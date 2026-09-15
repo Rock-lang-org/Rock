@@ -1,6 +1,7 @@
 /target
 /build
 /docs/book/
+/docs/.deps/
 /stdlib/build/
 coverage/
 .worktrees/

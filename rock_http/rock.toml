@@ -1,6 +1,0 @@
-[crate]
-name = "rock_http"
-version = "0.1.0"
-
-[lib]
-path = "src/lib.rk"

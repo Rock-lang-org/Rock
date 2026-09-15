@@ -6,4 +6,4 @@ version = "0.1.0"
 path = "src/main.rk"
 
 [dependencies]
-rock_http = { path = "../../../rock_http" }
+rock_http = { path = "../../../../rock_http" }

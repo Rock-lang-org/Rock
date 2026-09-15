@@ -105,10 +105,10 @@ These options are for standalone or compiler-development workflows, not normal a
 
 ## Neovim plugin
 
-The plugin lives under `neovim/`, not at the repository root. It requires Neovim 0.11 or newer and uses `vim.lsp.config` and `vim.lsp.enable`, without an additional Lua dependency. Clone the repository, then add its plugin directory in `init.lua` (replace the path with your checkout):
+The plugin lives in [rock.nvim](https://github.com/rock-lang-org/rock.nvim). It requires Neovim 0.11 or newer and uses `vim.lsp.config` and `vim.lsp.enable`, without an additional Lua dependency. Clone that repository, then add its root in `init.lua` (replace the path with your checkout):
 
 ```lua
-vim.opt.runtimepath:prepend("/absolute/path/to/Rock/neovim")
+vim.opt.runtimepath:prepend("/absolute/path/to/rock.nvim")
 require("rock").setup()
 ```
 
@@ -122,7 +122,7 @@ The plugin registers `.rk` as filetype `rock`. Its client root markers are `rock
 | `autostart` | Enable the LSP configuration during setup; defaults to `true`. |
 | `server` | Additional native `vim.lsp.Config` fields; `server.cmd` is used only when top-level `cmd` is absent. |
 
-Automatic executable selection checks `target/release/rock-lsp` inside the plugin checkout, then `target/debug/rock-lsp`, then `PATH`. Set `cmd = { "rock-lsp" }` explicitly to prefer the installed toolchain shim over a checkout binary.
+The default server is `rock-lsp` from `PATH`. To use a compiler-development build instead, set `cmd` to its absolute executable path.
 
 Use `:checkhealth rock` to check prerequisites, `:RockLspInfo` to inspect the resolved configuration and clients, and `:RockLspRestart` to restart Rock clients. See [Editors and Diagnostics](../getting-started/editor-and-diagnostics.md) for local-checkout setup and explicit hover/diagnostic commands.
 
@@ -136,9 +136,10 @@ The [diagnostics walkthrough](../getting-started/editor-and-diagnostics.md#readi
 
 ## Tree-sitter grammar
 
-The separate grammar project is under `tree-sitter-rock/`:
+Clone the separate [tree-sitter-rock](https://github.com/rock-lang-org/tree-sitter-rock) repository to develop the grammar:
 
 ```console
+$ git clone https://github.com/rock-lang-org/tree-sitter-rock.git
 $ cd tree-sitter-rock
 $ tree-sitter generate
 $ tree-sitter build

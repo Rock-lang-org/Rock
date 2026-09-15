@@ -2,7 +2,7 @@
 
 TCP delivers bytes, not requests. An HTTP server must recognize where headers end, wait for the declared body length, and write a response whose framing matches its body. The `rock_http` library supplies those operations using Rock's safe I/O, collections, and threading APIs.
 
-`rock_http` is a separate package, not part of the standard library. Its source is at `rock_http/src/` in the Rock repository, and its manifest is `rock_http/rock.toml`. Import it as `rock_http::...`, not `stdlib::http::...`.
+`rock_http` is a separate package, not part of the standard library. It lives in the [rock-lang-org/rock_http](https://github.com/rock-lang-org/rock_http) repository. Import it as `rock_http::...`, not `stdlib::http::...`.
 
 In this chapter we will build a small loopback server with a health endpoint and a binary echo endpoint. It is a local learning project, not a hardened Internet-facing service.
 
@@ -26,15 +26,22 @@ Keep routing separate from socket operations. The handler can be exercised with 
 
 ## Create the Project
 
-Use a Rock toolchain built from the same branch as the checkout, including its matching standard library. Older toolchains may not have the range and complete-write APIs this library needs. The commands below use the `rock` application CLI, which builds local dependencies and passes their artifacts to the compiler for you.
+Use Rock `v0.5.2` with its matching standard library, or a compatible development toolchain. The commands below use the `rock` application CLI, which builds local dependencies and passes their artifacts to the compiler for you.
 
-The complete project is included at `docs/examples/http-server/`. Its layout relative to the repository root is:
+The complete project is included at `docs/examples/http-server/`. From the Rock repository root, clone the library alongside the compiler checkout and select the revision used by this example:
+
+```console
+$ git clone https://github.com/rock-lang-org/rock_http.git ../rock_http
+$ git -C ../rock_http checkout --detach 55967acf9850660595f187a503c4c79661cd2479
+```
+
+The checkouts have this layout:
 
 ```text
+rock_http/
+  rock.toml
+  src/lib.rk
 Rock/
-  rock_http/
-    rock.toml
-    src/lib.rk
   docs/
     examples/
       http-server/
@@ -53,12 +60,12 @@ version = "0.1.0"
 path = "src/main.rk"
 
 [dependencies]
-rock_http = { path = "../../../rock_http" }
+rock_http = { path = "../../../../rock_http" }
 ```
 
-The current manifest format uses `[lib].path` for the application's entry file too. Dependency paths are relative to the directory containing that manifest, not the shell's current directory. From `docs/examples/http-server`, three parent steps reach the repository root. If you place the application elsewhere, adjust the path to the actual `rock_http` directory.
+The current manifest format uses `[lib].path` for the application's entry file too. Dependency paths are relative to the directory containing that manifest, not the shell's current directory. From `docs/examples/http-server`, four parent steps reach the directory containing both checkouts. If you place the application elsewhere, adjust the path to the actual `rock_http` directory.
 
-Do not add a registry version in place of this path: registry dependencies are not implemented. Do not add a second local `stdlib` dependency for this tutorial either; `rock` supplies the selected toolchain's standard-library artifact to both packages.
+Do not replace this path with a registry version or Git dependency: those manifest dependency sources are not implemented. The explicit checkout above pins the library revision instead. Do not add a second local `stdlib` dependency for this tutorial either; `rock` supplies the selected toolchain's standard-library artifact to both packages.
 
 ## Handle a Request
 

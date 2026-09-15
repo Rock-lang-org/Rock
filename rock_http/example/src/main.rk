@@ -1,8 +1,0 @@
-> rock_http::response::Response
-
-main = ->
-    response = Response::text 200, "hello from Rock"
-    if response.status == 200
-        0
-    else
-        1

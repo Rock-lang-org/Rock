@@ -12,17 +12,21 @@ From the repository root:
 
 ```sh
 cargo install tree-sitter-cli --version 0.26.9 --locked
-(cd tree-sitter-rock && tree-sitter generate)
+node docs/checks/fetch-grammar.cjs
 node --test docs/checks/rock-highlight.test.cjs
 mdbook build docs
 node docs/checks/verify-book.cjs
 ```
 
 `rock-highlight.cjs` implements the mdBook preprocessor protocol. It batches Rock
-fences through the tree-sitter CLI using `tree-sitter-rock/queries/highlights.scm`
-and `tree-sitter-rock/queries/locals.scm`, shared with the VS Code extension, against
+fences through the tree-sitter CLI using `queries/highlights.scm`
+and `queries/locals.scm` from the standalone
+[tree-sitter-rock](https://github.com/rock-lang-org/tree-sitter-rock) repository, against
 the real Rock syntax tree. The generated parser C source is ignored, so generation is
-required on a fresh checkout. Grammar and query errors fail the build.
+required on a fresh checkout. The fetch script checks out the exact commit in
+`grammar-revision.txt` under ignored `docs/.deps/tree-sitter-rock/` and generates
+the parser. Change that pin explicitly to adopt grammar updates; no submodule or
+sibling checkout is needed. Grammar and query errors fail the build.
 
 The preprocessor retains tree-sitter capture classes such as `function`,
 `operator assignment`, and `variable builtin`. Style these under

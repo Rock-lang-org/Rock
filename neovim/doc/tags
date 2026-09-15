@@ -1,8 +1,0 @@
-rock-commands	rock.txt	/*rock-commands*
-rock-contents	rock.txt	/*rock-contents*
-rock-health	rock.txt	/*rock-health*
-rock-options	rock.txt	/*rock-options*
-rock-setup	rock.txt	/*rock-setup*
-rock.txt	rock.txt	/*rock.txt*
-:RockLspInfo	rock.txt	/*:RockLspInfo*
-:RockLspRestart	rock.txt	/*:RockLspRestart*

@@ -1,9 +1,0 @@
-[crate]
-name = "rock_http_example"
-version = "0.1.0"
-
-[lib]
-path = "src/main.rk"
-
-[dependencies]
-rock_http = { path = ".." }

@@ -4,7 +4,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const repoRoot = path.resolve(__dirname, "../..");
-const grammarRoot = path.join(repoRoot, "tree-sitter-rock");
+const grammarRoot = path.join(repoRoot, "docs/.deps/tree-sitter-rock");
 const queryPath = path.join(grammarRoot, "queries/highlights.scm");
 const localsPath = path.join(grammarRoot, "queries/locals.scm");
 
@@ -66,7 +66,7 @@ function highlightSources(sources) {
         const captures = [...fs.readFileSync(queryPath, "utf8").matchAll(/"(?:\\.|[^"\\])*"|;[^\n]*|@([\w.-]+)/g)]
             .filter((match) => match[1]).map((match) => [match[1], null]);
         const configPath = path.join(temporary, "config.json");
-        fs.writeFileSync(configPath, JSON.stringify({ "parser-directories": [repoRoot], theme: Object.fromEntries(captures) }));
+        fs.writeFileSync(configPath, JSON.stringify({ "parser-directories": [path.dirname(grammarRoot)], theme: Object.fromEntries(captures) }));
         const highlighted = [];
         for (let offset = 0; offset < sources.length; offset += 64) {
             const batch = sources.slice(offset, offset + 64);

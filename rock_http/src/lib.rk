@@ -1,8 +1,0 @@
-// Safe blocking HTTP/1.1 server library.
-
-< mod config
-< mod error
-< mod request
-< mod parser
-< mod response
-< mod server

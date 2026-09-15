@@ -5,7 +5,6 @@ on:
     branches: [master]
     paths:
       - "docs/**"
-      - "tree-sitter-rock/**"
       - ".github/workflows/book.yml"
   workflow_dispatch:
 
@@ -32,9 +31,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Generate Rock parser
-        working-directory: tree-sitter-rock
-        run: tree-sitter generate
+      - name: Fetch pinned grammar and generate Rock parser
+        run: node docs/checks/fetch-grammar.cjs
       - name: Test book highlighting
         run: node --test docs/checks/rock-highlight.test.cjs
       - name: Build book

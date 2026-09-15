@@ -1,8 +1,0 @@
-node_modules/**
-src/**
-scripts/**
-test/**
-tsconfig.json
-package-lock.json
-dist/highlights.cjs
-*.vsix

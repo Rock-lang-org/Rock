@@ -38,22 +38,22 @@ The manifest lets the editor and build command agree on the program entry, path 
 
 ## Connect Neovim
 
-The Rock repository contains a Neovim plugin under `neovim/`. It uses Neovim's native LSP APIs and requires Neovim 0.11 or newer; no `nvim-lspconfig` dependency is needed.
+The separate [rock.nvim](https://github.com/rock-lang-org/rock.nvim) plugin uses Neovim's native LSP APIs and requires Neovim 0.11 or newer; no `nvim-lspconfig` dependency is needed.
 
 Clone the repository if you do not already have a checkout:
 
 ```console
-$ git clone https://github.com/Rock-lang-org/Rock.git
+$ git clone https://github.com/rock-lang-org/rock.nvim.git
 ```
 
-Add the checkout's `neovim/` directory, not the repository root, to `runtimepath` in `init.lua` before setup. Replace the path with your checkout's absolute path:
+Add the plugin repository root to `runtimepath` in `init.lua` before setup. Replace the path with your checkout's absolute path:
 
 ```lua
-vim.opt.runtimepath:prepend("/absolute/path/to/Rock/neovim")
+vim.opt.runtimepath:prepend("/absolute/path/to/rock.nvim")
 require("rock").setup()
 ```
 
-These snippets install or load Lua integration, not the compiler. The toolchain installation provides `rock-lsp`. By default, the plugin first looks for `target/release/rock-lsp` in its own checkout, then `target/debug/rock-lsp`, and finally `rock-lsp` on `PATH`. To ensure it uses the installed toolchain shim even when checkout binaries exist, replace the setup call with:
+These snippets install or load Lua integration, not the compiler. The toolchain installation provides `rock-lsp`. By default, the plugin uses `rock-lsp` on `PATH`. You can also set the command explicitly:
 
 ```lua
 require("rock").setup({
@@ -71,7 +71,7 @@ Open `main.rk`, then inspect the integration:
 :RockLspInfo
 ```
 
-The filetype should be `rock`. The health check verifies the Neovim APIs, executable, setup, and active clients; it is not a compilation check. `RockLspInfo` shows the command and client root, which is useful when an older checkout binary is being selected unexpectedly.
+The filetype should be `rock`. The health check verifies the Neovim APIs, executable, setup, and active clients; it is not a compilation check. `RockLspInfo` shows the command and client root, which is useful when diagnosing a server-path problem.
 
 With the cursor on `answer` in the correct program, request hover information:
 
@@ -87,7 +87,7 @@ The server can show its inferred `I64` type. With the cursor inside `add 20, 22`
 
 Signature help identifies the function's parameters and the active argument. Commas trigger requests automatically in supporting clients; an explicit request is useful because Rock calls do not need parentheses. The plugin does not add custom key mappings, so these commands work without relying on a particular user's keybindings.
 
-Tree-sitter highlighting is separate. The repository's `tree-sitter-rock/` project supplies the grammar and queries, but the LSP setup above does not install that parser.
+Tree-sitter highlighting is separate. [tree-sitter-rock](https://github.com/rock-lang-org/tree-sitter-rock) supplies the grammar and queries, but the LSP setup above does not install that parser. The [VS Code extension](https://github.com/rock-lang-org/vscode-rock) is also maintained separately.
 
 ## Reading a source diagnostic
 

@@ -727,14 +727,25 @@ Without arguments it starts a language server over standard input/output, not an
 
 ### Neovim
 
-The [`neovim/`](neovim/) directory contains a plugin using Neovim's built-in LSP client, without requiring `nvim-lspconfig`. It requires Neovim 0.11 or newer. Clone this repository, then add its `neovim/` directory to `runtimepath` in `init.lua` (replace the path with your checkout):
+The [rock.nvim](https://github.com/rock-lang-org/rock.nvim) plugin uses Neovim's built-in LSP client, without requiring `nvim-lspconfig`. It requires Neovim 0.11 or newer. Install it with your plugin manager, or clone that repository and add its root to `runtimepath` in `init.lua` (replace the path with your checkout):
 
 ```lua
-vim.opt.runtimepath:prepend("/absolute/path/to/Rock/neovim")
+vim.opt.runtimepath:prepend("/absolute/path/to/rock.nvim")
 require("rock").setup()
 ```
 
-The plugin does not install the compiler: complete rockup installation first, then open a Rock project and run `:checkhealth rock`. The [editor guide](https://rock-lang-org.github.io/Rock/getting-started/editor-and-diagnostics.html) covers local checkouts, other clients, and diagnostics. Tree-sitter highlighting is provided by [tree-sitter-rock](tree-sitter-rock/).
+The plugin does not install the compiler: complete rockup installation first, then open a Rock project and run `:checkhealth rock`. The [editor guide](https://rock-lang-org.github.io/Rock/getting-started/editor-and-diagnostics.html) covers local checkouts, other clients, and diagnostics. Tree-sitter highlighting is provided by [tree-sitter-rock](https://github.com/rock-lang-org/tree-sitter-rock).
+
+### Ecosystem Repositories
+
+Editor integrations and application libraries are maintained separately:
+
+- [rock.nvim](https://github.com/rock-lang-org/rock.nvim): Neovim integration.
+- [vscode-rock](https://github.com/rock-lang-org/vscode-rock): VS Code extension.
+- [tree-sitter-rock](https://github.com/rock-lang-org/tree-sitter-rock): syntax grammar and highlighting queries.
+- [rock_http](https://github.com/rock-lang-org/rock_http): HTTP library and examples.
+
+`rock-lsp` stays in this repository with its compiler dependencies and ships with the matching toolchain.
 
 ## Build From Source
 
