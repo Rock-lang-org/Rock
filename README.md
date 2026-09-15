@@ -92,27 +92,27 @@ A project pin selects an installed toolchain; it does not download one automatic
 
 ## Your First Program
 
-Create a directory for your project:
+Create a hello-world project:
 
 ```sh
-mkdir hello-rock
+rock new hello-rock
 cd hello-rock
 ```
 
-Add a `rock.toml` manifest:
+The command creates a `rock.toml` manifest:
 
 ```toml
 [crate]
-name = "hello"
+name = "hello-rock"
 version = "0.1.0"
 
 [lib]
-path = "main.rk"
+path = "src/main.rk"
 ```
 
 The manifest names the package and its entry file. The package version is your application's version, not the compiler version. The current project format uses `[lib]` for the entry even when you run a program containing `main`.
 
-Put this in `main.rk`:
+It also creates `.gitignore` to exclude `/build/` and `src/main.rk` with this program:
 
 ```haskell
 main = !->
@@ -130,7 +130,7 @@ Hello, Rock!
 
 Prefer `main = !->` for ordinary programs. Use `main = ->` when you intentionally return an integer process exit status instead; the discard form does not turn a discarded error value into a failure status.
 
-**Trying the tour:** each Rock code block below is a complete replacement for `main.rk`, independent of earlier blocks. The modules section shows its complete two-file project separately. Standard prelude names such as `Option`, `Vec`, and `println` are available through the installed stdlib; non-prelude imports are shown explicitly. In the examples, `|>` passes a result to the next function, and `(.println!)` is a function that prints its input.
+**Trying the tour:** each Rock code block below is a complete replacement for `src/main.rk`, independent of earlier blocks. The modules section shows its complete two-file project separately. Standard prelude names such as `Option`, `Vec`, and `println` are available through the installed stdlib; non-prelude imports are shown explicitly. In the examples, `|>` passes a result to the next function, and `(.println!)` is a function that prints its input.
 
 ## Everyday Syntax
 

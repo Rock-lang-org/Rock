@@ -9,6 +9,15 @@ use crate::{
 use super::support::{sysroot_env_lock, temp_test_dir, write_package};
 
 #[test]
+fn test_new_command_requires_project_name() {
+    let config = <Config as clap::Parser>::try_parse_from(["rock", "new", "hello-rock"]).unwrap();
+    assert!(
+        matches!(config.command, Command::New { project_name } if project_name == "hello-rock")
+    );
+    assert!(<Config as clap::Parser>::try_parse_from(["rock", "new"]).is_err());
+}
+
+#[test]
 fn test_run_command_parses_trailing_args() {
     let config =
         <Config as clap::Parser>::try_parse_from(["rock", "run", "--", "--flag", "value"]).unwrap();

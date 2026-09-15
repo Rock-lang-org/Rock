@@ -5,13 +5,19 @@ use clap::{Parser, Subcommand};
 use crate::{
     artifact::{ensure_artifact, ArtifactBuildState},
     build::{build_project, run_project},
-    commands::{expand_project, format_project},
+    commands::{expand_project, format_project, new_project},
 };
 
 pub fn run() -> Result<CliOutcome, String> {
     let config = Config::parse();
 
     match config.command {
+        Command::New { project_name } => {
+            let path = new_project(&current_project_root()?, &project_name)?;
+            println!("Created project '{}' at {}", project_name, path.display());
+            println!("\n  cd {}\n  rock run", project_name);
+            Ok(CliOutcome::Success)
+        }
         Command::Format => format_project().map(|_| CliOutcome::Success),
         Command::Build => {
             let executable = build_project(&current_project_root()?)?;
@@ -47,6 +53,10 @@ pub(crate) struct Config {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Command {
+    /// Create a new hello-world project in a new directory
+    New {
+        project_name: String,
+    },
     Format,
     Build,
     Run {

@@ -1,6 +1,15 @@
 # Hello, Rock!
 
-Create a directory with this `rock.toml` manifest:
+Create your first project with `rock new`:
+
+```sh
+rock new hello
+cd hello
+```
+
+This creates a new directory containing `rock.toml`, `src/main.rk`, and a `.gitignore` that excludes build output. Existing directories are never overwritten. Project names start with an ASCII letter and can contain letters, digits, hyphens, and underscores; `stdlib` is reserved.
+
+The generated `rock.toml` manifest is:
 
 ```toml
 [crate]
@@ -8,10 +17,10 @@ name = "hello"
 version = "0.1.0"
 
 [lib]
-path = "main.rk"
+path = "src/main.rk"
 ```
 
-Create `main.rk` beside it with this complete program:
+The generated `src/main.rk` contains this complete program:
 
 ```rock
 main = !->
