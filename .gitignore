@@ -2,6 +2,8 @@
 /build
 /docs/book/
 /docs/.deps/
+/docs/plans/
+/docs/superpowers/
 /stdlib/build/
 coverage/
 .worktrees/
