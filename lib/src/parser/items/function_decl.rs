@@ -73,6 +73,15 @@ pub fn lambda_decl(stream: Input) -> IResult<LambdaDecl> {
 }
 
 fn parameters(stream: Input) -> IResult<Vec<Pattern>> {
+    if stream.inside_inline_argument_list {
+        // At a call site, commas separate arguments rather than extending a
+        // bare lambda's parameter list: `visit values, value !-> ...`.
+        // Parenthesized lambdas reset this context and can have many parameters.
+        return pattern
+            .opt()
+            .map(|parameter| parameter.into_iter().collect())
+            .process(stream);
+    }
     separated_trailing(pattern, TokenType::Coma).process(stream)
 }
 

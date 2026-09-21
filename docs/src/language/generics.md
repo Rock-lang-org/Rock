@@ -71,7 +71,7 @@ main = !->
 
 The body uses `==`, so `T: Eq` is required. In both calls inference chooses `T = I64`; the output is `true` and `false`. Without the bound, the generic body would have no promise that `==` exists.
 
-Multiple bounds are comma-separated. Each named capability needs a concrete implementation at the call site.
+The same rule applies to named methods. Here `T: Show` supplies `show!`, and the concrete argument type must implement that capability.
 
 ```rock
 show_value: &T -> String where T: Show
@@ -102,7 +102,7 @@ main = !->
     echoed.println!
 ```
 
-The receiver establishes `T = I64`, so `echoed` is `I64` and the output is `7`. A generic implementation is not a promise that every possible instantiation works; its own bounds and receiver shape still have to match.
+The receiver establishes `T = I64` and matches the required array length of three. The trait declares the argument and result of `echo` as `I64` independently of `T`; the method returns its argument, so the output is `7`. A generic implementation is not a promise that every possible instantiation works; its own bounds and receiver shape still have to match.
 
 ## Type Aliases
 

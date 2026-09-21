@@ -73,13 +73,13 @@ Open `main.rk`, then inspect the integration:
 
 The filetype should be `rock`. The health check verifies the Neovim APIs, executable, setup, and active clients; it is not a compilation check. `RockLspInfo` shows the command and client root, which is useful when diagnosing a server-path problem.
 
-With the cursor on `answer` in the correct program, request hover information:
+With the cursor on `left` in the body of `add` in the correct program, request hover information:
 
 ```vim
 :lua vim.lsp.buf.hover()
 ```
 
-The server can show its inferred `I64` type. With the cursor inside `add 20, 22`, request call information:
+The server can show the parameter's `I64` type from the function signature. With the cursor inside `add 20, 22`, request call information:
 
 ```vim
 :lua vim.lsp.buf.signature_help()

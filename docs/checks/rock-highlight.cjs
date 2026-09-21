@@ -57,7 +57,7 @@ function htmlSource(html) {
 function highlightSources(sources) {
     if (!sources.length) return [];
     for (const file of [queryPath, localsPath]) {
-        if (!fs.existsSync(file)) throw new Error(`Missing Rock AST highlight query: ${file}`);
+        if (!fs.existsSync(file)) throw new Error(`Missing Rock AST highlight query: ${file}. Run \`node checks/fetch-grammar.cjs\` from docs (or \`node docs/checks/fetch-grammar.cjs\` from the repository root) before building or serving the book.`);
     }
     const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "rock-book-"));
     try {

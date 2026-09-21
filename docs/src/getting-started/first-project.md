@@ -1,6 +1,6 @@
 # A First Project: FizzBuzz
 
-FizzBuzz is a useful first project because it combines a value-producing function, an enum, conditions, pattern matching, a loop, and output without needing a large library. The rules are:
+FizzBuzz is a useful first project because it combines a value-producing function, an enum, guarded pattern matching, a range, and an inline callback without needing a large library. The rules are:
 
 1. Visit the integers from 1 through 30.
 2. Print `FizzBuzz` for a multiple of both 3 and 5.
@@ -30,14 +30,11 @@ enum FizzBuzzValue
 
 fizzbuzz_value: I64 -> FizzBuzzValue
 fizzbuzz_value = number ->
-    if number % 15 == 0
-        FizzBuzzValue::Text "FizzBuzz"
-    else if number % 3 == 0
-        FizzBuzzValue::Text "Fizz"
-    else if number % 5 == 0
-        FizzBuzzValue::Text "Buzz"
-    else
-        FizzBuzzValue::Number number
+    match number
+        n if n % 15 == 0 => FizzBuzzValue::Text "FizzBuzz"
+        n if n % 3 == 0 => FizzBuzzValue::Text "Fizz"
+        n if n % 5 == 0 => FizzBuzzValue::Text "Buzz"
+        n => FizzBuzzValue::Number n
 
 print_value: FizzBuzzValue -> I32
 print_value = value ->
@@ -46,11 +43,10 @@ print_value = value ->
         FizzBuzzValue::Number number => number.println!
 
 main = !->
-    number = 1
-    while number <= 30
-        value = fizzbuzz_value number
-        print_value value
-        number = number + 1
+    for_each 1..=30, number !->
+        number
+            |> fizzbuzz_value
+            |> print_value
 ```
 
 Run it from the project directory:
@@ -137,19 +133,16 @@ enum FizzBuzzValue
 
 fizzbuzz_value: I64 -> FizzBuzzValue
 fizzbuzz_value = number ->
-    if number % 15 == 0
-        FizzBuzzValue::Text "FizzBuzz"
-    else if number % 3 == 0
-        FizzBuzzValue::Text "Fizz"
-    else if number % 5 == 0
-        FizzBuzzValue::Text "Buzz"
-    else
-        FizzBuzzValue::Number number
+    match number
+        n if n % 15 == 0 => FizzBuzzValue::Text "FizzBuzz"
+        n if n % 3 == 0 => FizzBuzzValue::Text "Fizz"
+        n if n % 5 == 0 => FizzBuzzValue::Text "Buzz"
+        n => FizzBuzzValue::Number n
 ```
 
-The signature says that one `I64` becomes one `FizzBuzzValue`. The body does not print, so the calculation can be reused by another output function or a test. Each branch constructs the same enclosing enum type even though the selected variant differs.
+The signature says that one `I64` becomes one `FizzBuzzValue`. The body does not print, so the calculation can be reused by another output function or a test. Each match arm constructs the same enclosing enum type even though the selected variant differs.
 
-The operator `%` computes a remainder and `==` produces a `Bool`. Checking 15 first is essential: 15 is divisible by both 3 and 5, so a 3-only branch placed first would hide the combined case.
+Each `n` pattern binds the input integer within its own arm. An `if` guard checks an additional condition; `%` computes a remainder and `==` produces a `Bool`. Arms are checked from top to bottom, and the first successful arm supplies the result. Checking divisibility by 15 first is essential because a 3-only arm placed first would hide the combined case. The final unguarded `n` arm handles every remaining number.
 
 ## Recover the payload with `match`
 
@@ -169,20 +162,22 @@ print_value = value ->
 
 An arm pattern checks the variant and binds its payload at the same time. The arm body is evaluated only after its pattern succeeds. Listing both variants makes the output decision visible in one place.
 
-## Repeat with `while`
+## Traverse the range with `for_each`
 
-The loop in the complete program has four data-flow steps on every iteration:
+`for_each` is a generic prelude function with two arguments: the values to visit and an action to run for each value. Here `1..=30` includes both endpoints, and `number !->` introduces the inline action:
 
-1. `number <= 30` is evaluated.
-2. If it is true, `fizzbuzz_value number` creates an enum value.
-3. `print_value value` matches and prints that value.
-4. `number = number + 1` advances the state before the next condition check.
+1. `for_each` supplies the next integer as `number`, in ascending order.
+2. `number |> fizzbuzz_value` passes that integer to the calculation and produces a `FizzBuzzValue`.
+3. `|> print_value` passes that result to the output function.
+4. The action's `!->` discards the printing result and returns unit (`()`).
 
-The current compiler permits ordinary reassignment of an existing local, so this counter does not need `mut`. `mut` is still meaningful for mutable borrows and mutable receiver calls; the bindings chapter describes that distinction precisely.
+The `|>` operator passes the value on its left to the function on its right. Indented continuation lines keep the pipeline together as one expression. There is no counter to update and no intermediate collection: bounded ranges are traversed directly, and `for_each` returns only after every action has completed. Both endpoints are required; an open-ended range is rejected at runtime.
+
+The same function also works with foldable containers such as `Vec`, `Option`, and `Result`; [Higher-Kinded Types](../functional/higher-kinded-types.md#traversing-for-effects) explains how their shared `Foldable` abstraction supplies the traversal.
 
 ## A `for` version
 
-Ranges exclude their upper bound. The same calculation can therefore use `1..31`:
+An ordinary `for` loop can express the same traversal. An exclusive range written with `..` excludes its upper bound, so this version uses `1..31`:
 
 ```rock
 enum FizzBuzzValue
@@ -191,14 +186,11 @@ enum FizzBuzzValue
 
 fizzbuzz_value: I64 -> FizzBuzzValue
 fizzbuzz_value = number ->
-    if number % 15 == 0
-        FizzBuzzValue::Text "FizzBuzz"
-    else if number % 3 == 0
-        FizzBuzzValue::Text "Fizz"
-    else if number % 5 == 0
-        FizzBuzzValue::Text "Buzz"
-    else
-        FizzBuzzValue::Number number
+    match number
+        n if n % 15 == 0 => FizzBuzzValue::Text "FizzBuzz"
+        n if n % 3 == 0 => FizzBuzzValue::Text "Fizz"
+        n if n % 5 == 0 => FizzBuzzValue::Text "Buzz"
+        n => FizzBuzzValue::Number n
 
 print_value: FizzBuzzValue -> I32
 print_value = value ->
@@ -224,14 +216,15 @@ is_divisible = number, divisor ->
     number % divisor == 0
 ```
 
-The curried signature reads as “take an `I64`, then another `I64`, and return `Bool`.” In a larger version of the project, a branch could say `if is_divisible number, 15` without changing the underlying calculation.
+The signature lists two `I64` parameters followed by a `Bool` result. The `->` definition receives both arguments in one call; it is not a curried `~>` definition. In a larger version of the project, the first match arm could read `n if is_divisible n, 15 => FizzBuzzValue::Text "FizzBuzz"` without changing the underlying calculation.
 
 ## Common mistakes
 
 - Checking `% 3` before `% 15`, which changes the result for 15.
 - Forgetting that `1..31` excludes 31 and therefore includes 30 as its final element.
-- Returning a raw string from one branch and an integer from another; all branches still need one enclosing type.
-- Forgetting the counter update in the `while` version, which makes the condition stay true forever.
+- Placing the unguarded `n` arm first, which would match every number before any divisibility guard is checked.
+- Returning a raw string from one match arm and an integer from another; all arms still need one enclosing type.
+- Using `->` for an action that leaves the printing result as its return value; `for_each` expects a unit-returning action, so use `!->`.
 - Assuming an enum payload is available outside its matching arm; the binding is introduced by the pattern.
 
 The next chapters isolate each of these language features so that you can reason about the type and value flowing through every line.

@@ -85,24 +85,6 @@ fn collect_generic_names_from_parse_type<F>(
     }
 }
 
-fn simple_trait_bound(
-    trait_bound: &ast::ParseType,
-) -> Option<(&ast::ParseTypeInner, &[ast::ParseType])> {
-    match trait_bound {
-        ast::ParseType::Type(inner) => Some((inner, &inner.generics)),
-        ast::ParseType::Application(application) => {
-            let ast::ParseType::Type(inner) = application.constructor.as_ref() else {
-                return None;
-            };
-            if !inner.generics.is_empty() {
-                return None;
-            }
-            Some((inner, application.args.as_slice()))
-        }
-        _ => None,
-    }
-}
-
 fn is_known_nominal_type_name(lowerer: &Lowerer, name: &str) -> bool {
     if let Some(id) = lowerer.resolver.resolve_item_or_alias(name) {
         return is_registered_nominal_type_id(lowerer, id);
@@ -576,81 +558,18 @@ impl Lowerer {
                     );
                 }
 
-                // Set bounds from where clauses so the method body type-checker
-                // can resolve method calls on bounded generic params (e.g. T: Show).
-                let mut impl_bounds = HirGenericBounds::new();
-                impl_bounds.extend(func.generic_bounds.clone());
+                // Reuse the collected bounds, including constructor predicates.
+                // Re-parsing only named type subjects here loses HKT impl bounds.
+                let mut impl_bounds = self.items.impl_def(impl_id).unwrap().bounds.clone();
+                for (param, bounds) in &func.generic_bounds {
+                    impl_bounds
+                        .entry(*param)
+                        .or_default()
+                        .extend(bounds.clone());
+                }
                 impl_bounds
                     .predicates
                     .extend(func.generic_bounds.predicates.clone());
-                for wc in &imp.where_clauses {
-                    let ast::ParseType::Type(subject) = &wc.subject else {
-                        if wc.trait_bound.is_some() {
-                            self.diagnostics.push_with_span(
-                                "unsupported constructor generic parameter in where clause"
-                                    .to_string(),
-                                wc.subject.span(),
-                            );
-                        }
-                        continue;
-                    };
-                    let type_param = subject.name.as_str();
-                    let type_param_id = if let Some(index) = type_generics
-                        .iter()
-                        .position(|param| param.name == type_param)
-                    {
-                        Some(type_generics[index].id)
-                    } else if let Some(index) = func
-                        .generic_params
-                        .iter()
-                        .position(|param| param.name == type_param)
-                    {
-                        Some(func.generic_params[index].id)
-                    } else {
-                        self.diagnostics.push_with_span(
-                            format!("unknown generic parameter '{}' in where clause", type_param),
-                            wc.subject.span(),
-                        );
-                        None
-                    };
-                    let Some(type_param_id) = type_param_id else {
-                        continue;
-                    };
-                    let Some(trait_bound) = wc.trait_bound.as_ref() else {
-                        continue;
-                    };
-                    let Some((trait_bound, type_args)) = simple_trait_bound(trait_bound) else {
-                        self.diagnostics.push_with_span(
-                            "unsupported trait bound shape in where clause".to_string(),
-                            wc.subject.span(),
-                        );
-                        continue;
-                    };
-                    let Some(trait_id) =
-                        crate::lower::resolution::LowerResolutionContext::new(self)
-                            .resolve_trait_id(&trait_bound.name)
-                    else {
-                        self.diagnostics.push_with_span(
-                            format!("unknown trait '{}' in where clause", trait_bound.name),
-                            wc.trait_bound
-                                .as_ref()
-                                .expect("trait bound checked above")
-                                .span(),
-                        );
-                        continue;
-                    };
-                    let type_args = type_args
-                        .iter()
-                        .map(|generic| self.lower_parse_type(generic))
-                        .collect();
-                    impl_bounds
-                        .entry(type_param_id)
-                        .or_default()
-                        .push(TraitBound {
-                            trait_id,
-                            type_args,
-                        });
-                }
                 // Inject implicit Sized bound for all type params
                 if let Some(sized_trait_id) = self
                     .language_items
@@ -659,6 +578,9 @@ impl Lowerer {
                     .map(|items| items.trait_id)
                 {
                     for generic in &type_generics {
+                        if generic.kind != crate::type_services::kind::Kind::Type {
+                            continue;
+                        }
                         impl_bounds
                             .entry(generic.id)
                             .or_insert_with(Vec::new)
@@ -668,6 +590,9 @@ impl Lowerer {
                             });
                     }
                     for generic in &func.generic_params {
+                        if generic.kind != crate::type_services::kind::Kind::Type {
+                            continue;
+                        }
                         impl_bounds
                             .entry(generic.id)
                             .or_insert_with(Vec::new)

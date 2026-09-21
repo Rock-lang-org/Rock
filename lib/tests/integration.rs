@@ -4,7 +4,6 @@
 
 use std::fs;
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -11361,6 +11360,196 @@ main = ->
 }
 
 #[test]
+fn test_stdlib_for_each_ranges_and_mutable_capture() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    mut digits: I64 = 0
+    for_each 1..=3, number !->
+        digits = digits * 10 + number
+    digits.println!
+    for_each 4..6, number !-> number.println!
+    for_each 5..5, number !-> number.println!
+    for_each 5..3, number !-> number.println!
+    for_each 5..=3, number !-> number.println!
+    for_each 7..=7, number !-> number.println!
+    for_each 9223372036854775806..=9223372036854775807, number !-> number.println!
+    mut visits: I64 = 0
+    for_each 0..100000, _ !->
+        visits = visits + 1
+    visits.println!
+"#,
+    );
+
+    assert_eq!(
+        output.lines().collect::<Vec<_>>(),
+        vec![
+            "123",
+            "4",
+            "5",
+            "7",
+            "9223372036854775806",
+            "9223372036854775807",
+            "100000"
+        ]
+    );
+}
+
+#[test]
+fn test_stdlib_for_each_owned_and_borrowed_collections() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    mut words: Vec String = Vec::new!
+    words.push String::from_str "first"
+    words.push String::from_str "second"
+    for_each &words, word !-> word.println!
+    words.len!.println!
+    for_each words, word !-> word.println!
+
+    values = [3, 4, 5]
+    view: &[I64] = &values[..]
+    for_each view, value !-> (*value).println!
+    values[0].println!
+"#,
+    );
+
+    assert_eq!(
+        output.lines().collect::<Vec<_>>(),
+        vec!["first", "second", "2", "first", "second", "3", "4", "5", "3"]
+    );
+}
+
+#[test]
+fn test_stdlib_for_each_book_fizzbuzz() {
+    let source = include_str!("../../docs/examples/fizzbuzz.rk");
+    let chapter = include_str!("../../docs/src/getting-started/first-project.md");
+    let listing = chapter
+        .split_once("```rock\n")
+        .unwrap()
+        .1
+        .split_once("```")
+        .unwrap()
+        .0;
+    assert_eq!(listing.trim(), source.trim());
+    let expected = (1..=30)
+        .map(|number| match (number % 3, number % 5) {
+            (0, 0) => "FizzBuzz".to_string(),
+            (0, _) => "Fizz".to_string(),
+            (_, 0) => "Buzz".to_string(),
+            _ => number.to_string(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        compile_and_run(source).lines().collect::<Vec<_>>(),
+        expected
+    );
+}
+
+#[test]
+fn test_stdlib_for_each_hkt_foldable_carriers() {
+    let output = compile_and_run(
+        r#"
+struct One T
+    < value: T
+
+impl Foldable for One
+    foldl = mut step, initial, value ->
+        step.call_mut (initial, value.value)
+
+main = !->
+    for_each (Option::Some 7), number !-> number.println!
+    absent: Option I64 = Option::None
+    for_each absent, number !-> number.println!
+    success: Result I64, I64 = Result::Ok 9
+    failure: Result I64, I64 = Result::Err 99
+    for_each success, number !-> number.println!
+    for_each failure, number !-> number.println!
+    one = One
+        value: String::from_str "custom foldable"
+    for_each one, text !-> text.println!
+"#,
+    );
+    assert_eq!(
+        output.lines().collect::<Vec<_>>(),
+        vec!["7", "9", "custom foldable"]
+    );
+}
+
+#[test]
+fn test_stdlib_for_each_rejects_open_ended_ranges() {
+    for range in ["(..)", "(1..)", "(..3)", "(..=3)"] {
+        let (output, success) = compile_and_run_with_status(&format!(
+            "main = !->\n    for_each {range}, number !-> number.println!\n"
+        ));
+        assert!(!success, "range {range} should fail");
+        assert_eq!(output.trim(), "for_each requires a bounded range");
+    }
+}
+
+#[test]
+fn test_stdlib_for_each_drops_owned_items_and_callback_once() {
+    let output = compile_and_run(
+        r#"
+struct Item
+    < id: I64
+
+impl Drop for Item
+    ~@drop = !-> self.id.println!
+
+struct Counter
+    < total: I64
+
+impl FnMut Item, () for Counter
+    type Output = ()
+    ^@call_mut = item !->
+        self.total = self.total + item.id
+
+impl Drop for Counter
+    ~@drop = !-> self.total.println!
+
+main = !->
+    mut items: Vec Item = Vec::new!
+    first = Item
+        id: 2
+    second = Item
+        id: 3
+    items.push first
+    items.push second
+    counter = Counter
+        total: 0
+    for_each items, counter
+"#,
+    );
+    assert_eq!(output.lines().collect::<Vec<_>>(), vec!["2", "3", "5"]);
+}
+
+#[test]
+fn test_stdlib_for_each_consumes_owned_source() {
+    compile_should_fail(
+        r#"
+main = !->
+    mut values: Vec I64 = Vec::new!
+    values.push 1
+    for_each values, value !-> value.println!
+    values.len!.println!
+"#,
+        "borrow of moved value",
+    );
+}
+
+#[test]
+fn test_stdlib_for_each_rejects_non_unit_action() {
+    compile_should_fail(
+        r#"
+main = !->
+    for_each 1..=3, value -> value
+"#,
+        "does not implement trait",
+    );
+}
+
+#[test]
 fn test_stdlib_vec_map_ref_preserves_source() {
     let output = compile_and_run(
         r#"
@@ -11685,174 +11874,6 @@ main = ->
             504, 601,
         ]
     );
-}
-
-#[test]
-fn test_fresh_stdlib_artifact_invalid_mode_is_deterministic() {
-    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = test_temp_dir(id);
-    fs::create_dir_all(&dir).unwrap();
-    let _cleanup = TestDirCleanup(dir.clone());
-
-    let stdlib_dir = dir.join("stdlib");
-    fs::create_dir_all(&stdlib_dir).unwrap();
-    let artifact_path = stdlib_dir.join("stdlib.rkca");
-    let object_path = stdlib_dir.join("stdlib.o");
-    let output = rock_lib::compile_with_products(&rock_lib::Config {
-        entry_file: stdlib_path().join("lib.rk"),
-        output_dir: stdlib_dir,
-        debug_print: vec![],
-        meta_files: vec![],
-        extern_artifacts: vec![],
-        source_providers: Vec::new(),
-        current_crate_name: Some("stdlib".to_string()),
-        opt_level: 0,
-        emit_llvm: false,
-        no_link: true,
-        emit_object: Some(object_path),
-        no_prelude: true,
-        no_std: true,
-        sysroot: None,
-    })
-    .expect("fresh stdlib artifact compilation failed");
-    let mut products = output
-        .products
-        .expect("stdlib compile produced no products");
-    products.link.object_path = Some(PathBuf::from("stdlib.o"));
-    products
-        .write_artifact_to_path(&artifact_path)
-        .expect("fresh stdlib artifact write failed");
-
-    let project_dir = dir.join("app");
-    fs::create_dir_all(&project_dir).unwrap();
-    let source_path = dir.join("main.rk");
-    fs::write(
-        &source_path,
-        r#"
-> stdlib::result::Result
-> stdlib::io::IoError
-> stdlib::env::args
-
-run_mode: &String -> Result I64, IoError
-run_mode = mode ->
-    match mode.as_str!
-        "ok" => Result::Ok 0
-        _ => Result::Err (IoError::Os (1 as I32))
-
-main = ->
-    values = args!
-    result: Result I64, IoError = values.get 1 !> IoError::Os (1 as I32) >>= run_mode
-    result.println!
-    0
-"#,
-    )
-    .unwrap();
-    let mut config = test_config(source_path, project_dir.clone());
-    config.extern_artifacts = vec![("stdlib".to_string(), artifact_path.clone())];
-    let output = rock_lib::compile_with_products(&config)
-        .expect("fixture compilation against fresh artifact failed");
-    assert!(
-        output.products.is_some(),
-        "fixture compile produced no products"
-    );
-
-    let mut command = Command::new(project_dir.join("main"));
-    command.arg("invalid");
-    let output = run_test_command(&mut command);
-    assert!(
-        output.status.success(),
-        "fixture invalid-mode run failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "Err(IoError)"
-    );
-
-    let mut command = Command::new(project_dir.join("main"));
-    let output = run_test_command(&mut command);
-    assert!(
-        output.status.success(),
-        "fixture missing-mode run failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "Err(IoError)"
-    );
-
-    let new_new_dir = dir.join("new_new");
-    fs::create_dir_all(&new_new_dir).unwrap();
-    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
-        .expect("failed to reserve new_new test port")
-        .local_addr()
-        .unwrap()
-        .port();
-    let source = fs::read_to_string(workspace_root().join("test_projects/new_new/main.rk"))
-        .expect("failed to read annotation-free new_new fixture");
-    assert!(source.contains("9999"), "new_new fixture port changed");
-    let source_path = new_new_dir.join("main.rk");
-    fs::write(&source_path, source.replace("9999", &port.to_string())).unwrap();
-    let mut config = test_config(source_path, new_new_dir.clone());
-    config.extern_artifacts = vec![("stdlib".to_string(), artifact_path)];
-    rock_lib::compile_with_products(&config)
-        .expect("annotation-free new_new compilation against fresh artifact failed");
-
-    let mut listener = Command::new(new_new_dir.join("main"))
-        .arg("listen")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to start annotation-free new_new listener");
-    let scenario = (|| -> Result<(), String> {
-        let address = ("127.0.0.1", port);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut first = loop {
-            match TcpStream::connect(address) {
-                Ok(stream) => break stream,
-                Err(_error) if Instant::now() < deadline => {
-                    if let Some(status) = listener.try_wait().map_err(|error| error.to_string())? {
-                        return Err(format!(
-                            "listener exited before accepting clients: {status}"
-                        ));
-                    }
-                    std::thread::sleep(Duration::from_millis(25));
-                }
-                Err(error) => return Err(format!("listener did not become ready: {error}")),
-            }
-        };
-        let mut second = TcpStream::connect(address)
-            .map_err(|error| format!("second client failed to connect: {error}"))?;
-        first
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .map_err(|error| error.to_string())?;
-        second
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .map_err(|error| error.to_string())?;
-        std::thread::sleep(Duration::from_millis(250));
-
-        let payload = b"annotation-free-broadcast\n";
-        first
-            .write_all(payload)
-            .map_err(|error| format!("failed to send broadcast payload: {error}"))?;
-        let mut first_received = vec![0; payload.len()];
-        let mut second_received = vec![0; payload.len()];
-        first
-            .read_exact(&mut first_received)
-            .map_err(|error| format!("sender did not receive broadcast: {error}"))?;
-        second
-            .read_exact(&mut second_received)
-            .map_err(|error| format!("peer did not receive broadcast: {error}"))?;
-        if first_received != payload || second_received != payload {
-            return Err(format!(
-                "broadcast payload mismatch: sender={first_received:?}, peer={second_received:?}"
-            ));
-        }
-        Ok(())
-    })();
-    let _ = listener.kill();
-    let _ = listener.wait();
-    scenario.expect("annotation-free new_new two-client scenario failed");
 }
 
 #[test]

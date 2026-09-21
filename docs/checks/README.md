@@ -18,6 +18,16 @@ mdbook build docs
 node docs/checks/verify-book.cjs
 ```
 
+To preview the book locally after fetching the grammar:
+
+```sh
+cd docs
+mdbook serve --port 3001
+```
+
+If the preprocessor reports `Missing Rock AST highlight query`, run
+`node checks/fetch-grammar.cjs` from `docs`, then retry the build or serve command.
+
 `rock-highlight.cjs` implements the mdBook preprocessor protocol. It batches Rock
 fences through the tree-sitter CLI using `queries/highlights.scm`
 and `queries/locals.scm` from the standalone

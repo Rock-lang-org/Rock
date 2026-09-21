@@ -67,6 +67,8 @@ main = !->
 
 Only ranges with both endpoints are finite loop inputs. Open-ended forms such as `start..` remain useful for slicing but are rejected as `for` iterators.
 
+For an inline action instead of a loop body, the prelude also provides `for_each 0..10, number !-> number.println!`. It visits the same integers in order; [the FizzBuzz project](../getting-started/first-project.md#traverse-the-range-with-for_each) uses this form with a pipeline.
+
 The upper bound is exclusive, so this prints `0` through `9`. The pattern is bound for each iteration:
 
 ```rock
@@ -92,7 +94,7 @@ main = !->
         value.println!
 ```
 
-`values` owns its growable allocation. `as_slice!` borrows its initialized elements, and `*view` supplies the slice value accepted by `for`. The loop prints `4`, `5`, and `6`; ownership returns to `values` after the borrow's final use. Indexed `while` loops and consuming traversal methods are covered in [Arrays, Slices, and Tuples](arrays-slices-tuples.md) and [Strings and Collections](../stdlib/collections.md).
+`values` owns its growable allocation throughout. `as_slice!` borrows its initialized elements, and `*view` supplies the slice value accepted by `for`. The loop prints `4`, `5`, and `6`; the borrow ends after its final use. Slice views and consuming traversal methods are covered in [Arrays, Slices, and Tuples](arrays-slices-tuples.md) and [Strings and Collections](../stdlib/collections.md).
 
 ## `loop`, `break`, and `continue`
 

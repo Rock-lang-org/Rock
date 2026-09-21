@@ -131,6 +131,9 @@ impl Lowerer {
         }
 
         let mut generic_params = HashSet::new();
+        // Parameters used only in bounds still need fresh call-site variables
+        // (for example T in `C: ForEach T, A: FnMut T, ()`).
+        generic_params.extend(func.generic_params.iter().map(|param| param.id));
         for param in &func.params {
             param.ty.collect_generic_params(&mut generic_params);
         }
@@ -2261,6 +2264,43 @@ mod tests {
             self_receiver: None,
             is_unsafe: false,
         }
+    }
+
+    #[test]
+    fn instantiate_function_type_freshens_bounds_only_parameters() {
+        let mut lowerer = Lowerer::new_for_test();
+        let owner = def_id(800);
+        let source = GenericParamId { owner, index: 0 };
+        let item = GenericParamId { owner, index: 1 };
+        let mut function = test_function(owner, "visit", vec![Type::Generic(source)], Type::Unit);
+        function.generic_params = vec![
+            GenericParamDecl::new(source, "C", crate::type_services::kind::Kind::Type),
+            GenericParamDecl::new(item, "T", crate::type_services::kind::Kind::Type),
+        ];
+        function.generic_bounds.insert(
+            source,
+            vec![crate::types::TraitBound {
+                trait_id: def_id(801),
+                type_args: vec![Type::Generic(item)],
+            }],
+        );
+        let mut item_variables = Vec::new();
+        for _ in 0..2 {
+            let Type::Function { params, .. } =
+                lowerer.instantiate_function_type(&function, Span::test())
+            else {
+                panic!("expected instantiated function");
+            };
+            let Type::TypeVar(source_variable) = params[0] else {
+                panic!("expected fresh source variable");
+            };
+            let bounds = lowerer.engine.get_bounds(source_variable);
+            let Type::TypeVar(item_variable) = bounds[0].type_args[0] else {
+                panic!("bounds-only parameter was not instantiated");
+            };
+            item_variables.push(item_variable);
+        }
+        assert_ne!(item_variables[0], item_variables[1]);
     }
 
     fn operator_impl(

@@ -4,21 +4,20 @@ enum FizzBuzzValue
 
 fizzbuzz_value: I64 -> FizzBuzzValue
 fizzbuzz_value = number ->
-    if number % 15 == 0
-        FizzBuzzValue::Text "FizzBuzz"
-    else if number % 3 == 0
-        FizzBuzzValue::Text "Fizz"
-    else if number % 5 == 0
-        FizzBuzzValue::Text "Buzz"
-    else
-        FizzBuzzValue::Number number
+    match number
+        n if n % 15 == 0 => FizzBuzzValue::Text "FizzBuzz"
+        n if n % 3 == 0 => FizzBuzzValue::Text "Fizz"
+        n if n % 5 == 0 => FizzBuzzValue::Text "Buzz"
+        n => FizzBuzzValue::Number n
 
-main = ->
-    mut current = 1
-    while current <= 30
-        value = fizzbuzz_value current
-        match value
-            FizzBuzzValue::Text text => text.println!
-            FizzBuzzValue::Number number => number.println!
-        current = current + 1
-    0
+print_value: FizzBuzzValue -> I32
+print_value = value ->
+    match value
+        FizzBuzzValue::Text text => text.println!
+        FizzBuzzValue::Number number => number.println!
+
+main = !->
+    for_each 1..=30, number !->
+        number
+            |> fizzbuzz_value
+            |> print_value

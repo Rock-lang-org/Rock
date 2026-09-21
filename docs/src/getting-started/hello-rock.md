@@ -51,7 +51,7 @@ main = !->
     max 10, 20 .println!
 ```
 
-`max` is a prelude function. The first argument is `10`, the second is `20`, and the result is bound to `maximum` before it is printed.
+`max` is a prelude function. The first argument is `10` and the second is `20`. The space before `.println!` makes the method apply to the result of the complete `max 10, 20` call, so this prints `20` directly.
 
 ## Expressions and statements
 

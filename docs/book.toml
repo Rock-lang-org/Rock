@@ -8,7 +8,7 @@ src = "src"
 [build]
 build-dir = "book"
 create-missing = false
-extra-watch-dirs = ["../tree-sitter-rock/queries"]
+extra-watch-dirs = [".deps/tree-sitter-rock/queries"]
 
 [preprocessor.rock-highlight]
 command = "node checks/rock-highlight.cjs"

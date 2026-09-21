@@ -67,6 +67,7 @@
 < stdlib::monad::*
 < stdlib::monad::>>=
 < stdlib::foldable::*
+< stdlib::for_each::*
 < stdlib::traversable::*
 < stdlib::thread_safety::*
 < stdlib::clone::*

@@ -23,7 +23,7 @@ The expansion produces a normal unit-returning `main` function, which prints `42
 
 The tested fragment categories are `ident`, `expr`, and `ty`. The executable example below uses identifier and expression captures; the type capture is isolated in the explicitly experimental example that follows.
 
-The invocation syntax is token-based and uses spaces rather than a function-call comma list. `answer` captures the identifier, `6 * 7` captures one expression, and `I64` captures one type:
+The invocation syntax is token-based and uses spaces rather than a function-call comma list. In the example below, `$name:ident` captures `answer` and `$value:expr` captures the expression `6 * 7`:
 
 ```rock
 macro make_constant
@@ -51,7 +51,7 @@ macro make_wrapper
 %make_wrapper Number I64
 ```
 
-The compiler currently reports the diagnostic during expansion. Until generated field indentation is stable, prefer handwritten structs and use macros for tested top-level function declarations.
+Here `$name:ident` captures `Number` and `$inner:ty` captures `I64`. The compiler currently reports the diagnostic during expansion. Until generated field indentation is stable, prefer handwritten structs and use macros for tested top-level function declarations.
 
 ## Repetition
 

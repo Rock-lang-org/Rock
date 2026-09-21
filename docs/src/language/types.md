@@ -96,7 +96,7 @@ main = !->
     result.println!
 ```
 
-The arrows are read left to right as the function's parameter types followed by its return type. Calls still use spaces and commas.
+The arrows are read left to right as the function's parameter types followed by its return type. Calls still use spaces and commas. Despite its name, this `hypotenuse` body computes the sum of the squares without taking a square root, so the call prints `25`, not `5`.
 
 ## Compound type notation
 

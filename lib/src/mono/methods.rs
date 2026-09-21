@@ -227,9 +227,11 @@ impl Monomorphizer {
         if imp.trait_arg_types.len() != target.trait_args().len() {
             return false;
         }
-        let Some(mut substitution) =
-            crate::selection::receiver_pattern_substitution(&imp.receiver_pattern, recv_ty)
-        else {
+        let Some(mut substitution) = crate::selection::impl_receiver_pattern_substitution(
+            imp,
+            recv_ty,
+            self.trait_impls.values().flatten(),
+        ) else {
             return false;
         };
         imp.trait_arg_types
@@ -298,7 +300,12 @@ impl Monomorphizer {
             .map(|(decl, ty)| (decl.id, ty))
             .collect::<HashMap<_, _>>();
         let param_start = usize::from(method.is_method);
-        for (param, arg) in method.params.iter().skip(param_start).zip(args) {
+        for (param, arg) in method
+            .params
+            .iter()
+            .skip(param_start)
+            .zip(args.iter().skip(param_start))
+        {
             self.extract_generics_from_type(&param.ty, &arg.ty, &method_ids, &mut inferred);
         }
         for (index, id) in method_ids.into_iter().enumerate() {
@@ -1054,8 +1061,11 @@ impl Monomorphizer {
         imp: &HirImpl,
         recv_ty: &Type,
     ) -> Option<Vec<TypeId>> {
-        let substitution =
-            crate::selection::receiver_pattern_substitution(&imp.receiver_pattern, recv_ty)?;
+        let substitution = crate::selection::impl_receiver_pattern_substitution(
+            imp,
+            recv_ty,
+            self.trait_impls.values().flatten(),
+        )?;
         imp.type_generics
             .iter()
             .map(|decl| {

@@ -103,9 +103,9 @@ main = !->
     word.println!
 ```
 
-The right side creates one tuple. The pattern then binds its first element to `number` and its second element to `word`. The pattern must have a shape compatible with the value.
+`pair = (10, "ten")` creates the tuple. In `(number, word) = pair`, the pattern binds that tuple's first element to `number` and its second element to `word`. The pattern must have a shape compatible with the value.
 
-Patterns can mark an individual binding as mutable. This is useful when the binding will be passed to a mutable operation:
+Patterns can mark an individual binding as mutable. Here only `left` is marked `mut`; the plain reassignment shown would also work without that marker:
 
 ```rock
 main = !->
@@ -114,7 +114,7 @@ main = !->
     left.println!
 ```
 
-Enum and struct patterns use the same mechanism; the matching chapter shows how a pattern can both check a shape and bind its fields.
+The output is `3`, while `right` remains `2`. The matching chapter shows how an enum pattern can both check a variant and bind its payloads.
 
 ## Updating a field
 

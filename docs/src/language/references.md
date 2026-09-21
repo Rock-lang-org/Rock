@@ -71,7 +71,7 @@ main = !->
     result.println!
 ```
 
-`borrowed` has type `&I64`, while `result` has type `I64`. Reading `*borrowed` does not move the integer out of `number` because `I64` is copyable. The output is `17`.
+`borrowed` has type `&I64`, while `result` has type `I64`. The call passes `borrowed` to `read`, whose `*value` expression copies the integer from `number` because `I64` is copyable. The output is `17`.
 
 Method lookup performs receiver borrowing and dereferencing for both inherent methods and trait methods. Write the simplest receiver expression first; do not add `&*` repeatedly unless the signature requires an explicit reference.
 

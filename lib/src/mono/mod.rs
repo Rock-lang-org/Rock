@@ -1430,7 +1430,12 @@ impl Monomorphizer {
     }
 
     fn impl_receiver_pattern_matches(&self, imp: &HirImpl, recv_ty: &Type) -> bool {
-        crate::selection::receiver_pattern_substitution(&imp.receiver_pattern, recv_ty).is_some()
+        crate::selection::impl_receiver_pattern_substitution(
+            imp,
+            recv_ty,
+            self.trait_impls.values().flatten(),
+        )
+        .is_some()
     }
 
     fn impl_receiver_pattern_by_id(&self, impl_id: DefId) -> Option<&HirImplReceiverPattern> {

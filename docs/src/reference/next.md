@@ -12,15 +12,15 @@ next step depends on which boundary you want to practice:
 ## Checkpoint: a complete FizzBuzz executable
 
 This optional checkpoint separates calculation from output. It exercises an enum,
-function signatures, conditions, a `while` loop, `match`, and the prelude's
-numeric operators.
+function signatures, guarded `match` arms, and the prelude's `for_each` and
+pipeline operator.
 
 ### Outline
 
 1. Define `FizzBuzzValue` with text and numeric variants.
-2. Define `fizzbuzz_value` so divisibility by 15 is checked before divisibility by 3 or 5.
+2. Define `fizzbuzz_value` with guarded match arms, checking divisibility by 15 before 3 or 5 and ending with an unguarded numeric fallback.
 3. Define `print_value` to consume one enum and print both variants.
-4. Define `main` with a counter from 1 through 30.
+4. Define `main` with `for_each` over `1..=30` and an inline action.
 5. Run the project with `rock`.
 6. Run the executable and compare the final lines with the expected output.
 
@@ -44,14 +44,11 @@ enum FizzBuzzValue
 
 fizzbuzz_value: I64 -> FizzBuzzValue
 fizzbuzz_value = number ->
-    if number % 15 == 0
-        FizzBuzzValue::Text "FizzBuzz"
-    else if number % 3 == 0
-        FizzBuzzValue::Text "Fizz"
-    else if number % 5 == 0
-        FizzBuzzValue::Text "Buzz"
-    else
-        FizzBuzzValue::Number number
+    match number
+        n if n % 15 == 0 => FizzBuzzValue::Text "FizzBuzz"
+        n if n % 3 == 0 => FizzBuzzValue::Text "Fizz"
+        n if n % 5 == 0 => FizzBuzzValue::Text "Buzz"
+        n => FizzBuzzValue::Number n
 
 print_value: FizzBuzzValue -> I32
 print_value = value ->
@@ -60,11 +57,10 @@ print_value = value ->
         FizzBuzzValue::Number number => number.println!
 
 main = !->
-    mut number: I64 = 1
-    while number <= 30
-        value: FizzBuzzValue = fizzbuzz_value number
-        print_value value
-        number = number + 1
+    for_each 1..=30, number !->
+        number
+            |> fizzbuzz_value
+            |> print_value
 ```
 
 Run it from the project directory:
@@ -76,9 +72,10 @@ $ rock run
 The expected output starts with `1`, `2`, `Fizz`, `4`, and `Buzz`, contains
 `FizzBuzz` at 15, and ends with `Fizz`, `28`, `29`, and `FizzBuzz` at 30.
 
-The important ownership boundary is `print_value value`: the enum moves into
-the function, but its `&Str` payloads refer to static string literals and the
-numeric payload is copyable. The loop does not use `value` after the call.
+The final pipeline step moves the enum produced by `fizzbuzz_value` into
+`print_value`. Its `&Str` payloads refer to static string literals and the
+numeric payload is copyable. The inline action returns unit after printing;
+`for_each` visits all 30 integers without creating an intermediate collection.
 
 ## Read concrete source
 

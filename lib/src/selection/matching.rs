@@ -81,6 +81,91 @@ pub fn constructor_target_substitution(
     type_pattern_matches(expected, target, &mut substitution).then_some(substitution)
 }
 
+/// Match a higher-kinded blanket receiver using its constructor bounds.
+/// For `F T where F _: Foldable`, the Foldable impl determines whether a
+/// concrete carrier belongs to `Vec`, `Option`, or a section such as `Result _, E`.
+pub fn impl_receiver_pattern_substitution<'a, P: crate::hir::HirPhase + 'a>(
+    imp: &crate::hir::HirImplFor<P>,
+    actual: &Type,
+    impls: impl IntoIterator<Item = &'a crate::hir::HirImplFor<P>>,
+) -> Option<HashMap<GenericParamId, Type>> {
+    let pattern = P::impl_receiver_pattern(&imp.receiver_pattern)?;
+    if let Some(subst) = receiver_pattern_substitution(pattern, actual) {
+        return Some(subst);
+    }
+    let HirImplReceiverPattern::Exact(Type::Apply { constructor, args }) = pattern else {
+        return None;
+    };
+    let Type::Generic(head) = constructor.as_ref() else {
+        return None;
+    };
+    let bounds = imp.bounds.get(head)?;
+    let mut candidates = Vec::new();
+    for constructor_impl in impls {
+        for bound in bounds {
+            if constructor_impl.trait_id != Some(bound.trait_id)
+                || constructor_impl.trait_arg_types.len() != bound.type_args.len()
+            {
+                continue;
+            }
+            let Some(target_pattern) = P::impl_receiver_pattern(&constructor_impl.receiver_pattern)
+            else {
+                continue;
+            };
+            let Some((target, mut target_subst)) =
+                constructor_target_from_applied_type(target_pattern, actual)
+            else {
+                continue;
+            };
+            let Some(applied) = apply_constructor_pattern(&target, args) else {
+                continue;
+            };
+            let mut subst = HashMap::from([(*head, target)]);
+            if !type_pattern_matches(&applied, actual, &mut subst)
+                || !constructor_impl
+                    .trait_arg_types
+                    .iter()
+                    .zip(&bound.type_args)
+                    .all(|(expected, required)| {
+                        type_pattern_matches(
+                            expected,
+                            &required.substitute_generics(&subst),
+                            &mut target_subst,
+                        )
+                    })
+            {
+                continue;
+            }
+            if !candidates.contains(&subst) {
+                candidates.push(subst);
+            }
+        }
+    }
+    if candidates.len() == 1 {
+        candidates.pop()
+    } else {
+        None
+    }
+}
+
+fn apply_constructor_pattern(constructor: &Type, args: &[Type]) -> Option<Type> {
+    match constructor {
+        Type::Constructor { id, flavor } => Some(match flavor {
+            crate::types::NominalTypeKind::Struct => Type::Struct {
+                id: *id,
+                args: args.to_vec(),
+            },
+            crate::types::NominalTypeKind::Enum => Type::Enum {
+                id: *id,
+                args: args.to_vec(),
+            },
+            crate::types::NominalTypeKind::Alias => return None,
+        }),
+        Type::Lambda { .. } => apply_type_lambda(constructor, args),
+        _ => None,
+    }
+}
+
 pub fn constructor_target_from_applied_type(
     pattern: &HirImplReceiverPattern,
     actual: &Type,
@@ -261,6 +346,11 @@ fn collect_section_arguments(
 }
 
 pub(crate) fn type_pattern_matches_after_subst(pattern: &Type, actual: &Type) -> bool {
+    if let Type::Apply { constructor, args } = pattern {
+        if let Some(applied) = apply_constructor_pattern(constructor, args) {
+            return type_pattern_matches_after_subst(&applied, actual);
+        }
+    }
     match (pattern, actual) {
         (
             Type::Struct {
@@ -673,6 +763,117 @@ mod tests {
                 Type::U8,
             )])),
         );
+    }
+
+    #[test]
+    fn higher_kinded_blanket_matches_constructor_sections_without_guessing() {
+        use crate::type_services::kind::Kind;
+        use crate::types::{NominalTypeKind, TraitBound};
+
+        let make_impl = |id, trait_id, receiver_pattern| HirImpl {
+            id,
+            owner: HirImplOwner::Named("test".to_string()),
+            type_name: "test".to_string(),
+            type_generics: Vec::new(),
+            receiver_pattern,
+            trait_name: None,
+            trait_id: Some(trait_id),
+            trait_generics: Vec::new(),
+            trait_arg_types: Vec::new(),
+            associated_types: Vec::new(),
+            bounds: Default::default(),
+            methods: HashMap::new(),
+        };
+        let head = GenericParamId {
+            owner: def_id(80),
+            index: 0,
+        };
+        let item = GenericParamId {
+            owner: def_id(80),
+            index: 1,
+        };
+        let foldable = def_id(81);
+        let mut blanket = make_impl(
+            def_id(80),
+            def_id(82),
+            HirImplReceiverPattern::Exact(Type::Apply {
+                constructor: Box::new(Type::Generic(head)),
+                args: vec![Type::Generic(item)],
+            }),
+        );
+        blanket.bounds.insert(
+            head,
+            vec![TraitBound {
+                trait_id: foldable,
+                type_args: vec![],
+            }],
+        );
+        let option = make_impl(
+            def_id(83),
+            foldable,
+            HirImplReceiverPattern::Constructor(Type::Constructor {
+                id: def_id(84),
+                flavor: NominalTypeKind::Enum,
+            }),
+        );
+        let option_value = Type::Enum {
+            id: def_id(84),
+            args: vec![Type::I64],
+        };
+        let substitution =
+            impl_receiver_pattern_substitution(&blanket, &option_value, [&option]).unwrap();
+        assert_eq!(substitution[&item], Type::I64);
+        assert!(impl_receiver_pattern_substitution(&blanket, &option_value, []).is_none());
+
+        let section = |left_hole| Type::Lambda {
+            params: vec![Kind::Type],
+            body: Box::new(Type::Enum {
+                id: def_id(85),
+                args: if left_hole {
+                    vec![
+                        Type::BoundVar {
+                            depth: 0,
+                            index: 0,
+                            kind: Kind::Type,
+                        },
+                        Type::Bool,
+                    ]
+                } else {
+                    vec![
+                        Type::I64,
+                        Type::BoundVar {
+                            depth: 0,
+                            index: 0,
+                            kind: Kind::Type,
+                        },
+                    ]
+                },
+            }),
+        };
+        let result = make_impl(
+            def_id(86),
+            foldable,
+            HirImplReceiverPattern::Constructor(section(true)),
+        );
+        let result_value = Type::Enum {
+            id: def_id(85),
+            args: vec![Type::I64, Type::Bool],
+        };
+        let substitution =
+            impl_receiver_pattern_substitution(&blanket, &result_value, [&result]).unwrap();
+        assert_eq!(substitution[&head], section(true));
+        assert_eq!(substitution[&item], Type::I64);
+        let other_section = make_impl(
+            def_id(87),
+            foldable,
+            HirImplReceiverPattern::Constructor(section(false)),
+        );
+        assert!(impl_receiver_pattern_substitution(
+            &blanket,
+            &result_value,
+            [&result, &other_section]
+        )
+        .is_none());
     }
 
     #[test]

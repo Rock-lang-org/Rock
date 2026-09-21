@@ -73,7 +73,7 @@ main = ->
         Result::Err _ => 1
 ```
 
-The successful output is `22`, and `rock-greeting.txt` contains `Hello from Rock` followed by `Again`, each followed by a newline. The descriptor is closed by `Drop`; callers do not call a separate close API. An absent path reports an operating-system `IoError::Os code`. A path containing a null byte reports `IoError::InvalidPath` before the operating-system call.
+The successful output is `22`, and `rock-greeting.txt` contains `Hello from Rock` followed by `Again`, each followed by a newline. The descriptor is closed by `Drop`; callers do not call a separate close API. `create` and `append` can create a missing file, as this example requires; `open` reports an operating-system `IoError::Os code` when the file is absent. A path containing a null byte reports `IoError::InvalidPath` before the operating-system call.
 
 ## Reading bytes
 

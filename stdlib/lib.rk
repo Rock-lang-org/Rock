@@ -133,6 +133,9 @@ infix 10 %
 // Vec module - growable heap-allocated vector
 < mod vec
 
+// Generic eager traversal over ranges and owned or borrowed collections
+< mod for_each
+
 // String module - string manipulation functions
 < mod string
 

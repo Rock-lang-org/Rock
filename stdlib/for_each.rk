@@ -1,0 +1,63 @@
+// Eager, ordered traversal for effects without an intermediate collection.
+
+> stdlib::callable::FnMut
+> stdlib::foldable::Foldable
+> stdlib::libc::exit
+> stdlib::libc::puts
+> stdlib::range::Range
+> stdlib::slice::slice_len
+> stdlib::vec::Vec
+
+// Consumes the source. Borrowed sources yield references and retain their owner.
+< trait ForEach T
+    ~@visit_each: A -> () where A: FnMut T, ()
+
+for_each: C -> A -> () where C: ForEach T, A: FnMut T, ()
+< for_each = values, action !->
+    values.visit_each action
+
+impl ForEach I64 for Range
+    ~@visit_each = mut action !->
+        match self
+            Range::Exclusive start, end =>
+                index = start
+                while index < end
+                    action.call_mut index
+                    index = index + 1
+            Range::Inclusive start, end =>
+                index = start
+                while index <= end
+                    action.call_mut index
+                    // Do not increment past the maximum I64 endpoint.
+                    if index == end
+                        break
+                    index = index + 1
+            _ =>
+                puts (~ArrPtr "for_each requires a bounded range")
+                exit (1 as I32)
+
+// Carry the callback as fold state so its mutable captures and owned fields
+// survive each call and are cleaned up once after the traversal.
+for_each_step: (A, T) -> A where A: FnMut T, ()
+for_each_step = pair ->
+    (mut action, item) = pair
+    action.call_mut item
+    action
+
+// Every Foldable constructor gets effect-only traversal without another impl.
+impl ForEach T for F T where F _: Foldable
+    ~@visit_each = action !->
+        step: (A, T) -> A = for_each_step
+        F::Foldable::foldl step, action, self
+
+impl ForEach &T for &Vec T
+    ~@visit_each = action !->
+        self.for_each action
+
+impl ForEach &T for &[T]
+    ~@visit_each = mut action !->
+        len = slice_len self
+        index = 0
+        while index < len
+            action.call_mut (&self[index])
+            index = index + 1

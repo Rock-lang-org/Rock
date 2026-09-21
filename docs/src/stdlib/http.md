@@ -123,7 +123,7 @@ main = ->
 
 `handle` consumes one owned `Request` and returns one owned `Response`. Borrowing `request.method` for the match lets us inspect the enum without consuming the request's data. For `/echo`, `Response::bytes` takes ownership of `request.body`, a `Vec U8`; there is no need to reinterpret arbitrary bytes as text or copy the body into another vector.
 
-`Response::text` copies its `&Str` argument into an owned string. `with_header` consumes the response and returns it with another header appended, which allows the construction and header call to be chained. Text responses do not automatically receive a `Content-Type`, so the handler sets one explicitly.
+`Response::text` copies its `&Str` argument into an owned string. `with_header` consumes the response and returns it with another header appended, which allows the construction and header call to be chained. Text responses do not automatically receive a `Content-Type`: the handler sets `text/plain` for the successful health response and the 404 response, while the 405 responses add only an `Allow` header.
 
 The routing here is deliberately exact. `Request.target` is the raw request target, not a parsed URL: `/health?verbose=1` does not match `/health`. There is no automatic query parsing, percent decoding, routing, JSON decoding, or content negotiation. `Method` recognizes GET, HEAD, POST, PUT, DELETE, OPTIONS, and PATCH; other valid method tokens are represented as `Method::Other String`.
 

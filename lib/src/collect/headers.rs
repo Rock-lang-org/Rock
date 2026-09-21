@@ -976,6 +976,23 @@ pub(crate) fn build_function_header_with_sig(
         collect_generic_ids_from_type(ty, &mut used_generic_param_ids);
     }
     collect_generic_ids_from_type(&sig_ret, &mut used_generic_param_ids);
+    for (param, bounds) in &generic_bounds {
+        if !used_generic_param_ids.contains(param) {
+            used_generic_param_ids.push(*param);
+        }
+        for bound in bounds {
+            for arg in &bound.type_args {
+                collect_generic_ids_from_type(arg, &mut used_generic_param_ids);
+            }
+        }
+    }
+    for predicate in &generic_bounds.predicates {
+        let crate::types::Predicate::Trait { subject, args, .. } = predicate;
+        collect_generic_ids_from_type(subject, &mut used_generic_param_ids);
+        for arg in args {
+            collect_generic_ids_from_type(arg, &mut used_generic_param_ids);
+        }
+    }
 
     let mut generic_params = Vec::new();
     let mut public_entries = Vec::new();
@@ -1512,6 +1529,11 @@ pub(crate) fn build_impl_with_id(
             }
         }
         for (index, _) in type_generics.iter().enumerate() {
+            if context.current_generic_kinds.get(index)
+                != Some(&crate::type_services::kind::Kind::Type)
+            {
+                continue;
+            }
             let type_param_id = GenericParamId {
                 owner: id,
                 index: index as u32,

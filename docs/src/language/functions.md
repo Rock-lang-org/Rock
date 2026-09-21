@@ -52,6 +52,8 @@ main = !->
 
 The inner call owns the arguments `2, 3` and produces `5`; the outer call receives that complete result and produces `10`. Neither call needs grouping.
 
+An inline callback can follow another argument: `for_each 1..=3, number !-> number.println!`. At this level, the comma separates call arguments, so the lambda has just the `number` parameter. Parenthesize a callback with multiple parameters, as in `apply (left, right -> left + right)`, to keep its parameter commas inside the lambda.
+
 Use `!` for a zero-argument call:
 
 ```rock

@@ -4,7 +4,7 @@ Functions and lambdas are values. They can be bound to names, passed as argument
 
 ## Lambdas
 
-A lambda has parameters, an arrow, and a body. The following binding has inferred type `I64 -> I64`.
+A lambda has parameters, an arrow, and a body. The following function has the explicit signature `I64 -> I64`.
 
 ```rock
 double: I64 -> I64

@@ -353,8 +353,13 @@ pub fn monoline_tuple(stream: Input) -> IResult<Vec<Expression>> {
 }
 
 pub fn tuple(stream: Input) -> IResult<Tuple> {
-    let (stream, (open_span, elements)) =
-        (get_span, parenthesis(multiline_tuple.or(monoline_tuple))).process(stream)?;
+    let (stream, (open_span, elements)) = (
+        get_span,
+        parenthesis(reset_inside_argument_list(
+            multiline_tuple.or(monoline_tuple),
+        )),
+    )
+        .process(stream)?;
     if elements.len() < 2 {
         Err(ParseError::UnexpectedToken(
             TokenType::OpenParen.discriminant().to_string(),

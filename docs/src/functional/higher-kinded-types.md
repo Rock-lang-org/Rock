@@ -86,7 +86,7 @@ main = !->
     applied.show!.println!
 ```
 
-The inferred constructor is `F = Option`; `pure` ignores the input carrier's payload and produces `Some 2`, then `ap` applies `increment`, producing `Some 3`. The output is `Some(3)`.
+The inferred constructor is `F = Option`. `repure_any` ignores its input carrier and calls `pure 2`, producing `Some 2`; then `ap` applies `increment`, producing `Some 3`. The output is `Some(3)`.
 
 ## Monad Binding
 
@@ -161,6 +161,28 @@ main = !->
 ```
 
 The second callback returns `None`, so traversal stops and the output is `None`.
+
+## Traversing for Effects
+
+Use the standalone `for_each values, action` when the callback exists for effects rather than to build another container. The action returns `()` and may mutate its captures through `FnMut`:
+
+```rock
+main = !->
+    mut total: I64 = 0
+    for_each 1..=3, number !->
+        total = total + number
+    total.println!
+
+    for_each (Option::Some 7), number !-> number.println!
+    result: Result I64, I64 = Result::Ok 9
+    for_each result, number !-> number.println!
+```
+
+The output is `6`, `7`, and `9`. `Option::None` and `Result::Err` invoke no callback. A `Vec T` supplies each owned element in order and is consumed; `&Vec T` and `&[T]` supply shared references while preserving the owner. Borrow an array as a slice to use the same function.
+
+The public function uses the ordinary `ForEach T` bridge trait. Its blanket implementation for `F T where F _: Foldable` derives traversal from `F::Foldable::foldl`: the callback is carried as fold state, called once per element, and returned for the next step. Any new constructor implementing `Foldable` receives this behavior automatically; no separate `ForEach` implementation is needed.
+
+Native `Range` is a concrete integer type, not a unary type constructor. Its dedicated bridge implementation visits bounded ranges directly without allocating a vector. Exclusive `start..end` and inclusive `start..=end` ranges run in ascending order; reversed ranges are empty, and an inclusive equal-endpoint range visits one integer. Open-ended ranges terminate with `for_each requires a bounded range` before invoking the action.
 
 ## Sequencing Effects
 

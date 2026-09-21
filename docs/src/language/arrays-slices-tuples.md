@@ -275,7 +275,7 @@ main = !->
     entry.2.println!
 ```
 
-The inferred component types are `I64`, `Bool`, and `&Str`; the output is `7`, `true`, and `rock`. `.0`, `.1`, and `.2` are tuple projections, not array indexes, so their positions are checked statically.
+The annotation specifies component types `I64`, `Bool`, and `&Str`; the output is `7`, `true`, and `rock`. `.0`, `.1`, and `.2` are tuple projections, not array indexes, so their positions are checked statically.
 
 Functions can return tuples and callers can project the result.
 

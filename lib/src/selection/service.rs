@@ -9,7 +9,7 @@ use crate::hir::{
 use crate::ids::{AssocTypeId, DefId};
 use crate::selection::matching::{
     constructor_target_from_applied_type, constructor_target_substitution,
-    receiver_pattern_substitution, type_pattern_matches,
+    impl_receiver_pattern_substitution, type_pattern_matches,
 };
 use crate::selection::types::{
     ReceiverAdjustment, ReceiverCandidate, SelectedConstructorMember, SelectedMethod,
@@ -425,6 +425,29 @@ impl<'a> SelectionService<'a> {
         self.select_trait_impl_matching(receiver_ty, trait_id, Some(trait_args), |_| true)
     }
 
+    /// Infer a bound's arguments from a unique, fully applicable receiver impl.
+    /// This supplies callback input types before lowering an inline lambda body.
+    pub fn infer_trait_arguments(&self, receiver_ty: &Type, trait_id: DefId) -> Option<Vec<Type>> {
+        let mut candidates = self.impl_ids_in_order().filter_map(|id| {
+            let imp = self.impls.get(&id)?;
+            if imp.trait_id != Some(trait_id) {
+                return None;
+            }
+            let subst = impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())?;
+            if !self.impl_bound_obligations(imp, &subst)?.is_empty() {
+                return None;
+            }
+            let args = imp
+                .trait_arg_types
+                .iter()
+                .map(|ty| ty.substitute_generics(&subst))
+                .collect::<Vec<_>>();
+            (!args.iter().any(Self::type_contains_type_var)).then_some(args)
+        });
+        let args = candidates.next()?;
+        candidates.next().is_none().then_some(args)
+    }
+
     pub fn select_trait_impl_strict(
         &self,
         receiver_ty: &Type,
@@ -768,7 +791,8 @@ impl<'a> SelectionService<'a> {
     ) -> Option<ReceiverAdjustment> {
         if function_has_receiver(method) {
             if let Some(self_param) = method.params.first() {
-                let mut subst = receiver_pattern_substitution(&imp.receiver_pattern, receiver_ty)?;
+                let mut subst =
+                    impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())?;
                 let expected_self = Self::receiver_mode_expected_self_type(
                     self_param.ty.substitute_generics(&subst),
                     method.self_receiver,
@@ -1724,7 +1748,7 @@ impl<'a> SelectionService<'a> {
         if self.impl_method(imp, method_name).is_none() {
             return None;
         }
-        receiver_pattern_substitution(&imp.receiver_pattern, receiver_ty)
+        impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())
     }
 
     fn impl_matches_trait_ref(
@@ -1776,7 +1800,8 @@ impl<'a> SelectionService<'a> {
             return false;
         }
 
-        let Some(mut subst) = receiver_pattern_substitution(&imp.receiver_pattern, receiver_ty)
+        let Some(mut subst) =
+            impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())
         else {
             return false;
         };
@@ -1808,7 +1833,7 @@ impl<'a> SelectionService<'a> {
             return None;
         }
 
-        let mut subst = receiver_pattern_substitution(&imp.receiver_pattern, receiver_ty)?;
+        let mut subst = impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())?;
 
         if let Some(trait_args) = trait_args {
             for (expected, actual) in imp.trait_arg_types.iter().zip(trait_args.iter()) {
@@ -2036,7 +2061,7 @@ impl<'a> SelectionService<'a> {
     }
 
     fn impl_matches_receiver_type(&self, imp: &HirImpl, receiver_ty: &Type) -> bool {
-        receiver_pattern_substitution(&imp.receiver_pattern, receiver_ty).is_some()
+        impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values()).is_some()
     }
 
     fn impl_index_args_substitution(
@@ -2046,7 +2071,7 @@ impl<'a> SelectionService<'a> {
         receiver_ty: &Type,
         trait_args: &[Type],
     ) -> Option<HashMap<GenericParamId, Type>> {
-        let mut subst = receiver_pattern_substitution(&imp.receiver_pattern, receiver_ty)?;
+        let mut subst = impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())?;
         if self.impl_method_for_trait_member(imp, member_id).is_none()
             || imp.trait_arg_types.len() != trait_args.len()
         {
@@ -2124,7 +2149,8 @@ impl<'a> SelectionService<'a> {
         mut subst: HashMap<GenericParamId, Type>,
         receiver_adjustment: ReceiverAdjustment,
     ) -> Option<SelectedMethod> {
-        let receiver_subst = receiver_pattern_substitution(&imp.receiver_pattern, receiver_ty)?;
+        let receiver_subst =
+            impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())?;
         for (param, ty) in receiver_subst {
             if subst.get(&param).is_some_and(|existing| existing != &ty) {
                 return None;

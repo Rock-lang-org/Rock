@@ -102,8 +102,9 @@ the affected declaration manually when the formatter changes its meaning.
 The tree-sitter grammar, formatter, and older root documentation can also lag
 the active parser; compiler diagnostics are authoritative for a build.
 
-Inline modules are another parser-only surface. The following source shape is
-not a supported compiled project:
+Inline module bodies are another parser-only surface. The following listing
+uses a file-backed declaration instead, but it is incomplete without its
+companion module file:
 
 ```text
 main.rk
@@ -113,9 +114,10 @@ main = !->
     ()
 ```
 
-Use a file-backed module instead, with `inline.rk` beside `main.rk`, and import
-its exported names explicitly. Macro diagnostics and indentation recovery are
-also incomplete. The project-aware language server and Neovim integration
+`mod inline` asks the loader for `inline.rk` or `inline/mod.rk`; `inline` is
+the module name, not an inline-module keyword. Supply that file and import
+any exported names the entry uses. Macro diagnostics and indentation recovery
+are also incomplete. The project-aware language server and Neovim integration
 provide source diagnostics; see [Editors and Diagnostics](../getting-started/editor-and-diagnostics.md)
 for setup and the current analysis boundaries.
 

@@ -139,7 +139,7 @@ main = !->
     describe Packet::Empty .println!
 ```
 
-The first arm binds both payloads and checks the guard. If the guard is false, the second arm matches any `Data` payload without introducing names. Tuple and array destructuring assignments are covered in the bindings chapter; the current compiler does not yet execute refutable tuple matches.
+The first arm binds both payloads and checks the guard. If the guard is false, the second arm matches any `Data` payload without introducing names. Tuple destructuring assignments are covered in the bindings chapter; the current compiler does not yet execute refutable tuple matches.
 
 ## Matching through a reference
 

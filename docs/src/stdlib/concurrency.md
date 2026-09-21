@@ -64,7 +64,7 @@ main = !->
         Result::Err _ => "spawn failed".println!
 ```
 
-The output is `73`. `owned` is moved into the closure through `take!`, so there is no borrowed stack reference for the worker to retain. A closure that captures `value` by shared borrow is rejected because the closure type does not satisfy the required thread-safety bounds.
+The output is `73`. The consuming `owned.take!` call makes the closure capture `owned` by value, and the worker consumes it when the closure runs. A closure that instead borrowed the local `owned` would not satisfy the required thread-safety bounds.
 
 ## Shared mutable state
 

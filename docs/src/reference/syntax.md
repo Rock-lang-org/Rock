@@ -106,8 +106,8 @@ RANGE_EXPRESSION ::= EXPRESSION? (".." | "..=") EXPRESSION?
 
 An inclusive range written with `..=` requires an end expression. Native ranges are first-class values and can be used for slicing, for example `&values[1..3]`, `&values[..count]`, and `&values[..]`.
 
-This program constructs each literal family and gives the compound values
-explicit types where that makes their shape clearer:
+This program constructs integer, floating-point, Boolean, character, string,
+array, and tuple literals, with explicit annotations for their types:
 
 ```rock
 main = !->
@@ -194,6 +194,10 @@ Arguments are separated by commas, and each argument consumes a complete
 expression. A nested call owns its comma-separated arguments without extra
 grouping; parentheses do not turn a call into Rust-style
 `function(arguments)` syntax.
+
+In an inline argument list, a bare lambda has at most one parameter; commas
+separate call arguments. Group a multi-parameter lambda explicitly:
+`apply (left, right -> left + right)`.
 
 ```rock
 add: I64 -> I64 -> I64
@@ -307,7 +311,8 @@ WHERE_CLAUSE ::= "where" BOUND ("," BOUND)*
 BOUND ::= TYPE_NAME ":" TRAIT_PATH_LIST | TYPE_NAME IDENTIFIER ":" TRAIT_PATH_LIST
 ```
 
-Use a concrete trait bound in a complete generic function:
+The following program declares a generic trait with an associated type and
+implements it for a concrete type:
 
 ```rock
 trait Combiner T
@@ -324,8 +329,10 @@ main = !->
     ()
 ```
 
-Trait syntax and generic specialization are still evolving; prefer the tested
-concrete forms shown in the language chapters when a bound is not essential.
+`Combiner T` declares the argument type as a trait parameter, while each
+implementation chooses `Output`. `AddOne` uses `I64` for both and returns its
+argument plus one. This `main` returns unit without calling `combine`; see
+[Generics](../language/generics.md#trait-bounds) for functions with `where` bounds.
 
 ## Type forms
 
@@ -345,8 +352,8 @@ TYPE_TUPLE ::= "(" TYPE "," TYPE_LIST? ")"
 TYPE_FUNCTION ::= TYPE "->" TYPE
 ```
 
-The following complete declarations make the less common forms visible in
-one type-checked program:
+The following program combines a generic struct, a generic function signature,
+a concrete type application, and a shared reference:
 
 ```rock
 struct Pair A, B
@@ -367,8 +374,13 @@ main = !->
     text.println!
 ```
 
-`_` is a type hole for inference, `Self::Output` is an associated type
-projection, `*T` is a raw pointer, and `&T` or `&mut T` are borrowed views.
+`Pair I64, &Str` fixes the two field types. Despite its name, `borrow_first`
+reads `pair.second` through a shared reference, so the program prints `seven`.
+The generic `identity` function is declared but not called.
+
+Other forms in the grammar include `_` for an inference hole, `Self::Output`
+for an associated type projection, `*T` for a raw pointer, and `&mut T` for a
+mutable borrowed view.
 
 ## Control flow and patterns
 
@@ -509,8 +521,8 @@ argument propagates the whole call, including when that argument is borrowed:
 contains a complete example. `?` is propagation syntax, not an infix operator
 whose precedence is declared by the program.
 
-This complete program defines a pipeline operator and uses a cast, a field
-selection, and a postfix call:
+This complete program defines a pipeline operator, converts its result with
+an associated string constructor, and prints it with a zero-argument method call:
 
 ```rock
 infix 1 |>
@@ -525,8 +537,10 @@ main = !->
     text.println!
 ```
 
-The standard library supplies common arithmetic and comparison meanings, but
-the compiler does not assign a meaning to an operator spelling by itself.
+`7 |> double` produces `14`, `String::from_i64 value` creates the text `14`,
+and `text.println!` prints it. The standard library supplies common arithmetic
+and comparison meanings, but the compiler does not assign a meaning to an
+operator spelling by itself.
 
 ## Macros
 

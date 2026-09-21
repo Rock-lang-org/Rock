@@ -175,6 +175,70 @@ impl Monomorphizer {
             }
         }
 
+        // A type parameter may occur only in a bound, rather than in a value
+        // parameter (C: ForEach T, A: FnMut T, ()). Recover it from the concrete
+        // receiver's unique impl instead of falling back to the numeric default.
+        while generic_ids.iter().any(|id| !substitution.contains_key(id)) {
+            let before = substitution.len();
+            for (subject, bounds) in &generic_func.generic_bounds {
+                if !substitution.contains_key(subject) {
+                    continue;
+                }
+                let actual = self.apply_substitution(&Type::Generic(*subject), &substitution);
+                for bound in bounds {
+                    let known = substitution
+                        .keys()
+                        .map(|param| {
+                            (
+                                *param,
+                                self.apply_substitution(&Type::Generic(*param), &substitution),
+                            )
+                        })
+                        .collect::<HashMap<_, _>>();
+                    let mut candidates = Vec::new();
+                    for imp in self.trait_impls.get(&bound.trait_id).into_iter().flatten() {
+                        if imp.trait_arg_types.len() != bound.type_args.len() {
+                            continue;
+                        }
+                        let Some(impl_subst) = crate::selection::impl_receiver_pattern_substitution(
+                            imp,
+                            &actual,
+                            self.trait_impls.values().flatten(),
+                        ) else {
+                            continue;
+                        };
+                        let mut inferred = known.clone();
+                        if bound.type_args.iter().zip(&imp.trait_arg_types).all(
+                            |(expected, found)| {
+                                type_pattern_matches(
+                                    expected,
+                                    &found.substitute_generics(&impl_subst),
+                                    &mut inferred,
+                                )
+                            },
+                        ) && !candidates.contains(&inferred)
+                        {
+                            candidates.push(inferred);
+                        }
+                    }
+                    if candidates.len() == 1 {
+                        for (param, ty) in candidates.pop().unwrap() {
+                            if generic_ids.contains(&param) && !substitution.contains_key(&param) {
+                                if !crate::type_services::visit::type_any(&ty, |nested| {
+                                    matches!(nested, Type::Generic(_) | Type::TypeVar(_))
+                                }) {
+                                    substitution.insert(param, self.intern_type(&ty));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if substitution.len() == before {
+                break;
+            }
+        }
+
         for generic_id in &generic_ids {
             if !substitution.contains_key(generic_id) {
                 for param in &generic_func.params {

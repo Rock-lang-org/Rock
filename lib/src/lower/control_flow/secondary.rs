@@ -88,6 +88,81 @@ impl Lowerer {
         self.lower_lambda_with_expected_params(lambda, expected.as_deref())
     }
 
+    fn callable_argument_parameters(&self, expected: &Type) -> Option<Vec<Type>> {
+        match self.engine.resolve(expected) {
+            Type::Function { params, .. } => Some(params),
+            Type::TypeVar(id) => {
+                let callable_ids = [
+                    self.language_items
+                        .fn_once
+                        .as_ref()
+                        .map(|items| items.trait_id),
+                    self.language_items
+                        .fn_mut
+                        .as_ref()
+                        .map(|items| items.trait_id),
+                    self.language_items
+                        .fn_trait
+                        .as_ref()
+                        .map(|items| items.trait_id),
+                ];
+                let bounds = self.engine.get_bounds(id);
+                let bound = bounds.iter().find(|bound| {
+                    bound.type_args.len() == 2
+                        && callable_ids
+                            .iter()
+                            .flatten()
+                            .any(|id| *id == bound.trait_id)
+                })?;
+                Some(match self.engine.resolve(&bound.type_args[0]) {
+                    Type::Unit => Vec::new(),
+                    Type::Tuple(params) => params,
+                    param => vec![param],
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn propagate_call_argument_bounds(&mut self, expected: &Type, actual: &Type) {
+        let bounds = match expected {
+            Type::TypeVar(id) => self.engine.get_bounds(*id),
+            _ => Vec::new(),
+        };
+        let mut probe = self.engine.clone_for_probe();
+        if probe.unify(expected, actual).is_err() {
+            return;
+        }
+        self.engine.commit_probe(probe);
+        let actual = self.engine.resolve(actual);
+        for bound in bounds {
+            if !bound.type_args.iter().any(|arg| {
+                crate::type_services::visit::type_any(&self.engine.resolve(arg), |ty| {
+                    matches!(ty, Type::TypeVar(_))
+                })
+            }) {
+                continue;
+            }
+            let Some(args) = self
+                .selection_service()
+                .infer_trait_arguments(&actual, bound.trait_id)
+            else {
+                continue;
+            };
+            if args.len() != bound.type_args.len() {
+                continue;
+            }
+            let mut probe = self.engine.clone_for_probe();
+            if args
+                .iter()
+                .zip(&bound.type_args)
+                .all(|(actual, expected)| probe.unify(expected, actual).is_ok())
+            {
+                self.engine.commit_probe(probe);
+            }
+        }
+    }
+
     pub(crate) fn call_target_for_callee(&self, callee: &HirExpr) -> Option<HirCallTarget> {
         match &callee.kind {
             HirExprKind::ResolvedVar(reference) => match &reference.target {
@@ -894,19 +969,19 @@ impl Lowerer {
                         .cloned();
                     let hir_arg = if let Some(lambda) = Self::lambda_from_expression(&argument.arg)
                     {
-                        let expected_params =
-                            expected
-                                .as_ref()
-                                .and_then(|ty| match self.engine.resolve(ty) {
-                                    Type::Function { params, .. } => Some(params),
-                                    _ => None,
-                                });
+                        let expected_params = expected
+                            .as_ref()
+                            .and_then(|ty| self.callable_argument_parameters(ty));
                         self.lower_lambda_with_expected_params(lambda, expected_params.as_deref())
                     } else {
                         self.lower_expression(&argument.arg)
                     };
                     hir_args.push(match expected {
-                        Some(expected) => self.coerce_argument_to_expected(hir_arg, &expected),
+                        Some(expected) => {
+                            let hir_arg = self.coerce_argument_to_expected(hir_arg, &expected);
+                            self.propagate_call_argument_bounds(&expected, &hir_arg.ty);
+                            hir_arg
+                        }
                         None => hir_arg,
                     });
                 }

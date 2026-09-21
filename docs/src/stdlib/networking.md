@@ -76,7 +76,7 @@ The output is `true` and `127`. A listener created with port zero must be querie
 
 ## Reading, writing, and shutdown
 
-`TcpStream` implements the generic `Read` and `Write` traits and also has direct `recv`, `send`, `shutdown`, and `shutdown_write` methods. This complete round-trip writes a native subslice, receives its bytes, then half-closes the client write side.
+`TcpStream` implements the generic `Read` and `Write` traits and also has direct `recv`, `send`, `shutdown`, and `shutdown_write` methods. This complete round-trip writes a native subslice, half-closes the client write side, then receives the sent bytes on the server side.
 
 ```rock
 > stdlib::io::IoError

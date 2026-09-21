@@ -10,7 +10,8 @@ The prelude exports the everyday vocabulary used by the examples in this chapter
 - representation and ownership traits: `Show`, `From`, `Clone`, `Drop`, `Deref`, `DerefMut`, and `Sized`;
 - access and comparison traits: `Index`, `IndexMut`, `Eq`, `Ord`, and `Hash`;
 - callable and thread-safety traits: `Fn`, `FnMut`, `FnOnce`, `Send`, and `Sync`;
-- functional traits: `Bifunctor`, `Functor`, `Applicative`, `Monad`, `Foldable`, and `Traversable`;
+- functional traits: `Bifunctor`, `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, and the `ForEach` traversal bridge;
+- effect-only traversal: `for_each values, action`, for bounded ranges, foldable containers, borrowed vectors, and borrowed slices;
 - the arithmetic, comparison, logical, bitwise, negation, and functional operator declarations provided by those modules.
 
 The prelude does not turn a missing implementation into a compiler fallback: an operator still needs a matching library trait implementation. Files, process arguments, networking handles, and thread-spawning functions remain explicit imports because they are not universal vocabulary.
@@ -47,7 +48,7 @@ main = !->
     point.println!
 ```
 
-The output is `Point(3, 4)`. The fields are exported here so the complete fence can construct the value at the program boundary; a private field would require a public constructor or factory function.
+The output is `Point(3, 4)`. The `<` markers export `Point` and its fields for use by other modules. In this example, `main` is in the same module and could construct `Point` even if its fields were private; outside modules would need an exported constructor or factory function to initialize private fields.
 
 ## Numeric behavior and generic bounds
 

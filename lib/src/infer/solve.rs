@@ -680,9 +680,23 @@ fn solve_structural_constraints_to_fixed_point(
                     }
                 }
             }
-            Constraint::Trait { ty, .. } => {
+            Constraint::Trait { ty, bound, .. } => {
                 if contains_unresolved_type(&engine.resolve(&ty)) {
                     ObligationState::Pending
+                } else if bound
+                    .type_args
+                    .iter()
+                    .any(|arg| contains_unresolved_type(&engine.resolve(arg)))
+                {
+                    infer_explicit_impl_trait_args(
+                        engine,
+                        &engine.resolve(&ty),
+                        &bound,
+                        impls,
+                        structs,
+                        enums,
+                        builtin_traits,
+                    )
                 } else {
                     ObligationState::Solved
                 }
@@ -806,7 +820,7 @@ fn infer_explicit_impl_trait_args(
             continue;
         }
         let Some(subst) =
-            crate::selection::receiver_pattern_substitution(&imp.receiver_pattern, ty)
+            crate::selection::impl_receiver_pattern_substitution(imp, ty, impls.values())
         else {
             continue;
         };
@@ -1101,7 +1115,7 @@ fn explicit_impl_exists_for(
         }
 
         let Some(mut subst) =
-            crate::selection::receiver_pattern_substitution(&imp.receiver_pattern, ty)
+            crate::selection::impl_receiver_pattern_substitution(imp, ty, impls.values())
         else {
             return false;
         };
@@ -1402,6 +1416,25 @@ fn impl_receiver_owner_matches(
     structs: &HashMap<DefId, HirStruct>,
     enums: &HashMap<DefId, HirEnum>,
 ) -> bool {
+    if let (
+        Type::Reference { .. },
+        HirImplReceiverPattern::Exact(pattern @ Type::Reference { .. }),
+    ) = (ty, &imp.receiver_pattern)
+    {
+        // Generic borrowed receivers have different display spellings once
+        // instantiated; compare their structure and nominal IDs instead.
+        return crate::selection::type_pattern_matches(pattern, ty, &mut HashMap::new());
+    }
+    if matches!(
+        &imp.receiver_pattern,
+        HirImplReceiverPattern::Exact(Type::Generic(_))
+    ) || matches!(
+        &imp.receiver_pattern,
+        HirImplReceiverPattern::Exact(Type::Apply { constructor, .. })
+            if matches!(constructor.as_ref(), Type::Generic(_))
+    ) {
+        return true;
+    }
     if let Some(id) = constructor_owner_id(ty) {
         return (structs.contains_key(&id) || enums.contains_key(&id))
             && receiver_owner_id(imp) == Some(id);
