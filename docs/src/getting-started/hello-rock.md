@@ -81,13 +81,13 @@ An `if`/`else` expression produces the value of the selected branch. When it is 
 ```rock
 absolute = number ->
     if number >= 0 then number
-    else 0 - number
+    else -number
 
 main = !->
-    absolute 0 - 5 .println!
+    absolute -5 .println!
 ```
 
-For `-5`, the condition is false, so the `else` branch evaluates `0 - number` and produces `5`. For a nonnegative value, the `then` branch produces `number` unchanged. The selected value is returned by `absolute`.
+For `-5`, the condition is false, so the `else` branch evaluates `-number` and produces `5`. For a nonnegative value, the `then` branch produces `number` unchanged. The selected value is returned by `absolute`.
 
 ## Comments
 

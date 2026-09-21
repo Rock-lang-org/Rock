@@ -97,11 +97,11 @@ allocation once:
 unsafe allocate_and_release: I64 -> I64
 allocate_and_release = size ->
     if size <= 0
-        0 - 1
+        -1
     else
         pointer: *U8 = malloc size
         if (pointer as I64) == 0
-            0 - 1
+            -1
         else
             free pointer
             size

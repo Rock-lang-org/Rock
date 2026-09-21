@@ -9645,6 +9645,32 @@ main = ->
 }
 
 #[test]
+fn test_doc_casts_negative_branches_and_unit_values() {
+    let output = compile_and_run(
+        r#"
+average = total, count -> total as F64 / count as F64
+
+classify = value ->
+    if value <= 0
+        -1
+    else
+        if value == 1
+            -2
+        else
+            value
+
+main = !->
+    ()
+    average 9, 2 .println!
+    classify 0 .println!
+    classify 1 .println!
+    classify 3 .println!
+"#,
+    );
+    assert_eq!(output.trim(), "4.5\n-1\n-2\n3");
+}
+
+#[test]
 fn test_gcd_lcm() {
     let output = compile_and_run(
         r#"

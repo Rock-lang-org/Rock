@@ -128,6 +128,7 @@ for setup and the current analysis boundaries.
 The compiler currently rejects a guard that consumes a non-copy enum payload.
 This is a complete diagnostic reproducer:
 
+<!-- compile-fail: unsupported guarded non-copy enum payload binding -->
 ```rock
 enum Message
     Text String

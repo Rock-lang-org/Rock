@@ -7,8 +7,7 @@ add = left, right ->
     left + right
 
 main = !->
-    result = add 2, 3
-    result.println!
+    add 2, 3 .println!
 ```
 
 The parameter names are introduced before the body is evaluated. The final expression of `add` is its result.
@@ -28,8 +27,7 @@ clamp = value, low, high ->
         value
 
 main = !->
-    result = clamp 120, 0, 100
-    result.println!
+    clamp 120, 0, 100 .println!
 ```
 
 The signature lists three parameter types followed by the return type. The branches of `clamp` all produce `I64`, so the definition satisfies the contract.
@@ -46,8 +44,7 @@ double = value ->
     value * 2
 
 main = !->
-    result = double add 2, 3
-    result.println!
+    double add 2, 3 .println!
 ```
 
 The inner call owns the arguments `2, 3` and produces `5`; the outer call receives that complete result and produces `10`. Neither call needs grouping.
@@ -58,7 +55,7 @@ Use `!` for a zero-argument call:
 
 ```rock
 main = !->
-    mut values: Vec I64 = Vec::new!
+    mut values = Vec::new!
     values.push 10
     length = values.len!
     length.println!
@@ -93,9 +90,8 @@ struct Counter
 impl Counter
     @read = -> @value
 
-    ^@add = amount ->
+    ^@add = amount !->
         self.value = self.value + amount
-        return
 
     ~@finish = -> self.value
 
@@ -118,12 +114,11 @@ With an ordinary `->` body, the final expression is returned:
 ```rock
 sign = value ->
     if value < 0
-        0 - 1
-    else
-        1
+    then -1
+    else 1
 
 main = !->
-    sign 0 - 8 .println!
+    sign -8 .println!
     sign 8 .println!
 ```
 
@@ -132,8 +127,8 @@ Use `return` when a condition should leave the function immediately:
 ```rock
 first_nonzero = left, right ->
     if left != 0
-        return left
-    right
+    then left
+    else right
 
 main = !->
     first_nonzero 3, 9 .println!
@@ -182,9 +177,8 @@ A function can call itself after its declaration:
 factorial: I64 -> I64
 factorial = n ->
     if n <= 1
-        1
-    else
-        n * factorial n - 1
+    then 1
+    else n * factorial n - 1
 
 main = !->
     factorial 5 .println!

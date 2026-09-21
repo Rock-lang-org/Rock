@@ -206,6 +206,7 @@ The output is `Rock` twice. Cloning the `String` gives each `Label` its own allo
 
 Rock requires one unambiguous applicable implementation for a trait call. The following exhaustive program is intentionally rejected because `Tag` has two implementations of the same trait:
 
+<!-- compile-fail: overlapping impls -->
 ```rock
 trait Named
     @name: &Str

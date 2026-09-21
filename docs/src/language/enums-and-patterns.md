@@ -108,7 +108,7 @@ classify = value ->
         _ => "positive"
 
 main = !->
-    classify 0 - 3 .println!
+    classify -3 .println!
     classify 0 .println!
     classify 8 .println!
 ```
@@ -135,7 +135,7 @@ describe = packet ->
 
 main = !->
     describe Packet::Data 3, "three" .println!
-    describe Packet::Data 0 - 1, "negative" .println!
+    describe Packet::Data -1, "negative" .println!
     describe Packet::Empty .println!
 ```
 

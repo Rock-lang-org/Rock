@@ -87,36 +87,39 @@ fn range_operator(stream: Input) -> IResult<(crate::lexer::Span, bool)> {
 }
 
 fn expression_without_spaced_dot(stream: Input) -> IResult<Expression> {
-    let (stream, base) = (
-        unary_expr,
-        (
-            operator,
-            // Allow expression continuation on the same line
-            expression_without_spaced_dot
-                // Or on the next line with indentation
-                .or(preceded(
-                    TokenType::Eol,
-                    preceded(
-                        empty_lines,
-                        preceded(indent_token, expression_without_spaced_dot),
-                    ),
-                )),
-        )
-            // Or operator at the beginning of the next line (indented by one level)
-            .or(multiline_operator_continuation)
-            .opt(),
+    let (stream, unary) = unary_expr(stream)?;
+    let (stream, base) = parse_cast_suffix(stream, Expression::UnaryExpr(unary))?;
+    let (stream, binop) = (
+        operator,
+        // Allow expression continuation on the same line
+        expression_without_spaced_dot
+            // Or on the next line with indentation
+            .or(preceded(
+                TokenType::Eol,
+                preceded(
+                    empty_lines,
+                    preceded(indent_token, expression_without_spaced_dot),
+                ),
+            )),
     )
-        .map(|(unary, binop_opt)| {
-            if let Some((op, expr)) = binop_opt {
-                Expression::BinopExpr(unary, op, Box::new(expr))
-            } else {
-                Expression::UnaryExpr(unary)
-            }
-        })
+        // Or operator at the beginning of the next line (indented by one level)
+        .or(multiline_operator_continuation)
+        .opt()
         .process(stream)
         .map_err(|e| e.with_context("expression"))?;
 
-    parse_cast_suffix(stream, base)
+    let Some((op, rhs)) = binop else {
+        return Ok((stream, base));
+    };
+    let lhs = match base {
+        Expression::UnaryExpr(unary) => unary,
+        expression => UnaryExpr::PrimaryExpr(PrimaryExpr {
+            operand: Operand::Expression(Box::new(expression)),
+            secondaries: None,
+            type_annotation: None,
+        }),
+    };
+    Ok((stream, Expression::BinopExpr(lhs, op, Box::new(rhs))))
 }
 
 fn append_secondaries(expression: Expression, mut trailing: Vec<SecondaryExpr>) -> Expression {
@@ -176,7 +179,12 @@ fn multiline_operator_continuation(stream: Input) -> IResult<(Operator, Expressi
     }
     // Parse operator and expression WITHOUT increasing indent context
     // This allows subsequent continuations at the same indent level
-    (operator, expression_without_spaced_dot).process(stream)
+    // A stuck prefix operator starts the nested body, not an infix continuation.
+    (
+        operator_token.or(ampersand_token),
+        expression_without_spaced_dot,
+    )
+        .process(stream)
 }
 
 pub fn unary_expr(stream: Input) -> IResult<UnaryExpr> {

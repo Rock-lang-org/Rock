@@ -40,14 +40,12 @@ Without an expected type, whole-number literals default to `I64` and decimal lit
 
 ```rock
 show_default_integer: I64 -> ()
-show_default_integer = value ->
+show_default_integer = value !->
     value.println!
-    return
 
 show_default_float: F64 -> ()
-show_default_float = value ->
+show_default_float = value !->
     value.println!
-    return
 
 main = !->
     whole = 42
@@ -89,11 +87,10 @@ Function signatures use arrows. The following declaration and definition agree o
 ```rock
 hypotenuse: F64 -> F64 -> F64
 hypotenuse = a, b ->
-    a * a + b * b as F64
+    a * a + b * b
 
 main = !->
-    result = hypotenuse 3.0, 4.0
-    result.println!
+    hypotenuse 3.0, 4.0 .println!
 ```
 
 The arrows are read left to right as the function's parameter types followed by its return type. Calls still use spaces and commas. Despite its name, this `hypotenuse` body computes the sum of the squares without taking a square root, so the call prints `25`, not `5`.
@@ -147,21 +144,20 @@ Use `as` for an explicit primitive or pointer conversion:
 ```rock
 main = !->
     byte: U8 = 7
-    count: I64 = byte as I64
-    fraction: F64 = count as F64
+    count = byte as I64
+    fraction = count as F64
     fraction.println!
 ```
 
-The cast applies to the expression immediately on its left. These parentheses are required so each operand is converted before division:
+The cast binds more tightly than binary operators, so each operand is converted before division:
 
 ```rock
 average: I64 -> I64 -> F64
 average = total, count ->
-    (total as F64) / (count as F64)
+    total as F64 / count as F64
 
 main = !->
-    result = average 9, 2
-    result.println!
+    average 9, 2 .println!
 ```
 
 A cast is still checked against the supported conversion rules; it is not a general escape from type checking. Pointer casts deserve the same care as raw-pointer dereferences.

@@ -27,10 +27,12 @@ For short alternatives, `then` and `else` fit on one line:
 ```rock
 absolute: I64 -> I64
 absolute = value ->
-    if value >= 0 then value else 0 - value
+    if value >= 0
+    then value 
+    else -value
 
 main = !->
-    absolute 0 - 7 .println!
+    absolute -7 .println!
 ```
 
 ## `while`
@@ -73,7 +75,7 @@ The upper bound is exclusive, so this prints `0` through `9`. The pattern is bou
 
 ```rock
 main = !->
-    values: [I64; 3] = [10, 20, 30]
+    values = [10, 20, 30]
     for value in values
         value.println!
 ```
@@ -84,12 +86,12 @@ This complete example borrows a vector as a slice and iterates over that fixed v
 
 ```rock
 main = !->
-    mut values: Vec I64 = Vec::new!
+    mut values = Vec::new!
     values.push 4
     values.push 5
     values.push 6
 
-    view: &[I64] = values.as_slice!
+    view = values.as_slice!
     for value in *view
         value.println!
 ```

@@ -93,6 +93,7 @@ Tree-sitter highlighting is separate. [tree-sitter-rock](https://github.com/rock
 
 **Intentional error: an integer annotation with a Boolean value.**
 
+<!-- compile-fail: Type annotation mismatch -->
 ```rock
 main = !->
     count: I64 = true
@@ -133,6 +134,7 @@ Some errors concern the relationship between two operations. Here is a complete 
 
 **Intentional error: changing a value while it is borrowed.**
 
+<!-- compile-fail: borrow conflict -->
 ```rock
 main = !->
     mut number: I64 = 1

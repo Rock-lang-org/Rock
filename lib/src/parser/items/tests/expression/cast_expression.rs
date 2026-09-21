@@ -136,3 +136,22 @@ fn test_cast_parenthesised_expr() {
         assert_formatted_eq(&ty, &parse_type_i32());
     }
 }
+
+#[test]
+fn test_cast_on_both_binary_operands() {
+    let tokens = lex_test("total as F64 / count as F64");
+    let config = Config::default();
+    let (rest, expr) = expression
+        .process(ParseCtx::from(&tokens, &config))
+        .expect("parse failed");
+    assert!(rest.is_empty());
+    let Expression::BinopExpr(UnaryExpr::PrimaryExpr(lhs), op, rhs) = expr else {
+        panic!("expected binary expression with a cast left operand");
+    };
+    assert_eq!(op.value, "/");
+    let Operand::Expression(lhs) = lhs.operand else {
+        panic!("expected a wrapped left cast");
+    };
+    assert!(matches!(*lhs, Expression::CastExpr(_, _)));
+    assert!(matches!(*rhs, Expression::CastExpr(_, _)));
+}

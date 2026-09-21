@@ -85,8 +85,7 @@ increment_and_print = value ->
     value
 
 main = !->
-    result = increment_and_print 4
-    result.println!
+    increment_and_print 4 .println!
 ```
 
 The assignment changes the current value of `value`; it does not introduce a second parameter. Keeping the same name is useful when the old representation is no longer needed, but a new descriptive name is clearer when both values remain meaningful.

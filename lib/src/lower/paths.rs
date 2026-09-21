@@ -2126,6 +2126,17 @@ impl Lowerer {
 
     pub(crate) fn lower_instance(&mut self, inst: &ast::Instance) -> HirExpr {
         let span = Self::full_path_span(&inst.name.path);
+        if matches!(
+            inst.name.path.as_slice(),
+            [ast::IdentOrType::Type(ast::ParseType::Unit(_))]
+        ) && inst.fields.is_empty()
+        {
+            return HirExpr {
+                ty: Type::Unit,
+                kind: HirExprKind::Unit,
+                span,
+            };
+        }
         let segments = path_names(&inst.name.path);
 
         let struct_resolution = crate::lower::resolution::LowerResolutionContext::new(self)

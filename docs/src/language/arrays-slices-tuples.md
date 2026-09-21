@@ -32,7 +32,7 @@ All elements must have the same type. A cast or an annotation can establish a na
 ```rock
 main = !->
     bytes: [U8; 3] = [97, 98, 99]
-    first: I64 = bytes[0] as I64
+    first = bytes[0] as I64
     first.println!
 ```
 
@@ -57,7 +57,7 @@ Reading `values[index]` selects the standard library's `Index` implementation. A
 
 ```rock
 main = !->
-    mut values: [I64; 3] = [10, 20, 30]
+    mut values = [10, 20, 30]
     before = values[1]
     values[1] = 99
     after = values[1]
@@ -71,20 +71,19 @@ Nested arrays use the same rule at each position.
 
 ```rock
 set_second: &mut [I64] -> ()
-set_second = row ->
+set_second = row !->
     row[1] = 7
-    return
 
 first_row: &[I64] -> I64
 first_row = row -> row[1]
 
 main = !->
-    mut row: [I64; 2] = [1, 0]
-    second_row: [I64; 2] = [0, 1]
+    mut row = [1, 0]
+    second_row = [0, 1]
     set_second &mut row
     first_row &row .println!
     first_row &second_row .println!
-    matrix: [[I64; 2]; 2] = [row, second_row]
+    matrix = [row, second_row]
 ```
 
 The output is `7` and `1`. Nested fixed-array literals are valid, but the current implementation does not support chained indexing directly on an inner fixed-array value; borrow a row as a slice before indexing when a program needs that operation.
@@ -101,8 +100,8 @@ sum_three = values ->
     values[0] + values[1] + values[2]
 
 main = !->
-    values: [I64; 3] = [2, 4, 6]
-    total: I64 = sum_three &values
+    values = [2, 4, 6]
+    total = sum_three &values
     total.println!
     values[0].println!
 ```
@@ -115,12 +114,11 @@ Mutable slices let a function update the owner's storage without taking ownershi
 
 ```rock
 write_middle: &mut [I64] -> ()
-write_middle = values ->
+write_middle = values !->
     values[1] = 42
-    return
 
 main = !->
-    mut values: [I64; 3] = [7, 8, 9]
+    mut values = [7, 8, 9]
     write_middle &mut values
     values[1].println!
 ```
@@ -138,14 +136,14 @@ Use a range to borrow a prefix, suffix, or middle portion of an array or slice. 
 
 inspect: &[I64] -> ()
 inspect = values !->
-    (slice_len values).println!
+    slice_len values .println!
     values[0].println!
 
 main = !->
     values = [10, 20, 30, 40]
-    inspect (&values[..2])
-    inspect (&values[1..])
-    inspect (&values[1..=2])
+    inspect &values[..2]
+    inspect &values[1..]
+    inspect &values[1..=2]
 ```
 
 The example prints lengths and first values for `[10, 20]`, `[20, 30, 40]`, and `[20, 30]`. `slice_len` returns an `I64` element count without requiring a compiler intrinsic.
@@ -168,7 +166,7 @@ main = !->
     values = [10, 20, 30, 40]
     middle = 1..3
     view = &values[middle]
-    (*view)[0].println!
+    view[0].println!
 ```
 
 These values have the standard library type `Range`, whose endpoints are `I64`. Creating a range does not check it against any collection; indexing does.
@@ -183,7 +181,7 @@ An exclusive range must satisfy `0 <= start <= end <= length`. Equal endpoints p
 main = !->
     values = [10, 20, 30, 40]
     empty = &values[4..4]
-    (slice_len empty).println!
+    slice_len empty .println!
 ```
 
 The output is `0`. Do not index element zero of an empty slice. Negative, reversed, or out-of-bounds ranges terminate the process with `range out of bounds`; slicing does not clamp endpoints or return an `Option`. Validate a count from untrusted input before constructing its view. A byte count returned by a successful standard-library read already fits the supplied buffer, which makes `&buffer[..count]` useful for [safe I/O](../stdlib/io-and-files.md).
@@ -200,7 +198,7 @@ update_middle = values !->
 
 main = !->
     mut values = [10, 20, 30, 40]
-    update_middle (&mut values)
+    update_middle &mut values
     values[1].println!
     values[2].println!
 ```
@@ -225,7 +223,7 @@ This prints `6`; `1..3` would visit only `1` and `2`. The current range-loop for
 
 ```rock
 main = !->
-    mut values: Vec I64 = Vec::new!
+    mut values = Vec::new!
     values.push 10
     values.push 20
     values.push 30
@@ -241,12 +239,12 @@ The output is `3` and `20`. `values` owns all three elements before and after `p
 > stdlib::slice::slice_len
 
 main = !->
-    mut values: Vec I64 = Vec::new!
+    mut values = Vec::new!
     values.push 10
     values.push 20
     values.push 30
     tail = &values[1..]
-    (slice_len tail).println!
+    slice_len tail .println!
     tail[0].println!
 ```
 
@@ -254,7 +252,7 @@ This prints `2` and `20`. Do not resize or move the vector while a borrowed view
 
 ```rock
 main = !->
-    mut values: Vec I64 = Vec::new!
+    mut values = Vec::new!
     values.push 10
     match values.get 4
         Option::Some value => *value .println!
@@ -269,7 +267,7 @@ A tuple stores a fixed number of values in a fixed order. Its type records every
 
 ```rock
 main = !->
-    entry: (I64, Bool, &Str) = (7, true, "rock")
+    entry = (7, true, "rock")
     entry.0.println!
     entry.1.println!
     entry.2.println!
@@ -284,7 +282,7 @@ swap: I64 -> I64 -> (I64, I64)
 swap = left, right -> (right, left)
 
 main = !->
-    pair: (I64, I64) = swap 10, 20
+    pair = swap 10, 20
     pair.0.println!
     pair.1.println!
 ```

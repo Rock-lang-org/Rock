@@ -42,6 +42,7 @@ The generated `answer` returns `42`, so this executable example prints `42`. A m
 
 The parser recognizes `ty` captures, but end-to-end expansion of a generated struct field currently stops with a `Nothing expected this token` diagnostic. This parser-only example is explicitly experimental rather than executable; it contains no placeholder body or undefined runtime value.
 
+<!-- compile-fail: Nothing expected this token -->
 ```rock
 macro make_wrapper
     $name:ident $inner:ty =>

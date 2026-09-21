@@ -1,5 +1,30 @@
 # Book Highlighting
 
+## Compile Examples
+
+Compile every Rock fence in the README and book, plus the sources under
+`docs/examples`, using the current compiler:
+
+```sh
+cargo build --release -p rockc
+node docs/checks/compile-examples.cjs
+```
+
+The runner rebuilds the stdlib, assembles the companion files in the modules and
+packages chapters, and builds their dependencies. The HTTP examples require the
+`rock_http` checkout and revision documented in the HTTP chapter, at
+`../rock_http` by default. Set `ROCK_HTTP_ROOT` to use another checkout location,
+or `ROCKC` to select another compiler binary. Missing dependencies fail the check;
+they are not skipped.
+
+Intentional rejection examples have a `compile-fail` HTML comment immediately
+before their fence naming the required diagnostic. They pass only when the
+compiler rejects them with that diagnostic, not when it crashes or reports an
+unrelated error. Logs are retained in the temporary directory printed by the
+runner. This checks compilation to object files, not runtime behavior or linking.
+
+## Highlighting
+
 The book requires Node.js 22, mdBook 0.5.4, tree-sitter-cli (CI pins
 0.26.9), and a C compiler for the Rock parser. The extension's pinned CLI 0.27.0
 is also supported. No npm dependencies are needed for the book.

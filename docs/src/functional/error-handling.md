@@ -73,7 +73,7 @@ parse_nonnegative = value ->
         Result::Ok value
 
 main = !->
-    result: Result I64, ParseError = parse_nonnegative 0 - 3
+    result: Result I64, ParseError = parse_nonnegative -3
     match result
         Result::Ok value => value.println!
         Result::Err error => error.show!.println!
@@ -121,7 +121,7 @@ double_positive = value ->
 
 main = !->
     success: Result I64, I64 = double_positive 4
-    failure: Result I64, I64 = double_positive 0 - 4
+    failure: Result I64, I64 = double_positive -4
     success.unwrap_or 0 |> value -> value.println!
     failure.unwrap_or 0 |> value -> value.println!
 ```

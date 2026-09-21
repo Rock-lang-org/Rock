@@ -117,7 +117,7 @@ main = !->
     retained_source.retain value -> *value % 2 == 0
 
     mut optional_source: Vec I64 = Vec::new!
-    optional_source.push 0 - 1
+    optional_source.push -1
     optional_source.push 2
     optional_source.push 3
     positives: Vec I64 = optional_source.filter_map value ->
