@@ -76,19 +76,18 @@ main = !->
     announce_square 5 .println!
 ```
 
-An explicit `return` exits before the end of the block:
+An `if`/`else` expression produces the value of the selected branch. When it is the final expression in a function, that value becomes the function's return value:
 
 ```rock
 absolute = number ->
-    if number >= 0
-        return number
-    0 - number
+    if number >= 0 then number
+    else 0 - number
 
 main = !->
     absolute 0 - 5 .println!
 ```
 
-For `-5`, the condition is false, so execution reaches `0 - number` and produces `5`. For a nonnegative value, `return number` skips the remaining expression.
+For `-5`, the condition is false, so the `else` branch evaluates `0 - number` and produces `5`. For a nonnegative value, the `then` branch produces `number` unchanged. The selected value is returned by `absolute`.
 
 ## Comments
 
