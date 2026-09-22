@@ -40,18 +40,19 @@ impl Monomorphizer {
                 {
                     continue;
                 }
-                self.extract_generics_from_type(
-                    &bound.type_args[0],
-                    &args,
-                    generic_ids,
-                    substitution,
-                );
-                self.extract_generics_from_type(
-                    &bound.type_args[1],
-                    ret.as_ref(),
-                    generic_ids,
-                    substitution,
-                );
+                for (expected, actual) in [
+                    (&bound.type_args[0], &args),
+                    (&bound.type_args[1], ret.as_ref()),
+                ] {
+                    if let Some((constructor_id, target)) =
+                        self.bounded_constructor_target(function, expected, actual)
+                    {
+                        substitution
+                            .entry(constructor_id)
+                            .or_insert_with(|| self.intern_type(&target));
+                    }
+                    self.extract_generics_from_type(expected, actual, generic_ids, substitution);
+                }
             }
         }
     }

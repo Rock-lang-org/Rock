@@ -6,5 +6,14 @@
 < trait Monad for F _ where F _: Applicative
     bind: F A -> M -> F B where M: FnMut A, (F B)
 
+bind: F A -> M -> F B where F _: Monad, M: FnMut A, (F B)
+< bind = value, callback -> F::Monad::bind value, callback
+
+< trait MonadValue A, Output
+    ~@bind: M -> Output where M: FnMut A, Output
+
+impl MonadValue A, (F B) for F A where F _: Monad
+    ~@bind = callback -> F::Monad::bind self, callback
+
 >>=: F A -> (A -> F B) -> F B where F _: Monad
 >>= = value, callback -> F::Monad::bind value, callback

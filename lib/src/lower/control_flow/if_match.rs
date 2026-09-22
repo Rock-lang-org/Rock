@@ -49,8 +49,15 @@ impl Lowerer {
     }
 
     pub(crate) fn lower_match(&mut self, match_expr: &ast::Match) -> HirExpr {
-        let scrutinee = self.lower_expression(&match_expr.expr);
+        let mut scrutinee = self.lower_expression(&match_expr.expr);
         let span = scrutinee.span.clone();
+        scrutinee.ty = match self.engine.normalize_resolved_type(&scrutinee.ty) {
+            Ok(ty) => ty,
+            Err(error) => {
+                self.diagnostics.push_type_with_span(error, span.clone());
+                Type::Error
+            }
+        };
         let mut result_ty: Option<Type> = None;
 
         let arms: Vec<HirMatchArm> = match_expr

@@ -5,6 +5,18 @@
 < trait Functor for F _
     fmap: M -> F A -> F B where M: FnMut A, B
 
+fmap: M -> F A -> F B where F _: Functor, M: FnMut A, B
+< fmap = mapper, value -> F::Functor::fmap mapper, value
+
+// Bridge a fully applied value to its constructor's consuming operation.
+< trait FunctorValue A, B
+    type Output
+    ~@fmap: M -> Self::Output where M: FnMut A, B
+
+impl FunctorValue A, B for F A where F _: Functor
+    type Output = F B
+    ~@fmap = mapper -> F::Functor::fmap mapper, self
+
 <$>: (A -> B) -> F A -> F B where F _: Functor
 <$> = mapper, value -> F::Functor::fmap mapper, value
 

@@ -909,6 +909,7 @@ fn infer_constructor_trait_obligation(
         return ObligationState::Solved;
     };
     let mut candidates = Vec::new();
+    let mut pending_candidate = false;
     let mut impl_ids = impls.keys().copied().collect::<Vec<_>>();
     impl_ids.sort();
     for impl_id in impl_ids {
@@ -951,7 +952,37 @@ fn infer_constructor_trait_obligation(
         {
             continue;
         }
+        let subst = subst
+            .into_iter()
+            .map(|(param, ty)| (param, probe.resolve(&ty)))
+            .collect::<HashMap<_, _>>();
         if !impl_bounds_satisfied(imp, &subst, impls, structs, enums, builtin_traits) {
+            // An unresolved impl parameter is not evidence against a candidate.
+            // Wait for value/callback constraints instead of choosing a different
+            // constructor merely because its bounds are already concrete.
+            pending_candidate |= imp.bounds.iter().all(|(param, bounds)| {
+                let Some(ty) = subst.get(param) else {
+                    return false;
+                };
+                bounds.iter().all(|bound| {
+                    let args = bound
+                        .type_args
+                        .iter()
+                        .map(|arg| arg.substitute_generics(&subst))
+                        .collect::<Vec<_>>();
+                    contains_unresolved_type(ty)
+                        || args.iter().any(contains_unresolved_type)
+                        || impl_exists_for(
+                            ty,
+                            bound.trait_id,
+                            &args,
+                            impls,
+                            structs,
+                            enums,
+                            builtin_traits,
+                        )
+                })
+            });
             continue;
         }
         let trait_args = imp
@@ -966,6 +997,9 @@ fn infer_constructor_trait_obligation(
         {
             candidates.push((authority_key, probe));
         }
+    }
+    if pending_candidate {
+        return ObligationState::Pending;
     }
     match candidates.as_slice() {
         [] => ObligationState::Pending,

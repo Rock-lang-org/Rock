@@ -6,5 +6,21 @@
     pure: A -> F A
     ap: F (A -> B) -> F A -> F B
 
+pure: A -> F A where F _: Applicative
+< pure = value -> F::Applicative::pure value
+
+ap: F (A -> B) -> F A -> F B where F _: Applicative
+< ap = wrapped_function, wrapped_value -> F::Applicative::ap wrapped_function, wrapped_value
+
+< trait ApplicativeValue A, B
+    type Input
+    type Output
+    ~@ap: Self::Input -> Self::Output
+
+impl ApplicativeValue A, B for F (A -> B) where F _: Applicative
+    type Input = F A
+    type Output = F B
+    ~@ap = wrapped_value -> F::Applicative::ap self, wrapped_value
+
 <*>: F (A -> B) -> F A -> F B where F _: Applicative
 <*> = wrapped_function, wrapped_value -> F::Applicative::ap wrapped_function, wrapped_value

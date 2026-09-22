@@ -545,8 +545,7 @@ impl HirProgram {
         errors
     }
 
-    pub(crate) fn validate_accepted_types(&self) -> Vec<String> {
-        let mut errors = Vec::new();
+    fn type_normalization_env(&self) -> crate::type_services::normalize::TypeNormalizationEnv {
         let mut normalization_env = crate::type_services::normalize::TypeNormalizationEnv::new();
         for structure in self.structs.values() {
             normalization_env.register_constructor(
@@ -615,6 +614,12 @@ impl HirProgram {
             }
         }
 
+        normalization_env
+    }
+
+    pub(crate) fn validate_accepted_types(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        let normalization_env = self.type_normalization_env();
         let mut predicate_rows = Vec::new();
         for trait_def in self.traits.values() {
             for (index, predicate) in trait_def.predicates.iter().enumerate() {
@@ -1427,11 +1432,24 @@ fn validate_method_target_authority(
                         .iter()
                         .map(|binding| (binding.param, binding.ty.clone()))
                         .collect::<HashMap<_, _>>();
+                    let normalization_env = program.type_normalization_env();
                     let expected_trait_args = imp
                         .trait_arg_types
                         .iter()
-                        .map(|arg| arg.substitute_generics(&owner_substitution))
-                        .collect::<Vec<_>>();
+                        .map(|arg| {
+                            crate::type_services::normalize::TypeNormalizer::new(&normalization_env)
+                                .normalize(&arg.substitute_generics(&owner_substitution))
+                        })
+                        .collect::<Result<Vec<_>, _>>();
+                    let expected_trait_args = match expected_trait_args {
+                        Ok(args) => args,
+                        Err(error) => {
+                            errors.push(format!(
+                                "cannot normalize method authority trait arguments for impl {impl_id:?}: {error}"
+                            ));
+                            return;
+                        }
+                    };
                     if expected_trait_args != selected_trait.trait_args {
                         errors.push(format!(
                             "method authority trait arguments do not match impl {impl_id:?}: expected {expected_trait_args:?}, found {:?}",
@@ -2029,18 +2047,23 @@ fn hir_stmt_is_codegen_concrete<P: HirPhase>(stmt: &HirStmtFor<P>) -> bool {
 }
 
 fn hir_method_target_is_codegen_concrete(target: &HirMethodCallTarget) -> bool {
-    target.trait_args().iter().all(hir_type_is_codegen_concrete)
+    target
+        .trait_args()
+        .iter()
+        .all(crate::type_services::facts::TypeFacts::is_concrete_type_argument)
         && target
             .owner_substitution
             .iter()
             .chain(target.method_substitution.iter())
-            .all(|binding| hir_type_is_codegen_concrete(&binding.ty))
+            .all(|binding| {
+                crate::type_services::facts::TypeFacts::is_concrete_type_argument(&binding.ty)
+            })
 }
 
 fn hir_call_target_is_codegen_concrete(target: &HirCallTarget) -> bool {
     match target {
         HirCallTarget::StaticMethod(target) => {
-            hir_type_is_codegen_concrete(&target.owner_ty)
+            crate::type_services::facts::TypeFacts::is_concrete_type_argument(&target.owner_ty)
                 && hir_method_target_is_codegen_concrete(&target.method)
         }
         _ => true,

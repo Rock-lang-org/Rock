@@ -13,7 +13,8 @@ use crate::products::{
     ProductEnumInterface, ProductExternInterface, ProductFunctionInterface, ProductImplInterface,
     ProductLocalDefId, ProductStructInterface, ProductTraitInterface, ProductTypeAliasInterface,
 };
-use crate::types::Type;
+use crate::type_services::normalize::{TypeNormalizationEnv, TypeNormalizer};
+use crate::types::{GenericParamDecl, GenericParamId, NominalTypeKind, Type};
 
 #[derive(Debug, Clone)]
 pub(super) struct ProductIdentityRemap {
@@ -88,6 +89,7 @@ impl ProductIdentityRemap {
 
 #[derive(Debug, Clone)]
 struct ProductNominalTypeValidator {
+    normalization_env: TypeNormalizationEnv,
     local_crate: ProductCrateId,
     structs: BTreeSet<ProductDefId>,
     enums: BTreeSet<ProductDefId>,
@@ -127,6 +129,7 @@ struct ProductNominalTypeValidator {
 
 #[derive(Debug, Clone, Default)]
 struct ProductDependencyDefinitions {
+    normalization_env: TypeNormalizationEnv,
     structs: BTreeSet<ProductDefId>,
     enums: BTreeSet<ProductDefId>,
     type_aliases: BTreeSet<ProductDefId>,
@@ -176,6 +179,11 @@ impl ProductDependencyDefinitions {
             for strukt in interface.structs.values() {
                 if let Some(id) = product_id_for_def(strukt.id) {
                     defs.structs.insert(id);
+                    defs.normalization_env.register_constructor(
+                        DefId::new(CrateId(id.crate_id.0), LocalDefId(id.local_id.0)),
+                        NominalTypeKind::Struct,
+                        crate::type_lowering::constructor_kind(&strukt.generic_params),
+                    );
                 }
             }
             for alias in interface.type_aliases.values() {
@@ -187,6 +195,11 @@ impl ProductDependencyDefinitions {
             let crate_name = dep.name();
 
             for function in interface.functions.values() {
+                register_product_generic_kinds(
+                    &mut defs.normalization_env,
+                    &function.generic_params,
+                    &product_id_for_def,
+                );
                 if let Some(id) = product_id_for_def(function.id) {
                     defs.functions.insert(id);
                     let canonical_name = interface
@@ -219,10 +232,25 @@ impl ProductDependencyDefinitions {
             for enum_ in interface.enums.values() {
                 if let Some(id) = product_id_for_def(enum_.id) {
                     defs.enums.insert(id);
+                    defs.normalization_env.register_constructor(
+                        DefId::new(CrateId(id.crate_id.0), LocalDefId(id.local_id.0)),
+                        NominalTypeKind::Enum,
+                        crate::type_lowering::constructor_kind(&enum_.generic_params),
+                    );
                 }
             }
 
             for trait_def in interface.traits.values() {
+                register_product_generic_kinds(
+                    &mut defs.normalization_env,
+                    &trait_def.generic_params,
+                    &product_id_for_def,
+                );
+                register_product_generic_kinds(
+                    &mut defs.normalization_env,
+                    trait_def.target.iter(),
+                    &product_id_for_def,
+                );
                 let Some(trait_id) = product_id_for_def(trait_def.id) else {
                     continue;
                 };
@@ -264,11 +292,21 @@ impl ProductDependencyDefinitions {
                         .filter_map(|method| product_id_for_def(method.id)),
                 );
                 for method in trait_def.methods.values() {
+                    register_product_generic_kinds(
+                        &mut defs.normalization_env,
+                        &method.generic_params,
+                        &product_id_for_def,
+                    );
                     if let Some(id) = product_id_for_def(method.id) {
                         defs.method_receiver_modes.insert(id, method.self_receiver);
                     }
                 }
                 for signature in trait_def.signatures.values() {
+                    register_product_generic_kinds(
+                        &mut defs.normalization_env,
+                        &signature.generic_params,
+                        &product_id_for_def,
+                    );
                     if let Some(id) = product_id_for_def(signature.id) {
                         defs.method_receiver_modes
                             .insert(id, signature.self_receiver);
@@ -313,6 +351,11 @@ fn record_dependency_impl<P: crate::hir::HirPhase>(
     };
 
     defs.impls.insert(impl_id);
+    register_product_generic_kinds(
+        &mut defs.normalization_env,
+        imp.type_generics.iter().chain(&imp.trait_generics),
+        product_id_for_def,
+    );
     defs.impl_traits
         .insert(impl_id, imp.trait_id.and_then(product_id_for_def));
     let mut trait_args = imp.trait_arg_types.clone();
@@ -332,6 +375,11 @@ fn record_dependency_impl<P: crate::hir::HirPhase>(
             .collect(),
     );
     for method in imp.methods.values() {
+        register_product_generic_kinds(
+            &mut defs.normalization_env,
+            &method.generic_params,
+            product_id_for_def,
+        );
         let Some(id) = product_id_for_def(method.id) else {
             continue;
         };
@@ -394,6 +442,24 @@ fn static_method_interface_callable_names(
     names
 }
 
+fn register_product_generic_kinds<'a>(
+    env: &mut TypeNormalizationEnv,
+    params: impl IntoIterator<Item = &'a GenericParamDecl>,
+    product_id_for_def: &impl Fn(DefId) -> Option<ProductDefId>,
+) {
+    for param in params {
+        if let Some(owner) = product_id_for_def(param.id.owner) {
+            env.register_generic_kind(
+                GenericParamId {
+                    owner: DefId::new(CrateId(owner.crate_id.0), LocalDefId(owner.local_id.0)),
+                    index: param.id.index,
+                },
+                param.kind.clone(),
+            );
+        }
+    }
+}
+
 impl ProductNominalTypeValidator {
     #[cfg(test)]
     fn from_products(products: &CompilerProducts, remap: &ProductIdentityRemap) -> Self {
@@ -433,8 +499,34 @@ impl ProductNominalTypeValidator {
         let mut method_receiver_modes = BTreeMap::new();
         let mut function_names = BTreeMap::new();
         let mut extern_names = BTreeMap::new();
+        let mut normalization_env = dependencies.normalization_env;
+        let local_id = |id| Some(ProductDefId::from(id));
+        for (id, structure) in &products.interface.structs {
+            normalization_env.register_constructor(
+                DefId::new(CrateId(id.crate_id.0), LocalDefId(id.local_id.0)),
+                NominalTypeKind::Struct,
+                crate::type_lowering::constructor_kind(&structure.generic_params),
+            );
+        }
+        for (id, enumeration) in &products.interface.enums {
+            normalization_env.register_constructor(
+                DefId::new(CrateId(id.crate_id.0), LocalDefId(id.local_id.0)),
+                NominalTypeKind::Enum,
+                crate::type_lowering::constructor_kind(&enumeration.generic_params),
+            );
+        }
 
         for (id, trait_def) in &products.interface.traits {
+            register_product_generic_kinds(
+                &mut normalization_env,
+                &trait_def.generic_params,
+                &local_id,
+            );
+            register_product_generic_kinds(
+                &mut normalization_env,
+                trait_def.target.iter(),
+                &local_id,
+            );
             trait_generic_counts.insert(*id, trait_def.generic_params.len());
             trait_methods.insert(
                 *id,
@@ -465,15 +557,30 @@ impl ProductNominalTypeValidator {
                     .map(|signature| ProductDefId::from(signature.id)),
             );
             for method in trait_def.methods.values() {
+                register_product_generic_kinds(
+                    &mut normalization_env,
+                    &method.generic_params,
+                    &local_id,
+                );
                 method_receiver_modes.insert(ProductDefId::from(method.id), method.self_receiver);
             }
             for signature in trait_def.signatures.values() {
+                register_product_generic_kinds(
+                    &mut normalization_env,
+                    &signature.generic_params,
+                    &local_id,
+                );
                 method_receiver_modes
                     .insert(ProductDefId::from(signature.id), signature.self_receiver);
             }
         }
 
         for (id, imp) in &products.interface.impls {
+            register_product_generic_kinds(
+                &mut normalization_env,
+                imp.type_generics.iter().chain(&imp.trait_generics),
+                &local_id,
+            );
             impls.insert(*id);
             impl_traits.insert(*id, imp.trait_id.map(ProductDefId::from));
             impl_trait_args.insert(*id, imp.trait_arg_types.clone());
@@ -502,11 +609,21 @@ impl ProductNominalTypeValidator {
                 );
             }
             for method in imp.methods.values() {
+                register_product_generic_kinds(
+                    &mut normalization_env,
+                    &method.generic_params,
+                    &local_id,
+                );
                 method_receiver_modes.insert(ProductDefId::from(method.id), method.self_receiver);
             }
         }
 
         for (id, function) in &products.interface.functions {
+            register_product_generic_kinds(
+                &mut normalization_env,
+                &function.generic_params,
+                &local_id,
+            );
             let display_name = product_display_name(products, *id);
             add_callable_names(
                 &mut function_names,
@@ -533,6 +650,7 @@ impl ProductNominalTypeValidator {
         }
 
         Self {
+            normalization_env,
             local_crate: remap.local_crate,
             structs: products.interface.structs.keys().copied().collect(),
             enums: products.interface.enums.keys().copied().collect(),
@@ -1053,8 +1171,12 @@ impl ProductNominalTypeValidator {
                         .impl_trait_args(impl_id)
                         .unwrap_or_default()
                         .iter()
-                        .map(|arg| arg.substitute_generics(&owner_substitution))
-                        .collect::<Vec<_>>();
+                        .map(|arg| {
+                            TypeNormalizer::new(&self.normalization_env)
+                                .normalize(&arg.substitute_generics(&owner_substitution))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|error| format!("Product artifact method authority trait arguments cannot be normalized: {error}"))?;
                     if expected_trait_args != selected_trait.trait_args {
                         return Err(format!(
                             "Product artifact method authority trait arguments do not match impl {}::{}: expected {expected_trait_args:?}, found {:?}",
@@ -9841,6 +9963,7 @@ mod product_tests {
             variants_by_id: HashMap::new(),
         };
         let type_validator = super::ProductNominalTypeValidator {
+            normalization_env: Default::default(),
             local_crate: ProductCrateId(0),
             structs: BTreeSet::new(),
             enums: BTreeSet::new(),

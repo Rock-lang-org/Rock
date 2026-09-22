@@ -56,31 +56,29 @@ impl TypeFacts {
         concrete
     }
 
-    pub fn is_codegen_concrete(ty: &Type) -> bool {
-        fn closed_constructor_value(ty: &Type) -> bool {
-            match ty {
-                Type::Constructor { .. } => true,
-                Type::Apply { constructor, args } => {
-                    closed_constructor_value(constructor)
-                        && args
-                            .iter()
-                            .all(|arg| runtime_type(arg) || closed_constructor_value(arg))
-                }
-                Type::Lambda { body, .. } => {
-                    !crate::type_services::visit::type_any(body, |nested| {
-                        matches!(
-                            nested,
-                            Type::TypeVar(_)
-                                | Type::Generic(_)
-                                | Type::Projection { .. }
-                                | Type::Error
-                        )
-                    })
-                }
-                _ => false,
+    fn closed_constructor_value(ty: &Type) -> bool {
+        match ty {
+            Type::Constructor { .. } => true,
+            Type::Apply { constructor, args } => {
+                Self::closed_constructor_value(constructor)
+                    && args.iter().all(Self::is_concrete_type_argument)
             }
+            Type::Lambda { body, .. } => !crate::type_services::visit::type_any(body, |nested| {
+                matches!(
+                    nested,
+                    Type::TypeVar(_) | Type::Generic(_) | Type::Projection { .. } | Type::Error
+                )
+            }),
+            _ => false,
         }
+    }
 
+    /// Specialization arguments may be closed constructors rather than runtime values.
+    pub fn is_concrete_type_argument(ty: &Type) -> bool {
+        Self::is_codegen_concrete(ty) || Self::closed_constructor_value(ty)
+    }
+
+    pub fn is_codegen_concrete(ty: &Type) -> bool {
         fn runtime_type(ty: &Type) -> bool {
             match ty {
                 Type::Slice(inner) | Type::Array(inner, _) | Type::Pointer(inner) => {
@@ -98,9 +96,9 @@ impl TypeFacts {
                         && runtime_type(ret)
                         && captures.iter().all(|capture| runtime_type(&capture.ty))
                 }
-                Type::Struct { args, .. } | Type::Enum { args, .. } => args
-                    .iter()
-                    .all(|arg| runtime_type(arg) || closed_constructor_value(arg)),
+                Type::Struct { args, .. } | Type::Enum { args, .. } => {
+                    args.iter().all(TypeFacts::is_concrete_type_argument)
+                }
                 Type::TypeVar(_)
                 | Type::Generic(_)
                 | Type::Projection { .. }
@@ -286,6 +284,13 @@ mod tests {
             flavor: crate::types::NominalTypeKind::Enum,
         };
         assert!(!TypeFacts::is_codegen_concrete(&constructor));
+        assert!(TypeFacts::is_concrete_type_argument(&constructor));
+        assert!(!TypeFacts::is_concrete_type_argument(&Type::Generic(
+            crate::types::GenericParamId {
+                owner: crate::ids::DefId::new(crate::ids::CrateId(0), crate::ids::LocalDefId(4)),
+                index: 0,
+            }
+        )));
         assert!(TypeFacts::is_codegen_concrete(&Type::Struct {
             id: crate::ids::DefId::new(crate::ids::CrateId(0), crate::ids::LocalDefId(5)),
             args: vec![constructor, Type::I64],

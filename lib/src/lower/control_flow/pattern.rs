@@ -158,7 +158,7 @@ impl Lowerer {
                                             );
                                             return HirPattern::Wildcard;
                                         }
-                                        Type::TypeVar(_) => {
+                                        Type::TypeVar(_) | Type::Apply { .. } => {
                                             let fresh_type_args: Vec<Type> = enum_info
                                                 .generic_params
                                                 .iter()
@@ -351,7 +351,7 @@ impl Lowerer {
                                 );
                                 return HirPattern::Wildcard;
                             }
-                            Type::TypeVar(_) => {}
+                            Type::TypeVar(_) | Type::Apply { .. } => {}
                             _ => {
                                 let span = identifier_path_span(&inst_pat.name);
                                 self.report_pattern_type_mismatch(
@@ -465,7 +465,7 @@ impl Lowerer {
                                 let resolved_expected_ty = self.engine.resolve(expected_ty);
                                 let scrutinee_type_args = match &resolved_expected_ty {
                                     Type::Enum { id, args } if *id == enum_info.id => args.clone(),
-                                    Type::TypeVar(_) => {
+                                    Type::TypeVar(_) | Type::Apply { .. } => {
                                         let fresh_type_args: Vec<Type> = enum_info
                                             .generic_params
                                             .iter()
@@ -586,7 +586,7 @@ impl Lowerer {
                             {
                                 type_args.clone()
                             }
-                            Type::TypeVar(_) => struct_info
+                            Type::TypeVar(_) | Type::Apply { .. } => struct_info
                                 .as_ref()
                                 .map(|hir_struct| {
                                     hir_struct

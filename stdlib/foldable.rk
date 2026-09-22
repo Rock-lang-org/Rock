@@ -4,3 +4,12 @@
 
 < trait Foldable for F _
     foldl: S -> B -> F A -> B where S: FnMut (B, A), B
+
+foldl: S -> B -> F A -> B where F _: Foldable, S: FnMut (B, A), B
+< foldl = step, initial, values -> F::Foldable::foldl step, initial, values
+
+< trait FoldableValue A
+    ~@foldl: S -> B -> B where S: FnMut (B, A), B
+
+impl FoldableValue A for F A where F _: Foldable
+    ~@foldl = step, initial -> F::Foldable::foldl step, initial, self

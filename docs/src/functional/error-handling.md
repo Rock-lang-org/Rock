@@ -10,13 +10,12 @@ Rock represents expected absence and recoverable failure with ordinary enum valu
 find_even: I64 -> Option I64
 find_even = value ->
     if value % 2 == 0
-        Option::Some value
-    else
-        Option::None
+    then Option::Some value
+    else Option::None
 
 main = !->
-    present: Option I64 = find_even 6
-    absent: Option I64 = find_even 7
+    present = find_even 6
+    absent = find_even 7
     match present
         Option::Some value => value.println!
         Option::None => -1 .println!
@@ -35,13 +34,12 @@ main = !->
 divide: I64 -> I64 -> Result I64, I64
 divide = numerator, denominator ->
     if denominator == 0
-        Result::Err 1
-    else
-        Result::Ok numerator / denominator
+    then Result::Err 1
+    else Result::Ok numerator / denominator
 
 main = !->
-    successful: Result I64, I64 = divide 10, 2
-    failed: Result I64, I64 = divide 10, 0
+    successful = divide 10, 2
+    failed = divide 10, 0
     match successful
         Result::Ok value => value.println!
         Result::Err error => error.println!
@@ -68,12 +66,11 @@ impl Show for ParseError
 parse_nonnegative: I64 -> Result I64, ParseError
 parse_nonnegative = value ->
     if value < 0
-        Result::Err ParseError::Negative
-    else
-        Result::Ok value
+    then Result::Err ParseError::Negative
+    else Result::Ok value
 
 main = !->
-    result: Result I64, ParseError = parse_nonnegative -3
+    result = parse_nonnegative -3
     match result
         Result::Ok value => value.println!
         Result::Err error => error.show!.println!
@@ -88,12 +85,12 @@ Postfix `?` unwraps a successful `Option` or `Result` value and returns early fr
 ```rock
 twice_present: Option I64 -> Option I64
 twice_present = value ->
-    number: I64 = value?
+    number = value?
     Option::Some number * 2
 
 main = !->
-    present: Option I64 = twice_present Option::Some 4
-    absent: Option I64 = twice_present Option::None
+    present = twice_present Option::Some 4
+    absent = twice_present Option::None
     match present
         Option::Some value => value.println!
         Option::None => -1 .println!
@@ -110,20 +107,19 @@ The enclosing return type must implement `FromResidual` for the propagated carri
 positive: I64 -> Result I64, I64
 positive = value ->
     if value < 0
-        Result::Err 1
-    else
-        Result::Ok value
+    then Result::Err 1
+    else Result::Ok value
 
 double_positive: I64 -> Result I64, I64
 double_positive = value ->
-    number: I64 = positive value?
+    number = positive value?
     Result::Ok number * 2
 
 main = !->
-    success: Result I64, I64 = double_positive 4
-    failure: Result I64, I64 = double_positive -4
-    success.unwrap_or 0 |> value -> value.println!
-    failure.unwrap_or 0 |> value -> value.println!
+    success = double_positive 4
+    failure = double_positive -4
+    success.unwrap_or 0 .println!
+    failure.unwrap_or 0 .println!
 ```
 
 The successful path returns `Ok 8`; the failing path returns `Err 1`, and both are handled with `unwrap_or 0`, so the output is `8` and `0`. Ownership follows ordinary return control flow: a value moved into a failed operation is not restored by `?`.
@@ -138,7 +134,7 @@ read = value -> Result::Ok *value
 
 compute: () -> Result I64, I64
 compute = ->
-    value: I64 = 21
+    value = 21
     number = read &value?
     Result::Ok number * 2
 
@@ -159,17 +155,16 @@ increment = value -> value + 1
 keep_even: I64 -> Option I64
 keep_even = value ->
     if value % 2 == 0
-        Option::Some value
-    else
-        Option::None
+    then Option::Some value
+    else Option::None
 
 main = !->
-    mapped: Option I64 = Option::Some 4 .map increment
-    chained: Option I64 = Option::Some 4 .and_then keep_even
-    flattened: Option I64 = Option::Some Option::Some 9 .flatten!
-    mapped.unwrap_or 0 |> value -> value.println!
-    chained.unwrap_or 0 |> value -> value.println!
-    flattened.unwrap_or 0 |> value -> value.println!
+    mapped = Option::Some 4 .map increment
+    chained = Option::Some 4 .and_then keep_even
+    flattened = Option::Some Option::Some 9 .flatten!
+    mapped.unwrap_or 0 .println!
+    chained.unwrap_or 0 .println!
+    flattened.unwrap_or 0 .println!
 ```
 
 `mapped` is `Some 5`, `chained` is `Some 4`, and `flattened` is `Some 9`; the output is `5`, `4`, and `9`. The three source `Option` values are consumed independently and are not reused afterward.
@@ -178,11 +173,11 @@ main = !->
 
 ```rock
 main = !->
-    result: Result I64, I64 = Option::Some 4 .ok_or 1
-    result.unwrap_or 0 |> value -> value.println!
+    result = Option::Some 4 .ok_or 1
+    result.unwrap_or 0 .println!
 ```
 
-`Result` has the same shape for successful values and preserves the concrete error type.
+`Result` has the same shape for successful values and preserves the concrete error type. The annotations below specify the error type, which cannot be inferred from `Result::Ok` alone.
 
 ```rock
 increment: I64 -> I64
@@ -191,10 +186,10 @@ increment = value -> value + 1
 main = !->
     mapped: Result I64, I64 = Result::Ok 4 .map increment
     chained: Result I64, I64 = Result::Ok 4 .and_then value -> Result::Ok value * 2
-    failed: Result I64, I64 = Result::Err 7 .map increment
-    mapped.unwrap_or 0 |> value -> value.println!
-    chained.unwrap_or 0 |> value -> value.println!
-    failed.unwrap_or 0 |> value -> value.println!
+    failed = Result::Err 7 .map increment
+    mapped.unwrap_or 0 .println!
+    chained.unwrap_or 0 .println!
+    failed.unwrap_or 0 .println!
 ```
 
 The output is `5`, `8`, and `0`; the error `7` is preserved in `failed` even though `unwrap_or` chooses the fallback for printing.
@@ -210,19 +205,18 @@ increment = value -> value + 1
 keep_even_option: I64 -> Option I64
 keep_even_option = value ->
     if value % 2 == 0
-        Option::Some value
-    else
-        Option::None
+    then Option::Some value
+    else Option::None
 
 main = !->
-    mapped: Option I64 = Option::Some 4 <&> increment
-    chained: Option I64 = Option::Some 4 >>= keep_even_option
-    fallback: Option I64 = Option::None <|> Option::Some 9
-    converted: Result I64, I64 = Option::Some 4 !> 1
-    mapped.unwrap_or 0 |> value -> value.println!
-    chained.unwrap_or 0 |> value -> value.println!
-    fallback.unwrap_or 0 |> value -> value.println!
-    converted.unwrap_or 0 |> value -> value.println!
+    mapped = Option::Some 4 <&> increment
+    chained = Option::Some 4 >>= keep_even_option
+    fallback = Option::None <|> Option::Some 9
+    converted = Option::Some 4 !> 1
+    mapped.unwrap_or 0 .println!
+    chained.unwrap_or 0 .println!
+    fallback.unwrap_or 0 .println!
+    converted.unwrap_or 0 .println!
 ```
 
 `<&>` maps, `>>=` binds, `<|>` chooses a fallback, `!>` converts an `Option` to a `Result`, and `|>` passes a value to a function. The output is `5`, `4`, `9`, and `4`. These meanings are standard-library definitions, not compiler-owned special cases.
@@ -256,13 +250,12 @@ impl FromResidual MyResidual for MyFlow T
 next: Bool -> MyFlow I64
 next = should_continue ->
     if should_continue
-        MyFlow::Value 41
-    else
-        MyFlow::Stop 7
+    then MyFlow::Value 41
+    else MyFlow::Stop 7
 
 compute: Bool -> MyFlow I64
 compute = should_continue ->
-    value: I64 = next should_continue?
+    value = next should_continue?
     MyFlow::Value value + 1
 
 main = !->

@@ -235,6 +235,17 @@ impl Monomorphizer {
         ) else {
             return false;
         };
+        if target.impl_id() == Some(imp.id) {
+            for binding in &target.owner_substitution {
+                if !crate::selection::type_pattern_matches(
+                    &Type::Generic(binding.param),
+                    &binding.ty,
+                    &mut substitution,
+                ) {
+                    return false;
+                }
+            }
+        }
         imp.trait_arg_types
             .iter()
             .zip(target.trait_args())

@@ -1,6 +1,6 @@
 # Higher-Kinded Types
 
-Ordinary generics abstract over a complete type such as `I64`. Higher-kinded types abstract over a type constructor such as `Option`, `Vec`, or a partially applied `Result`. This chapter uses the exact constructor-hole syntax supported by the current stdlib and integration tests.
+Ordinary generics abstract over a complete type such as `I64`. Higher-kinded types abstract over a type constructor such as `Option`, `Vec`, or a partially applied `Result`. Rock's prelude provides standalone functions and consuming receiver methods for working with these constructors; ordinary calls do not need a qualified trait path.
 
 ## Kinds and Constructor Holes
 
@@ -21,7 +21,7 @@ The `Functor` trait maps a callback over a constructor while preserving its shap
 
 ```rock
 map_any: M -> F A -> F B where F _: Functor, M: FnMut A, B
-map_any = mapper, value -> F::Functor::fmap mapper, value
+map_any = mapper, value -> fmap mapper, value
 
 increment: I64 -> I64
 increment = value -> value + 1
@@ -31,38 +31,38 @@ double = value -> value * 2
 
 make_values: () -> Vec I64
 make_values = ->
-    mut values: Vec I64 = Vec::new!
+    mut values = Vec::new!
     values.push 1
     values.push 2
     values.push 3
     values
 
 main = !->
-    option_result: Option I64 = map_any increment, Option::Some 4
-    vector_result: Vec I64 = map_any double, make_values!
+    option_result = map_any increment, Option::Some 4
+    vector_result = make_values!.fmap double
     option_result.show!.println!
     vector_result.show!.println!
 ```
 
-At the first call, `F = Option`, `A = I64`, and `B = I64`; at the second, `F = Vec`. `map_any` calls the selected constructor's `Functor::fmap`, not a compiler special case. The output is `Some(5)` and `[2, 4, 6]`. Both input carriers are consumed by their mapping operation.
+At the first call, `F = Option`, `A = I64`, and `B = I64`; at the second, the receiver supplies `F = Vec`. The standalone `fmap mapper, value` and receiver form `value.fmap mapper` delegate to the same constructor's `Functor` implementation. The output is `Some(5)` and `[2, 4, 6]`. Both input carriers are consumed by their mapping operation.
 
-The same constructor can be named explicitly when a partially applied type is needed.
+For `Result`, a function signature can fix the error type while the call still infers the constructor:
 
 ```rock
 map_result: M -> Result A, I64 -> Result B, I64 where M: FnMut A, B
-map_result = mapper, value -> (Result _, I64)::Functor::fmap mapper, value
+map_result = mapper, value -> fmap mapper, value
 
 increment: I64 -> I64
 increment = value -> value + 1
 
 main = !->
-    success: Result I64, I64 = map_result increment, Result::Ok 4
-    failure: Result I64, I64 = map_result increment, Result::Err 9
+    success = map_result increment, Result::Ok 4
+    failure = map_result increment, Result::Err 9
     success.show!.println!
     failure.show!.println!
 ```
 
-`Result _, I64` has the required unary kind, while bare `Result` would still require two arguments. The output is `Ok(5)` and `Err(9)`.
+Here the inferred constructor is `Result _, I64`: the error type stays fixed while `fmap` changes the success payload. It has the required unary kind, while bare `Result` would still require two arguments. The output is `Ok(5)` and `Err(9)`. When explicit dispatch is useful, the same operation can be written `(Result _, I64)::Functor::fmap mapper, value`; that qualification is not required at ordinary call sites.
 
 ## Applicative Values
 
@@ -70,23 +70,39 @@ main = !->
 
 ```rock
 repure_any: F I64 -> F I64 where F _: Applicative
-repure_any = ignored -> F::Applicative::pure 2
+repure_any = ignored -> pure 2
 
 apply_any: F (I64 -> I64) -> F I64 -> F I64 where F _: Applicative
 apply_any = wrapped_function, wrapped_value ->
-    F::Applicative::ap wrapped_function, wrapped_value
+    ap wrapped_function, wrapped_value
 
 increment: I64 -> I64
 increment = value -> value + 1
 
 main = !->
-    lifted: Option I64 = repure_any Option::Some 0
-    wrapped: Option (I64 -> I64) = Option::Some increment
-    applied: Option I64 = apply_any wrapped, lifted
+    lifted = repure_any Option::Some 0
+    wrapped = Option::Some increment
+    applied = apply_any wrapped, lifted
     applied.show!.println!
 ```
 
-The inferred constructor is `F = Option`. `repure_any` ignores its input carrier and calls `pure 2`, producing `Some 2`; then `ap` applies `increment`, producing `Some 3`. The output is `Some(3)`.
+The inferred constructor is `F = Option`. `repure_any` ignores its input carrier and calls `pure 2`, producing `Some 2`; then `ap` applies `increment`, producing `Some 3`. The output is `Some(3)`. The receiver form is `wrapped_function.ap wrapped_value`; its receiver is the carrier holding the function.
+
+Unlike `fmap`, `pure` has no input carrier from which to infer its constructor. Its expected return type must supply that information. In `repure_any`, the return signature supplies `F I64`, and the caller fixes `F` through the argument. A concrete return signature works too:
+
+```rock
+make_option: () -> Option I64
+make_option = -> pure 2
+
+make_result: () -> Result I64, I64
+make_result = -> pure 3
+
+main = !->
+    make_option!.show!.println!
+    make_result!.show!.println!
+```
+
+This prints `Some(2)` and `Ok(3)`. Without such context, `pure 2` cannot choose a carrier. `pure` remains a standalone or associated function because it creates a carrier rather than consuming an existing one.
 
 ## Monad Binding
 
@@ -94,18 +110,18 @@ The inferred constructor is `F = Option`. `repure_any` ignores its input carrier
 
 ```rock
 bind_any: F I64 -> M -> F I64 where F _: Monad, M: FnMut I64, (F I64)
-bind_any = value, callback -> F::Monad::bind value, callback
+bind_any = value, callback -> value.bind callback
 
 add_two: I64 -> Option I64
 add_two = value -> Option::Some value + 2
 
 main = !->
-    start: Option I64 = Option::Some 3
-    result: Option I64 = bind_any start, add_two
+    start = Option::Some 3
+    result = bind_any start, add_two
     result.show!.println!
 ```
 
-Here `F = Option` and `M` is the callback type `I64 -> Option I64`. `bind` unwraps `Some 3`, calls `add_two`, and returns `Some 5`. The output is `Some(5)`; a `None` input would skip the callback.
+Here `F = Option` and `M` is the callback type `I64 -> Option I64`. `bind` unwraps `Some 3`, calls `add_two`, and returns `Some 5`. The output is `Some(5)`; a `None` input would skip the callback. The standalone spelling is `bind value, callback`.
 
 ## Foldable and Traversable
 
@@ -120,22 +136,22 @@ increment_effect = value -> Option::Some value + 1
 
 make_values: () -> Vec I64
 make_values = ->
-    mut values: Vec I64 = Vec::new!
+    mut values = Vec::new!
     values.push 1
     values.push 2
     values.push 3
     values
 
 main = !->
-    option_total: I64 = Option::Foldable::foldl fold_digits, 0, Option::Some 4
-    vector_total: I64 = Vec::Foldable::foldl fold_digits, 0, make_values!
-    traversed: Option (Vec I64) = Vec::Traversable::traverse increment_effect, make_values!
+    option_total = foldl fold_digits, 0, Option::Some 4
+    vector_total = make_values!.foldl fold_digits, 0
+    traversed = make_values!.traverse increment_effect
     option_total.println!
     vector_total.println!
     traversed.show!.println!
 ```
 
-The fold over `Some 4` returns `4`; the vector fold computes `123`; and traversal produces `Some([2, 3, 4])`. The output is `4`, `123`, and `Some([2, 3, 4])`. `Vec` supplies `Functor`, `Foldable`, and `Traversable`; its traversal consumes the input vector while constructing a new vector.
+The fold over `Some 4` returns `4`; the vector fold computes `123`; and traversal produces `Some([2, 3, 4])`. The output is `4`, `123`, and `Some([2, 3, 4])`. `Vec` supplies `Functor`, `Foldable`, and `Traversable`; its traversal consumes the input vector while constructing a new vector. The standalone traversal spelling is `traverse increment_effect, make_values!`.
 
 `traverse_m` uses monadic binding instead of applicative application and can stop as soon as an effect fails.
 
@@ -149,18 +165,18 @@ stop_at_two = value ->
 
 make_values: () -> Vec I64
 make_values = ->
-    mut values: Vec I64 = Vec::new!
+    mut values = Vec::new!
     values.push 1
     values.push 2
     values.push 3
     values
 
 main = !->
-    result: Option (Vec I64) = Vec::Traversable::traverse_m stop_at_two, make_values!
+    result = make_values!.traverse_m stop_at_two
     result.show!.println!
 ```
 
-The second callback returns `None`, so traversal stops and the output is `None`.
+The second callback returns `None`, so traversal stops and the output is `None`. The standalone spelling is `traverse_m stop_at_two, make_values!`.
 
 ## Traversing for Effects
 
@@ -168,7 +184,7 @@ Use the standalone `for_each values, action` when the callback exists for effect
 
 ```rock
 main = !->
-    mut total: I64 = 0
+    mut total = 0
     for_each 1..=3, number !->
         total = total + number
     total.println!
@@ -190,10 +206,10 @@ Native `Range` is a concrete integer type, not a unary type constructor. Its ded
 
 ```rock
 main = !->
-    mut effects: Vec (Option I64) = Vec::new!
+    mut effects = Vec::new!
     effects.push Option::Some 4
     effects.push Option::Some 5
-    successful: Option (Vec I64) = sequence effects
+    successful = sequence effects
     match successful
         Option::Some values =>
             values.len!.println!
@@ -202,20 +218,58 @@ main = !->
                 Option::None => 0.println!
         Option::None => 0.println!
 
-    mut failed_effects: Vec (Option I64) = Vec::new!
+    mut failed_effects = Vec::new!
     failed_effects.push Option::Some 1
     failed_effects.push Option::None
     failed_effects.push Option::Some 3
-    failed: Option (Vec I64) = sequence failed_effects
+    failed = failed_effects.sequence!
     match failed
         Option::Some values => values.len!.println!
         Option::None => -1 .println!
 ```
 
-The successful sequence prints `2` and `4`. The sequence containing `None` prints `-1`, because one missing effect makes the whole `Option` result absent. `sequence` consumes both input vectors.
+The successful sequence prints `2` and `4`. The sequence containing `None` prints `-1`, because one missing effect makes the whole `Option` result absent. Both `sequence values` and `values.sequence!` consume the input vector.
+
+## Choosing a Call Style
+
+The standalone functions and receiver methods are available through the prelude:
+
+| Standalone | Receiver |
+| --- | --- |
+| `fmap mapper, value` | `value.fmap mapper` |
+| `ap wrapped_function, wrapped_value` | `wrapped_function.ap wrapped_value` |
+| `bind value, callback` | `value.bind callback` |
+| `foldl step, initial, values` | `values.foldl step, initial` |
+| `traverse action, values` | `values.traverse action` |
+| `traverse_m action, values` | `values.traverse_m action` |
+| `sequence values` | `values.sequence!` |
+
+The receiver APIs are ordinary blanket trait implementations on fully applied values. Implementing the corresponding constructor traits gives a custom carrier these methods automatically. They consume their receivers and preserve the callback bounds of the constructor operations, including `FnMut` where supported. Qualified calls such as `F::Functor::fmap` remain useful inside implementations or when choosing a trait explicitly.
+
+For example, this custom carrier only implements `Functor`; the prelude supplies its `.fmap` method:
+
+```rock
+enum Parcel T
+    Item T
+
+impl Functor for Parcel
+    fmap = mut mapper, value ->
+        match value
+            Parcel::Item item => Parcel::Item (mapper item)
+
+increment: I64 -> I64
+increment = value -> value + 1
+
+main = !->
+    parcel = Parcel::Item 4
+    match parcel.fmap increment
+        Parcel::Item value => value.println!
+```
+
+This prints `5`. The standalone `fmap` function uses the same implementation.
 
 ## Current Limits and Design Guidance
 
-Use `F _` for a unary constructor bound and `Result _, E` when fixing one `Result` parameter. Do not pass a bare binary `Result` where a unary constructor is required. The current stdlib intentionally gives `Vec` no `Applicative` or `Monad` implementation because Cartesian and zipped list semantics would make an arbitrary choice. Ordinary `Option::map` or `Vec::map` is often clearer than a constructor-generic helper used once.
+Use `F _` for a unary constructor bound and `Result _, E` when fixing one `Result` parameter. Do not pass a bare binary `Result` where a unary constructor is required. The current stdlib intentionally gives `Vec` no `Applicative` or `Monad` implementation because Cartesian and zipped list semantics would make an arbitrary choice. Existing `.map` and `.and_then` methods remain useful for concrete containers; `fmap` and `bind` provide a shared vocabulary for constructor-generic code.
 
-The examples here use tested constructor applications and associated trait calls. Explicit type-lambda syntax and custom higher-kinded carriers are not presented as stable teaching forms until a user-facing integration example establishes their complete syntax and ownership behavior.
+The examples here use constructor holes, standalone functions, and receiver methods. Explicit type-lambda syntax is not needed for these APIs.

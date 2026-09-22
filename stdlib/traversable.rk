@@ -10,6 +10,28 @@
     traverse: V -> T A -> G (T B) where G _: Applicative, V: FnMut A, (G B)
     traverse_m: V -> T A -> G (T B) where G _: Monad, V: FnMut A, (G B)
 
+traverse: V -> T A -> G (T B) where T _: Traversable, G _: Applicative, V: FnMut A, (G B)
+< traverse = action, values -> T::Traversable::traverse action, values
+
+traverse_m: V -> T A -> G (T B) where T _: Traversable, G _: Monad, V: FnMut A, (G B)
+< traverse_m = action, values -> T::Traversable::traverse_m action, values
+
+< trait TraversableValue A, Effect
+    type Output
+    ~@traverse: V -> Self::Output where V: FnMut A, Effect
+
+impl TraversableValue A, (G B) for T A where T _: Traversable, G _: Applicative
+    type Output = G (T B)
+    ~@traverse = action -> T::Traversable::traverse action, self
+
+< trait MonadTraversableValue A, Effect
+    type Output
+    ~@traverse_m: V -> Self::Output where V: FnMut A, Effect
+
+impl MonadTraversableValue A, (G B) for T A where T _: Traversable, G _: Monad
+    type Output = G (T B)
+    ~@traverse_m = action -> T::Traversable::traverse_m action, self
+
 traversable_identity: A -> A
 traversable_identity = value -> value
 
@@ -18,3 +40,11 @@ sequence: T (G A) -> G (T A) where T _: Traversable, G _: Applicative
     identity: G A -> G A = traversable_identity
     result: G (T A) = T::Traversable::traverse identity, values
     result
+
+< trait SequenceValue
+    type Output
+    ~@sequence: () -> Self::Output
+
+impl SequenceValue for T (G A) where T _: Traversable, G _: Applicative
+    type Output = G (T A)
+    ~@sequence = -> sequence self

@@ -11059,6 +11059,217 @@ main = ->
 }
 
 #[test]
+fn test_hkt_standalone_and_receiver_operations() {
+    let output = compile_and_run(
+        r#"
+increment: I64 -> I64
+increment = value -> value + 1
+
+some_increment: I64 -> Option I64
+some_increment = value -> pure (value + 1)
+
+digits: (I64, I64) -> I64
+digits = pair -> pair.0 * 10 + pair.1
+
+values: () -> Vec I64
+values = ->
+    mut result = Vec::new!
+    result.push 1
+    result.push 2
+    result
+
+effects: () -> Vec (Option I64)
+effects = -> fmap some_increment, values!
+
+map_generic: M -> F A -> F B where F _: Functor, M: FnMut A, B
+map_generic = mapper, value -> value.fmap mapper
+
+result_value: () -> Result I64, I64
+result_value = -> pure 4
+
+main = !->
+    (fmap increment, Option::Some 4).show!.println!
+    (Option::Some 4).fmap increment .show!.println!
+    (map_generic increment, result_value!).show!.println!
+    (map_generic increment, values!).show!.println!
+    (ap (Option::Some increment), (Option::Some 4)).show!.println!
+    (Option::Some increment).ap (Option::Some 4) .show!.println!
+    (bind (Option::Some 4), some_increment).show!.println!
+    (Option::Some 4).bind some_increment .show!.println!
+    (foldl digits, 0, values!).println!
+    values!.foldl digits, 0 .println!
+    (traverse some_increment, values!).show!.println!
+    values!.traverse some_increment .show!.println!
+    (traverse_m some_increment, values!).show!.println!
+    values!.traverse_m some_increment .show!.println!
+    (sequence effects!).show!.println!
+    effects!.sequence!.show!.println!
+"#,
+    );
+
+    assert_eq!(
+        output.lines().collect::<Vec<_>>(),
+        vec![
+            "Some(5)",
+            "Some(5)",
+            "Ok(5)",
+            "[2, 3]",
+            "Some(5)",
+            "Some(5)",
+            "Some(5)",
+            "Some(5)",
+            "12",
+            "12",
+            "Some([2, 3])",
+            "Some([2, 3])",
+            "Some([2, 3])",
+            "Some([2, 3])",
+            "Some([2, 3])",
+            "Some([2, 3])",
+        ]
+    );
+}
+
+#[test]
+fn test_hkt_receiver_custom_carrier_and_owned_mutable_callbacks() {
+    let output = compile_and_run(
+        r#"
+enum Parcel T
+    Item T
+
+impl Functor for Parcel
+    fmap = mut mapper, value ->
+        match value
+            Parcel::Item item => Parcel::Item (mapper item)
+
+string_length: String -> I64
+string_length = value -> value.len!
+
+main = !->
+    parcel = Parcel::Item (String::from_str "hello")
+    match parcel.fmap string_length
+        Parcel::Item length => length.println!
+    match fmap string_length, Parcel::Item (String::from_str "world")
+        Parcel::Item length => length.println!
+
+    mut total = 0
+    mut values = Vec::new!
+    values.push 1
+    values.push 2
+    mapped = values.fmap (value ->
+        total = total + value
+        total)
+    mapped.show!.println!
+    total.println!
+
+    mut words = Vec::new!
+    words.push (String::from_str "one")
+    words.push (String::from_str "four")
+    words.fmap string_length .show!.println!
+"#,
+    );
+    assert_eq!(
+        output.lines().collect::<Vec<_>>(),
+        vec!["5", "5", "[1, 3]", "3", "[3, 4]"]
+    );
+}
+
+#[test]
+fn test_hkt_receiver_failure_paths_and_constructor_sections() {
+    let output = compile_and_run(
+        r#"
+increment: I64 -> I64
+increment = value -> value + 1
+
+success: I64 -> Result I64, String
+success = value -> pure value
+
+some: I64 -> Option I64
+some = value -> pure value
+
+stop: I64 -> Result I64, String
+stop = value ->
+    value.println!
+    if value == 2
+        Result::Err (String::from_str "stop")
+    else
+        pure (value + 1)
+
+values: () -> Vec I64
+values = ->
+    mut items = Vec::new!
+    items.push 1
+    items.push 2
+    items.push 3
+    items
+
+bind_generic: F A -> M -> F B where F _: Monad, M: FnMut A, (F B)
+bind_generic = value, callback -> value.bind callback
+
+main = !->
+    failed: Result I64, String = Result::Err (String::from_str "error")
+    failed.fmap increment .show!.println!
+    absent = Option::None
+    absent.fmap increment .show!.println!
+    absent_bind = Option::None
+    absent_bind.bind some .show!.println!
+    (bind_generic (success 4), success).show!.println!
+    wrapped: Result (I64 -> I64), String = pure increment
+    wrapped.ap (success 4) .show!.println!
+    (success 4).traverse success .unwrap_or (success 0) .unwrap_or 0 .println!
+    (success 4).traverse_m success .unwrap_or (success 0) .unwrap_or 0 .println!
+    values!.traverse_m stop .show!.println!
+    mut effects = Vec::new!
+    effects.push (success 1)
+    effects.push (Result::Err (String::from_str "error"))
+    effects.sequence!.show!.println!
+"#,
+    );
+    assert_eq!(
+        output.lines().collect::<Vec<_>>(),
+        vec![
+            "Err(error)",
+            "None",
+            "None",
+            "Ok(4)",
+            "Ok(5)",
+            "4",
+            "4",
+            "1",
+            "2",
+            "Err(stop)",
+            "Err(error)",
+        ]
+    );
+}
+
+#[test]
+fn test_hkt_pure_requires_constructor_context() {
+    compile_should_fail(
+        r#"
+main = !->
+    value = pure 4
+"#,
+        "ambiguous",
+    );
+}
+
+#[test]
+fn test_hkt_receiver_fmap_consumes_owned_source() {
+    compile_should_fail(
+        r#"
+main = !->
+    mut values = Vec::new!
+    values.push 1
+    mapped = values.fmap (value -> value + 1)
+    values.len!.println!
+    mapped.show!.println!
+"#,
+        "borrow of moved value",
+    );
+}
+
+#[test]
 fn test_hkt_foldable_and_traversable() {
     let output = compile_and_run(
         r#"

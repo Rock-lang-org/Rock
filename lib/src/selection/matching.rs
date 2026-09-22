@@ -93,9 +93,65 @@ pub fn impl_receiver_pattern_substitution<'a, P: crate::hir::HirPhase + 'a>(
     if let Some(subst) = receiver_pattern_substitution(pattern, actual) {
         return Some(subst);
     }
-    let HirImplReceiverPattern::Exact(Type::Apply { constructor, args }) = pattern else {
+    let HirImplReceiverPattern::Exact(expected) = pattern else {
         return None;
     };
+    let impls = impls.into_iter().collect::<Vec<_>>();
+    bounded_receiver_substitution(imp, expected, actual, &impls)
+}
+
+fn bounded_receiver_substitution<P: crate::hir::HirPhase>(
+    imp: &crate::hir::HirImplFor<P>,
+    expected: &Type,
+    actual: &Type,
+    impls: &[&crate::hir::HirImplFor<P>],
+) -> Option<HashMap<GenericParamId, Type>> {
+    let mut subst = HashMap::new();
+    if type_pattern_matches(expected, actual, &mut subst) {
+        return Some(subst);
+    }
+    // Constructor arguments can themselves be constructor applications, as in
+    // T (G A). Resolve each nested head from its own bounds before validating
+    // the whole receiver, including repeated generic parameters.
+    if let (
+        Type::Struct {
+            id: left,
+            args: expected_args,
+        }
+        | Type::Enum {
+            id: left,
+            args: expected_args,
+        },
+        Type::Struct {
+            id: right,
+            args: actual_args,
+        }
+        | Type::Enum {
+            id: right,
+            args: actual_args,
+        },
+    ) = (expected, actual)
+    {
+        if left != right || expected_args.len() != actual_args.len() {
+            return None;
+        }
+        for (expected_arg, actual_arg) in expected_args.iter().zip(actual_args) {
+            let nested = bounded_receiver_substitution(
+                imp,
+                &expected_arg.substitute_generics(&subst),
+                actual_arg,
+                impls,
+            )?;
+            subst.extend(nested);
+        }
+        return type_pattern_matches(expected, actual, &mut subst).then_some(subst);
+    }
+    let Type::Apply { constructor, args } = expected else {
+        return None;
+    };
+    if let Some(applied) = apply_constructor_pattern(constructor, args) {
+        return bounded_receiver_substitution(imp, &applied, actual, impls);
+    }
     let Type::Generic(head) = constructor.as_ref() else {
         return None;
     };
@@ -120,19 +176,25 @@ pub fn impl_receiver_pattern_substitution<'a, P: crate::hir::HirPhase + 'a>(
             let Some(applied) = apply_constructor_pattern(&target, args) else {
                 continue;
             };
-            let mut subst = HashMap::from([(*head, target)]);
-            if !type_pattern_matches(&applied, actual, &mut subst)
-                || !constructor_impl
-                    .trait_arg_types
-                    .iter()
-                    .zip(&bound.type_args)
-                    .all(|(expected, required)| {
-                        type_pattern_matches(
-                            expected,
-                            &required.substitute_generics(&subst),
-                            &mut target_subst,
-                        )
-                    })
+            let Some(mut subst) = bounded_receiver_substitution(imp, &applied, actual, impls)
+            else {
+                continue;
+            };
+            if subst.get(head).is_some_and(|existing| *existing != target) {
+                continue;
+            }
+            subst.insert(*head, target);
+            if !constructor_impl
+                .trait_arg_types
+                .iter()
+                .zip(&bound.type_args)
+                .all(|(expected, required)| {
+                    type_pattern_matches(
+                        expected,
+                        &required.substitute_generics(&subst),
+                        &mut target_subst,
+                    )
+                })
             {
                 continue;
             }
@@ -874,6 +936,53 @@ mod tests {
             [&result, &other_section]
         )
         .is_none());
+
+        let inner = GenericParamId {
+            owner: def_id(80),
+            index: 2,
+        };
+        let nested_pattern = |inner_head| {
+            HirImplReceiverPattern::Exact(Type::Apply {
+                constructor: Box::new(Type::Generic(head)),
+                args: vec![Type::Apply {
+                    constructor: Box::new(Type::Generic(inner_head)),
+                    args: vec![Type::Generic(item)],
+                }],
+            })
+        };
+        blanket.receiver_pattern = nested_pattern(inner);
+        let inner_bounds = blanket.bounds[&head].clone();
+        blanket.bounds.insert(inner, inner_bounds);
+        let nested_value = Type::Enum {
+            id: def_id(84),
+            args: vec![result_value],
+        };
+        let substitution =
+            impl_receiver_pattern_substitution(&blanket, &nested_value, [&option, &result])
+                .unwrap();
+        assert_eq!(substitution[&item], Type::I64);
+        assert_eq!(substitution[&inner], section(true));
+        assert_eq!(
+            substitution[&head],
+            Type::Constructor {
+                id: def_id(84),
+                flavor: NominalTypeKind::Enum,
+            }
+        );
+        assert!(impl_receiver_pattern_substitution(&blanket, &nested_value, [&option]).is_none());
+        assert!(impl_receiver_pattern_substitution(
+            &blanket,
+            &nested_value,
+            [&option, &result, &other_section]
+        )
+        .is_none());
+
+        // A repeated head must denote the same constructor at both levels.
+        blanket.receiver_pattern = nested_pattern(head);
+        assert!(
+            impl_receiver_pattern_substitution(&blanket, &nested_value, [&option, &result])
+                .is_none()
+        );
     }
 
     #[test]

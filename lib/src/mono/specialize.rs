@@ -93,7 +93,7 @@ impl Monomorphizer {
         Some((instance_id, specialized_func_type, specialized_ret_type))
     }
 
-    fn bounded_constructor_target(
+    pub(super) fn bounded_constructor_target(
         &self,
         generic_func: &HirFunction,
         param_ty: &Type,
@@ -670,12 +670,22 @@ impl Monomorphizer {
         let generic_ids = Self::generic_ids_for_function(generic_func);
         if let Type::Function {
             params: concrete_params,
+            ret: concrete_ret,
             ..
         } = concrete_ty
         {
-            for (param, concrete_param) in generic_func.params.iter().zip(concrete_params) {
+            for (param_ty, concrete_param) in generic_func
+                .params
+                .iter()
+                .map(|param| &param.ty)
+                .zip(concrete_params)
+                .chain(std::iter::once((
+                    &generic_func.ret_type,
+                    concrete_ret.as_ref(),
+                )))
+            {
                 let Some((constructor_id, target)) =
-                    self.bounded_constructor_target(generic_func, &param.ty, concrete_param)
+                    self.bounded_constructor_target(generic_func, param_ty, concrete_param)
                 else {
                     continue;
                 };
@@ -956,6 +966,25 @@ mod tests {
             .expect("concrete function value should infer all generic arguments");
         assert_eq!(mono.type_for(function_value_args[0]), section(Type::Bool));
         assert_eq!(mono.type_for(function_value_args[1]), Type::I64);
+
+        // A constructor may appear only in the return type (for example pure).
+        let mut producer = function;
+        producer.ret_type = producer.params[0].ty.clone();
+        producer.params[0].ty = Type::Generic(a.id);
+        let producer_args = mono
+            .extract_type_args_from_expr_type(
+                &producer,
+                &Type::function(
+                    vec![Type::I64],
+                    Type::Enum {
+                        id: result_id,
+                        args: vec![Type::I64, Type::Bool],
+                    },
+                ),
+            )
+            .expect("return context should select the bound constructor section");
+        assert_eq!(mono.type_for(producer_args[0]), section(Type::Bool));
+        assert_eq!(mono.type_for(producer_args[1]), Type::I64);
     }
 
     #[test]

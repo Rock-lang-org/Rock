@@ -1199,6 +1199,53 @@ fn test_stdlib_product_artifact_links_arithmetic_operator_impl_methods() {
 }
 
 #[test]
+fn test_hkt_receiver_authority_survives_artifact_round_trip() {
+    let temp_dir = temp_test_dir("hkt_receiver_artifact");
+    let _cleanup = TestDirCleanup(temp_dir.clone());
+    let dep_dir = temp_dir.join("dep");
+    let artifact_path = temp_dir.join("dep.rkca");
+    let stdlib = shared_stdlib_product_artifact();
+    write_crate(
+        &dep_dir,
+        "dep",
+        "",
+        r#"
+some_increment: I64 -> Option I64
+some_increment = value -> pure (value + 1)
+
+compute: () -> I64
+< compute = ->
+    mut values = Vec::new!
+    values.push 4
+    values.push 5
+    traversed = values.traverse some_increment
+    match traversed
+        Option::Some items => items.foldl (pair -> pair.0 + pair.1), 0
+        Option::None => 0
+"#,
+    );
+    build_product_artifact_with_extern_artifacts(
+        &dep_dir,
+        "dep",
+        &artifact_path,
+        true,
+        false,
+        vec![("stdlib".to_string(), stdlib.clone())],
+    );
+    delete_crate_source_files(&dep_dir);
+    assert_eq!(
+        write_and_run_artifact_app(
+            "> dep::compute\n\nmain = -> compute!\n",
+            vec![
+                ("stdlib".to_string(), stdlib),
+                ("dep".to_string(), artifact_path)
+            ],
+        ),
+        11
+    );
+}
+
+#[test]
 fn test_product_artifact_links_concrete_trait_impl_method() {
     let temp_dir = temp_test_dir("concrete_trait_impl_method_artifact");
     let dep_dir = temp_dir.join("dep");

@@ -91,6 +91,24 @@ impl Lowerer {
             .substituted_params
             .get(index)
             .and_then(|parameter| self.selected_callable_parameter_types(selected, parameter));
+        if let (Some(params), Some(function)) = (&mut expected, &selected.function) {
+            // Method-local generics are inference variables at a call site, not
+            // rigid parameters in the caller's lambda body.
+            let substitution = function
+                .generic_params
+                .iter()
+                .map(|param| {
+                    (
+                        param.id,
+                        self.engine
+                            .fresh_type_var_at_kind(lambda.span.clone(), param.kind.clone()),
+                    )
+                })
+                .collect();
+            for param in params {
+                *param = param.substitute_generics(&substitution);
+            }
+        }
         if lambda.parameters.len() == 1 {
             if let Some(params) = &mut expected {
                 if params.len() > 1 {
