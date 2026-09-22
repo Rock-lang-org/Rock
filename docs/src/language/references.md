@@ -11,9 +11,9 @@ length: &String -> I64
 length = text -> text.len!
 
 main = !->
-    name: String = String::from_str "Rock"
-    first: I64 = length &name
-    second: I64 = length &name
+    name = String::from_str "Rock"
+    first = length &name
+    second = length &name
     first.println!
     second.println!
     name.println!
@@ -25,7 +25,7 @@ A shared reference can be copied as a reference, but every alias keeps the borro
 
 ```rock
 main = !->
-    mut number: I64 = 1
+    mut number = 1
     first = &number
     second = first
     *first .println!
@@ -42,12 +42,11 @@ Create an exclusive borrow with `&mut`. The owner binding must be mutable, and n
 
 ```rock
 increment: &mut I64 -> ()
-increment = value ->
+increment = value !->
     *value = *value + 1
-    return
 
 main = !->
-    mut count: I64 = 4
+    mut count = 4
     increment &mut count
     count.println!
 ```
@@ -65,9 +64,9 @@ read: &I64 -> I64
 read = value -> *value
 
 main = !->
-    number: I64 = 17
+    number = 17
     borrowed = &number
-    result: I64 = read borrowed
+    result = read borrowed
     result.println!
 ```
 
@@ -88,7 +87,7 @@ impl Counter
 main = !->
     counter = Counter
         value: 12
-    result: I64 = counter.read!
+    result = counter.read!
     result.println!
 ```
 
@@ -100,13 +99,12 @@ A mutable reference can be temporarily reborrowed. The shorter reborrow must fin
 
 ```rock
 show_and_set: &mut I64 -> ()
-show_and_set = value ->
+show_and_set = value !->
     *value = 2
     *value .println!
-    return
 
 main = !->
-    mut value: I64 = 1
+    mut value = 1
     original = &mut value
     temporary = &mut *original
     show_and_set temporary
@@ -120,7 +118,7 @@ A reference cannot outlive its referent. Rock ends a borrow after its final use 
 
 ```rock
 main = !->
-    mut number: I64 = 1
+    mut number = 1
     view = &number
     *view .println!
     number = 2
@@ -143,9 +141,9 @@ show_option = option ->
         Option::None => 0
 
 main = !->
-    value: Option String = Option::Some String::from_str "hello"
-    first: I64 = show_option &value
-    second: I64 = show_option &value
+    value = Option::Some String::from_str "hello"
+    first = show_option &value
+    second = show_option &value
     first.println!
     second.println!
 ```
@@ -165,9 +163,8 @@ impl Counter
     @get = -> @value
 
     ^@increment: ()
-    ^@increment = ->
+    ^@increment = !->
         self.value = self.value + 1
-        return
 
     ~@finish: I64
     ~@finish = -> self.value

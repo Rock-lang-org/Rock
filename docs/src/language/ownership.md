@@ -8,8 +8,8 @@ The compiler knows that primitive values such as `I64` and `Bool` can be copied.
 
 ```rock
 main = !->
-    first: I64 = 42
-    second: I64 = first
+    first = 42
+    second = first
     first.println!
     second.println!
 ```
@@ -27,8 +27,8 @@ string_length: String -> I64
 string_length = text -> text.len!
 
 main = !->
-    name: String = String::from_str "Rock"
-    length: I64 = string_length name
+    name = String::from_str "Rock"
+    length = string_length name
     length.println!
 ```
 
@@ -45,8 +45,8 @@ measure: &String -> I64
 measure = text -> text.len!
 
 main = !->
-    name: String = String::from_str "Rock"
-    length: I64 = measure &name
+    name = String::from_str "Rock"
+    length = measure &name
     length.println!
     name.println!
 ```
@@ -64,10 +64,10 @@ string_length: String -> I64
 string_length = text -> text.len!
 
 main = !->
-    mut words: Vec String = Vec::new!
+    mut words = Vec::new!
     words.push String::from_str "a"
     words.push String::from_str "long"
-    lengths: Vec I64 = words.map string_length
+    lengths = words.map string_length
     lengths[0].println!
     lengths[1].println!
 ```
@@ -91,9 +91,8 @@ impl Counter
     @read = -> @value
 
     ^@set: I64 -> ()
-    ^@set = value ->
+    ^@set = value !->
         self.value = value
-        return
 
     ~@take: I64
     ~@take = -> self.value
@@ -115,8 +114,8 @@ main = !->
 
 ```rock
 main = !->
-    first: String = String::from_str "owned"
-    second: String = first.clone!
+    first = String::from_str "owned"
+    second = first.clone!
     first.println!
     second.println!
 ```
@@ -132,8 +131,7 @@ make_message: () -> String
 make_message = -> String::from_str "temporary"
 
 main = !->
-    message: String = make_message!
-    message.len!.println!
+    make_message!.len!.println!
 ```
 
 `make_message!` returns ownership of a `String` to `main`. `main` owns it until the function ends, after printing `9`. There is no implicit exception unwinding in Rock; errors are ordinary `Result` values and cleanup follows explicit control flow.
@@ -174,10 +172,8 @@ main = !->
         first: String::from_str "Ada"
         second: String::from_str "Lovelace"
 
-    first_length: I64 = take_length names.first
-    second_length: I64 = names.second.len!
-    first_length.println!
-    second_length.println!
+    take_length names.first .println!
+    names.second.len! .println!
 ```
 
 `take_length names.first` moves only the first `String`. The second field remains initialized and prints length `8`; trying to use `names.first` or move the complete `names` value afterward would be rejected. If `Names` itself implemented `Drop`, moving out one field could be rejected because cleanup would otherwise receive a partially initialized owner.
