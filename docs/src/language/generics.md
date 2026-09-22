@@ -15,7 +15,7 @@ enum Choice A, B
     Second B
 
 main = !->
-    number: Wrapper I64 = Wrapper
+    number = Wrapper
         value: 7
     text: Choice I64, &Str = Choice::Second "rock"
     number.value.println!
@@ -24,7 +24,7 @@ main = !->
         Choice::Second value => value.println!
 ```
 
-The concrete type of `number` is `Wrapper I64`, so `number.value` is `I64`. The concrete type of `text` is `Choice I64, &Str`, and its selected payload is `&Str`. The output is `7` and `rock`.
+The concrete type of `number` is `Wrapper I64`, so `number.value` is `I64`. The concrete type of `text` is `Choice I64, &Str`, and its selected payload is `&Str`. The annotation on `text` is needed because `Second` provides no value from which to infer the `First` payload type. The output is `7` and `rock`.
 
 Generic arguments are written with spaces and commas, not angle brackets: `Wrapper I64` and `Choice I64, &Str`.
 
@@ -37,8 +37,8 @@ identity: T -> T
 identity = value -> value
 
 main = !->
-    number: I64 = identity 42
-    flag: Bool = identity true
+    number = identity 42
+    flag = identity true
     number.println!
     flag.println!
 ```
@@ -78,9 +78,8 @@ show_value: &T -> String where T: Show
 show_value = value -> value.show!
 
 main = !->
-    number: I64 = 42
-    text: String = show_value &number
-    text.println!
+    number = 42
+    show_value &number .println!
 ```
 
 Here `T` is inferred as `I64`; `I64` implements `Show`, and `show_value` returns a `String` containing `42`.
@@ -97,9 +96,8 @@ impl EchoArray for [T; 3]
     @echo = value -> value
 
 main = !->
-    values: [I64; 3] = [7, 8, 9]
-    echoed: I64 = values.echo 7
-    echoed.println!
+    values = [7, 8, 9]
+    values.echo 7 .println!
 ```
 
 The receiver establishes `T = I64` and matches the required array length of three. The trait declares the argument and result of `echo` as `I64` independently of `T`; the method returns its argument, so the output is `7`. A generic implementation is not a promise that every possible instantiation works; its own bounds and receiver shape still have to match.
@@ -115,8 +113,7 @@ identity: Number -> Number
 identity = value -> value
 
 main = !->
-    value: Number = identity 42
-    value.println!
+    identity 42 .println!
 ```
 
 `Number` is an alias for `I64`, so `identity` accepts and returns `I64`. The output is `42`. Use a struct or enum when a distinct type is required.
@@ -138,8 +135,7 @@ impl Projector for Identity
 
 main = !->
     identity = Identity
-    value: I64 = identity.project 13
-    value.println!
+    identity.project 13 .println!
 ```
 
 The implementation fixes `Identity::Output` to `I64`, so the argument and result of `project` are both `I64`. The output is `13`. An implementation must define every associated type required by its trait.

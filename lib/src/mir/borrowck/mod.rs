@@ -1952,7 +1952,11 @@ impl BorrowChecker {
                     );
                 }
                 AccessKind::BorrowMut => {
-                    if event.place.projection.is_empty()
+                    if !event
+                        .place
+                        .projection
+                        .iter()
+                        .any(|projection| matches!(projection, crate::mir::Projection::Deref))
                         && event.place.local.0 < func.local_decls.len()
                         && func.local_decls[event.place.local.0]
                             .source

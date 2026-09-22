@@ -11,6 +11,65 @@ use crate::mir::{
 };
 
 impl<'a> MirBuilder<'a> {
+    fn lower_indirect_callee(&mut self, callee: &HirExpr) -> Operand {
+        let span = Some(callee.span.clone());
+        let mut function_ty = &callee.ty;
+        let mut derefs = 0;
+        while let Type::Reference { inner, .. } = function_ty {
+            function_ty = inner;
+            derefs += 1;
+        }
+        let kind = match function_ty {
+            Type::Function { callable_kind, .. } => *callable_kind,
+            _ => unreachable!("accepted indirect callee must be a function"),
+        };
+        let mut place = if let Some(place) = self.lower_place(callee) {
+            place
+        } else {
+            let temp = self.new_local_from_expr(callee.ty.clone(), callee);
+            self.register_scoped_temp(temp);
+            self.emit_storage_live(temp, span.clone());
+            let place = Place {
+                local: temp,
+                projection: Vec::new(),
+            };
+            self.lower_expr(callee, place.clone());
+            place
+        };
+        place
+            .projection
+            .extend((0..derefs).map(|_| Projection::Deref));
+        if kind == crate::types::CallableKind::FnOnce {
+            return self.operand_for_place(function_ty, place, false);
+        }
+        let mutable = kind == crate::types::CallableKind::FnMut;
+        let reference_ty = Type::Reference {
+            mutable,
+            inner: Box::new(function_ty.clone()),
+        };
+        let reference = self.new_local_from_expr(reference_ty, callee);
+        let reference_place = Place {
+            local: reference,
+            projection: Vec::new(),
+        };
+        self.emit_assign(
+            reference_place,
+            Rvalue::Ref(
+                if mutable {
+                    Mutability::Mut
+                } else {
+                    Mutability::Not
+                },
+                place,
+            ),
+            span,
+        );
+        Operand::Copy(Place {
+            local: reference,
+            projection: vec![Projection::Deref],
+        })
+    }
+
     pub(super) fn lower_expr_with_context(
         &mut self,
         expr: &HirExpr,
@@ -637,6 +696,12 @@ impl<'a> MirBuilder<'a> {
                 let direct_move_receiver_call =
                     matches!(receiver_mode, Some(crate::types::ReceiverMode::Move));
 
+                let func_operand = if let Some(callable) = callable {
+                    Operand::Constant(Constant::Callable(callable))
+                } else {
+                    self.lower_indirect_callee(func)
+                };
+
                 let mut arg_operands = Vec::new();
                 for (index, arg) in call_args.into_iter().enumerate() {
                     let borrowed_receiver = index == 0
@@ -645,6 +710,10 @@ impl<'a> MirBuilder<'a> {
                             .and_then(|types| types.get(index - user_arg_offset))
                             .is_none_or(|expected| expected != &arg.ty);
                     let move_receiver = index == 0 && direct_move_receiver_call;
+                    let reborrowed_receiver = index == 0
+                        && direct_borrowed_receiver_call
+                        && !borrowed_receiver
+                        && matches!(arg.ty, Type::Reference { .. });
                     let expected_arg_ty = if index < user_arg_offset {
                         None
                     } else {
@@ -665,14 +734,17 @@ impl<'a> MirBuilder<'a> {
                         local: arg_temp,
                         projection: vec![],
                     };
-                    if borrowed_receiver {
-                        let mutability =
-                            if matches!(receiver_mode, Some(crate::types::ReceiverMode::Mut)) {
-                                Mutability::Mut
-                            } else {
-                                Mutability::Not
-                            };
-                        if let Some(place) = self.lower_place(arg) {
+                    if borrowed_receiver || reborrowed_receiver {
+                        let mutability = if matches!(arg_ty, Type::Reference { mutable: true, .. })
+                        {
+                            Mutability::Mut
+                        } else {
+                            Mutability::Not
+                        };
+                        if let Some(mut place) = self.lower_place(arg) {
+                            if reborrowed_receiver {
+                                place.projection.push(Projection::Deref);
+                            }
                             self.emit_assign(
                                 arg_place.clone(),
                                 Rvalue::Ref(mutability, place),
@@ -687,6 +759,10 @@ impl<'a> MirBuilder<'a> {
                                 projection: vec![],
                             };
                             self.lower_expr(arg, base_place.clone());
+                            let mut base_place = base_place;
+                            if reborrowed_receiver {
+                                base_place.projection.push(Projection::Deref);
+                            }
                             self.emit_assign(
                                 arg_place.clone(),
                                 Rvalue::Ref(mutability, base_place),
@@ -709,25 +785,6 @@ impl<'a> MirBuilder<'a> {
                     }
                     arg_operands.push(self.operand_for_place(&arg_ty, arg_place, false));
                 }
-
-                let func_operand = if let Some(callable) = callable {
-                    Operand::Constant(Constant::Callable(callable))
-                } else {
-                    let func_temp = self.new_local_from_expr(func.ty.clone(), func);
-                    let mut func_place = Place {
-                        local: func_temp,
-                        projection: vec![],
-                    };
-                    self.lower_expr(func, func_place.clone());
-                    if matches!(
-                        &func.ty,
-                        Type::Reference { inner, .. }
-                            if matches!(inner.as_ref(), Type::Function { .. })
-                    ) {
-                        func_place.projection.push(Projection::Deref);
-                    }
-                    Operand::Copy(func_place)
-                };
 
                 let merge_block = self.new_block();
 

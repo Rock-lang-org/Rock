@@ -81,6 +81,7 @@ impl Monomorphizer {
         &mut self,
         mut program: super::hir_types::HirProgram,
     ) -> super::hir_types::HirProgram {
+        self.language_items = program.language_items.clone();
         let canonical_names_by_id = Self::canonical_names_from_indexes(&program);
         self.drop_trait_id = program
             .language_items
@@ -453,6 +454,13 @@ impl Monomorphizer {
                 self.process_expr(recv);
                 for arg in &mut *args {
                     self.process_expr(arg);
+                }
+
+                if let Some(adapter) =
+                    self.native_callable_adapter(recv, args, &selected_target, &expr.ty, &expr.span)
+                {
+                    *expr = adapter;
+                    return;
                 }
 
                 let processed_recv = recv.as_ref().clone();

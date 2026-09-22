@@ -85,6 +85,7 @@ impl Monomorphizer {
         program: &mut super::hir_types::HirProgram,
         crate_ctx: &CrateContext,
     ) {
+        self.language_items = program.language_items.clone();
         self.dependency_resolvers = crate_ctx
             .extern_crates()
             .map(|dep| dep.metadata().resolver().clone())

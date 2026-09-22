@@ -1394,7 +1394,10 @@ impl Lowerer {
                         defined,
                         used,
                         capture_kinds,
-                        current_kind,
+                        Self::lambda_capture_kind_for_value(
+                            &self.engine.resolve(&value.ty),
+                            current_kind,
+                        ),
                     );
                     defined.insert(name.clone());
                 }
@@ -1403,21 +1406,30 @@ impl Lowerer {
                     defined,
                     used,
                     capture_kinds,
-                    current_kind,
+                    Self::lambda_capture_kind_for_value(
+                        &self.engine.resolve(&expr.ty),
+                        current_kind,
+                    ),
                 ),
                 HirStmt::Return(Some(expr)) => self.collect_lambda_captures_expr(
                     expr,
                     defined,
                     used,
                     capture_kinds,
-                    current_kind,
+                    Self::lambda_capture_kind_for_value(
+                        &self.engine.resolve(&expr.ty),
+                        current_kind,
+                    ),
                 ),
                 HirStmt::Break(Some(expr)) => self.collect_lambda_captures_expr(
                     expr,
                     defined,
                     used,
                     capture_kinds,
-                    current_kind,
+                    Self::lambda_capture_kind_for_value(
+                        &self.engine.resolve(&expr.ty),
+                        current_kind,
+                    ),
                 ),
                 _ => {}
             }
@@ -1478,7 +1490,22 @@ impl Lowerer {
                 self.collect_lambda_captures_expr(inner, defined, used, capture_kinds, ref_kind);
             }
             HirExprKind::Call(func, args, _) => {
-                self.collect_lambda_captures_expr(func, defined, used, capture_kinds, current_kind);
+                let mut function_ty = self.engine.resolve(&func.ty);
+                while let Type::Reference { inner, .. } = function_ty {
+                    function_ty = *inner;
+                }
+                let callee_kind = match function_ty {
+                    Type::Function {
+                        callable_kind: crate::types::CallableKind::FnMut,
+                        ..
+                    } => HirClosureCaptureKind::MutableBorrow,
+                    Type::Function {
+                        callable_kind: crate::types::CallableKind::FnOnce,
+                        ..
+                    } => HirClosureCaptureKind::Move,
+                    _ => HirClosureCaptureKind::SharedBorrow,
+                };
+                self.collect_lambda_captures_expr(func, defined, used, capture_kinds, callee_kind);
                 let expected_params = match &func.ty {
                     Type::Function { params, .. } => Some(params.as_slice()),
                     _ => None,
@@ -1497,7 +1524,9 @@ impl Lowerer {
                 let recv_kind = match self_receiver {
                     Some(crate::types::ReceiverMode::Move) => HirClosureCaptureKind::Move,
                     Some(crate::types::ReceiverMode::Mut) => HirClosureCaptureKind::MutableBorrow,
-                    Some(crate::types::ReceiverMode::Shared) | None => current_kind,
+                    Some(crate::types::ReceiverMode::Shared) | None => {
+                        HirClosureCaptureKind::SharedBorrow
+                    }
                 };
                 self.collect_lambda_captures_expr(recv, defined, used, capture_kinds, recv_kind);
                 for arg in args {

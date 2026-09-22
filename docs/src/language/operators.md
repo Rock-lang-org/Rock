@@ -8,17 +8,17 @@ With the standard library prelude, ordinary operators are selected from the oper
 
 ```rock
 main = !->
-    sum: I64 = 2 + 3
-    same: Bool = sum == 5
-    low: I64 = 2
-    high: I64 = 8
-    inside: Bool = sum >= low && sum <= high
+    sum = 2 + 3
+    same = sum == 5
+    low = 2
+    high = 8
+    inside = sum >= low && sum <= high
     sum.println!
     same.println!
     inside.println!
 ```
 
-The declared result types are `I64`, `Bool`, and `Bool`; the output is `5`, `true`, and `true`. Removing those local annotations would let the same operand and operator constraints infer the types. If no implementation matches the operand types, compilation fails instead of applying a hidden built-in conversion.
+The inferred types of `sum`, `same`, and `inside` are `I64`, `Bool`, and `Bool`; the output is `5`, `true`, and `true`. Operand and operator constraints determine these types without local annotations. If no implementation matches the operand types, compilation fails instead of applying a hidden built-in conversion.
 
 ## Declaring Precedence and Defining a Function
 
@@ -31,7 +31,7 @@ infix 9 %%
 %% = left, right -> left - right
 
 main = !->
-    result: I64 = 40 %% 2
+    result = 40 %% 2
     result.println!
 ```
 
@@ -58,7 +58,7 @@ main = !->
         value: 40
     right = Boxed
         value: 2
-    result: I64 = left %% right
+    result = left %% right
     result.println!
 ```
 
@@ -70,10 +70,10 @@ Prefix operators use the same type-directed model. The standard library provides
 
 ```rock
 main = !->
-    value: I64 = 7
-    condition: Bool = true
-    negative: I64 = -value
-    opposite: Bool = !condition
+    value = 7
+    condition = true
+    negative = -value
+    opposite = !condition
     negative.println!
     opposite.println!
 ```
@@ -89,15 +89,14 @@ increment: I64 -> I64
 increment = (+ 2)
 
 main = !->
-    result: I64 = increment 5
-    result.println!
+    increment 5 .println!
 ```
 
 `increment` has type `I64 -> I64`, and the output is `7`. Use an explicit lambda when the missing side or ownership is not obvious.
 
 ## Functional Operators
 
-The prelude also exports standard-library operators for function application through a value, mapping, binding, and fallback. Each example declares its functions and concrete carrier types.
+The prelude also exports standard-library operators for function application through a value, mapping, binding, and fallback. The function signatures and values determine the concrete carrier types.
 
 ```rock
 increment: I64 -> I64
@@ -106,17 +105,16 @@ increment = value -> value + 1
 keep_even: I64 -> Option I64
 keep_even = value ->
     if value % 2 == 0
-        Option::Some value
-    else
-        Option::None
+    then Option::Some value
+    else Option::None
 
 main = !->
-    mapped: Option I64 = Option::Some 4 <&> increment
-    bound: Option I64 = Option::Some 4 >>= keep_even
-    fallback: Option I64 = Option::None <|> Option::Some 9
-    mapped.unwrap_or 0 |> value -> value.println!
-    bound.unwrap_or 0 |> value -> value.println!
-    fallback.unwrap_or 0 |> value -> value.println!
+    mapped = Option::Some 4 <&> increment
+    bound = Option::Some 4 >>= keep_even
+    fallback = Option::None <|> Option::Some 9
+    mapped.unwrap_or 0 .println!
+    bound.unwrap_or 0 .println!
+    fallback.unwrap_or 0 .println!
 ```
 
 The output is `5`, `4`, and `9`. `<&>` maps a function over `Option`, `>>=` calls a function that returns another `Option`, `<|>` chooses the first present value, and `|>` passes a value to a function. These meanings are standard-library definitions, not compiler fallbacks.
@@ -130,8 +128,8 @@ double: I64 -> I64
 double = value -> value * 2
 
 main = !->
-    doubled_sum: I64 = double 2 + 2
-    adjusted_result: I64 = (double 2) + 2
+    doubled_sum = double 2 + 2
+    adjusted_result = (double 2) + 2
     doubled_sum .println!
     adjusted_result .println!
     Option::Some 2 <&> (+ 2) .unwrap_or 0 .println!

@@ -36,13 +36,13 @@ result_and_then = res, f ->
 impl Bifunctor for Result
     bimap = mut map_ok, mut map_err, value ->
         match value
-            Result::Ok item => Result::Ok (map_ok.call_mut item)
-            Result::Err error => Result::Err (map_err.call_mut error)
+            Result::Ok item => Result::Ok (map_ok item)
+            Result::Err error => Result::Err (map_err error)
 
 impl Functor for Result _, E
     fmap = mut mapper, value ->
         match value
-            Result::Ok item => Result::Ok (mapper.call_mut item)
+            Result::Ok item => Result::Ok (mapper item)
             Result::Err error => Result::Err error
 
 impl Applicative for Result _, E
@@ -59,20 +59,20 @@ impl Applicative for Result _, E
 impl Monad for Result _, E
     bind = value, mut callback ->
         match value
-            Result::Ok item => callback.call_mut item
+            Result::Ok item => callback item
             Result::Err error => Result::Err error
 
 impl Foldable for Result _, E
     foldl = mut step, initial, value ->
         match value
-            Result::Ok item => step.call_mut (initial, item)
+            Result::Ok item => step (initial, item)
             Result::Err _ => initial
 
 impl Traversable for Result _, E
     traverse = mut visitor, value ->
         match value
             Result::Ok item =>
-                effect = visitor.call_mut item
+                effect = visitor item
                 wrap: B -> Result B, E = mapped -> Result::Ok mapped
                 G::ap (G::pure wrap), effect
             Result::Err error =>
@@ -82,7 +82,7 @@ impl Traversable for Result _, E
     traverse_m = mut visitor, value ->
         match value
             Result::Ok item =>
-                effect = visitor.call_mut item
+                effect = visitor item
                 G::bind effect, (mapped ->
                     success: Result B, E = Result::Ok mapped
                     G::pure success)

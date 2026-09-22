@@ -48,7 +48,7 @@ impl ThreadPacket F, T where F: FnOnce (), T
 
     ~@run: *U8
     ~@run = ->
-        value = self.task.call_once (thread_unit!)
+        value = self.task!
         result = unsafe (*self.state).result
         unsafe *result = value
         thread_state_release_detached self.state

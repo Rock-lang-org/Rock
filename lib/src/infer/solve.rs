@@ -165,6 +165,7 @@ pub fn solve_constraints_in_place(
         language_items,
         true,
         None,
+        &crate::hir::HirGenericBounds::new(),
     )
 }
 
@@ -178,6 +179,7 @@ pub(crate) fn solve_constraints_in_place_for_owners(
     language_items: &LanguageItems<DefId>,
     owners: &HashSet<ConstraintOwner>,
     finalize_pending: bool,
+    assumptions: &crate::hir::HirGenericBounds,
 ) -> SolveResult {
     solve_constraints_in_place_mode(
         engine,
@@ -189,6 +191,7 @@ pub(crate) fn solve_constraints_in_place_for_owners(
         language_items,
         finalize_pending,
         Some(owners),
+        assumptions,
     )
 }
 
@@ -202,6 +205,7 @@ fn solve_constraints_in_place_mode(
     language_items: &LanguageItems<DefId>,
     finalize_pending: bool,
     owners: Option<&HashSet<ConstraintOwner>>,
+    assumptions: &crate::hir::HirGenericBounds,
 ) -> SolveResult {
     let builtin_traits = BuiltinTraitIds::from_language_items(language_items);
     let mut warnings = Vec::new();
@@ -372,15 +376,33 @@ fn solve_constraints_in_place_mode(
                         {
                             continue;
                         }
-                        if !impl_exists_for(
-                            concrete_ty,
-                            resolved_bound.trait_id,
-                            &resolved_bound.type_args,
-                            impls,
-                            structs,
-                            enums,
-                            builtin_traits,
-                        ) {
+                        let generic_impl =
+                            crate::type_services::visit::type_any(concrete_ty, |ty| {
+                                matches!(ty, Type::Generic(_))
+                            }) && crate::selection::SelectionService::new(
+                                traits,
+                                impls,
+                                builtin_traits.sized,
+                                None,
+                                assumptions,
+                            )
+                            .select_trait_impl_strict(
+                                concrete_ty,
+                                resolved_bound.trait_id,
+                                &resolved_bound.type_args,
+                            )
+                            .is_ok();
+                        if !generic_impl
+                            && !impl_exists_for(
+                                concrete_ty,
+                                resolved_bound.trait_id,
+                                &resolved_bound.type_args,
+                                impls,
+                                structs,
+                                enums,
+                                builtin_traits,
+                            )
+                        {
                             if context == "try operator"
                                 && language_items
                                     .try_protocol
@@ -819,11 +841,18 @@ fn infer_explicit_impl_trait_args(
         {
             continue;
         }
-        let Some(subst) =
-            crate::selection::impl_receiver_pattern_substitution(imp, ty, impls.values())
+        let Some(mut subst) =
+            callable_impl_substitution(imp, ty, bound.trait_id, builtin_traits, impls)
         else {
             continue;
         };
+        for (expected, actual) in imp.trait_arg_types.iter().zip(&bound.type_args) {
+            crate::selection::infer_generic_subst_from_types(
+                expected,
+                &engine.resolve(actual),
+                &mut subst,
+            );
+        }
         let mut probe = engine.clone_for_probe();
         if imp
             .trait_arg_types
@@ -1114,8 +1143,7 @@ fn explicit_impl_exists_for(
             return false;
         }
 
-        let Some(mut subst) =
-            crate::selection::impl_receiver_pattern_substitution(imp, ty, impls.values())
+        let Some(mut subst) = callable_impl_substitution(imp, ty, trait_id, builtin_traits, impls)
         else {
             return false;
         };
@@ -1176,12 +1204,16 @@ fn callable_trait_satisfied(
         params,
         ret,
         callable_kind,
+        safety,
         ..
     } = ty
     else {
         return None;
     };
-    if trait_args.len() != 2 || *callable_kind > required_kind {
+    if trait_args.len() != 2
+        || *callable_kind > required_kind
+        || *safety == crate::types::FunctionSafety::Unsafe
+    {
         return Some(false);
     }
     let args = match params.as_slice() {
@@ -1192,6 +1224,23 @@ fn callable_trait_satisfied(
     let args_match = trait_args[0] == args
         || matches!((&trait_args[0], &args), (Type::Tuple(elements), Type::Unit) if elements.is_empty());
     Some(args_match && trait_args[1] == **ret)
+}
+
+fn callable_impl_substitution(
+    imp: &HirImpl,
+    ty: &Type,
+    trait_id: DefId,
+    builtin: BuiltinTraitIds,
+    impls: &HashMap<DefId, HirImpl>,
+) -> Option<HashMap<crate::types::GenericParamId, Type>> {
+    if [builtin.fn_trait, builtin.fn_mut, builtin.fn_once].contains(&Some(trait_id)) {
+        if let crate::hir::HirImplReceiverPattern::Exact(pattern) = &imp.receiver_pattern {
+            let mut subst = HashMap::new();
+            return crate::selection::type_pattern_matches(pattern, ty, &mut subst)
+                .then_some(subst);
+        }
+    }
+    crate::selection::impl_receiver_pattern_substitution(imp, ty, impls.values())
 }
 
 fn auto_trait_satisfied(

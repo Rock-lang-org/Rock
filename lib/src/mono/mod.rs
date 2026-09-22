@@ -22,6 +22,7 @@ mod hir_types {
     };
 }
 
+mod callable;
 mod external;
 mod methods;
 mod process;
@@ -323,6 +324,7 @@ pub(crate) fn monomorphize_with_crates(
 }
 
 struct Monomorphizer {
+    language_items: crate::hir::HirLanguageItems,
     /// Concrete function payloads, selected exclusively by canonical identity.
     concrete_functions: HashMap<DefId, HirFunction>,
     /// Generic function payloads, including external providers, keyed by canonical identity.
@@ -1211,6 +1213,7 @@ impl Monomorphizer {
 
     fn new() -> Self {
         Self {
+            language_items: crate::hir::HirLanguageItems::default(),
             concrete_functions: HashMap::new(),
             generic_functions: HashMap::new(),
             function_names_by_id: HashMap::new(),
@@ -1430,6 +1433,19 @@ impl Monomorphizer {
     }
 
     fn impl_receiver_pattern_matches(&self, imp: &HirImpl, recv_ty: &Type) -> bool {
+        if self
+            .language_items
+            .callable_protocols()
+            .any(|(_, id, _)| imp.trait_id == Some(id))
+        {
+            if let HirImplReceiverPattern::Exact(pattern) = &imp.receiver_pattern {
+                return crate::selection::type_pattern_matches(
+                    pattern,
+                    recv_ty,
+                    &mut HashMap::new(),
+                );
+            }
+        }
         crate::selection::impl_receiver_pattern_substitution(
             imp,
             recv_ty,

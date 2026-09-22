@@ -117,6 +117,58 @@ impl Lowerer {
                 substitution.insert(variable, replacement);
             }
 
+            // Inferred callable bounds are part of the function scheme, just
+            // like its parameter/result types. Freshen their variables together
+            // so separate calls neither lose context nor specialize each other.
+            substitution.extend(representatives.iter().map(|(id, ty)| (*id, ty.clone())));
+            let inferred_bounds = representatives
+                .keys()
+                .copied()
+                .map(|id| (id, self.engine.get_bounds(id)))
+                .collect::<Vec<_>>();
+            for (_, bounds) in &inferred_bounds {
+                for bound in bounds {
+                    for argument in &bound.type_args {
+                        crate::type_services::visit::visit_type(
+                            &self.engine.resolve(argument),
+                            &mut |ty: &Type| {
+                                if let Type::TypeVar(id) = ty {
+                                    if !substitution.contains_key(id) {
+                                        let kind = self.engine.kind_of_type_var(*id);
+                                        substitution.insert(
+                                            *id,
+                                            self.engine.fresh_type_var_at_kind(span.clone(), kind),
+                                        );
+                                    }
+                                }
+                            },
+                        );
+                    }
+                }
+            }
+            for (id, bounds) in inferred_bounds {
+                let Some(Type::TypeVar(instance)) = substitution.get(&id).cloned() else {
+                    continue;
+                };
+                for bound in bounds {
+                    let bound = crate::types::TraitBound {
+                        trait_id: bound.trait_id,
+                        type_args: bound
+                            .type_args
+                            .iter()
+                            .map(|arg| self.engine.resolve(arg).substitute(&substitution))
+                            .collect(),
+                    };
+                    self.engine.add_bound(instance, bound.clone());
+                    self.constraint_store.add_trait(
+                        Type::TypeVar(instance),
+                        bound,
+                        span.clone(),
+                        "inferred callable argument",
+                    );
+                }
+            }
+
             let params = func
                 .params
                 .iter()

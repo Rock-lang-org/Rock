@@ -8071,18 +8071,21 @@ mod tests {
             },
         );
 
+        let Some(crate::mir::Terminator::Call { args, .. }) = &builder.blocks[0].terminator else {
+            panic!("expected a call terminator");
+        };
+        let Operand::Move(argument_place) = &args[0] else {
+            panic!("non-copy argument must be moved into the call");
+        };
         assert!(builder.blocks[0].statements.iter().any(|stmt| matches!(
             &stmt.kind,
             StatementKind::Assign(
-                Place {
-                    local: Local(3),
-                    projection: dest_projection,
-                },
+                destination,
                 Rvalue::Use(Operand::Move(Place {
                     local: Local(2),
                     projection: source_projection,
                 }))
-            ) if dest_projection.is_empty() && source_projection.is_empty()
+            ) if destination == argument_place && source_projection.is_empty()
         )));
     }
 

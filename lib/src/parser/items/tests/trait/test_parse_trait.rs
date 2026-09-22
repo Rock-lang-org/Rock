@@ -41,3 +41,15 @@ fn trait_parses_constructor_supertrait_predicates() {
         "Functor"
     );
 }
+
+#[test]
+fn trait_parses_self_supertrait_predicates() {
+    let tokens = lex_test("trait FnMut Args, Ret where Self: FnOnce Args, Ret\n");
+    let config = Config::default();
+    let (rest, declaration) = r#trait.process(ParseCtx::from(&tokens, &config)).unwrap();
+    assert!(rest.is_empty());
+    assert_eq!(declaration.generic_params.len(), 2);
+    assert!(declaration.for_.is_none());
+    assert_eq!(declaration.where_clauses.len(), 1);
+    assert_eq!(declaration.where_clauses[0].subject.type_name(), "Self");
+}

@@ -174,6 +174,20 @@ pub fn generalize_single_function_with_exclusions(
         &engine.resolve(&func.ret_type),
         &mut resolved_signature_type_vars,
     );
+    // Callable outputs can occur only in a parameter's bound (for example an
+    // ignored callback result). They still belong to the polymorphic scheme.
+    let mut index = 0;
+    while index < resolved_signature_type_vars.len() {
+        for bound in engine.get_bounds(resolved_signature_type_vars[index]) {
+            for argument in bound.type_args {
+                collect_type_vars_in_order(
+                    &engine.resolve(&argument),
+                    &mut resolved_signature_type_vars,
+                );
+            }
+        }
+        index += 1;
+    }
     resolved_signature_type_vars.retain(|representative| {
         !is_excluded_representative(engine, excluded, *representative)
             && !constraints.has_literal_evidence_for_representative(*representative, |var| {

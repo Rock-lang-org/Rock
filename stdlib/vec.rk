@@ -45,7 +45,7 @@ vec_traverse_state_finish = mut state, mapped ->
 
 vec_traverse_visit: V -> A -> (V, R) where V: FnMut A, R
 vec_traverse_visit = mut visitor, item ->
-    effect: R = visitor.call_mut item
+    effect: R = visitor item
     (visitor, effect)
 
 vec_traverse_state_values: VecTraverseState V, B -> Vec B
@@ -137,7 +137,7 @@ impl Vec T
         i = 0
         while i < len
             item = unsafe *(~PtrOffset ptr, i)
-            output.push (mapper.call_mut item)
+            output.push (mapper item)
             i = i + 1
         output
 
@@ -151,7 +151,7 @@ impl Vec T
         i = 0
         while i < len
             item = unsafe &*(~PtrOffset ptr, i)
-            output.push (mapper.call_mut item)
+            output.push (mapper item)
             i = i + 1
         output
 
@@ -162,7 +162,7 @@ impl Vec T
         i = 0
         while i < len
             item = unsafe &*(~PtrOffset ptr, i)
-            action.call_mut item
+            action item
             i = i + 1
 
     ~@for_each_owned: A -> () where A: FnMut T, ()
@@ -174,7 +174,7 @@ impl Vec T
         i = 0
         while i < len
             item = unsafe *(~PtrOffset ptr, i)
-            action.call_mut item
+            action item
             i = i + 1
 
     ^@retain: P -> () where P: FnMut &T, Bool
@@ -185,7 +185,7 @@ impl Vec T
         read = 0
         while read < len
             item = unsafe *(~PtrOffset ptr, read)
-            if predicate.call_mut (&item)
+            if predicate (&item)
                 unsafe *(~PtrOffset ptr, self.raw_len) = item
                 self.raw_len = self.raw_len + 1
             read = read + 1
@@ -202,7 +202,7 @@ impl Vec T
         i = 0
         while i < len
             item = unsafe *(~PtrOffset ptr, i)
-            if predicate.call_mut (&item)
+            if predicate (&item)
                 output.push item
             i = i + 1
         output
@@ -219,7 +219,7 @@ impl Vec T
         i = 0
         while i < len
             item = unsafe *(~PtrOffset ptr, i)
-            mapped: Option U = mapper.call_mut item
+            mapped: Option U = mapper item
             match mapped
                 Option::Some value => output.push value
                 Option::None => vec_unit!
@@ -238,7 +238,7 @@ impl Vec T
         i = 0
         while i < len
             item = unsafe *(~PtrOffset ptr, i)
-            mapped: Result U, E = mapper.call_mut item
+            mapped: Result U, E = mapper item
             match mapped
                 Result::Ok value => output.push value
                 Result::Err error =>
@@ -259,7 +259,7 @@ impl Vec T
         i = 0
         while i < len
             item = unsafe &*(~PtrOffset ptr, i)
-            result: Result (), E = action.call_mut item
+            result: Result (), E = action item
             match result
                 Result::Ok unit => vec_unit!
                 Result::Err error =>
@@ -316,7 +316,7 @@ impl Functor for Vec
         i = 0
         while i < len
             item = unsafe *(~PtrOffset ptr, i)
-            output.push (mapper.call_mut item)
+            output.push (mapper item)
             i = i + 1
         output
 
@@ -329,7 +329,7 @@ impl Foldable for Vec
         i = 0
         while i < len
             item = unsafe *(~PtrOffset ptr, i)
-            output = step.call_mut (output, item)
+            output = step (output, item)
             i = i + 1
         output
 
@@ -345,7 +345,7 @@ impl Traversable for Vec
         i = 0
         while i < len
             item = unsafe *(~PtrOffset ptr, i)
-            effect = visitor.call_mut item
+            effect = visitor item
             append = G::ap (G::pure vec_push_owned), output
             output = G::ap append, effect
             i = i + 1

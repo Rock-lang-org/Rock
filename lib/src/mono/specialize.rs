@@ -178,6 +178,7 @@ impl Monomorphizer {
         // A type parameter may occur only in a bound, rather than in a value
         // parameter (C: ForEach T, A: FnMut T, ()). Recover it from the concrete
         // receiver's unique impl instead of falling back to the numeric default.
+        self.infer_native_callable_bound_arguments(generic_func, &generic_ids, &mut substitution);
         while generic_ids.iter().any(|id| !substitution.contains_key(id)) {
             let before = substitution.len();
             for (subject, bounds) in &generic_func.generic_bounds {
@@ -541,7 +542,7 @@ impl Monomorphizer {
         }
     }
 
-    fn apply_substitution(
+    pub(super) fn apply_substitution(
         &mut self,
         ty: &Type,
         substitution: &HashMap<GenericParamId, TypeId>,

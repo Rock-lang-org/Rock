@@ -12,39 +12,39 @@ lang fn_once
     ~@call_once: Args -> Ret
 
 lang fn_mut
-< trait FnMut Args, Ret
+< trait FnMut Args, Ret where Self: FnOnce Args, Ret
     lang output
     type Output
     lang method
     ^@call_mut: Args -> Ret
 
 lang fn
-< trait Fn Args, Ret
+< trait Fn Args, Ret where Self: FnMut Args, Ret
     lang output
     type Output
     lang method
     @call: Args -> Ret
 
-impl FnOnce Args, Ret for (Args -> Ret)
+impl FnOnce Args, Ret for &F where F: Fn Args, Ret
     type Output = Ret
-    ~@call_once = args -> self args
+    ~@call_once = args -> (*self) args
 
-impl FnMut Args, Ret for (Args -> Ret)
+impl FnMut Args, Ret for &F where F: Fn Args, Ret
     type Output = Ret
-    ^@call_mut = args -> self args
+    ^@call_mut = args -> (*self) args
 
-impl Fn Args, Ret for (Args -> Ret)
+impl Fn Args, Ret for &F where F: Fn Args, Ret
     type Output = Ret
-    @call = args -> self args
+    @call = args -> (*self) args
 
-impl FnOnce (), Ret for (() -> Ret)
+impl FnOnce Args, Ret for &mut F where F: FnMut Args, Ret
     type Output = Ret
-    ~@call_once = unit -> self!
+    ~@call_once = args -> (*self) args
 
-impl FnMut (), Ret for (() -> Ret)
+impl FnMut Args, Ret for &mut F where F: FnMut Args, Ret
     type Output = Ret
-    ^@call_mut = unit -> self!
+    ^@call_mut = args -> (*self) args
 
-impl Fn (), Ret for (() -> Ret)
+impl Fn Args, Ret for &mut F where F: Fn Args, Ret
     type Output = Ret
-    @call = unit -> self!
+    @call = args -> (*self) args

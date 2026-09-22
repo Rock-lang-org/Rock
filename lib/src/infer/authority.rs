@@ -18,6 +18,16 @@ use crate::types::{
     CallableKind, CaptureKind, FunctionCapture, FunctionSafety, GenericParamId, TraitBound, Type,
 };
 
+mod callable;
+
+fn native_call_type(ty: &Type) -> bool {
+    match ty {
+        Type::Function { .. } => true,
+        Type::Reference { inner, .. } => native_call_type(inner),
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct AuthorityPassResult {
     pub progress: bool,
@@ -38,6 +48,7 @@ impl AuthorityObligationId {
 pub(super) enum AuthorityObligationKind {
     Propagation,
     DeferredCall,
+    CallableCall,
     MethodCall,
     Field,
     TryBranch,
@@ -181,6 +192,7 @@ pub(super) fn run_authority_obligation(
             propagate_function_instances_for_owners_with_progress(hir, Some(&owners))
         }
         AuthorityObligationKind::DeferredCall
+        | AuthorityObligationKind::CallableCall
         | AuthorityObligationKind::MethodCall
         | AuthorityObligationKind::Field
         | AuthorityObligationKind::TryBranch
@@ -314,8 +326,28 @@ fn collect_authority_sites(
     ) {
         match &node.kind {
             HirExprKind::Call(callee, args, target) => {
+                if !native_call_type(&callee.ty)
+                    && !matches!(callee.kind, HirExprKind::FieldAccess(..))
+                {
+                    let kind = AuthorityObligationKind::CallableCall;
+                    output.push((
+                        kind,
+                        AuthoritySiteId::new(kind, &node.span),
+                        "function call".into(),
+                        node.span.clone(),
+                        dependencies(
+                            std::iter::once(callee.ty.clone())
+                                .chain(std::iter::once(node.ty.clone()))
+                                .chain(args.iter().map(|arg| arg.ty.clone())),
+                            engine,
+                        ),
+                    ));
+                }
                 if let HirExprKind::FieldAccess(receiver, name, location) = &callee.kind {
-                    if target.is_none() && location.is_none() {
+                    if target.is_none()
+                        && (location.is_none()
+                            || contains_recovery_type(&engine.resolve(&receiver.ty)))
+                    {
                         let kind = AuthorityObligationKind::DeferredCall;
                         let types = std::iter::once(node.ty.clone())
                             .chain(std::iter::once(receiver.ty.clone()))
@@ -1044,6 +1076,16 @@ fn constrained_signature_vars(
         let mut obligation_vars = HashSet::new();
         match constraint {
             Constraint::Trait { ty, bound, .. } => {
+                if matches!(hir.engine.resolve(ty), Type::TypeVar(_))
+                    && hir
+                        .language_items
+                        .callable_protocols()
+                        .any(|(_, id, _)| id == bound.trait_id)
+                {
+                    // A callable requirement is a polymorphic predicate, not
+                    // evidence fixing the declaration to one caller's type.
+                    continue;
+                }
                 collect_type_vars(&hir.engine.resolve(ty), &mut obligation_vars);
                 for arg in &bound.type_args {
                     collect_type_vars(&hir.engine.resolve(arg), &mut obligation_vars);
@@ -1128,6 +1170,26 @@ fn propagate_expr(
             // Establish the call-site scheme before descending into deferred
             // arguments so their method authority can use the parameter type.
             propagate_call_instance(hir, &expr.ty, callee, args, constrained_vars, errors);
+            let resolved = hir.engine.resolve(&callee.ty);
+            let mut native = &resolved;
+            while let Type::Reference { inner, .. } = native {
+                native = inner;
+            }
+            let indirect = !matches!(&callee.kind, HirExprKind::ResolvedVar(reference) if !matches!(reference.target, HirVarTarget::Local(_)));
+            if let Type::Function { params, ret, .. } = native {
+                if indirect && params.len() == args.len() {
+                    for (arg, expected) in args.iter().zip(params) {
+                        propagate_argument_type(
+                            &mut hir.engine,
+                            &arg.ty,
+                            expected,
+                            errors,
+                            &arg.span,
+                        );
+                    }
+                    let _ = hir.engine.unify(&expr.ty, ret);
+                }
+            }
             if !matches!(
                 callee.kind,
                 HirExprKind::ResolvedVar(HirVarRef {
@@ -1319,6 +1381,17 @@ fn propagate_method_arguments(
         let _ = hir.engine.unify(&receiver.ty, &expected);
     }
     for (arg, param) in args.iter().zip(params) {
+        if let Type::TypeVar(id) = hir.engine.resolve(&param.ty) {
+            if hir.engine.get_bounds(id).iter().any(|bound| {
+                hir.language_items
+                    .callable_protocols()
+                    .any(|(_, trait_id, _)| trait_id == bound.trait_id)
+            }) {
+                // This callable parameter has an independently instantiated
+                // bound at the call site; do not monomorphize its declaration.
+                continue;
+            }
+        }
         let expected = param.ty.substitute_generics(&substitutions);
         let _ = hir.engine.unify(&arg.ty, &expected);
     }
@@ -1829,9 +1902,15 @@ fn collect_unresolved_authority_vars(
         match &node.kind {
             HirExprKind::Call(callee, args, target) => {
                 if target.is_none() {
-                    if let HirExprKind::FieldAccess(receiver, _, None) = &callee.kind {
+                    if let HirExprKind::FieldAccess(receiver, _, _) = &callee.kind {
                         collect_type_vars(&engine.resolve(&receiver.ty), output);
                     }
+                }
+                if !matches!(callee.kind, HirExprKind::FieldAccess(..))
+                    && matches!(callee.ty, Type::TypeVar(_))
+                {
+                    collect_type_vars(&engine.resolve(&callee.ty), output);
+                    collect_type_vars(&engine.resolve(&node.ty), output);
                 }
                 expr(callee, engine, output);
                 for arg in args {
@@ -1963,6 +2042,7 @@ fn materialize_pending(
         .collect();
     let functions = hir.functions.clone();
     let mut context = MethodAuthorityContext {
+        language_items: hir.language_items.clone(),
         functions,
         traits: &traits,
         impls: &impls,
@@ -2048,6 +2128,12 @@ fn materialize_pending(
     }
 }
 
+pub(super) fn finalize_method_instantiations(
+    hir: &mut PartialHir,
+) -> Result<(), Vec<ResolveError>> {
+    materialize_pending(hir, true, true, None, None).map(|_| ())
+}
+
 fn binding_sort_key(binding: &HirTypeBinding) -> (u32, u32, u32) {
     (
         binding.param.owner.crate_id.0,
@@ -2057,6 +2143,7 @@ fn binding_sort_key(binding: &HirTypeBinding) -> (u32, u32, u32) {
 }
 
 struct MethodAuthorityContext<'a> {
+    language_items: crate::hir::HirLanguageItems,
     functions: HashMap<DefId, HirFunction>,
     traits: &'a HashMap<DefId, crate::hir::HirTrait>,
     impls: &'a HashMap<DefId, crate::hir::HirImpl>,
@@ -3038,6 +3125,12 @@ impl MethodAuthorityContext<'_> {
     }
 
     fn materialize_expr(&mut self, expr: &mut HirExpr, errors: &mut Vec<ResolveError>) {
+        if matches!(&expr.kind, HirExprKind::Call(callee, _, _) if !native_call_type(&callee.ty) && !matches!(callee.kind, HirExprKind::FieldAccess(_, _, None)))
+            && (self.visit_authority_slot(AuthorityObligationKind::CallableCall, &expr.span)
+                || self.visit_authority_slot(AuthorityObligationKind::DeferredCall, &expr.span))
+        {
+            self.materialize_value_call(expr, errors);
+        }
         match &mut expr.kind {
             HirExprKind::Call(callee, args, target) => {
                 let deferred_member = matches!(callee.kind, HirExprKind::FieldAccess(_, _, _));
@@ -3072,6 +3165,9 @@ impl MethodAuthorityContext<'_> {
                             self.materialize_expr(arg, errors);
                         }
                         self.materialize_callable_arguments(callee, args, errors);
+                        if matches!(callee.kind, HirExprKind::FieldAccess(_, _, Some(_))) {
+                            self.materialize_value_call(expr, errors);
+                        }
                         return;
                     }
                 };
@@ -3093,10 +3189,13 @@ impl MethodAuthorityContext<'_> {
                     Some(&expr.ty),
                     errors,
                 ) else {
-                    if !self.strict && contains_recovery_type(&receiver.ty) {
+                    if !self.strict && contains_recovery_type(&self.resolved_type(&receiver.ty)) {
                         return;
                     }
                     self.materialize_field_access(callee, errors);
+                    if matches!(callee.kind, HirExprKind::FieldAccess(_, _, Some(_))) {
+                        self.materialize_value_call(expr, errors);
+                    }
                     return;
                 };
                 selected.receiver = receiver.clone();
@@ -3282,8 +3381,11 @@ impl MethodAuthorityContext<'_> {
                 let selected_site =
                     self.visit_authority_slot(AuthorityObligationKind::MethodCall, &expr.span);
                 self.materialize_expr(receiver, errors);
-                for arg in args {
+                for arg in args.iter_mut() {
                     self.materialize_expr(arg, errors);
+                }
+                if let Some(target) = target {
+                    self.materialize_method_bindings(args, &expr.ty, target, &expr.span, errors);
                 }
                 if selected_site && self.strict && target.is_none() {
                     errors.push(ResolveError::with_span(
@@ -4010,9 +4112,6 @@ impl MethodAuthorityContext<'_> {
             };
             **receiver = dereferenced;
         }
-        if location.is_some() {
-            return;
-        }
         let receiver_ty = &receiver.ty;
         let Type::Struct { id, args } = receiver_ty else {
             if !contains_inference_type(receiver_ty) {
@@ -4033,7 +4132,10 @@ impl MethodAuthorityContext<'_> {
         let Some(field) = structure
             .fields
             .iter()
-            .find(|field| field.name == *field_name)
+            .find(|field| match location.as_ref() {
+                Some(location) => location.owner == *id && location.field_id == field.id,
+                None => field.name == *field_name,
+            })
         else {
             errors.push(ResolveError::with_span(
                 format!(
@@ -4044,7 +4146,7 @@ impl MethodAuthorityContext<'_> {
             ));
             return;
         };
-        if !field.public {
+        if !field.public && location.is_none() {
             if !self.strict {
                 return;
             }

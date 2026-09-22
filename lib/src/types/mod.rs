@@ -132,8 +132,8 @@ impl FunctionSafety {
 
 /// The callable capabilities supported by a function value.
 ///
-/// The declaration order is intentional: each later kind has at least the
-/// capabilities of the preceding kind.
+/// The declaration order is intentional: later kinds require stronger receiver
+/// access. A callable of an earlier kind satisfies the later trait requirements.
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
 )]

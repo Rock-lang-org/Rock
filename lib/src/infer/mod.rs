@@ -463,6 +463,7 @@ pub fn finalize(mut hir: PartialHir) -> Result<ResolvedHirProgram, Vec<ResolveEr
     // Methods are not represented in the standalone function SCC map; finish
     // their component-local generalization after all body SCCs quiesce.
     generalize::generalize_methods_only(&mut hir);
+    authority::finalize_method_instantiations(&mut hir)?;
 
     // Phase 6: finalize — replace all remaining TypeVars
     let errors = finalize::apply_finalization(&mut hir);
@@ -498,6 +499,58 @@ pub fn finalize(mut hir: PartialHir) -> Result<ResolvedHirProgram, Vec<ResolveEr
 }
 
 fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), Vec<ResolveError>> {
+    fn declaration_bounds(hir: &PartialHir) -> crate::hir::HirGenericBounds {
+        let mut result = crate::hir::HirGenericBounds::new();
+        for bounds in hir
+            .functions
+            .values()
+            .map(|function| &function.generic_bounds)
+            .chain(hir.impls.values().map(|imp| &imp.bounds))
+            .chain(
+                hir.impls
+                    .values()
+                    .flat_map(|imp| imp.methods.values().map(|method| &method.generic_bounds)),
+            )
+            .chain(
+                hir.traits
+                    .values()
+                    .flat_map(|tr| tr.methods.values().map(|method| &method.generic_bounds)),
+            )
+        {
+            for (param, bounds) in bounds {
+                let existing = result.entry(*param).or_default();
+                for bound in bounds {
+                    if !existing.contains(bound) {
+                        existing.push(bound.clone());
+                    }
+                }
+            }
+        }
+        // A parameter passed by value already requires a sized runtime layout;
+        // retain that fact when proving blanket impls for references to it.
+        if let Some(sized) = &hir.language_items.sized {
+            for function in hir
+                .functions
+                .values()
+                .chain(hir.impls.values().flat_map(|imp| imp.methods.values()))
+                .chain(hir.traits.values().flat_map(|tr| tr.methods.values()))
+            {
+                for param in &function.params {
+                    if let Type::Generic(id) = &param.ty {
+                        let bound = crate::types::TraitBound {
+                            trait_id: sized.trait_id,
+                            type_args: Vec::new(),
+                        };
+                        let bounds = result.entry(*id).or_default();
+                        if !bounds.contains(&bound) {
+                            bounds.push(bound);
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
     #[derive(Clone, Copy)]
     enum WorkItem {
         Structural,
@@ -531,6 +584,7 @@ fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), Vec<Resolve
             match item {
                 WorkItem::Structural => {
                     structural_queued = false;
+                    let assumptions = declaration_bounds(hir);
                     let solved = solve::solve_constraints_in_place_for_owners(
                         &mut hir.engine,
                         &mut hir.constraint_store,
@@ -541,6 +595,7 @@ fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), Vec<Resolve
                         &hir.language_items,
                         owners,
                         false,
+                        &assumptions,
                     );
                     if !solved.errors.is_empty() {
                         return Err(solved
@@ -697,6 +752,7 @@ fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), Vec<Resolve
     }
 
     for (_, owners, _) in &component_work {
+        let assumptions = declaration_bounds(hir);
         let solved = solve::solve_constraints_in_place_for_owners(
             &mut hir.engine,
             &mut hir.constraint_store,
@@ -707,6 +763,7 @@ fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), Vec<Resolve
             &hir.language_items,
             &owners,
             true,
+            &assumptions,
         );
         if !solved.errors.is_empty() {
             return Err(solved

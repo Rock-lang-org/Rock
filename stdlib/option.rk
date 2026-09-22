@@ -35,7 +35,7 @@ option_and_then = opt, f ->
 impl Functor for Option
     fmap = mut mapper, value ->
         match value
-            Option::Some item => Option::Some (mapper.call_mut item)
+            Option::Some item => Option::Some (mapper item)
             Option::None => Option::None
 
 impl Applicative for Option
@@ -52,20 +52,20 @@ impl Applicative for Option
 impl Monad for Option
     bind = value, mut callback ->
         match value
-            Option::Some item => callback.call_mut item
+            Option::Some item => callback item
             Option::None => Option::None
 
 impl Foldable for Option
     foldl = mut step, initial, value ->
         match value
-            Option::Some item => step.call_mut (initial, item)
+            Option::Some item => step (initial, item)
             Option::None => initial
 
 impl Traversable for Option
     traverse = mut visitor, value ->
         match value
             Option::Some item =>
-                effect = visitor.call_mut item
+                effect = visitor item
                 wrap: B -> Option B = mapped -> Option::Some mapped
                 G::ap (G::pure wrap), effect
             Option::None =>
@@ -75,7 +75,7 @@ impl Traversable for Option
     traverse_m = mut visitor, value ->
         match value
             Option::Some item =>
-                effect = visitor.call_mut item
+                effect = visitor item
                 G::bind effect, (mapped ->
                     some: Option B = Option::Some mapped
                     G::pure some)

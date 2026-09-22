@@ -11,8 +11,7 @@ double: I64 -> I64
 double = value -> value * 2
 
 main = !->
-    result: I64 = double 5
-    result.println!
+    double 5 .println!
 ```
 
 The output is `10`. `double` is a named function value; the expression after the equals sign is still a lambda-shaped function body.
@@ -21,10 +20,10 @@ Pass a lambda directly when its purpose is local.
 
 ```rock
 main = !->
-    mut values: Vec I64 = Vec::new!
+    mut values = Vec::new!
     values.push 1
     values.push 2
-    mapped: Vec I64 = values.map value -> value + 10
+    mapped = values.map value -> value + 10
     mapped[0].println!
     mapped[1].println!
 ```
@@ -43,8 +42,7 @@ increment: I64 -> I64
 increment = value -> value + 1
 
 main = !->
-    result: I64 = apply increment, 4
-    result.println!
+    apply increment, 4 .println!
 ```
 
 The parameter `function` has type `I64 -> I64`, `value` has type `I64`, and the result is `I64`. The output is `5`.
@@ -56,9 +54,9 @@ apply: (I64 -> I64) -> I64 -> I64
 apply = function, value -> function value
 
 main = !->
-    offset: I64 = 10
-    add_offset: I64 -> I64 = value -> value + offset
-    result: I64 = apply add_offset, 5
+    offset = 10
+    add_offset = value -> value + offset
+    result = apply add_offset, 5
     result.println!
 ```
 
@@ -66,23 +64,53 @@ main = !->
 
 ## Callable Bounds
 
-The standard library expresses callback requirements with callable traits. `FnMut` permits a callback to update its captured state while it is called.
+The standard library expresses callback requirements with callable traits. Call a trait-bound parameter with ordinary function-call syntax: `function value`, or `function!` when there are no arguments. This works for functions, closures, and user-defined types implementing the callable traits.
+
+| Bound | How a call uses the callable |
+| --- | --- |
+| `Fn Args, Ret` | Borrows it through shared access. |
+| `FnMut Args, Ret` | Borrows it through mutable access, allowing captured state to change. |
+| `FnOnce Args, Ret` | Takes it by value, allowing captured owned values to be consumed. |
+
+`Fn` implies `FnMut` and `FnOnce`; `FnMut` implies `FnOnce`. Choose the least restrictive bound your implementation needs: `FnOnce` for a single consuming invocation, `FnMut` for repeated invocations that may mutate state, and `Fn` when shared access is required. Custom callable implementations must also implement their supertraits.
 
 ```rock
 apply_mut: M -> I64 -> I64 where M: FnMut I64, I64
-apply_mut = mut function, value -> function.call_mut value
+apply_mut = mut function, value -> function value
 
 main = !->
-    mut calls: I64 = 0
-    callback: I64 -> I64 = value ->
+    mut calls = 0
+    callback = value ->
         calls = calls + 1
         value + calls
-    first: I64 = apply_mut callback, 10
+    first = apply_mut callback, 10
     first.println!
     calls.println!
 ```
 
-The callback's capture is mutable, so `apply_mut` calls it through `FnMut`. The outputs are `11` and `1`. `apply_mut` receives the callback by value, so this callback value is consumed by the call; create a new callback or pass a mutable reference when an API's signature explicitly supports repeated calls. A callback that consumes a captured owned value has a stronger one-call ownership requirement.
+The callback's capture is mutable, so `apply_mut` calls it through `FnMut`. Its `mut function` parameter permits that mutable borrow. The outputs are `11` and `1`. The invocation itself borrows the callback, but passing the callback into `apply_mut` transfers ownership of this non-copy value.
+
+Pass a mutable reference to keep using a mutable callback afterward. The same generic bound accepts `&mut F` when `F` implements `FnMut`.
+
+```rock
+twice: F -> I64 -> I64 where F: FnMut I64, I64
+twice = mut function, value ->
+    function value
+    function value
+
+main = !->
+    mut count = 0
+    mut callback = value ->
+        count = count + 1
+        value + count
+    result = twice &mut callback, 10
+    result.println!
+    callback 10 .println!
+```
+
+The output is `12` followed by `13`. Each invocation reborrows the callable rather than moving it. Shared references similarly support callbacks implementing `Fn`. A callback that consumes an owned capture only supports `FnOnce` and cannot be invoked again after it is moved.
+
+The explicit `.call`, `.call_mut`, and `.call_once` methods remain available, but ordinary calls select the appropriate protocol automatically. Callable bounds use `()` for no arguments, the argument type for one argument, and a tuple of argument types for multiple arguments; explicit methods receive that argument pack as one value.
 
 ## Call Holes
 
@@ -93,10 +121,10 @@ combine: I64 -> I64 -> I64 -> I64
 combine = first, middle, last -> first + middle + last
 
 main = !->
-    add_ends: I64 -> I64 = combine 10, _, 30
-    answer: I64 = add_ends 2
-    fill_middle: I64 -> I64 -> I64 = combine _, 5, _
-    second_answer: I64 = fill_middle 1, 9
+    add_ends = combine 10, _, 30
+    answer = add_ends 2
+    fill_middle = combine _, 5, _
+    second_answer = fill_middle 1, 9
     answer.println!
     second_answer.println!
 ```
@@ -112,9 +140,9 @@ add: I64 -> I64 -> I64
 add = left, right ~> left + right
 
 main = !->
-    increment: I64 -> I64 = add 1
-    first: I64 = increment 2
-    second: I64 = add 1, 2
+    increment = add 1
+    first = increment 2
+    second = add 1, 2
     first.println!
     second.println!
 ```
@@ -130,8 +158,7 @@ increment: I64 -> I64
 increment = (+ 2)
 
 main = !->
-    result: I64 = increment 5
-    result.println!
+    increment 5 .println!
 ```
 
 The output is `7`. Use an explicit lambda such as `value -> 2 - value` when the direction of the operation is not visually obvious.
@@ -152,8 +179,8 @@ main = !->
     counter = Counter
         value: 21
     get = counter.get
-    first: I64 = get!
-    second: I64 = counter.get!
+    first = get!
+    second = counter.get!
     first.println!
     second.println!
 ```

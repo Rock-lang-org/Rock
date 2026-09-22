@@ -303,7 +303,8 @@ impl LoanAnalysis {
             let Some(loan) = table.get(loan_id) else {
                 continue;
             };
-            if Self::same_mutable_deref_access(&original_place, loan_id, loan, kind, active_loans) {
+            if Self::access_through_mutable_loan_owner(&original_place, loan_id, loan, active_loans)
+            {
                 continue;
             }
 
@@ -338,15 +339,14 @@ impl LoanAnalysis {
         Ok(())
     }
 
-    fn same_mutable_deref_access(
+    fn access_through_mutable_loan_owner(
         place: &Place,
         loan_id: LoanId,
         loan: &LoanData,
-        kind: LoanKind,
         active_loans: &LoanState,
     ) -> bool {
-        kind == LoanKind::Mut
-            && loan.kind == LoanKind::Mut
+        // The owner of an exclusive loan may both read and write through it.
+        loan.kind == LoanKind::Mut
             && active_loans.owner_contains(loan_id, place.local)
             && matches!(place.projection.first(), Some(Projection::Deref))
     }
@@ -589,6 +589,22 @@ mod tests {
         assert_eq!(
             LoanAnalysis::check_aliasing(&place, LoanKind::Mut, &table, &active),
             Err(id)
+        );
+        assert_eq!(
+            LoanAnalysis::check_aliasing(&place, LoanKind::Shared, &table, &active),
+            Err(id)
+        );
+        let through_owner = Place {
+            local: Local(2),
+            projection: vec![Projection::Deref],
+        };
+        assert_eq!(
+            LoanAnalysis::check_aliasing(&through_owner, LoanKind::Shared, &table, &active),
+            Ok(())
+        );
+        assert_eq!(
+            LoanAnalysis::check_aliasing(&through_owner, LoanKind::Mut, &table, &active),
+            Ok(())
         );
     }
 

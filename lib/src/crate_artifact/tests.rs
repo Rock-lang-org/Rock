@@ -466,7 +466,10 @@ fn stdlib_product_cache_reuses_and_repairs_artifacts() {
     });
     let modified = fs::metadata(&artifact).unwrap().modified().unwrap();
     cached_stdlib_product_artifact(&stdlib_dir, &cache_dir);
-    assert_eq!(modified, fs::metadata(&artifact).unwrap().modified().unwrap());
+    assert_eq!(
+        modified,
+        fs::metadata(&artifact).unwrap().modified().unwrap()
+    );
 
     fs::remove_file(cache_dir.join("stdlib.o")).unwrap();
     cached_stdlib_product_artifact(&stdlib_dir, &cache_dir);
@@ -2241,7 +2244,7 @@ impl Slot I64 for Rack
     type Yield = I64
     @fetch = _ -> &@value
 
-make_rack = -> Rack
+make_rack = ->
     Rack
         value: 1
 < Rack

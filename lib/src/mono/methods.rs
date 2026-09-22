@@ -84,7 +84,8 @@ impl Monomorphizer {
         };
 
         let type_args = if !imp.type_generics.is_empty() || !method.generic_params.is_empty() {
-            let Some(receiver_type_args) = self.extract_type_args_from_receiver_pattern(imp, ty)
+            let Some(receiver_type_args) =
+                self.extract_type_args_from_receiver_pattern(imp, ty, &[])
             else {
                 self.diagnostics.push(drop_diagnostic(
                     format!(
@@ -308,6 +309,7 @@ impl Monomorphizer {
         {
             self.extract_generics_from_type(&param.ty, &arg.ty, &method_ids, &mut inferred);
         }
+        self.infer_native_callable_bound_arguments(method, &method_ids, &mut inferred);
         for (index, id) in method_ids.into_iter().enumerate() {
             let binding = target
                 .method_substitution
@@ -709,7 +711,11 @@ impl Monomorphizer {
             let receiver_type_args = if selected_impl {
                 self.extract_type_args_from_selected_target(&imp, selected_target)
             } else {
-                self.extract_type_args_from_receiver_pattern(&imp, owner_ty)
+                self.extract_type_args_from_receiver_pattern(
+                    &imp,
+                    owner_ty,
+                    selected_target.trait_args(),
+                )
             };
             let receiver_type_args = receiver_type_args.ok_or_else(|| {
                 error(crate::mono::MonoErrorKind::InvalidBindings {
@@ -898,8 +904,12 @@ impl Monomorphizer {
                             self.extract_type_args_from_selected_target(&imp, &selected_target)
                                 .unwrap_or_default()
                         } else {
-                            self.extract_type_args_from_receiver_pattern(&imp, &args[0].ty)
-                                .unwrap_or_default()
+                            self.extract_type_args_from_receiver_pattern(
+                                &imp,
+                                &args[0].ty,
+                                selected_target.trait_args(),
+                            )
+                            .unwrap_or_default()
                         };
 
                         if receiver_type_args.len() != imp.type_generics.len() {
@@ -1060,12 +1070,18 @@ impl Monomorphizer {
         &mut self,
         imp: &HirImpl,
         recv_ty: &Type,
+        trait_args: &[Type],
     ) -> Option<Vec<TypeId>> {
-        let substitution = crate::selection::impl_receiver_pattern_substitution(
+        let mut substitution = crate::selection::impl_receiver_pattern_substitution(
             imp,
             recv_ty,
             self.trait_impls.values().flatten(),
         )?;
+        for (expected, actual) in imp.trait_arg_types.iter().zip(trait_args) {
+            if !crate::selection::type_pattern_matches(expected, actual, &mut substitution) {
+                return None;
+            }
+        }
         imp.type_generics
             .iter()
             .map(|decl| {

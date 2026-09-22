@@ -840,6 +840,13 @@ impl<'a> SelectionService<'a> {
         subst: &mut HashMap<GenericParamId, Type>,
     ) -> Option<ReceiverAdjustment> {
         if let Type::Reference { mutable, inner } = expected_self {
+            if *mutable
+                && can_autoref_mut
+                && matches!(inner.as_ref(), Type::Reference { .. })
+                && Self::type_pattern_matches_committing(inner, receiver_ty, subst)
+            {
+                return Some(ReceiverAdjustment::AutorefMut);
+            }
             if let Type::Reference {
                 mutable: receiver_mutable,
                 inner: receiver_inner,
@@ -1726,6 +1733,9 @@ impl<'a> SelectionService<'a> {
         self_param_ty: &Type,
         candidate: &ReceiverCandidate,
     ) -> bool {
+        if candidate.expr.ty == *self_param_ty {
+            return false;
+        }
         if candidate.adjustment != ReceiverAdjustment::None {
             return false;
         }
@@ -1774,6 +1784,13 @@ impl<'a> SelectionService<'a> {
         trait_id: DefId,
         trait_args: Option<&[Type]>,
     ) -> bool {
+        // Proving a trait obligation is not method lookup: receiver autoref and
+        // autoderef must not turn `&T` into an implementation for `&mut T`.
+        if let HirImplReceiverPattern::Exact(pattern) = &imp.receiver_pattern {
+            if !type_pattern_matches(pattern, receiver_ty, &mut HashMap::new()) {
+                return false;
+            }
+        }
         self.impl_matches_trait_ref_with_bound_filter(
             imp,
             receiver_ty,
@@ -1872,6 +1889,9 @@ impl<'a> SelectionService<'a> {
                     trait_id,
                     type_args: args,
                 };
+                if self.assumed_trait_bound_satisfied(&subject, &bound) {
+                    continue;
+                }
                 if Self::type_contains_type_var(&subject)
                     || bound.type_args.iter().any(Self::type_contains_type_var)
                 {
@@ -1896,6 +1916,9 @@ impl<'a> SelectionService<'a> {
                         .map(|arg| arg.substitute_generics(subst))
                         .collect(),
                 };
+                if self.assumed_trait_bound_satisfied(&bounded_ty, &bound) {
+                    continue;
+                }
                 if Self::type_contains_type_var(&bounded_ty)
                     || bound.type_args.iter().any(Self::type_contains_type_var)
                 {
@@ -1923,14 +1946,8 @@ impl<'a> SelectionService<'a> {
         bound: &TraitBound,
         excluded_impl: DefId,
     ) -> bool {
-        if let Type::Generic(param) = ty {
-            if self.current_impl_bounds.get(param).is_some_and(|bounds| {
-                self.trait_bounds_with_supertraits(ty, bounds)
-                    .iter()
-                    .any(|candidate| candidate == bound)
-            }) {
-                return true;
-            }
+        if self.assumed_trait_bound_satisfied(ty, bound) {
+            return true;
         }
 
         if self.is_builtin_sized_trait(bound.trait_id) {
@@ -1942,7 +1959,12 @@ impl<'a> SelectionService<'a> {
             .filter_map(|id| self.impls.get(&id))
             .any(|imp| {
                 imp.id != excluded_impl
-                    && self.impl_matches_trait_ref(imp, ty, bound.trait_id, Some(&bound.type_args))
+                    && self.impl_matches_trait_ref_strict(
+                        imp,
+                        ty,
+                        bound.trait_id,
+                        Some(&bound.type_args),
+                    )
             })
     }
 
@@ -2015,6 +2037,16 @@ impl<'a> SelectionService<'a> {
         }
         output.sort_by_key(|bound| (bound.trait_id, format!("{:?}", bound.type_args)));
         output
+    }
+
+    fn assumed_trait_bound_satisfied(&self, ty: &Type, bound: &TraitBound) -> bool {
+        if let Type::Generic(param) = ty {
+            return self.current_impl_bounds.get(param).is_some_and(|bounds| {
+                self.trait_bounds_with_supertraits(ty, bounds)
+                    .contains(bound)
+            });
+        }
+        false
     }
 
     fn is_builtin_sized_trait(&self, trait_id: DefId) -> bool {
@@ -2409,7 +2441,11 @@ impl<'a> SelectionService<'a> {
             .or_else(|| trait_def.signatures.get(method_name).map(|sig| sig.id))
     }
 
-    fn trait_member_name_by_id(&self, trait_id: DefId, member_id: DefId) -> Option<&str> {
+    pub(super) fn trait_member_name_by_id(
+        &self,
+        trait_id: DefId,
+        member_id: DefId,
+    ) -> Option<&str> {
         let trait_def = self.traits.get(&trait_id)?;
         trait_def
             .methods

@@ -112,9 +112,8 @@ impl Counter
     @read = -> @value
 
     ^@set: I64 -> ()
-    ^@set = value ->
+    ^@set = value !->
         self.value = value
-        return
 
     ~@take: I64
     ~@take = -> self.value
@@ -147,8 +146,7 @@ impl Projector for Identity
 
 main = !->
     identity = Identity
-    result: I64 = identity.project 13
-    result.println!
+    identity.project 13 .println!
 ```
 
 The implementation defines `Identity::Output = I64`, so `project` accepts and returns `I64`. Omitting the required associated type is a compile-time error.

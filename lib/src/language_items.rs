@@ -250,6 +250,26 @@ impl<D> Default for LanguageItems<D> {
     }
 }
 
+impl<D: Copy> LanguageItems<D> {
+    /// Invocation preference: shared, mutable, then consuming.
+    pub fn callable_protocols(&self) -> impl Iterator<Item = (crate::types::CallableKind, D, D)> {
+        use crate::types::CallableKind;
+        [
+            self.fn_trait
+                .as_ref()
+                .map(|item| (CallableKind::Fn, item.trait_id, item.method_id)),
+            self.fn_mut
+                .as_ref()
+                .map(|item| (CallableKind::FnMut, item.trait_id, item.method_id)),
+            self.fn_once
+                .as_ref()
+                .map(|item| (CallableKind::FnOnce, item.trait_id, item.method_id)),
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LanguageItemProviderConflict {
     Multiple {

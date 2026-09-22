@@ -19,6 +19,9 @@ use serde::Serialize;
 mod stdlib_cache_key;
 use stdlib_cache_key::{stdlib_cache_compiler_stamp, stdlib_cache_key};
 
+#[path = "support/callable.rs"]
+mod callable;
+
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 const STDLIB_CACHE_LOCK_STALE_AFTER: Duration = Duration::from_secs(10 * 60);
 const TEST_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
@@ -357,8 +360,15 @@ fn stdlib_cache_key_changes_when_stdlib_source_changes() {
     std::fs::write(stdlib_dir.join("rock.toml"), "[crate]\nname = \"stdlib\"\n").unwrap();
     let with_manifest = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
     assert_ne!(changed, with_manifest);
-    std::fs::write(stdlib_dir.join("rock.toml"), "[crate]\nname = \"renamed\"\n").unwrap();
-    assert_ne!(with_manifest, stdlib_cache_key(&stdlib_dir, "compiler-stamp"));
+    std::fs::write(
+        stdlib_dir.join("rock.toml"),
+        "[crate]\nname = \"renamed\"\n",
+    )
+    .unwrap();
+    assert_ne!(
+        with_manifest,
+        stdlib_cache_key(&stdlib_dir, "compiler-stamp")
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -11525,6 +11535,10 @@ impl Drop for Item
 
 struct Counter
     < total: I64
+
+impl FnOnce Item, () for Counter
+    type Output = ()
+    ~@call_once = item !-> item.id.println!
 
 impl FnMut Item, () for Counter
     type Output = ()

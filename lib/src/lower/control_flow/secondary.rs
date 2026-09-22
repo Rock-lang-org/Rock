@@ -54,13 +54,19 @@ impl Lowerer {
             .pending_impl_bounds
             .iter()
             .find(|(subject, bound)| subject == &parameter.ty && is_callable_bound(bound))
-            .map(|(_, bound)| bound);
+            .map(|(_, bound)| bound.clone());
         let function_bound = match &parameter.ty {
             Type::Generic(parameter_id) => selected
                 .function
                 .as_ref()
                 .and_then(|function| function.generic_bounds.get(parameter_id))
-                .and_then(|bounds| bounds.iter().find(|bound| is_callable_bound(bound))),
+                .and_then(|bounds| bounds.iter().find(|bound| is_callable_bound(bound)))
+                .cloned(),
+            Type::TypeVar(id) => self
+                .engine
+                .get_bounds(*id)
+                .into_iter()
+                .find(is_callable_bound),
             _ => None,
         };
         let bound = pending_bound.or(function_bound)?;
@@ -81,10 +87,17 @@ impl Lowerer {
         let Some(lambda) = Self::lambda_from_expression(argument) else {
             return self.lower_expression(argument);
         };
-        let expected = selected
+        let mut expected = selected
             .substituted_params
             .get(index)
             .and_then(|parameter| self.selected_callable_parameter_types(selected, parameter));
+        if lambda.parameters.len() == 1 {
+            if let Some(params) = &mut expected {
+                if params.len() > 1 {
+                    *params = vec![Type::Tuple(std::mem::take(params))];
+                }
+            }
+        }
         self.lower_lambda_with_expected_params(lambda, expected.as_deref())
     }
 
@@ -365,6 +378,9 @@ impl Lowerer {
             }
         }
         recv.ty = self.engine.resolve(&recv.ty);
+        if let Some(selected) = self.callable_method_candidate(recv.clone(), Some(method_name)) {
+            return Some(selected);
+        }
         let recv_span = recv.span.clone();
         let receiver_candidates = self.receiver_adjustment_candidates(recv);
         // Prefer proven adjusted candidates without discarding unresolved generic fallbacks.
@@ -454,6 +470,9 @@ impl Lowerer {
         selected: &crate::selection::SelectedMethod,
         args: Vec<HirExpr>,
     ) -> Option<(HirFunction, Type, Vec<HirExpr>, HirMethodCallTarget)> {
+        let mut instantiated = selected.clone();
+        self.instantiate_selected_callable_parameters(&mut instantiated);
+        let selected = &instantiated;
         let method_func = selected.function.clone()?;
         let recv_resolved = self.engine.resolve(&selected.receiver.ty);
         let operation_span = selected.receiver.span.clone();
@@ -486,11 +505,10 @@ impl Lowerer {
             &coerced_args,
             operation_span,
         );
-        let ret_ty = if method_subst.is_empty() {
-            selected.return_type.clone()
-        } else {
-            selected.return_type.substitute_generics(&method_subst)
-        };
+        let ret_ty = self
+            .engine
+            .resolve(&selected.return_type)
+            .substitute_generics(&method_subst);
         let ret_ty = self.resolve_selected_projection_type(selected, &ret_ty);
         self.record_pending_impl_bounds(selected, &method_subst, "method call");
         self.record_function_generic_bounds(
@@ -957,9 +975,24 @@ impl Lowerer {
                     }
                 }
 
+                let callable_selection =
+                    if matches!(self.engine.resolve(&expr.ty), Type::Function { .. })
+                        || matches!(expr.kind, HirExprKind::EnumVariant(..))
+                    {
+                        None
+                    } else {
+                        self.callable_method_candidate(expr.clone(), None)
+                    };
                 let expected_param_types = match self.engine.resolve(&expr.ty) {
                     Type::Function { params, .. } => Some(params),
-                    _ => None,
+                    _ => callable_selection
+                        .as_ref()
+                        .and_then(|selected| selected.substituted_params.first())
+                        .map(|param| match (&param.ty, args.len()) {
+                            (Type::Unit, 0) => Vec::new(),
+                            (Type::Tuple(types), count) if count > 1 => types.clone(),
+                            (ty, _) => vec![ty.clone()],
+                        }),
                 };
                 hir_args = Vec::with_capacity(args.len());
                 for (index, argument) in args.iter().enumerate() {
@@ -969,9 +1002,20 @@ impl Lowerer {
                         .cloned();
                     let hir_arg = if let Some(lambda) = Self::lambda_from_expression(&argument.arg)
                     {
-                        let expected_params = expected
+                        let mut expected_params = expected
                             .as_ref()
                             .and_then(|ty| self.callable_argument_parameters(ty));
+                        if lambda.parameters.len() == 1
+                            && !expected.as_ref().is_some_and(|ty| {
+                                matches!(self.engine.resolve(ty), Type::Function { .. })
+                            })
+                        {
+                            if let Some(params) = &mut expected_params {
+                                if params.len() > 1 {
+                                    *params = vec![Type::Tuple(std::mem::take(params))];
+                                }
+                            }
+                        }
                         self.lower_lambda_with_expected_params(lambda, expected_params.as_deref())
                     } else {
                         self.lower_expression(&argument.arg)
@@ -1241,6 +1285,9 @@ impl Lowerer {
                 }
 
                 let resolved_expr_ty = self.engine.resolve(&expr.ty);
+                if let Some(selected) = callable_selection {
+                    return self.lower_callable_call(selected, hir_args);
+                }
                 let defer_argument_coercions = matches!(resolved_expr_ty, Type::TypeVar(_));
                 if let Type::Function { params, .. } = &resolved_expr_ty {
                     if params.len() == 1 && hir_args.len() > 1 {
@@ -1283,6 +1330,8 @@ impl Lowerer {
                     .iter()
                     .map(|arg| {
                         if defer_argument_coercions
+                            && (matches!(expr.kind, HirExprKind::FieldAccess(..))
+                                || self.language_items.fn_once.is_none())
                             && matches!(
                                 self.engine.resolve(&arg.ty),
                                 Type::Reference { inner, .. }
@@ -1307,7 +1356,76 @@ impl Lowerer {
                     _ => crate::types::FunctionSafety::Safe,
                 };
                 let expected_fn_ty = Type::function_with_safety(arg_types, ret_ty.clone(), safety);
-                let _ = self.engine.unify(&expr.ty, &expected_fn_ty);
+                let mut callable_ty = self.engine.resolve(&expr.ty);
+                while let Type::Reference { inner, .. } = callable_ty {
+                    callable_ty = *inner;
+                }
+                let numeric_callee = if let Type::TypeVar(id) = callable_ty {
+                    self.constraint_store
+                        .literal_default_type_for_representative(id, |var| {
+                            match self.engine.resolve(&Type::TypeVar(var)) {
+                                Type::TypeVar(id) => Some(id),
+                                _ => None,
+                            }
+                        })
+                        .is_some()
+                } else {
+                    false
+                };
+                if !numeric_callee && !matches!(expr.kind, HirExprKind::FieldAccess(..)) {
+                    if let Type::TypeVar(id) = callable_ty {
+                        let protocol = if self.expr_is_mutable_lvalue(&expr) {
+                            self.language_items
+                                .fn_mut
+                                .as_ref()
+                                .map(|items| items.trait_id)
+                        } else {
+                            None
+                        }
+                        .or_else(|| {
+                            self.language_items
+                                .fn_once
+                                .as_ref()
+                                .map(|items| items.trait_id)
+                        });
+                        if let Some(trait_id) = protocol {
+                            let args_ty = match hir_args.as_slice() {
+                                [] => Type::Unit,
+                                [arg] => arg.ty.clone(),
+                                args => {
+                                    Type::Tuple(args.iter().map(|arg| arg.ty.clone()).collect())
+                                }
+                            };
+                            let bound = TraitBound {
+                                trait_id,
+                                type_args: vec![args_ty, ret_ty.clone()],
+                            };
+                            self.engine.add_bound(id, bound.clone());
+                            self.constraint_store.add_trait(
+                                callable_ty.clone(),
+                                bound,
+                                span.clone(),
+                                "function call",
+                            );
+                            if let Some(selected) =
+                                self.callable_method_candidate(expr.clone(), None)
+                            {
+                                return self.lower_callable_call(selected, hir_args);
+                            }
+                            return self.error_expression_at(span);
+                        }
+                    }
+                }
+                if (numeric_callee || self.engine.unify(&callable_ty, &expected_fn_ty).is_err())
+                    && !matches!(expr.kind, HirExprKind::FieldAccess(..))
+                {
+                    let message = format!(
+                        "value of type {} is not callable with these arguments",
+                        self.display_type(&callable_ty)
+                    );
+                    self.diagnostics.push_type_with_span(message, span.clone());
+                    return self.error_expression_at(span);
+                }
                 let resolved_ret_ty = self.engine.resolve(&ret_ty);
                 self.report_unsafe_function_value_call_from_type(&expr);
 
@@ -1412,7 +1530,11 @@ impl Lowerer {
                         );
                         if inferred.len() == 1 {
                             found_method = inferred.into_iter().next();
-                        } else if inferred.len() > 1 {
+                        } else if inferred.len() > 1
+                            && !crate::type_services::visit::type_any(&recv_ty, |ty| {
+                                matches!(ty, Type::TypeVar(_))
+                            })
+                        {
                             let receiver_type = self.display_type(&recv_ty);
                             self.diagnostics.push_selection_with_span(
                                 format!(
