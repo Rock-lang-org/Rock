@@ -113,8 +113,11 @@ pub fn function_shorthand(stream: Input) -> IResult<LambdaDecl> {
 }
 
 pub fn prefix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
-    let (stream, (span, _, inner_tokens)) = (
+    let (stream, (span, unit, _, inner_tokens)) = (
         get_span,
+        TokenType::StuckOperator("!".to_string())
+            .followed_by(seek(TokenType::Dot))
+            .opt(),
         seek(operator_token.map(|_| ()).or(TokenType::Dot.map(|_| ()))),
         consume_tokens_until(TokenType::CloseParen),
     )
@@ -126,7 +129,11 @@ pub fn prefix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
             span: span.clone(),
         },
         Token {
-            token_type: TokenType::Arrow,
+            token_type: if unit.is_some() {
+                TokenType::UnitArrow
+            } else {
+                TokenType::Arrow
+            },
             span: span.clone(),
         },
         Token {

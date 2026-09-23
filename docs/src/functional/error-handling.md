@@ -73,7 +73,7 @@ main = !->
     result = parse_nonnegative -3
     match result
         Result::Ok value => value.println!
-        Result::Err error => error.show!.println!
+        Result::Err error => error.println!
 ```
 
 `parse_nonnegative` returns `Err ParseError::Negative`; the `Show` implementation turns that structured error into `negative input`, which is the output.

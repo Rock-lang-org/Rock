@@ -393,6 +393,13 @@ plus_one = (+1)
 multiply_by_two = (*2)
 ```
 
+Receiver sections use `(.method!)` for `value -> value.method!` and `(!.method!)` for `value !-> value.method!`. The leading `!` discards the result of the entire section body, including any method arguments and chains, and returns `()`. The trailing `!` remains a zero-argument call.
+
+```haskell
+main = !->
+    for_each 1..=3, (!.println!)
+```
+
 ### 6.3 Function Features
 
 #### Currying

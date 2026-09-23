@@ -69,7 +69,7 @@ main = !->
 
 Only ranges with both endpoints are finite loop inputs. Open-ended forms such as `start..` remain useful for slicing but are rejected as `for` iterators.
 
-For an inline action instead of a loop body, the prelude also provides `for_each 0..10, number !-> number.println!`. It visits the same integers in order; [the FizzBuzz project](../getting-started/first-project.md#traverse-the-range-with-for_each) uses this form with a pipeline.
+For an inline action instead of a loop body, the prelude also provides `for_each 0..10, (!.println!)`. The unit-returning receiver section `(!.println!)` means `number !-> number.println!`. It visits the same integers in order; [the FizzBuzz project](../getting-started/first-project.md#traverse-the-range-with-for_each) uses `for_each` with a pipeline.
 
 The upper bound is exclusive, so this prints `0` through `9`. The pattern is bound for each iteration:
 

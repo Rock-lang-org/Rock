@@ -40,8 +40,8 @@ make_values = ->
 main = !->
     option_result = map_any increment, Option::Some 4
     vector_result = make_values!.fmap double
-    option_result.show!.println!
-    vector_result.show!.println!
+    option_result.println!
+    vector_result.println!
 ```
 
 At the first call, `F = Option`, `A = I64`, and `B = I64`; at the second, the receiver supplies `F = Vec`. The standalone `fmap mapper, value` and receiver form `value.fmap mapper` delegate to the same constructor's `Functor` implementation. The output is `Some(5)` and `[2, 4, 6]`. Both input carriers are consumed by their mapping operation.
@@ -58,8 +58,8 @@ increment = value -> value + 1
 main = !->
     success = map_result increment, Result::Ok 4
     failure = map_result increment, Result::Err 9
-    success.show!.println!
-    failure.show!.println!
+    success.println!
+    failure.println!
 ```
 
 Here the inferred constructor is `Result _, I64`: the error type stays fixed while `fmap` changes the success payload. It has the required unary kind, while bare `Result` would still require two arguments. The output is `Ok(5)` and `Err(9)`. When explicit dispatch is useful, the same operation can be written `(Result _, I64)::Functor::fmap mapper, value`; that qualification is not required at ordinary call sites.
@@ -83,7 +83,7 @@ main = !->
     lifted = repure_any Option::Some 0
     wrapped = Option::Some increment
     applied = apply_any wrapped, lifted
-    applied.show!.println!
+    applied.println!
 ```
 
 The inferred constructor is `F = Option`. `repure_any` ignores its input carrier and calls `pure 2`, producing `Some 2`; then `ap` applies `increment`, producing `Some 3`. The output is `Some(3)`. The receiver form is `wrapped_function.ap wrapped_value`; its receiver is the carrier holding the function.
@@ -98,8 +98,8 @@ make_result: () -> Result I64, I64
 make_result = -> pure 3
 
 main = !->
-    make_option!.show!.println!
-    make_result!.show!.println!
+    make_option!.println!
+    make_result!.println!
 ```
 
 This prints `Some(2)` and `Ok(3)`. Without such context, `pure 2` cannot choose a carrier. `pure` remains a standalone or associated function because it creates a carrier rather than consuming an existing one.
@@ -118,7 +118,7 @@ add_two = value -> Option::Some value + 2
 main = !->
     start = Option::Some 3
     result = bind_any start, add_two
-    result.show!.println!
+    result.println!
 ```
 
 Here `F = Option` and `M` is the callback type `I64 -> Option I64`. `bind` unwraps `Some 3`, calls `add_two`, and returns `Some 5`. The output is `Some(5)`; a `None` input would skip the callback. The standalone spelling is `bind value, callback`.
@@ -148,7 +148,7 @@ main = !->
     traversed = make_values!.traverse increment_effect
     option_total.println!
     vector_total.println!
-    traversed.show!.println!
+    traversed.println!
 ```
 
 The fold over `Some 4` returns `4`; the vector fold computes `123`; and traversal produces `Some([2, 3, 4])`. The output is `4`, `123`, and `Some([2, 3, 4])`. `Vec` supplies `Functor`, `Foldable`, and `Traversable`; its traversal consumes the input vector while constructing a new vector. The standalone traversal spelling is `traverse increment_effect, make_values!`.
@@ -173,7 +173,7 @@ make_values = ->
 
 main = !->
     result = make_values!.traverse_m stop_at_two
-    result.show!.println!
+    result.println!
 ```
 
 The second callback returns `None`, so traversal stops and the output is `None`. The standalone spelling is `traverse_m stop_at_two, make_values!`.
@@ -189,9 +189,9 @@ main = !->
         total = total + number
     total.println!
 
-    for_each (Option::Some 7), number !-> number.println!
+    for_each (Option::Some 7), (!.println!)
     result: Result I64, I64 = Result::Ok 9
-    for_each result, number !-> number.println!
+    for_each result, (!.println!)
 ```
 
 The output is `6`, `7`, and `9`. `Option::None` and `Result::Err` invoke no callback. A `Vec T` supplies each owned element in order and is consumed; `&Vec T` and `&[T]` supply shared references while preserving the owner. Borrow an array as a slice to use the same function.
@@ -199,6 +199,8 @@ The output is `6`, `7`, and `9`. `Option::None` and `Result::Err` invoke no call
 The public function uses the ordinary `ForEach T` bridge trait. Its blanket implementation for `F T where F _: Foldable` derives traversal from `F::Foldable::foldl`: the callback is carried as fold state, called once per element, and returned for the next step. Any new constructor implementing `Foldable` receives this behavior automatically; no separate `ForEach` implementation is needed.
 
 Native `Range` is a concrete integer type, not a unary type constructor. Its dedicated bridge implementation visits bounded ranges directly without allocating a vector. Exclusive `start..end` and inclusive `start..=end` ranges run in ascending order; reversed ranges are empty, and an inclusive equal-endpoint range visits one integer. Open-ended ranges terminate with `for_each requires a bounded range` before invoking the action.
+
+`(!.println!)` is a unit-returning receiver section: it means `number !-> number.println!`. The leading `!` discards the result of the whole section body, while `(.println!)` would return the method's result.
 
 ## Sequencing Effects
 

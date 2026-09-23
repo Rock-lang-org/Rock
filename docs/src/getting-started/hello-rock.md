@@ -80,7 +80,8 @@ An `if`/`else` expression produces the value of the selected branch. When it is 
 
 ```rock
 absolute = number ->
-    if number >= 0 then number
+    if number >= 0 
+    then number
     else -number
 
 main = !->

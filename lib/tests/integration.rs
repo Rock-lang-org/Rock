@@ -1796,7 +1796,7 @@ fn test_show_impl_for_slice_resolves_through_builtin_receiver_type() {
         r#"
 main = ->
     s = "abc"
-    s.show!.println!
+    s.println!
     0
 "#,
     );
@@ -1923,10 +1923,10 @@ struct Array
 main = ->
     a = Array
         value: 1
-    a.show!.println!
+    a.println!
     0
 "#,
-        "Unknown field 'show' on struct 'Array'",
+        "Unknown field 'println' on struct 'Array'",
     );
 }
 
@@ -2173,7 +2173,7 @@ fn test_fixed_array_show_uses_slice_impl_via_coercion() {
         r#"
 main = ->
     arr = [1, 2, 3]
-    arr.show!.println!
+    arr.println!
     0
 "#,
     );
@@ -2642,7 +2642,7 @@ impl Index I64 for [Bool; 3]
 
 main = ->
     arr: [Bool; 3] = [false, false, true]
-    arr[0].show!.println!
+    arr[0].println!
     p = &arr[0]
     *p .println!
     0
@@ -8957,10 +8957,10 @@ fn test_stdlib_repeated_primitive_show_println_drops_temporaries() {
 main = ->
     i = 0
     while i < 5
-        (100 + i).show!.println!
-        (i as F64).show!.println!
-        true.show!.println!
-        'x'.show!.println!
+        (100 + i).println!
+        (i as F64).println!
+        true.println!
+        'x'.println!
         i = i + 1
     0
 "#,
@@ -10436,7 +10436,7 @@ fn test_mut_array_borrow_directly_dispatches_shared_slice_method() {
 main = ->
     mut arr = [1, 2, 3]
     r = &mut arr
-    r.show!.println!
+    r.println!
     0
 "#,
     );
@@ -10728,7 +10728,7 @@ print_len = value -> value.len! .println!
 main = ->
     value = Option::Some (String::from_str "hello")
     returned = value.inspect print_len
-    returned.show!.println!
+    returned.println!
     0
 "#,
     );
@@ -10746,8 +10746,8 @@ print_len = value -> value.len! .println!
 main = ->
     value = Option::Some (String::from_str "hello")
     returned = value.inspect print_len
-    returned.show!.println!
-    value.show!.println!
+    returned.println!
+    value.println!
     0
 "#,
         "borrow of moved value",
@@ -10891,13 +10891,13 @@ main = ->
     nested: Option (Vec I64) = Option::Some (make_values!)
     mapped_nested: Option (Vec I64) = map_any map_values, nested
 
-    mapped_option.show!.println!
-    mapped_result.show!.println!
-    mapped_vec.show!.println!
-    qualified.show!.println!
-    fixed_error.show!.println!
-    alias_error.show!.println!
-    mapped_nested.show!.println!
+    mapped_option.println!
+    mapped_result.println!
+    mapped_vec.println!
+    qualified.println!
+    fixed_error.println!
+    alias_error.println!
+    mapped_nested.println!
     0
 "#,
     );
@@ -11013,36 +11013,36 @@ main = ->
     second_error: Result I64, I64 = Result::Err 2
     result_error_precedence: Result I64, I64 = (Result _, I64)::Applicative::ap first_error, second_error
 
-    generic_bind.show!.println!
-    option_identity_l.show!.println!
-    option_identity_r.show!.println!
-    option_composition_l.show!.println!
-    option_composition_r.show!.println!
-    option_homomorphism_l.show!.println!
-    option_homomorphism_r.show!.println!
-    option_interchange_l.show!.println!
-    option_interchange_r.show!.println!
-    option_left_identity_l.show!.println!
-    option_left_identity_r.show!.println!
-    option_right_identity_l.show!.println!
-    option_right_identity_r.show!.println!
-    option_associativity_l.show!.println!
-    option_associativity_r.show!.println!
-    result_identity_l.show!.println!
-    result_identity_r.show!.println!
-    result_composition_l.show!.println!
-    result_composition_r.show!.println!
-    result_homomorphism_l.show!.println!
-    result_homomorphism_r.show!.println!
-    result_interchange_l.show!.println!
-    result_interchange_r.show!.println!
-    result_left_identity_l.show!.println!
-    result_left_identity_r.show!.println!
-    result_right_identity_l.show!.println!
-    result_right_identity_r.show!.println!
-    result_associativity_l.show!.println!
-    result_associativity_r.show!.println!
-    result_error_precedence.show!.println!
+    generic_bind.println!
+    option_identity_l.println!
+    option_identity_r.println!
+    option_composition_l.println!
+    option_composition_r.println!
+    option_homomorphism_l.println!
+    option_homomorphism_r.println!
+    option_interchange_l.println!
+    option_interchange_r.println!
+    option_left_identity_l.println!
+    option_left_identity_r.println!
+    option_right_identity_l.println!
+    option_right_identity_r.println!
+    option_associativity_l.println!
+    option_associativity_r.println!
+    result_identity_l.println!
+    result_identity_r.println!
+    result_composition_l.println!
+    result_composition_r.println!
+    result_homomorphism_l.println!
+    result_homomorphism_r.println!
+    result_interchange_l.println!
+    result_interchange_r.println!
+    result_left_identity_l.println!
+    result_left_identity_r.println!
+    result_right_identity_l.println!
+    result_right_identity_r.println!
+    result_associativity_l.println!
+    result_associativity_r.println!
+    result_error_precedence.println!
     0
 "#,
     );
@@ -11088,22 +11088,22 @@ result_value: () -> Result I64, I64
 result_value = -> pure 4
 
 main = !->
-    (fmap increment, Option::Some 4).show!.println!
-    (Option::Some 4).fmap increment .show!.println!
-    (map_generic increment, result_value!).show!.println!
-    (map_generic increment, values!).show!.println!
-    (ap (Option::Some increment), (Option::Some 4)).show!.println!
-    (Option::Some increment).ap (Option::Some 4) .show!.println!
-    (bind (Option::Some 4), some_increment).show!.println!
-    (Option::Some 4).bind some_increment .show!.println!
+    (fmap increment, Option::Some 4).println!
+    (Option::Some 4).fmap increment .println!
+    (map_generic increment, result_value!).println!
+    (map_generic increment, values!).println!
+    (ap (Option::Some increment), (Option::Some 4)).println!
+    (Option::Some increment).ap (Option::Some 4) .println!
+    (bind (Option::Some 4), some_increment).println!
+    (Option::Some 4).bind some_increment .println!
     (foldl digits, 0, values!).println!
     values!.foldl digits, 0 .println!
-    (traverse some_increment, values!).show!.println!
-    values!.traverse some_increment .show!.println!
-    (traverse_m some_increment, values!).show!.println!
-    values!.traverse_m some_increment .show!.println!
-    (sequence effects!).show!.println!
-    effects!.sequence!.show!.println!
+    (traverse some_increment, values!).println!
+    values!.traverse some_increment .println!
+    (traverse_m some_increment, values!).println!
+    values!.traverse_m some_increment .println!
+    (sequence effects!).println!
+    effects!.sequence!.println!
 "#,
     );
 
@@ -11159,13 +11159,13 @@ main = !->
     mapped = values.fmap (value ->
         total = total + value
         total)
-    mapped.show!.println!
+    mapped.println!
     total.println!
 
     mut words = Vec::new!
     words.push (String::from_str "one")
     words.push (String::from_str "four")
-    words.fmap string_length .show!.println!
+    words.fmap string_length .println!
 "#,
     );
     assert_eq!(
@@ -11208,21 +11208,21 @@ bind_generic = value, callback -> value.bind callback
 
 main = !->
     failed: Result I64, String = Result::Err (String::from_str "error")
-    failed.fmap increment .show!.println!
+    failed.fmap increment .println!
     absent = Option::None
-    absent.fmap increment .show!.println!
+    absent.fmap increment .println!
     absent_bind = Option::None
-    absent_bind.bind some .show!.println!
-    (bind_generic (success 4), success).show!.println!
+    absent_bind.bind some .println!
+    (bind_generic (success 4), success).println!
     wrapped: Result (I64 -> I64), String = pure increment
-    wrapped.ap (success 4) .show!.println!
+    wrapped.ap (success 4) .println!
     (success 4).traverse success .unwrap_or (success 0) .unwrap_or 0 .println!
     (success 4).traverse_m success .unwrap_or (success 0) .unwrap_or 0 .println!
-    values!.traverse_m stop .show!.println!
+    values!.traverse_m stop .println!
     mut effects = Vec::new!
     effects.push (success 1)
     effects.push (Result::Err (String::from_str "error"))
-    effects.sequence!.show!.println!
+    effects.sequence!.println!
 "#,
     );
     assert_eq!(
@@ -11263,7 +11263,7 @@ main = !->
     values.push 1
     mapped = values.fmap (value -> value + 1)
     values.len!.println!
-    mapped.show!.println!
+    mapped.println!
 "#,
         "borrow of moved value",
     );
@@ -11615,12 +11615,12 @@ main = !->
     for_each 1..=3, number !->
         digits = digits * 10 + number
     digits.println!
-    for_each 4..6, number !-> number.println!
-    for_each 5..5, number !-> number.println!
-    for_each 5..3, number !-> number.println!
-    for_each 5..=3, number !-> number.println!
-    for_each 7..=7, number !-> number.println!
-    for_each 9223372036854775806..=9223372036854775807, number !-> number.println!
+    for_each 4..6, (!.println!)
+    for_each 5..5, (!.println!)
+    for_each 5..3, (!.println!)
+    for_each 5..=3, (!.println!)
+    for_each 7..=7, (!.println!)
+    for_each 9223372036854775806..=9223372036854775807, (!.println!)
     mut visits: I64 = 0
     for_each 0..100000, _ !->
         visits = visits + 1
@@ -11650,9 +11650,9 @@ main = !->
     mut words: Vec String = Vec::new!
     words.push String::from_str "first"
     words.push String::from_str "second"
-    for_each &words, word !-> word.println!
+    for_each &words, (!.println!)
     words.len!.println!
-    for_each words, word !-> word.println!
+    for_each words, (!.println!)
 
     values = [3, 4, 5]
     view: &[I64] = &values[..]
@@ -11705,21 +11705,56 @@ impl Foldable for One
         step.call_mut (initial, value.value)
 
 main = !->
-    for_each (Option::Some 7), number !-> number.println!
+    for_each (Option::Some 7), (!.println!)
     absent: Option I64 = Option::None
-    for_each absent, number !-> number.println!
+    for_each absent, (!.println!)
     success: Result I64, I64 = Result::Ok 9
     failure: Result I64, I64 = Result::Err 99
-    for_each success, number !-> number.println!
-    for_each failure, number !-> number.println!
+    for_each success, (!.println!)
+    for_each failure, (!.println!)
     one = One
         value: String::from_str "custom foldable"
-    for_each one, text !-> text.println!
+    for_each one, (!.println!)
 "#,
     );
     assert_eq!(
         output.lines().collect::<Vec<_>>(),
         vec!["7", "9", "custom foldable"]
+    );
+}
+
+#[test]
+fn test_unit_receiver_sections_discard_results_and_capture_arguments() {
+    let output = compile_and_run(
+        r#"
+struct Number
+    < value: I64
+
+impl Number
+    @plus: I64 -> I64
+    @plus = amount -> self.value + amount
+
+main = !->
+    for_each 1..=3, (!.println!)
+    offset = 5
+    value = Number
+        value: 7
+    for_each (Option::Some value), (!.plus offset .println!)
+    suffix = String::from_str "!"
+    for_each (Option::Some (String::from_str "hello")), (!.concat suffix.clone! .println!)
+    read: Number -> I64 = (.plus offset)
+    ignore: Number -> () = (!.plus offset)
+    other = Number
+        value: 10
+    read other .println!
+    ignored = Number
+        value: 20
+    ignore ignored
+"#,
+    );
+    assert_eq!(
+        output.lines().collect::<Vec<_>>(),
+        ["1", "2", "3", "12", "hello!", "15"]
     );
 }
 
@@ -12215,17 +12250,17 @@ main = ->
     composed_err_l: Result I64, I64 = bimap double_after_inc, triple_after_add_ten, (Result::Err 7)
     composed_err_r: Result I64, I64 = bimap double, triple, (bimap inc, add_ten, (Result::Err 7))
 
-    mapped_ok.show!.println!
-    mapped_err.show!.println!
-    first_ok.show!.println!
-    second_err.show!.println!
-    operator_err.show!.println!
-    identity_ok.show!.println!
-    identity_err.show!.println!
-    composed_ok_l.show!.println!
-    composed_ok_r.show!.println!
-    composed_err_l.show!.println!
-    composed_err_r.show!.println!
+    mapped_ok.println!
+    mapped_err.println!
+    first_ok.println!
+    second_err.println!
+    operator_err.println!
+    identity_ok.println!
+    identity_err.println!
+    composed_ok_l.println!
+    composed_ok_r.println!
+    composed_err_l.println!
+    composed_err_r.println!
     0
 "#,
     );
@@ -12276,14 +12311,14 @@ main = ->
     ok_41: Result I64, I64 = Result::Ok 41
     err_4: Result I64, I64 = Result::Err 4
     ok_5: Result I64, I64 = Result::Ok 5
-    (Option::Some 3).show!.println!
-    none.show!.println!
-    ok_41.show!.println!
-    err_4.show!.println!
+    (Option::Some 3).println!
+    none.println!
+    ok_41.println!
+    err_4.println!
     ok_5.println!
     err_io_a: Result I64, IoError = Result::Err (IoError::Os (0 as I32))
     err_io_b: Result I64, IoError = Result::Err (IoError::Os (0 as I32))
-    err_io_a.show!.println!
+    err_io_a.println!
     err_io_b.println!
     0
 "#,
@@ -12310,8 +12345,8 @@ fn test_stdlib_option_show_owned_string_is_non_consuming() {
         r#"
 main = ->
     value = Option::Some (String::from_str "hello")
-    value.show!.println!
-    value.show!.println!
+    value.println!
+    value.println!
     0
 "#,
     );
@@ -12326,10 +12361,10 @@ fn test_stdlib_result_show_owned_string_is_non_consuming() {
 main = ->
     ok: Result String, String = Result::Ok (String::from_str "hello")
     err: Result String, String = Result::Err (String::from_str "oops")
-    ok.show!.println!
-    ok.show!.println!
-    err.show!.println!
-    err.show!.println!
+    ok.println!
+    ok.println!
+    err.println!
+    err.println!
     0
 "#,
     );

@@ -169,6 +169,30 @@ main = ->
 
 This program exits with status `0` when given a user argument and `1` otherwise. Both integers are meaningful results here; `!->` would discard the selected status.
 
+## Receiver sections
+
+A parenthesized expression beginning with `.` creates a one-parameter function whose parameter is the receiver. `(.println!)` is shorthand for `value -> value.println!`: it returns the method's result.
+
+Use `(!.println!)` when the callback should return `()` instead. It is shorthand for `value !-> value.println!`, which suits `for_each`:
+
+```rock
+main = !->
+    for_each 1..=3, (!.println!)
+    for_each (Option::Some 7), (!.println!)
+```
+
+This prints `1`, `2`, `3`, and `7`, each on its own line. The leading `!` discards the section body's result; the trailing `!` calls `println` with no explicit arguments.
+
+The body can include method arguments and chains. The entire chain runs before its final result is discarded:
+
+```rock
+main = !->
+    suffix = String::from_str "!"
+    for_each (Option::Some (String::from_str "hello")), (!.concat suffix.clone! .println!)
+```
+
+This prints `hello!`. As with an explicit lambda, values referenced by the body are captured, and ordinary receiver and ownership rules still apply.
+
 ## Recursion
 
 A function can call itself after its declaration:
