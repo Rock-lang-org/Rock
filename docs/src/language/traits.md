@@ -192,7 +192,7 @@ impl Clone for Label
 
 main = !->
     original = Label
-        text: String::from_str "Rock"
+        text: String::from "Rock"
     copy = original.clone!
     original.println!
     copy.println!

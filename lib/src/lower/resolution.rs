@@ -1206,19 +1206,16 @@ mod tests {
                 trait_arg_types: Vec::new(),
                 associated_types: Vec::new(),
                 bounds: HashMap::new().into(),
-                methods: HashMap::from([(
-                    "from_str".to_string(),
-                    test_function(method_id, "from_str"),
-                )]),
+                methods: HashMap::from([("from".to_string(), test_function(method_id, "from"))]),
             })
             .unwrap();
         let resolution = LowerResolutionContext::new(&lowerer);
         let resolved = resolution
-            .resolve_static_method_path(&["String".to_string(), "from_str".to_string()])
+            .resolve_static_method_path(&["String".to_string(), "from".to_string()])
             .unwrap()
             .unwrap();
 
-        assert_eq!(resolved.value.name, "stdlib::string::String::from_str");
+        assert_eq!(resolved.value.name, "stdlib::string::String::from");
         assert_eq!(
             resolved.value.target,
             Some(HirVarTarget::Function(method_id))

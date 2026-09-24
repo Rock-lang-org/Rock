@@ -63,12 +63,12 @@ A string literal is borrowed string data with type `&Str`. `String` is a separat
 ```rock
 main = !->
     borrowed: &Str = "hello"
-    owned = String::from_str borrowed
+    owned = String::from borrowed
     borrowed.println!
     owned.println!
 ```
 
-The literal can be used while its source is available; `String::from_str` copies the bytes into owned storage. Current string helpers operate on bytes, so an index or offset is not automatically a Unicode scalar-value position.
+The literal can be used while its source is available; `String::from` copies the bytes into owned storage. Current string helpers operate on bytes, so an index or offset is not automatically a Unicode scalar-value position.
 
 ## Annotations and signatures
 

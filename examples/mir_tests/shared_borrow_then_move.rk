@@ -1,5 +1,5 @@
 main = ->
-    mut x = String::from_str "held"
+    mut x = String::from "held"
     r = &x
     y = x
     r.println!

@@ -13,29 +13,29 @@ as_bytes = s ->
 byte_to_ascii_str: I64 -> String
 byte_to_ascii_str = b ->
     if b == 32
-        String::from_char ' '
+        String::from ' '
     else if b == 72
-        String::from_char 'H'
+        String::from 'H'
     else if b == 87
-        String::from_char 'W'
+        String::from 'W'
     else if b == 100
-        String::from_char 'd'
+        String::from 'd'
     else if b == 101
-        String::from_char 'e'
+        String::from 'e'
     else if b == 108
-        String::from_char 'l'
+        String::from 'l'
     else if b == 111
-        String::from_char 'o'
+        String::from 'o'
     else if b == 114
-        String::from_char 'r'
+        String::from 'r'
     else
-        String::from_char '?'
+        String::from '?'
 
 reverse_ascii = s ->
     bytes = as_bytes s
     slice = bytes.as_slice!
     len = string_len s
-    result = String::from_str ""
+    result = String::from ""
     one = 1
     i = len - one
     zero = 0

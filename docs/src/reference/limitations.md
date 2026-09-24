@@ -142,7 +142,7 @@ has_text = message ->
         Message::Empty => false
 
 main = !->
-    message: Message = Message::Text String::from_str "hello"
+    message: Message = Message::Text String::from "hello"
     result: Bool = has_text message
     result.println!
 ```
@@ -162,7 +162,7 @@ has_text = message ->
         Message::Empty => false
 
 main = !->
-    message: Message = Message::Text String::from_str "hello"
+    message: Message = Message::Text String::from "hello"
     result: Bool = has_text message
     result.println!
 ```
@@ -250,7 +250,7 @@ not user-perceived characters:
 > stdlib::hash::Hash
 
 main = !->
-    text: String = String::from_str "cafe"
+    text: String = String::from "cafe"
     length: I64 = text.len!
     length.println!
 ```

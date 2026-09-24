@@ -27,7 +27,7 @@ string_length: String -> I64
 string_length = text -> text.len!
 
 main = !->
-    name = String::from_str "Rock"
+    name = String::from "Rock"
     length = string_length name
     length.println!
 ```
@@ -45,7 +45,7 @@ measure: &String -> I64
 measure = text -> text.len!
 
 main = !->
-    name = String::from_str "Rock"
+    name = String::from "Rock"
     length = measure &name
     length.println!
     name.println!
@@ -65,8 +65,8 @@ string_length = text -> text.len!
 
 main = !->
     mut words = Vec::new!
-    words.push String::from_str "a"
-    words.push String::from_str "long"
+    words.push String::from "a"
+    words.push String::from "long"
     lengths = words.map string_length
     lengths[0].println!
     lengths[1].println!
@@ -114,7 +114,7 @@ main = !->
 
 ```rock
 main = !->
-    first = String::from_str "owned"
+    first = String::from "owned"
     second = first.clone!
     first.println!
     second.println!
@@ -128,7 +128,7 @@ An owned value is cleaned up when its live scope ends. `String`, `Vec`, and `Box
 
 ```rock
 make_message: () -> String
-make_message = -> String::from_str "temporary"
+make_message = -> String::from "temporary"
 
 main = !->
     make_message!.len!.println!
@@ -169,8 +169,8 @@ take_length = text -> text.len!
 
 main = !->
     names = Names
-        first: String::from_str "Ada"
-        second: String::from_str "Lovelace"
+        first: String::from "Ada"
+        second: String::from "Lovelace"
 
     take_length names.first .println!
     names.second.len! .println!

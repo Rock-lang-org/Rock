@@ -2,7 +2,7 @@
 // This should NOT error because the move only happens conditionally
 
 main = ->
-    x = String::from_str "hello"
+    x = String::from "hello"
     y = 0
     if y > 0
         z = x

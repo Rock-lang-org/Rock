@@ -49,7 +49,7 @@ main = !->
     zeros[3].println!
 ```
 
-The output is two lines containing `0`. A `String` is owned and is not copyable, so a repeated owned string is rejected. Use a loop and a fresh `String::from_str` call when each element must own a separate allocation.
+The output is two lines containing `0`. A `String` is owned and is not copyable, so a repeated owned string is rejected. Use a loop and a fresh `String::from` call when each element must own a separate allocation.
 
 ### Indexing and Mutation
 

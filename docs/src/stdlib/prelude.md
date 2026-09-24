@@ -7,7 +7,7 @@ For an ordinary project, `rock` loads the selected toolchain's standard library 
 The prelude exports the everyday vocabulary used by the examples in this chapter:
 
 - owned types: `String`, `Option`, `Result`, `Vec`, `HashMap`, `Box`, `Arc`, `Mutex`, and `MutexGuard`;
-- representation and ownership traits: `Show`, `From`, `Clone`, `Drop`, `Deref`, `DerefMut`, and `Sized`;
+- representation and ownership traits: `Show`, `From`, `Into`, `Clone`, `Drop`, `Deref`, `DerefMut`, and `Sized`;
 - access and comparison traits: `Index`, `IndexMut`, `Eq`, `Ord`, and `Hash`;
 - callable and thread-safety traits: `Fn`, `FnMut`, `FnOnce`, `Send`, and `Sync`;
 - functional traits: `Bifunctor`, `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, and the `ForEach` traversal bridge;
@@ -59,7 +59,7 @@ sum: I64 -> I64 -> I64
 sum = left, right -> left + right
 
 main = !->
-    integer: I64 = sum 20, 22
+    integer = sum 20, 22
     integer.println!
 ```
 
@@ -67,21 +67,80 @@ The output is `42`. Without a matching `Add` implementation and operator declara
 
 ## Conversion
 
-The `From` family expresses reusable conversions, while primitive casts use `as`. The common `String` constructors are prelude-accessible.
+`From` expresses a conversion from a source type into a destination type. The trait declares `from: T -> Self`: `T` is the source, and `Self` is the type receiving the implementation. Implement `From` when the conversion can produce a value directly, without reporting failure.
+
+For example, an application can convert a distance in meters into a distance in millimeters:
+
+```rock
+struct Meters
+    < value: I64
+
+struct Millimeters
+    < value: I64
+
+impl From Meters for Millimeters
+    from = meters ->
+        Millimeters
+            value: meters.value * 1000
+
+main = !->
+    distance = Meters
+        value: 3
+    converted = Millimeters::from distance
+    converted.value.println!
+```
+
+The output is `3000`. In `impl From Meters for Millimeters`, `Meters` is the input type and `Millimeters` is the output type. The `<` markers make their fields public. The trait supplies the signature, so the implementation only needs the body of `from`. Calling `Millimeters::from distance` selects the destination explicitly; both local variable types are inferred. The argument is passed by value, so converting an owned, non-copyable source transfers ownership to `from`.
+
+This example assumes the scaled distance fits in `I64`. For a conversion that needs validation or can fail, use a function returning `Result` so callers can handle the error. Implementing `From` in one direction does not define the reverse conversion.
+
+The standard library uses the same trait to convert `&Str`, `&[U8]`, `I64`, `F64`, and `Char` values into owned strings. Each call below selects a different `From` implementation from its argument type:
 
 ```rock
 main = !->
-    from_text: String = String::from_str "hello"
-    from_integer: String = String::from_i64 42
-    from_float: String = String::from_f64 3.5
-    from_character: String = String::from_char 'R'
+    from_text = String::from "hello"
+    from_integer = String::from 42
+    from_float = String::from 3.5
+    from_character = String::from 'R'
+    bytes = [82 as U8, 111 as U8, 99 as U8, 107 as U8]
+    from_bytes = String::from (&bytes)
     from_text.println!
     from_integer.println!
     from_float.println!
     from_character.println!
+    from_bytes.println!
 ```
 
-The output is `hello`, `42`, `3.5`, and `R`. Use an explicit constructor or trait conversion when ownership and failure behavior matter; use `as` for a primitive representation cast whose validity is already understood by the caller.
+The output is `hello`, `42`, `3.5`, `R`, and `Rock`. Borrowed text and bytes are copied into the new string's owned storage.
+
+### Converting with `Into`
+
+`Into` performs the same conversion using method syntax on the source value. The standard library provides `Into U for T` whenever `U` implements `From T`, so implementing `From` also makes `into!` available automatically. This applies to the custom distance conversion above as well as the string conversions.
+
+Unlike `String::from value`, `value.into!` does not name its destination. The surrounding code must supply that type, either through an annotation or through a function parameter:
+
+```rock
+print_text: String -> ()
+print_text = text !-> text.println!
+
+main = !->
+    text: String = 42.into!
+    text.println!
+    print_text 'R'.into!
+```
+
+The output is `42` and `R`. The `String` annotation on `text` selects the first conversion's destination; the `print_text` parameter supplies the destination for the second. `into!` takes its receiver by value, transferring ownership when the source is non-copyable. Prefer implementing `From` and using this automatic `Into` implementation rather than writing both yourself.
+
+### Primitive casts
+
+Primitive casts use `as`; they do not call a custom `From` implementation:
+
+```rock
+main = !->
+    integer = 42
+    floating = integer as F64
+    floating.println!
+```
 
 ## Memory and callable traits
 
@@ -89,9 +148,9 @@ The output is `hello`, `42`, `3.5`, and `R`. Use an explicit constructor or trai
 
 ```rock
 main = !->
-    original: String = String::from_str "owned"
-    duplicate: String = original.clone!
-    shared: Arc String = Arc::new duplicate
+    original = String::from "owned"
+    duplicate = original.clone!
+    shared = Arc::new duplicate
     *shared .println!
     original.println!
 ```

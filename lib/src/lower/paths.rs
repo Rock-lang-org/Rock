@@ -142,16 +142,91 @@ impl Lowerer {
         method_name: &str,
         operation_span: Span,
     ) -> Result<Option<(Type, HirStaticMethodTarget)>, String> {
-        let Some(owner_param) = self.current_generic_param_id_for_name(owner_name) else {
-            return Ok(None);
-        };
-        let owner_ty = Type::Generic(owner_param);
-        let Some(bounds) = self.current_impl_bounds().get(&owner_param) else {
-            return Ok(None);
-        };
-        let bounds = self
-            .selection_service()
-            .trait_bounds_with_supertraits(&owner_ty, bounds);
+        let (owner_ty, bounds) =
+            if let Some(owner_param) = self.current_generic_param_id_for_name(owner_name) {
+                let owner_ty = Type::Generic(owner_param);
+                let Some(bounds) = self.current_impl_bounds().get(&owner_param) else {
+                    return Ok(None);
+                };
+                let bounds = self
+                    .selection_service()
+                    .trait_bounds_with_supertraits(&owner_ty, bounds);
+                (owner_ty, bounds)
+            } else {
+                let Some(nominal) = crate::lower::resolution::LowerResolutionContext::new(self)
+                    .resolve_nominal_type(owner_name)
+                else {
+                    return Ok(None);
+                };
+                let owner_ty = match nominal {
+                    crate::type_lowering::ResolvedNominalType::Struct(def)
+                        if def.generic_params.is_empty() =>
+                    {
+                        Type::Struct {
+                            id: def.id,
+                            args: Vec::new(),
+                        }
+                    }
+                    crate::type_lowering::ResolvedNominalType::Enum(def)
+                        if def.generic_params.is_empty() =>
+                    {
+                        Type::Enum {
+                            id: def.id,
+                            args: Vec::new(),
+                        }
+                    }
+                    _ => return Ok(None),
+                };
+                let matching_traits = self
+                    .items
+                    .impl_defs_in_order()
+                    .map(|(_, imp)| imp)
+                    .filter(|imp| {
+                        imp.receiver_pattern == HirImplReceiverPattern::Exact(owner_ty.clone())
+                    })
+                    .filter(|imp| {
+                        imp.methods
+                            .get(method_name)
+                            .is_some_and(|method| !method.is_method)
+                    })
+                    .map(|imp| imp.trait_id)
+                    .collect::<Vec<_>>();
+                let Some(Some(trait_id)) = matching_traits.first().copied() else {
+                    return Ok(None);
+                };
+                if required_trait_id.is_some_and(|required| required != trait_id)
+                    || matching_traits.len() < 2
+                    || matching_traits
+                        .iter()
+                        .any(|candidate| *candidate != Some(trait_id))
+                {
+                    return Ok(None);
+                }
+                // Resolve the shared trait member now, but let argument inference choose
+                // its implementation rather than selecting an arbitrary overload.
+                let trait_def = self
+                    .trait_by_id(trait_id)
+                    .cloned()
+                    .ok_or_else(|| "static method has unknown trait authority".to_string())?;
+                let bound = crate::types::TraitBound {
+                    trait_id,
+                    type_args: trait_def
+                        .generic_params
+                        .iter()
+                        .map(|param| {
+                            self.engine
+                                .fresh_type_var_at_kind(operation_span.clone(), param.kind.clone())
+                        })
+                        .collect(),
+                };
+                self.constraint_store.add_trait(
+                    owner_ty.clone(),
+                    bound.clone(),
+                    operation_span.clone(),
+                    "static trait member",
+                );
+                (owner_ty, vec![bound])
+            };
 
         let mut candidates = Vec::new();
         for bound in &bounds {
@@ -687,6 +762,96 @@ impl Lowerer {
                 method: selected.target,
             },
         ))
+    }
+
+    pub(crate) fn infer_static_trait_argument_coercions(
+        &mut self,
+        callee: &HirExpr,
+        args: &[HirExpr],
+    ) {
+        let HirExprKind::Lambda {
+            params,
+            body,
+            captures,
+        } = &callee.kind
+        else {
+            return;
+        };
+        let [HirStmt::Expr(HirExpr {
+            kind: HirExprKind::Call(_, forwarded, Some(HirCallTarget::StaticMethod(target))),
+            ..
+        })] = body.stmts.as_slice()
+        else {
+            return;
+        };
+        if !captures.is_empty() || params.len() != args.len() || forwarded.len() != params.len()
+            || !forwarded.iter().zip(params).all(|(arg, param)| matches!(&arg.kind,
+                HirExprKind::ResolvedVar(reference) if reference.target == HirVarTarget::Local(param.local_id)))
+        {
+            return;
+        }
+        let Some(trait_id) = target.method.trait_id() else {
+            return;
+        };
+        if target.method.impl_id().is_some() {
+            return;
+        }
+        let owner = self.engine.resolve(&target.owner_ty);
+        let mut direct = self.engine.clone_for_probe();
+        if params
+            .iter()
+            .zip(args)
+            .any(|(param, arg)| direct.unify(&param.ty, &arg.ty).is_err())
+        {
+            return;
+        }
+        let direct_args = target
+            .method
+            .trait_args()
+            .iter()
+            .map(|ty| direct.resolve(ty))
+            .collect::<Vec<_>>();
+        if !matches!(
+            self.selection_service()
+                .select_trait_impl_strict(&owner, trait_id, &direct_args),
+            Err(crate::selection::SelectionDiagnostic::NoImplementation { .. })
+        ) {
+            return;
+        }
+
+        // Keep the expected parameter open until overload selection has considered
+        // the normal array-reference-to-slice coercion. Exact impls take precedence.
+        let mut coerced = self.engine.clone_for_probe();
+        let mut changed = false;
+        for (param, arg) in params.iter().zip(args) {
+            let mut actual = self.engine.resolve(&arg.ty);
+            if let Type::Reference { mutable, inner } = &actual {
+                if let Type::Array(element, _) = inner.as_ref() {
+                    actual = Type::Reference {
+                        mutable: *mutable,
+                        inner: Box::new(Type::Slice(element.clone())),
+                    };
+                    changed = true;
+                }
+            }
+            if coerced.unify(&param.ty, &actual).is_err() {
+                return;
+            }
+        }
+        let trait_args = target
+            .method
+            .trait_args()
+            .iter()
+            .map(|ty| coerced.resolve(ty))
+            .collect::<Vec<_>>();
+        if changed
+            && self
+                .selection_service()
+                .select_trait_impl_strict(&owner, trait_id, &trait_args)
+                .is_ok()
+        {
+            self.engine.commit_probe(coerced.clone_for_commit());
+        }
     }
 
     fn static_method_value_lambda(
@@ -1842,7 +2007,7 @@ impl Lowerer {
                     }
                 }
 
-                // Check if it's a struct type name used as a value (e.g. String.from_str)
+                // Check if it's a struct type name used as a value (e.g. String.from)
                 // Struct names are not valid standalone values — use `Type::method` syntax
                 if crate::lower::resolution::LowerResolutionContext::new(self)
                     .resolve_struct_type(name)
@@ -4542,16 +4707,13 @@ main = ->
                 trait_arg_types: Vec::new(),
                 associated_types: Vec::new(),
                 bounds: std::collections::HashMap::new().into(),
-                methods: HashMap::from([(
-                    "from_str".to_string(),
-                    test_function(method_id, "from_str"),
-                )]),
+                methods: HashMap::from([("from".to_string(), test_function(method_id, "from"))]),
             })
             .unwrap();
-        let expr = lowerer.lower_identifier_path(&identifier_path(&["String", "from_str"]));
+        let expr = lowerer.lower_identifier_path(&identifier_path(&["String", "from"]));
 
         let (reference, target) = static_method_value_parts(&expr);
-        assert_eq!(reference.name, "stdlib::string::String::from_str");
+        assert_eq!(reference.name, "stdlib::string::String::from");
         assert_eq!(reference.target, HirVarTarget::Function(method_id));
         assert_eq!(target.method.impl_id(), Some(def_id(50)));
         assert_eq!(target.method.method_id(), Some(method_id));
@@ -4568,10 +4730,10 @@ main = ->
             .resolver
             .import_aliases
             .insert("String".to_string(), struct_id);
-        let expr = lowerer.lower_identifier_path(&identifier_path(&["String", "from_str"]));
+        let expr = lowerer.lower_identifier_path(&identifier_path(&["String", "from"]));
 
         match expr.kind {
-            HirExprKind::Var(name) => assert_eq!(name, "String::from_str"),
+            HirExprKind::Var(name) => assert_eq!(name, "String::from"),
             other => panic!("expected unresolved static method path, got {other:?}"),
         }
     }
@@ -4594,14 +4756,14 @@ main = ->
             def_id(155),
             struct_id,
             "stdlib::string::String",
-            "from_str",
-            test_function(canonical_method_id, "from_str"),
+            "from",
+            test_function(canonical_method_id, "from"),
         );
 
-        let expr = lowerer.lower_identifier_path(&identifier_path(&["String", "from_str"]));
+        let expr = lowerer.lower_identifier_path(&identifier_path(&["String", "from"]));
 
         let (reference, target) = static_method_value_parts(&expr);
-        assert_eq!(reference.name, "stdlib::string::String::from_str");
+        assert_eq!(reference.name, "stdlib::string::String::from");
         assert_eq!(
             reference.target,
             HirVarTarget::Function(canonical_method_id)

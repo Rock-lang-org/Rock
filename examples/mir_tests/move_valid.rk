@@ -1,7 +1,7 @@
 // Valid move - should compile without error
 
 main = ->
-    x = String::from_str "hello"
+    x = String::from "hello"
     y = x
     y.println!
     0

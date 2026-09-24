@@ -21,7 +21,7 @@ The expansion produces a normal unit-returning `main` function, which prints `42
 
 ## Capturing identifiers and expressions
 
-The tested fragment categories are `ident`, `expr`, and `ty`. The executable example below uses identifier and expression captures; the type capture is isolated in the explicitly experimental example that follows.
+The tested fragment categories are `ident`, `expr`, and `ty`. The example below uses identifier and expression captures; the next example demonstrates type-name captures.
 
 The invocation syntax is token-based and uses spaces rather than a function-call comma list. In the example below, `$name:ident` captures `answer` and `$value:expr` captures the expression `6 * 7`:
 
@@ -40,19 +40,22 @@ The generated `answer` returns `42`, so this executable example prints `42`. A m
 
 ## Capturing a type
 
-The parser recognizes `ty` captures, but end-to-end expansion of a generated struct field currently stops with a `Nothing expected this token` diagnostic. This parser-only example is explicitly experimental rather than executable; it contains no placeholder body or undefined runtime value.
+Use `ty` to capture a single uppercase type name. Rock distinguishes uppercase type-name tokens from ordinary identifiers, so both the new struct name `Number` and the field type `I64` require `ty` captures. An `ident` capture would not match `Number`.
 
-<!-- compile-fail: Nothing expected this token -->
 ```rock
 macro make_wrapper
-    $name:ident $inner:ty =>
+    $name:ty $inner:ty =>
         struct $name
-            value: $inner
+            < value: $inner
 
 %make_wrapper Number I64
+
+main = !->
+    number = Number
+        value: 42
 ```
 
-Here `$name:ident` captures `Number` and `$inner:ty` captures `I64`. The compiler currently reports the diagnostic during expansion. Until generated field indentation is stable, prefer handwritten structs and use macros for tested top-level function declarations.
+Here `$name:ty` captures `Number` and `$inner:ty` captures `I64`. The expansion declares a struct with an exported `value: I64` field, and `main` constructs a value of that struct. Captures match syntax before type checking, so `Number` does not need to be declared before the invocation. Currently, `ty` captures consume only one type-name token, not a compound type such as a reference or a generic type application.
 
 ## Repetition
 

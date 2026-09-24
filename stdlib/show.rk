@@ -41,31 +41,31 @@ impl Show for F32
 impl Show for Bool
     @show = ->
         if *self
-            String::from_str "true"
+            String::from "true"
         else
-            String::from_str "false"
+            String::from "false"
 
 impl Show for String
     @show = -> self.clone!
 
 impl Show for Char
-    @show = -> String::from_char *self
+    @show = -> String::from *self
 
 impl Show for &[T] where T: Show
     @show = ->
-        out = String::from_str "["
+        out = String::from "["
         i = 0
         value = *self
         len = ~ArrayLen value
         while i < len
             if i > 0
-                out = out.concat (String::from_str ", ")
+                out = out.concat (String::from ", ")
             out = out.concat ((value[i]).show!)
             i = i + 1
-        out.concat (String::from_str "]")
+        out.concat (String::from "]")
 
 impl Show for &Str
-    @show = -> String::from_str *self
+    @show = -> String::from *self
     @println = ->
         value = *self
         ptr = ~ArrPtr value

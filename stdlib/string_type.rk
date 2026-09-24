@@ -7,6 +7,7 @@
 > stdlib::libc::memcpy
 > stdlib::libc::strlen
 > stdlib::clone::Clone
+> stdlib::convert::From
 > stdlib::drop::Drop
 > stdlib::num::Add
 > stdlib::raw_buffer::RawBuffer
@@ -26,10 +27,8 @@ impl String
             raw: raw
             raw_len: 0
 
-// Constructor: create from &Str string slice (static method)
-impl String
-    from_str: &Str -> String
-    from_str = s ->
+impl From &Str for String
+    from = s ->
         slice_len = ~ArrayLen s
         raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, (slice_len + 1)
         mut buf = raw.ptr!
@@ -42,8 +41,8 @@ impl String
             raw: raw
             raw_len: slice_len
 
-    from_bytes: &[U8] -> String
-    from_bytes = bytes ->
+impl From &[U8] for String
+    from = bytes ->
         slice_len = ~ArrayLen bytes
         raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, (slice_len + 1)
         mut buf = raw.ptr!
@@ -56,6 +55,7 @@ impl String
             raw: raw
             raw_len: slice_len
 
+impl String
     // The pointer must address a valid null-terminated byte string.
     unsafe from_c_str: *U8 -> String
     unsafe from_c_str = s ->
@@ -68,8 +68,8 @@ impl String
             raw: raw
             raw_len: len
 
-    from_i64: I64 -> String
-    from_i64 = x ->
+impl From I64 for String
+    from = x ->
         raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, 21
         mut buf = raw.ptr!
         is_neg = x < 0
@@ -111,8 +111,8 @@ impl String
             raw: raw
             raw_len: len
 
-    from_f64: F64 -> String
-    from_f64 = x ->
+impl From F64 for String
+    from = x ->
         raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, 32
         mut buf = raw.ptr!
         gcvt x, 6, buf
@@ -121,8 +121,8 @@ impl String
             raw: raw
             raw_len: len
 
-    from_char: Char -> String
-    from_char = c ->
+impl From Char for String
+    from = c ->
         raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, 2
         mut buf = raw.ptr!
         unsafe
@@ -170,15 +170,15 @@ impl Add String for String
 
 impl Add &Str for String
     type Output = String
-    @+ = other -> self.concat (String::from_str other)
+    @+ = other -> self.concat (String::from other)
 
 impl Add String for &Str
     type Output = String
-    @+ = other -> (String::from_str *self).concat other
+    @+ = other -> (String::from *self).concat other
 
 impl Add &Str for &Str
     type Output = String
-    @+ = other -> (String::from_str *self).concat (String::from_str other)
+    @+ = other -> (String::from *self).concat (String::from other)
 
 // Clone
 impl Clone for String

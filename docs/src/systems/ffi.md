@@ -69,7 +69,7 @@ c_string_length = text ->
     strlen pointer
 
 main = !->
-    text: String = String::from_str "Rock"
+    text: String = String::from "Rock"
     length: I64 = unsafe c_string_length text
     length.println!
 ```

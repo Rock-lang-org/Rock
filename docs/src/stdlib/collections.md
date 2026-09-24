@@ -8,13 +8,13 @@ The standard library supplies owned strings and heap-backed containers. Their AP
 
 ```rock
 describe: &Str -> String
-describe = value -> String::from_str value
+describe = value -> String::from value
 
 main = !->
     name: &Str = "Rock"
     owned: String = describe name
     empty: String = String::new!
-    number: String = String::from_i64 42
+    number: String = String::from 42
     copy: String = owned.clone!
     length: I64 = owned.len!
     view: &Str = owned.as_str!
@@ -28,7 +28,7 @@ main = !->
     message.println!
 ```
 
-The output is `0`, `Rock`, `4`, `Rock`, `Rock42`, and `Hello, Rock!`. `from_str`, `new`, and `from_i64` construct owned strings; `len!` reads a byte count and `as_str!` borrows a string view. `clone!` makes a second owner. `owned.concat number` borrows its receiver `owned`, consumes the argument `number`, and returns a new owner. Because `owned` remains alive, `view` can still be printed after concatenation. The `+` implementations cover `String` and `&Str` combinations and also return a new `String`.
+The output is `0`, `Rock`, `4`, `Rock`, `Rock42`, and `Hello, Rock!`. `String::from` converts through the `From` trait, while `String::new!` constructs an empty string; `len!` reads a byte count and `as_str!` borrows a string view. `clone!` makes a second owner. `owned.concat number` borrows its receiver `owned`, consumes the argument `number`, and returns a new owner. Because `owned` remains alive, `view` can still be printed after concatenation. The `+` implementations cover `String` and `&Str` combinations and also return a new `String`.
 
 Strings are byte-oriented in the current library. Lengths, searches, substrings, and byte indexes count bytes rather than Unicode scalar values. A multi-byte UTF-8 character must not be split by a byte range unless the caller intentionally handles raw bytes.
 
@@ -202,7 +202,7 @@ The output is `5`, `4`, and `5`. `point` is moved into `boxed`; `as_mut!` change
 
 ```rock
 main = !->
-    state: Arc String = Arc::new String::from_str "shared"
+    state: Arc String = Arc::new String::from "shared"
     worker_copy: Arc String = state.clone!
     *state .println!
     *worker_copy .println!

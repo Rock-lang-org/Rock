@@ -533,11 +533,11 @@ double = value -> value * 2
 
 main = !->
     value: I64 = 7 |> double
-    text: String = String::from_i64 value
+    text: String = String::from value
     text.println!
 ```
 
-`7 |> double` produces `14`, `String::from_i64 value` creates the text `14`,
+`7 |> double` produces `14`, `String::from value` creates the text `14`,
 and `text.println!` prints it. The standard library supplies common arithmetic
 and comparison meanings, but the compiler does not assign a meaning to an
 operator spelling by itself.

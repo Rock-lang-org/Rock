@@ -300,7 +300,7 @@ impl Lowerer {
         mut arg: HirExpr,
         expected_ty: &Type,
     ) -> HirExpr {
-        let resolved_expected = self.resolve_projection_type(expected_ty);
+        let resolved_expected = self.resolve_projection_type(&self.engine.resolve(expected_ty));
         let resolved_arg = self.resolve_projection_type(&self.engine.resolve(&arg.ty));
 
         if let (
@@ -1038,6 +1038,12 @@ impl Lowerer {
                     } else {
                         self.lower_expression(&argument.arg)
                     };
+                    if args.len() == 1 {
+                        self.infer_static_trait_argument_coercions(
+                            &expr,
+                            std::slice::from_ref(&hir_arg),
+                        );
+                    }
                     hir_args.push(match expected {
                         Some(expected) => {
                             let hir_arg = self.coerce_argument_to_expected(hir_arg, &expected);

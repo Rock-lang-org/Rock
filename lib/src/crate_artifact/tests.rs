@@ -998,28 +998,35 @@ fn test_product_stdlib_artifact_preserves_string_method_abi_and_prelude_exports(
         .interface
         .impls
         .values()
-        .filter(|imp| imp.type_name == "String" && imp.trait_name.is_none())
+        .filter(|imp| imp.type_name == "String")
         .collect::<Vec<_>>();
-    let from_str = string_impls
+    let from = string_impls
         .iter()
-        .find_map(|imp| imp.methods.get("from_str"))
+        .filter_map(|imp| imp.methods.get("from"))
+        .find(|method| {
+            method.params
+                == vec![Type::Reference {
+                    mutable: false,
+                    inner: Box::new(Type::Str),
+                }]
+        })
         .unwrap();
     let concat = string_impls
         .iter()
         .find_map(|imp| imp.methods.get("concat"))
         .unwrap();
-    let expected_string_ty = from_str.ret_type.clone();
+    let expected_string_ty = from.ret_type.clone();
 
     assert!(matches!(expected_string_ty, Type::Struct { .. }));
     assert_eq!(concat.ret_type, expected_string_ty);
     assert_eq!(
-        from_str.params[0],
+        from.params[0],
         Type::Reference {
             mutable: false,
             inner: Box::new(Type::Str),
         }
     );
-    assert_eq!(concat.params[1], from_str.ret_type);
+    assert_eq!(concat.params[1], from.ret_type);
     assert!(products
         .interface
         .traits
@@ -1032,22 +1039,28 @@ fn test_product_stdlib_artifact_records_static_impl_method_link_symbol_by_produc
     let artifact_path = shared_stdlib_product_artifact();
     let products = CompilerProducts::read_artifact_from_path(&artifact_path).unwrap();
 
-    let string_impl = products
+    let from = products
         .interface
         .impls
         .values()
-        .filter(|imp| imp.type_name == "String" && imp.trait_name.is_none())
-        .find(|imp| imp.methods.contains_key("from_str"))
+        .filter(|imp| imp.type_name == "String")
+        .filter_map(|imp| imp.methods.get("from"))
+        .find(|method| {
+            method.params
+                == vec![Type::Reference {
+                    mutable: false,
+                    inner: Box::new(Type::Str),
+                }]
+        })
         .unwrap();
-    let from_str = &string_impl.methods["from_str"];
-    let from_str_id = ProductDefId::from(from_str.id);
-    assert!(!products.interface.functions.contains_key(&from_str_id));
-    assert!(!products.bodies.functions.contains_key(&from_str_id));
+    let from_id = ProductDefId::from(from.id);
+    assert!(!products.interface.functions.contains_key(&from_id));
+    assert!(!products.bodies.functions.contains_key(&from_id));
     let record = products
         .link
         .records
-        .get(&from_str_id)
-        .unwrap_or_else(|| panic!("missing from_str link record for {from_str_id:?}"));
+        .get(&from_id)
+        .unwrap_or_else(|| panic!("missing from link record for {from_id:?}"));
     assert!(record.backend_symbol.starts_with("__rock_"));
 }
 
@@ -1163,7 +1176,7 @@ fn test_stdlib_product_artifact_links_static_impl_method() {
     let exit_code = write_and_run_artifact_app(
         r#"
 main = ->
-    s = String::from_str "hello"
+    s = String::from "hello"
     s.len!
 "#,
         vec![("stdlib".to_string(), artifact_path)],

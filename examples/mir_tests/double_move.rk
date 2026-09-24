@@ -1,7 +1,7 @@
 // RUN: rockc %s 2>&1 | grep "use of moved"
 
 main = ->
-    x = String::from_str "hello"
+    x = String::from "hello"
     y = x
     z = x
     0

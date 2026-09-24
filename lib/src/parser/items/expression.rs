@@ -216,7 +216,7 @@ pub fn primary_expr(stream: Input) -> IResult<PrimaryExpr> {
     move_trailing_argument_interogation_to_call(&mut secondaries_vec);
 
     // Reject `Type.method` syntax: Instance with no fields followed by a Dot secondary
-    // means the user wrote `String.from_str` instead of `String::from_str`.
+    // means the user wrote `String.from` instead of `String::from`.
     if let Operand::Instance(ref inst) = operand {
         if inst.fields.is_empty() {
             if let Some(SecondaryExpr::Dot(IdentOrNumber::Ident(ref method_ident))) =

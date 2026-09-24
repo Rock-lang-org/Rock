@@ -157,8 +157,8 @@ impl Show for Option T where T: Show
     @show = ->
         match *self
             Option::Some val =>
-                start = String::from_str "Some("
+                start = String::from "Some("
                 body = start.concat (val.show!)
-                body.concat (String::from_str ")")
+                body.concat (String::from ")")
             Option::None =>
-                String::from_str "None"
+                String::from "None"

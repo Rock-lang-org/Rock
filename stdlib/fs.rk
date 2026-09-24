@@ -46,7 +46,7 @@ open_with_flags = path, flags ->
         err = IoError::InvalidPath
         Result::Err err
     else
-        owned_path = String::from_str path
+        owned_path = String::from path
         fd = open owned_path.as_ptr!, flags, default_mode!
         if fd < (0 as I32)
             Result::Err (last_os_error!)

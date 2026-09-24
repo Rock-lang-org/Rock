@@ -297,7 +297,7 @@ After `finish!`, `counter` has moved and cannot be used again. Ownership also ap
 length = text -> text.len!
 
 main = !->
-    text = String::from_str "Rock"
+    text = String::from "Rock"
     length &text .println!
     text.println!
     text.clone!.println!
@@ -450,7 +450,7 @@ divide = numerator, denominator ->
 
 quarter = value -> divide (divide value, 2)?, 2
 
-describe_error = message -> "calculation: " + String::from_str message
+describe_error = message -> "calculation: " + String::from message
 
 main = !->
     quarter 84 .println!

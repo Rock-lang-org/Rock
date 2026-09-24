@@ -52,7 +52,19 @@ square = value -> value * value
 
 `mod math` loads `math.rk` and gives it the qualified name `math`. The explicit import binds the exported function as `square`; the qualified call remains available when the name should be unambiguous. Running the project prints `36` and `16`, then returns exit code `0`.
 
-The export is a separate declaration because a module can contain private helpers alongside its public interface. `double` is usable inside `math.rk` but is not importable from `main.rk`; attempting `> math::double` is a compile-time visibility error. Export only the names consumers should depend on; private helpers can then change without changing callers.
+The separate `< square` declaration exports an existing item. You can also export an item inline by putting `<` before its definition. For example, this alternative `math.rk` exports `square` at its definition and also exports a function named `myfn` that returns unit (`()`):
+
+```rock
+double: I64 -> I64
+double = value -> value * 2
+
+square: I64 -> I64
+< square = value -> value * value
+
+< myfn = -> ()
+```
+
+Both export styles make the item public; an inline export does not need a separate `< square` or `< myfn` declaration. Items without an export remain private: `double` is usable inside `math.rk` but is not importable from `main.rk`; attempting `> math::double` is a compile-time visibility error. Export only the names consumers should depend on; private helpers can then change without changing callers.
 
 ## Directory modules
 

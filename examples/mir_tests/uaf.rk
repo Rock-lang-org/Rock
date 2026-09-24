@@ -2,7 +2,7 @@
 
 main = ->
     // Create owned String (heap allocated, needs drop, NOT Copy)
-    x = String::from_str "hello"
+    x = String::from "hello"
 
     // Move ownership of x into y
     y = x

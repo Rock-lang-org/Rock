@@ -108,4 +108,4 @@ impl Write for Stdout
     @write_all = buf -> write_all self, buf
 
 impl Show for IoError
-    @show = -> String::from_str "IoError"
+    @show = -> String::from "IoError"

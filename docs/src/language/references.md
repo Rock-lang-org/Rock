@@ -11,7 +11,7 @@ length: &String -> I64
 length = text -> text.len!
 
 main = !->
-    name = String::from_str "Rock"
+    name = String::from "Rock"
     first = length &name
     second = length &name
     first.println!
@@ -141,7 +141,7 @@ show_option = option ->
         Option::None => 0
 
 main = !->
-    value = Option::Some String::from_str "hello"
+    value = Option::Some String::from "hello"
     first = show_option &value
     second = show_option &value
     first.println!

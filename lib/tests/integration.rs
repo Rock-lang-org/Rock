@@ -2064,7 +2064,7 @@ fn test_repeat_array_rejects_non_copy_initializer() {
     compile_should_fail(
         r#"
 main = ->
-    values = [String::from_str "owned"; 2]
+    values = [String::from "owned"; 2]
     values
     0
 "#,
@@ -4068,9 +4068,9 @@ classify = value ->
         _ => 3
 
 main = ->
-    classify (String::from_str "listen") .println!
-    classify (String::from_str "connect") .println!
-    classify (String::from_str "other") .println!
+    classify (String::from "listen") .println!
+    classify (String::from "connect") .println!
+    classify (String::from "other") .println!
     0
 "#,
     );
@@ -4083,7 +4083,7 @@ fn test_owned_string_literal_match_requests_borrowed_str_view() {
     compile_should_fail(
         r#"
 main = ->
-    value = String::from_str "listen"
+    value = String::from "listen"
     match value
         "listen" => 1
         _ => 0
@@ -4531,7 +4531,7 @@ fn test_string_add_operator_concats_owned_string_and_borrowed_str() {
     let output = compile_and_run(
         r#"
 main = ->
-    (String::from_str "Hello, ") + "World!" .println!
+    (String::from "Hello, ") + "World!" .println!
     "Hello, " + "World!" .println!
     0
 "#,
@@ -4950,7 +4950,7 @@ main = ->
     abs (0 - 7) .println!
 
     s1 = string_concat "Rock", " "
-    greeting = s1.concat (String::from_str "lang!")
+    greeting = s1.concat (String::from "lang!")
     greeting.println!
     0
 "#,
@@ -5372,7 +5372,7 @@ fn test_stdlib_arc_drops_owned_value_once() {
 > stdlib::arc::Arc
 
 main = ->
-    value = Arc::new (String::from_str "shared")
+    value = Arc::new (String::from "shared")
     other = value.clone!
     value.println!
     other.println!
@@ -5508,8 +5508,8 @@ main = ->
     c = "World"
     d = "!"
     s1 = string_concat a, b
-    s2 = s1.concat (String::from_str c)
-    result = s2.concat (String::from_str d)
+    s2 = s1.concat (String::from c)
+    result = s2.concat (String::from d)
     result.println!
     result.len!.println!
     0
@@ -6116,6 +6116,83 @@ main = ->
 }
 
 #[test]
+fn test_static_trait_overloads_infer_arguments_without_stdlib() {
+    let status = compile_and_run_without_stdlib(
+        r#"
+trait Convert T
+    convert: T -> Self
+
+struct Value
+    < value: I64
+
+impl Convert I64 for Value
+    convert = input -> Value
+        value: input
+
+impl Convert Bool for Value
+    convert = input -> Value
+        value: if input
+            42
+        else
+            0
+
+main = ->
+    convert_integer: I64 -> Value = Value::convert
+    integer = convert_integer 7
+    boolean = Value::convert true
+    ~I64Add integer.value, boolean.value
+"#,
+    );
+    assert_eq!(status, 49);
+}
+
+#[test]
+fn test_stdlib_string_from_conversions() {
+    let output = compile_and_run(
+        r#"
+convert: T -> U where U: From T
+convert = value -> U::from value
+
+main = !->
+    text = String::from "hello"
+    text.println!
+    text.len!.println!
+    String::from 42 .println!
+    String::from (-7) .println!
+    String::from 0 .println!
+    String::from 3.5 .println!
+    String::from 'R' .println!
+    String::from "" .len!.println!
+    bytes = [82 as U8, 111 as U8, 99 as U8, 107 as U8]
+    String::from (&bytes) .println!
+    generic_text: String = convert "generic"
+    generic_number: String = convert 123
+    generic_text.println!
+    generic_number.println!
+    converted: String = 7.into!
+    converted.println!
+    owned = String::from text
+    owned.println!
+"#,
+    );
+    assert_eq!(
+        output,
+        "hello\n5\n42\n-7\n0\n3.5\nR\n0\nRock\ngeneric\n123\n7\nhello\n"
+    );
+}
+
+#[test]
+fn test_stdlib_string_from_rejects_unsupported_source() {
+    compile_should_fail(
+        r#"
+main = !->
+    String::from true .println!
+"#,
+        "does not implement trait",
+    );
+}
+
+#[test]
 fn test_stdlib_fixed_u8_arrays_convert_to_string_for_any_length() {
     let output = compile_and_run(
         r#"
@@ -6696,7 +6773,7 @@ fn test_signatureless_method_receiver_is_constrained_by_call_site() {
 run_mode = mode -> mode.as_str!
 
 main = ->
-    mode = String::from_str "listen"
+    mode = String::from "listen"
     run_mode &mode .println!
     0
 "#,
@@ -7690,8 +7767,8 @@ fn test_stdlib_vec_show_formats_owned_elements() {
         r#"
 main = ->
     mut values: Vec String = Vec::new!
-    values.push (String::from_str "alpha")
-    values.push (String::from_str "two words")
+    values.push (String::from "alpha")
+    values.push (String::from "two words")
     values.println!
     0
 "#,
@@ -8457,7 +8534,7 @@ fn test_string_len_method() {
     let output = compile_and_run(
         r#"
 main = ->
-    s = String::from_str "hello"
+    s = String::from "hello"
     s.len! .println!
     0
 "#,
@@ -8471,7 +8548,7 @@ fn test_move_non_copy_value_out_of_shared_reference_is_rejected() {
     compile_should_fail(
         r#"
 main = ->
-    s = String::from_str "hello"
+    s = String::from "hello"
     r = &s
     moved = *r
     0
@@ -8491,7 +8568,7 @@ show_option = opt ->
         Option::None => 0
 
 main = ->
-    value = Option::Some (String::from_str "hello")
+    value = Option::Some (String::from "hello")
     show_option &value .println!
     show_option &value .println!
     0
@@ -8516,7 +8593,7 @@ show_boxed = opt ->
 
 main = ->
     value = Option::Some (Boxed
-        text: String::from_str "hello")
+        text: String::from "hello")
     show_boxed &value .println!
     show_boxed &value .println!
     0
@@ -8585,7 +8662,7 @@ fn test_string_raw_len_field_access_is_rejected_outside_impl() {
     compile_should_fail(
         r#"
 main = ->
-    s = String::from_str "hello"
+    s = String::from "hello"
     x = s.raw_len
     0
 "#,
@@ -8850,7 +8927,7 @@ main = ->
     s = int_to_string 42
     s.println!
     num_str = int_to_string 100
-    result = (String::from_str "Value: ").concat (num_str.clone!)
+    result = (String::from "Value: ").concat (num_str.clone!)
     result.println!
     0
 "#,
@@ -8922,7 +8999,7 @@ main = ->
 fn test_stdlib_string_add_operators() {
     let src = r#"
 main = ->
-    suffix = String::from_str "!"
+    suffix = String::from "!"
     prefix = "Hello, " + "Rock"
     a = prefix + " language"
     b = "Greeting: " + a
@@ -9023,10 +9100,10 @@ fn test_string_operations_advanced() {
     let output = compile_and_run(
         r#"
 repeat_str = s, n ->
-    result = String::from_str ""
+    result = String::from ""
     i = 0
     while i < n
-        result = result.concat (String::from_str s)
+        result = result.concat (String::from s)
         i = i + 1
     result
 
@@ -9035,7 +9112,7 @@ main = ->
     stars.println!
     stars.len!.println!
     num_str = int_to_string 42
-    msg = (String::from_str "Count: ").concat (num_str.clone!)
+    msg = (String::from "Count: ").concat (num_str.clone!)
     msg.println!
     0
 "#,
@@ -9736,11 +9813,11 @@ fn test_string_building() {
     let output = compile_and_run(
         r#"
 main = ->
-    result = String::from_str ""
+    result = String::from ""
     i = 1
     while i <= 5
         if i > 1
-            result = result.concat (String::from_str ", ")
+            result = result.concat (String::from ", ")
         num_str = int_to_string i
         result = result.concat (num_str.clone!)
         i = i + 1
@@ -10475,7 +10552,7 @@ main = ->
     b = "World!"
     c = string_concat a, b
     c.println!
-    d = (string_concat "foo", "bar").concat (String::from_str "baz")
+    d = (string_concat "foo", "bar").concat (String::from "baz")
     d.println!
     0
 "#,
@@ -10491,9 +10568,9 @@ fn test_vec_swap_remove_moves_owned_value() {
         r#"
 main = ->
     mut values: Vec String = Vec::new!
-    values.push (String::from_str "first")
-    values.push (String::from_str "second")
-    values.push (String::from_str "third")
+    values.push (String::from "first")
+    values.push (String::from "second")
+    values.push (String::from "third")
     match values.swap_remove 1
         Option::Some value => value.println!
         Option::None => "missing".println!
@@ -10726,7 +10803,7 @@ print_len: &String -> I32
 print_len = value -> value.len! .println!
 
 main = ->
-    value = Option::Some (String::from_str "hello")
+    value = Option::Some (String::from "hello")
     returned = value.inspect print_len
     returned.println!
     0
@@ -10744,7 +10821,7 @@ print_len: &String -> I32
 print_len = value -> value.len! .println!
 
 main = ->
-    value = Option::Some (String::from_str "hello")
+    value = Option::Some (String::from "hello")
     returned = value.inspect print_len
     returned.println!
     value.println!
@@ -11146,10 +11223,10 @@ string_length: String -> I64
 string_length = value -> value.len!
 
 main = !->
-    parcel = Parcel::Item (String::from_str "hello")
+    parcel = Parcel::Item (String::from "hello")
     match parcel.fmap string_length
         Parcel::Item length => length.println!
-    match fmap string_length, Parcel::Item (String::from_str "world")
+    match fmap string_length, Parcel::Item (String::from "world")
         Parcel::Item length => length.println!
 
     mut total = 0
@@ -11163,8 +11240,8 @@ main = !->
     total.println!
 
     mut words = Vec::new!
-    words.push (String::from_str "one")
-    words.push (String::from_str "four")
+    words.push (String::from "one")
+    words.push (String::from "four")
     words.fmap string_length .println!
 "#,
     );
@@ -11191,7 +11268,7 @@ stop: I64 -> Result I64, String
 stop = value ->
     value.println!
     if value == 2
-        Result::Err (String::from_str "stop")
+        Result::Err (String::from "stop")
     else
         pure (value + 1)
 
@@ -11207,7 +11284,7 @@ bind_generic: F A -> M -> F B where F _: Monad, M: FnMut A, (F B)
 bind_generic = value, callback -> value.bind callback
 
 main = !->
-    failed: Result I64, String = Result::Err (String::from_str "error")
+    failed: Result I64, String = Result::Err (String::from "error")
     failed.fmap increment .println!
     absent = Option::None
     absent.fmap increment .println!
@@ -11221,7 +11298,7 @@ main = !->
     values!.traverse_m stop .println!
     mut effects = Vec::new!
     effects.push (success 1)
-    effects.push (Result::Err (String::from_str "error"))
+    effects.push (Result::Err (String::from "error"))
     effects.sequence!.println!
 "#,
     );
@@ -11595,8 +11672,8 @@ print_value = value ->
 
 main = ->
     mut values: Vec String = Vec::new!
-    values.push (String::from_str "a")
-    values.push (String::from_str "bbb")
+    values.push (String::from "a")
+    values.push (String::from "bbb")
     mapped: Vec I64 = values.map string_len
     mapped.for_each_owned print_value
     0
@@ -11648,8 +11725,8 @@ fn test_stdlib_for_each_owned_and_borrowed_collections() {
         r#"
 main = !->
     mut words: Vec String = Vec::new!
-    words.push String::from_str "first"
-    words.push String::from_str "second"
+    words.push String::from "first"
+    words.push String::from "second"
     for_each &words, (!.println!)
     words.len!.println!
     for_each words, (!.println!)
@@ -11713,7 +11790,7 @@ main = !->
     for_each success, (!.println!)
     for_each failure, (!.println!)
     one = One
-        value: String::from_str "custom foldable"
+        value: String::from "custom foldable"
     for_each one, (!.println!)
 "#,
     );
@@ -11740,8 +11817,8 @@ main = !->
     value = Number
         value: 7
     for_each (Option::Some value), (!.plus offset .println!)
-    suffix = String::from_str "!"
-    for_each (Option::Some (String::from_str "hello")), (!.concat suffix.clone! .println!)
+    suffix = String::from "!"
+    for_each (Option::Some (String::from "hello")), (!.concat suffix.clone! .println!)
     read: Number -> I64 = (.plus offset)
     ignore: Number -> () = (!.plus offset)
     other = Number
@@ -11849,8 +11926,8 @@ print_value = value ->
 
 main = ->
     mut values: Vec String = Vec::new!
-    values.push (String::from_str "aa")
-    values.push (String::from_str "bbbb")
+    values.push (String::from "aa")
+    values.push (String::from "bbbb")
     mapped: Vec I64 = values.map_ref string_len
     mapped.for_each_owned print_value
     values.len!.println!
@@ -11872,8 +11949,8 @@ print_value = value ->
 
 main = ->
     mut values: Vec String = Vec::new!
-    values.push (String::from_str "aa")
-    values.push (String::from_str "bbbb")
+    values.push (String::from "aa")
+    values.push (String::from "bbbb")
     mapped: Vec I64 = values.map_ref (value -> value.len!)
     mapped.for_each_owned print_value
     values.len!.println!
@@ -12344,7 +12421,7 @@ fn test_stdlib_option_show_owned_string_is_non_consuming() {
     let output = compile_and_run(
         r#"
 main = ->
-    value = Option::Some (String::from_str "hello")
+    value = Option::Some (String::from "hello")
     value.println!
     value.println!
     0
@@ -12359,8 +12436,8 @@ fn test_stdlib_result_show_owned_string_is_non_consuming() {
     let output = compile_and_run(
         r#"
 main = ->
-    ok: Result String, String = Result::Ok (String::from_str "hello")
-    err: Result String, String = Result::Err (String::from_str "oops")
+    ok: Result String, String = Result::Ok (String::from "hello")
+    err: Result String, String = Result::Err (String::from "oops")
     ok.println!
     ok.println!
     err.println!
@@ -12377,7 +12454,7 @@ fn test_stdlib_option_map_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 main = ->
-    value = Option::Some (String::from_str "hello")
+    value = Option::Some (String::from "hello")
     mapped = value.map (s -> s.len!)
     mapped.unwrap_or 0 .println!
     again = value.show!
@@ -12393,7 +12470,7 @@ fn test_stdlib_result_map_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 main = ->
-    value: Result String, String = Result::Ok (String::from_str "hello")
+    value: Result String, String = Result::Ok (String::from "hello")
     mapped = value.map (s -> s.len!)
     mapped.unwrap_or 0 .println!
     again = value.show!
@@ -12409,7 +12486,7 @@ fn test_stdlib_result_map_err_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 main = ->
-    value: Result String, String = Result::Err (String::from_str "oops")
+    value: Result String, String = Result::Err (String::from "oops")
     mapped = value.map_err (s -> s.len!)
     (mapped.fold (n -> n), (s -> s.len!)) .println!
     again = value.show!
@@ -12428,7 +12505,7 @@ bind: String -> Option I64
 bind = s -> Option::Some (s.len!)
 
 main = ->
-    value = Option::Some (String::from_str "hello")
+    value = Option::Some (String::from "hello")
     mapped = value >>= bind
     mapped.unwrap_or 0 .println!
     0
@@ -12446,7 +12523,7 @@ bind: String -> Result I64, String
 bind = s -> Result::Ok (s.len!)
 
 main = ->
-    value: Result String, String = Result::Ok (String::from_str "hello")
+    value: Result String, String = Result::Ok (String::from "hello")
     mapped = value >>= bind
     mapped.unwrap_or 0 .println!
     0
@@ -13730,7 +13807,7 @@ fn test_owned_string_temporary_lives_through_ffi_call() {
 > stdlib::string_type::String
 
 main = ->
-    puts ((String::from_str "hello").as_ptr!)
+    puts ((String::from "hello").as_ptr!)
     0
 "#,
     );
@@ -15109,7 +15186,7 @@ fn test_borrow_mut_ref_blocks_drop_at_scope_end() {
     compile_should_pass(
         r#"
 main = ->
-    mut x = String::from_str "hello"
+    mut x = String::from "hello"
     r = &mut x
     0
 "#,

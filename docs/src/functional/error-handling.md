@@ -60,8 +60,8 @@ enum ParseError
 impl Show for ParseError
     @show = ->
         match *self
-            ParseError::Empty => String::from_str "empty input"
-            ParseError::Negative => String::from_str "negative input"
+            ParseError::Empty => String::from "empty input"
+            ParseError::Negative => String::from "negative input"
 
 parse_nonnegative: I64 -> Result I64, ParseError
 parse_nonnegative = value ->

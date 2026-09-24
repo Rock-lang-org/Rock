@@ -150,10 +150,10 @@ impl Show for Result T, E where T: Show, E: Show
     @show = ->
         match *self
             Result::Ok val =>
-                start = String::from_str "Ok("
+                start = String::from "Ok("
                 body = start.concat (val.show!)
-                body.concat (String::from_str ")")
+                body.concat (String::from ")")
             Result::Err err =>
-                start = String::from_str "Err("
+                start = String::from "Err("
                 body = start.concat (err.show!)
-                body.concat (String::from_str ")")
+                body.concat (String::from ")")

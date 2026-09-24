@@ -98,7 +98,7 @@ fn callable_once_cannot_be_called_twice() {
     compile_should_fail(
         r#"
 main = !->
-    value = String::from_str "owned"
+    value = String::from "owned"
     consume = -> value
     consume!
     consume!

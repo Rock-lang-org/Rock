@@ -70,14 +70,14 @@ main = !->
 ```rock
 main = !->
     some = Option::Some 5
-    text = String::from_i64 42
+    text = String::from 42
     some_text = match some
         Option::Some value => text
-        Option::None => String::from_str "missing"
+        Option::None => String::from "missing"
     some_text.println!
 ```
 
-`Option::Some` constructs a prelude enum variant, and `String::from_i64` constructs an owned string through an associated function. A method would instead use a receiver and dot syntax, as `some_text.println!` does.
+`Option::Some` constructs a prelude enum variant, and `String::from` constructs an owned string through the `From` trait's associated function. A method would instead use a receiver and dot syntax, as `some_text.println!` does.
 
 ## Receiver contracts
 
@@ -187,8 +187,8 @@ The body can include method arguments and chains. The entire chain runs before i
 
 ```rock
 main = !->
-    suffix = String::from_str "!"
-    for_each (Option::Some (String::from_str "hello")), (!.concat suffix.clone! .println!)
+    suffix = String::from "!"
+    for_each (Option::Some (String::from "hello")), (!.concat suffix.clone! .println!)
 ```
 
 This prints `hello!`. As with an explicit lambda, values referenced by the body are captured, and ordinary receiver and ownership rules still apply.
