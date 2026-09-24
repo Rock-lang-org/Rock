@@ -48,6 +48,7 @@ if (orphanedChapters.length > 0) {
 
 let rockFenceCount = 0;
 let resourceVerified = false;
+let doVerified = false;
 for (const file of markdownFiles) {
     const source = fs.readFileSync(file, "utf8");
     // Hyphenated names such as Rock-lang-org are not the standalone keyword.
@@ -81,6 +82,14 @@ for (const file of markdownFiles) {
             if (fences[index].source === resourceSource) {
                 verifyResourceHighlight(html);
                 resourceVerified = true;
+            }
+            if (path.relative(sourceRoot, file) === "functional/error-handling.md" &&
+                fences[index].source.includes("sum_positive = left, right -> do")) {
+                if (!/<span class=['"]keyword['"]>do<\/span>/.test(html) ||
+                    (html.match(/<span class=['"]operator arrow['"]>&lt;-<\/span>/g) || []).length !== 2) {
+                    fail("The do-notation example is missing its keyword or bind-arrow highlighting.");
+                }
+                doVerified = true;
             }
         }
     }
@@ -145,6 +154,7 @@ const indexHtml = fs.readFileSync(path.join(outputRoot, "index.html"), "utf8");
 });
 
 if (!resourceVerified) fail("The rendered Resource/Drop AST highlighting regression was not exercised.");
+if (!doVerified) fail("The rendered do-notation AST highlighting regression was not exercised.");
 
 console.log(
     `Verified ${chapterLinks.length} chapters, ${rockFenceCount} Rock fences, ` +

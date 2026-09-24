@@ -99,6 +99,30 @@ test("member names and pattern binders do not inherit an unrelated argument colo
         "variable parameter", "variable parameter"]);
 });
 
+test("do keywords, bind arrows, and nested bindings retain their lexical roles", () => {
+    const source = `sequence = value, source ->
+    result = do
+        value <- source 0
+        nested = do
+            inner <- source value
+            pure inner
+        _ <- nested
+        pure value
+    value
+`;
+    const [html] = highlightSources([source]);
+    assert.equal(htmlSource(html), source);
+    const spans = [...html.matchAll(/<span class='([^']+)'>([^<]*)<\/span>/g)];
+    const classes = (name) => spans.filter((span) => span[2] === name).map((span) => span[1]);
+    assert.deepEqual(classes("do"), ["keyword", "keyword"]);
+    assert.deepEqual(classes("&lt;-"), Array(3).fill("operator arrow"));
+    assert.deepEqual(classes("value"), ["variable parameter", "variable",
+        "variable", "variable", "variable parameter"]);
+    assert.deepEqual(classes("inner"), ["variable", "variable"]);
+    assert.deepEqual(classes("source"), Array(3).fill("variable parameter"));
+    assert.deepEqual(classes("pure"), ["function", "function"]);
+});
+
 test("spaced operators keep operands out of the function category", () => {
     const source = `main = ->
     left = 2

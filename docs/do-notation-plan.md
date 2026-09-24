@@ -12,7 +12,9 @@ Runtime validation covers `Option`, `Result`, nested blocks, short-circuiting, o
 
 The explicit expansions exposed two existing MIR issues, reproduced without `do`: transitive closure captures borrowed a reference slot instead of its pointee, and block-local shadowing did not restore the outer variable mapping. The accompanying MIR fixes address those ordinary-code regressions rather than adding `do` semantics.
 
-The external tree-sitter grammar needs a corresponding syntax update and a published revision before the book's grammar pin can be advanced; that repository is not part of this compiler checkout.
+The external tree-sitter grammar now supports `do` expressions, contextual bind arrows, highlighting, lexical scopes, and indentation. The book pins published revision `bce41184c3a5aa9ef3f7ba77d3775637baa38c28`. The grammar's 38 corpus tests and native build pass; all 12 book highlighting tests pass, including nested bindings and restoration of outer parameter colors. The optional compiler-conformance check reports 108 passed, 12 excluded, and three failures also reproduced at the previous grammar pin: `test_projects/expression-problem/src/main.rk`, `test_projects/new_new2/main.rk`, and `test_projects/new_new/main.rk`.
+
+The pinned commit was fetched successfully from GitHub. The book builds with mdBook 0.5.4, and its verifier passes for 37 chapters, 266 Rock fences, and 41 HTML pages, including the rendered `do` keyword and bind arrows. The full example compilation check still reports 268 compiled examples, four expected rejections, and no unexpected failures. A remaining CLI 0.26.9 initializer-color distinction is documented in `docs/checks/README.md`.
 
 ## Goal
 

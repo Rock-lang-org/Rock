@@ -77,10 +77,11 @@ function highlightSources(sources) {
             });
             let output;
             try {
+                // Keep highlights and locals in their declared roles in tree-sitter.json;
+                // --query-paths overrides them with a custom highlight query.
                 output = execFileSync("tree-sitter", [
                     "highlight", "--html", "--css-classes", "--scope", "source.rock",
-                    "--config-path", configPath,
-                    "--query-paths", queryPath, localsPath, "--", ...files,
+                    "--config-path", configPath, "--", ...files,
                 ], { cwd: grammarRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
             } catch (error) {
                 throw new Error(`Tree-sitter highlighting failed. Install tree-sitter-cli 0.26.9, run \`tree-sitter generate\` in ${grammarRoot}, and check ${queryPath}.\n${error.stderr || error.message}`);

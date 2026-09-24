@@ -75,6 +75,17 @@ The locals query propagates parameter colors through their lexical scopes,
 including captured references and reassignment. Member names and unrelated
 body bindings retain their own roles rather than inheriting colors by spelling.
 
+`do` blocks highlight the keyword and `<-` bind arrows and give payload bindings
+their own lexical scope. The grammar's `tree-sitter.json` declares the highlights
+and locals queries separately; the book uses those declarations rather than
+passing locals queries as additional highlight patterns. Regression tests cover
+nested blocks and restoration of outer parameter colors after a block ends.
+
+With CLI 0.26.9, a bind such as `value <- source value` currently colors the
+right-hand `value` like the new payload binding, even when it refers to an outer
+parameter. The locals query records the initializer range; this remaining color
+distinction does not affect parsing or the compiler's name resolution.
+
 Enum variants use `constant variant`, separately from their owning types. The
 query marks declarations, qualified constructors, and patterns directly. A
 per-fence pass resolves AST-captured short value names against that fence's
