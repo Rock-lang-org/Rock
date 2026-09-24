@@ -1,6 +1,7 @@
 mod ambiguous_multiline_should_fail;
 mod application_precedence;
 mod bang_call_expression;
+mod call_boundaries;
 mod call_expression;
 mod cast_expression;
 mod complex_operator_precedence;

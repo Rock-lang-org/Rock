@@ -33,7 +33,7 @@ write_demo = path ->
     write_text &file, "hello"
 
 main = !->
-    (write_demo "rock-io-traits.txt")
+    write_demo "rock-io-traits.txt"
         .unwrap_or -1
         .println!
 ```
@@ -65,7 +65,7 @@ main = ->
     result = do
         count <- write_greeting "rock-greeting.txt"
         appended <- append_greeting "rock-greeting.txt"
-        pure (count + appended)
+        pure count + appended
     status = result <&> total ->
         total.println!
         0
@@ -98,11 +98,11 @@ read_file = path ->
     output = stdout!
     mut bytes: [U8; 3] = [0; 3]
     mut total = 0
-    mut count = file.read (&mut bytes)?
+    mut count = file.read &mut bytes?
     while count > 0
-        written = output.write_all (&bytes[..count])?
+        written = output.write_all &bytes[..count]?
         total = total + written
-        count = file.read (&mut bytes)?
+        count = file.read &mut bytes?
     Result::Ok total
 
 main = ->
@@ -129,9 +129,9 @@ write_parts: () -> Result I64, IoError
 write_parts = ->
     output = stdout!
     bytes = str_as_bytes "hello"
-    first = output.write_all (&bytes[..2])?
-    rest = output.write_all (&bytes[2..])?
-    Result::Ok (first + rest)
+    first = output.write_all &bytes[..2]?
+    rest = output.write_all &bytes[2..]?
+    Result::Ok first + rest
 
 main = ->
     status = write_parts! <&> _ -> 0
@@ -151,7 +151,7 @@ This writes `hello`. `str_as_bytes` borrows an `&Str` as `&[U8]`; an owned `Stri
 main = ->
     output = stdout!
     bytes: [U8; 5] = [104, 101, 108, 108, 111]
-    status = output.write_all (&bytes[..3]) <&> _ -> 0
+    status = output.write_all &bytes[..3] <&> _ -> 0
     status.unwrap_or 1
 ```
 
@@ -191,7 +191,7 @@ prepare = path ->
 copy_file: &Str -> &Str -> Result I64, IoError
 copy_file = source, target ->
     output = File::create target?
-    (File::open source?) |>> &output
+    File::open source? |>> &output
 
 main = ->
     copied = do

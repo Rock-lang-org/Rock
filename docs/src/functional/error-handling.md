@@ -144,6 +144,29 @@ main = !->
 
 `read &value?` means `(read (&value))?`: it borrows `value`, calls `read`, then propagates the returned `Result`. It does not apply `?` to the integer. Keep `&` adjacent to the borrowed operand to distinguish it from a spaced infix `&`. This program prints `42`.
 
+### Call Results and Continuations
+
+A `?` following an unparenthesized call finishes that call and propagates its result before any following operator, method chain, index, cast, or further call. This rule is independent of the following operator's precedence:
+
+```rock
+checked: I64 -> Result I64, &Str
+checked = value ->
+    if value < 0 then Result::Err "negative" else Result::Ok value
+
+sum_checked: I64 -> I64 -> Result I64, &Str
+sum_checked = left, right ->
+    total = checked left? + checked right?
+    Result::Ok total
+
+main = !->
+    sum_checked 20, 22 .println!
+    sum_checked -1, 22 .println!
+```
+
+This prints `Ok(42)` and `Err(negative)`. Each `?` acts on a result returned by `checked`, not on an integer argument. The first error returns from `sum_checked` before evaluating the rest of the addition.
+
+To propagate inside an argument instead, keep `?` inside that argument's parentheses: `checked (checked left?)` evaluates and propagates the inner call before calling the outer one. This grouping is also necessary when a propagated argument precedes another comma-separated argument. Parenthesized expressions, array elements, indices, and explicit nested function bodies retain their own expression boundaries.
+
 ## Consuming Combinators
 
 `map` changes a successful payload while preserving the carrier. `and_then` calls a function that returns another carrier. These operations consume an owned receiver so an owned payload can move into the callback.

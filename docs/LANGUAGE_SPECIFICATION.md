@@ -176,6 +176,10 @@ obj.method arg
 obj.method1!.method2 arg
 ```
 
+A multiline dot chain following inline arguments continues the completed call, not its last argument. An argument-owned chain must be explicitly grouped or placed in its own multiline argument block.
+
+Postfix `?` closes the current ungrouped application before subsequent operators or suffixes are parsed. Thus `foo arg? + other` applies `?` to `foo arg`, regardless of the following operator's declared precedence. Field access, indexing, casts, another `?`, and further calls also operate on the propagated result. To propagate an argument before invoking its caller, place `?` inside the argument's parentheses, as in `foo (arg?)`; a comma-separated argument that needs its own propagation must be grouped this way. Delimited expressions and explicit nested bodies establish independent expression boundaries.
+
 ### 3.3 Array/Tuple Access
 ```haskell
 // Array indexing

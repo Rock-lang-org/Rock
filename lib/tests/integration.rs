@@ -25,6 +25,105 @@ mod callable;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn test_multiline_chain_targets_completed_call() {
+    let output = compile_and_run(
+        r#"
+make = value -> Option::Some value
+add = left, right -> Option::Some (left + right)
+
+main = !->
+    make 42
+        .unwrap_or 0
+        .println!
+    add 20, 22
+        .map (+ 1)
+        .unwrap_or 0
+        .println!
+    make (make 44
+        .unwrap_or 0)
+        .unwrap_or 0
+        .println!
+"#,
+    );
+    assert_eq!(output, "42\n43\n44\n");
+}
+
+#[test]
+fn test_call_result_propagation_operator_continuations() {
+    let output = compile_and_run(
+        r#"
+infix 1 %%
+infix 12 **
+%% = left, right -> left + right
+** = left, right -> left + right
+
+get: I64 -> Result I64, I64
+get = value -> if value < 0 then Result::Err 99 else Result::Ok value
+
+compute: () -> Result I64, I64
+compute = ->
+    first = get 20? + 1
+    second = get 20? %% 1
+    third = get 20? ** 1
+    fourth = get 20? |> (+ 1)
+    same = get 21? == 21
+    same.println!
+    converted = get 21? as I32
+    converted.println!
+    Result::Ok (first + second + third + fourth)
+
+never = value ->
+    999.println!
+    value
+
+fail: () -> Result I64, I64
+fail = -> Result::Ok (get -1? |> never)
+
+main = !->
+    compute!.println!
+    fail!.println!
+"#,
+    );
+    assert_eq!(output, "true\n21\nOk(84)\nErr(99)\n");
+}
+
+#[test]
+fn test_call_result_propagation_suffixes_and_grouped_arguments() {
+    let output = compile_and_run(
+        r#"
+get: I64 -> Result I64, I64
+get = value -> Result::Ok value
+pair: I64 -> Result (Vec I64), I64
+pair = value ->
+    mut values = Vec::new!
+    values.push value
+    values.push value + 1
+    Result::Ok values
+nested: I64 -> Result (Result I64, I64), I64
+nested = value -> Result::Ok (Result::Ok value)
+adder: I64 -> Result (I64 -> I64), I64
+adder = ignored -> Result::Ok (extra -> extra + 1)
+
+compute: () -> Result I64, I64
+compute = ->
+    get 42?.println!
+    pair 41?[1].println!
+    nested 42??.println!
+    applied = adder 0? 41
+    applied.println!
+    explicit = get (get 42?)?
+    explicit.println!
+    borrowed = [get 42?]
+    borrowed[0].println!
+    Result::Ok 0
+
+main = !-> compute!.println!
+"#,
+    );
+    assert_eq!(output, "42\n42\n42\n42\n42\n42\nOk(0)\n");
+}
+
+#[test]
 fn test_nested_bind_transitive_capture() {
     let output = compile_and_run(
         r#"

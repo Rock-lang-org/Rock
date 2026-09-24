@@ -228,6 +228,20 @@ main = !->
 
 The continuation lines remain one expression. Binding intermediate values is often clearer for complicated calls because each type and ownership boundary gets a name.
 
+A method chain on following lines continues the completed call, including all its inline arguments:
+
+```rock
+as_option = value -> Option::Some value
+
+main = !->
+    as_option 42
+        .map (+ 1)
+        .unwrap_or 0
+        .println!
+```
+
+This prints `43`. `.map` acts on the option returned by `as_option 42`, not on the integer argument. No parentheses around the call are needed. To chain on an argument instead, group that argument explicitly or put it in a multiline argument block with its own more-indented chain.
+
 ## Common mistakes
 
 - Omitting commas between call arguments.

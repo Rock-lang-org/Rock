@@ -7,7 +7,7 @@
 
 **A native language with a functional style and explicit ownership.**
 
-Rock combines type inference, pattern matching, traits, and higher-kinded types with native code generation through LLVM. Functions are ordinary values, containers share useful abstractions, and short operators let you write transformations in the order you read them.
+Rock combines type inference, pattern matching, traits, and higher-kinded types with native code generation through LLVM. Functions are ordinary values, containers share useful abstractions, and short operators let you write transformations in the order you read them. `do` notation keeps dependent, fallible operations in a flat block.
 
 The syntax takes inspiration from [LiveScript](https://livescript.net/), [Haskell](https://www.haskell.org/), and [Rust](https://www.rust-lang.org/). You do not need to know those languages to follow this tour. It starts with small programs and introduces the functional vocabulary through examples.
 
@@ -448,7 +448,7 @@ divide = numerator, denominator ->
     else
         Result::Ok numerator / denominator
 
-quarter = value -> divide (divide value, 2)?, 2
+quarter = value -> divide (divide value, 2?), 2
 
 describe_error = message -> "calculation: " + String::from message
 
@@ -462,6 +462,33 @@ main = !->
 This prints `Ok(21)` and `Err(calculation: division by zero)`. In `quarter`, the parentheses group the inner call so `?` applies to its result before the outer division. The error mapper changes the error type from a borrowed `&Str` to an owned `String`.
 
 `<!>` is supplied through **Bifunctor**, a trait for constructors with two type parameters. `?` also works with `Option`; its general behavior is described by the `Try` and `FromResidual` traits. See [Error Handling](https://rock-lang-org.github.io/Rock/functional/error-handling.html) for propagation across function boundaries.
+
+### Keep Fallible Work Flat with `do`
+
+Use `do` when later operations need values from earlier ones. This program creates a file, writes two lines, and adds their byte counts without nesting callbacks:
+
+```haskell
+> stdlib::fs::File
+> stdlib::io::IoError
+> stdlib::io::Write
+
+write_greeting: &Str -> Result I64, IoError
+write_greeting = path -> do
+    file <- File::create path
+    first <- file.write_str "Hello from Rock\n"
+    second <- file.write_str "Again\n"
+    total = first + second
+    pure total
+
+main = !->
+    write_greeting "greeting.txt" .println!
+```
+
+On success, this prints `Ok(22)` and leaves both lines in `greeting.txt`; creating the file replaces any existing contents. Each `<-` binds a successful payload and makes it available to the remaining steps. If creating or writing the file fails, subsequent steps are skipped and the error becomes the result. Earlier writes are not rolled back, and the file closes automatically when its owner is dropped.
+
+`total = first + second` is an ordinary local binding. `pure total` wraps that value in the inferred carrier—here, `Result::Ok`. The final expression is returned unchanged, so the block can also end directly with another fallible operation.
+
+`do` is syntax sugar for calls to the `bind` function in scope; the prelude supplies its **Monad** implementation. It also works with `Option` and custom carriers supported by `bind`, using the same closure and ownership rules as explicit callbacks. See [Flat Sequencing with `do`](https://rock-lang-org.github.io/Rock/functional/error-handling.html#flat-sequencing-with-do) for more examples.
 
 ### Apply a Wrapped Function
 

@@ -5,24 +5,23 @@ use crate::parser::{
 };
 
 use super::{
-    ampersand_token, block, empty_lines, function_shorthand, get_span, ident, ident_path, indent,
-    instance, int, lambda_decl, mut_prefix, native_operator, operator, operator_token, parenthesis,
-    r#loop, r#match,
+    ampersand_token, block, empty_lines, empty_lines_permissive, function_shorthand, get_span,
+    ident, ident_path, indent, instance, int, lambda_decl, mut_prefix, native_operator, operator,
+    operator_token, parenthesis, r#loop, r#match,
 };
 use super::{indent_token, parse_if, parse_type};
 use super::{literal, stuck_operator_token};
 
 pub fn expression(stream: Input) -> IResult<Expression> {
+    let original_indent = stream.indent_level;
     let (mut stream, mut expression) = range_expression(stream)?;
 
-    if stream.inside_argument_list {
-        return Ok((stream, expression));
-    }
-
-    while matches!(
-        stream.tokens.first().map(|token| &token.token_type),
-        Some(TokenType::SpacedDot)
-    ) {
+    while !stream.inside_argument_list
+        && matches!(
+            stream.tokens.first().map(|token| &token.token_type),
+            Some(TokenType::SpacedDot)
+        )
+    {
         let (next_stream, _) = TokenType::SpacedDot.process(stream)?;
         let (next_stream, member) = ident_or_number.process(next_stream)?;
         let (next_stream, trailing) = many(secondary).process(next_stream)?;
@@ -33,6 +32,9 @@ pub fn expression(stream: Input) -> IResult<Expression> {
         stream = next_stream;
     }
 
+    // Dot continuations temporarily set their own indentation for arguments
+    // and callbacks; they must not change the enclosing statement's level.
+    stream.indent_level = original_indent;
     Ok((stream, expression))
 }
 
@@ -205,15 +207,13 @@ pub fn unary_expr(stream: Input) -> IResult<UnaryExpr> {
 }
 
 pub fn primary_expr(stream: Input) -> IResult<PrimaryExpr> {
-    let (stream, (operand, mut secondaries_vec, type_annotation)) = (
+    let (stream, (operand, secondaries_vec, type_annotation)) = (
         operand,
         many(secondary),
         preceded(TokenType::Colon, parse_type).opt(),
     )
         .process(stream)
         .map_err(|e| e.with_context("primary expression"))?;
-
-    move_trailing_argument_interogation_to_call(&mut secondaries_vec);
 
     // Reject `Type.method` syntax: Instance with no fields followed by a Dot secondary
     // means the user wrote `String.from` instead of `String::from`.
@@ -256,63 +256,25 @@ pub fn primary_expr(stream: Input) -> IResult<PrimaryExpr> {
     ))
 }
 
-fn move_trailing_argument_interogation_to_call(secondaries: &mut Vec<SecondaryExpr>) {
-    let mut index = 0;
-    while index < secondaries.len() {
-        let move_to_call = match &mut secondaries[index] {
-            SecondaryExpr::Arguments(args) => args
-                .last_mut()
-                .is_some_and(|arg| remove_trailing_interogation(&mut arg.arg)),
-            _ => false,
-        };
-
-        if move_to_call {
-            secondaries.insert(index + 1, SecondaryExpr::Interogation);
-            index += 1;
-        }
-        index += 1;
-    }
-}
-
-fn remove_trailing_interogation(expr: &mut Expression) -> bool {
-    let Expression::UnaryExpr(unary) = expr else {
-        return false;
-    };
-
-    remove_trailing_interogation_from_unary(unary)
-}
-
-fn remove_trailing_interogation_from_unary(unary: &mut UnaryExpr) -> bool {
-    let primary = match unary {
-        UnaryExpr::PrimaryExpr(primary) => primary,
-        UnaryExpr::UnaryExpr(_, inner) => {
-            return remove_trailing_interogation_from_unary(inner);
-        }
-    };
-
-    let Some(secondaries) = primary.secondaries.as_mut() else {
-        return false;
-    };
-    if !matches!(secondaries.last(), Some(SecondaryExpr::Interogation)) {
-        return false;
-    }
-
-    secondaries.pop();
-    if secondaries.is_empty() {
-        primary.secondaries = None;
-    }
-    true
-}
-
 pub fn operand(stream: Input) -> IResult<Operand> {
     super::do_expression
-        .or(parse_if.map(Box::new).map(Operand::If))
-        .or(r#loop.map(Box::new).map(Operand::Loop))
-        .or(r#match.map(Box::new).map(Operand::Match))
-        .or((get_span, TokenType::Keyword("unsafe".to_string()), block)
+        .or(reset_inside_argument_list(parse_if)
+            .map(Box::new)
+            .map(Operand::If))
+        .or(reset_inside_argument_list(r#loop)
+            .map(Box::new)
+            .map(Operand::Loop))
+        .or(reset_inside_argument_list(r#match)
+            .map(Box::new)
+            .map(Operand::Match))
+        .or((
+            get_span,
+            TokenType::Keyword("unsafe".to_string()),
+            reset_inside_argument_list(block),
+        )
             .map(|(span, _, block)| Operand::Unsafe(block, span)))
         .or(self_ident)
-        .or(instance.map(Operand::Instance))
+        .or(reset_inside_argument_list(instance).map(Operand::Instance))
         .or(tuple
             .followed_by(not(TokenType::DoubleColon))
             .map(Operand::Tuple))
@@ -325,7 +287,7 @@ pub fn operand(stream: Input) -> IResult<Operand> {
             .map(Box::new)
             .map(Operand::Expression))
         // TODO: disallow function calls after literal
-        .or(literal.map(Operand::Literal))
+        .or(reset_inside_argument_list(literal).map(Operand::Literal))
         // Try lambda_decl before ident_path so that "param ->" is parsed as a lambda, not as an ident
         .or(native_operator.map(Operand::NativeOperator))
         .or(preceded(not(operator), ident_path.map(Operand::Ident)))
@@ -392,24 +354,29 @@ pub fn self_ident(stream: Input) -> IResult<Operand> {
 }
 
 pub fn secondary(stream: Input) -> IResult<SecondaryExpr> {
-    // Check for argument list short circuit on multiline dots and double dots
-    // For inline argument lists (e.g., .method1 a), multiline dots should close the argument list
-    // UNLESS the dot is more indented than the current level (meaning it's part of the argument)
-    // For multiline argument lists, only close if the dot is at the method chain level
     if stream.inside_argument_list {
+        // A propagation suffix closes the current ungrouped application. Leave
+        // it for the caller before parsing any following operator or suffix.
+        // Delimited expressions and nested bodies establish their own context.
+        if matches!(
+            stream.tokens.first().map(|token| &token.token_type),
+            Some(TokenType::Interogation)
+        ) {
+            return Err(ParseError::ShortCircuit);
+        }
         // Check for multiline dot
-        if let Ok((_, (_, indent_level, _))) =
-            (TokenType::Eol, indent_token, TokenType::Dot).process(stream)
+        if let Ok((_, (_, _, indent_level, _))) = (
+            TokenType::Eol,
+            empty_lines_permissive,
+            indent_token,
+            TokenType::Dot,
+        )
+            .process(stream)
         {
-            // If we're in an inline argument list, multiline dots should close it
-            // UNLESS the dot is more indented (meaning it's part of the argument expression)
+            // A new-line chain continues the completed inline call. Parentheses
+            // or a separate multiline argument block can group an argument chain.
             if stream.inside_inline_argument_list {
-                // Only short-circuit if the dot is at or below the current indent level
-                // Dots that are more indented are part of the argument expression
-                if (indent_level as usize) <= stream.indent_level {
-                    return arguments_list_short_circuit(stream)
-                        .and_then(|_| Err(ParseError::ShortCircuit));
-                }
+                return Err(ParseError::ShortCircuit);
             }
 
             // For multiline argument lists, calculate the method chain indent level
@@ -752,9 +719,15 @@ pub fn dot(stream: Input) -> IResult<IdentOrNumber> {
     // For multiline dots, update the indent level to match the dot's indent
     // This is needed so that lambda arguments after the dot have the correct indent context
     // But don't do this inside argument lists, as it would break multiline argument parsing
-    let result = (TokenType::Eol, indent_token, TokenType::Dot).process(stream);
+    let result = (
+        TokenType::Eol,
+        empty_lines_permissive,
+        indent_token,
+        TokenType::Dot,
+    )
+        .process(stream);
 
-    if let Ok((stream, (_, dot_indent_level, _))) = result {
+    if let Ok((stream, (_, _, dot_indent_level, _))) = result {
         // If the dot's indent level is less than the current indent level,
         // it belongs to an outer scope and should not be consumed here
         // This prevents lambda bodies from consuming dots that belong to the outer expression
@@ -792,7 +765,10 @@ pub fn ident_or_number(stream: Input) -> IResult<IdentOrNumber> {
 pub fn indice(stream: Input) -> IResult<Box<Expression>> {
     preceded(
         TokenType::OpenBracket,
-        followed(expression.map(Box::new), TokenType::CloseBracket),
+        followed(
+            reset_inside_argument_list(expression).map(Box::new),
+            TokenType::CloseBracket,
+        ),
     )
     .process(stream)
 }
