@@ -1355,16 +1355,63 @@ impl<'a> MirBuilder<'a> {
         std::mem::take(&mut self.nested_functions)
     }
 
-    fn lower_closure_captures(&self, captures: &[HirClosureCapture]) -> Vec<MirClosureCapture> {
+    fn lower_closure_captures(&mut self, captures: &[HirClosureCapture]) -> Vec<MirClosureCapture> {
         captures
             .iter()
             .filter_map(|capture| {
-                let local = self.var_map.get(&capture.name).copied()?;
+                let mut local = self.var_map.get(&capture.name).copied()?;
                 let span = self.locals.get(local.0).and_then(|decl| decl.span.clone());
+                let mut kind = MirClosureCaptureKind::from(capture.kind);
+                if let Some(place) = self.place_for_borrowed_binding_value(local, &capture.ty) {
+                    // A transitive capture borrows the original value, not the
+                    // enclosing closure's reference slot. Materialize that
+                    // reborrow because MIR captures store locals, not places.
+                    let (ty, value) = match kind {
+                        MirClosureCaptureKind::ByValue => (
+                            capture.ty.clone(),
+                            Rvalue::Use(self.operand_for_place(&capture.ty, place, false)),
+                        ),
+                        MirClosureCaptureKind::ByRef | MirClosureCaptureKind::ByMutRef => {
+                            let mutable = kind == MirClosureCaptureKind::ByMutRef;
+                            (
+                                Type::Reference {
+                                    mutable,
+                                    inner: Box::new(capture.ty.clone()),
+                                },
+                                Rvalue::Ref(
+                                    if mutable {
+                                        Mutability::Mut
+                                    } else {
+                                        Mutability::Not
+                                    },
+                                    place,
+                                ),
+                            )
+                        }
+                    };
+                    local = self.new_local_with_source(
+                        self.type_id_for(&ty),
+                        Mutability::Not,
+                        None,
+                        LocalSource::Temporary,
+                        span.clone(),
+                    );
+                    self.register_scoped_temp(local);
+                    self.emit_storage_live(local, span.clone());
+                    self.emit_assign(
+                        Place {
+                            local,
+                            projection: vec![],
+                        },
+                        value,
+                        span.clone(),
+                    );
+                    kind = MirClosureCaptureKind::ByValue;
+                }
                 Some(MirClosureCapture {
                     name: capture.name.clone(),
                     local,
-                    kind: MirClosureCaptureKind::from(capture.kind),
+                    kind,
                     span,
                 })
             })

@@ -172,6 +172,26 @@ impl FormatNode for Operand {
 
 impl FormatNode for Match {
     fn fmt_with<W: Write>(&self, context: &mut FormatContext, f: &mut W) -> fmt::Result {
+        if let Some(statements) = &self.do_syntax {
+            writeln!(f, "do")?;
+            context.increase_indent();
+            for (index, statement) in statements.iter().enumerate() {
+                context.write_indent(f)?;
+                match statement {
+                    DoStatement::Bind(pattern, expression, _) => {
+                        pattern.fmt_with(context, f)?;
+                        write!(f, " <- ")?;
+                        expression.fmt_with(context, f)?;
+                    }
+                    DoStatement::Statement(statement, _) => statement.fmt_with(context, f)?,
+                }
+                if index + 1 < statements.len() {
+                    writeln!(f)?;
+                }
+            }
+            context.decrease_indent();
+            return Ok(());
+        }
         write!(f, "match ")?;
         self.expr.fmt_with(context, f)?;
         writeln!(f)?;

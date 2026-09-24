@@ -64,6 +64,25 @@ main = !->
 
 The receiver is `Boxed`, the right operand is `Boxed`, and the selected implementation returns `42`. The compiler does not need to know a special meaning for `%%`; the trait declaration and implementation provide it.
 
+## Operators on Borrowed Values
+
+For a method-backed binary operator, the left operand is its receiver. The same [receiver borrowing and dereferencing](references.md#dereferencing) used by ordinary method calls applies during operator lookup.
+
+```rock
+main = !->
+    number = 4
+    borrowed = &number
+    incremented = borrowed + 1
+    even = borrowed % 2 == 0
+    incremented.println!
+    even.println!
+    number.println!
+```
+
+The output is `5`, `true`, and `4`. Although `borrowed` has type `&I64`, method lookup can select the `I64` implementations of `+` and `%`. Those implementations use shared receivers (`@`) and read the integer through `self`, so the caller does not need to write `*borrowed`. The original integer remains available.
+
+This also lets operator sections such as `(+ 1)` work as callbacks receiving `&I64`, as shown in the [collection transformations](../stdlib/collections.md#consuming-and-borrowing-transformations). Receiver adjustment does not make references and values interchangeable in every argument position; the selected operator's signature still determines its requirements.
+
 ## Unary Operators
 
 Prefix operators use the same type-directed model. The standard library provides negation for numeric values and logical not for booleans where an implementation exists.

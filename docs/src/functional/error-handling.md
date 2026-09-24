@@ -221,6 +221,47 @@ main = !->
 
 `<&>` maps, `>>=` binds, `<|>` chooses a fallback, `!>` converts an `Option` to a `Result`, and `|>` passes a value to a function. The output is `5`, `4`, `9`, and `4`. These meanings are standard-library definitions, not compiler-owned special cases.
 
+## Flat Sequencing with `do`
+
+Use a `do` expression when later fallible operations need values from earlier ones. `<-` binds a successful payload, and the rest of the block becomes the callback passed to `bind`. With `Result`, an error skips that callback and becomes the block's result.
+
+```rock
+positive: I64 -> Result I64, I64
+positive = value ->
+    if value < 0 then Result::Err 1 else Result::Ok value
+
+sum_positive: I64 -> I64 -> Result I64, I64
+sum_positive = left, right -> do
+    first <- positive left
+    second <- positive right
+    total = first + second
+    pure total
+
+main = !->
+    sum_positive 16, 6 .unwrap_or -1 .println!
+    sum_positive -1, 6 .unwrap_or -1 .println!
+```
+
+This prints `22` and `-1`. An ordinary `=` statement keeps Rock's usual binding or reassignment behavior. `pure total` constructs the successful result; `pure` is an ordinary prelude function whose carrier is inferred from the function signature. The last expression is returned unchanged, so you can also end with another fallible call or an explicit `Result::Ok` value.
+
+The same sequencing works with `Option`:
+
+```rock
+main = !->
+    answer = do
+        first <- Option::Some 20
+        _ <- Option::Some 0
+        second <- Option::Some 22
+        pure (first + second)
+    answer.unwrap_or -1 .println!
+```
+
+This prints `42`. `_ <- action` discards a successful payload. A nonfinal bare expression does the same: it is sequenced through `bind`, rather than treated as an ordinary statement. In particular, `println!` returns an `I32`, not a carrier; print the completed result outside the block, as above, or explicitly assign an eager side effect's result to a local inside a continuation.
+
+`do` is syntax sugar for calls to the `bind` function visible at each sequencing step. The prelude supplies the standard monadic implementation, but ordinary imports and explicit local shadowing can select another function. There is no implicit error conversion, automatic lifting of the final value, or new runtime effect system. Existing closure capture and ownership rules apply; the standard `bind` requires a callback that supports `FnMut`.
+
+A block must be indented and end with an expression. Bind targets currently support an identifier or `_`. Use `<-` instead of `?` directly in the block, and use the final expression instead of `return`; `break` and `continue` cannot leave the block. Explicit nested functions and loops retain their own control-flow rules.
+
 ## Defining a Custom `?` Carrier
 
 `?` is not limited to the two standard enums. A custom carrier participates by implementing `Try` and `FromResidual`. `Try::branch` separates a continuing payload from a short-circuit residual; `FromResidual::from_residual` rebuilds the enclosing carrier when propagation stops.

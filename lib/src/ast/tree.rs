@@ -464,6 +464,15 @@ pub enum Operand {
 pub struct Match {
     pub expr: Expression,
     pub arms: Vec<MatchArm>,
+    /// Original parser sugar for formatting only; semantic visitors use the expanded arms.
+    #[serde(skip)]
+    pub do_syntax: Option<Vec<DoStatement>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DoStatement {
+    Bind(Pattern, Expression, Span),
+    Statement(Statement, Span),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

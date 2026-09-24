@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use crate::lexer::{span::Span, Token, TokenType};
 
-pub const KEYWORDS: [&str; 26] = [
+pub const KEYWORDS: [&str; 27] = [
     "struct", "enum", "trait", "impl", "if", "then", "else", "for", "in", "while", "loop", "macro",
     "true", "false", "return", "continue", "break", "infix", "mod", "extern", "match", "unsafe",
-    "type", "mut", "where", "as",
+    "type", "mut", "where", "as", "do",
 ];
 pub const OPERATORS_CHARS: [char; 13] = [
     '+', '-', '*', '/', '%', '=', '!', '<', '>', '$', '|', '&', ';',

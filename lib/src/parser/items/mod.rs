@@ -1,5 +1,6 @@
 mod array;
 mod block;
+mod do_expr;
 mod enum_decl;
 mod expression;
 mod function_decl;
@@ -28,6 +29,7 @@ mod tests;
 
 pub use array::*;
 pub use block::*;
+pub use do_expr::do_expression;
 pub use enum_decl::*;
 pub use expression::*;
 pub use function_decl::*;

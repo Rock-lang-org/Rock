@@ -19,6 +19,7 @@ fn test_parse_match() {
     assert_formatted_eq(
         &expression,
         &Match {
+            do_syntax: None,
             expr: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(crate::ast::IdentifierPath {
                     path: vec![IdentOrType::Ident(Ident {

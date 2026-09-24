@@ -15,7 +15,11 @@ pub fn r#match(stream: Input) -> IResult<Match> {
             TokenType::Eol.followed_by(empty_lines),
         )),
     )
-        .map(|(_, expr, _, arms)| Match { expr, arms })
+        .map(|(_, expr, _, arms)| Match {
+            expr,
+            arms,
+            do_syntax: None,
+        })
         .process(stream)
         .map_err(|e| e.with_context("match expression"))
 }

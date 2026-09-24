@@ -10,7 +10,7 @@ Rock is a functional programming language with Haskell-inspired syntax, featurin
 ```
 struct, enum, trait, impl, if, then, else, for, in, while, loop, macro,
 true, false, return, continue, break, infix, mod, extern, match, unsafe,
-type, mut
+type, mut, where, as, do
 ```
 
 ### 1.2 Operators
@@ -217,6 +217,31 @@ Custom infix operators currently have two precise resolution paths:
 !x          // logical not
 *ptr        // pointer dereference
 ```
+
+### 3.6 `do` Expressions
+
+`do` introduces an indented sequencing expression. It expands during parsing to ordinary calls to the unqualified `bind` function, closures, and assignments; ordinary name resolution determines which `bind` is used. The standard prelude implementation supports `Option`, `Result`, and other `Monad` constructors.
+
+```rock
+sum: Option I64 -> Option I64 -> Option I64
+sum = left, right -> do
+    first <- left
+    second <- right
+    total = first + second
+    pure total
+
+main = !->
+    sum (Option::Some 20), (Option::Some 22) .unwrap_or 0 .println!
+```
+
+- `name <- action` expands to `bind action, (name -> remainder)`; `_` discards the payload.
+- A nonfinal bare expression also binds and discards its payload.
+- Assignments retain their existing declaration/reassignment semantics and evaluation position.
+- The final expression is returned unchanged. `pure` is an ordinary function; no lifting or error conversion is inserted.
+- New bindings are scoped to the block and its continuations. Later actions execute only when the resolved `bind` invokes the continuation, with the existing closure ownership rules.
+- Blocks must be nonempty and end in an expression. Bind patterns initially support only an immutable identifier or `_`.
+- Direct `?` and `return` are rejected in the sequencing region. `break` and `continue` cannot leave it. Explicit nested functions and loops retain their own control-flow targets.
+- `<-` is recognized contextually at the start of a `do` statement, not registered as a global operator. `do` is a reserved keyword.
 
 ## 4. Statements
 

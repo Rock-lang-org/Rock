@@ -305,9 +305,8 @@ fn remove_trailing_interogation_from_unary(unary: &mut UnaryExpr) -> bool {
 }
 
 pub fn operand(stream: Input) -> IResult<Operand> {
-    parse_if
-        .map(Box::new)
-        .map(Operand::If)
+    super::do_expression
+        .or(parse_if.map(Box::new).map(Operand::If))
         .or(r#loop.map(Box::new).map(Operand::Loop))
         .or(r#match.map(Box::new).map(Operand::Match))
         .or((get_span, TokenType::Keyword("unsafe".to_string()), block)

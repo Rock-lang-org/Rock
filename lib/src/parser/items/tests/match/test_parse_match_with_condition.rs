@@ -16,6 +16,7 @@ fn test_parse_match_with_condition() {
     assert_eq!(
         expression,
         Match {
+            do_syntax: None,
             expr: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(crate::ast::IdentifierPath {
                     path: vec![IdentOrType::Ident(Ident {

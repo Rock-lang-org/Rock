@@ -21,8 +21,7 @@ Rock's I/O abstractions use `Result` and ownership rather than exceptions or man
 
 write_text: &W -> &Str -> Result I64, IoError where W: Write
 write_text = writer, text ->
-    written = writer.write_str text?
-    Result::Ok written
+    writer.write_str text
 
 read_text_prefix: &mut R -> &mut [U8] -> Result I64, IoError where R: Read
 read_text_prefix = reader, buffer ->
@@ -34,9 +33,9 @@ write_demo = path ->
     write_text &file, "hello"
 
 main = !->
-    match write_demo "rock-io-traits.txt"
-        Result::Ok count => count.println!
-        Result::Err _ => -1 .println!
+    (write_demo "rock-io-traits.txt")
+        .unwrap_or -1
+        .println!
 ```
 
 This example writes five bytes and prints `5`; `read_text_prefix` demonstrates the reader signature even though `main` only uses the write path. `read` needs exclusive access to both the reader and buffer. Writing needs only a shared handle, so the file does not need a mutable binding. The file closes automatically when its owner is dropped.
@@ -54,26 +53,28 @@ The free functions `stdlib::io::write_all` and `stdlib::io::write_str` supply th
 
 write_greeting: &Str -> Result I64, IoError
 write_greeting = path ->
-    mut file = File::create path?
+    file = File::create path?
     file.write_str "Hello from Rock\n"
 
 append_greeting: &Str -> Result I64, IoError
 append_greeting = path ->
-    mut file = File::append path?
+    file = File::append path?
     file.write_str "Again\n"
 
 main = ->
-    match write_greeting "rock-greeting.txt"
-        Result::Ok count =>
-            match append_greeting "rock-greeting.txt"
-                Result::Ok appended =>
-                    count + appended .println!
-                    0
-                Result::Err _ => 1
-        Result::Err _ => 1
+    result = do
+        count <- write_greeting "rock-greeting.txt"
+        appended <- append_greeting "rock-greeting.txt"
+        pure (count + appended)
+    status = result <&> total ->
+        total.println!
+        0
+    status.unwrap_or 1
 ```
 
 The successful output is `22`, and `rock-greeting.txt` contains `Hello from Rock` followed by `Again`, each followed by a newline. The descriptor is closed by `Drop`; callers do not call a separate close API. `create` and `append` can create a missing file, as this example requires; `open` reports an operating-system `IoError::Os code` when the file is absent. A path containing a null byte reports `IoError::InvalidPath` before the operating-system call.
+
+`do` keeps the successful counts in scope without nested callbacks. Each `<-` sequences through the prelude's `bind`, which continues only for `Result::Ok`; `pure` wraps the sum in the same carrier. This has the sequencing behavior of `>>=`. At the boundary, `<&>` prints a successful total and produces exit code `0`, while `unwrap_or 1` turns either operation's error into exit code `1`. See [error handling](../functional/error-handling.md) for `do` and the named combinators.
 
 ## Reading bytes
 
@@ -88,7 +89,7 @@ Only the prefix indicated by the returned count contains newly read bytes. A zer
 
 prepare: &Str -> Result I64, IoError
 prepare = path ->
-    mut file = File::create path?
+    file = File::create path?
     file.write_str "world"
 
 read_file: &Str -> Result I64, IoError
@@ -105,12 +106,11 @@ read_file = path ->
     Result::Ok total
 
 main = ->
-    match prepare "rock-io-input.txt"
-        Result::Ok _ =>
-            match read_file "rock-io-input.txt"
-                Result::Ok count => if count == 5 then 0 else 1
-                Result::Err _ => 1
-        Result::Err _ => 1
+    copied = do
+        prepare "rock-io-input.txt"
+        read_file "rock-io-input.txt"
+    status = copied <&> count -> if count == 5 then 0 else 1
+    status.unwrap_or 1
 ```
 
 The output is `world`, without a newline. The caller checks that five bytes were copied before reporting success. Each `&bytes[..count]` borrows just the initialized prefix from this read, not any leftover bytes from the previous iteration. The shared borrow is finished before the next mutable read. The file owns its descriptor throughout and closes when `read_file` returns.
@@ -134,9 +134,8 @@ write_parts = ->
     Result::Ok (first + rest)
 
 main = ->
-    match write_parts!
-        Result::Ok _ => 0
-        Result::Err _ => 1
+    status = write_parts! <&> _ -> 0
+    status.unwrap_or 1
 ```
 
 This writes `hello`. `str_as_bytes` borrows an `&Str` as `&[U8]`; an owned `String` offers the equivalent `as_bytes!` method. Neither operation copies the data. The offsets count bytes, not Unicode characters, and the resulting view is a byte slice, not a string. Range bounds are checked and invalid bounds terminate the process rather than returning `IoError`.
@@ -152,9 +151,8 @@ This writes `hello`. `str_as_bytes` borrows an `&Str` as `&[U8]`; an owned `Stri
 main = ->
     output = stdout!
     bytes: [U8; 5] = [104, 101, 108, 108, 111]
-    match output.write_all (&bytes[..3])
-        Result::Ok _ => 0
-        Result::Err _ => 1
+    status = output.write_all (&bytes[..3]) <&> _ -> 0
+    status.unwrap_or 1
 ```
 
 The process writes `hel` to standard output and returns `0`. The native range creates a borrowed three-byte view, and `write_all` handles partial operating-system writes until the whole slice is sent or an error occurs.
@@ -173,9 +171,7 @@ read_stdin = ->
     input.read &mut buffer
 
 main = !->
-    match read_stdin!
-        Result::Ok count => count.println!
-        Result::Err _ => -1 .println!
+    read_stdin! .unwrap_or -1 .println!
 ```
 
 ## Copying and the `|>>` operator
@@ -189,7 +185,7 @@ The generic `copy` function reads from `&mut R` and writes to `&W` until end of 
 
 prepare: &Str -> Result I64, IoError
 prepare = path ->
-    mut file = File::create path?
+    file = File::create path?
     file.write_str "functional byte pipe"
 
 copy_file: &Str -> &Str -> Result I64, IoError
@@ -198,14 +194,13 @@ copy_file = source, target ->
     (File::open source?) |>> &output
 
 main = ->
-    match prepare "rock-copy-input.txt"
-        Result::Ok _ =>
-            match copy_file "rock-copy-input.txt", "rock-copy-output.txt"
-                Result::Ok copied =>
-                    copied.println!
-                    0
-                Result::Err _ => 1
-        Result::Err _ => 1
+    copied = do
+        prepare "rock-copy-input.txt"
+        copy_file "rock-copy-input.txt", "rock-copy-output.txt"
+    status = copied <&> count ->
+        count.println!
+        0
+    status.unwrap_or 1
 ```
 
 The output is `20`, and the destination contains the same 20 bytes. The source `File` is moved into the pipe, while `output` remains the destination owner. This shape is useful for generic file, socket, and standard-stream code.
@@ -226,6 +221,6 @@ With no user arguments the output is `1`; with `first second` after the run sepa
 
 ## Errors, ownership, and portability
 
-Use a concrete error type such as `IoError` in public signatures. Match `Result::Ok` and `Result::Err` at the boundary, or use `?` in a helper that returns the same carrier. Moving a `File` transfers descriptor ownership; borrowing it for `Read` or `Write` leaves the caller responsible for the eventual drop. A failed `?` returns early and does not restore values already moved into the failed operation.
+Use a concrete error type such as `IoError` in public signatures. Use `>>=` to sequence fallible operations, `<&>` to transform successes, and `?` to propagate failures from a helper that returns a compatible carrier. At the boundary, `unwrap_or` supplies a fallback value; use `match` when you need to inspect and report the particular error. Moving a `File` transfers descriptor ownership; borrowing it for `Read` or `Write` leaves the caller responsible for the eventual drop. A failed `?` returns early and does not restore values already moved into the failed operation.
 
 The current file and stream implementations are POSIX-oriented. Error numbers and some behavior depend on the host operating system, and the examples that create files require a writable working directory.

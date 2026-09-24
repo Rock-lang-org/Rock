@@ -11,15 +11,15 @@ describe: &Str -> String
 describe = value -> String::from value
 
 main = !->
-    name: &Str = "Rock"
-    owned: String = describe name
-    empty: String = String::new!
-    number: String = String::from 42
-    copy: String = owned.clone!
-    length: I64 = owned.len!
-    view: &Str = owned.as_str!
-    combined: String = owned.concat number
-    message: String = "Hello, " + "Rock" + "!"
+    name = "Rock"
+    owned = describe name
+    empty = String::new!
+    number = String::from 42
+    copy = owned.clone!
+    length = owned.len!
+    view = owned.as_str!
+    combined = owned.concat number
+    message = "Hello, " + "Rock" + "!"
     empty.len!.println!
     copy.println!
     length.println!
@@ -44,13 +44,13 @@ The search helpers live in `stdlib::string` and are not prelude names. This fenc
 > stdlib::string::string_len
 
 main = !->
-    text: &Str = "rock"
-    length: I64 = string_len text
-    offset: I64 = string_find text, "oc"
-    contains: I64 = string_contains text, "ck"
-    bytes: [U8; 4] = [114, 111, 99, 107]
-    middle: Vec U8 = byte_substr (&bytes), 1, 2
-    second: U8 = byte_at (&bytes), 1
+    text = "rock"
+    length = string_len text
+    offset = string_find text, "oc"
+    contains = string_contains text, "ck"
+    bytes = [114, 111, 99, 107]
+    middle = byte_substr &bytes, 1, 2
+    second = byte_at &bytes, 1
     length.println!
     offset.println!
     contains.println!
@@ -66,7 +66,7 @@ The output is `4`, `1`, `1`, `2`, and `111`. `string_find` returns a byte offset
 
 ```rock
 main = !->
-    mut values: Vec I64 = Vec::new!
+    mut values = Vec::new!
     values.push 10
     values.push 20
     values.push 30
@@ -90,50 +90,46 @@ The callback type tells you whether an operation moves elements or borrows them.
 
 ```rock
 main = !->
-    mut source: Vec I64 = Vec::new!
+    mut source = Vec::new!
     source.push 1
     source.push 2
     source.push 3
-    mapped: Vec I64 = source.map value -> value + 1
+    mapped = source.map (+ 1)
 
-    mut borrowed_source: Vec I64 = Vec::new!
+    mut borrowed_source = Vec::new!
     borrowed_source.push 4
     borrowed_source.push 5
-    references: Vec I64 = borrowed_source.map_ref value -> *value + 1
-    borrowed_source.for_each value ->
-        value.println!
-        return
+    references = borrowed_source.map_ref (+ 1)
+    borrowed_source.for_each (!.println!)
 
-    mut filtered_source: Vec I64 = Vec::new!
+    mut filtered_source = Vec::new!
     filtered_source.push 1
     filtered_source.push 2
     filtered_source.push 3
-    filtered: Vec I64 = filtered_source.filter value -> value % 2 == 0
+    filtered = filtered_source.filter (% 2 == 0)
 
-    mut retained_source: Vec I64 = Vec::new!
+    mut retained_source = Vec::new!
     retained_source.push 1
     retained_source.push 2
     retained_source.push 3
-    retained_source.retain value -> *value % 2 == 0
+    retained_source.retain (% 2 == 0)
 
-    mut optional_source: Vec I64 = Vec::new!
+    mut optional_source = Vec::new!
     optional_source.push -1
     optional_source.push 2
     optional_source.push 3
-    positives: Vec I64 = optional_source.filter_map value ->
+    positives = optional_source.filter_map value ->
         if value > 0
-            Option::Some value
-        else
-            Option::None
+        then Option::Some value
+        else Option::None
 
-    mut checked_source: Vec I64 = Vec::new!
+    mut checked_source = Vec::new!
     checked_source.push 4
     checked_source.push 5
-    checked: Result (Vec I64), I64 = checked_source.try_map value ->
+    checked = checked_source.try_map value ->
         if value >= 0
-            Result::Ok value
-        else
-            Result::Err 1
+        then Result::Ok value
+        else Result::Err 1
 
     mapped.println!
     references.println!
@@ -143,7 +139,9 @@ main = !->
     checked.unwrap_or Vec::new! .println!
 ```
 
-The callback forms are intentionally explicit: the first `map` moves `source`, while `map_ref` leaves `borrowed_source` available after the callback. The output is `4`, `5`, `[2, 3, 4]`, `[5, 6]`, `[2]`, `[2]`, `[2, 3]`, and `[4, 5]`; the first two lines come from `for_each`. `try_map` returns `Ok` here. If a callback returns `Err 1`, later source elements are not mapped and the original source is consumed.
+The first `map` moves `source`, while `map_ref` leaves `borrowed_source` available after the callback. The output is `4`, `5`, `[2, 3, 4]`, `[5, 6]`, `[2]`, `[2]`, `[2, 3]`, and `[4, 5]`; the first two lines come from `for_each`. `try_map` returns `Ok` here. If a callback returns `Err 1`, later source elements are not mapped and the original source is consumed.
+
+`map_ref` and `retain` pass shared references to their callbacks. Their operator sections still work: `(+ 1)` means `value -> value + 1`, and `(% 2 == 0)` means `value -> value % 2 == 0`. The integer `+` and `%` implementations use shared receivers, and method lookup adjusts the borrowed left operand to select them. No explicit `*value` is needed; the parameter remains `&I64`. See [operators on borrowed values](../language/operators.md#operators-on-borrowed-values).
 
 The concrete methods above are the supported everyday `Vec` surface. Higher-kinded traversal interfaces are still evolving and are intentionally not expanded here. `Vec` has no `Applicative` or `Monad` implementation: choosing Cartesian application would require cloning, while choosing zipped application would not have list-monad semantics.
 
@@ -156,9 +154,9 @@ main = !->
     mut scores = HashMap::new!
     scores.insert 10, 100
     scores.insert 20, 200
-    ten: I64 = 10
-    twenty: I64 = 20
-    thirty: I64 = 30
+    ten = 10
+    twenty = 20
+    thirty = 30
     scores.contains_key &ten .println!
     scores.contains_key &thirty .println!
     match scores.get &ten
@@ -185,10 +183,10 @@ main = !->
     point = Point
         x: 3
         y: 4
-    mut boxed: Box Point = Box::new point
-    mutable_view: &mut Point = boxed.as_mut!
+    mut boxed = Box::new point
+    mutable_view = boxed.as_mut!
     mutable_view.x = 5
-    view: &Point = boxed.as_ref!
+    view = boxed.as_ref!
     view.x.println!
     view.y.println!
     (*boxed).x.println!
@@ -202,8 +200,8 @@ The output is `5`, `4`, and `5`. `point` is moved into `boxed`; `as_mut!` change
 
 ```rock
 main = !->
-    state: Arc String = Arc::new String::from "shared"
-    worker_copy: Arc String = state.clone!
+    state = Arc::new String::from "shared"
+    worker_copy = state.clone!
     *state .println!
     *worker_copy .println!
 ```

@@ -445,6 +445,7 @@ impl<'a> MirBuilder<'a> {
 
     pub(super) fn lower_block(&mut self, block: &HirBlock, dest: Place) {
         self.scope_locals.push(Vec::new());
+        let mut restored_bindings = Vec::new();
         let stmts_len = block.stmts.len();
 
         for (i, stmt) in block.stmts.iter().enumerate() {
@@ -470,7 +471,6 @@ impl<'a> MirBuilder<'a> {
                         LocalSource::UserBinding,
                         self.source_local_span(self.current_source_owner, *local_id),
                     );
-                    self.var_map.insert(name.clone(), local);
                     if let Some(scope_locals) = self.scope_locals.last_mut() {
                         scope_locals.push(local);
                     }
@@ -485,6 +485,10 @@ impl<'a> MirBuilder<'a> {
                     self.lower_expr(value, place);
                     let temp_locals = self.scope_locals.pop().unwrap_or_default();
                     self.finish_scope_locals(temp_locals);
+                    // Initializers still see the outer binding. Restore it
+                    // when this lexical block ends, including after shadowing.
+                    restored_bindings
+                        .push((name.clone(), self.var_map.insert(name.clone(), local)));
                 }
                 HirStmt::Expr(expr) => {
                     if is_last && !matches!(block.ty, Type::Unit) {
@@ -560,5 +564,12 @@ impl<'a> MirBuilder<'a> {
 
         let block_locals = self.scope_locals.pop().unwrap_or_default();
         self.finish_scope_locals(block_locals);
+        for (name, previous) in restored_bindings.into_iter().rev() {
+            if let Some(local) = previous {
+                self.var_map.insert(name, local);
+            } else {
+                self.var_map.remove(&name);
+            }
+        }
     }
 }
