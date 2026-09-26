@@ -26,13 +26,13 @@ Keep routing separate from socket operations. The handler can be exercised with 
 
 ## Create the Project
 
-Use Rock `v0.5.2` with its matching standard library, or a compatible development toolchain. The commands below use the `rock` application CLI, which builds local dependencies and passes their artifacts to the compiler for you.
+Use Rock `v0.6.0` with its matching standard library, or a compatible development toolchain. The commands below use the `rock` application CLI, which builds local dependencies and passes their artifacts to the compiler for you.
 
 The complete project is included at `docs/examples/http-server/`. From the Rock repository root, clone the library alongside the compiler checkout and select the revision used by this example:
 
 ```console
 $ git clone https://github.com/rock-lang-org/rock_http.git ../rock_http
-$ git -C ../rock_http checkout --detach 55967acf9850660595f187a503c4c79661cd2479
+$ git -C ../rock_http checkout --detach 19beaf0eeba22e01de16939ca1475bd540cf7b5c
 ```
 
 The checkouts have this layout:

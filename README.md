@@ -11,7 +11,7 @@ Rock combines type inference, pattern matching, traits, and higher-kinded types 
 
 The syntax takes inspiration from [LiveScript](https://livescript.net/), [Haskell](https://www.haskell.org/), and [Rust](https://www.rust-lang.org/). You do not need to know those languages to follow this tour. It starts with small programs and introduces the functional vocabulary through examples.
 
-Rock is experimental. Version `0.5.2` is not a stability promise: syntax, APIs, and tooling can change, and compiler bugs remain. Use it to explore, build small programs, and help shape the language.
+Rock is experimental. Version `0.6.0` is not a stability promise: syntax, APIs, and tooling can change, and compiler bugs remain. Use it to explore, build small programs, and help shape the language.
 
 ## Contents
 
@@ -74,10 +74,10 @@ Once rockup is installed, the everyday commands are short:
 | `rockup update` | Install or update the stable toolchain |
 | `rockup self update` | Update the rockup manager itself |
 | `rockup list` | List installed toolchains and mark the active one |
-| `rockup install v0.5.2` | Install that specific release |
-| `rockup default v0.5.2` | Select that version, installing it if needed |
-| `rockup run v0.5.2 rock --version` | Run one command with a chosen version |
-| `rockup remove v0.5.2` | Remove an installed version |
+| `rockup install v0.6.0` | Install that specific release |
+| `rockup default v0.6.0` | Select that version, installing it if needed |
+| `rockup run v0.6.0 rock --version` | Run one command with a chosen version |
+| `rockup remove v0.6.0` | Remove an installed version |
 
 `install` and `update` default to `stable`, meaning GitHub's latest non-prerelease release. The channel name does not mean Rock's language or APIs are stable. Use `update`, rather than another `install`, when a toolchain is already present.
 
@@ -85,7 +85,7 @@ To pin a project, install its version first and add a `rock-toolchain.toml` besi
 
 ```toml
 [toolchain]
-channel = "v0.5.2"
+channel = "v0.6.0"
 ```
 
 A project pin selects an installed toolchain; it does not download one automatically. See the [installation guide](https://rock-lang-org.github.io/Rock/getting-started/installation.html) for custom `ROCKUP_HOME` locations, shell setup, and troubleshooting. Windows, macOS, musl, and other CPU architectures are not release targets yet.
@@ -785,10 +785,10 @@ sudo apt install git llvm-18-dev libpolly-18-dev libzstd-dev libxml2-dev zlib1g-
 export LLVM_SYS_180_PREFIX=/usr/lib/llvm-18
 ```
 
-Use a checkout of the revision you want to build. For the `v0.5.2` release:
+Use a checkout of the revision you want to build. For the `v0.6.0` release:
 
 ```sh
-git clone --branch v0.5.2 https://github.com/Rock-lang-org/Rock.git
+git clone --branch v0.6.0 https://github.com/Rock-lang-org/Rock.git
 cd Rock
 ```
 
@@ -810,7 +810,7 @@ cargo test -p rock-lib
 cargo test -p rockup
 ```
 
-See the [release maintainer guide](docs/releases.md) for packaging `v0.5.2`, verifying assets, and creating a draft GitHub release. Publishing a release is a separate maintainer action, not a side effect of building the workspace.
+See the [release maintainer guide](docs/releases.md) for packaging `v0.6.0`, verifying assets, and creating a draft GitHub release. Publishing a release is a separate maintainer action, not a side effect of building the workspace.
 
 ## Keep Exploring
 

@@ -679,7 +679,7 @@ checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "rock"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rock-shared",
@@ -687,7 +687,7 @@ dependencies = [
 
 [[package]]
 name = "rock-lib"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "ariadne",
  "bincode",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "rock-lsp"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rock",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "rock-shared"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "serde",
  "toml",
@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "rockc"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rock-lib",
@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "rockup"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "clap",
  "rock-shared",

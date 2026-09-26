@@ -2,13 +2,13 @@
 
 This guide defines the Linux release contract for `Rock-lang-org/Rock`. Releases use tags named `vVERSION`. Only `x86_64-unknown-linux-gnu` is supported, built on Ubuntu 24.04 (glibc 2.39 baseline) with statically linked LLVM 18. End users do not need to install LLVM, but still need a C linker, curl, and CA certificates (`build-essential curl ca-certificates` on Ubuntu 24.04), plus GNU tar, gzip, and `sha256sum`. These are not fully static executables: system-library dependencies remain, and archives do not bundle the operating-system runtime.
 
-The rockup asset format starts with `v0.5.0`. Earlier releases provide historical standalone assets and are not supported by the bootstrap. This guide uses `v0.5.2` as its example; choose a new, unused tag when preparing subsequent releases.
+The rockup asset format starts with `v0.5.0`. Earlier releases provide historical standalone assets and are not supported by the bootstrap. This guide uses `v0.6.0` as its example; choose a new, unused tag when preparing subsequent releases.
 
 ## Repository Transfer
 
-The canonical repository is now `Rock-lang-org/Rock`, and the book is published at <https://rock-lang-org.github.io/Rock/>. Pre-`v0.5.2` release assets still contain the old installer and binary download URLs; transferring the repository or editing source does not rewrite those assets. `v0.5.2` is the first release built with the updated `rockup` and `scripts/install.sh` targeting the canonical repository after the transfer. Publish that tagged release, including fresh checksum sidecars, before treating the migration as complete.
+The canonical repository is now `Rock-lang-org/Rock`, and the book is published at <https://rock-lang-org.github.io/Rock/>. Pre-`v0.5.2` release assets still contain the old installer and binary download URLs; transferring the repository or editing source does not rewrite those assets. `v0.5.2` was the first published release built with the updated `rockup` and `scripts/install.sh` targeting the canonical repository after the transfer. Subsequent releases retain those canonical URLs and provide fresh assets and checksum sidecars.
 
-An old `rockup self update` rejects a redirect to the canonical repository. After `v0.5.2` is public and selected as Latest, affected users can recover without deleting installed toolchains:
+An old `rockup self update` rejects a redirect to the canonical repository. Using the current published release (`v0.5.2` or later), affected users can recover without deleting installed toolchains:
 
 1. Stop other `rockup` operations and move only `ROCKUP_HOME/bin/rockup` to an unused backup filename (the default home is `$HOME/.rockup`). Keep the toolchains, pins, and default selection intact.
 2. Rerun the bootstrap from the canonical URL below, using the same `ROCKUP_HOME` if customized. The bootstrap intentionally refuses to overwrite an existing manager, so the backup step is required.
@@ -20,13 +20,13 @@ In the new organization, check GitHub Pages settings (GitHub Actions deployment 
 
 ## Asset Contract
 
-For `VERSION=0.5.2` and `TARGET=x86_64-unknown-linux-gnu`, attach:
+For `VERSION=0.6.0` and `TARGET=x86_64-unknown-linux-gnu`, attach:
 
 | Asset | Contents or purpose |
 | --- | --- |
-| `rock-v0.5.2-x86_64-unknown-linux-gnu.tar.gz` | Complete toolchain, extracted directly into its toolchain root |
+| `rock-v0.6.0-x86_64-unknown-linux-gnu.tar.gz` | Complete toolchain, extracted directly into its toolchain root |
 | `rockup-x86_64-unknown-linux-gnu` | Standalone executable, not an archive |
-| `stdlib-v0.5.2-x86_64-unknown-linux-gnu.tar.gz` | Matching standard-library component archive |
+| `stdlib-v0.6.0-x86_64-unknown-linux-gnu.tar.gz` | Matching standard-library component archive |
 | Each binary/archive name followed by `.sha256` | SHA-256 sidecar for that exact asset |
 | `install.sh` | POSIX bootstrap from `scripts/install.sh` |
 
@@ -47,10 +47,10 @@ Stable standalone-manager downloads use `releases/latest/download/rockup-TARGET`
 The maintainer entry point is:
 
 ```sh
-bash scripts/release.sh v0.5.2
+bash scripts/release.sh v0.6.0
 ```
 
-Its contract is to build, package, and smoke-test locally, writing output to `dist/v0.5.2`. This default mode must not create tags, upload assets, or publish releases. Use Ubuntu 24.04 x86_64 with Rust/Cargo, LLVM 18 development files and static archives, a C toolchain, GNU tar, gzip, curl, CA certificates, and sha256sum. A build on a newer distribution can accidentally raise the glibc baseline; use the baseline environment for distributable artifacts.
+Its contract is to build, package, and smoke-test locally, writing output to `dist/v0.6.0`. This default mode must not create tags, upload assets, or publish releases. Use Ubuntu 24.04 x86_64 with Rust/Cargo, LLVM 18 development files and static archives, a C toolchain, GNU tar, gzip, curl, CA certificates, and sha256sum. A build on a newer distribution can accidentally raise the glibc baseline; use the baseline environment for distributable artifacts.
 
 Install the source-build dependencies and select LLVM 18 before packaging:
 
@@ -61,7 +61,7 @@ export LLVM_SYS_180_PREFIX=/usr/lib/llvm-18
 
 Static LLVM archives are mandatory; there is no dynamic-linking fallback. The new packaging contract requires rejecting shared LLVM dependencies via `ldd` and including LLVM license notices under `share/licenses/llvm/`.
 
-Before tagging, set the package versions in `rock/Cargo.toml`, `rockc/Cargo.toml`, `rockup/Cargo.toml`, and `rock-lsp/Cargo.toml` to the release version and refresh `Cargo.lock`; the script rejects mismatched versions. Existing output directories are never overwritten. The separate stdlib archive extracts directly to a target component directory and includes its manifests, artifact, and object file.
+Before tagging, synchronize the package versions in `rock/Cargo.toml`, `rockc/Cargo.toml`, `rockup/Cargo.toml`, `rock-lsp/Cargo.toml`, `lib/Cargo.toml`, and `rock-shared/Cargo.toml`, and refresh `Cargo.lock`; the script rejects mismatched CLI versions. Existing output directories are never overwritten. The separate stdlib archive extracts directly to a target component directory and includes its manifests, artifact, and object file.
 
 Before accepting the output, inspect archive layouts, verify every sidecar from the output directory, and smoke-test with a disposable `HOME` and `ROCKUP_HOME`. Test that the bootstrap installs the manager, shims, shell setup, and selected toolchain in one invocation. Remove temporary downloads afterward: `rockup self install` must persist the downloaded manager at `ROCKUP_HOME/bin/rockup`. Activate the shell, then check `rock --version`, `rock-lsp --help`, and compilation/execution of a small application with the packaged stdlib without a separate install command. All three shims must work even though the bootstrap staging directory is gone. A shim pointing into the build or download staging directory is a release blocker.
 
@@ -70,7 +70,7 @@ Run the bootstrap checks without network access:
 ```sh
 sh -n scripts/install.sh
 sh scripts/tests/install.sh
-bash scripts/tests/release.sh dist/v0.5.2
+bash scripts/tests/release.sh dist/v0.6.0
 ```
 
 The final check uses the real packaged binaries and archives with an offline HTTP fixture to exercise bootstrap cleanup, stable updates, pinned installation, self-update, shims, and compilation. The new CI contract requires running package smoke tests before draft creation in a clean Ubuntu 24.04 container with the runtime packages listed above and no LLVM installation. A successful build on an LLVM-equipped runner alone does not validate the runtime contract.
@@ -80,7 +80,7 @@ The final check uses the real packaged binaries and archives with an offline HTT
 Uploading is explicitly opt-in:
 
 ```sh
-bash scripts/release.sh v0.5.2 --publish
+bash scripts/release.sh v0.6.0 --publish
 ```
 
 Despite the option name, this creates a **draft only**, using authenticated `gh`. It requires the existing tag to point at local `HEAD` and to exist on GitHub; it must not create or move a tag. Arrange the reviewed commit and remote tag separately through the project's normal maintainer process. Do not use this option merely to test packaging.
