@@ -7,6 +7,7 @@
 
 <h2 align="center"><a href="https://rock-lang-org.github.io/Rock/">Read the Book</a></h2>
 
+
 **A native language with a functional style and explicit ownership.**
 
 Rock combines type inference, pattern matching, traits, and higher-kinded types with native code generation through LLVM. Functions are ordinary values, containers share useful abstractions, and short operators let you write transformations in the order you read them. `do` notation keeps dependent, fallible operations in a flat block.
