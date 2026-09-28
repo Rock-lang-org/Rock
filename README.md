@@ -3,7 +3,9 @@
 [![Book](https://github.com/Rock-lang-org/Rock/actions/workflows/book.yml/badge.svg?branch=master)](https://github.com/Rock-lang-org/Rock/actions/workflows/book.yml)
 [![Discord](https://img.shields.io/discord/990627124236939314.svg)](https://discord.gg/f6skPNB96J)
 
-[Read the Book](https://rock-lang-org.github.io/Rock/) | [GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [Examples](examples/)
+[GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [Examples](examples/)
+
+<h2 align="center"><a href="https://rock-lang-org.github.io/Rock/">Read the Book</a></h2>
 
 **A native language with a functional style and explicit ownership.**
 
@@ -777,3 +779,17 @@ See the [release maintainer guide](docs/releases.md) for packaging `v0.6.0`, ver
 - [Contributing documentation](docs/checks/README.md): book build and syntax-highlighting checks.
 
 Questions, small reproductions, and contributions are welcome through [GitHub issues](https://github.com/Rock-lang-org/Rock/issues) and [Discord](https://discord.gg/f6skPNB96J).
+
+## Next steps
+
+A few of the remaining important features which are planned but still missing:
+
+- UTF-8 support and string indexing
+- Dynamic dispatch and vtables
+- Better trait resolution
+- More complete stdlib
+- Multiline imports like in rust
+- bin/lib compilation distinction
+- --debug/--release mode (optimisations are there already)
+
+- Self-host the compiler
