@@ -1,8 +1,11 @@
 use std::{
     fs,
+    io::{self, IsTerminal, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
+
+use serde::Deserialize;
 
 use crate::{
     fsutil::make_executable,
@@ -13,7 +16,85 @@ use crate::{
 };
 
 const RELEASES: &str = "https://github.com/Rock-lang-org/Rock/releases";
+const RELEASES_API: &str = "https://api.github.com/repos/Rock-lang-org/Rock/releases";
 const TARGET: &str = "x86_64-unknown-linux-gnu";
+
+pub(crate) struct AvailableRelease {
+    pub(crate) tag: String,
+    pub(crate) prerelease: bool,
+}
+
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    draft: bool,
+    prerelease: bool,
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Deserialize)]
+struct GithubAsset {
+    name: String,
+}
+
+pub(crate) fn available_releases() -> Result<Vec<AvailableRelease>, String> {
+    check_platform()?;
+    collect_available_releases(|page| {
+        checked_output(curl().args([
+            "--header",
+            "Accept: application/vnd.github+json",
+            "--header",
+            "X-GitHub-Api-Version: 2022-11-28",
+            "--user-agent",
+            concat!("rockup/", env!("CARGO_PKG_VERSION")),
+            // Listing should fail promptly offline rather than use download timeouts.
+            "--retry",
+            "0",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "15",
+            &format!("{}?per_page=100&page={}", RELEASES_API, page),
+        ]))
+        .map(|output| output.stdout)
+    })
+}
+
+fn collect_available_releases(
+    mut fetch_page: impl FnMut(usize) -> Result<Vec<u8>, String>,
+) -> Result<Vec<AvailableRelease>, String> {
+    let mut available = Vec::new();
+    for page in 1.. {
+        let releases: Vec<GithubRelease> = serde_json::from_slice(&fetch_page(page)?)
+            .map_err(|e| format!("Invalid GitHub releases response: {}", e))?;
+        let last_page = releases.len() < 100;
+        for release in releases {
+            if release.draft
+                || release.tag_name == "stable"
+                || release_name(&release.tag_name).as_ref() != Ok(&release.tag_name)
+            {
+                continue;
+            }
+            let archive = format!("rock-{}-{}.tar.gz", release.tag_name, TARGET);
+            let checksum = format!("{}.sha256", archive);
+            if release.assets.iter().any(|asset| asset.name == archive)
+                && release.assets.iter().any(|asset| asset.name == checksum)
+                && !available
+                    .iter()
+                    .any(|entry: &AvailableRelease| entry.tag == release.tag_name)
+            {
+                available.push(AvailableRelease {
+                    tag: release.tag_name,
+                    prerelease: release.prerelease,
+                });
+            }
+        }
+        if last_page {
+            break;
+        }
+    }
+    Ok(available)
+}
 
 fn check_platform() -> Result<(), String> {
     if cfg!(all(
@@ -121,7 +202,7 @@ fn download_verified(tag: &str, asset: &str, directory: &Path) -> Result<PathBuf
     let path = directory.join(asset);
     let checksum = directory.join(format!("{}.sha256", asset));
     let url = format!("{}/download/{}/{}", RELEASES, tag, asset);
-    checked_output(curl().arg("--output").arg(&path).arg(&url))?;
+    download_asset(&url, &path)?;
     checked_output(
         curl()
             .arg("--output")
@@ -130,6 +211,98 @@ fn download_verified(tag: &str, asset: &str, directory: &Path) -> Result<PathBuf
     )?;
     verify_checksum(&path, &checksum, asset)?;
     Ok(path)
+}
+
+fn download_asset(url: &str, path: &Path) -> Result<(), String> {
+    let mut command = curl();
+    command.arg("--output").arg(path).arg(url);
+    if !io::stderr().is_terminal() {
+        return checked_output(&mut command).map(|_| ());
+    }
+
+    // Reuse curl's transfer accounting, including its five-second current-speed
+    // average and retry handling, instead of measuring the staging file.
+    command
+        .args(["--no-silent", "--no-progress-bar"])
+        .env("LC_ALL", "C")
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    let result = (|| -> io::Result<()> {
+        let mut source = child
+            .stderr
+            .take()
+            .ok_or_else(|| io::Error::other("Missing curl progress stream"))?;
+        let mut terminal = io::stderr().lock();
+        let mut pending = Vec::new();
+        let mut buffer = [0; 4096];
+        loop {
+            let count = source.read(&mut buffer)?;
+            for &byte in &buffer[..count] {
+                if matches!(byte, b'\r' | b'\n') {
+                    show_download_progress(&pending, &mut terminal)?;
+                    pending.clear();
+                } else {
+                    pending.push(byte);
+                }
+            }
+            if count == 0 {
+                show_download_progress(&pending, &mut terminal)?;
+                break;
+            }
+        }
+        writeln!(terminal)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+    }
+    let status = child
+        .wait()
+        .map_err(|e| format!("Failed to wait for curl: {}", e))?;
+    result.map_err(|e| format!("Failed to display download progress: {}", e))?;
+    if !status.success() {
+        return Err(format!("curl failed ({}) downloading {}", status, url));
+    }
+    Ok(())
+}
+
+fn show_download_progress(line: &[u8], terminal: &mut impl Write) -> io::Result<()> {
+    let text = String::from_utf8_lossy(line);
+    let fields: Vec<_> = text.split_whitespace().collect();
+    if fields.is_empty() || text.contains("% Total") || text.contains("Dload  Upload") {
+        return Ok(());
+    }
+    // curl's standard meter: total %, total, received %, received, sent %,
+    // sent, average download, average upload, three times, current speed.
+    // Some curl versions leave all three time columns blank before transfer,
+    // producing nine zero fields rather than the usual twelve fields.
+    if fields.len() == 9 && fields.iter().all(|field| *field == "0") {
+        return Ok(());
+    }
+    if fields.len() == 12 {
+        if let Ok(percent) = fields[2].parse::<usize>() {
+            if percent <= 100 {
+                let filled = percent / 5;
+                let bar = format!("{}{}", "=".repeat(filled), " ".repeat(20 - filled));
+                let progress = if fields[1] == "0" {
+                    format!("[{}] {} received", bar, fields[3])
+                } else {
+                    format!("[{}] {:3}% {}/{}", bar, percent, fields[3], fields[1])
+                };
+                write!(
+                    terminal,
+                    "\r\x1b[2K{} | avg {}/s | current {}/s",
+                    progress, fields[6], fields[11]
+                )?;
+                return terminal.flush();
+            }
+        }
+    }
+    // Preserve curl errors and retry notices alongside the live meter.
+    writeln!(terminal, "\r\x1b[2K{}", text)?;
+    terminal.flush()
 }
 
 fn verify_checksum(path: &Path, checksum: &Path, asset: &str) -> Result<(), String> {
@@ -417,6 +590,152 @@ pub(crate) fn self_update() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn github_release(tag: &str) -> serde_json::Value {
+        let archive = format!("rock-{}-{}.tar.gz", tag, TARGET);
+        serde_json::json!({
+            "tag_name": tag,
+            "draft": false,
+            "prerelease": false,
+            "assets": [{"name": archive}, {"name": format!("{}.sha256", archive)}],
+        })
+    }
+
+    #[test]
+    fn available_versions_require_installable_tags_and_both_assets() {
+        let stable = github_release("v1.2.3");
+        let mut prerelease = github_release("v1.3.0-rc.1");
+        prerelease["prerelease"] = true.into();
+        let mut draft = github_release("v1.4.0");
+        draft["draft"] = true.into();
+        let mut missing_checksum = github_release("v1.2.2");
+        missing_checksum["assets"].as_array_mut().unwrap().pop();
+        let mut wrong_platform = github_release("v1.2.1");
+        wrong_platform["assets"] = serde_json::json!([
+            {"name": "rock-v1.2.1-aarch64-apple-darwin.tar.gz"},
+            {"name": "rock-v1.2.1-aarch64-apple-darwin.tar.gz.sha256"},
+        ]);
+        let body = serde_json::to_vec(&vec![
+            stable.clone(),
+            prerelease,
+            draft,
+            missing_checksum,
+            wrong_platform,
+            github_release("nightly"),
+            github_release("stable"),
+            github_release("1.2.3"),
+            github_release("v1.2.3\n"),
+            stable,
+        ])
+        .unwrap();
+        let available = collect_available_releases(|page| {
+            assert_eq!(page, 1);
+            Ok(body.clone())
+        })
+        .unwrap();
+        assert_eq!(available.len(), 2);
+        assert_eq!(available[0].tag, "v1.2.3");
+        assert!(!available[0].prerelease);
+        assert_eq!(available[1].tag, "v1.3.0-rc.1");
+        assert!(available[1].prerelease);
+    }
+
+    #[test]
+    fn available_versions_paginate_before_filtering() {
+        let mut draft = github_release("v2.0.0");
+        draft["draft"] = true.into();
+        let mut pages = Vec::new();
+        let available = collect_available_releases(|page| {
+            pages.push(page);
+            Ok(serde_json::to_vec(&match page {
+                1 => vec![draft.clone(); 100],
+                2 => vec![github_release("v1.0.0")],
+                _ => panic!("unexpected page {}", page),
+            })
+            .unwrap())
+        })
+        .unwrap();
+        assert_eq!(pages, [1, 2]);
+        assert_eq!(available.len(), 1);
+        assert_eq!(available[0].tag, "v1.0.0");
+    }
+
+    #[test]
+    fn available_versions_handle_empty_invalid_and_failed_responses() {
+        assert!(collect_available_releases(|_| Ok(b"[]".to_vec()))
+            .unwrap()
+            .is_empty());
+        for body in ["not json", "{}", "[{\"tag_name\":\"v1.0.0\"}]"] {
+            assert!(collect_available_releases(|_| Ok(body.as_bytes().to_vec())).is_err());
+        }
+        assert!(matches!(
+            collect_available_releases(|_| Err("offline".into())),
+            Err(error) if error == "offline"
+        ));
+    }
+
+    #[test]
+    fn download_meter_shows_percentage_and_both_speeds() {
+        let mut output = Vec::new();
+        show_download_progress(
+            b" 50 2048k 50 1024k 0 0 256k 0 0:00:08 0:00:04 0:00:04 300k",
+            &mut output,
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "\r\x1b[2K[==========          ]  50% 1024k/2048k | avg 256k/s | current 300k/s"
+        );
+    }
+
+    #[test]
+    fn download_meter_suppresses_zero_rows_with_blank_times() {
+        let mut output = Vec::new();
+        for _ in 0..4 {
+            show_download_progress(
+                b"  0      0   0      0   0      0      0      0                              0",
+                &mut output,
+            )
+            .unwrap();
+        }
+        assert!(output.is_empty());
+        show_download_progress(
+            b"73 38.73M 73 28.52M 0 0 203.9k 0 0:03:14 0:02:23 0:00:51 215.0k",
+            &mut output,
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "\r\x1b[2K[==============      ]  73% 28.52M/38.73M | avg 203.9k/s | current 215.0k/s"
+        );
+    }
+
+    #[test]
+    fn download_meter_handles_unknown_size_and_preserves_errors() {
+        let mut output = Vec::new();
+        for line in [
+            "% Total    % Received % Xferd  Average Speed   Time    Time     Time  Current",
+            "                                 Dload  Upload   Total   Spent    Left  Speed",
+            "",
+        ] {
+            show_download_progress(line.as_bytes(), &mut output).unwrap();
+        }
+        assert!(output.is_empty());
+        show_download_progress(
+            b"0 0 0 1024 0 0 512 0 --:--:-- 0:00:02 --:--:-- 512",
+            &mut output,
+        )
+        .unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.contains("1024 received"));
+        assert!(!text.contains('%'));
+        let mut output = Vec::new();
+        show_download_progress(b"curl: (22) HTTP error 404", &mut output).unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "\r\x1b[2Kcurl: (22) HTTP error 404\n"
+        );
+    }
 
     #[test]
     fn release_names_and_latest_redirect() {

@@ -45,7 +45,9 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
-if [ "$latest" = yes ]; then
+if [ "$url" = 'https://api.github.com/repos/Rock-lang-org/Rock/releases?per_page=100&page=1' ]; then
+    cat "$FIXTURE/releases.json"
+elif [ "$latest" = yes ]; then
     [ "$url" = https://github.com/Rock-lang-org/Rock/releases/latest ] || exit 93
     printf 'https://github.com/Rock-lang-org/Rock/releases/tag/v1.2.3'
 else
@@ -57,6 +59,7 @@ else
 fi
 "#,
         );
+        fs::write(root.join("releases.json"), "[]").unwrap();
         Self { root }
     }
 
@@ -191,8 +194,10 @@ fn self_install_persists_only_manager_then_install_fetches_toolchain() {
     );
     fs::remove_file(downloaded).unwrap();
     let manager = fixture.root.join("home/bin/rockup");
+    assert!(!fixture.root.join("requests").exists());
     let list = fixture.command_for(&manager).arg("list").output().unwrap();
-    assert!(list.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&list.stdout)
+        .starts_with("Installed toolchains (* active):\n  (none)\n"));
     success(list);
     for binary in ["rock", "rockc", "rock-lsp"] {
         let shim = fs::read_to_string(fixture.root.join("home/bin").join(binary)).unwrap();
@@ -201,7 +206,9 @@ fn self_install_persists_only_manager_then_install_fetches_toolchain() {
     assert!(fixture.root.join("home/env").is_file());
     assert!(fixture.root.join("user/.profile").is_file());
     assert!(!fixture.root.join("home/default-toolchain").exists());
-    assert!(!fixture.root.join("requests").exists());
+    let requests = fs::read_to_string(fixture.root.join("requests")).unwrap();
+    assert_eq!(requests.lines().count(), 1);
+    assert!(requests.contains("https://api.github.com/"));
     let source = fixture.source("old");
     fixture.pack(&source, &[]);
     success(
@@ -222,7 +229,8 @@ fn install_update_default_and_local_path() {
     success(fixture.run(&["install"]));
     fixture.assert_old();
     let listed = fixture.run(&["list"]);
-    assert_eq!(String::from_utf8_lossy(&listed.stdout).trim(), "* stable");
+    assert!(String::from_utf8_lossy(&listed.stdout)
+        .starts_with("Installed toolchains (* active):\n* stable\n"));
     success(listed);
     assert!(!fixture.run(&["install"]).status.success());
 
@@ -268,6 +276,51 @@ fn install_update_default_and_local_path() {
             & 0o7777,
         0o755
     );
+}
+
+#[test]
+fn list_shows_available_versions_and_survives_network_failure() {
+    let fixture = Fixture::new();
+    let source = fixture.source("old");
+    fixture.pack(&source, &[]);
+    success(fixture.run(&["install", "v1.2.3"]));
+    let releases: Vec<_> = [("v1.2.3", false), ("v1.3.0-rc.1", true)]
+        .into_iter()
+        .map(|(tag, prerelease)| {
+            let archive = format!("rock-{tag}-{TARGET}.tar.gz");
+            serde_json::json!({
+                "tag_name": tag,
+                "draft": false,
+                "prerelease": prerelease,
+                "assets": [{"name": archive}, {"name": format!("{archive}.sha256")}],
+            })
+        })
+        .collect();
+    fs::write(
+        fixture.root.join("releases.json"),
+        serde_json::to_vec(&releases).unwrap(),
+    )
+    .unwrap();
+    let listed = fixture.run(&["list"]);
+    let stdout = String::from_utf8_lossy(&listed.stdout);
+    assert!(stdout.contains("* v1.2.3\n"));
+    assert!(
+        stdout.contains("Available versions:\n  v1.2.3 (installed)\n  v1.3.0-rc.1 (prerelease)\n")
+    );
+    assert!(listed.stderr.is_empty());
+    success(listed);
+
+    let offline = fixture
+        .command()
+        .env("FAIL_DOWNLOAD", "yes")
+        .arg("list")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&offline.stdout);
+    assert!(stdout.contains("* v1.2.3\n"));
+    assert!(stdout.contains("Available versions:\n  (unavailable)"));
+    assert!(String::from_utf8_lossy(&offline.stderr).contains("could not list available versions"));
+    success(offline);
 }
 
 #[test]

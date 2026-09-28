@@ -108,6 +108,8 @@ $ rockup default stable
 $ rockup remove v0.6.0
 ```
 
+`rockup list` shows installed toolchains, marks the active selection with `*`, and queries GitHub for versions available to install. The available section includes only releases with a toolchain archive and checksum for the supported platform; prereleases are labeled. Install a listed tag with `rockup install v0.6.0`, for example, or use `rockup install stable` for the latest stable release. If GitHub cannot be reached or its API rate limit is exceeded, the command still shows installed toolchains and reports that available versions could not be retrieved.
+
 Rockup is not a full Rustup replacement. Release downloads do not support Windows, macOS, musl, other CPU architectures, a nightly channel, or automatic cross-target installation. The local `target add --path` component workflow does not imply downloadable cross-target releases.
 
 ## Build from source
