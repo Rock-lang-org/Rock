@@ -5,8 +5,7 @@
 
 [GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [Examples](examples/)
 
-<h2 align="center"><a href="https://rock-lang-org.github.io/Rock/">Read the Book</a></h2>
-
+<h3 align="center"><a href="https://rock-lang-org.github.io/Rock/">Read the Book</a></h3>
 
 **A native language with a functional style and explicit ownership.**
 
