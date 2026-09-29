@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use crate::hir::{
@@ -27,6 +28,7 @@ pub struct SelectionService<'a> {
     #[allow(dead_code)]
     current_impl_bounds: &'a HirGenericBounds,
     effective_trait_methods: &'a HashMap<(DefId, DefId), DefId>,
+    active_obligations: RefCell<HashSet<(Type, TraitBound)>>,
 }
 
 struct EffectiveTraitMethod {
@@ -57,6 +59,7 @@ impl<'a> SelectionService<'a> {
             current_trait,
             current_impl_bounds,
             effective_trait_methods: empty_effective_trait_methods(),
+            active_obligations: RefCell::new(HashSet::new()),
         }
     }
 
@@ -87,6 +90,7 @@ impl<'a> SelectionService<'a> {
                 method_name,
                 &mut normalize,
             );
+            Self::prefer_exact_receiver(&mut candidates, receiver_candidate.adjustment);
             match candidates.len() {
                 0 => continue,
                 1 => return Ok(candidates.pop().expect("one candidate")),
@@ -131,6 +135,7 @@ impl<'a> SelectionService<'a> {
                 &mut normalize,
             );
             candidates.retain(|candidate| matches(candidate));
+            Self::prefer_exact_receiver(&mut candidates, receiver_candidate.adjustment);
             let mut seen_targets = Vec::new();
             candidates.retain(|candidate| {
                 let target = (candidate.target.impl_id(), candidate.target.method_id());
@@ -171,6 +176,18 @@ impl<'a> SelectionService<'a> {
         })
     }
 
+    pub(crate) fn prefer_exact_receiver(
+        candidates: &mut Vec<SelectedMethod>,
+        adjustment: ReceiverAdjustment,
+    ) {
+        if candidates
+            .iter()
+            .any(|candidate| candidate.receiver_adjustment == adjustment)
+        {
+            candidates.retain(|candidate| candidate.receiver_adjustment == adjustment);
+        }
+    }
+
     pub fn select_concrete_method_candidates<F>(
         &self,
         receiver_candidates: &[ReceiverCandidate],
@@ -190,6 +207,9 @@ impl<'a> SelectionService<'a> {
                     .filter_map(|id| self.impls.get(&id))
                     .filter_map(|imp| {
                         if !self.impl_matches_receiver_type(imp, &candidate_ty) {
+                            return None;
+                        }
+                        if !function_has_receiver(&self.impl_method(imp, method_name)?) {
                             return None;
                         }
                         let subst =
@@ -789,25 +809,23 @@ impl<'a> SelectionService<'a> {
         receiver_ty: &Type,
         can_autoref_mut: bool,
     ) -> Option<ReceiverAdjustment> {
-        if function_has_receiver(method) {
-            if let Some(self_param) = method.params.first() {
-                let mut subst =
-                    impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())?;
-                let expected_self = Self::receiver_mode_expected_self_type(
-                    self_param.ty.substitute_generics(&subst),
-                    method.self_receiver,
-                );
-                return Self::self_type_adjustment(
-                    &expected_self,
-                    receiver_ty,
-                    can_autoref_mut,
-                    self.impl_owner_is_reference_like(imp),
-                    imp.trait_id.is_some(),
-                    &mut subst,
-                );
-            }
+        if !function_has_receiver(method) {
+            return Some(ReceiverAdjustment::None);
         }
-        Some(ReceiverAdjustment::None)
+        let self_param = method.params.first()?;
+        let mut subst = impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())?;
+        let expected_self = Self::receiver_mode_expected_self_type(
+            self_param.ty.substitute_generics(&subst),
+            method.self_receiver,
+        );
+        Self::self_type_adjustment(
+            &expected_self,
+            receiver_ty,
+            can_autoref_mut,
+            self.impl_owner_is_reference_like(imp),
+            imp.trait_id.is_some(),
+            &mut subst,
+        )
     }
 
     fn receiver_mode_expected_self_type(
@@ -1898,7 +1916,7 @@ impl<'a> SelectionService<'a> {
                     obligations.push((subject, bound));
                     continue;
                 }
-                if !self.trait_bound_satisfied(&subject, &bound, imp.id) {
+                if !self.trait_bound_satisfied(&subject, &bound) {
                     return None;
                 }
             }
@@ -1925,7 +1943,7 @@ impl<'a> SelectionService<'a> {
                     obligations.push((bounded_ty.clone(), bound));
                     continue;
                 }
-                if !self.trait_bound_satisfied(&bounded_ty, &bound, imp.id) {
+                if !self.trait_bound_satisfied(&bounded_ty, &bound) {
                     return None;
                 }
             }
@@ -1940,12 +1958,7 @@ impl<'a> SelectionService<'a> {
         })
     }
 
-    pub(crate) fn trait_bound_satisfied(
-        &self,
-        ty: &Type,
-        bound: &TraitBound,
-        excluded_impl: DefId,
-    ) -> bool {
+    pub(crate) fn trait_bound_satisfied(&self, ty: &Type, bound: &TraitBound) -> bool {
         if self.assumed_trait_bound_satisfied(ty, bound) {
             return true;
         }
@@ -1954,18 +1967,24 @@ impl<'a> SelectionService<'a> {
             return self.type_is_sized(ty);
         }
 
-        self.impl_ids_in_order()
+        // The same impl may solve a structurally smaller obligation (for
+        // example nested carriers); reject cycles in goals, not impl IDs.
+        let goal = (ty.clone(), bound.clone());
+        {
+            let mut active = self.active_obligations.borrow_mut();
+            if active.len() >= 128 || !active.insert(goal.clone()) {
+                return false;
+            }
+        }
+        let satisfied = self
+            .impl_ids_in_order()
             .into_iter()
             .filter_map(|id| self.impls.get(&id))
             .any(|imp| {
-                imp.id != excluded_impl
-                    && self.impl_matches_trait_ref_strict(
-                        imp,
-                        ty,
-                        bound.trait_id,
-                        Some(&bound.type_args),
-                    )
-            })
+                self.impl_matches_trait_ref_strict(imp, ty, bound.trait_id, Some(&bound.type_args))
+            });
+        self.active_obligations.borrow_mut().remove(&goal);
+        satisfied
     }
 
     pub(crate) fn trait_bounds_with_supertraits(
@@ -5578,7 +5597,6 @@ mod tests {
                 trait_id: functor_id,
                 type_args: Vec::new(),
             },
-            def_id(999),
         ));
     }
 

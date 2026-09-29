@@ -129,6 +129,23 @@ impl<'ctx> CodeGen<'ctx> {
             })
     }
 
+    pub(crate) fn enum_variant_payload_is_unwrapped(
+        &self,
+        enum_id: crate::ids::DefId,
+        variant_index: usize,
+    ) -> Result<bool, crate::codegen::CodegenError> {
+        let variant = self
+            .enum_layouts_by_id
+            .get(&enum_id)
+            .and_then(|variants| variants.get(variant_index))
+            .ok_or_else(|| {
+                crate::codegen::CodegenError::layout("Missing enum variant payload layout")
+            })?;
+        Ok(
+            matches!(&variant.fields, crate::codegen::CodegenEnumVariantFields::Positional(fields) if fields.len() == 1),
+        )
+    }
+
     pub(crate) fn enum_layout_types_by_id(
         &self,
         id: crate::ids::DefId,
@@ -224,7 +241,7 @@ impl<'ctx> CodeGen<'ctx> {
             Type::F32 => self.context.f32_type().into(),
             Type::F64 => self.context.f64_type().into(),
             Type::Bool => self.context.bool_type().into(),
-            Type::Char => self.context.i8_type().into(),
+            Type::Char => self.context.i32_type().into(),
             Type::Unit => self.context.i64_type().into(),
             Type::Str => self.slice_layout_type().into(),
             Type::Never => self.context.i64_type().into(),
@@ -397,7 +414,7 @@ impl<'ctx> CodeGen<'ctx> {
             Type::F32 => self.context.f32_type().const_float(0.0).into(),
             Type::F64 => self.context.f64_type().const_float(0.0).into(),
             Type::Bool => self.context.bool_type().const_int(0, false).into(),
-            Type::Char => self.context.i8_type().const_int(0, false).into(),
+            Type::Char => self.context.i32_type().const_int(0, false).into(),
             Type::Unit | Type::Never => self.context.i64_type().const_int(0, false).into(),
             // Str is a fat pointer - use zero struct
             Type::Str => {
@@ -729,14 +746,14 @@ mod tests {
     }
 
     #[test]
-    fn test_default_value_for_char_uses_i8() {
+    fn test_default_value_for_char_uses_i32() {
         let context = Context::create();
         let codegen = CodeGen::new(&context, "test");
 
         let value = codegen.default_value(&Type::Char);
         let int_value = value.into_int_value();
 
-        assert_eq!(int_value.get_type().get_bit_width(), 8);
+        assert_eq!(int_value.get_type().get_bit_width(), 32);
         assert_eq!(int_value.get_zero_extended_constant(), Some(0));
     }
 

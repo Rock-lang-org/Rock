@@ -161,6 +161,7 @@ fn language_item_top_level(stream: Input) -> IResult<TopLevel> {
                 marker.role,
                 LanguageItemRole::Sized
                     | LanguageItemRole::Drop
+                    | LanguageItemRole::Fold
                     | LanguageItemRole::Index
                     | LanguageItemRole::IndexMut
                     | LanguageItemRole::FnOnce

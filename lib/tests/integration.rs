@@ -25,6 +25,571 @@ mod callable;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn test_fold_loop_utf8_traversal() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    text = String::from "aé🦀"
+    for_each text.chars!, (!.println!)
+    for ch in text.chars!
+        ch.println!
+    for (offset, ch) in text.char_indices!
+        offset.println!
+        ch.println!
+    text.println!
+"#,
+    );
+    assert_eq!(output, "a\né\n🦀\na\né\n🦀\n0\na\n1\né\n3\n🦀\naé🦀\n");
+}
+
+#[test]
+fn test_fold_loop_control_flow() {
+    let output = compile_and_run(
+        r#"
+pick: () -> I64
+pick = ->
+    for (offset, ch) in "aé🦀z".char_indices!
+        if offset == 0
+            continue
+        if offset == 3
+            return ch as I64
+    -1
+
+main = !->
+    total = 0
+    for (offset, ch) in "aé🦀z".char_indices!
+        if offset == 0
+            continue
+        total = total + offset
+        if offset == 3
+            break
+    total.println!
+    pick!.println!
+    for ch in "é".chars!
+        for n in 0..3
+            if n == 1
+                continue
+            n.println!
+        ch.println!
+    for outer in "ab".chars!
+        for inner in "xy".chars!
+            inner.println!
+            break
+        outer.println!
+"#,
+    );
+    assert_eq!(output, "4\n129408\n0\n2\né\nx\na\nx\nb\n");
+}
+
+#[test]
+fn test_fold_loop_try_returns_from_enclosing_function() {
+    let output = compile_and_run(
+        r#"
+check: I64 -> Result I64, I64
+check = value -> if value == 1 then Result::Err 99 else Result::Ok value
+run: () -> Result I64, I64
+run = ->
+    for (offset, ch) in "abc".char_indices!
+        value = check offset?
+        value.println!
+    Result::Ok 42
+main = !-> run!.println!
+"#,
+    );
+    assert_eq!(output, "0\nErr(99)\n");
+}
+
+#[test]
+fn test_fold_loop_user_collections_and_generic_source() {
+    let output = compile_and_run(
+        r#"
+struct One T
+    < value: T
+impl Foldable for One
+    try_fold = mut step, initial, source -> step (initial, source.value)
+
+visit: C -> () where C: FoldableValue I64
+visit = source !->
+    for value in source
+        value.println!
+
+main = !->
+    value = One
+        value: 42
+    visit value
+    for value in (Option::Some 7)
+        value.println!
+    range = 2..4
+    visit range
+    mut values = Vec::new!
+    values.push 8
+    values.push 9
+    for value in &values
+        value.println!
+    for value in values
+        value.println!
+"#,
+    );
+    assert_eq!(output, "42\n7\n2\n3\n8\n9\n8\n9\n");
+}
+
+#[test]
+fn test_fold_loop_infers_source_and_element_types() {
+    let output = compile_and_run(
+        r#"
+count_all = source ->
+    count = 0
+    for value in source
+        count = count + 1
+    count
+
+main = !->
+    count_all "é🦀".chars! .println!
+    count_all (Option::Some 42) .println!
+"#,
+    );
+    assert_eq!(output, "2\n1\n");
+}
+
+#[test]
+fn test_fold_loop_uses_marked_protocol_without_stdlib() {
+    let status = compile_and_run_without_stdlib(
+        r#"
+lang control_flow
+< enum Signal Stop, State
+    lang break
+    Halt Stop
+    lang continue
+    More State
+
+lang try
+< trait Propagate
+    lang output
+    type Value
+    lang residual
+    type Error
+    lang branch
+    ~@split: Signal Self::Error, Self::Value
+
+lang from_residual
+< trait Lift E
+    lang method
+    lift: E -> Self
+
+lang fn_once
+< trait Call Args, Ret
+    lang output
+    type Output
+    lang method
+    ~@invoke: Args -> Ret
+
+lang fn_mut
+< trait CallMut Args, Ret where Self: Call Args, Ret
+    lang output
+    type Output
+    lang method
+    ^@invoke_mut: Args -> Ret
+
+lang fold
+< trait Each A
+    lang method
+    ~@scan: S -> B -> Signal R, B where S: CallMut (B, A), (Signal R, B)
+
+struct Once
+    < value: I64
+
+impl Each I64 for Once
+    ~@scan = mut step, initial -> step (initial, self.value)
+
+main = ->
+    source = Once
+        value: 42
+    for value in source
+        return value
+    0
+"#,
+    );
+    assert_eq!(status, 42);
+}
+
+#[test]
+fn test_fold_loop_custom_source_stops_requesting_elements() {
+    let output = compile_and_run(
+        r#"
+struct Counter
+    < end: I64
+
+impl FoldableValue I64 for Counter
+    ~@try_fold = mut step, initial ->
+        state = initial
+        i = 0
+        while i < self.end
+            (100 + i).println!
+            match step (state, i)
+                ControlFlow::Continue next => state = next
+                ControlFlow::Break result =>
+                    stopped: ControlFlow R, B = ControlFlow::Break result
+                    return stopped
+            i = i + 1
+        ControlFlow::Continue state
+
+make = ->
+    999.println!
+    Counter
+        end: 5
+
+main = !->
+    for value in make!
+        value.println!
+        if value == 1
+            break
+"#,
+    );
+    assert_eq!(output, "999\n100\n0\n101\n1\n");
+}
+
+#[test]
+fn test_fold_loop_owned_elements_drop_on_break_and_return() {
+    let output = compile_and_run(
+        r#"
+struct Item
+    < value: I64
+impl Drop for Item
+    ~@drop = !-> self.value.println!
+
+first: Vec String -> String
+first = values ->
+    for value in values
+        return value
+    String::from "empty"
+
+main = !->
+    mut values = Vec::new!
+    values.push (Item
+        value: 1)
+    values.push (Item
+        value: 2)
+    values.push (Item
+        value: 3)
+    for item in values
+        break
+    mut words = Vec::new!
+    words.push (String::from "first")
+    words.push (String::from "second")
+    first words .println!
+"#,
+    );
+    assert_eq!(output, "1\n2\n3\nfirst\n");
+}
+
+#[test]
+fn test_fold_loop_utf8_cursor_resume_and_empty() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    mut chars = "é🦀".chars!
+    chars.next!.println!
+    for ch in chars
+        ch.println!
+    mut indexed = "é🦀".char_indices!
+    match indexed.next!
+        Option::Some pair => pair.0.println!
+        Option::None => -1.println!
+    for (offset, ch) in indexed
+        offset.println!
+        ch.println!
+    for ch in "".chars!
+        999.println!
+    mut empty = "".chars!
+    empty.next!.println!
+    empty.next!.println!
+"#,
+    );
+    assert_eq!(output, "Some(é)\n🦀\n0\n2\n🦀\nNone\nNone\n");
+}
+
+#[test]
+fn test_fold_loop_cursor_foldl_and_direct_try_fold() {
+    let output = compile_and_run(
+        r#"
+sum: (I64, Char) -> I64
+sum = pair -> pair.0 + (pair.1 as I64)
+stop: (I64, (I64, Char)) -> ControlFlow I64, I64
+stop = pair ->
+    (total, entry) = pair
+    if entry.0 == 3
+        ControlFlow::Break total
+    else
+        ControlFlow::Continue (total + 1)
+
+main = !->
+    "aé🦀".chars!.foldl sum, 0 .println!
+    match "aé🦀z".char_indices!.try_fold stop, 0
+        ControlFlow::Break total => total.println!
+        ControlFlow::Continue total => total.println!
+"#,
+    );
+    assert_eq!(output, "129738\n2\n");
+}
+
+#[test]
+fn test_fold_loop_native_loop_and_nested_lambda_control() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    count = 0
+    loop
+        count = count + 1
+        if count < 3
+            continue
+        break
+    count.println!
+    for ch in "ab".chars!
+        local = ->
+            return 7
+        local!.println!
+        ch.println!
+        break
+"#,
+    );
+    assert_eq!(output, "3\n7\na\n");
+}
+
+#[test]
+fn test_fold_loop_utf8_cursor_cannot_outlive_string() {
+    compile_should_fail(
+        r#"
+bad: () -> Chars
+bad = ->
+    text = String::from "é"
+    text.chars!
+main = !-> for_each bad!, (!.println!)
+"#,
+        "Cannot return reference",
+    );
+}
+
+#[test]
+fn test_fold_loop_rejects_refutable_pattern() {
+    compile_should_fail(
+        r#"
+main = !->
+    for 1 in (Option::Some 1)
+        42.println!
+"#,
+        "for loop pattern must be irrefutable",
+    );
+}
+
+#[test]
+fn test_utf8_strings_and_range_indexing() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    text = "aé中🦀z"
+    string_len text .println!
+    (&text[1..3]).println!
+    (&text[3..=5]).println!
+    (&text[6..10]).println!
+    (&text[..1]).println!
+    (&text[10..]).println!
+    (&text[..]).println!
+    string_len (&text[11..11]) .println!
+    owned = String::from text
+    (&owned[1..6]).println!
+    owned.char_at 3 .println!
+    str_char_at text, 5 .println!
+    str_char_at text, -1 .println!
+    String::from 'é' .println!
+    String::from '中' .println!
+    String::from '🦀' .println!
+    ('🦀' as I64).println!
+"#,
+    );
+    assert_eq!(
+        output,
+        "11\né\n中\n🦀\na\nz\naé中🦀z\n0\né中\nSome(🦀)\nNone\nNone\né\n中\n🦀\n129408\n"
+    );
+}
+
+#[test]
+fn test_utf8_validation() {
+    for bytes in [
+        vec![0x80],
+        vec![0xc0, 0x80],
+        vec![0xc2],
+        vec![0xe0, 0x80, 0x80],
+        vec![0xed, 0xa0, 0x80],
+        vec![0xf0, 0x80, 0x80, 0x80],
+        vec![0xf4, 0x90, 0x80, 0x80],
+        vec![0xf5, 0x80, 0x80, 0x80],
+        vec![0xc2, 0x41],
+        vec![0xff],
+    ] {
+        let values = bytes
+            .iter()
+            .map(|b| format!("{b} as U8"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = format!(
+            "main = !->\n    bytes = [{values}]\n    String::from_utf8 (&bytes) .println!\n"
+        );
+        assert_eq!(compile_and_run(&source), "None\n", "{bytes:?}");
+    }
+    assert_eq!(
+        compile_and_run(
+            r#"
+main = !->
+    bytes = [240 as U8, 159 as U8, 166 as U8, 128 as U8]
+    String::from_utf8 (&bytes) .println!
+    empty: [U8; 0] = []
+    String::from_utf8 (&empty) .println!
+"#
+        ),
+        "Some(🦀)\nSome()\n"
+    );
+}
+
+#[test]
+fn test_utf8_invalid_ranges_are_checked() {
+    for range in [
+        "2..3",
+        "1..2",
+        "2..2",
+        "-1..1",
+        "3..1",
+        "0..5",
+        "..=4",
+        "..=9223372036854775807",
+    ] {
+        for receiver in ["\"aéz\"", "String::from \"aéz\""] {
+            let source =
+                format!("main = !->\n    text = {receiver}\n    (&text[{range}]).println!\n");
+            let (output, success) = compile_and_run_with_status(&source);
+            assert!(!success, "{receiver}[{range}] unexpectedly succeeded");
+            assert!(
+                output.contains("out of bounds") || output.contains("UTF-8 boundary"),
+                "{output}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_utf8_char_width_escapes_and_nul() {
+    let output = compile_and_run(
+        r#"
+echo: Char -> Char
+echo = value -> value
+main = !->
+    chars = ['é', '中', '🦀']
+    chars[2].println!
+    echo '中' .println!
+    ('\n' as I64).println!
+    ('\'' as I64).println!
+    ('\\' as I64).println!
+    text = String::from "é\0🦀"
+    text.len!.println!
+    text.println!
+    str_char_at "é", 1 .println!
+    String::from (1114111 as Char) .len!.println!
+    match '\n'
+        '\n' => 1.println!
+        _ => 0.println!
+"#,
+    );
+    assert_eq!(output, "🦀\n中\n10\n39\n92\n7\né\0🦀\nSome(́)\n4\n1\n");
+}
+
+#[test]
+fn test_utf8_invalid_char_casts_trap_before_narrowing() {
+    for value in [-1_i64, 0xd800, 0xdfff, 0x110000, 0x100000041] {
+        let source = format!("main = !->\n    value = {value}\n    (value as Char).println!\n");
+        assert!(
+            !compile_and_run_with_status(&source).1,
+            "{value} must not form a Char"
+        );
+    }
+}
+
+#[test]
+fn test_utf8_invalid_byte_conversion_is_checked() {
+    let (output, success) = compile_and_run_with_status(
+        r#"
+main = !->
+    bytes = [255 as U8]
+    String::from (&bytes) .println!
+"#,
+    );
+    assert!(!success);
+    assert_eq!(output, "invalid UTF-8\n");
+}
+
+#[test]
+fn test_utf8_scalar_boundaries_roundtrip() {
+    let scalars = [
+        0_u32, 0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff,
+    ];
+    let mut source = String::from("main = !->\n");
+    let mut expected = String::new();
+    for (i, scalar) in scalars.into_iter().enumerate() {
+        source.push_str(&format!(
+            "    text{i} = String::from ({scalar} as Char)\n    is_utf8 text{i}.as_bytes! .println!\n    text{i}.len!.println!\n    decoded{i} = text{i}.char_at 0 .unwrap_or 'x'\n    (decoded{i} as I64).println!\n"
+        ));
+        expected.push_str(&format!(
+            "true\n{}\n{scalar}\n",
+            char::from_u32(scalar).unwrap().len_utf8()
+        ));
+    }
+    assert_eq!(compile_and_run(&source), expected);
+}
+
+#[test]
+fn test_utf8_char_literals_require_one_scalar() {
+    for literal in ["''", "'ab'", "'é'", "'\\q'"] {
+        compile_should_fail(
+            &format!("main = !->\n    {literal}.println!\n"),
+            "character literal must contain exactly one Unicode scalar",
+        );
+    }
+}
+
+#[test]
+fn test_utf8_strings_do_not_allow_byte_mutation_or_integer_indexing() {
+    compile_should_fail(
+        r#"
+main = !->
+    text = String::from "é"
+    text[0].println!
+"#,
+        "No implementation found for operator '[]'",
+    );
+    compile_should_fail(
+        r#"
+main = !->
+    mut text = String::from "é"
+    text[0..2] = "hi"
+"#,
+        "No mutable indexing implementation found",
+    );
+}
+
+#[test]
+fn test_utf8_string_slice_cannot_outlive_owner() {
+    compile_should_fail(
+        r#"
+bad: () -> &Str
+bad = ->
+    text = String::from "é🦀"
+    &text[2..]
+
+main = !-> bad!.println!
+"#,
+        "Cannot return reference",
+    );
+}
+
+#[test]
 fn test_multiline_chain_targets_completed_call() {
     let output = compile_and_run(
         r#"
@@ -2111,7 +2676,7 @@ main = ->
     s[1] .println!
     0
 "#,
-        "cannot index Str by integer",
+        "No implementation found for operator '[]'",
     );
 }
 
@@ -12170,7 +12735,7 @@ struct One T
     < value: T
 
 impl Foldable for One
-    foldl = mut step, initial, value ->
+    try_fold = mut step, initial, value ->
         step.call_mut (initial, value.value)
 
 main = !->
@@ -13181,7 +13746,7 @@ main = ->
     s[0].println!
     0
 "#,
-        "cannot index Str by integer",
+        "No implementation found for operator '[]'",
     );
 }
 
@@ -13319,7 +13884,7 @@ main = ->
     c.println!
     0
 "#,
-        "cannot index Str by integer",
+        "No implementation found for operator '[]'",
     );
 }
 
@@ -13333,7 +13898,7 @@ main = ->
     s[i].println!
     0
 "#,
-        "cannot index Str by integer",
+        "No implementation found for operator '[]'",
     );
 }
 

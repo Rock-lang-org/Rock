@@ -18,3 +18,8 @@ lang from_residual
 < trait FromResidual R
     lang method
     from_residual: R -> Self
+
+// A residual exits a short-circuiting fold; nested folds preserve the enclosing
+// function's conversion by nesting ControlFlow break values.
+impl FromResidual E for ControlFlow R, C where R: FromResidual E
+    from_residual = residual -> ControlFlow::Break (R::from_residual residual)

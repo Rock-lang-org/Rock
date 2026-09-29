@@ -63,10 +63,10 @@ impl Monad for Result _, E
             Result::Err error => Result::Err error
 
 impl Foldable for Result _, E
-    foldl = mut step, initial, value ->
+    try_fold = mut step, initial, value ->
         match value
             Result::Ok item => step (initial, item)
-            Result::Err _ => initial
+            Result::Err _ => ControlFlow::Continue initial
 
 impl Traversable for Result _, E
     traverse = mut visitor, value ->

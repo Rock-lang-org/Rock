@@ -392,6 +392,9 @@ fn generated_default_method_receiver_is_self(expr: &HirExpr) -> bool {
 }
 
 fn apply_generated_default_self_type(func: &mut HirFunction, self_type: &Type) {
+    if func.self_receiver.is_none() {
+        return;
+    }
     let Some(existing_param_ty) = func.params.first().map(|param| param.ty.clone()) else {
         return;
     };
@@ -1825,12 +1828,11 @@ impl TraitConformanceService<'_> {
             trait_generic_subst: &HashMap<GenericParamId, Type>,
         ) {
             // Only substitute the self-related TypeVars from the default body.
-            let source_self_ty = func
-                .params
-                .first()
-                .map(|param| param.ty.clone())
-                .unwrap_or_else(|| self_type.clone());
-            crate::hir::substitute_typevars_in_function(func, &source_self_ty, self_type);
+            if func.self_receiver.is_some() {
+                if let Some(source_self_ty) = func.params.first().map(|param| param.ty.clone()) {
+                    crate::hir::substitute_typevars_in_function(func, &source_self_ty, self_type);
+                }
+            }
             substitute_trait_impl_types_in_function(
                 func,
                 self_type,
@@ -2236,7 +2238,7 @@ impl TraitConformanceService<'_> {
                     trait_id: required_trait,
                     type_args: args,
                 };
-                if !selection.trait_bound_satisfied(&subject, &bound, impl_id) {
+                if !selection.trait_bound_satisfied(&subject, &bound) {
                     let required_name = traits
                         .get(&required_trait)
                         .map(|required| required.name.as_str())

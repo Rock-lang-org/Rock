@@ -241,22 +241,22 @@ when the return carrier implements `FromResidual` for the source residual.
 Missing conversions are not synthesized: implement that exact conversion or
 handle the failure with an explicit `match`.
 
-Strings, characters, and Unicode text handling are byte-oriented and escaped
-literal behavior is not mature. This complete program measures encoded bytes,
-not user-perceived characters:
+Strings support UTF-8 and checked byte-range slicing; character lookup counts
+Unicode scalars. Grapheme segmentation and Unicode normalization are not yet
+provided. This program measures encoded bytes, not user-perceived characters:
 
 ```rock
 > stdlib::eq::Eq
 > stdlib::hash::Hash
 
 main = !->
-    text: String = String::from "cafe"
+    text: String = String::from "café"
     length: I64 = text.len!
     length.println!
 ```
 
-Use ASCII protocol data or process a deliberately specified byte encoding until
-Unicode-aware APIs are available. There is no async/await syntax or runtime;
+This prints `5`; see [Strings and Collections](../stdlib/collections.md) for
+scalar lookup and validated byte conversion. There is no async/await syntax or runtime;
 use an ordinary synchronous function or the prototype thread API instead.
 
 There are no top-level global or static values and no stable C-layout
@@ -268,7 +268,9 @@ that a Rock struct has a C representation.
 
 ### Strings and `Vec`
 
-`String` length and indexing are byte-oriented. `Vec` has eager traversal
+`String` lengths and range offsets count bytes; range endpoints must be UTF-8
+boundaries. Use `char_at` for scalar lookup rather than integer indexing.
+`Vec` has eager traversal
 methods such as `for_each` and `map`, but no general lazy iterator API or
 `pop` method. Use `swap_remove` at the last index to remove the final element
 without changing the order of the remaining elements:

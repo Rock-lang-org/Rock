@@ -23,6 +23,7 @@
 > stdlib::monad::Monad
 > stdlib::foldable::Foldable
 > stdlib::traversable::Traversable
+> stdlib::ops::ControlFlow
 
 < struct Vec T
     raw: RawBuffer T
@@ -321,7 +322,7 @@ impl Functor for Vec
         output
 
 impl Foldable for Vec
-    foldl = mut step, initial, mut value ->
+    try_fold = mut step, initial, mut value ->
         len = value.raw_len
         ptr = value.raw.ptr!
         value.raw_len = 0
@@ -329,9 +330,17 @@ impl Foldable for Vec
         i = 0
         while i < len
             item = unsafe *(~PtrOffset ptr, i)
-            output = step (output, item)
+            match step (output, item)
+                ControlFlow::Continue next => output = next
+                ControlFlow::Break result =>
+                    j = i + 1
+                    while j < len
+                        unsafe drop_in_place (~PtrOffset ptr, j)
+                        j = j + 1
+                    stopped: ControlFlow R, B = ControlFlow::Break result
+                    return stopped
             i = i + 1
-        output
+        ControlFlow::Continue output
 
 // Vec intentionally has no Applicative or Monad impl: either Cartesian semantics
 // require cloning or zipped semantics violate the list-monad contract.

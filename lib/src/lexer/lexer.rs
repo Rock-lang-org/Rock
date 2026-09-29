@@ -247,8 +247,8 @@ impl Lexer {
             '.' if self.peek(1) == '.' => self.token(TokenType::DoubleDot, 2),
             '.' => self.token(TokenType::Dot, 1),
             '?' => self.token(TokenType::Interogation, 1),
-            '\'' => self.char(),
-            '"' => self.string(),
+            '\'' => self.quoted('\'')?,
+            '"' => self.quoted('"')?,
             '@' => self.token(TokenType::Arobase, 1),
             '_' if self.peek(1).is_alphanumeric() || self.peek(1) == '_' => {
                 self.ident_or_keyword_or_type()
@@ -420,43 +420,29 @@ impl Lexer {
         )
     }
 
-    fn char(&self) -> Token {
-        let start = self.position;
-        let mut end = self.position;
-
-        // We deliberately allow multi-character literals here to handle escaped chars
-        // The other errors should be catched in the parser
-        while self.peek(end - start + 1) != '\'' {
-            end += 1;
-        }
-
-        self.token(
-            TokenType::Char(self.input[start + 1..end + 1].to_owned()),
-            end - start + 2,
-        )
-    }
-
-    fn string(&self) -> Token {
-        let start = self.position;
-        let mut end = self.position;
-
-        loop {
-            let ch = self.peek(end - start + 1);
-            if ch == '"' {
-                break;
+    fn quoted(&self, quote: char) -> Result<Token, LexerError> {
+        let start = self.position + 1;
+        let mut escaped = false;
+        // Token spans use byte offsets, even when literal contents are Unicode.
+        for (offset, ch) in self.input[start..].char_indices() {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == quote {
+                let value = self.input[start..start + offset].to_owned();
+                let kind = if quote == '\'' {
+                    TokenType::Char(value)
+                } else {
+                    TokenType::String(value)
+                };
+                return Ok(self.token(kind, offset + 2));
             }
-            // Skip escaped characters (e.g., \", \\, \n)
-            if ch == '\\' {
-                end += 2; // skip backslash + next char
-                continue;
-            }
-            end += 1;
         }
-
-        self.token(
-            TokenType::String(self.input[start + 1..end + 1].to_string()),
-            end - start + 2,
-        )
+        Err(LexerError::UnknownToken(
+            quote,
+            self.span(self.input.len() - self.position),
+        ))
     }
 
     fn indent(&mut self) -> Token {
@@ -502,6 +488,33 @@ impl Lexer {
 mod lexer_tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn unicode_literals_use_byte_spans_and_preserve_following_tokens() {
+        let input = "\"é中🦀\" '🦀' '\\'' 42";
+        let tokens = lex_input(input).unwrap();
+        let literal = tokens
+            .iter()
+            .find(|t| matches!(t.token_type, TokenType::String(_)))
+            .unwrap();
+        assert_eq!(&input[literal.span.start..literal.span.end], "\"é中🦀\"");
+        assert!(tokens
+            .iter()
+            .any(|t| matches!(&t.token_type, TokenType::Char(c) if c == "🦀")));
+        assert!(tokens
+            .iter()
+            .any(|t| matches!(&t.token_type, TokenType::Char(c) if c == "\\'")));
+        assert!(tokens
+            .iter()
+            .any(|t| matches!(&t.token_type, TokenType::Number(n) if n == "42")));
+    }
+
+    #[test]
+    fn unterminated_unicode_literals_report_errors() {
+        for input in ["\"🦀", "'é", "\"escaped\\\""] {
+            assert!(lex_input(input).is_err());
+        }
+    }
 
     fn lex_input(input: &str) -> Result<Vec<Token>, LexerError> {
         let mut lexer = Lexer::new(PathBuf::from("/test.rk"), input)?;

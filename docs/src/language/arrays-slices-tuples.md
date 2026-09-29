@@ -210,12 +210,13 @@ Range syntax also supports bounded integer loops:
 ```rock
 main = !->
     mut total = 0
-    for value in 1..=3
+    bounds = 1..=3
+    for value in bounds
         total = total + value
     total.println!
 ```
 
-This prints `6`; `1..3` would visit only `1` and `2`. The current range-loop form requires both endpoints directly in the loop expression; open-ended slicing syntax is not an unbounded iterator API.
+This prints `6`; `1..3` would visit only `1` and `2`. Bounded ranges can be written directly in the loop or stored in a variable, as shown here. Open-ended slicing syntax is not an unbounded iterator API.
 
 ## Growable Vectors
 

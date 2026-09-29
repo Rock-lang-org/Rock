@@ -64,14 +64,14 @@ impl<'ctx> CodeGen<'ctx> {
 
         let mut current_pointer = *pointer;
         let mut current_ty = self.normalize_projection_type(&self.structural_type_for(*ty));
-        let mut scalar_downcast_payload = false;
+        let mut unwrapped_downcast_payload = false;
 
         for projection in &place.projection {
             current_ty = self.normalize_projection_type(&current_ty);
             match projection {
                 Projection::Field { index, .. } => {
-                    if scalar_downcast_payload {
-                        scalar_downcast_payload = false;
+                    if unwrapped_downcast_payload {
+                        unwrapped_downcast_payload = false;
                         if *index == 0 {
                             continue;
                         }
@@ -95,7 +95,7 @@ impl<'ctx> CodeGen<'ctx> {
                     current_ty = self.normalize_projection_type(&field_ty);
                 }
                 Projection::Index(index_local) => {
-                    scalar_downcast_payload = false;
+                    unwrapped_downcast_payload = false;
                     let Some(Some((index_pointer, index_ty))) = ctx.locals.get(index_local.0)
                     else {
                         return Err(CodegenError::backend_contract(format!(
@@ -305,7 +305,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 e
                             ))
                         })?;
-                    scalar_downcast_payload = !matches!(payload_ty, Type::Tuple(_));
+                    unwrapped_downcast_payload =
+                        self.enum_variant_payload_is_unwrapped(*id, variant_index)?;
                     current_ty = self.normalize_projection_type(&payload_ty);
                 }
                 Projection::Deref => {

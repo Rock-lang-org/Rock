@@ -298,6 +298,22 @@ impl<'a> MirBuilder<'a> {
                 self.current_block = Some(merge_block);
                 self.mark_place_initialized(&dest, span.clone());
             }
+            HirExprKind::Loop(body) => {
+                // Share the ordinary loop CFG and cleanup rules with while.
+                let loop_expr = HirExpr {
+                    ty: expr.ty.clone(),
+                    span: expr.span.clone(),
+                    kind: HirExprKind::While {
+                        condition: Box::new(HirExpr {
+                            ty: Type::Bool,
+                            kind: HirExprKind::BoolLiteral(true),
+                            span: expr.span.clone(),
+                        }),
+                        body: body.clone(),
+                    },
+                };
+                self.lower_expr_with_context(&loop_expr, dest, borrow_context);
+            }
             HirExprKind::While { condition, body } => {
                 let cond_block = self.new_block();
                 let body_block = self.new_block();
@@ -1523,7 +1539,6 @@ impl<'a> MirBuilder<'a> {
                     self.emit_assign(dest, Rvalue::Use(Operand::Copy(inner_place)), span);
                 }
             }
-            _ => {}
         }
     }
 

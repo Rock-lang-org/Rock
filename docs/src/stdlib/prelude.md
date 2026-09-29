@@ -10,7 +10,7 @@ The prelude exports the everyday vocabulary used by the examples in this chapter
 - representation and ownership traits: `Show`, `From`, `Into`, `Clone`, `Drop`, `Deref`, `DerefMut`, and `Sized`;
 - access and comparison traits: `Index`, `IndexMut`, `Eq`, `Ord`, and `Hash`;
 - callable and thread-safety traits: `Fn`, `FnMut`, `FnOnce`, `Send`, and `Sync`;
-- functional traits: `Bifunctor`, `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, and the `ForEach` traversal bridge;
+- functional traits: `Bifunctor`, `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, and the concrete-source `FoldableValue` bridge;
 - effect-only traversal: `for_each values, action`, for bounded ranges, foldable containers, borrowed vectors, and borrowed slices;
 - the arithmetic, comparison, logical, bitwise, negation, and functional operator declarations provided by those modules.
 

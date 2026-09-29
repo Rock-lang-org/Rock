@@ -1,15 +1,37 @@
 // Foldable consumes values in deterministic left-to-right order.
 
 > stdlib::callable::FnMut
+> stdlib::ops::ControlFlow
 
 < trait Foldable for F _
+    try_fold: S -> B -> F A -> ControlFlow R, B where S: FnMut (B, A), (ControlFlow R, B)
     foldl: S -> B -> F A -> B where S: FnMut (B, A), B
+    foldl = step, initial, values -> fold_all step, initial, values
+
+fold_all: S -> B -> F A -> B where F _: Foldable, S: FnMut (B, A), B
+fold_all = mut step, initial, values ->
+    visit: (B, A) -> ControlFlow B, B = pair ->
+        next: ControlFlow B, B = ControlFlow::Continue (step pair)
+        next
+    match F::Foldable::try_fold visit, initial, values
+        ControlFlow::Continue state => state
+        ControlFlow::Break result => result
 
 foldl: S -> B -> F A -> B where F _: Foldable, S: FnMut (B, A), B
-< foldl = step, initial, values -> F::Foldable::foldl step, initial, values
+< foldl = step, initial, values -> fold_all step, initial, values
 
+lang fold
 < trait FoldableValue A
+    lang method
+    ~@try_fold: S -> B -> ControlFlow R, B where S: FnMut (B, A), (ControlFlow R, B)
     ~@foldl: S -> B -> B where S: FnMut (B, A), B
+    ~@foldl = mut step, initial ->
+        visit: (B, A) -> ControlFlow B, B = pair ->
+            next: ControlFlow B, B = ControlFlow::Continue (step pair)
+            next
+        match self.try_fold visit, initial
+            ControlFlow::Continue state => state
+            ControlFlow::Break result => result
 
 impl FoldableValue A for F A where F _: Foldable
-    ~@foldl = step, initial -> F::Foldable::foldl step, initial, self
+    ~@try_fold = step, initial -> F::Foldable::try_fold step, initial, self

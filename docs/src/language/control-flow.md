@@ -59,7 +59,7 @@ Rock has no built-in `++` or `--`; write the state transition explicitly.
 
 ## `for`
 
-`for pattern in expression` iterates over a range, fixed array, or slice. `start..end` excludes the upper bound, while `start..=end` includes it:
+`for pattern in expression` iterates over a range, fixed array, slice, or a source implementing `FoldableValue`. Every `Foldable` constructor receives the latter implementation automatically, including user-defined collections. `start..end` excludes the upper bound, while `start..=end` includes it:
 
 ```rock
 main = !->
@@ -80,7 +80,22 @@ main = !->
         value.println!
 ```
 
-The current iteration facilities are smaller than Rust's iterator ecosystem. A growable `Vec` is not directly the same as a fixed array; use its `as_slice!` view, a library traversal helper, or a `while` loop when a `Vec` is the source.
+For `FoldableValue` sources, loop patterns must be irrefutable: bindings, wildcards, and tuple or struct destructuring can bind every element. Use a `match` inside the body when only some variants or literal values should be processed.
+
+For an owned `Vec`, the loop consumes the vector and yields owned elements. A loop over `&values` borrows the vector and yields shared references. Both `for..in` and `for_each` use the folding interface for these sources; a loop also supports `break`, `continue`, and returning from the enclosing function. The body follows the same `FnMut` capture rules as the callback passed to `for_each`.
+
+```rock
+main = !->
+    mut values = Vec::new!
+    values.push 10
+    values.push 20
+    for value in &values
+        value.println!
+    for value in values
+        value.println!
+```
+
+This prints `10` and `20` twice. The second loop transfers ownership, so `values` is no longer available afterward. An early `break` stops traversal and drops the remaining owned elements.
 
 This complete example borrows a vector as a slice and iterates over that fixed view:
 

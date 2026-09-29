@@ -1077,12 +1077,17 @@ fn constrained_signature_vars(
         match constraint {
             Constraint::Trait { ty, bound, .. } => {
                 if matches!(hir.engine.resolve(ty), Type::TypeVar(_))
-                    && hir
+                    && (hir
                         .language_items
                         .callable_protocols()
                         .any(|(_, id, _)| id == bound.trait_id)
+                        || hir
+                            .language_items
+                            .fold
+                            .as_ref()
+                            .is_some_and(|fold| fold.trait_id == bound.trait_id))
                 {
-                    // A callable requirement is a polymorphic predicate, not
+                    // Callable and fold requirements are polymorphic predicates, not
                     // evidence fixing the declaration to one caller's type.
                     continue;
                 }

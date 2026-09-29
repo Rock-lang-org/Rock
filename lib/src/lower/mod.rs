@@ -87,6 +87,7 @@ pub struct Lowerer {
     pub(crate) tuple_temp_counter: u32,
     pub(crate) source_map: crate::source_map::SemanticSourceMap,
     pub(crate) source_scope_stack: Vec<u32>,
+    pub(crate) fold_loop_stack: Vec<Option<control_flow::fold_loop::FoldLoopContext>>,
 }
 
 impl Lowerer {
@@ -235,6 +236,7 @@ impl Lowerer {
             tuple_temp_counter: 0,
             source_map: Default::default(),
             source_scope_stack: Vec::new(),
+            fold_loop_stack: Vec::new(),
         }
     }
 

@@ -624,7 +624,7 @@ impl<'a> MirBuilder<'a> {
             Operand::Constant(Constant::Int(_)) => type_context.id_for_type(&Type::I64),
             Operand::Constant(Constant::Float(_)) => type_context.id_for_type(&Type::F64),
             Operand::Constant(Constant::Bool(_)) => type_context.id_for_type(&Type::Bool),
-            Operand::Constant(Constant::Char(_)) => type_context.id_for_type(&Type::U8),
+            Operand::Constant(Constant::Char(_)) => type_context.id_for_type(&Type::Char),
             Operand::Constant(Constant::String(_)) => type_context.id_for_type(&Type::Str),
             Operand::Constant(Constant::Unit) => type_context.id_for_type(&Type::Unit),
             Operand::Constant(Constant::TypeId(id)) => Some(*id),

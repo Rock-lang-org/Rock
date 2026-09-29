@@ -6,12 +6,17 @@
 > stdlib::libc::gcvt
 > stdlib::libc::memcpy
 > stdlib::libc::strlen
+> stdlib::libc::puts
+> stdlib::libc::exit
 > stdlib::clone::Clone
 > stdlib::convert::From
 > stdlib::drop::Drop
 > stdlib::num::Add
 > stdlib::raw_buffer::RawBuffer
 > stdlib::string::str_as_bytes
+> stdlib::string::is_utf8
+> stdlib::string::str_char_at
+> stdlib::option::Option
 
 // Heap-allocated string type
 < struct String
@@ -43,6 +48,9 @@ impl From &Str for String
 
 impl From &[U8] for String
     from = bytes ->
+        if !(is_utf8 bytes)
+            puts (~ArrPtr "invalid UTF-8")
+            exit (1 as I32)
         slice_len = ~ArrayLen bytes
         raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, (slice_len + 1)
         mut buf = raw.ptr!
@@ -56,10 +64,22 @@ impl From &[U8] for String
             raw_len: slice_len
 
 impl String
+    from_utf8: &[U8] -> Option String
+    from_utf8 = bytes ->
+        if is_utf8 bytes
+            Option::Some (String::from bytes)
+        else
+            Option::None
+
     // The pointer must address a valid null-terminated byte string.
+    // Invalid UTF-8 is rejected before constructing the owned string.
     unsafe from_c_str: *U8 -> String
     unsafe from_c_str = s ->
         len = strlen s
+        bytes = unsafe ~BorrowSlice s, len
+        if !(is_utf8 bytes)
+            puts (~ArrPtr "invalid UTF-8")
+            exit (1 as I32)
         raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, (len + 1)
         mut buf = raw.ptr!
         memcpy buf, s, len
@@ -123,14 +143,29 @@ impl From F64 for String
 
 impl From Char for String
     from = c ->
-        raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, 2
+        value = c as I64
+        if value > 1114111 || (value >= 55296 && value <= 57343)
+            puts (~ArrPtr "invalid Unicode scalar")
+            exit (1 as I32)
+        len = if value < 128 then 1 else if value < 2048 then 2 else if value < 65536 then 3 else 4
+        raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, (len + 1)
         mut buf = raw.ptr!
         unsafe
-            *buf = c as U8
-            buf[1] = 0
+            if len == 1
+                *buf = value as U8
+            else
+                remaining = value
+                i = len - 1
+                while i > 0
+                    buf[i] = (128 + remaining % 64) as U8
+                    remaining = remaining / 64
+                    i = i - 1
+                prefix = if len == 2 then 192 else if len == 3 then 224 else 240
+                *buf = (prefix + remaining) as U8
+            buf[len] = 0
         String
             raw: raw
-            raw_len: 1
+            raw_len: len
 
 // Get raw pointer for libc interop
 impl String
@@ -143,6 +178,9 @@ impl String
 
     @as_bytes: &[U8]
     @as_bytes = -> str_as_bytes self.as_str!
+
+    @char_at: I64 -> Option Char
+    @char_at = index -> str_char_at self.as_str!, index
 
 // Concatenate two strings, returns new String
 impl String

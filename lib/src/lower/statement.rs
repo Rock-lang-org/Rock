@@ -73,15 +73,42 @@ impl Lowerer {
             }
             ast::Statement::Return(Some(expr)) => {
                 let hir_expr = self.lower_expression(expr);
-                HirStmt::Return(Some(hir_expr))
+                HirStmt::Return(Some(self.wrap_fold_return(hir_expr)))
             }
-            ast::Statement::Return(None) => HirStmt::Return(None),
+            ast::Statement::Return(None) => {
+                if let Some(context) = self.fold_loop_stack.iter().flatten().last() {
+                    let unit = context.unit();
+                    HirStmt::Return(Some(self.wrap_fold_return(unit)))
+                } else {
+                    HirStmt::Return(None)
+                }
+            }
             ast::Statement::Break(Some(expr)) => {
                 let hir_expr = self.lower_expression(expr);
-                HirStmt::Break(Some(hir_expr))
+                if let Some(Some(context)) = self.fold_loop_stack.last() {
+                    HirStmt::Expr(HirExpr {
+                        ty: Type::Never,
+                        span: hir_expr.span.clone(),
+                        kind: HirExprKind::Block(HirBlock {
+                            ty: Type::Never,
+                            stmts: vec![
+                                HirStmt::Expr(hir_expr),
+                                HirStmt::Return(Some(context.stop())),
+                            ],
+                        }),
+                    })
+                } else {
+                    HirStmt::Break(Some(hir_expr))
+                }
             }
-            ast::Statement::Break(None) => HirStmt::Break(None),
-            ast::Statement::Continue(_) => HirStmt::Continue,
+            ast::Statement::Break(None) => match self.fold_loop_stack.last() {
+                Some(Some(context)) => HirStmt::Return(Some(context.stop())),
+                _ => HirStmt::Break(None),
+            },
+            ast::Statement::Continue(_) => match self.fold_loop_stack.last() {
+                Some(Some(context)) => HirStmt::Return(Some(context.next())),
+                _ => HirStmt::Continue,
+            },
         }
     }
 

@@ -196,7 +196,30 @@ main = !->
 
 The output is `6`, `7`, and `9`. `Option::None` and `Result::Err` invoke no callback. A `Vec T` supplies each owned element in order and is consumed; `&Vec T` and `&[T]` supply shared references while preserving the owner. Borrow an array as a slice to use the same function.
 
-The public function uses the ordinary `ForEach T` bridge trait. Its blanket implementation for `F T where F _: Foldable` derives traversal from `F::Foldable::foldl`: the callback is carried as fold state, called once per element, and returned for the next step. Any new constructor implementing `Foldable` receives this behavior automatically; no separate `ForEach` implementation is needed.
+The public function uses `FoldableValue T`, the concrete-source bridge for `Foldable`. Its blanket implementation for `F T where F _: Foldable` delegates to `F::Foldable::try_fold`. `for_each` uses a unit accumulator and borrows its callback for the traversal, preserving its mutable captures and owned fields across calls. The same bridge supports `for..in`; there is no separate `ForEach` trait.
+
+`try_fold` is the required operation. A step returns `ControlFlow::Continue` with the next accumulator or `ControlFlow::Break` with an early result. Implementations must stop invoking the step immediately on `Break` and clean up any remaining owned elements. `foldl` is derived from this operation, and `Traversable` continues to require `Foldable` for its shape-preserving effectful operations.
+
+A user-defined constructor needs only one folding implementation:
+
+```rock
+struct One T
+    < value: T
+
+impl Foldable for One
+    try_fold = mut step, initial, source -> step (initial, source.value)
+
+main = !->
+    first = One
+        value: 42
+    for value in first
+        value.println!
+    second = One
+        value: 7
+    for_each second, (!.println!)
+```
+
+This prints `42` and `7`. Concrete sources that are not type constructors, such as character cursors, implement `FoldableValue` directly instead.
 
 Native `Range` is a concrete integer type, not a unary type constructor. Its dedicated bridge implementation visits bounded ranges directly without allocating a vector. Exclusive `start..end` and inclusive `start..=end` ranges run in ascending order; reversed ranges are empty, and an inclusive equal-endpoint range visits one integer. Open-ended ranges terminate with `for_each requires a bounded range` before invoking the action.
 

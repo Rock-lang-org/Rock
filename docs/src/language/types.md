@@ -68,7 +68,7 @@ main = !->
     owned.println!
 ```
 
-The literal can be used while its source is available; `String::from` copies the bytes into owned storage. Current string helpers operate on bytes, so an index or offset is not automatically a Unicode scalar-value position.
+The literal can be used while its source is available; `String::from` copies the UTF-8 bytes into owned storage. Lengths and range offsets count bytes, and slicing checks UTF-8 boundaries. `Char` represents one Unicode scalar; use `str_char_at` or `String::char_at` for scalar lookup. See [Strings and Collections](../stdlib/collections.md) for complete examples.
 
 ## Annotations and signatures
 

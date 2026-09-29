@@ -6,6 +6,204 @@
 
 > stdlib::string_type::String
 > stdlib::vec::Vec
+> stdlib::option::Option
+> stdlib::index::Index
+> stdlib::index::range_bounds_check
+> stdlib::range::Range
+> stdlib::libc::puts
+> stdlib::libc::exit
+> stdlib::foldable::FoldableValue
+> stdlib::ops::ControlFlow
+
+// Borrowed UTF-8 cursors. Offsets always point to a scalar boundary.
+< struct Chars
+    text: &Str
+    offset: I64
+
+< struct CharIndices
+    cursor: Chars
+
+< trait Utf8Chars
+    @chars: Chars
+    @char_indices: CharIndices
+
+impl Utf8Chars for &Str
+    @chars: Chars
+    @chars = -> Chars::new *self
+
+    @char_indices: CharIndices
+    @char_indices = -> CharIndices::new *self
+
+impl String
+    @chars: Chars
+    @chars = -> Chars::new self.as_str!
+
+    @char_indices: CharIndices
+    @char_indices = -> CharIndices::new self.as_str!
+
+// The caller supplies an in-bounds scalar boundary in valid UTF-8.
+decode_scalar: &Str -> I64 -> (Char, I64)
+decode_scalar = text, offset ->
+    bytes = str_as_bytes text
+    first = bytes[offset] as I64
+    width = 1
+    value = first
+    if first >= 240
+        width = 4
+        value = first - 240
+    else if first >= 224
+        width = 3
+        value = first - 224
+    else if first >= 192
+        width = 2
+        value = first - 192
+    j = 1
+    while j < width
+        value = value * 64 + (bytes[offset + j] as I64) - 128
+        j = j + 1
+    (value as Char, width)
+
+impl Chars
+    new: &Str -> Chars
+    new = text -> Chars
+        text: text
+        offset: 0
+
+    @byte_offset = -> self.offset
+
+    ^@next: Option Char
+    ^@next = ->
+        if self.offset < string_len self.text
+            decoded = decode_scalar self.text, self.offset
+            self.offset = self.offset + decoded.1
+            Option::Some decoded.0
+        else
+            Option::None
+
+impl CharIndices
+    new: &Str -> CharIndices
+    new = text -> CharIndices
+        cursor: Chars::new text
+
+    ^@next: Option (I64, Char)
+    ^@next = ->
+        offset = self.cursor.byte_offset!
+        match self.cursor.next!
+            Option::Some ch => Option::Some (offset, ch)
+            Option::None => Option::None
+
+impl FoldableValue Char for Chars
+    ~@try_fold = mut step, initial ->
+        mut source = self
+        state = initial
+        loop
+            match source.next!
+                Option::Some ch =>
+                    match step (state, ch)
+                        ControlFlow::Continue next => state = next
+                        ControlFlow::Break result =>
+                            stopped: ControlFlow R, B = ControlFlow::Break result
+                            return stopped
+                Option::None => break
+        ControlFlow::Continue state
+
+impl FoldableValue (I64, Char) for CharIndices
+    ~@try_fold = mut step, initial ->
+        mut source = self
+        state = initial
+        loop
+            match source.next!
+                Option::Some entry =>
+                    match step (state, entry)
+                        ControlFlow::Continue next => state = next
+                        ControlFlow::Break result =>
+                            stopped: ControlFlow R, B = ControlFlow::Break result
+                            return stopped
+                Option::None => break
+        ControlFlow::Continue state
+
+// Strict UTF-8 validation: reject overlong encodings, surrogates, and values
+// beyond U+10FFFF as well as malformed or truncated continuation sequences.
+is_utf8: &[U8] -> Bool
+< is_utf8 = bytes ->
+    len = ~ArrayLen bytes
+    i = 0
+    while i < len
+        first = bytes[i] as I64
+        width = 1
+        minimum = 0
+        value = first
+        if first >= 194 && first <= 223
+            width = 2
+            minimum = 128
+            value = first - 192
+        else if first >= 224 && first <= 239
+            width = 3
+            minimum = 2048
+            value = first - 224
+        else if first >= 240 && first <= 244
+            width = 4
+            minimum = 65536
+            value = first - 240
+        else if first >= 128
+            return false
+        if width > len - i
+            return false
+        j = 1
+        while j < width
+            next = bytes[i + j] as I64
+            if next < 128 || next > 191
+                return false
+            value = value * 64 + next - 128
+            j = j + 1
+        if value < minimum || value > 1114111 || (value >= 55296 && value <= 57343)
+            return false
+        i = i + width
+    true
+
+str_is_char_boundary: &Str -> I64 -> Bool
+< str_is_char_boundary = text, offset ->
+    len = ~ArrayLen text
+    if offset < 0 || offset > len
+        false
+    else if offset == len
+        true
+    else
+        byte = (str_as_bytes text)[offset] as I64
+        byte < 128 || byte >= 192
+
+// Returns the Unicode scalar at a zero-based scalar index (linear time).
+str_char_at: &Str -> I64 -> Option Char
+< str_char_at = text, index ->
+    bytes = str_as_bytes text
+    len = ~ArrayLen bytes
+    i = 0
+    count = 0
+    while index >= 0 && i < len
+        decoded = decode_scalar text, i
+        if count == index
+            return Option::Some decoded.0
+        count = count + 1
+        i = i + decoded.1
+    Option::None
+
+str_slice: &Str -> Range -> &Str
+< str_slice = text, range ->
+    bounds = range_bounds_check range, (string_len text)
+    if !(str_is_char_boundary text, bounds.0) || !(str_is_char_boundary text, bounds.1)
+        puts (~ArrPtr "string index is not a UTF-8 boundary")
+        exit (1 as I32)
+    base: *U8 = ~ArrPtr text
+    ptr: *U8 = unsafe ~PtrOffset base, bounds.0
+    unsafe ~BorrowStr ptr, (bounds.1 - bounds.0)
+
+impl Index Range for &Str
+    type Output = Str
+    @index = range -> str_slice *self, range
+
+impl Index Range for String
+    type Output = Str
+    @index = range -> str_slice self.as_str!, range
 
 // View a string slice as its underlying bytes.
 str_as_bytes: &Str -> &[U8]
@@ -22,8 +220,7 @@ string_len: &Str -> I64
 // Get the byte at index idx in a byte slice
 byte_at: &[U8] -> I64 -> U8
 < byte_at = s, idx ->
-    p = ~ArrPtr s
-    unsafe p[idx]
+    s[idx]
 
 // Concatenate two string slices. Concatenating valid UTF-8 preserves UTF-8 validity.
 string_concat: &Str -> &Str -> String
@@ -32,6 +229,9 @@ string_concat: &Str -> &Str -> String
 // Extract byte substring starting at `start` with length `len`
 byte_substr: &[U8] -> I64 -> I64 -> Vec U8
 < byte_substr = s, start, len ->
+    if start < 0 || start > (~ArrayLen s) || len < 0 || len > (~ArrayLen s) - start
+        puts (~ArrPtr "range out of bounds")
+        exit (1 as I32)
     mut out = Vec::new!
     i = 0
     ptr = ~ArrPtr s

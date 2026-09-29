@@ -1540,6 +1540,9 @@ impl BorrowChecker {
         );
 
         for (block_idx, block) in func.basic_blocks.iter().enumerate() {
+            if !init_results.reachable[block_idx] {
+                continue;
+            }
             let mut state = init_results.entry_sets[block_idx].clone();
             let mut active_loans = active_loan_entries[block_idx].clone();
 
@@ -1718,6 +1721,9 @@ impl BorrowChecker {
         diagnostics: &mut Diagnostics,
     ) {
         for (block_idx, block) in func.basic_blocks.iter().enumerate() {
+            if !results.reachable[block_idx] {
+                continue;
+            }
             let mut state = results.entry_sets[block_idx].clone();
             for stmt in &block.statements {
                 if let StatementKind::Assign(dest, rvalue) = &stmt.kind {

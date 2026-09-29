@@ -5,7 +5,7 @@ use crate::hir::{
 };
 use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId};
 use crate::language_items::{
-    DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems,
+    DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, FoldLanguageItems,
     IndexLanguageItems, IndexMutLanguageItems, RangeLanguageItems, SendLanguageItems,
     SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
 };
@@ -24,6 +24,16 @@ pub(super) fn language_items_from_products(
 
     let language_items = &products.interface.language_items;
     Ok(HirLanguageItems {
+        fold: language_items
+            .fold
+            .as_ref()
+            .map(|items| {
+                Ok::<_, String>(FoldLanguageItems {
+                    trait_id: remap.def_id(items.trait_id)?,
+                    method_id: remap.def_id(items.method_id)?,
+                })
+            })
+            .transpose()?,
         sized: language_items
             .sized
             .as_ref()
@@ -155,6 +165,7 @@ pub(super) fn validate_product_language_items(products: &CompilerProducts) -> Re
     let language_items = &products.interface.language_items;
     if language_items.sized.is_none()
         && language_items.drop.is_none()
+        && language_items.fold.is_none()
         && language_items.index.is_none()
         && language_items.index_mut.is_none()
         && language_items.fn_once.is_none()
@@ -178,6 +189,22 @@ pub(super) fn validate_product_language_items(products: &CompilerProducts) -> Re
     validate_product_index_mut_impls(products, language_items)?;
 
     let program = product_language_item_program(products)?;
+    validate_bundle(
+        &program,
+        language_items.fold.as_ref().map(|items| {
+            (
+                "fold.trait",
+                items.trait_id,
+                HirLanguageItems {
+                    fold: Some(FoldLanguageItems {
+                        trait_id: product_def_id(items.trait_id),
+                        method_id: product_def_id(items.method_id),
+                    }),
+                    ..HirLanguageItems::default()
+                },
+            )
+        }),
+    )?;
     validate_bundle(
         &program,
         language_items.sized.as_ref().map(|items| {
@@ -760,6 +787,12 @@ fn validate_product_local_ids(
     local_crate: ProductCrateId,
 ) -> Result<(), String> {
     let mut ids = Vec::new();
+    if let Some(items) = &language_items.fold {
+        ids.extend([
+            ("fold.trait", items.trait_id),
+            ("fold.method", items.method_id),
+        ]);
+    }
     if let Some(items) = &language_items.sized {
         ids.push(("sized.trait", items.trait_id));
     }
@@ -926,6 +959,11 @@ fn product_language_item_ids(products: &CompilerProducts) -> BTreeSet<ProductDef
     let mut member_ids = BTreeSet::new();
     let mut assoc_ids = BTreeSet::new();
     let mut variant_ids = BTreeSet::new();
+    if let Some(items) = &language_items.fold {
+        ids.insert(items.trait_id);
+        ids.insert(items.method_id);
+        member_ids.insert(items.method_id);
+    }
     if let Some(items) = &language_items.sized {
         ids.insert(items.trait_id);
     }
@@ -1335,6 +1373,7 @@ mod tests {
             }),
         );
         interface.language_items = LanguageItems {
+            fold: None,
             sized: Some(SizedLanguageItems { trait_id: sized }),
             drop: Some(DropLanguageItems {
                 trait_id: drop_trait,

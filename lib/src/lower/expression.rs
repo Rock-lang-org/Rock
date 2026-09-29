@@ -184,7 +184,7 @@ impl Lowerer {
 
         let mut generic_params = HashSet::new();
         // Parameters used only in bounds still need fresh call-site variables
-        // (for example T in `C: ForEach T, A: FnMut T, ()`).
+        // (for example T in `C: FoldableValue T, A: FnMut T, ()`).
         generic_params.extend(func.generic_params.iter().map(|param| param.id));
         for param in &func.params {
             param.ty.collect_generic_params(&mut generic_params);
@@ -2145,11 +2145,33 @@ impl Lowerer {
                 kind: HirExprKind::StringLiteral(s.clone()),
                 span,
             },
-            ast::LiteralKind::Char(c) => HirExpr {
-                ty: Type::Char,
-                kind: HirExprKind::CharLiteral(c.chars().next().unwrap_or('\0')),
-                span,
-            },
+            ast::LiteralKind::Char(c) => {
+                let value = match c.as_str() {
+                    "\\n" => Some('\n'),
+                    "\\t" => Some('\t'),
+                    "\\r" => Some('\r'),
+                    "\\0" => Some('\0'),
+                    "\\\\" => Some('\\'),
+                    "\\'" => Some('\''),
+                    "\\\"" => Some('"'),
+                    _ => {
+                        let mut chars = c.chars();
+                        chars.next().filter(|_| chars.next().is_none())
+                    }
+                };
+                let Some(value) = value else {
+                    self.diagnostics.push_selection_with_span(
+                        "character literal must contain exactly one Unicode scalar or supported escape".to_string(),
+                        span.clone(),
+                    );
+                    return self.error_expression_at(span);
+                };
+                HirExpr {
+                    ty: Type::Char,
+                    kind: HirExprKind::CharLiteral(value),
+                    span,
+                }
+            }
             ast::LiteralKind::Array(arr) => {
                 let elem_ty = self.engine.fresh_type_var_at(span.clone());
                 let len = arr.elements.len();

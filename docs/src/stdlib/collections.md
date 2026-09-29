@@ -30,11 +30,100 @@ main = !->
 
 The output is `0`, `Rock`, `4`, `Rock`, `Rock42`, and `Hello, Rock!`. `String::from` converts through the `From` trait, while `String::new!` constructs an empty string; `len!` reads a byte count and `as_str!` borrows a string view. `clone!` makes a second owner. `owned.concat number` borrows its receiver `owned`, consumes the argument `number`, and returns a new owner. Because `owned` remains alive, `view` can still be printed after concatenation. The `+` implementations cover `String` and `&Str` combinations and also return a new `String`.
 
-Strings are byte-oriented in the current library. Lengths, searches, substrings, and byte indexes count bytes rather than Unicode scalar values. A multi-byte UTF-8 character must not be split by a byte range unless the caller intentionally handles raw bytes.
+Both string types contain valid UTF-8. `Char` is a 32-bit Unicode scalar value, and converting it to `String` encodes one to four UTF-8 bytes. Lengths and search offsets count bytes, not Unicode scalars or displayed characters. Strings can contain embedded NUL bytes; their stored length includes these bytes, and `println!` prints the whole string. C functions that consume null-terminated strings still stop at the first NUL.
+
+## UTF-8 range indexing
+
+Use a borrowed range to select text from either `&Str` or `String`:
+
+```rock
+main = !->
+    text = "aé中🦀z"
+    owned = String::from text
+    (&text[1..3]).println!
+    (&owned[3..6]).println!
+    (&text[6..=9]).println!
+    (&owned[..1]).println!
+    (&text[10..]).println!
+    (&owned[..]).println!
+    string_len (&text[11..11]) .println!
+```
+
+The output is `é`, `中`, `🦀`, `a`, `z`, `aé中🦀z`, and `0`. `start..end` excludes `end`; `start..=end` includes that byte, so the checked end boundary is `end + 1`. The forms `..end`, `..=end`, `start..`, and `..` work too. Empty slices at valid boundaries, including the end of a string, are allowed.
+
+The operation borrows the original text without allocating. The owner must remain alive while the slice is used. Negative offsets, reversed or out-of-bounds ranges, and endpoints inside a multi-byte encoding terminate the program with an error, just as invalid collection indexes do. For example, byte offset `2` in the text above is inside `é`; it is not a valid slice boundary. `str_is_char_boundary text, offset` checks a byte boundary without terminating.
+
+String indexing uses the standard library's `Index Range` implementations. There is no integer `Index` or mutable `IndexMut` implementation for strings: arbitrary byte mutation could invalidate UTF-8. Borrow bytes explicitly when byte-level inspection is intended.
+
+## Unicode scalar access
+
+`str_char_at` and `String::char_at` return `Option Char` using a zero-based scalar index. A negative index or an index past the last scalar returns `None`.
+
+```rock
+main = !->
+    text = "aé中🦀"
+    owned = String::from text
+    str_char_at text, 1 .println!
+    owned.char_at 3 .println!
+    owned.char_at 4 .println!
+    String::from '中' .len!.println!
+    bytes = owned.as_bytes!
+    bytes[1].println!
+    str_is_char_boundary text, 2 .println!
+```
+
+This prints `Some(é)`, `Some(🦀)`, `None`, `3`, `195`, and `false`. Scalar lookup scans from the beginning, so its cost grows with the requested index. Byte-range slicing and boundary checks take constant time. Integer-to-`Char` casts accept only Unicode scalars (`0..=0x10FFFF`, excluding surrogates `0xD800..=0xDFFF`) and trap for invalid values before narrowing.
+
+A scalar is not necessarily a whole displayed character: a letter followed by a combining accent consists of two scalars. These APIs do not perform grapheme segmentation, normalization, or locale-sensitive comparison.
+
+## Iterating over UTF-8 text
+
+Both `&Str` and `String` provide `chars!` and `char_indices!`. They create small borrowing cursors without allocating a collection. `chars!` yields `Char` values; `char_indices!` yields `(I64, Char)` pairs whose first component is the character's starting byte offset.
+
+```rock
+main = !->
+    text = String::from "aé🦀"
+    for_each text.chars!, (!.println!)
+    for (offset, ch) in text.char_indices!
+        offset.println!
+        ch.println!
+    text.println!
+```
+
+The first traversal prints `a`, `é`, and `🦀`. The second prints offsets `0`, `1`, and `3`, each followed by its character. The final line prints `aé🦀`: traversal borrowed the owner rather than consuming it. Keep the owner alive while a cursor exists.
+
+Each call creates a fresh cursor. Advancing through the entire text takes linear time in its byte length, and `break` stops decoding immediately. To advance manually, use `next!` on a mutable cursor; it returns `Option Char` or `Option (I64, Char)` and remains exhausted after reaching the end:
+
+```rock
+main = !->
+    mut cursor = "é🦀".chars!
+    cursor.next!.println!
+    for ch in cursor
+        ch.println!
+    mut empty = "".chars!
+    empty.next!.println!
+```
+
+This prints `Some(é)`, `🦀`, and `None`. The loop consumes the remaining cursor state, starting after `é`. `Chars` and `CharIndices` implement `FoldableValue`, so manual advancement, folding, `for_each`, and `for..in` share the same UTF-8 decoder. As with `char_at`, the items are Unicode scalars, not grapheme clusters.
+
+## Validating bytes
+
+Use `String::from_utf8` for input that might not be UTF-8. It returns `Some String` after validation and copying, or `None` for invalid bytes. Validation rejects incomplete sequences, unexpected continuation bytes, overlong encodings, surrogates, and values beyond U+10FFFF.
+
+```rock
+main = !->
+    valid = [195 as U8, 169 as U8]
+    invalid = [255 as U8]
+    String::from_utf8 (&valid) .println!
+    String::from_utf8 (&invalid) .println!
+    is_utf8 (&invalid) .println!
+```
+
+This prints `Some(é)`, `None`, and `false`. `is_utf8` validates without allocating. `String::from` also accepts byte slices but terminates with `invalid UTF-8` when validation fails; prefer `from_utf8` for recoverable input errors. The unsafe `String::from_c_str` requires a readable null-terminated allocation and also validates its bytes. Raw borrowed-string construction in unsafe code must uphold UTF-8 validity and the lifetime of its backing allocation.
 
 ## Byte and search helpers
 
-The search helpers live in `stdlib::string` and are not prelude names. This fence imports every non-prelude function it uses and keeps the byte buffer separate from the borrowed `&Str` search input.
+The search helpers live in `stdlib::string` and are re-exported by the prelude. Explicit imports also work; this example keeps the byte buffer separate from the borrowed `&Str` search input.
 
 ```rock
 > stdlib::string::byte_at
@@ -58,7 +147,7 @@ main = !->
     second as I64 .println!
 ```
 
-The output is `4`, `1`, `1`, `2`, and `111`. `string_find` returns a byte offset or `-1`; `string_contains` returns `1` or `0`; `byte_substr` returns an owned `Vec U8`; and `byte_at` reads one byte from a byte slice. Out-of-range behavior is not a Unicode-aware character operation, so validate byte boundaries in the caller.
+The output is `4`, `1`, `1`, `2`, and `111`. `string_find` returns a byte offset or `-1`; `string_contains` returns `1` or `0`; `byte_substr` returns an owned `Vec U8`; and `byte_at` reads one byte from a byte slice. Both byte helpers check bounds and terminate on an invalid index or range. They operate on arbitrary bytes and do not enforce Unicode boundaries.
 
 ## `Vec T`
 

@@ -869,7 +869,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let mut current_ty = self.normalize_projection_type(&self.structural_type_for(local.ty));
-        let mut scalar_downcast_payload = false;
+        let mut unwrapped_downcast_payload = false;
         for projection in &place.projection {
             current_ty = self.normalize_projection_type(&current_ty);
             current_ty = match projection {
@@ -885,8 +885,8 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 },
                 crate::mir::Projection::Field { index, .. } => {
-                    if scalar_downcast_payload {
-                        scalar_downcast_payload = false;
+                    if unwrapped_downcast_payload {
+                        unwrapped_downcast_payload = false;
                         if *index == 0 {
                             continue;
                         }
@@ -902,7 +902,7 @@ impl<'ctx> CodeGen<'ctx> {
                     self.normalize_projection_type(&field_ty)
                 }
                 crate::mir::Projection::Index(_) => {
-                    scalar_downcast_payload = false;
+                    unwrapped_downcast_payload = false;
                     match &current_ty {
                         Type::Array(element, _) | Type::Slice(element) | Type::Pointer(element) => {
                             self.normalize_projection_type(element)
@@ -930,7 +930,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 id, variant_id.0
                             ))
                         })?;
-                    scalar_downcast_payload = !matches!(payload_ty, Type::Tuple(_));
+                    unwrapped_downcast_payload =
+                        self.enum_variant_payload_is_unwrapped(*id, variant_id.0 as usize)?;
                     self.normalize_projection_type(&payload_ty)
                 }
             };

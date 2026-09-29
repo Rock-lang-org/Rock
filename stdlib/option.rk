@@ -56,10 +56,10 @@ impl Monad for Option
             Option::None => Option::None
 
 impl Foldable for Option
-    foldl = mut step, initial, value ->
+    try_fold = mut step, initial, value ->
         match value
             Option::Some item => step (initial, item)
-            Option::None => initial
+            Option::None => ControlFlow::Continue initial
 
 impl Traversable for Option
     traverse = mut visitor, value ->

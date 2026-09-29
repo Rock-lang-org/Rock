@@ -15,7 +15,7 @@ use crate::hir::{
 use crate::ids::{CrateId, DefId, Idx, LocalDefId};
 use crate::infer::ResolvedHirProgram;
 use crate::language_items::{
-    DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems,
+    DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, FoldLanguageItems,
     IndexLanguageItems, IndexMutLanguageItems, LanguageItems, RangeLanguageItems,
     SendLanguageItems, SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
 };
@@ -58,7 +58,7 @@ impl From<DefId> for ProductDefId {
     }
 }
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 45;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 47;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;
@@ -1416,6 +1416,25 @@ fn product_language_items_from_program<P: HirPhase>(
         })
         .transpose()?
         .flatten();
+    let fold = language_items
+        .fold
+        .as_ref()
+        .map(|items| {
+            map_product_language_item_bundle(
+                "fold",
+                &[items.trait_id, items.method_id],
+                current_def_ids,
+                id_remap,
+            )
+            .map(|ids| {
+                ids.map(|ids| FoldLanguageItems {
+                    trait_id: ids[0],
+                    method_id: ids[1],
+                })
+            })
+        })
+        .transpose()?
+        .flatten();
     let index = language_items
         .index
         .as_ref()
@@ -1593,6 +1612,7 @@ fn product_language_items_from_program<P: HirPhase>(
         .flatten();
 
     Ok(ProductLanguageItems {
+        fold,
         sized,
         drop,
         index,
@@ -3712,6 +3732,7 @@ mod tests {
     #[test]
     fn product_artifact_roundtrip_preserves_complete_language_item_registry() {
         let language_items = ProductLanguageItems {
+            fold: None,
             sized: Some(SizedLanguageItems {
                 trait_id: product_def_id(17),
             }),
@@ -7062,7 +7083,7 @@ mod tests {
 
     #[test]
     fn product_artifact_format_version_matches_shared_contract() {
-        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 45);
+        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 47);
         assert_eq!(
             PRODUCT_ARTIFACT_FORMAT_VERSION,
             rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION

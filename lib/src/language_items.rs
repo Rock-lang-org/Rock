@@ -8,6 +8,7 @@ use crate::ids::{AssocTypeId, VariantId};
 pub enum LanguageItemRole {
     Sized,
     Drop,
+    Fold,
     Index,
     IndexMut,
     FnOnce,
@@ -34,9 +35,10 @@ pub enum LanguageItemRole {
 }
 
 impl LanguageItemRole {
-    pub const ALL_NAMES: [&str; 25] = [
+    pub const ALL_NAMES: [&str; 26] = [
         "sized",
         "drop",
+        "fold",
         "index",
         "index_mut",
         "fn_once",
@@ -66,6 +68,7 @@ impl LanguageItemRole {
         match self {
             Self::Sized => "sized",
             Self::Drop => "drop",
+            Self::Fold => "fold",
             Self::Index => "index",
             Self::IndexMut => "index_mut",
             Self::FnOnce => "fn_once",
@@ -100,6 +103,7 @@ impl FromStr for LanguageItemRole {
         match role {
             "sized" => Ok(Self::Sized),
             "drop" => Ok(Self::Drop),
+            "fold" => Ok(Self::Fold),
             "index" => Ok(Self::Index),
             "index_mut" => Ok(Self::IndexMut),
             "fn_once" => Ok(Self::FnOnce),
@@ -144,6 +148,12 @@ pub struct SizedLanguageItems<D> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DropLanguageItems<D> {
+    pub trait_id: D,
+    pub method_id: D,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FoldLanguageItems<D> {
     pub trait_id: D,
     pub method_id: D,
 }
@@ -221,6 +231,7 @@ pub struct RangeLanguageItems<D> {
 pub struct LanguageItems<D> {
     pub sized: Option<SizedLanguageItems<D>>,
     pub drop: Option<DropLanguageItems<D>>,
+    pub fold: Option<FoldLanguageItems<D>>,
     pub index: Option<IndexLanguageItems<D>>,
     pub index_mut: Option<IndexMutLanguageItems<D>>,
     pub fn_once: Option<FnOnceLanguageItems<D>>,
@@ -237,6 +248,7 @@ impl<D> Default for LanguageItems<D> {
         Self {
             sized: None,
             drop: None,
+            fold: None,
             index: None,
             index_mut: None,
             fn_once: None,
@@ -353,6 +365,12 @@ pub fn merge_language_item_providers_all<'a, D: Clone + 'a>(
         .iter()
         .filter_map(|(name, items)| items.index.as_ref().map(|items| (*name, items)))
         .collect::<Vec<_>>();
+    let fold = merge_protocol(
+        &providers,
+        "fold",
+        |items| items.fold.as_ref(),
+        &mut conflicts,
+    );
     let index_mut_claims = providers
         .iter()
         .filter_map(|(name, items)| items.index_mut.as_ref().map(|items| (*name, items)))
@@ -426,6 +444,7 @@ pub fn merge_language_item_providers_all<'a, D: Clone + 'a>(
         Ok(LanguageItems {
             sized,
             drop,
+            fold,
             index,
             index_mut,
             fn_once,

@@ -10,6 +10,47 @@ use crate::types::{GenericParamId, Type};
 
 pub(crate) fn validate_language_items<P: HirPhase>(program: &HirProgramFor<P>) -> Vec<String> {
     let mut errors = Vec::new();
+    if let Some(items) = &program.language_items.fold {
+        require_same_crate(
+            "fold",
+            [
+                ("fold.trait", items.trait_id),
+                ("fold.method", items.method_id),
+            ],
+            &mut errors,
+        );
+        if let Some(trait_def) = required_trait(program, items.trait_id, "fold.trait", &mut errors)
+        {
+            require_trait_generics(trait_def, "fold.trait", 1, &mut errors);
+            if let Some(method) = required_trait_member(
+                program,
+                trait_def,
+                items.trait_id,
+                items.method_id,
+                "fold.method",
+                &mut errors,
+            ) {
+                require_receiver(
+                    &method,
+                    "fold.method",
+                    Some(ReceiverMode::Move),
+                    &mut errors,
+                );
+                require_receiver_type(
+                    &method,
+                    "fold.method",
+                    self_ty(items.trait_id, 1),
+                    &mut errors,
+                );
+                require_explicit_params(&method, "fold.method", 2, &mut errors);
+                let params = method.params();
+                match method.ret() {
+                    Type::Enum { args, .. } if args.len() == 2 && params.get(2).is_some_and(|state| *state == &args[1]) => {},
+                    _ => errors.push("fold.method must return a two-parameter control-flow enum preserving its accumulator type".to_string()),
+                }
+            }
+        }
+    }
 
     if let Some(items) = &program.language_items.sized {
         validate_sized(program, items, &mut errors);

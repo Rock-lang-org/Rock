@@ -12,7 +12,9 @@ impl Lowerer {
                 let _ = self.engine.unify(&condition.ty, &Type::Bool);
 
                 self.push_scope();
+                self.fold_loop_stack.push(None);
                 let body = self.lower_block(body);
+                self.fold_loop_stack.pop();
                 self.pop_scope();
 
                 HirExpr {
@@ -49,16 +51,17 @@ impl Lowerer {
                             "for loops currently require a bounded range".to_string(),
                             span.clone(),
                         );
+                        return self.error_expression_at(span);
+                    }
+                    if self.language_items.fold.is_some() {
+                        return self.lower_fold_loop(pattern, iter, body, span);
                     }
                     Type::I64
                 } else {
                     match self.engine.resolve(&iter.ty) {
                         Type::Array(element, _) | Type::Slice(element) => *element,
                         _ => {
-                            let elem_ty = self.engine.fresh_type_var_at(span.clone());
-                            let slice_ty = Type::Slice(Box::new(elem_ty.clone()));
-                            let _ = self.engine.unify(&iter.ty, &slice_ty);
-                            elem_ty
+                            return self.lower_fold_loop(pattern, iter, body, span);
                         }
                     }
                 };
@@ -78,7 +81,9 @@ impl Lowerer {
                 }
                 self.scope
                     .define_local(var_name.clone(), elem_ty, false, local_id);
+                self.fold_loop_stack.push(None);
                 let body = self.lower_block(body);
+                self.fold_loop_stack.pop();
                 self.pop_scope();
 
                 HirExpr {
@@ -94,7 +99,9 @@ impl Lowerer {
             }
             ast::Loop::Loop(body, span) => {
                 self.push_scope();
+                self.fold_loop_stack.push(None);
                 let body = self.lower_block(body);
+                self.fold_loop_stack.pop();
                 self.pop_scope();
                 HirExpr {
                     ty: Type::Unit,
@@ -110,7 +117,7 @@ impl Lowerer {
 mod tests {
     use crate::ast::{
         Block, Expression, Ident, IdentOrType, IdentifierPath, Literal, LiteralKind, Operand,
-        Pattern, PatternKind, PrimaryExpr, RangeExpr, Statement, UnaryExpr,
+        Pattern, PatternKind, PrimaryExpr, Statement, UnaryExpr,
     };
     use crate::hir::{HirExprKind, HirStmt, HirVarRef, HirVarTarget};
     use crate::lexer::Span;
@@ -133,7 +140,7 @@ mod tests {
         }
     }
 
-    fn range_expr(start: u64, end: u64) -> Expression {
+    fn array_expr(start: u64, end: u64) -> Expression {
         let endpoint = |value| {
             Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Literal(Literal {
@@ -144,12 +151,16 @@ mod tests {
                 type_annotation: None,
             }))
         };
-        Expression::Range(RangeExpr {
-            start: Some(Box::new(endpoint(start))),
-            end: Some(Box::new(endpoint(end))),
-            inclusive: false,
-            span: Span::test(),
-        })
+        Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+            operand: Operand::Literal(Literal {
+                kind: LiteralKind::Array(crate::ast::Array {
+                    elements: vec![endpoint(start), endpoint(end)],
+                }),
+                span: Span::test(),
+            }),
+            secondaries: None,
+            type_annotation: None,
+        }))
     }
 
     fn var_expr(name: &str) -> Expression {
@@ -167,7 +178,7 @@ mod tests {
         let mut lowerer = Lowerer::new_for_test();
         let loop_expr = crate::ast::Loop::For(
             binding_pattern("item"),
-            range_expr(0, 2),
+            array_expr(0, 2),
             Block {
                 statements: vec![Statement::Expression(var_expr("item"))],
             },

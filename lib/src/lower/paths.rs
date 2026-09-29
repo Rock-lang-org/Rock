@@ -1543,6 +1543,30 @@ impl Lowerer {
         captures
     }
 
+    fn define_capture_pattern(
+        pattern: &HirPattern,
+        defined: &mut std::collections::HashSet<String>,
+    ) {
+        match pattern {
+            HirPattern::Binding { name, .. } => {
+                defined.insert(name.clone());
+            }
+            HirPattern::Tuple(patterns)
+            | HirPattern::Or(patterns)
+            | HirPattern::Enum(_, _, _, patterns) => {
+                for pattern in patterns {
+                    Self::define_capture_pattern(pattern, defined);
+                }
+            }
+            HirPattern::Struct(_, _, _, fields) => {
+                for field in fields {
+                    Self::define_capture_pattern(&field.pattern, defined);
+                }
+            }
+            HirPattern::Wildcard | HirPattern::Literal(_) => {}
+        }
+    }
+
     fn collect_lambda_captures_block(
         &self,
         block: &HirBlock,
@@ -1793,6 +1817,16 @@ impl Lowerer {
                 );
                 for arm in arms {
                     let mut arm_defined = defined.clone();
+                    Self::define_capture_pattern(&arm.pattern, &mut arm_defined);
+                    if let Some(guard) = &arm.guard {
+                        self.collect_lambda_captures_expr(
+                            guard,
+                            &mut arm_defined,
+                            used,
+                            capture_kinds,
+                            current_kind,
+                        );
+                    }
                     self.collect_lambda_captures_block(
                         &arm.body,
                         &mut arm_defined,
@@ -1819,9 +1853,12 @@ impl Lowerer {
                     current_kind,
                 );
             }
-            HirExprKind::For { iter, body, .. } => {
+            HirExprKind::For {
+                var, iter, body, ..
+            } => {
                 self.collect_lambda_captures_expr(iter, defined, used, capture_kinds, current_kind);
                 let mut nested_defined = defined.clone();
+                nested_defined.insert(var.clone());
                 self.collect_lambda_captures_block(
                     body,
                     &mut nested_defined,
@@ -2593,9 +2630,11 @@ impl Lowerer {
         }
 
         let lambda_return_ty = self.engine.fresh_type_var_at(lambda.span.clone());
+        let loop_stack = std::mem::take(&mut self.fold_loop_stack);
         let body = self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
             lowerer.lower_lambda_body(lambda)
         });
+        self.fold_loop_stack = loop_stack;
         let span = lambda.span.clone();
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
         let ret_type = self.engine.resolve(&lambda_return_ty);
@@ -2670,6 +2709,7 @@ impl Lowerer {
         };
 
         let lambda_return_ty = self.engine.fresh_type_var_at(span.clone());
+        let loop_stack = std::mem::take(&mut self.fold_loop_stack);
         let body = if params.len() == 1 {
             self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
                 lowerer.lower_block(body)
@@ -2686,6 +2726,7 @@ impl Lowerer {
                 stmts: vec![HirStmt::Expr(inner)],
             }
         };
+        self.fold_loop_stack = loop_stack;
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
         let body_ty = self.engine.resolve(&lambda_return_ty);
         let mut captures = self.collect_lambda_captures(&body, std::slice::from_ref(&param));

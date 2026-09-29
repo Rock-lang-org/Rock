@@ -1,14 +1,13 @@
 // Show trait - provides string representation and printing for types
 
 > stdlib::libc::putchar
-> stdlib::libc::puts
 > stdlib::convert::int_to_string
 > stdlib::convert::float_to_string
 > stdlib::string_type::String
 > stdlib::clone::Clone
 
 show_println_string: String -> I32
-show_println_string = out -> puts out.as_ptr!
+show_println_string = out -> out.as_str!.println!
 
 < trait Show
     @show: String

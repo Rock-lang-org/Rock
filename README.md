@@ -279,6 +279,36 @@ main = !->
 
 This prints `4`, then `Rock` twice. Borrowing does not copy the allocation; cloning does. Owned values are cleaned up deterministically through `Drop`. See [Ownership](https://rock-lang-org.github.io/Rock/language/ownership.html) for moves, mutable references, and lifetime constraints.
 
+### UTF-8 Strings and Slicing
+
+String literals have type `&Str`; `String` owns UTF-8 text, and `Char` represents one Unicode scalar value. Lengths and range indexes count **bytes**. Slicing checks both bounds and UTF-8 character boundaries, so it cannot split a multi-byte character.
+
+```haskell
+main = !->
+    text = String::from "aé中🦀"
+    text.len!.println!
+    text[1..3].println!
+    text.char_at 3 .println!
+    String::from '🦀' .println!
+```
+
+This prints `10`, `é`, `Some(🦀)`, and `🦀`. Use `&text[start..end]` for a borrowed substring, `char_at` for a zero-based Unicode scalar lookup, and `as_bytes!` for byte indexing. Integer string indexing is intentionally unsupported; a byte, a Unicode scalar, and a displayed character are different units. `String::from_utf8` validates raw bytes and returns `Option String`.
+
+See [Strings and Collections](https://rock-lang-org.github.io/Rock/stdlib/collections.html) for range forms, validation, and Unicode details.
+
+Use `chars!` to traverse Unicode scalars and `char_indices!` to include their byte offsets. Both borrow the text without allocating a collection and work with `for_each` and `for..in`:
+
+```haskell
+main = !->
+    text = "aé🦀"
+    for_each text.chars!, (!.println!)
+    for (offset, ch) in text.char_indices!
+        offset.println!
+        ch.println!
+```
+
+The offsets are `0`, `1`, and `3`. Generalized loops also support owned and borrowed vectors and user-defined `Foldable`/`FoldableValue` sources, with short-circuiting traversal on `break`.
+
 ### Transforming Collections
 
 `Vec T` is a growable owned sequence. Its methods make a useful starting point before the more general functional traits.
@@ -784,12 +814,16 @@ Questions, small reproductions, and contributions are welcome through [GitHub is
 
 A few of the remaining important features which are planned but still missing:
 
-- UTF-8 support and string indexing
 - Dynamic dispatch and vtables
 - Better trait resolution
 - More complete stdlib
 - Multiline imports like in rust
 - bin/lib compilation distinction
 - --debug/--release mode (optimisations are there already)
+- String interpolation
+- Test suite
+- RockDoc
+- Windows/Macos support
+- Release for other arch than x64
 
 - Self-host the compiler

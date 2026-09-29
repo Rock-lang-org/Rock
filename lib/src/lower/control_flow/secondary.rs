@@ -415,6 +415,10 @@ impl Lowerer {
             if has_proven_candidate {
                 concrete.retain(|candidate| candidate.pending_impl_bounds.is_empty());
             }
+            crate::selection::SelectionService::prefer_exact_receiver(
+                &mut concrete,
+                receiver_candidate.adjustment,
+            );
             match concrete.len() {
                 0 => {}
                 1 if concrete[0].pending_impl_bounds.is_empty() => return concrete.pop(),
@@ -1887,20 +1891,6 @@ impl Lowerer {
             ast::SecondaryExpr::Indice(index_expr) => {
                 let index = self.lower_expression(index_expr);
                 let resolved_expr_ty = self.resolve_projection_type(&self.engine.resolve(&expr.ty));
-                if matches!(resolved_expr_ty, Type::Str)
-                    || matches!(
-                        &resolved_expr_ty,
-                        Type::Reference { inner, .. } if matches!(inner.as_ref(), Type::Str)
-                    )
-                {
-                    self.diagnostics.push_selection_with_span(
-                        "cannot index Str by integer; string slices are UTF-8 text, use an explicit string or byte API"
-                            .to_string(),
-                        span.clone(),
-                    );
-                    return self.error_expression_at(span.clone());
-                }
-
                 let is_array_receiver = matches!(resolved_expr_ty, Type::Array(_, _))
                     || matches!(
                         &resolved_expr_ty,

@@ -556,13 +556,22 @@ impl<'ctx> CodeGen<'ctx> {
                         ))
                     })?;
                 let payload_llvm_ty = self.llvm_type(&payload_ty);
-                let payload = self.compile_mir_aggregate_payload(
-                    function,
-                    context,
-                    operands,
-                    &payload_ty,
-                    payload_llvm_ty,
-                )?;
+                // One positional field is the payload itself, even when its
+                // type is a tuple; named fields retain their aggregate wrapper.
+                let single_positional =
+                    self.enum_variant_payload_is_unwrapped(*enum_id, variant_index)?;
+                let payload = if single_positional {
+                    let operand = self.compile_mir_operand(function, context, &operands[0])?;
+                    self.coerce_value(operand, payload_llvm_ty)?
+                } else {
+                    self.compile_mir_aggregate_payload(
+                        function,
+                        context,
+                        operands,
+                        &payload_ty,
+                        payload_llvm_ty,
+                    )?
+                };
                 value = self
                     .builder
                     .build_insert_value(value, payload, variant_index as u32 + 1, "payload")
@@ -675,7 +684,7 @@ impl<'ctx> CodeGen<'ctx> {
             Operand::Constant(Constant::Int(_)) => Ok(Type::I64),
             Operand::Constant(Constant::Float(_)) => Ok(Type::F64),
             Operand::Constant(Constant::Bool(_)) => Ok(Type::Bool),
-            Operand::Constant(Constant::Char(_)) => Ok(Type::U8),
+            Operand::Constant(Constant::Char(_)) => Ok(Type::Char),
             Operand::Constant(Constant::Unit) => Ok(Type::Unit),
             Operand::Constant(Constant::TypeId(id)) => Ok(self.type_context().type_for(*id)),
             Operand::Constant(constant) => Err(CodegenError::backend_contract(format!(
@@ -709,8 +718,8 @@ impl<'ctx> CodeGen<'ctx> {
                 .ok_or_else(|| CodegenError::from("MIR TypeContext is missing Bool")),
             Operand::Constant(Constant::Char(_)) => self
                 .type_context()
-                .id_for_type(&Type::U8)
-                .ok_or_else(|| CodegenError::from("MIR TypeContext is missing U8")),
+                .id_for_type(&Type::Char)
+                .ok_or_else(|| CodegenError::from("MIR TypeContext is missing Char")),
             Operand::Constant(Constant::Unit) => self
                 .type_context()
                 .id_for_type(&Type::Unit)
@@ -737,6 +746,84 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
         Ok(lhs_ty)
+    }
+
+    fn validate_unicode_scalar(
+        &self,
+        value: inkwell::values::IntValue<'ctx>,
+        from_ty: &Type,
+    ) -> Result<(), CodegenError> {
+        use inkwell::IntPredicate;
+
+        let error = |e: inkwell::builder::BuilderError| CodegenError::from(e.to_string());
+        // Check before narrowing so large integers cannot wrap into valid scalars.
+        let wide = self.context.i64_type();
+        let value = if value.get_type().get_bit_width() < 64 {
+            if from_ty.is_signed_integer() {
+                self.builder
+                    .build_int_s_extend(value, wide, "char_value")
+                    .map_err(error)?
+            } else {
+                self.builder
+                    .build_int_z_extend(value, wide, "char_value")
+                    .map_err(error)?
+            }
+        } else {
+            value
+        };
+        let out_of_range = self
+            .builder
+            .build_int_compare(
+                IntPredicate::UGT,
+                value,
+                wide.const_int(0x10ffff, false),
+                "char_out_of_range",
+            )
+            .map_err(error)?;
+        let above = self
+            .builder
+            .build_int_compare(
+                IntPredicate::UGE,
+                value,
+                wide.const_int(0xd800, false),
+                "char_above_surrogate_start",
+            )
+            .map_err(error)?;
+        let below = self
+            .builder
+            .build_int_compare(
+                IntPredicate::ULE,
+                value,
+                wide.const_int(0xdfff, false),
+                "char_below_surrogate_end",
+            )
+            .map_err(error)?;
+        let surrogate = self
+            .builder
+            .build_and(above, below, "char_surrogate")
+            .map_err(error)?;
+        let invalid = self
+            .builder
+            .build_or(out_of_range, surrogate, "char_invalid")
+            .map_err(error)?;
+        let function = self
+            .builder
+            .get_insert_block()
+            .and_then(|block| block.get_parent())
+            .ok_or_else(|| CodegenError::from("No current function for Unicode scalar check"))?;
+        let fail = self.context.append_basic_block(function, "char_invalid");
+        let valid = self.context.append_basic_block(function, "char_valid");
+        self.builder
+            .build_conditional_branch(invalid, fail, valid)
+            .map_err(error)?;
+        self.builder.position_at_end(fail);
+        let trap = inkwell::intrinsics::Intrinsic::find("llvm.trap")
+            .and_then(|intrinsic| intrinsic.get_declaration(&self.module, &[]))
+            .ok_or_else(|| CodegenError::from("LLVM trap intrinsic is unavailable"))?;
+        self.builder.build_call(trap, &[], "").map_err(error)?;
+        self.builder.build_unreachable().map_err(error)?;
+        self.builder.position_at_end(valid);
+        Ok(())
     }
 
     fn compile_mir_cast_value(
@@ -816,6 +903,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         if from_ty.is_integer() && matches!(target_ty, Type::Char) {
+            self.validate_unicode_scalar(value.into_int_value(), from_ty)?;
             let from_width = value.into_int_value().get_type().get_bit_width();
             let to_width = to_llvm.into_int_type().get_bit_width();
             if from_width < to_width {

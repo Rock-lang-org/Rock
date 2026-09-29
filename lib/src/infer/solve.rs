@@ -693,12 +693,23 @@ fn solve_structural_constraints_to_fixed_point(
                     }
                 } else {
                     *engine = probe;
-                    if contains_unresolved_type(&engine.resolve(&bound.type_args[0]))
-                        || contains_unresolved_type(&engine.resolve(&bound.type_args[1]))
-                    {
-                        ObligationState::Pending
-                    } else {
-                        ObligationState::Solved
+                    // Once argument/result types unify, structural callability
+                    // is known even if those types will later be generalized.
+                    // Still check receiver capability and safety here.
+                    let args = bound
+                        .type_args
+                        .iter()
+                        .map(|ty| engine.resolve(ty))
+                        .collect::<Vec<_>>();
+                    match callable_trait_satisfied(
+                        &engine.resolve(&ty),
+                        bound.trait_id,
+                        &args,
+                        builtin_traits,
+                    ) {
+                        Some(true) => ObligationState::Solved,
+                        Some(false) => ObligationState::Failed,
+                        None => ObligationState::Pending,
                     }
                 }
             }
