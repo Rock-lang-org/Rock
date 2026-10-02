@@ -140,6 +140,26 @@ fn retarget_generated_default_trait_method_calls_in_expr(
     impl_methods: &HashMap<String, HirFunction>,
 ) {
     match &mut expr.kind {
+        HirExprKind::Open { source, body, .. } => {
+            retarget_generated_default_trait_method_calls_in_expr(source, trait_id, impl_id, impl_methods);
+            retarget_generated_default_trait_method_calls_in_block(body, trait_id, impl_id, impl_methods);
+        }
+        HirExprKind::OwnedObjectCall { owner, args, .. } => {
+            retarget_generated_default_trait_method_calls_in_expr(
+                owner,
+                trait_id,
+                impl_id,
+                impl_methods,
+            );
+            for arg in args {
+                retarget_generated_default_trait_method_calls_in_expr(
+                    arg,
+                    trait_id,
+                    impl_id,
+                    impl_methods,
+                );
+            }
+        }
         HirExprKind::Call(func, args, _) => {
             retarget_generated_default_trait_method_calls_in_expr(
                 func,
@@ -306,7 +326,8 @@ fn retarget_generated_default_trait_method_calls_in_expr(
         | HirExprKind::TupleIndex(inner, _)
         | HirExprKind::Ref(_, inner)
         | HirExprKind::Deref(inner)
-        | HirExprKind::Cast(inner, _) => {
+        | HirExprKind::Cast(inner, _)
+        | HirExprKind::ObjectCoercion(inner, _) => {
             retarget_generated_default_trait_method_calls_in_expr(
                 inner,
                 trait_id,
@@ -450,6 +471,16 @@ fn apply_generated_default_self_type_in_expr(
     self_type: &Type,
 ) {
     match &mut expr.kind {
+        HirExprKind::Open { source, body, .. } => {
+            apply_generated_default_self_type_in_expr(source, param_ty, self_type);
+            apply_generated_default_self_type_in_block(body, param_ty, self_type);
+        }
+        HirExprKind::OwnedObjectCall { owner, args, .. } => {
+            apply_generated_default_self_type_in_expr(owner, param_ty, self_type);
+            for arg in args {
+                apply_generated_default_self_type_in_expr(arg, param_ty, self_type);
+            }
+        }
         HirExprKind::Var(name) if name == "self" => {
             expr.ty = param_ty.clone();
         }
@@ -507,7 +538,8 @@ fn apply_generated_default_self_type_in_expr(
         | HirExprKind::FieldAccess(inner, _, _)
         | HirExprKind::TupleIndex(inner, _)
         | HirExprKind::Ref(_, inner)
-        | HirExprKind::Cast(inner, _) => {
+        | HirExprKind::Cast(inner, _)
+        | HirExprKind::ObjectCoercion(inner, _) => {
             apply_generated_default_self_type_in_expr(inner, param_ty, self_type);
         }
         HirExprKind::Intrinsic { args, .. }
@@ -554,7 +586,7 @@ fn resolve_generated_default_types(engine: &mut InferenceEngine, func: &mut HirF
     resolve_generated_default_block_types(engine, &mut func.body);
     if !generated_default_uses_generic_type(func) {
         func.generic_params.clear();
-        func.generic_bounds.clear();
+        func.generic_bounds = HirGenericBounds::new();
     }
 }
 
@@ -632,6 +664,18 @@ fn resolve_generated_default_pattern_types(engine: &mut InferenceEngine, pattern
 fn resolve_generated_default_expr_types(engine: &mut InferenceEngine, expr: &mut HirExpr) {
     expr.ty = engine.resolve(&expr.ty);
     match &mut expr.kind {
+        HirExprKind::Open { source, binding, body } => {
+            resolve_generated_default_expr_types(engine, source);
+            binding.visit_types_mut(&mut |ty| *ty = engine.resolve(ty));
+            resolve_generated_default_block_types(engine, body);
+        }
+        HirExprKind::OwnedObjectCall { owner, args, call } => {
+            resolve_generated_default_expr_types(engine, owner);
+            for arg in args {
+                resolve_generated_default_expr_types(engine, arg);
+            }
+            call.visit_types_mut(&mut |ty| *ty = engine.resolve(ty));
+        }
         HirExprKind::Call(func_expr, args, target) => {
             resolve_generated_default_expr_types(engine, func_expr);
             for arg in args {
@@ -726,6 +770,10 @@ fn resolve_generated_default_expr_types(engine: &mut InferenceEngine, expr: &mut
             resolve_generated_default_expr_types(engine, inner);
             *ty = engine.resolve(ty);
         }
+        HirExprKind::ObjectCoercion(inner, coercion) => {
+            resolve_generated_default_expr_types(engine, inner);
+            coercion.visit_types_mut(&mut |ty| *ty = engine.resolve(ty));
+        }
         HirExprKind::Intrinsic { args, .. }
         | HirExprKind::ArrayLiteral(args)
         | HirExprKind::TupleLiteral(args)
@@ -778,6 +826,7 @@ pub(crate) struct IndexProtocolIds {
 }
 
 pub(crate) struct TraitConformanceContext<'a> {
+    language_items: &'a crate::hir::HirLanguageItems,
     items: &'a mut LowerItems,
     engine: &'a mut InferenceEngine,
     resolver: &'a ResolverTables,
@@ -790,6 +839,7 @@ pub(crate) struct TraitConformanceContext<'a> {
 }
 
 pub(crate) struct TraitConformanceService<'a> {
+    language_items: &'a crate::hir::HirLanguageItems,
     items: &'a mut LowerItems,
     engine: &'a mut InferenceEngine,
     resolver: &'a ResolverTables,
@@ -807,6 +857,7 @@ pub(crate) struct TraitConformancePhase;
 impl<'a> TraitConformanceService<'a> {
     pub(crate) fn new(context: TraitConformanceContext<'a>) -> Self {
         Self {
+            language_items: context.language_items,
             items: context.items,
             engine: context.engine,
             resolver: context.resolver,
@@ -1010,6 +1061,7 @@ impl TraitConformancePhase {
             });
         let output = {
             let mut service = TraitConformanceService::new(TraitConformanceContext {
+                language_items: &lowerer.language_items,
                 items: &mut lowerer.items,
                 engine: &mut lowerer.engine,
                 resolver: &lowerer.resolver,
@@ -1436,6 +1488,41 @@ impl TraitConformanceService<'_> {
             );
 
             match &mut expr.kind {
+                HirExprKind::Open { source, binding, body } => {
+                    substitute_trait_impl_types_in_expr(source, impl_type, impl_trait_id, impl_trait_arg_types, impl_associated_types, generic_subst);
+                    binding.visit_types_mut(&mut |ty| *ty = substitute_self(ty, impl_type, impl_trait_id, impl_trait_arg_types, impl_associated_types, generic_subst));
+                    substitute_trait_impl_types_in_block(body, impl_type, impl_trait_id, impl_trait_arg_types, impl_associated_types, generic_subst);
+                }
+                HirExprKind::OwnedObjectCall { owner, args, call } => {
+                    substitute_trait_impl_types_in_expr(
+                        owner,
+                        impl_type,
+                        impl_trait_id,
+                        impl_trait_arg_types,
+                        impl_associated_types,
+                        generic_subst,
+                    );
+                    for arg in args {
+                        substitute_trait_impl_types_in_expr(
+                            arg,
+                            impl_type,
+                            impl_trait_id,
+                            impl_trait_arg_types,
+                            impl_associated_types,
+                            generic_subst,
+                        );
+                    }
+                    call.visit_types_mut(&mut |ty| {
+                        *ty = substitute_self(
+                            ty,
+                            impl_type,
+                            impl_trait_id,
+                            impl_trait_arg_types,
+                            impl_associated_types,
+                            generic_subst,
+                        )
+                    });
+                }
                 HirExprKind::ArrayLiteral(elems) | HirExprKind::TupleLiteral(elems) => {
                     for elem in elems {
                         substitute_trait_impl_types_in_expr(
@@ -1487,6 +1574,26 @@ impl TraitConformanceService<'_> {
                         impl_associated_types,
                         generic_subst,
                     );
+                }
+                HirExprKind::ObjectCoercion(inner, coercion) => {
+                    substitute_trait_impl_types_in_expr(
+                        inner,
+                        impl_type,
+                        impl_trait_id,
+                        impl_trait_arg_types,
+                        impl_associated_types,
+                        generic_subst,
+                    );
+                    coercion.visit_types_mut(&mut |ty| {
+                        *ty = substitute_self(
+                            ty,
+                            impl_type,
+                            impl_trait_id,
+                            impl_trait_arg_types,
+                            impl_associated_types,
+                            generic_subst,
+                        )
+                    });
                 }
                 HirExprKind::BinOp(_, lhs, rhs) | HirExprKind::Assign(lhs, rhs) => {
                     substitute_trait_impl_types_in_expr(
@@ -2173,6 +2280,16 @@ impl TraitConformanceService<'_> {
     }
 
     fn check_supertrait_obligations(&mut self) {
+        let structs = self
+            .items
+            .structures()
+            .map(|(id, definition)| (id, definition.clone()))
+            .collect();
+        let enums = self
+            .items
+            .enumerations()
+            .map(|(id, definition)| (id, definition.clone()))
+            .collect();
         let traits = self
             .items
             .trait_defs()
@@ -2224,7 +2341,7 @@ impl TraitConformanceService<'_> {
             let selection = crate::selection::SelectionService::new(
                 &traits,
                 &impls,
-                None,
+                self.language_items.sized.as_ref().map(|item| item.trait_id),
                 Some(trait_id),
                 &imp.bounds,
             );
@@ -2238,7 +2355,15 @@ impl TraitConformanceService<'_> {
                     trait_id: required_trait,
                     type_args: args,
                 };
-                if !selection.trait_bound_satisfied(&subject, &bound) {
+                let protocol = crate::infer::solve::object_protocol_origin(
+                    &subject,
+                    &bound,
+                    &impls,
+                    &structs,
+                    &enums,
+                    self.language_items,
+                );
+                if protocol.is_none() && !selection.trait_bound_satisfied(&subject, &bound) {
                     let required_name = traits
                         .get(&required_trait)
                         .map(|required| required.name.as_str())
@@ -2567,6 +2692,16 @@ fn alpha_equivalent_bounds(
     if left.len() != right.len() {
         return false;
     }
+    if left.relaxed_sized.len() != right.relaxed_sized.len()
+        || !left.relaxed_sized.iter().all(|left| {
+            right
+                .relaxed_sized
+                .iter()
+                .any(|right| alpha_equivalent_generic_param(*left, left_impl, *right, right_impl))
+        })
+    {
+        return false;
+    }
 
     let mut left_entries = left.iter().collect::<Vec<_>>();
     left_entries.sort_by_key(|(param, _)| (param.owner, param.index));
@@ -2622,7 +2757,22 @@ fn remap_generic_param_owner(param: &mut GenericParamId, old_owner: DefId, new_o
 }
 
 fn remap_generic_bounds_owner(bounds: &mut HirGenericBounds, old_owner: DefId, new_owner: DefId) {
-    let old_bounds = std::mem::take(bounds);
+    let mut old_bounds = std::mem::take(bounds);
+    bounds.relaxed_sized = std::mem::take(&mut old_bounds.relaxed_sized)
+        .into_iter()
+        .map(|mut parameter| {
+            remap_generic_param_owner(&mut parameter, old_owner, new_owner);
+            parameter
+        })
+        .collect();
+    bounds.predicates = std::mem::take(&mut old_bounds.predicates);
+    for predicate in &mut bounds.predicates {
+        let crate::types::Predicate::Trait { subject, args, .. } = predicate;
+        remap_type_generic_owner(subject, old_owner, new_owner);
+        for argument in args {
+            remap_type_generic_owner(argument, old_owner, new_owner);
+        }
+    }
     for (mut param, mut trait_bounds) in old_bounds {
         remap_generic_param_owner(&mut param, old_owner, new_owner);
         for bound in &mut trait_bounds {
@@ -2701,6 +2851,20 @@ fn remap_expr_generic_owner(expr: &mut HirExpr, old_owner: DefId, new_owner: Def
     remap_type_generic_owner(&mut expr.ty, old_owner, new_owner);
 
     match &mut expr.kind {
+        HirExprKind::Open { source, binding, body } => {
+            remap_expr_generic_owner(source, old_owner, new_owner);
+            binding.visit_types_mut(&mut |ty| remap_type_generic_owner(ty, old_owner, new_owner));
+            if binding.witness.owner == old_owner { binding.witness.owner = new_owner; }
+            remap_block_generic_owner(body, old_owner, new_owner);
+        }
+        HirExprKind::OwnedObjectCall { owner, args, call } => {
+            remap_expr_generic_owner(owner, old_owner, new_owner);
+            for arg in args {
+                remap_expr_generic_owner(arg, old_owner, new_owner);
+            }
+            call.visit_types_mut(&mut |ty| remap_type_generic_owner(ty, old_owner, new_owner));
+            remap_opened_dispatch_owner(&mut call.method, old_owner, new_owner);
+        }
         HirExprKind::ArrayLiteral(elems) | HirExprKind::TupleLiteral(elems) => {
             for elem in elems {
                 remap_expr_generic_owner(elem, old_owner, new_owner);
@@ -2715,6 +2879,10 @@ fn remap_expr_generic_owner(expr: &mut HirExpr, old_owner: DefId, new_owner: Def
         HirExprKind::Cast(inner, ty) => {
             remap_expr_generic_owner(inner, old_owner, new_owner);
             remap_type_generic_owner(ty, old_owner, new_owner);
+        }
+        HirExprKind::ObjectCoercion(inner, coercion) => {
+            remap_expr_generic_owner(inner, old_owner, new_owner);
+            coercion.visit_types_mut(&mut |ty| remap_type_generic_owner(ty, old_owner, new_owner));
         }
         HirExprKind::BinOp(_, lhs, rhs) | HirExprKind::Assign(lhs, rhs) => {
             remap_expr_generic_owner(lhs, old_owner, new_owner);
@@ -2733,6 +2901,7 @@ fn remap_expr_generic_owner(expr: &mut HirExpr, old_owner: DefId, new_owner: Def
             }
             if let Some(target) = target {
                 target.for_each_type_mut(|ty| remap_type_generic_owner(ty, old_owner, new_owner));
+                remap_opened_dispatch_owner(target, old_owner, new_owner);
             }
         }
         HirExprKind::Try {
@@ -2824,6 +2993,12 @@ fn remap_expr_generic_owner(expr: &mut HirExpr, old_owner: DefId, new_owner: Def
     }
 }
 
+fn remap_opened_dispatch_owner(target: &mut crate::hir::HirMethodCallTarget, old_owner: DefId, new_owner: DefId) {
+    if let crate::hir::HirSelectedMethodTarget::TraitMethod { dispatch: crate::hir::HirTraitDispatchKind::Opened(witness), .. } = &mut target.target {
+        if witness.owner == old_owner { witness.owner = new_owner; }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -2912,6 +3087,7 @@ mod tests {
         });
 
         let service = super::TraitConformanceService::new(super::TraitConformanceContext {
+            language_items: &lowerer.language_items,
             items: &mut lowerer.items,
             engine: &mut lowerer.engine,
             resolver: &lowerer.resolver,
@@ -3019,6 +3195,7 @@ mod tests {
 
         let output = {
             let mut service = super::TraitConformanceService::new(super::TraitConformanceContext {
+                language_items: &lowerer.language_items,
                 items: &mut lowerer.items,
                 engine: &mut lowerer.engine,
                 resolver: &lowerer.resolver,
@@ -6100,6 +6277,7 @@ mod tests {
 
         let output = {
             let mut service = super::TraitConformanceService::new(super::TraitConformanceContext {
+                language_items: &lowerer.language_items,
                 items: &mut lowerer.items,
                 engine: &mut lowerer.engine,
                 resolver: &lowerer.resolver,

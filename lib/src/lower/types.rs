@@ -8,6 +8,20 @@ use crate::types::Type;
 use crate::lower::Lowerer;
 
 impl TypeLoweringContext for Lowerer {
+    fn nominal_type_params(&self, id: crate::ids::DefId) -> Vec<crate::types::GenericParamDecl> {
+        self.items
+            .structure(id)
+            .map(|definition| definition.generic_params.clone())
+            .or_else(|| {
+                self.items
+                    .enumeration(id)
+                    .map(|definition| definition.generic_params.clone())
+            })
+            .unwrap_or_default()
+    }
+    fn sized_trait_id(&self) -> Option<crate::ids::DefId> {
+        self.language_items.sized.as_ref().map(|item| item.trait_id)
+    }
     fn push_type_error(&mut self, message: String, span: crate::lexer::Span) {
         self.diagnostics.push(message, span);
     }
@@ -34,6 +48,64 @@ impl TypeLoweringContext for Lowerer {
 
     fn resolve_trait_type(&self, name: &str) -> Option<HirTrait> {
         crate::lower::resolution::LowerResolutionContext::new(self).resolve_trait_type(name)
+    }
+
+    fn existing_generic_type(&self, name: &str) -> Option<Type> {
+        if let Some((_, binding)) = self.opened_witnesses.iter().rev().find(|(binder, _)| binder == name) {
+            return Some(Type::Witness(binding.witness));
+        }
+        if let Some(parameter) = self
+            .body_context
+            .as_ref()
+            .and_then(|context| context.generic_param_id(name))
+        {
+            return Some(Type::Generic(parameter));
+        }
+        let owner = self.current_generic_owner()?;
+        let index = self
+            .current_generic_params()
+            .iter()
+            .position(|parameter| parameter == name)?;
+        Some(Type::Generic(crate::types::GenericParamId {
+            owner,
+            index: index as u32,
+        }))
+    }
+
+    fn admit_object_type(
+        &mut self,
+        ty: Type,
+        env: &crate::type_services::normalize::TypeNormalizationEnv,
+        span: crate::lexer::Span,
+    ) -> Type {
+        match crate::traits::objects::admit_type_objects(&ty, self, env) {
+            Ok(ty) => ty,
+            Err(error) => {
+                self.push_type_error(error.to_string(), span);
+                Type::Error
+            }
+        }
+    }
+
+    fn qualify_object_type(
+        &mut self,
+        object: crate::types::ObjectType,
+        bindings: Vec<crate::type_lowering::ObjectBindingSyntax>,
+        _binders: Vec<Vec<crate::type_services::kind::Kind>>,
+        span: crate::lexer::Span,
+    ) -> Type {
+        let traits = self
+            .items
+            .trait_defs()
+            .map(|(id, definition)| (id, definition.clone()))
+            .collect();
+        match crate::type_lowering::resolve_object_bindings(object, bindings, &traits, span) {
+            Ok(ty) => ty,
+            Err((message, span)) => {
+                self.push_type_error(message, span);
+                Type::Error
+            }
+        }
     }
 
     fn resolve_type_alias(&self, name: &str) -> Option<crate::hir::HirTypeAlias> {
@@ -122,6 +194,22 @@ impl TypeLoweringContext for Lowerer {
             env,
             self.items.type_aliases().map(|(_, alias)| alias),
         );
+    }
+}
+
+impl crate::traits::objects::ObjectTraitProvider for Lowerer {
+    fn object_trait(
+        &self,
+        id: crate::ids::DefId,
+    ) -> Option<crate::traits::objects::TraitTypeHeader> {
+        self.trait_by_id(id).map(|definition| {
+            crate::traits::objects::TraitTypeHeader::new(
+                &definition.generic_params,
+                definition.target.as_ref(),
+                &definition.associated_types,
+                &definition.predicates,
+            )
+        })
     }
 }
 

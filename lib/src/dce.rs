@@ -154,6 +154,7 @@ fn collect_instance_edges_mir_terminator(
 ) {
     match terminator {
         Terminator::Goto(_)
+        | Terminator::Unreachable { .. }
         | Terminator::GotoWithOrigin { .. }
         | Terminator::Return
         | Terminator::ReturnWithOrigin { .. }
@@ -178,7 +179,10 @@ fn collect_instance_edges_mir_rvalue(
     missing_instance_edges: &mut BTreeSet<InstanceId>,
 ) {
     match rvalue {
-        Rvalue::Use(operand) | Rvalue::Cast(operand, _) | Rvalue::UnaryOp(_, operand) => {
+        Rvalue::Object(operand, _)
+        | Rvalue::Use(operand)
+        | Rvalue::Cast(operand, _)
+        | Rvalue::UnaryOp(_, operand) => {
             collect_instance_edges_mir_operand(operand, indexes, edges, missing_instance_edges);
         }
         Rvalue::BinaryOp(_, lhs, rhs) => {
@@ -222,6 +226,7 @@ fn collect_instance_edges_mir_callable(
         }
         MirCallable::Resolved(
             MirCallableKey::Extern(_)
+            | MirCallableKey::ObjectAdapter(_)
             | MirCallableKey::Closure(_)
             | MirCallableKey::Intrinsic(_)
             | MirCallableKey::RuntimeHelper(_),
@@ -257,6 +262,44 @@ fn instance_roots(program: &MonomorphizedProgram, bodies: &MirInstanceBodies) ->
 
     if !roots.is_empty() {
         roots.extend(bodies.runtime_instance_roots());
+        roots.extend(
+            program
+                .owned_object_calls
+                .values()
+                .flat_map(|plan| [&plan.into_parts, &plan.release])
+                .filter_map(|key| match key {
+                    MirCallableKey::Instance(id) => Some(*id),
+                    _ => None,
+                }),
+        );
+        roots.extend(
+            program
+                .erased
+                .dictionaries
+                .values()
+                .flat_map(|dictionary| dictionary.members.iter())
+                .filter_map(|member| match &member.target {
+                    MirCallableKey::Instance(id) => Some(*id),
+                    MirCallableKey::ObjectAdapter(
+                        crate::mir::MirObjectAdapterKey::ConsumingMethod { target, .. },
+                    ) => Some(*target),
+                    _ => None,
+                }),
+        );
+        // Metadata is a code edge even when no source-level direct call exists.
+        roots.extend(program.vtables.values().flat_map(|table| {
+            table
+                .methods
+                .iter()
+                .chain(table.drop.iter())
+                .filter_map(|key| match key {
+                    MirCallableKey::Instance(id) => Some(*id),
+                    MirCallableKey::ObjectAdapter(
+                        crate::mir::MirObjectAdapterKey::ConsumingMethod { target, .. },
+                    ) => Some(*target),
+                    _ => None,
+                })
+        }));
     }
     roots
 }
@@ -429,6 +472,11 @@ mod tests {
             }
         }
         MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program: program(
                 functions,
                 HashMap::new(),

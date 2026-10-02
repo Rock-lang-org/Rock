@@ -7,9 +7,19 @@ use crate::ids::{AssocTypeId, DefId, TypeVarId};
 use crate::type_services::facts::TypeFacts;
 use crate::type_services::kind::Kind;
 use crate::type_services::visit::{
-    fold_type, fold_type_children, fold_type_in_place, visit_type, visit_type_children, TypeFolder,
-    TypeVisitor,
+    fold_type, fold_type_children, visit_type, visit_type_children, TypeFolder, TypeVisitor,
 };
+
+mod object;
+pub use object::{ObjectAssociatedType, ObjectBinding, ObjectType};
+
+/// A rigid, descriptor-backed type bound by an opening in one canonical body.
+/// Local IDs are preserved when the owning definition is remapped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct WitnessId {
+    pub owner: DefId,
+    pub local: crate::ids::HirLocalId,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReceiverMode {
@@ -18,7 +28,7 @@ pub enum ReceiverMode {
     Move,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct GenericParamId {
     pub owner: DefId,
     pub index: u32,
@@ -38,6 +48,7 @@ pub struct GenericParamDecl {
     pub id: GenericParamId,
     pub name: String,
     pub kind: Kind,
+    pub maybe_unsized: bool,
 }
 
 impl GenericParamDecl {
@@ -46,6 +57,7 @@ impl GenericParamDecl {
             id,
             name: name.into(),
             kind,
+            maybe_unsized: false,
         }
     }
 
@@ -88,7 +100,7 @@ impl GenericParamDecl {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AssociatedTypeKey {
     pub owner: DefId,
     pub assoc_type_id: AssocTypeId,
@@ -103,7 +115,7 @@ impl AssociatedTypeKey {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum FunctionSafety {
     Safe,
     Unsafe,
@@ -164,14 +176,14 @@ impl CallableKind {
 }
 
 /// How a closure stores a captured value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum CaptureKind {
     SharedBorrow,
     MutableBorrow,
     Move,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FunctionCapture {
     pub kind: CaptureKind,
     pub ty: Type,
@@ -183,7 +195,7 @@ impl FunctionCapture {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum NominalTypeKind {
     Struct,
     Enum,
@@ -191,7 +203,7 @@ pub enum NominalTypeKind {
 }
 
 /// The core type representation used throughout the compiler after parsing.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Type {
     /// Primitive integer types
     I8,
@@ -247,6 +259,15 @@ pub enum Type {
     },
     /// Raw pointer: *T
     Pointer(Box<Type>),
+    /// An unsized existential trait view with explicit associated-type evidence.
+    Object(Box<ObjectType>),
+    /// Hidden sized receiver bound by an object signature. Depth counts object
+    /// binders independently of type-lambda binders.
+    ObjectSelf {
+        depth: u32,
+    },
+    /// Sized but dynamically laid out; valid only under its opening evidence.
+    Witness(WitnessId),
     /// A type variable (for inference)
     TypeVar(TypeVarId),
     /// A generic type parameter (e.g. T in fn foo<T>)
@@ -287,27 +308,33 @@ struct DefIdRemapper<'a, F> {
     remap: &'a mut F,
 }
 
-impl<F> TypeFolder for DefIdRemapper<'_, F>
+impl<F, E> crate::type_services::visit::TryTypeFolder for DefIdRemapper<'_, F>
 where
-    F: FnMut(DefId) -> DefId,
+    F: FnMut(DefId) -> Result<DefId, E>,
 {
-    fn fold_type(&mut self, mut ty: Type) -> Type {
+    type Error = E;
+
+    fn try_fold_type(&mut self, mut ty: Type) -> Result<Type, E> {
         match &mut ty {
             Type::Struct { id, .. } | Type::Enum { id, .. } | Type::Constructor { id, .. } => {
-                *id = (self.remap)(*id)
+                *id = (self.remap)(*id)?;
             }
             Type::Projection {
                 trait_id,
                 assoc_type,
                 ..
             } => {
-                *trait_id = (self.remap)(*trait_id);
-                assoc_type.remap_def_ids(self.remap);
+                *trait_id = (self.remap)(*trait_id)?;
+                assoc_type.owner = (self.remap)(assoc_type.owner)?;
             }
-            Type::Generic(param) => param.remap_def_ids(self.remap),
+            Type::Generic(param) => param.owner = (self.remap)(param.owner)?,
+            Type::Witness(witness) => witness.owner = (self.remap)(witness.owner)?,
+            Type::Object(object) => {
+                object.try_remap_trait_ids(self.remap)?;
+            }
             _ => {}
         }
-        fold_type_children(ty, self)
+        crate::type_services::visit::try_fold_type_children(ty, self)
     }
 }
 
@@ -433,7 +460,20 @@ impl Type {
     where
         F: FnMut(DefId) -> DefId,
     {
-        fold_type_in_place(self, &mut DefIdRemapper { remap });
+        match self.try_remap_def_ids(&mut |id| Ok::<_, std::convert::Infallible>(remap(id))) {
+            Ok(()) => {}
+            Err(never) => match never {},
+        }
+    }
+
+    pub fn try_remap_def_ids<E>(
+        &mut self,
+        remap: &mut impl FnMut(DefId) -> Result<DefId, E>,
+    ) -> Result<(), E> {
+        let remapped =
+            crate::type_services::visit::try_fold_type(self.clone(), &mut DefIdRemapper { remap })?;
+        *self = remapped;
+        Ok(())
     }
 
     pub fn is_integer(&self) -> bool {
@@ -576,10 +616,10 @@ pub struct FunctionSig {
 }
 
 /// Trait bound for type variables (e.g., Num T)
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct TraitBound {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct TraitBound<T = Type> {
     pub trait_id: DefId,
-    pub type_args: Vec<Type>,
+    pub type_args: Vec<T>,
 }
 
 /// A semantic where-clause predicate with an arbitrary typed subject.

@@ -34,6 +34,7 @@ pub struct MirClosureId {
 pub enum MirRuntimeHelper {
     BoundsCheck,
     HeapAlloc,
+    HeapFree,
     DropGlue,
 }
 
@@ -218,6 +219,9 @@ pub enum MirIntrinsicId {
     BorrowStr,
     ArrPtr,
     SizeOf,
+    AlignOf,
+    SizeOfValue,
+    AlignOfValue,
     DropInPlace,
     Forget,
     AtomicU64Exchange,
@@ -410,6 +414,9 @@ impl MirIntrinsicId {
             "BorrowStr" => Self::BorrowStr,
             "ArrPtr" => Self::ArrPtr,
             "SizeOf" => Self::SizeOf,
+            "AlignOf" => Self::AlignOf,
+            "SizeOfValue" => Self::SizeOfValue,
+            "AlignOfValue" => Self::AlignOfValue,
             "DropInPlace" => Self::DropInPlace,
             "Forget" => Self::Forget,
             "AtomicU64Exchange" => Self::AtomicU64Exchange,
@@ -601,6 +608,9 @@ impl MirIntrinsicId {
             Self::BorrowStr => "BorrowStr",
             Self::ArrPtr => "ArrPtr",
             Self::SizeOf => "SizeOf",
+            Self::AlignOf => "AlignOf",
+            Self::SizeOfValue => "SizeOfValue",
+            Self::AlignOfValue => "AlignOfValue",
             Self::DropInPlace => "DropInPlace",
             Self::Forget => "Forget",
             Self::AtomicU64Exchange => "AtomicU64Exchange",
@@ -796,7 +806,7 @@ impl MirIntrinsicId {
     }
 
     pub fn is_type_only(&self) -> bool {
-        matches!(self, Self::ArrayLen | Self::SizeOf)
+        matches!(self, Self::ArrayLen | Self::SizeOf | Self::AlignOf)
     }
 }
 
@@ -819,7 +829,9 @@ impl MirCallable {
                 MirCallableKey::Extern(id) => Some(MirFunctionId::Extern(*id)),
                 MirCallableKey::Instance(id) => Some(MirFunctionId::Instance(*id)),
                 MirCallableKey::Closure(id) => Some(id.clone()),
-                MirCallableKey::Intrinsic(_) | MirCallableKey::RuntimeHelper(_) => None,
+                MirCallableKey::Intrinsic(_)
+                | MirCallableKey::RuntimeHelper(_)
+                | MirCallableKey::ObjectAdapter(_) => None,
             },
         }
     }

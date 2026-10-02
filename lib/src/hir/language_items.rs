@@ -10,6 +10,7 @@ use crate::types::{GenericParamId, Type};
 
 pub(crate) fn validate_language_items<P: HirPhase>(program: &HirProgramFor<P>) -> Vec<String> {
     let mut errors = Vec::new();
+    validate_owners(program, &mut errors);
     if let Some(items) = &program.language_items.fold {
         require_same_crate(
             "fold",
@@ -88,6 +89,165 @@ pub(crate) fn validate_language_items<P: HirPhase>(program: &HirProgramFor<P>) -
     }
 
     errors
+}
+
+fn validate_owners<P: HirPhase>(program: &HirProgramFor<P>, errors: &mut Vec<String>) {
+    use crate::language_items::LanguageItemRole as R;
+    use crate::type_services::kind::Kind;
+    let mut operations = Vec::new();
+    if let Some(owner) = &program.language_items.object_owner {
+        operations.push((owner.trait_id, owner.into_parts_id, R::OwnerIntoParts));
+        operations.push((owner.trait_id, owner.from_parts_id, R::OwnerFromParts));
+    }
+    for (item, role) in [
+        (
+            &program.language_items.object_owner_allocate,
+            R::OwnerAllocate,
+        ),
+        (&program.language_items.object_owner_unique, R::OwnerRelease),
+    ] {
+        if let Some(item) = item {
+            if program
+                .language_items
+                .object_owner
+                .as_ref()
+                .is_none_or(|owner| owner.trait_id.crate_id != item.trait_id.crate_id)
+            {
+                errors.push(format!(
+                    "{role} requires object_owner from the same provider"
+                ));
+            }
+            operations.push((item.trait_id, item.method_id, role));
+        }
+    }
+    for (trait_id, member_id, role) in operations {
+        let label = role.as_str();
+        require_same_crate(label, [("trait", trait_id), ("method", member_id)], errors);
+        let Some(definition) = required_trait(program, trait_id, label, errors) else {
+            continue;
+        };
+        let Some(constructor) = definition
+            .target
+            .as_ref()
+            .filter(|target| target.kind == Kind::arrow(Kind::Type, Kind::Type))
+        else {
+            errors.push(format!("{label} requires a unary constructor target"));
+            continue;
+        };
+        if definition.generic_params.len() != 1
+            || definition.generic_params[0].kind != Kind::Type
+            || definition.generic_params[0].maybe_unsized
+            || !definition.associated_types.is_empty()
+        {
+            errors.push(format!(
+                "{label} requires exactly one value-kind State parameter and no associated types"
+            ));
+            continue;
+        }
+        let state = Type::Generic(definition.generic_params[0].id);
+        let Some(method) =
+            required_trait_member(program, definition, trait_id, member_id, label, errors)
+        else {
+            continue;
+        };
+        require_receiver(&method, label, None, errors);
+        let (unsafe_, parameters, bounds) = match &method {
+            TraitMember::Default(function) => (
+                function.is_unsafe,
+                &function.generic_params,
+                &function.generic_bounds,
+            ),
+            TraitMember::Signature(function) => (
+                function.is_unsafe,
+                &function.generic_params,
+                &function.generic_bounds,
+            ),
+        };
+        if !unsafe_ {
+            errors.push(format!("{label} must be unsafe"));
+        }
+        let params = method.params();
+        let byte_pointer = Type::Pointer(Box::new(Type::U8));
+        if role == R::OwnerAllocate {
+            if parameters
+                .iter()
+                .any(|parameter| parameter.id.owner == member_id)
+            {
+                errors.push(format!(
+                    "{label} must not quantify payload-dependent parameters"
+                ));
+            }
+            if params != vec![&Type::I64, &Type::I64]
+                || method.ret() != &Type::Tuple(vec![byte_pointer, state])
+            {
+                errors.push(format!(
+                    "{label} must have signature I64 -> I64 -> (*U8, State)"
+                ));
+            }
+            continue;
+        }
+        if role == R::OwnerRelease {
+            if parameters
+                .iter()
+                .any(|parameter| parameter.id.owner == member_id)
+            {
+                errors.push(format!(
+                    "{label} must not quantify payload-dependent parameters"
+                ));
+            }
+            if params != vec![&byte_pointer, &state] || method.ret() != &Type::Unit {
+                errors.push(format!("{label} must have signature *U8 -> State -> ()"));
+            }
+            continue;
+        }
+        let payload = match role {
+            R::OwnerIntoParts => match method.ret() {
+                Type::Tuple(parts) if parts.len() == 2 && parts[1] == state => match &parts[0] {
+                    Type::Pointer(payload) => Some(payload.as_ref()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            R::OwnerFromParts => match params.first() {
+                Some(Type::Pointer(payload)) => Some(payload.as_ref()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(Type::Generic(payload)) = payload else {
+            errors.push(format!("{label} must transport a generic payload pointer"));
+            continue;
+        };
+        if *payload == definition.generic_params[0].id
+            || *payload == constructor.id
+            || !parameters.iter().any(|parameter| parameter.id == *payload)
+            || !bounds.relaxed_sized.contains(payload)
+        {
+            errors.push(format!(
+                "{label} must quantify a distinct payload T with T: ?Sized"
+            ));
+        }
+        if parameters.iter().any(|parameter| parameter.id.owner == member_id && parameter.id != *payload)
+            || bounds.get(payload).is_some_and(|bounds| !bounds.is_empty())
+            || bounds.predicates.iter().any(|predicate| matches!(predicate, crate::types::Predicate::Trait { subject: Type::Generic(parameter), .. } if parameter == payload))
+        {
+            errors.push(format!("{label} must accept every ?Sized payload, without additional payload bounds"));
+        }
+        let owner = Type::Apply {
+            constructor: Box::new(Type::Generic(constructor.id)),
+            args: vec![Type::Generic(*payload)],
+        };
+        let valid = if role == R::OwnerIntoParts {
+            params == vec![&owner]
+        } else {
+            params.len() == 2 && params[1] == &state && method.ret() == &owner
+        };
+        if !valid {
+            errors.push(format!(
+                "{label} must preserve the exact owner constructor, pointee and independent State"
+            ));
+        }
+    }
 }
 
 fn validate_range<P: HirPhase>(

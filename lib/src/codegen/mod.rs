@@ -283,6 +283,13 @@ pub(crate) struct MirClosureCodegenMetadata {
     pub(crate) captures: Vec<TypeId>,
 }
 
+#[cfg(test)]
+mod erased_tests;
+#[cfg(test)]
+mod object_adapter_tests;
+#[cfg(test)]
+mod object_tests;
+
 #[derive(Debug, Clone)]
 pub(crate) enum CodegenEnumVariantFields {
     Unit,
@@ -300,6 +307,16 @@ pub(crate) struct CodeGen<'ctx> {
     module: Module<'ctx>,
     builder: Builder<'ctx>,
     type_context: Option<crate::type_context::TypeContext>,
+    erased_functions: std::collections::BTreeMap<crate::mir::MirErasedKey, FunctionValue<'ctx>>,
+    erased_descriptors: std::collections::BTreeMap<TypeId, inkwell::values::GlobalValue<'ctx>>,
+    erased_dictionaries:
+        std::collections::BTreeMap<crate::mir::MirDictionaryId, inkwell::values::GlobalValue<'ctx>>,
+    erased_contract: crate::mir::MirErasedContract,
+    object_schemas: std::collections::BTreeMap<TypeId, crate::mir::MirObjectSchema>,
+    owned_object_calls:
+        std::collections::BTreeMap<crate::mir::MirOwnedObjectKey, crate::mir::MirOwnedObjectPlan>,
+    object_vtables:
+        std::collections::BTreeMap<crate::mir::MirVtableId, inkwell::values::GlobalValue<'ctx>>,
     /// Known functions
     functions: HashMap<String, FunctionValue<'ctx>>,
     #[allow(dead_code)]
@@ -398,6 +415,13 @@ impl<'ctx> CodeGen<'ctx> {
             module,
             builder,
             type_context: None,
+            erased_functions: Default::default(),
+            erased_descriptors: Default::default(),
+            erased_dictionaries: Default::default(),
+            erased_contract: Default::default(),
+            object_schemas: Default::default(),
+            owned_object_calls: Default::default(),
+            object_vtables: Default::default(),
             functions: HashMap::new(),
             mir_function_symbols: HashMap::new(),
             callable_symbols_by_key: HashMap::new(),
@@ -570,6 +594,16 @@ impl<'ctx> CodeGen<'ctx> {
             let func = self.module.add_function("malloc", fn_type, None);
             self.functions.insert("malloc".to_string(), func);
         }
+        if runtime_requirements.contains(&MirRuntimeHelper::HeapFree)
+            && !self.functions.contains_key("free")
+        {
+            let function = self.module.add_function(
+                "free",
+                self.context.void_type().fn_type(&[ptr_ty.into()], false),
+                None,
+            );
+            self.functions.insert("free".into(), function);
+        }
     }
 
     fn prepare_mir_program_declarations(
@@ -594,6 +628,9 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(CodegenError::internalize)?;
         self.materialize_program_entrypoint(mir)
             .map_err(CodegenError::internalize)?;
+        self.emit_object_adapters(&mir.backend_contract)?;
+        self.emit_erased_program(&mir.backend_contract)?;
+        self.emit_object_vtables(&mir.backend_contract)?;
 
         Ok(())
     }
@@ -614,8 +651,19 @@ impl<'ctx> CodeGen<'ctx> {
         .map(|error| format!("{:?}", error))
         .collect::<Vec<_>>();
 
-        let observed = crate::mir::backend_contract::runtime_requirements_for_functions(
+        let observed = crate::mir::backend_contract::runtime_requirements_for_backend(
+            &mir.backend_contract,
             mir.functions.values(),
+        );
+        messages.extend(
+            crate::mir::validate_object_contract(mir)
+                .into_iter()
+                .map(|error| format!("{error:?}")),
+        );
+        messages.extend(
+            crate::mir::validate_erased_contract(mir)
+                .into_iter()
+                .map(|error| format!("invalid erased contract: {error:?}")),
         );
         let missing = observed
             .difference(&mir.backend_contract.runtime_requirements)
@@ -1014,7 +1062,9 @@ impl<'ctx> CodeGen<'ctx> {
         declaration: &MirCallableDecl,
     ) -> Result<(), CodegenError> {
         match &declaration.kind {
-            MirCallableKind::LocalBody { .. } | MirCallableKind::ObjectProvided => {
+            MirCallableKind::LocalBody { .. }
+            | MirCallableKind::ObjectProvided
+            | MirCallableKind::ObjectAdapter(_) => {
                 let function = if matches!(declaration.key, MirCallableKey::Closure(_)) {
                     self.declare_mir_contract_closure_function(declaration)?
                 } else {
@@ -1080,7 +1130,7 @@ impl<'ctx> CodeGen<'ctx> {
         let ret = declaration.signature.ret.abi_ty;
         let ret_ty = self.structural_type_for(ret);
         let fn_type = match ret_ty {
-            Type::Unit => self.context.void_type().fn_type(&param_types, false),
+            Type::Unit | Type::Never => self.context.void_type().fn_type(&param_types, false),
             _ => self.llvm_type_id(ret).fn_type(&param_types, false),
         };
         let llvm_function =
@@ -1133,7 +1183,7 @@ impl<'ctx> CodeGen<'ctx> {
         let ret = declaration.signature.ret.abi_ty;
         let ret_ty = self.structural_type_for(ret);
         let fn_type = match ret_ty {
-            Type::Unit => self.context.void_type().fn_type(&param_types, variadic),
+            Type::Unit | Type::Never => self.context.void_type().fn_type(&param_types, variadic),
             _ => self.llvm_type_id(ret).fn_type(&param_types, variadic),
         };
         let base_name = link_name.split("::").last().unwrap_or(link_name);
@@ -1179,7 +1229,7 @@ impl<'ctx> CodeGen<'ctx> {
         let ret = signature.ret.abi_ty;
         let ret_type = self.structural_type_for(ret);
         let fn_type = match ret_type {
-            Type::Unit => self.context.void_type().fn_type(&param_types, false),
+            Type::Unit | Type::Never => self.context.void_type().fn_type(&param_types, false),
             _ => self.llvm_type(&ret_type).fn_type(&param_types, false),
         };
         let llvm_function = if let Some(existing) = self.module.get_function(&llvm_symbol) {

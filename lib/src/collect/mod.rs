@@ -10,8 +10,10 @@ mod declarations;
 mod headers;
 pub mod item_index;
 mod language_items;
+mod objects;
 pub mod resolver;
 mod scope;
+pub(crate) mod sizedness;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -1438,6 +1440,7 @@ mod tests {
 
     fn generic_param_decl(name: &str) -> crate::ast::GenericParamDecl {
         crate::ast::GenericParamDecl {
+            unsized_bound: None,
             name: ident(name),
             kind: None,
             span: crate::lexer::Span::test(),

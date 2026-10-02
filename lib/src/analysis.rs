@@ -62,7 +62,7 @@ impl Analysis {
                     self.local_binding(owner, local)
                         .map(|(name, ty)| HoverInfo {
                             span,
-                            contents: format!("{}: {}", name, self.hir.display_type(&ty)),
+                            contents: format!("{}: {}", name, self.hover_type(&ty)),
                             kind: HoverKind::Variable,
                         })
                 }
@@ -88,9 +88,9 @@ impl Analysis {
                         contents,
                         kind: HoverKind::Type,
                     }),
-                SourceSymbol::Generic(id) => self.generic_name(id).map(|name| HoverInfo {
+                SourceSymbol::Generic(id) => self.generic_hover(id).map(|contents| HoverInfo {
                     span,
-                    contents: format!("{}: type parameter", name),
+                    contents,
                     kind: HoverKind::Generic,
                 }),
             };
@@ -282,6 +282,72 @@ impl Analysis {
             .type_aliases
             .get(&id.owner)
             .and_then(|alias| generic_param_name(&alias.generic_params, id))
+    }
+
+    fn generic_hover(&self, id: GenericParamId) -> Option<String> {
+        let name = self.generic_name(id)?;
+        let bounds = self
+            .function(id.owner)
+            .map(|function| &function.generic_bounds)
+            .or_else(|| self.hir.program.impls.get(&id.owner).map(|imp| &imp.bounds))
+            .and_then(|bounds| bounds.get(&id));
+        let mut contents = format!("{name}: type parameter");
+        if let Some(bounds) = bounds {
+            let visible = bounds
+                .iter()
+                .filter_map(|bound| {
+                    let trait_def = self.hir.program.traits.get(&bound.trait_id)?;
+                    let arguments = bound
+                        .type_args
+                        .iter()
+                        .map(|ty| self.hir.display_type(ty))
+                        .collect::<Vec<_>>();
+                    let application = if arguments.is_empty() {
+                        trait_def.name.clone()
+                    } else {
+                        format!("{} {}", trait_def.name, arguments.join(", "))
+                    };
+                    Some(format!("{name}: {application}"))
+                })
+                .collect::<Vec<_>>();
+            if !visible.is_empty() {
+                contents.push_str(&format!("\nwhere {}", visible.join(", ")));
+            }
+        }
+        Some(contents)
+    }
+
+    fn hover_type(&self, ty: &Type) -> String {
+        let mut contents = self.hir.display_type(ty);
+        if crate::type_services::visit::type_any(ty, |nested| matches!(nested, Type::Object(_))) {
+            contents.push_str("\n// trait object; reference or owner determines storage");
+        }
+        let mut witnesses = std::collections::BTreeSet::new();
+        crate::type_services::visit::visit_type(ty, &mut |nested: &Type| {
+            if let Type::Witness(witness) = nested {
+                witnesses.insert(*witness);
+            }
+        });
+        for witness in witnesses {
+            let mut object = None;
+            self.for_each_function(|function| {
+                if object.is_none() {
+                    object = find_witness_object_in_block(&function.body, witness);
+                }
+            });
+            let bound = object
+                .map(|object| {
+                    format!(
+                        " of {}",
+                        self.hir.display_type(&Type::Object(Box::new(object)))
+                    )
+                })
+                .unwrap_or_default();
+            contents.push_str(&format!(
+                "\n// scoped witness{bound}; descriptor-backed layout"
+            ));
+        }
+        contents
     }
 
     fn function_signature(&self, id: DefId) -> Option<FunctionSignature> {
@@ -483,6 +549,11 @@ fn find_local_in_block(block: &AcceptedHirBlock, local: HirLocalId) -> Option<(S
 }
 
 fn find_local_in_expr(expr: &AcceptedHirExpr, local: HirLocalId) -> Option<(String, Type)> {
+    if let HirExprKindFor::Open { binding, .. } = &expr.kind {
+        if binding.value.local_id == local {
+            return Some((binding.value.name.clone(), binding.value.ty.clone()));
+        }
+    }
     if let HirExprKindFor::ResolvedVar(reference) = &expr.kind {
         if reference.target == HirVarTarget::Local(local) {
             return Some((reference.name.clone(), expr.ty.clone()));
@@ -546,11 +617,7 @@ fn find_expression_hover_in_expr(
         {
             let (contents, kind) = match &expr.kind {
                 HirExprKindFor::ResolvedVar(reference) => (
-                    format!(
-                        "{}: {}",
-                        reference.name,
-                        analysis.hir.display_type(&expr.ty)
-                    ),
+                    format!("{}: {}", reference.name, analysis.hover_type(&expr.ty)),
                     HoverKind::Variable,
                 ),
                 HirExprKindFor::FieldAccess(_, name, location) => {
@@ -562,7 +629,7 @@ fn find_expression_hover_in_expr(
                         });
                     (contents, HoverKind::Field)
                 }
-                _ => (analysis.hir.display_type(&expr.ty), HoverKind::Variable),
+                _ => (analysis.hover_type(&expr.ty), HoverKind::Variable),
             };
             *best = Some((
                 width,
@@ -632,6 +699,11 @@ fn find_signature_in_expr(
             receiver.span.start,
             args.as_slice(),
         )),
+        HirExprKindFor::OwnedObjectCall { owner, args, call } => Some((
+            method_target_definition(&call.method),
+            owner.span.start,
+            args.as_slice(),
+        )),
         _ => None,
     };
 
@@ -692,12 +764,59 @@ enum HirChild<'a> {
     Block(&'a AcceptedHirBlock),
 }
 
+fn find_witness_object_in_block(
+    block: &AcceptedHirBlock,
+    witness: crate::types::WitnessId,
+) -> Option<crate::types::ObjectType> {
+    block.stmts.iter().find_map(|statement| match statement {
+        HirStmtFor::Let { value, .. }
+        | HirStmtFor::Expr(value)
+        | HirStmtFor::Return(Some(value))
+        | HirStmtFor::Break(Some(value)) => find_witness_object_in_expr(value, witness),
+        _ => None,
+    })
+}
+
+fn find_witness_object_in_expr(
+    expr: &AcceptedHirExpr,
+    witness: crate::types::WitnessId,
+) -> Option<crate::types::ObjectType> {
+    if let HirExprKindFor::Open { binding, .. } = &expr.kind {
+        if binding.witness == witness {
+            return Some(binding.object.clone());
+        }
+    }
+    let mut found = None;
+    visit_expr_children(expr, &mut |child| {
+        if found.is_none() {
+            found = match child {
+                HirChild::Expr(expr) => find_witness_object_in_expr(expr, witness),
+                HirChild::Block(block) => find_witness_object_in_block(block, witness),
+            };
+        }
+    });
+    found
+}
+
 fn visit_expr_children(expr: &AcceptedHirExpr, visit: &mut impl FnMut(HirChild<'_>)) {
     match &expr.kind {
+        HirExprKindFor::Open { source, body, .. } => {
+            visit(HirChild::Expr(source));
+            visit(HirChild::Block(body));
+        }
+        HirExprKindFor::Open { source, body, .. } => {
+            visit(HirChild::Expr(source));
+            visit(HirChild::Block(body));
+        }
+        HirExprKindFor::OwnedObjectCall { owner, args, .. } => {
+            visit(HirChild::Expr(owner));
+            args.iter().for_each(|expr| visit(HirChild::Expr(expr)));
+        }
         HirExprKindFor::ArrayLiteral(values) | HirExprKindFor::TupleLiteral(values) => {
             values.iter().for_each(|expr| visit(HirChild::Expr(expr)))
         }
         HirExprKindFor::ArrayRepeat(value, _)
+        | HirExprKindFor::ObjectCoercion(value, _)
         | HirExprKindFor::UnaryOp(_, value)
         | HirExprKindFor::FieldAccess(value, _, _)
         | HirExprKindFor::TupleIndex(value, _)
@@ -828,6 +947,75 @@ mod tests {
             .hover(&path, source.rfind("value").unwrap())
             .unwrap();
         assert_eq!(reference.contents, "Holder.value: I64");
+    }
+
+    #[test]
+    fn analysis_distinguishes_object_views_from_bounded_type_parameters() {
+        let source = r#"
+trait Read
+    @read: I64
+struct Number
+    < value: I64
+impl Read for Number
+    @read = -> self.value
+read_static: T -> I64 where T: Read
+read_static = item -> item.read!
+main = ->
+    number = Number
+        value: 42
+    object: &Read = &number
+    object.read!
+"#;
+        let analysis = analyze(source);
+        let path = PathBuf::from("/virtual/main.rk");
+        let object = analysis
+            .hover(&path, source.rfind("object.read").unwrap())
+            .unwrap();
+        assert!(object.contents.starts_with("object: &Read"), "{object:?}");
+        assert!(object.contents.contains("trait object"), "{object:?}");
+
+        let parameter = analysis.hover(&path, source.find("T ->").unwrap()).unwrap();
+        assert_eq!(parameter.kind, super::HoverKind::Generic);
+        assert!(parameter.contents.starts_with("T: type parameter"));
+        assert!(parameter.contents.contains("T: Read"), "{parameter:?}");
+        assert!(!parameter.contents.contains("trait object"));
+
+        let member = analysis
+            .hover(&path, source.rfind("read!").unwrap())
+            .unwrap();
+        assert_eq!(member.kind, super::HoverKind::Function);
+        assert!(member.contents.contains("I64"), "{member:?}");
+    }
+
+    #[test]
+    fn analysis_reports_opened_witness_bounds_without_exposing_a_concrete_type() {
+        let source = r#"
+trait Read
+    @read: I64
+struct Number
+    < value: I64
+impl Read for Number
+    @read = -> self.value
+read_open: &Read -> I64
+read_open = object ->
+    open object as T, value
+        value.read!
+main = ->
+    number = Number
+        value: 42
+    read_open &number
+"#;
+        let analysis = analyze(source);
+        let path = PathBuf::from("/virtual/main.rk");
+        let value = analysis
+            .hover(&path, source.find("value.read").unwrap())
+            .unwrap();
+        assert!(
+            value.contents.contains("scoped witness of Read"),
+            "{value:?}"
+        );
+        assert!(value.contents.contains("descriptor-backed layout"));
+        assert!(!value.contents.contains("Number"));
     }
 
     #[test]

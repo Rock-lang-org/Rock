@@ -150,7 +150,7 @@ impl Lowerer {
                 };
                 let bounds = self
                     .selection_service()
-                    .trait_bounds_with_supertraits(&owner_ty, bounds);
+                    .implied_trait_bounds(&owner_ty, bounds);
                 (owner_ty, bounds)
             } else {
                 let Some(nominal) = crate::lower::resolution::LowerResolutionContext::new(self)
@@ -352,7 +352,13 @@ impl Lowerer {
                 .map(|param| param.substitute_generics(&subst))
                 .collect();
             let ret = ret.substitute_generics(&subst);
-            let method_generic_bounds = method_generic_bounds
+            let relaxed_sized = method_generic_bounds.relaxed_sized.clone();
+            let predicates = method_generic_bounds
+                .predicates
+                .iter()
+                .map(|predicate| predicate.substitute_generics(&subst))
+                .collect();
+            let mut method_generic_bounds = method_generic_bounds
                 .iter()
                 .map(|(&param, bounds)| {
                     (
@@ -371,6 +377,8 @@ impl Lowerer {
                     )
                 })
                 .collect::<HirGenericBounds>();
+            method_generic_bounds.relaxed_sized = relaxed_sized;
+            method_generic_bounds.predicates = predicates;
             let target = HirMethodCallTarget::trait_method(
                 trait_def.id,
                 method_id,
@@ -797,11 +805,32 @@ impl Lowerer {
             return;
         }
         let owner = self.engine.resolve(&target.owner_ty);
+        // Expected-type lowering may already have wrapped a reference in a
+        // pending coercion. Probe the original operand, not its still-open
+        // destination; committed or fully typed conversions remain authoritative.
+        let actual_types = args
+            .iter()
+            .map(|arg| {
+                let mut value = arg;
+                while let HirExprKind::ObjectCoercion(inner, coercion) = &value.kind {
+                    if coercion.evidence.is_some()
+                        || !crate::type_services::visit::type_any(
+                            &self.engine.resolve(&coercion.target),
+                            |ty| matches!(ty, Type::TypeVar(_)),
+                        )
+                    {
+                        break;
+                    }
+                    value = inner.as_ref();
+                }
+                self.engine.resolve(&value.ty)
+            })
+            .collect::<Vec<_>>();
         let mut direct = self.engine.clone_for_probe();
         if params
             .iter()
-            .zip(args)
-            .any(|(param, arg)| direct.unify(&param.ty, &arg.ty).is_err())
+            .zip(&actual_types)
+            .any(|(param, actual)| direct.unify(&param.ty, actual).is_err())
         {
             return;
         }
@@ -811,11 +840,18 @@ impl Lowerer {
             .iter()
             .map(|ty| direct.resolve(ty))
             .collect::<Vec<_>>();
-        if !matches!(
-            self.selection_service()
-                .select_trait_impl_strict(&owner, trait_id, &direct_args),
-            Err(crate::selection::SelectionDiagnostic::NoImplementation { .. })
-        ) {
+        let exact = match self
+            .selection_service()
+            .select_trait_impl_strict(&owner, trait_id, &direct_args)
+        {
+            Ok(_) => true,
+            Err(crate::selection::SelectionDiagnostic::NoImplementation { .. }) => false,
+            Err(_) => return,
+        };
+        if exact {
+            // A proven exact implementation fixes the ordinary argument
+            // type before deferred object coercion can keep it open.
+            self.engine.commit_probe(direct.clone_for_commit());
             return;
         }
 
@@ -823,8 +859,8 @@ impl Lowerer {
         // the normal array-reference-to-slice coercion. Exact impls take precedence.
         let mut coerced = self.engine.clone_for_probe();
         let mut changed = false;
-        for (param, arg) in params.iter().zip(args) {
-            let mut actual = self.engine.resolve(&arg.ty);
+        for (param, actual) in params.iter().zip(actual_types) {
+            let mut actual = actual;
             if let Type::Reference { mutable, inner } = &actual {
                 if let Type::Array(element, _) = inner.as_ref() {
                     actual = Type::Reference {
@@ -1634,6 +1670,26 @@ impl Lowerer {
         current_kind: HirClosureCaptureKind,
     ) {
         match &expr.kind {
+            HirExprKind::Open { source, binding, body } => {
+                let kind = Self::lambda_capture_kind_for_value(&source.ty, current_kind);
+                self.collect_lambda_captures_expr(source, defined, used, capture_kinds, kind);
+                let mut inner_defined = defined.clone();
+                inner_defined.insert(binding.value.name.clone());
+                self.collect_lambda_captures_block(body, &mut inner_defined, used, capture_kinds, current_kind);
+            }
+            HirExprKind::OwnedObjectCall { owner, args, .. } => {
+                self.collect_lambda_captures_expr(
+                    owner,
+                    defined,
+                    used,
+                    capture_kinds,
+                    HirClosureCaptureKind::Move,
+                );
+                for arg in args {
+                    let kind = Self::lambda_capture_kind_for_value(&arg.ty, current_kind);
+                    self.collect_lambda_captures_expr(arg, defined, used, capture_kinds, kind);
+                }
+            }
             HirExprKind::Var(name) => {
                 self.record_lambda_capture(name, current_kind, defined, used, capture_kinds);
             }
@@ -1661,7 +1717,8 @@ impl Lowerer {
             }
             HirExprKind::UnaryOp(_, inner)
             | HirExprKind::Deref(inner)
-            | HirExprKind::Cast(inner, _) => {
+            | HirExprKind::Cast(inner, _)
+            | HirExprKind::ObjectCoercion(inner, _) => {
                 self.collect_lambda_captures_expr(
                     inner,
                     defined,
@@ -2496,7 +2553,16 @@ impl Lowerer {
 
             let mut fields = Vec::new();
             for (ident, expr) in &inst.fields {
-                let mut hir_expr = self.lower_expression(expr);
+                let expected = hir_struct
+                    .fields
+                    .iter()
+                    .find(|field| field.name == ident.name)
+                    .map(|field| field.ty.substitute_generics(&type_var_mapping));
+                let mut hir_expr = if let Some(expected) = &expected {
+                    self.lower_expression_expected(expr, expected)
+                } else {
+                    self.lower_expression(expr)
+                };
 
                 // Find the expected field type and substitute generic params
                 if let Some(field_info) = hir_struct.fields.iter().find(|f| f.name == ident.name) {
@@ -3718,6 +3784,95 @@ main = ->
         assert_eq!(reference.target, HirVarTarget::Function(method_id));
         assert_eq!(target.method.impl_id(), Some(def_id(42)));
         assert_eq!(target.method.method_id(), Some(method_id));
+    }
+
+    #[test]
+    fn static_trait_reference_argument_inference_precedes_deferred_coercion() {
+        let hir = compile_source_to_resolved_hir_for_test(
+            r#"
+trait Construct A
+    from: A -> Self
+struct Owned
+    < value: I64
+impl Construct T for T
+    from = value -> value
+impl Construct I64 for Owned
+    from = value -> Owned
+        value: value
+impl Construct &I64 for Owned
+    from = value -> Owned
+        value: *value
+convert: &I64 -> Owned
+convert = value -> Owned::from value
+main = !-> ()
+"#,
+        );
+        let expected = Type::Reference {
+            mutable: false,
+            inner: Box::new(Type::I64),
+        };
+        assert_static_conversion_target(&hir, &expected);
+    }
+
+    #[test]
+    fn static_trait_array_reference_inference_keeps_slice_coercion() {
+        let hir = compile_source_to_resolved_hir_for_test(
+            r#"
+trait Construct A
+    from: A -> Self
+struct Owned
+    < value: I64
+impl Construct T for T
+    from = value -> value
+impl Construct I64 for Owned
+    from = value -> Owned
+        value: value
+impl Construct &[I64] for Owned
+    from = _ -> Owned
+        value: 42
+convert: &[I64; 2] -> Owned
+convert = value -> Owned::from value
+main = !-> ()
+"#,
+        );
+        let expected = Type::Reference {
+            mutable: false,
+            inner: Box::new(Type::Slice(Box::new(Type::I64))),
+        };
+        assert_static_conversion_target(&hir, &expected);
+    }
+
+    fn assert_static_conversion_target(hir: &crate::infer::ResolvedHirProgram, expected: &Type) {
+        let program = hir.program.program();
+        let conversion = program
+            .functions
+            .values()
+            .find(|function| function.name == "convert")
+            .unwrap();
+        let target = conversion
+            .body
+            .stmts
+            .iter()
+            .find_map(|statement| match statement {
+                crate::hir::HirStmtFor::Expr(expression) => find_static_method_target(expression),
+                _ => None,
+            })
+            .expect("conversion must preserve static member authority");
+        let implementation = program
+            .impls
+            .values()
+            .find(|implementation| {
+                implementation.trait_arg_types.as_slice() == std::slice::from_ref(expected)
+            })
+            .unwrap();
+        let declaration = &program.traits[&implementation.trait_id.unwrap()];
+        assert_eq!(target.method.trait_args(), std::slice::from_ref(expected));
+        assert_eq!(target.owner_ty, conversion.ret_type);
+        assert_eq!(target.method.trait_id(), Some(declaration.id));
+        assert_eq!(
+            target.method.method_id(),
+            Some(declaration.signatures["from"].id)
+        );
     }
 
     #[test]

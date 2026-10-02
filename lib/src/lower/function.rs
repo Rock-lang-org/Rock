@@ -98,6 +98,20 @@ impl Lowerer {
             })
             .collect();
         remapped.predicates = bounds.predicates.clone();
+        remapped.relaxed_sized = bounds
+            .relaxed_sized
+            .iter()
+            .map(|parameter| {
+                generic_ids
+                    .iter()
+                    .position(|id| id == parameter)
+                    .map(|index| GenericParamId {
+                        owner: new_owner,
+                        index: index as u32,
+                    })
+                    .unwrap_or(*parameter)
+            })
+            .collect();
         for predicate in &mut remapped.predicates {
             match predicate {
                 crate::types::Predicate::Trait { subject, args, .. } => {
@@ -345,6 +359,24 @@ impl Lowerer {
                     .0
                 })
                 .collect::<Vec<_>>();
+            if clause.relaxed {
+                if self.language_items.sized.as_ref().map(|item| item.trait_id) != Some(trait_id)
+                    || !type_args.is_empty()
+                {
+                    self.diagnostics.push_with_span(
+                        "only the canonical Sized requirement may be relaxed".into(),
+                        trait_bound_span,
+                    );
+                } else if let Type::Generic(parameter) = subject {
+                    generic_bounds.relaxed_sized.insert(parameter);
+                } else {
+                    self.diagnostics.push_with_span(
+                        "a relaxed Sized bound requires a generic type parameter".into(),
+                        clause.subject.span(),
+                    );
+                }
+                continue;
+            }
             generic_bounds
                 .predicates
                 .push(crate::types::Predicate::Trait {
@@ -360,6 +392,9 @@ impl Lowerer {
             }
         }
 
+        for parameter in &mut generic_params {
+            parameter.maybe_unsized |= generic_bounds.relaxed_sized.contains(&parameter.id);
+        }
         HirFunctionSig {
             id: signature_id,
             name: sig.name.name.clone(),
@@ -620,7 +655,7 @@ impl Lowerer {
             }
         }
         public_entries.extend(hidden_entries);
-        for generic in public_entries {
+        for mut generic in public_entries {
             let generic_id = generic.id;
             let remapped = if let Some(index) = signature_owned_generic_param_ids
                 .iter()
@@ -634,13 +669,12 @@ impl Lowerer {
                 generic_id
             };
             if used_generic_param_ids.contains(&remapped) {
-                generic_params.push(GenericParamDecl::new(remapped, generic.name, generic.kind));
+                generic.id = remapped;
+                generic_params.push(generic);
             }
         }
-        let generic_bounds = generic_bounds
-            .into_iter()
-            .filter(|(param, _)| generic_params.iter().any(|generic| generic.id == *param))
-            .collect();
+        let mut generic_bounds = generic_bounds;
+        generic_bounds.retain(|param, _| generic_params.iter().any(|generic| generic.id == *param));
 
         let mut all_params = Vec::new();
         let mut local_ids = IdGen::<HirLocalId>::new();

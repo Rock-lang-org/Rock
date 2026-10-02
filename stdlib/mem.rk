@@ -5,6 +5,17 @@
 
 < size_of = val -> ~SizeOf val
 
+// Compile-time alignment of a sized value; this does not read its bytes.
+< align_of = val -> ~AlignOf val
+
+> stdlib::sized::Sized
+
+size_of_value: &T -> I64 where T: ?Sized
+< size_of_value = value -> ~SizeOfValue value
+
+align_of_value: &T -> I64 where T: ?Sized
+< align_of_value = value -> ~AlignOfValue value
+
 // Deliberately suppress destruction of a value. This is safe but may leak
 // resources, matching Rust's mem::forget contract.
 forget: T -> ()

@@ -124,6 +124,10 @@ fn language_item_top_level(stream: Input) -> IResult<TopLevel> {
     if matches!(
         marker.role,
         LanguageItemRole::Method
+            | LanguageItemRole::OwnerIntoParts
+            | LanguageItemRole::OwnerFromParts
+            | LanguageItemRole::OwnerAllocate
+            | LanguageItemRole::OwnerRelease
             | LanguageItemRole::Output
             | LanguageItemRole::Residual
             | LanguageItemRole::Branch
@@ -160,6 +164,9 @@ fn language_item_top_level(stream: Input) -> IResult<TopLevel> {
             if !matches!(
                 marker.role,
                 LanguageItemRole::Sized
+                    | LanguageItemRole::ObjectOwner
+                    | LanguageItemRole::ObjectOwnerAllocate
+                    | LanguageItemRole::ObjectOwnerUnique
                     | LanguageItemRole::Drop
                     | LanguageItemRole::Fold
                     | LanguageItemRole::Index

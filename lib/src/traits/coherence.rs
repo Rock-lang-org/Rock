@@ -581,6 +581,10 @@ fn render_normalize_error(
     display_type: &impl Fn(&Type) -> String,
 ) -> String {
     match error {
+        NormalizeError::Substitution(error) => format!("type substitution failed: {error}"),
+        NormalizeError::ConflictingObjectBinding(_) => {
+            "conflicting associated-type bindings in trait object".to_string()
+        }
         NormalizeError::AliasCycle(_) => "type alias cycle".to_string(),
         NormalizeError::DepthLimit { .. } => "type normalization depth limit exceeded".to_string(),
         NormalizeError::NodeLimit { .. } => "type normalization node limit exceeded".to_string(),

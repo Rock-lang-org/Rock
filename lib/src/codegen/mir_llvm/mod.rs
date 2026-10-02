@@ -1,6 +1,9 @@
 use inkwell::basic_block::BasicBlock as LlvmBasicBlock;
 
 mod assert;
+mod object;
+mod object_adapters;
+mod erased;
 mod operand;
 mod place;
 mod rvalue;
@@ -110,7 +113,9 @@ impl<'ctx> CodeGen<'ctx> {
         rvalue: &Rvalue,
     ) -> Result<(), CodegenError> {
         match rvalue {
-            Rvalue::Use(operand) => self.validate_mir_operand_type_ids(program, operand),
+            Rvalue::Object(operand, _) | Rvalue::Use(operand) => {
+                self.validate_mir_operand_type_ids(program, operand)
+            }
             Rvalue::Ref(_, _) => Ok(()),
             Rvalue::Cast(operand, target_ty) => {
                 self.validate_mir_operand_type_ids(program, operand)?;
@@ -138,6 +143,7 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Result<(), CodegenError> {
         match terminator {
             Terminator::Return
+            | Terminator::Unreachable { .. }
             | Terminator::ReturnWithOrigin { .. }
             | Terminator::Goto(_)
             | Terminator::GotoWithOrigin { .. }
@@ -533,6 +539,16 @@ impl<'ctx> CodeGen<'ctx> {
         block: &crate::mir::BasicBlock,
         context: &MirFunctionContext<'ctx>,
     ) -> Result<bool, CodegenError> {
+        if context
+            .locals
+            .first()
+            .and_then(|local| local.as_ref())
+            .is_some_and(|(_, ty)| {
+                matches!(self.structural_type_for(*ty), crate::types::Type::Never)
+            })
+        {
+            return Ok(false);
+        }
         if !matches!(
             block.terminator,
             Some(Terminator::Return | Terminator::ReturnWithOrigin { .. })

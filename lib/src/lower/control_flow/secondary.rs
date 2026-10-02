@@ -78,13 +78,20 @@ impl Lowerer {
         })
     }
 
-    fn lower_selected_method_argument(
+    pub(crate) fn lower_selected_method_argument(
         &mut self,
         argument: &ast::Expression,
         selected: &crate::selection::SelectedMethod,
         index: usize,
     ) -> HirExpr {
         let Some(lambda) = Self::lambda_from_expression(argument) else {
+            if let Some(parameter) = selected.substituted_params.get(index) {
+                let expected = self.engine.resolve(&parameter.ty);
+                if matches!(&expected, Type::Reference { inner, .. } if matches!(inner.as_ref(), Type::Object(_)))
+                {
+                    return self.lower_expression_expected(argument, &expected);
+                }
+            }
             return self.lower_expression(argument);
         };
         let mut expected = selected
@@ -302,6 +309,12 @@ impl Lowerer {
     ) -> HirExpr {
         let resolved_expected = self.resolve_projection_type(&self.engine.resolve(expected_ty));
         let resolved_arg = self.resolve_projection_type(&self.engine.resolve(&arg.ty));
+        if let Some(coerced) = self.coerce_object_owner(arg.clone(), &resolved_expected) {
+            return coerced;
+        }
+        if let Some(coerced) = self.coerce_borrowed_object(arg.clone(), &resolved_expected) {
+            return coerced;
+        }
 
         if let (
             Type::Reference {
@@ -330,11 +343,9 @@ impl Lowerer {
         if let Err(err) = self.engine.unify(&arg.ty, &resolved_expected) {
             self.diagnostics
                 .push_type_with_span(err.render(&self.engine), arg.span.clone());
-            return HirExpr {
-                ty: Type::Error,
-                kind: arg.kind,
-                span: arg.span,
-            };
+            // Retain the actual type so the enclosing return/assignment check
+            // can report its own source context instead of swallowing the error.
+            return arg;
         }
 
         self.resolve_all_types_in_expr(&mut arg);
@@ -396,6 +407,9 @@ impl Lowerer {
             }
         }
         recv.ty = self.engine.resolve(&recv.ty);
+        if let Some(selected) = self.object_method_candidate(recv.clone(), method_name) {
+            return Some(selected);
+        }
         if let Some(selected) = self.callable_method_candidate(recv.clone(), Some(method_name)) {
             return Some(selected);
         }
@@ -404,6 +418,16 @@ impl Lowerer {
         // Prefer proven adjusted candidates without discarding unresolved generic fallbacks.
         let mut deferred_candidate = None;
         for receiver_candidate in &receiver_candidates {
+            let ty = self.engine.resolve(&receiver_candidate.expr.ty);
+            if matches!(&ty, Type::Object(_))
+                || matches!(&ty, Type::Reference { inner, .. } if matches!(inner.as_ref(), Type::Object(_)))
+            {
+                if let Some(selected) =
+                    self.object_method_candidate(receiver_candidate.expr.clone(), method_name)
+                {
+                    return Some(selected);
+                }
+            }
             let mut concrete = self.selection_service().select_concrete_method_candidates(
                 std::slice::from_ref(receiver_candidate),
                 method_name,
@@ -583,7 +607,7 @@ impl Lowerer {
         }
     }
 
-    fn fresh_method_generic_subst(
+    pub(crate) fn fresh_method_generic_subst(
         &mut self,
         method_func: &HirFunction,
         span: Span,
@@ -834,6 +858,14 @@ impl Lowerer {
                 }
 
                 if let HirExprKind::FieldAccess(recv, method_name, _) = &expr.kind {
+                    if let Some(call) = self.lower_owned_object_call(
+                        (**recv).clone(),
+                        method_name,
+                        args,
+                        span.clone(),
+                    ) {
+                        return call;
+                    }
                     let recv_ty = self.engine.resolve(&recv.ty);
                     let found_method =
                         self.concrete_method_candidate((**recv).clone(), method_name);
@@ -1039,6 +1071,8 @@ impl Lowerer {
                             }
                         }
                         self.lower_lambda_with_expected_params(lambda, expected_params.as_deref())
+                    } else if let Some(expected) = &expected {
+                        self.lower_expression_expected(&argument.arg, expected)
                     } else {
                         self.lower_expression(&argument.arg)
                     };
@@ -1354,6 +1388,17 @@ impl Lowerer {
                 }
 
                 let ret_ty = self.engine.fresh_type_var_at(span.clone());
+                if defer_argument_coercions {
+                    for arg in &mut hir_args {
+                        let source = self.engine.resolve(&arg.ty);
+                        if matches!(&source, Type::TypeVar(_))
+                            || matches!(&source, Type::Reference { inner, .. } if !matches!(inner.as_ref(), Type::Array(_, _)))
+                        {
+                            let target = self.engine.fresh_type_var_at(arg.span.clone());
+                            *arg = self.coerce_argument_to_expected(arg.clone(), &target);
+                        }
+                    }
+                }
                 let arg_types: Vec<Type> = hir_args
                     .iter()
                     .map(|arg| {
@@ -1469,6 +1514,15 @@ impl Lowerer {
             ast::SecondaryExpr::Dot(ident_or_num) => match ident_or_num {
                 ast::IdentOrNumber::Ident(ident) => {
                     let span = ident.span.clone();
+                    if method_as_value {
+                        if let Some(value) = self.lower_owned_object_method_value(
+                            expr.clone(),
+                            &ident.name,
+                            span.clone(),
+                        ) {
+                            return value;
+                        }
+                    }
                     let recv_ty = self.engine.resolve(&expr.ty);
                     let found_method = if method_as_value {
                         self.concrete_method_candidate(expr.clone(), &ident.name)

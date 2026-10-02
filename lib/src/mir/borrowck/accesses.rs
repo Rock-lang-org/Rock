@@ -104,6 +104,7 @@ pub fn classify_terminator(term: &Terminator) -> Vec<AccessEvent> {
             }]
         }
         Terminator::Goto(_)
+        | Terminator::Unreachable { .. }
         | Terminator::GotoWithOrigin { .. }
         | Terminator::Return
         | Terminator::ReturnWithOrigin { .. } => Vec::new(),
@@ -112,7 +113,7 @@ pub fn classify_terminator(term: &Terminator) -> Vec<AccessEvent> {
 
 fn classify_rvalue(rvalue: &Rvalue, type_context: &TypeContext) -> Vec<AccessEvent> {
     match rvalue {
-        Rvalue::Use(operand) => classify_operand(operand),
+        Rvalue::Object(operand, _) | Rvalue::Use(operand) => classify_operand(operand),
         Rvalue::Ref(mutability, place) => vec![AccessEvent {
             kind: AccessKind::for_borrow(*mutability),
             place: place.clone(),

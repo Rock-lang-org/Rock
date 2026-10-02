@@ -29,6 +29,9 @@ impl<'ctx> CodeGen<'ctx> {
         expected_ty: Option<&Type>,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match rvalue {
+            Rvalue::Object(operand, conversion) => {
+                self.compile_object_conversion(function, context, operand, conversion)
+            }
             Rvalue::Use(operand) => self.compile_mir_operand(function, context, operand),
             Rvalue::BinaryOp(op, lhs, rhs) => {
                 let lhs_value = self.compile_mir_operand(function, context, lhs)?;
@@ -94,6 +97,30 @@ impl<'ctx> CodeGen<'ctx> {
         place: &crate::mir::Place,
         expected_ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
+        if let Type::Reference { inner, mutable } = expected_ty {
+            if matches!(inner.as_ref(), Type::Object(_)) {
+                let mut handle = place.clone();
+                if !matches!(handle.projection.pop(), Some(crate::mir::Projection::Deref)) {
+                    return Err(CodegenError::backend_contract(
+                        "object reborrow must retain existing metadata",
+                    ));
+                }
+                let (_, source) = self.compile_mir_place_local(context, &handle)?;
+                if !match &source {
+                    Type::Reference {
+                        inner: source,
+                        mutable: source_mut,
+                    } => source == inner && (!*mutable || *source_mut),
+                    Type::Pointer(source) => source == inner,
+                    _ => false,
+                } {
+                    return Err(CodegenError::backend_contract(
+                        "object reborrow changes signature or gains mutable permission",
+                    ));
+                }
+                return self.compile_mir_place_value(context, &handle);
+            }
+        }
         let (address, source_ty) = self.compile_mir_place_local(context, place)?;
 
         if self.is_fat_pointer_type(expected_ty) {

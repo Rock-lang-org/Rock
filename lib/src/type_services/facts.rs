@@ -5,6 +5,49 @@ use crate::types::{CaptureKind, Type};
 pub struct TypeFacts;
 
 impl TypeFacts {
+    fn object_type_is_closed(ty: &Type) -> bool {
+        use crate::type_services::visit::TypeVisitor;
+        struct Closed {
+            lambdas: u32,
+            objects: u32,
+            closed: bool,
+        }
+        impl TypeVisitor for Closed {
+            fn enter_binders(&mut self, _: &[crate::type_services::kind::Kind]) {
+                self.lambdas += 1;
+            }
+            fn exit_binders(&mut self) {
+                self.lambdas -= 1;
+            }
+            fn enter_object(&mut self) {
+                self.objects += 1;
+            }
+            fn exit_object(&mut self) {
+                self.objects -= 1;
+            }
+            fn visit_type(&mut self, ty: &Type) {
+                self.closed &= match ty {
+                    Type::ObjectSelf { depth } => *depth < self.objects,
+                    Type::BoundVar { depth, .. } => *depth < self.lambdas,
+                    Type::TypeVar(_)
+                    | Type::Generic(_)
+                    | Type::Witness(_)
+                    | Type::Projection { .. }
+                    | Type::Error => false,
+                    _ => true,
+                };
+                crate::type_services::visit::visit_type_children(ty, self);
+            }
+        }
+        let mut visitor = Closed {
+            lambdas: 0,
+            objects: 0,
+            closed: true,
+        };
+        visitor.visit_type(ty);
+        visitor.closed
+    }
+
     pub fn is_integer(ty: &Type) -> bool {
         matches!(
             ty,
@@ -46,6 +89,7 @@ impl TypeFacts {
                 nested,
                 Type::TypeVar(_)
                     | Type::Generic(_)
+                    | Type::Witness(_)
                     | Type::Projection { .. }
                     | Type::Constructor { .. }
                     | Type::Apply { .. }
@@ -53,7 +97,7 @@ impl TypeFacts {
                     | Type::BoundVar { .. }
             );
         });
-        concrete
+        concrete && !crate::type_services::substitution::has_free_object_self(ty)
     }
 
     fn closed_constructor_value(ty: &Type) -> bool {
@@ -66,7 +110,11 @@ impl TypeFacts {
             Type::Lambda { body, .. } => !crate::type_services::visit::type_any(body, |nested| {
                 matches!(
                     nested,
-                    Type::TypeVar(_) | Type::Generic(_) | Type::Projection { .. } | Type::Error
+                    Type::TypeVar(_)
+                        | Type::Generic(_)
+                        | Type::Witness(_)
+                        | Type::Projection { .. }
+                        | Type::Error
                 )
             }),
             _ => false,
@@ -75,12 +123,15 @@ impl TypeFacts {
 
     /// Specialization arguments may be closed constructors rather than runtime values.
     pub fn is_concrete_type_argument(ty: &Type) -> bool {
-        Self::is_codegen_concrete(ty) || Self::closed_constructor_value(ty)
+        !crate::type_services::substitution::has_free_object_self(ty)
+            && (Self::is_codegen_concrete(ty) || Self::closed_constructor_value(ty))
     }
 
     pub fn is_codegen_concrete(ty: &Type) -> bool {
         fn runtime_type(ty: &Type) -> bool {
             match ty {
+                Type::Object(_) => TypeFacts::object_type_is_closed(ty),
+                Type::ObjectSelf { .. } => false,
                 Type::Slice(inner) | Type::Array(inner, _) | Type::Pointer(inner) => {
                     runtime_type(inner)
                 }
@@ -101,6 +152,7 @@ impl TypeFacts {
                 }
                 Type::TypeVar(_)
                 | Type::Generic(_)
+                | Type::Witness(_)
                 | Type::Projection { .. }
                 | Type::Constructor { .. }
                 | Type::Apply { .. }
@@ -130,6 +182,8 @@ impl TypeFacts {
 
     pub fn is_copy(ty: &Type) -> bool {
         match ty {
+            Type::Object(_) => false,
+            Type::ObjectSelf { .. } => false,
             Type::I8 | Type::I16 | Type::I32 | Type::I64 => true,
             Type::U8 | Type::U16 | Type::U32 | Type::U64 => true,
             Type::F32 | Type::F64 => true,
@@ -151,6 +205,7 @@ impl TypeFacts {
             Type::Enum { .. } => false,
             Type::TypeVar(_)
             | Type::Generic(_)
+            | Type::Witness(_)
             | Type::Constructor { .. }
             | Type::Apply { .. }
             | Type::Lambda { .. }
@@ -165,6 +220,8 @@ impl TypeFacts {
         F: Copy + Fn(TypeId) -> &'a Ty,
     {
         match ty(id) {
+            Ty::Object(_) => false,
+            Ty::ObjectSelf { .. } => false,
             Ty::I8
             | Ty::I16
             | Ty::I32
@@ -195,6 +252,7 @@ impl TypeFacts {
             | Ty::Enum { .. }
             | Ty::TypeVar(_)
             | Ty::Generic(_)
+            | Ty::Witness(_)
             | Ty::Constructor { .. }
             | Ty::Apply { .. }
             | Ty::Lambda { .. }
@@ -206,6 +264,9 @@ impl TypeFacts {
 
     pub fn contains_reference(ty: &Type) -> bool {
         match ty {
+            Type::Witness(_) => true,
+            Type::ObjectSelf { .. } => true,
+            Type::Object(_) => true,
             Type::Reference { .. } => true,
             Type::Array(inner, _) | Type::Slice(inner) => Self::contains_reference(inner),
             Type::Tuple(elems)
@@ -329,6 +390,40 @@ mod tests {
 
         assert!(TypeFacts::is_copy_id(tuple, |id| context.ty(id)));
         assert!(!TypeFacts::is_copy_id(mutable_ref, |id| context.ty(id)));
+    }
+
+    #[test]
+    fn nominal_owners_do_not_inherit_copy_from_pointer_arguments() {
+        let pointer = Type::Pointer(Box::new(Type::I64));
+        let owner = Type::Struct {
+            id: crate::ids::DefId::new(crate::ids::CrateId(0), crate::ids::LocalDefId(1)),
+            args: vec![pointer.clone()],
+        };
+        let mut context = crate::type_context::TypeContext::new();
+        let pointer_id = context.intern_type(&pointer);
+        let owner_id = context.intern_type(&owner);
+
+        assert!(TypeFacts::is_copy(&pointer));
+        assert!(TypeFacts::is_copy_id(pointer_id, |id| context.ty(id)));
+        assert!(!TypeFacts::is_copy(&owner));
+        assert!(!TypeFacts::is_copy_id(owner_id, |id| context.ty(id)));
+    }
+
+    #[test]
+    fn opened_witness_requires_runtime_evidence_and_retains_hidden_origins() {
+        let witness = Type::Witness(crate::types::WitnessId {
+            owner: crate::ids::DefId::new(crate::ids::CrateId(0), crate::ids::LocalDefId(1)),
+            local: crate::ids::HirLocalId(0),
+        });
+        let mut context = crate::type_context::TypeContext::new();
+        let id = context.intern_type(&witness);
+
+        assert!(!TypeFacts::is_concrete(&witness));
+        assert!(!TypeFacts::is_codegen_concrete(&witness));
+        assert!(!TypeFacts::is_concrete_type_argument(&witness));
+        assert!(!TypeFacts::is_copy(&witness));
+        assert!(!TypeFacts::is_copy_id(id, |id| context.ty(id)));
+        assert!(TypeFacts::contains_reference(&witness));
     }
 
     #[test]

@@ -140,7 +140,9 @@ fn compute_successors(func: &MirFunction) -> Vec<Vec<usize>> {
                 Terminator::Drop { target, .. } | Terminator::DropWithOrigin { target, .. } => {
                     successors[i].push(target.0);
                 }
-                Terminator::Return | Terminator::ReturnWithOrigin { .. } => {}
+                Terminator::Return
+                | Terminator::ReturnWithOrigin { .. }
+                | Terminator::Unreachable { .. } => {}
             }
         }
     }

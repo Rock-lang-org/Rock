@@ -82,6 +82,8 @@ impl Monomorphizer {
         mut program: super::hir_types::HirProgram,
     ) -> super::hir_types::HirProgram {
         self.language_items = program.language_items.clone();
+        self.object_traits
+            .extend(program.traits.iter().map(|(id, tr)| (*id, tr.clone())));
         let canonical_names_by_id = Self::canonical_names_from_indexes(&program);
         self.drop_trait_id = program
             .language_items
@@ -189,6 +191,19 @@ impl Monomorphizer {
         self.var_types.clear();
         self.process_params(Some(func.id), &mut func.params);
         func.ret_type = self.substitute_generics(&func.ret_type);
+        for ty in func
+            .params
+            .iter()
+            .map(|p| &p.ty)
+            .chain(std::iter::once(&func.ret_type))
+        {
+            if let Err(message) = self.ensure_payload_schemas(ty, &mut Default::default()) {
+                self.diagnostics.push(
+                    crate::diagnostic::Diagnostic::for_internal(message)
+                        .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                );
+            }
+        }
         self.process_block(&mut func.body);
         self.current_function_owner = previous_owner;
         func
@@ -246,6 +261,43 @@ impl Monomorphizer {
         expr.ty = self.substitute_generics(&expr.ty);
 
         match &mut expr.kind {
+            HirExprKind::Open {
+                source, binding, ..
+            } => {
+                self.process_expr(source);
+                binding.visit_types_mut(&mut |ty| *ty = self.substitute_generics(ty));
+                // A witness body requires scoped descriptor-backed lowering;
+                // ordinary specialization must not invent a concrete layout.
+                self.diagnostics.push(
+                    crate::diagnostic::Diagnostic::new(
+                        "scoped opening requires descriptor-backed body lowering, which is not implemented yet",
+                        expr.span.clone(),
+                    ).with_code(crate::diagnostic::DiagnosticCode::Mono),
+                );
+            }
+            HirExprKind::OwnedObjectCall { owner, args, call } => {
+                self.process_expr(owner);
+                for arg in args {
+                    self.process_expr(arg);
+                }
+                call.visit_types_mut(&mut |ty| *ty = self.substitute_generics(ty));
+                if let Err(message) = self.materialize_owned_object_call(owner, call, &expr.span) {
+                    self.diagnostics.push(
+                        crate::diagnostic::Diagnostic::new(message, expr.span.clone())
+                            .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                    );
+                }
+            }
+            HirExprKind::ObjectCoercion(inner, coercion) => {
+                self.process_expr(inner);
+                coercion.visit_types_mut(&mut |ty| *ty = self.substitute_generics(ty));
+                if let Err(message) = self.materialize_object_coercion(coercion, &expr.span) {
+                    self.diagnostics.push(
+                        crate::diagnostic::Diagnostic::new(message, expr.span.clone())
+                            .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                    );
+                }
+            }
             HirExprKind::Var(_) => {}
             HirExprKind::ResolvedVar(reference) => {
                 if let HirVarTarget::Local(id) = reference.target {
@@ -454,6 +506,50 @@ impl Monomorphizer {
                 self.process_expr(recv);
                 for arg in &mut *args {
                     self.process_expr(arg);
+                }
+                if matches!(
+                    selected_target.target,
+                    crate::hir::HirSelectedMethodTarget::TraitMethod {
+                        dispatch: crate::hir::HirTraitDispatchKind::Object,
+                        ..
+                    }
+                ) {
+                    let object = match &recv.ty {
+                        Type::Reference { inner, .. } => inner.as_ref(),
+                        ty => ty,
+                    };
+                    let prepared = self.ensure_object_schema(object).and_then(|object| {
+                        let trait_args = selected_target
+                            .trait_args()
+                            .iter()
+                            .map(|ty| self.intern_type(ty))
+                            .collect::<Vec<_>>();
+                        let slot =
+                            self.object_schemas[&object]
+                                .erased_slots
+                                .iter()
+                                .position(|slot| {
+                                    Some(slot.trait_id) == selected_target.trait_id()
+                                        && Some(slot.member_id) == selected_target.method_id()
+                                        && slot.trait_args == trait_args
+                                });
+                        if let Some(slot) = slot {
+                            self.prepare_erased_virtual_call(
+                                object,
+                                slot as u32,
+                                &selected_target,
+                                &expr.span,
+                            )?;
+                        }
+                        Ok(())
+                    });
+                    if let Err(message) = prepared {
+                        self.diagnostics.push(
+                            crate::diagnostic::Diagnostic::new(message, expr.span.clone())
+                                .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                        );
+                    }
+                    return;
                 }
 
                 if let Some(adapter) =

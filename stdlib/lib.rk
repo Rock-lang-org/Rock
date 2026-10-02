@@ -60,6 +60,7 @@ infix 10 %
 // Raw heap storage and owned heap values
 < mod raw_buffer
 < mod box_type
+< mod object_owner
 
 // Sized module - compile-time element size marker trait
 < mod sized

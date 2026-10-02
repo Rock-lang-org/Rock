@@ -20,6 +20,11 @@ impl<'ctx> CodeGen<'ctx> {
         ctx: &MirFunctionContext<'ctx>,
     ) -> Result<(), CodegenError> {
         match terminator {
+            Terminator::Unreachable { .. } => self
+                .builder
+                .build_unreachable()
+                .map(|_| ())
+                .map_err(|e| CodegenError::from(e.to_string())),
             Terminator::Return | Terminator::ReturnWithOrigin { .. } => {
                 self.compile_mir_return(ctx)
             }
@@ -217,6 +222,80 @@ impl<'ctx> CodeGen<'ctx> {
         target: BasicBlockId,
     ) -> Result<(), CodegenError> {
         let (destination_ptr, destination_ty) = self.compile_mir_place_local(ctx, destination)?;
+        if let Operand::Constant(Constant::OwnedObjectCall(key)) = func {
+            let never = matches!(destination_ty, Type::Never);
+            let result = self.compile_owned_object_call(function, ctx, key, args, destination)?;
+            if never {
+                return self
+                    .builder
+                    .build_unreachable()
+                    .map(|_| ())
+                    .map_err(|e| CodegenError::from(e.to_string()));
+            }
+            if let Some(value) = result {
+                self.builder
+                    .build_store(destination_ptr, value)
+                    .map_err(|e| CodegenError::from(e.to_string()))?;
+            }
+            return self
+                .builder
+                .build_unconditional_branch(self.mir_target_block(
+                    ctx,
+                    target,
+                    "owned object call",
+                )?)
+                .map(|_| ())
+                .map_err(|e| CodegenError::from(e.to_string()));
+        }
+        if let Operand::Constant(Constant::ErasedCall(call)) = func {
+            self.compile_erased_call(function, ctx, call, args, destination)?;
+            return self
+                .builder
+                .build_unconditional_branch(self.mir_target_block(ctx, target, "erased call")?)
+                .map(|_| ())
+                .map_err(|e| CodegenError::from(e.to_string()));
+        }
+        if let Operand::Constant(Constant::VirtualTarget(selector)) = func {
+            let never = self
+                .object_schemas
+                .get(&selector.object)
+                .and_then(|schema| schema.slots.get(selector.slot as usize))
+                .is_some_and(|slot| {
+                    matches!(
+                        self.structural_type_for(slot.signature.ret.semantic_ty),
+                        Type::Never
+                    )
+                });
+            let result = self.compile_virtual_call(function, ctx, selector, args)?;
+            if never || matches!(destination_ty, Type::Never) {
+                return self
+                    .builder
+                    .build_unreachable()
+                    .map(|_| ())
+                    .map_err(|e| CodegenError::from(e.to_string()));
+            }
+            if let Some(value) = result {
+                self.builder
+                    .build_store(destination_ptr, value)
+                    .map_err(|e| CodegenError::from(e.to_string()))?;
+            }
+            return self
+                .builder
+                .build_unconditional_branch(self.mir_target_block(ctx, target, "virtual call")?)
+                .map(|_| ())
+                .map_err(|e| CodegenError::from(e.to_string()));
+        }
+        let never = if let Operand::Constant(Constant::Callable(callable)) = func {
+            self.resolve_mir_callable_signature(callable)
+                .is_some_and(|signature| {
+                    matches!(
+                        self.structural_type_for(signature.ret.semantic_ty),
+                        Type::Never
+                    )
+                })
+        } else {
+            matches!(self.mir_operand_ty(ctx, func)?, Type::Function { ret, .. } if matches!(ret.as_ref(), Type::Never))
+        };
         let result = if let Operand::Constant(Constant::Callable(callable)) = func {
             if let Some(intrinsic) = Self::mir_callable_intrinsic(callable) {
                 let (_, destination_ty_id) = self.compile_mir_place_local_id(ctx, destination)?;
@@ -349,6 +428,13 @@ impl<'ctx> CodeGen<'ctx> {
                 })?
         };
 
+        if never || matches!(destination_ty, Type::Never) {
+            return self
+                .builder
+                .build_unreachable()
+                .map(|_| ())
+                .map_err(|e| CodegenError::from(e.to_string()));
+        }
         let destination_is_unit = matches!(&destination_ty, Type::Unit)
             || matches!(&destination_ty, Type::Tuple(elements) if elements.is_empty());
         if !destination_is_unit {
@@ -369,7 +455,7 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| CodegenError::from(format!("Failed to build MIR call branch: {}", e)))
     }
 
-    fn compile_mir_call_args(
+    pub(super) fn compile_mir_call_args(
         &mut self,
         function: &MirFunction,
         ctx: &MirFunctionContext<'ctx>,
@@ -542,6 +628,18 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_mir_return(&mut self, ctx: &MirFunctionContext<'ctx>) -> Result<(), CodegenError> {
+        if ctx
+            .locals
+            .first()
+            .and_then(|local| local.as_ref())
+            .is_some_and(|(_, ty)| matches!(self.structural_type_for(*ty), Type::Never))
+        {
+            return self
+                .builder
+                .build_unreachable()
+                .map(|_| ())
+                .map_err(|e| CodegenError::from(e.to_string()));
+        }
         let return_type = ctx.function.get_type().get_return_type();
         if let Some(return_type) = return_type {
             let Some(Some((return_place, return_place_ty))) = ctx.locals.get(0) else {

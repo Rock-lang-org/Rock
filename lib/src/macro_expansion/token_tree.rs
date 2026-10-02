@@ -5,6 +5,7 @@ use crate::macro_expansion::{ExpansionId, GeneratedSourceId, TokenOrigin};
 pub enum Delimiter {
     Paren,
     Bracket,
+    Brace,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +119,10 @@ impl TokenStream {
                             token_with_origin_span(TokenType::OpenBracket, open_origin),
                             open_origin.clone(),
                         )),
+                        Delimiter::Brace => tokens.push((
+                            token_with_origin_span(TokenType::OpenBrace, open_origin),
+                            open_origin.clone(),
+                        )),
                     }
                     tokens.extend(inner.to_tokens_with_origins());
                     match delimiter {
@@ -127,6 +132,10 @@ impl TokenStream {
                         )),
                         Delimiter::Bracket => tokens.push((
                             token_with_origin_span(TokenType::CloseBracket, close_origin),
+                            close_origin.clone(),
+                        )),
+                        Delimiter::Brace => tokens.push((
+                            token_with_origin_span(TokenType::CloseBrace, close_origin),
                             close_origin.clone(),
                         )),
                     }

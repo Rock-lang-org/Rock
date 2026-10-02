@@ -64,6 +64,9 @@ pub struct ProjectionNormalizer;
 impl ProjectionNormalizer {
     pub fn normalize<P: ProjectionProvider + ?Sized>(provider: &P, ty: &Type) -> Type {
         match ty {
+            Type::Object(object) => Type::Object(Box::new(
+                object.map_types(|child| Self::normalize(provider, child)),
+            )),
             Type::Projection {
                 ty: base_ty,
                 trait_id,
@@ -77,6 +80,23 @@ impl ProjectionNormalizer {
                     .collect::<Vec<_>>();
 
                 if assoc_type.owner != *trait_id {
+                    return Type::Projection {
+                        ty: Box::new(resolved_base),
+                        trait_id: *trait_id,
+                        assoc_type: *assoc_type,
+                        trait_args: resolved_trait_args,
+                    };
+                }
+
+                if let Type::Object(object) = &resolved_base {
+                    let mut bindings = object.bindings.iter().filter(|binding| {
+                        binding.key.trait_ref.trait_id == *trait_id
+                            && binding.key.trait_ref.type_args == resolved_trait_args
+                            && binding.key.member == assoc_type.assoc_type_id
+                    });
+                    if let (Some(binding), None) = (bindings.next(), bindings.next()) {
+                        return Self::normalize(provider, &binding.ty);
+                    }
                     return Type::Projection {
                         ty: Box::new(resolved_base),
                         trait_id: *trait_id,

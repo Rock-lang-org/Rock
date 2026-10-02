@@ -153,6 +153,11 @@ impl PreMirInstanceBodies {
 
 #[derive(Debug, Clone)]
 pub struct MonomorphizedProgram {
+    pub erased: crate::mir::MirErasedContract,
+    pub erased_invocations: BTreeMap<crate::mir::MirErasedInvocationKey, crate::mir::MirErasedCall>,
+    pub owned_object_calls: BTreeMap<crate::mir::MirOwnedObjectKey, crate::mir::MirOwnedObjectPlan>,
+    pub object_schemas: BTreeMap<TypeId, crate::mir::MirObjectSchema>,
+    pub vtables: BTreeMap<crate::mir::MirVtableId, crate::mir::MirVtable>,
     pub program: HirProgram,
     pub instances: BTreeMap<InstanceId, InstanceRecord>,
     pub pre_mir_instance_bodies: PreMirInstanceBodies,
@@ -170,6 +175,11 @@ impl MonomorphizedProgram {
     ) -> Self {
         Self {
             program,
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: BTreeMap::new(),
+            vtables: BTreeMap::new(),
             instances: BTreeMap::new(),
             pre_mir_instance_bodies: PreMirInstanceBodies::new(),
             generated_drop_instances: BTreeMap::new(),

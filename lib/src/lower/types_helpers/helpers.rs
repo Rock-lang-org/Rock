@@ -246,6 +246,23 @@ impl Lowerer {
             return None;
         };
 
+        if matches!(inner.as_ref(), Type::Object(_)) {
+            let span = expr.span.clone();
+            let place = HirExpr {
+                ty: inner.as_ref().clone(),
+                kind: HirExprKind::Deref(Box::new(expr)),
+                span: span.clone(),
+            };
+            return Some(HirExpr {
+                ty: Type::Reference {
+                    mutable: false,
+                    inner,
+                },
+                kind: HirExprKind::Ref(false, Box::new(place)),
+                span,
+            });
+        }
+
         Some(HirExpr {
             ty: Type::Reference {
                 mutable: false,
@@ -556,7 +573,7 @@ impl Lowerer {
             ReceiverAdjustment::AutorefShared | ReceiverAdjustment::AutorefMut => {
                 let span = expr.span.clone();
                 let resolved_ty = self.resolve_projection_type(&self.engine.resolve(&expr.ty));
-                if !matches!(resolved_ty, Type::Str | Type::Slice(_)) {
+                if !matches!(resolved_ty, Type::Str | Type::Slice(_) | Type::Object(_)) {
                     return expr;
                 }
 

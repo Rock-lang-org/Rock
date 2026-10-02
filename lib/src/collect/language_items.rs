@@ -47,6 +47,13 @@ struct DropPartial {
 }
 
 #[derive(Default)]
+struct OwnerPartial {
+    root: Option<RootRecord>,
+    into_parts: Option<MethodRecord>,
+    from_parts: Option<MethodRecord>,
+}
+
+#[derive(Default)]
 struct IndexPartial {
     root: Option<RootRecord>,
     output: Option<AssociatedTypeRecord>,
@@ -100,6 +107,9 @@ struct ProtocolError {
 
 #[derive(Default)]
 struct BindingState {
+    object_owner: OwnerPartial,
+    object_owner_allocate: DropPartial,
+    object_owner_unique: DropPartial,
     sized: Option<RootRecord>,
     drop: DropPartial,
     fold: DropPartial,
@@ -525,6 +535,9 @@ impl BindingState {
     fn insert_root(&mut self, role: LanguageItemRole, root: RootRecord) -> bool {
         let span = root.span.clone();
         let slot = match role {
+            LanguageItemRole::ObjectOwner => &mut self.object_owner.root,
+            LanguageItemRole::ObjectOwnerAllocate => &mut self.object_owner_allocate.root,
+            LanguageItemRole::ObjectOwnerUnique => &mut self.object_owner_unique.root,
             LanguageItemRole::Sized => &mut self.sized,
             LanguageItemRole::Drop => &mut self.drop.root,
             LanguageItemRole::Fold => &mut self.fold.root,
@@ -560,6 +573,18 @@ impl BindingState {
     ) {
         let span = value.span.clone();
         let slot = match (protocol, role) {
+            (LanguageItemRole::ObjectOwner, LanguageItemRole::OwnerIntoParts) => {
+                &mut self.object_owner.into_parts
+            }
+            (LanguageItemRole::ObjectOwner, LanguageItemRole::OwnerFromParts) => {
+                &mut self.object_owner.from_parts
+            }
+            (LanguageItemRole::ObjectOwnerAllocate, LanguageItemRole::OwnerAllocate) => {
+                &mut self.object_owner_allocate.method
+            }
+            (LanguageItemRole::ObjectOwnerUnique, LanguageItemRole::OwnerRelease) => {
+                &mut self.object_owner_unique.method
+            }
             (LanguageItemRole::Drop, LanguageItemRole::Method) => &mut self.drop.method,
             (LanguageItemRole::Fold, LanguageItemRole::Method) => &mut self.fold.method,
             (LanguageItemRole::Index, LanguageItemRole::Method) => &mut self.index.method,
@@ -666,6 +691,34 @@ impl BindingState {
     }
 
     fn finish(mut self) -> Result<LanguageItems<DefId>, Vec<ResolveError>> {
+        for (role, root, complete) in [
+            (
+                LanguageItemRole::ObjectOwner,
+                self.object_owner.root.clone(),
+                self.object_owner.into_parts.is_some() && self.object_owner.from_parts.is_some(),
+            ),
+            (
+                LanguageItemRole::ObjectOwnerAllocate,
+                self.object_owner_allocate.root.clone(),
+                self.object_owner_allocate.method.is_some(),
+            ),
+            (
+                LanguageItemRole::ObjectOwnerUnique,
+                self.object_owner_unique.root.clone(),
+                self.object_owner_unique.method.is_some(),
+            ),
+        ] {
+            if let Some(root) = root {
+                if !complete {
+                    self.error(
+                        role,
+                        None,
+                        format!("language item {role} is missing a required operation"),
+                        root.span,
+                    );
+                }
+            }
+        }
         self.complete_sized();
         self.complete_drop();
         if let Some(root) = &self.fold.root {
@@ -696,6 +749,42 @@ impl BindingState {
             return Err(self.errors.into_iter().map(|error| error.error).collect());
         }
 
+        let object_owner = match (
+            self.object_owner.root,
+            self.object_owner.into_parts,
+            self.object_owner.from_parts,
+        ) {
+            (Some(root), Some(into), Some(from))
+                if root.id == into.owner_id && root.id == from.owner_id =>
+            {
+                Some(crate::language_items::ObjectOwnerLanguageItems {
+                    trait_id: root.id,
+                    into_parts_id: into.id,
+                    from_parts_id: from.id,
+                })
+            }
+            _ => None,
+        };
+        let object_owner_allocate = self
+            .object_owner_allocate
+            .root
+            .zip(self.object_owner_allocate.method)
+            .map(
+                |(root, method)| crate::language_items::OwnerOperationLanguageItems {
+                    trait_id: root.id,
+                    method_id: method.id,
+                },
+            );
+        let object_owner_unique = self
+            .object_owner_unique
+            .root
+            .zip(self.object_owner_unique.method)
+            .map(
+                |(root, method)| crate::language_items::OwnerOperationLanguageItems {
+                    trait_id: root.id,
+                    method_id: method.id,
+                },
+            );
         let sized = self
             .sized
             .map(|root| SizedLanguageItems { trait_id: root.id });
@@ -870,6 +959,9 @@ impl BindingState {
             _ => None,
         };
         Ok(LanguageItems {
+            object_owner,
+            object_owner_allocate,
+            object_owner_unique,
             sized,
             drop,
             fold,
@@ -1132,6 +1224,9 @@ fn insert_once<T>(
 
 fn root_expected_kind(role: LanguageItemRole) -> Option<ItemKind> {
     match role {
+        LanguageItemRole::ObjectOwner
+        | LanguageItemRole::ObjectOwnerAllocate
+        | LanguageItemRole::ObjectOwnerUnique => Some(ItemKind::Trait),
         LanguageItemRole::Sized
         | LanguageItemRole::Drop
         | LanguageItemRole::Fold
@@ -1154,6 +1249,14 @@ fn expected_child_kind(
     role: LanguageItemRole,
 ) -> Option<LanguageItemMemberKind> {
     match (protocol, role) {
+        (
+            LanguageItemRole::ObjectOwner,
+            LanguageItemRole::OwnerIntoParts | LanguageItemRole::OwnerFromParts,
+        )
+        | (LanguageItemRole::ObjectOwnerAllocate, LanguageItemRole::OwnerAllocate)
+        | (LanguageItemRole::ObjectOwnerUnique, LanguageItemRole::OwnerRelease) => {
+            Some(LanguageItemMemberKind::Method)
+        }
         (LanguageItemRole::Drop, LanguageItemRole::Method)
         | (LanguageItemRole::Fold, LanguageItemRole::Method)
         | (LanguageItemRole::Index, LanguageItemRole::Method)
@@ -1200,6 +1303,13 @@ fn child_kind_name(kind: LanguageItemMemberKind) -> &'static str {
 
 fn role_order(role: LanguageItemRole) -> u8 {
     match role {
+        LanguageItemRole::ObjectOwner => 26,
+        LanguageItemRole::ObjectOwnerAllocate => 27,
+        LanguageItemRole::ObjectOwnerUnique => 28,
+        LanguageItemRole::OwnerIntoParts => 29,
+        LanguageItemRole::OwnerFromParts => 30,
+        LanguageItemRole::OwnerAllocate => 31,
+        LanguageItemRole::OwnerRelease => 32,
         LanguageItemRole::Sized => 0,
         LanguageItemRole::Drop => 1,
         LanguageItemRole::Fold => 25,

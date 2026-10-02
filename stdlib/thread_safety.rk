@@ -5,6 +5,7 @@
 > stdlib::raw_buffer::RawBuffer
 > stdlib::sync::Mutex
 > stdlib::string_type::String
+> stdlib::sized::Sized
 
 lang send
 < trait Send
@@ -12,9 +13,9 @@ lang send
 lang sync
 < trait Sync
 
-impl Send for Box T where T: Send
+impl Send for Box T where T: ?Sized, T: Send
 
-impl Sync for Box T where T: Sync
+impl Sync for Box T where T: ?Sized, T: Sync
 
 impl Send for RawBuffer T where T: Send
 
@@ -28,9 +29,9 @@ impl Send for Mutex T where T: Send
 
 impl Sync for Mutex T where T: Send
 
-impl Send for Arc T where T: Send, T: Sync
+impl Send for Arc T where T: ?Sized, T: Send, T: Sync
 
-impl Sync for Arc T where T: Send, T: Sync
+impl Sync for Arc T where T: ?Sized, T: Send, T: Sync
 
 impl Send for I8
 impl Send for I16

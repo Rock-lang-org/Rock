@@ -299,6 +299,16 @@ impl LocalCollector {
         local_prefix: Option<&str>,
         reference_exports: &HashMap<String, Option<String>>,
     ) {
+        for (index, top_level) in module.top_levels.iter().enumerate() {
+            if let ast::TopLevel::TraitDecl(declaration) = top_level {
+                if let Some(id) = self.item_id_at_source(module_id, index, top_level, &declaration.name.span) {
+                    let prefix = local_prefix.map(str::to_string).or_else(|| self.context.current_crate_name.clone());
+                    let name = local_item_lookup_name(prefix.as_deref(), &declaration.name.name);
+                    self.predeclare_trait_identity(declaration, id, &name, reference_exports);
+                    if local_prefix.is_none() { self.context.canonical_import_aliases.insert(declaration.name.name.clone(), id); }
+                }
+            }
+        }
         for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
             let ast::TopLevel::NewType(name, _) = top_level else {
                 continue;

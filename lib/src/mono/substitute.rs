@@ -347,6 +347,30 @@ impl Monomorphizer {
                 Box::new(self.substitute_expr(inner, substitution)),
                 self.substitute_type_with_map(ty, substitution),
             ),
+            HirExprKind::OwnedObjectCall { owner, args, call } => {
+                let mut call = call.clone();
+                call.visit_types_mut(&mut |ty| {
+                    *ty = self.substitute_type_with_map(ty, substitution)
+                });
+                HirExprKind::OwnedObjectCall {
+                    owner: Box::new(self.substitute_expr(owner, substitution)),
+                    args: args
+                        .iter()
+                        .map(|arg| self.substitute_expr(arg, substitution))
+                        .collect(),
+                    call,
+                }
+            }
+            HirExprKind::ObjectCoercion(inner, coercion) => {
+                let mut coercion = coercion.clone();
+                coercion.visit_types_mut(&mut |ty| {
+                    *ty = self.substitute_type_with_map(ty, substitution)
+                });
+                HirExprKind::ObjectCoercion(
+                    Box::new(self.substitute_expr(inner, substitution)),
+                    coercion,
+                )
+            }
             HirExprKind::Assign(lhs, rhs) => HirExprKind::Assign(
                 Box::new(self.substitute_expr(lhs, substitution)),
                 Box::new(self.substitute_expr(rhs, substitution)),

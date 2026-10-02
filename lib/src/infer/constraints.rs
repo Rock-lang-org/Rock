@@ -542,6 +542,11 @@ fn collect_constraint_vars(constraint: &Constraint, output: &mut HashSet<TypeVar
 
 fn collect_type_vars(ty: &Type, output: &mut HashSet<TypeVarId>) {
     match ty {
+        Type::Object(object) => {
+            for child in object.children() {
+                collect_type_vars(child, output);
+            }
+        }
         Type::TypeVar(id) => {
             output.insert(*id);
         }
@@ -580,6 +585,8 @@ fn collect_type_vars(ty: &Type, output: &mut HashSet<TypeVarId>) {
         }
         Type::Lambda { body, .. } => collect_type_vars(body, output),
         Type::I8
+        | Type::ObjectSelf { .. }
+        | Type::Witness(_)
         | Type::I16
         | Type::I32
         | Type::I64

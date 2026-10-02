@@ -2,6 +2,7 @@ mod test_parse_array_type;
 mod test_parse_fn_type;
 mod test_parse_hkt;
 mod test_parse_nested_fn_type;
+mod test_parse_object;
 mod test_parse_pointer_type;
 mod test_parse_reference_type;
 mod test_parse_tuple_type;

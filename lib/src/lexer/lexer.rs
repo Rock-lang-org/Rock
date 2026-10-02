@@ -237,6 +237,8 @@ impl Lexer {
             ')' => self.token(TokenType::CloseParen, 1),
             '[' => self.token(TokenType::OpenBracket, 1),
             ']' => self.token(TokenType::CloseBracket, 1),
+            '{' => self.token(TokenType::OpenBrace, 1),
+            '}' => self.token(TokenType::CloseBrace, 1),
             ',' => self.token(TokenType::Coma, 1),
             ':' if self.peek(1) == ':' => self.token(TokenType::DoubleColon, 2),
             ':' => self.token(TokenType::Colon, 1),

@@ -104,6 +104,21 @@ fn replace_type_vars_in_expr_composite(
 ) {
     expr.ty = replace_type_vars_with_generics_composite(engine, &expr.ty, mapping, composite_types);
     match &mut expr.kind {
+        HirExprKind::Open { source, binding, body } => {
+            replace_type_vars_in_expr_composite(engine, source, mapping, composite_types);
+            binding.visit_types_mut(&mut |ty| *ty = replace_type_vars_with_generics_composite(engine, ty, mapping, composite_types));
+            replace_type_vars_in_block_composite(engine, body, mapping, composite_types);
+        }
+        HirExprKind::OwnedObjectCall { owner, args, call } => {
+            replace_type_vars_in_expr_composite(engine, owner, mapping, composite_types);
+            for arg in args {
+                replace_type_vars_in_expr_composite(engine, arg, mapping, composite_types);
+            }
+            call.visit_types_mut(&mut |ty| {
+                *ty =
+                    replace_type_vars_with_generics_composite(engine, ty, mapping, composite_types)
+            });
+        }
         HirExprKind::BinOp(_, lhs, rhs) => {
             replace_type_vars_in_expr_composite(engine, lhs, mapping, composite_types);
             replace_type_vars_in_expr_composite(engine, rhs, mapping, composite_types);
@@ -243,6 +258,13 @@ fn replace_type_vars_in_expr_composite(
         HirExprKind::Cast(inner, ty) => {
             replace_type_vars_in_expr_composite(engine, inner, mapping, composite_types);
             *ty = replace_type_vars_with_generics_composite(engine, ty, mapping, composite_types);
+        }
+        HirExprKind::ObjectCoercion(inner, coercion) => {
+            replace_type_vars_in_expr_composite(engine, inner, mapping, composite_types);
+            coercion.visit_types_mut(&mut |ty| {
+                *ty =
+                    replace_type_vars_with_generics_composite(engine, ty, mapping, composite_types)
+            });
         }
         HirExprKind::Assign(lhs, rhs) => {
             replace_type_vars_in_expr_composite(engine, lhs, mapping, composite_types);

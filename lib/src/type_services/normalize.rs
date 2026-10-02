@@ -31,11 +31,17 @@ pub enum NormalizeError {
     KindMismatch { expected: Kind, actual: Kind },
     NotApplicable { kind: Kind },
     NonCanonicalType { normalized: Type },
+    ConflictingObjectBinding(crate::types::ObjectAssociatedType),
+    Substitution(crate::type_services::substitution::SubstitutionError),
 }
 
 impl std::fmt::Display for NormalizeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Substitution(error) => write!(f, "type substitution failed: {error}"),
+            Self::ConflictingObjectBinding(_) => {
+                write!(f, "conflicting associated-type bindings in trait object")
+            }
             Self::AliasCycle(ids) => write!(f, "type alias cycle involving {ids:?}"),
             Self::DepthLimit { limit } => {
                 write!(f, "type normalization depth limit exceeded ({limit})")
@@ -212,6 +218,15 @@ impl<'a> TypeNormalizer<'a> {
     fn normalize_inner(&mut self, ty: Type, depth: usize) -> Result<Type, NormalizeError> {
         self.bump(depth)?;
         match ty {
+            Type::Object(object) => {
+                let mut object =
+                    object.try_map_types(|ty| self.normalize_inner(ty.clone(), depth + 1))?;
+                if let Some(key) = object.conflicting_binding() {
+                    return Err(NormalizeError::ConflictingObjectBinding(key.clone()));
+                }
+                object.guarantees.remove(&object.principal);
+                Ok(Type::Object(Box::new(object)))
+            }
             Type::Constructor { id, flavor } => self.normalize_constructor(id, flavor, depth),
             Type::Apply { constructor, args } => {
                 self.normalize_application(*constructor, args, depth)
@@ -412,7 +427,13 @@ impl<'a> TypeNormalizer<'a> {
         }
 
         let removes_group = consumed == params.len();
-        let body = substitute_lambda_group(&body, &args[..consumed], consumed, removes_group, 0);
+        let body = crate::type_services::substitution::substitute_lambda_group(
+            &body,
+            &args[..consumed],
+            consumed,
+            removes_group,
+        )
+        .map_err(NormalizeError::Substitution)?;
         let mut reduced = if removes_group {
             body
         } else {
@@ -503,48 +524,6 @@ impl<'a> TypeNormalizer<'a> {
     }
 }
 
-fn substitute_lambda_group(
-    ty: &Type,
-    args: &[Type],
-    consumed: usize,
-    removes_group: bool,
-    nested_depth: u32,
-) -> Type {
-    match ty {
-        Type::BoundVar { depth, index, kind } if *depth == nested_depth => {
-            if let Some(replacement) = args.get(*index as usize) {
-                shift_bound_depths(replacement, nested_depth as i32, 0)
-            } else {
-                Type::BoundVar {
-                    depth: *depth,
-                    index: index.saturating_sub(consumed as u32),
-                    kind: kind.clone(),
-                }
-            }
-        }
-        Type::BoundVar { depth, index, kind } if removes_group && *depth > nested_depth => {
-            Type::BoundVar {
-                depth: depth - 1,
-                index: *index,
-                kind: kind.clone(),
-            }
-        }
-        Type::Lambda { params, body } => Type::Lambda {
-            params: params.clone(),
-            body: Box::new(substitute_lambda_group(
-                body,
-                args,
-                consumed,
-                removes_group,
-                nested_depth + 1,
-            )),
-        },
-        other => map_type_children(other, &mut |child| {
-            substitute_lambda_group(child, args, consumed, removes_group, nested_depth)
-        }),
-    }
-}
-
 pub(crate) fn apply_type_lambda(ty: &Type, args: &[Type]) -> Option<Type> {
     let Type::Lambda { params, body } = ty else {
         return None;
@@ -552,24 +531,7 @@ pub(crate) fn apply_type_lambda(ty: &Type, args: &[Type]) -> Option<Type> {
     if params.len() != args.len() {
         return None;
     }
-    Some(substitute_lambda_group(body, args, args.len(), true, 0))
-}
-
-fn shift_bound_depths(ty: &Type, amount: i32, cutoff: u32) -> Type {
-    match ty {
-        Type::BoundVar { depth, index, kind } if *depth >= cutoff => Type::BoundVar {
-            depth: ((*depth as i64) + amount as i64) as u32,
-            index: *index,
-            kind: kind.clone(),
-        },
-        Type::Lambda { params, body } => Type::Lambda {
-            params: params.clone(),
-            body: Box::new(shift_bound_depths(body, amount, cutoff + 1)),
-        },
-        other => map_type_children(other, &mut |child| {
-            shift_bound_depths(child, amount, cutoff)
-        }),
-    }
+    crate::type_services::substitution::substitute_lambda_group(body, args, args.len(), true).ok()
 }
 
 fn eta_reduce(ty: Type) -> Option<Type> {
@@ -669,6 +631,7 @@ fn remove_bound_group(ty: &Type, nested_depth: u32) -> Type {
 
 fn type_children(ty: &Type) -> Vec<&Type> {
     match ty {
+        Type::Object(object) => object.children().collect(),
         Type::Slice(inner)
         | Type::Array(inner, _)
         | Type::Reference { inner, .. }
@@ -698,6 +661,7 @@ fn type_children(ty: &Type) -> Vec<&Type> {
 
 fn map_type_children(ty: &Type, map: &mut impl FnMut(&Type) -> Type) -> Type {
     match ty {
+        Type::Object(object) => Type::Object(Box::new(object.map_types(map))),
         Type::Slice(inner) => Type::Slice(Box::new(map(inner))),
         Type::Array(inner, len) => Type::Array(Box::new(map(inner)), *len),
         Type::Tuple(elements) => Type::Tuple(elements.iter().map(&mut *map).collect()),

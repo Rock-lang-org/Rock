@@ -13,6 +13,14 @@ impl Lowerer {
     // ============================================================
 
     pub(crate) fn lower_block(&mut self, block: &ast::Block) -> HirBlock {
+        self.lower_block_expected(block, None)
+    }
+
+    pub(crate) fn lower_block_expected(
+        &mut self,
+        block: &ast::Block,
+        expected: Option<&Type>,
+    ) -> HirBlock {
         let mut stmts = Vec::new();
         let mut last_ty = Type::Unit;
 
@@ -31,7 +39,13 @@ impl Lowerer {
                     }
                 }
             }
-            let hir_stmt = self.lower_statement(stmt, is_last);
+            let hir_stmt = if let (true, Some(expected), ast::Statement::Expression(expr)) =
+                (is_last, expected, stmt)
+            {
+                HirStmt::Expr(self.lower_expression_expected(expr, expected))
+            } else {
+                self.lower_statement(stmt, is_last)
+            };
             last_ty = self.stmt_type(&hir_stmt);
             stmts.push(hir_stmt);
         }
@@ -40,7 +54,12 @@ impl Lowerer {
     }
 
     pub(crate) fn lower_lambda_body(&mut self, lambda: &ast::LambdaDecl) -> HirBlock {
-        let mut body = self.lower_block(&lambda.body);
+        let expected = self.current_body_return_type();
+        let mut body = if matches!(lambda.arrow_kind, ast::LambdaArrowKind::Unit) {
+            self.lower_block(&lambda.body)
+        } else {
+            self.lower_block_expected(&lambda.body, expected.as_ref())
+        };
         if matches!(lambda.arrow_kind, ast::LambdaArrowKind::Unit) {
             let span = lambda.span.clone();
             body.stmts.push(HirStmt::Expr(HirExpr {
@@ -72,7 +91,11 @@ impl Lowerer {
                 HirStmt::Expr(hir_expr)
             }
             ast::Statement::Return(Some(expr)) => {
-                let hir_expr = self.lower_expression(expr);
+                let hir_expr = if let Some(expected) = self.current_body_return_type() {
+                    self.lower_expression_expected(expr, &expected)
+                } else {
+                    self.lower_expression(expr)
+                };
                 HirStmt::Return(Some(self.wrap_fold_return(hir_expr)))
             }
             ast::Statement::Return(None) => {
@@ -113,7 +136,18 @@ impl Lowerer {
     }
 
     pub(crate) fn lower_assignment(&mut self, assign: &ast::Assignment) -> HirStmt {
-        let mut rhs = self.lower_expression(&assign.rhs);
+        let annotation = match &assign.lhs {
+            ast::AssignmentLHS::Pattern {
+                type_annotation: Some(ann),
+                ..
+            } => Some(self.lower_parse_type(ann)),
+            _ => None,
+        };
+        let mut rhs = if let Some(expected) = &annotation {
+            self.lower_expression_expected(&assign.rhs, expected)
+        } else {
+            self.lower_expression(&assign.rhs)
+        };
 
         match &assign.lhs {
             ast::AssignmentLHS::Pattern {
@@ -163,7 +197,9 @@ impl Lowerer {
 
                 if let Some(ann) = type_annotation {
                     self.source_map.record_type_annotation(ann.span());
-                    let ann_ty = self.lower_parse_type(ann);
+                    let ann_ty = annotation
+                        .clone()
+                        .unwrap_or_else(|| self.lower_parse_type(ann));
                     if let Err(e) = self.engine.unify(&ty, &ann_ty) {
                         self.diagnostics.push_type_with_span(
                             format!(

@@ -79,6 +79,18 @@ impl Lowerer {
     pub(crate) fn resolve_all_types_in_expr(&mut self, expr: &mut HirExpr) {
         expr.ty = self.engine.resolve(&expr.ty);
         match &mut expr.kind {
+            HirExprKind::Open { source, binding, body } => {
+                self.resolve_all_types_in_expr(source);
+                binding.visit_types_mut(&mut |ty| *ty = self.engine.resolve(ty));
+                self.resolve_all_types_in_block(body);
+            }
+            HirExprKind::OwnedObjectCall { owner, args, call } => {
+                self.resolve_all_types_in_expr(owner);
+                for arg in args {
+                    self.resolve_all_types_in_expr(arg);
+                }
+                call.visit_types_mut(&mut |ty| *ty = self.engine.resolve(ty));
+            }
             HirExprKind::Call(func_expr, args, target) => {
                 self.resolve_all_types_in_expr(func_expr);
                 for arg in args.iter_mut() {
@@ -228,6 +240,10 @@ impl Lowerer {
             HirExprKind::Cast(inner, ty) => {
                 self.resolve_all_types_in_expr(inner);
                 *ty = self.engine.resolve(ty);
+            }
+            HirExprKind::ObjectCoercion(inner, coercion) => {
+                self.resolve_all_types_in_expr(inner);
+                coercion.visit_types_mut(&mut |ty| *ty = self.engine.resolve(ty));
             }
         }
     }

@@ -56,6 +56,11 @@ fn collect_generic_names_from_parse_type<F>(
     F: Fn(&str) -> bool,
 {
     match ty {
+        ast::ParseType::Object(object) => {
+            for ty in object.types() {
+                collect_generic_names_from_parse_type(ty, generic_params, is_known_type_name);
+            }
+        }
         ast::ParseType::Type(inner) => {
             if inner.generics.is_empty()
                 && !is_builtin_type_name(&inner.name)
@@ -283,6 +288,9 @@ fn insert_export_reference(
 }
 
 pub(crate) struct CollectContext {
+    pub(crate) object_type_uses: Vec<super::objects::ObjectTypeUse>,
+    pub(crate) sized_storage_uses: Vec<super::sizedness::SizedStorageUse>,
+    pub(crate) object_qualifier_uses: Vec<super::objects::ObjectQualifierUse>,
     pub(crate) type_vars: DeclarationTypeVars,
     pub(crate) scope: DeclarationScope,
     pub(crate) structs: HashMap<String, HirStruct>,
@@ -342,6 +350,22 @@ pub(crate) struct LocalCollection {
 }
 
 impl TypeLoweringContext for CollectContext {
+    fn nominal_type_params(&self, id: crate::ids::DefId) -> Vec<crate::types::GenericParamDecl> {
+        self.structs
+            .values()
+            .find(|definition| definition.id == id)
+            .map(|definition| definition.generic_params.clone())
+            .or_else(|| {
+                self.enums
+                    .values()
+                    .find(|definition| definition.id == id)
+                    .map(|definition| definition.generic_params.clone())
+            })
+            .unwrap_or_default()
+    }
+    fn sized_trait_id(&self) -> Option<crate::ids::DefId> {
+        self.language_items.sized.as_ref().map(|item| item.trait_id)
+    }
     fn push_type_error(&mut self, message: String, span: Span) {
         self.push_error_with_span(message, span);
     }
@@ -352,6 +376,116 @@ impl TypeLoweringContext for CollectContext {
 
     fn current_trait_name(&self) -> Option<String> {
         self.current_trait.clone()
+    }
+
+    fn existing_generic_type(&self, name: &str) -> Option<Type> {
+        let owner = self.current_generic_owner?;
+        let index = self
+            .current_generic_params
+            .iter()
+            .position(|parameter| parameter == name)?;
+        Some(Type::Generic(GenericParamId {
+            owner,
+            index: index as u32,
+        }))
+    }
+
+    fn admit_object_type(
+        &mut self,
+        ty: Type,
+        _env: &crate::type_services::normalize::TypeNormalizationEnv,
+        span: Span,
+    ) -> Type {
+        self.object_type_uses.push(super::objects::ObjectTypeUse {
+            ty: ty.clone(),
+            span,
+        });
+        ty
+    }
+
+    fn qualify_object_type(
+        &mut self,
+        object: crate::types::ObjectType,
+        bindings: Vec<crate::type_lowering::ObjectBindingSyntax>,
+        binders: Vec<Vec<crate::type_services::kind::Kind>>,
+        span: Span,
+    ) -> Type {
+        let placeholder = self.type_vars.fresh_type_var_at(span.clone());
+        let mut parameters = std::collections::BTreeSet::new();
+        let mut collect = |ty: &Type| {
+            crate::type_services::visit::visit_type(ty, &mut |ty: &Type| {
+                if let Type::Generic(parameter) = ty {
+                    parameters.insert(*parameter);
+                }
+            });
+        };
+        collect(&Type::Object(Box::new(object.clone())));
+        for binding in &bindings {
+            collect(&binding.ty);
+            if let Some(owner) = &binding.owner {
+                for ty in &owner.type_args {
+                    collect(ty);
+                }
+            }
+        }
+        let parameters = parameters.into_iter().collect::<Vec<_>>();
+        let kinds = match parameters
+            .iter()
+            .map(|parameter| TypeLowerer::kind_of(self, &Type::Generic(*parameter)))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(kinds) => kinds,
+            Err(message) => {
+                self.push_type_error(message, span);
+                return Type::Error;
+            }
+        };
+        let mut groups = Vec::new();
+        if !parameters.is_empty() {
+            groups.push(kinds);
+        }
+        groups.extend(binders.clone());
+        let kind =
+            groups
+                .iter()
+                .rev()
+                .fold(crate::type_services::kind::Kind::Type, |output, group| {
+                    group.iter().rev().fold(output, |output, input| {
+                        crate::type_services::kind::Kind::arrow(input.clone(), output)
+                    })
+                });
+        let mut application = placeholder.clone();
+        if !parameters.is_empty() {
+            application = Type::Apply {
+                constructor: Box::new(application),
+                args: parameters.iter().copied().map(Type::Generic).collect(),
+            };
+        }
+        for (index, group) in binders.iter().enumerate() {
+            application = Type::Apply {
+                constructor: Box::new(application),
+                args: group
+                    .iter()
+                    .enumerate()
+                    .map(|(parameter, kind)| Type::BoundVar {
+                        depth: (binders.len() - index - 1) as u32,
+                        index: parameter as u32,
+                        kind: kind.clone(),
+                    })
+                    .collect(),
+            };
+        }
+        self.object_qualifier_uses
+            .push(super::objects::ObjectQualifierUse {
+                placeholder: placeholder.clone(),
+                object,
+                bindings,
+                parameters,
+                groups,
+                kind,
+                span,
+            });
+        application
     }
 
     fn resolve_nominal_type(&self, name: &str) -> Option<ResolvedNominalType> {
@@ -441,6 +575,11 @@ impl TypeLoweringContext for CollectContext {
         &self,
         env: &mut crate::type_services::normalize::TypeNormalizationEnv,
     ) {
+        for usage in &self.object_qualifier_uses {
+            if let Type::TypeVar(id) = usage.placeholder {
+                env.register_inference_kind(id, usage.kind.clone());
+            }
+        }
         for structure in self.structs.values() {
             env.register_constructor(
                 structure.id,
@@ -464,6 +603,9 @@ impl TypeLoweringContext for CollectContext {
         for trait_def in self.traits.values() {
             for param in &trait_def.generic_params {
                 env.register_generic_kind(param.id, param.kind.clone());
+            }
+            if let Some(target) = &trait_def.target {
+                env.register_generic_kind(target.id, target.kind.clone());
             }
             for method in trait_def.methods.values() {
                 for param in &method.generic_params {
@@ -582,6 +724,9 @@ impl CollectContext {
 
     pub(crate) fn new() -> Self {
         Self {
+            object_type_uses: Vec::new(),
+            sized_storage_uses: Vec::new(),
+            object_qualifier_uses: Vec::new(),
             type_vars: DeclarationTypeVars::new(),
             scope: DeclarationScope::new(),
             structs: HashMap::new(),
@@ -678,7 +823,12 @@ impl CollectContext {
         current_crate_name: Option<&str>,
     ) -> LocalCollection {
         self.normalize_type_aliases();
+        super::objects::admit_collected_objects(&mut self);
+        super::sizedness::validate(&mut self);
         let Self {
+            object_type_uses: _,
+            sized_storage_uses: _,
+            object_qualifier_uses: _,
             type_vars,
             scope: _,
             structs,

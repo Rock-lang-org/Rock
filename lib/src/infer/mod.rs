@@ -7,6 +7,9 @@ mod engine;
 mod finalize;
 mod generalize;
 mod helpers;
+pub(crate) mod object_coercion;
+mod object_unify;
+pub(crate) mod owner_coercion;
 pub mod solve;
 mod type_vars;
 
@@ -535,8 +538,11 @@ fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), Vec<Resolve
                 .chain(hir.impls.values().flat_map(|imp| imp.methods.values()))
                 .chain(hir.traits.values().flat_map(|tr| tr.methods.values()))
             {
-                for param in &function.params {
+                for param in function.params.iter().filter(|parameter| !parameter.is_ref) {
                     if let Type::Generic(id) = &param.ty {
+                        if function.generic_bounds.relaxed_sized.contains(id) {
+                            continue;
+                        }
                         let bound = crate::types::TraitBound {
                             trait_id: sized.trait_id,
                             type_args: Vec::new(),

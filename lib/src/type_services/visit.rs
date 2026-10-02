@@ -6,6 +6,10 @@ use crate::types::{FunctionCapture, GenericParamId, Type};
 /// Binding forms must gain explicit scope callbacks before they are added to
 /// [`Type`]; binder declarations must not be treated as ordinary child types.
 pub trait TypeVisitor {
+    fn enter_object(&mut self) {}
+
+    fn exit_object(&mut self) {}
+
     fn enter_binders(&mut self, _params: &[Kind]) {}
 
     fn exit_binders(&mut self) {}
@@ -45,6 +49,7 @@ where
         }
 
         match ty {
+            Type::Object(object) => object.children().any(|ty| recurse(ty, predicate)),
             Type::Slice(inner)
             | Type::Array(inner, _)
             | Type::Reference { inner, .. }
@@ -73,6 +78,7 @@ where
             }
             Type::Lambda { body, .. } => recurse(body, predicate),
             Type::I8
+            | Type::ObjectSelf { .. }
             | Type::I16
             | Type::I32
             | Type::I64
@@ -104,6 +110,13 @@ where
     V: TypeVisitor + ?Sized,
 {
     match ty {
+        Type::Object(object) => {
+            visitor.enter_object();
+            for child in object.children() {
+                visitor.visit_type(child);
+            }
+            visitor.exit_object();
+        }
         Type::Slice(inner)
         | Type::Array(inner, _)
         | Type::Reference { inner, .. }
@@ -150,6 +163,7 @@ where
             visitor.exit_binders();
         }
         Type::I8
+        | Type::ObjectSelf { .. }
         | Type::I16
         | Type::I32
         | Type::I64
@@ -177,6 +191,10 @@ where
 /// Binding forms must override traversal with scope-aware behavior rather than
 /// exposing binder declarations through [`fold_type_children`].
 pub trait TypeFolder {
+    fn enter_object(&mut self) {}
+
+    fn exit_object(&mut self) {}
+
     fn enter_binders(&mut self, _params: &[Kind]) {}
 
     fn exit_binders(&mut self) {}
@@ -229,6 +247,12 @@ where
     F: TypeFolder + ?Sized,
 {
     match ty {
+        Type::Object(object) => {
+            folder.enter_object();
+            let object = object.map_types(|ty| folder.fold_type(ty.clone()));
+            folder.exit_object();
+            Type::Object(Box::new(object))
+        }
         Type::Slice(inner) => Type::Slice(Box::new(folder.fold_type(*inner))),
         Type::Array(inner, len) => Type::Array(Box::new(folder.fold_type(*inner)), len),
         Type::Tuple(elements) => Type::Tuple(
@@ -307,6 +331,14 @@ where
 pub trait TryTypeFolder {
     type Error;
 
+    fn try_enter_object(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn try_exit_object(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     fn try_enter_binders(&mut self, _params: &[Kind]) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -333,6 +365,12 @@ where
     F: TryTypeFolder + ?Sized,
 {
     Ok(match ty {
+        Type::Object(object) => {
+            folder.try_enter_object()?;
+            let object = object.try_map_types(|ty| folder.try_fold_type(ty.clone()))?;
+            folder.try_exit_object()?;
+            Type::Object(Box::new(object))
+        }
         Type::Slice(inner) => Type::Slice(Box::new(folder.try_fold_type(*inner)?)),
         Type::Array(inner, len) => Type::Array(Box::new(folder.try_fold_type(*inner)?), len),
         Type::Tuple(elements) => Type::Tuple(

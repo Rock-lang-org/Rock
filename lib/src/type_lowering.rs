@@ -11,6 +11,12 @@ pub(crate) enum ResolvedNominalType {
 }
 
 pub(crate) trait TypeLoweringContext {
+    fn nominal_type_params(&self, _id: crate::ids::DefId) -> Vec<GenericParamDecl> {
+        Vec::new()
+    }
+    fn sized_trait_id(&self) -> Option<crate::ids::DefId> {
+        None
+    }
     fn push_type_error(&mut self, message: String, span: crate::lexer::Span);
     fn record_type_reference(
         &mut self,
@@ -22,9 +28,142 @@ pub(crate) trait TypeLoweringContext {
     fn current_trait_name(&self) -> Option<String>;
     fn resolve_nominal_type(&self, name: &str) -> Option<ResolvedNominalType>;
     fn resolve_trait_type(&self, name: &str) -> Option<HirTrait>;
+    fn existing_generic_type(&self, name: &str) -> Option<Type>;
+    fn admit_object_type(
+        &mut self,
+        ty: Type,
+        env: &TypeNormalizationEnv,
+        span: crate::lexer::Span,
+    ) -> Type;
+    fn qualify_object_type(
+        &mut self,
+        object: crate::types::ObjectType,
+        bindings: Vec<ObjectBindingSyntax>,
+        binders: Vec<Vec<Kind>>,
+        span: crate::lexer::Span,
+    ) -> Type;
     fn resolve_type_alias(&self, name: &str) -> Option<HirTypeAlias>;
     fn generic_type_for_name(&mut self, name: &str, span: crate::lexer::Span) -> Type;
     fn populate_type_normalization_env(&self, env: &mut TypeNormalizationEnv);
+}
+
+pub(crate) struct ObjectBindingSyntax {
+    pub owner: Option<crate::types::TraitBound>,
+    pub member: ast::Ident,
+    pub ty: Type,
+}
+
+pub(crate) fn resolve_object_bindings(
+    mut object: crate::types::ObjectType,
+    bindings: Vec<ObjectBindingSyntax>,
+    traits: &std::collections::HashMap<crate::ids::DefId, HirTrait>,
+    span: crate::lexer::Span,
+) -> Result<Type, (String, crate::lexer::Span)> {
+    // The shared evidence query assumes an acyclic declaration graph. Qualifier
+    // resolution precedes admission, so establish that precondition here.
+    fn check_graph(
+        id: crate::ids::DefId,
+        traits: &std::collections::HashMap<crate::ids::DefId, HirTrait>,
+        path: &mut Vec<crate::ids::DefId>,
+        done: &mut std::collections::HashSet<crate::ids::DefId>,
+    ) -> Result<(), String> {
+        if path.contains(&id) {
+            return Err(format!("object supertrait cycle: {path:?} -> {id:?}"));
+        }
+        if done.contains(&id) {
+            return Ok(());
+        }
+        if path.len() >= crate::type_services::normalize::DEFAULT_MAX_NORMALIZATION_DEPTH {
+            return Err("object supertrait graph exceeds maximum depth".to_string());
+        }
+        let definition = traits
+            .get(&id)
+            .ok_or_else(|| format!("unknown object trait {id:?}"))?;
+        let self_id = definition
+            .target
+            .as_ref()
+            .map(|target| target.id)
+            .unwrap_or(GenericParamId {
+                owner: id,
+                index: definition.generic_params.len() as u32,
+            });
+        path.push(id);
+        for predicate in &definition.predicates {
+            let crate::types::Predicate::Trait {
+                subject, trait_id, ..
+            } = predicate;
+            if subject == &Type::Generic(self_id) {
+                check_graph(*trait_id, traits, path, done)?;
+            }
+        }
+        path.pop();
+        done.insert(id);
+        Ok(())
+    }
+    let roots = std::iter::once(object.principal.clone())
+        .chain(object.guarantees.iter().cloned())
+        .collect::<Vec<_>>();
+    let mut done = std::collections::HashSet::new();
+    for root in &roots {
+        check_graph(root.trait_id, traits, &mut Vec::new(), &mut done)
+            .map_err(|error| (error, span.clone()))?;
+    }
+    let closure = crate::traits::evidence::implied_trait_bounds(
+        traits,
+        &Type::ObjectSelf { depth: 0 },
+        &roots,
+    );
+    for binding in bindings {
+        let mut candidates = std::collections::BTreeSet::new();
+        for bound in &closure {
+            if binding.owner.as_ref().is_some_and(|owner| owner != bound) {
+                continue;
+            }
+            if let Some(definition) = traits.get(&bound.trait_id) {
+                for member in &definition.associated_types {
+                    if member.name == binding.member.name {
+                        candidates.insert(crate::types::ObjectAssociatedType {
+                            trait_ref: bound.clone(),
+                            member: member.id,
+                        });
+                    }
+                }
+            }
+        }
+        if candidates.len() != 1 {
+            return Err((
+                format!(
+                    "object associated member '{}' is {}",
+                    binding.member.name,
+                    if candidates.is_empty() {
+                        "unknown in the guaranteed trait closure"
+                    } else {
+                        "ambiguous; qualify its trait owner"
+                    }
+                ),
+                binding.member.span,
+            ));
+        }
+        let key = candidates.into_iter().next().unwrap();
+        if object
+            .bindings
+            .iter()
+            .any(|existing| existing.key == key && existing.ty != binding.ty)
+        {
+            return Err((
+                format!(
+                    "conflicting object associated binding '{}'",
+                    binding.member.name
+                ),
+                binding.member.span,
+            ));
+        }
+        object.bindings.insert(crate::types::ObjectBinding {
+            key,
+            ty: binding.ty,
+        });
+    }
+    Ok(Type::Object(Box::new(object)))
 }
 
 pub(crate) struct TypeLowerer;
@@ -112,16 +251,50 @@ pub(crate) fn lower_generic_param_decls(
         .iter()
         .enumerate()
         .map(|(index, param)| {
-            GenericParamDecl::new(
+            let mut declaration = GenericParamDecl::new(
                 GenericParamId {
                     owner,
                     index: index as u32,
                 },
                 param.name.name.clone(),
                 lower_generic_param_kind(param.kind.as_ref()),
-            )
+            );
+            declaration.maybe_unsized = param.unsized_bound.is_some();
+            declaration
         })
         .collect()
+}
+
+pub(crate) fn lower_generic_param_decls_checked<C: TypeLoweringContext + ?Sized>(
+    context: &mut C,
+    owner: crate::ids::DefId,
+    params: &[ast::GenericParamDecl],
+) -> Vec<GenericParamDecl> {
+    for param in params {
+        if let Some(bound) = &param.unsized_bound {
+            let valid = match bound {
+                ast::ParseType::Type(inner) if inner.generics.is_empty() => {
+                    !params
+                        .iter()
+                        .any(|parameter| parameter.name.name == inner.name)
+                        && context.existing_generic_type(&inner.name).is_none()
+                        && context
+                            .resolve_trait_type(&inner.name)
+                            .is_some_and(|definition| {
+                                Some(definition.id) == context.sized_trait_id()
+                            })
+                }
+                _ => false,
+            };
+            if !valid {
+                context.push_type_error(
+                    "only the canonical Sized requirement may be relaxed".into(),
+                    bound.span(),
+                );
+            }
+        }
+    }
+    lower_generic_param_decls(owner, params)
 }
 
 pub(crate) fn lower_parse_generic_param_decls(
@@ -153,6 +326,15 @@ pub(crate) fn lower_parse_generic_param_decls(
 }
 
 impl TypeLowerer {
+    fn normalize_component<C: TypeLoweringContext + ?Sized>(
+        context: &C,
+        env: &TypeNormalizationEnv,
+        ty: &Type,
+    ) -> Result<Type, crate::type_services::normalize::NormalizeError> {
+        let mut env = env.clone();
+        context.populate_type_normalization_env(&mut env);
+        TypeNormalizer::new(&env).normalize(ty)
+    }
     pub(crate) fn kind_of<C: TypeLoweringContext + ?Sized>(
         context: &C,
         ty: &Type,
@@ -184,7 +366,12 @@ impl TypeLowerer {
     ) -> Type {
         let mut env = TypeNormalizationEnv::new();
         context.populate_type_normalization_env(&mut env);
-        Self::lower_raw(context, parse_type, false, &env, &mut Vec::new())
+        let ty = Self::lower_raw(context, parse_type, false, &env, &mut Vec::new());
+        if crate::type_services::visit::type_any(&ty, |ty| matches!(ty, Type::Object(_))) {
+            context.admit_object_type(ty, &env, parse_type.span())
+        } else {
+            ty
+        }
     }
 
     fn lower<C: TypeLoweringContext + ?Sized>(
@@ -207,8 +394,39 @@ impl TypeLowerer {
         if matches!(ty, Type::Error) {
             return ty;
         }
+        let mut refreshed = env.clone();
+        context.populate_type_normalization_env(&mut refreshed);
+        let env = &refreshed;
         match TypeNormalizer::new(env).normalize(&ty) {
-            Ok(ty) => ty,
+            Ok(ty) => {
+                let mut invalid = false;
+                crate::type_services::visit::visit_type(&ty, &mut |nested: &Type| {
+                    if let Type::Struct { id, args } | Type::Enum { id, args } = nested {
+                        for (parameter, argument) in
+                            context.nominal_type_params(*id).iter().zip(args)
+                        {
+                            if !parameter.maybe_unsized
+                                && crate::type_services::layout::TypeLayout::sizedness(
+                                    argument,
+                                    &|_| crate::type_services::layout::Sizedness::Unknown,
+                                ) == crate::type_services::layout::Sizedness::Unsized
+                            {
+                                invalid = true;
+                            }
+                        }
+                    }
+                });
+                if invalid {
+                    context.push_type_error("nominal type argument requires Sized; declare an explicitly relaxed parameter to accept unsized pointees".into(), span);
+                    Type::Error
+                } else if crate::type_services::visit::type_any(&ty, |ty| {
+                    matches!(ty, Type::Object(_))
+                }) {
+                    context.admit_object_type(ty, env, span)
+                } else {
+                    ty
+                }
+            }
             Err(error) => {
                 context.push_type_error(error.to_string(), span);
                 Type::Error
@@ -224,6 +442,91 @@ impl TypeLowerer {
         binders: &mut Vec<Vec<(String, Kind)>>,
     ) -> Type {
         match parse_type {
+            ast::ParseType::Object(syntax) => {
+                let raw = Self::lower_raw(context, &syntax.base, false, env, binders);
+                let base = match Self::normalize_component(context, env, &raw) {
+                    Ok(Type::Object(object)) => object,
+                    Ok(_) => {
+                        context.push_type_error(
+                            "object qualifiers require a trait type".to_string(),
+                            syntax.base.span(),
+                        );
+                        return Type::Error;
+                    }
+                    Err(error) => {
+                        context.push_type_error(error.to_string(), syntax.base.span());
+                        return Type::Error;
+                    }
+                };
+                let mut object = *base;
+                let mut bindings = Vec::new();
+                for qualifier in &syntax.qualifiers {
+                    match qualifier {
+                        ast::ObjectQualifier::Trait(ty) => {
+                            let raw = Self::lower_raw(context, ty, false, env, binders);
+                            match Self::normalize_component(context, env, &raw) {
+                                Ok(Type::Object(extra))
+                                    if extra.bindings.is_empty() && extra.guarantees.is_empty() =>
+                                {
+                                    object.guarantees.insert(extra.principal);
+                                }
+                                _ => {
+                                    context.push_type_error(
+                                        "object guarantee must be a trait application".to_string(),
+                                        ty.span(),
+                                    );
+                                    return Type::Error;
+                                }
+                            }
+                        }
+                        ast::ObjectQualifier::Binding { owner, member, ty } => {
+                            let owner = if let Some(owner) = owner {
+                                let raw = Self::lower_raw(context, owner, false, env, binders);
+                                match Self::normalize_component(context, env, &raw) {
+                                    Ok(Type::Object(owner))
+                                        if owner.bindings.is_empty()
+                                            && owner.guarantees.is_empty() =>
+                                    {
+                                        Some(owner.principal)
+                                    }
+                                    _ => {
+                                        context.push_type_error(
+                                            "associated owner must be a trait application"
+                                                .to_string(),
+                                            owner.span(),
+                                        );
+                                        return Type::Error;
+                                    }
+                                }
+                            } else {
+                                None
+                            };
+                            let raw = Self::lower_raw(context, ty, false, env, binders);
+                            let ty = match Self::normalize_component(context, env, &raw) {
+                                Ok(ty) => ty,
+                                Err(error) => {
+                                    context.push_type_error(error.to_string(), ty.span());
+                                    return Type::Error;
+                                }
+                            };
+                            bindings.push(ObjectBindingSyntax {
+                                owner,
+                                member: member.clone(),
+                                ty,
+                            });
+                        }
+                    }
+                }
+                context.qualify_object_type(
+                    object,
+                    bindings,
+                    binders
+                        .iter()
+                        .map(|group| group.iter().map(|(_, kind)| kind.clone()).collect())
+                        .collect(),
+                    syntax.span.clone(),
+                )
+            }
             ast::ParseType::Unit(_) => Type::Unit,
             ast::ParseType::Type(inner) => {
                 Self::lower_inner_raw(context, inner, allow_bare_slice, env, binders)
@@ -267,6 +570,14 @@ impl TypeLowerer {
                 }
             }
             ast::ParseType::Lambda(lambda) => {
+                if let Some(parameter) = lambda
+                    .params
+                    .iter()
+                    .find(|parameter| parameter.unsized_bound.is_some())
+                {
+                    context.push_type_error("type-lambda binders describe kinds; put ?Sized on a value or nominal generic declaration".into(), parameter.span.clone());
+                    return Type::Error;
+                }
                 let params = lambda
                     .params
                     .iter()
@@ -470,6 +781,15 @@ impl TypeLowerer {
                     .current_module_prefix()
                     .map(|prefix| format!("{}::{}", prefix, name));
 
+                if let Some(generic) = context.existing_generic_type(name) {
+                    if generics.is_empty() {
+                        return generic;
+                    }
+                    return Type::Apply {
+                        constructor: Box::new(generic),
+                        args: generics,
+                    };
+                }
                 if let Some(alias) = current_module_name
                     .as_deref()
                     .and_then(|name| context.resolve_type_alias(name))
@@ -508,6 +828,42 @@ impl TypeLowerer {
                                 id: enum_def.id,
                                 flavor: NominalTypeKind::Enum,
                             }
+                        }
+                    }
+                } else if let Some(trait_def) = current_module_name
+                    .as_deref()
+                    .and_then(|name| context.resolve_trait_type(name))
+                    .or_else(|| context.resolve_trait_type(name))
+                {
+                    context.record_type_reference(
+                        inner.span.clone(),
+                        crate::source_map::SourceSymbol::Definition(trait_def.id),
+                    );
+                    let params = trait_def
+                        .generic_params
+                        .iter()
+                        .map(|param| param.kind.clone())
+                        .collect::<Vec<_>>();
+                    let object = Type::Object(Box::new(crate::types::ObjectType::new(
+                        crate::types::TraitBound {
+                            trait_id: trait_def.id,
+                            type_args: params
+                                .iter()
+                                .enumerate()
+                                .map(|(index, kind)| Type::BoundVar {
+                                    depth: 0,
+                                    index: index as u32,
+                                    kind: kind.clone(),
+                                })
+                                .collect(),
+                        },
+                    )));
+                    if params.is_empty() {
+                        object
+                    } else {
+                        Type::Lambda {
+                            params,
+                            body: Box::new(object),
                         }
                     }
                 } else {
@@ -582,8 +938,58 @@ mod tests {
             self.traits.get(name).cloned()
         }
 
+        fn existing_generic_type(&self, name: &str) -> Option<Type> {
+            let owner = self.generic_owner?;
+            let index = self.generic_params.iter().position(|param| param == name)?;
+            Some(Type::Generic(GenericParamId {
+                owner,
+                index: index as u32,
+            }))
+        }
+
+        fn admit_object_type(
+            &mut self,
+            ty: Type,
+            env: &TypeNormalizationEnv,
+            span: crate::lexer::Span,
+        ) -> Type {
+            let traits: HashMap<_, _> = self
+                .traits
+                .values()
+                .map(|definition| (definition.id, definition.clone()))
+                .collect();
+            match crate::traits::objects::admit_type_objects(&ty, &traits, env) {
+                Ok(ty) => ty,
+                Err(error) => {
+                    self.push_type_error(error.to_string(), span);
+                    Type::Error
+                }
+            }
+        }
+
         fn resolve_type_alias(&self, _name: &str) -> Option<HirTypeAlias> {
             None
+        }
+
+        fn qualify_object_type(
+            &mut self,
+            object: crate::types::ObjectType,
+            bindings: Vec<ObjectBindingSyntax>,
+            _binders: Vec<Vec<Kind>>,
+            span: crate::lexer::Span,
+        ) -> Type {
+            let traits = self
+                .traits
+                .values()
+                .map(|definition| (definition.id, definition.clone()))
+                .collect();
+            match resolve_object_bindings(object, bindings, &traits, span) {
+                Ok(ty) => ty,
+                Err((message, span)) => {
+                    self.push_type_error(message, span);
+                    Type::Error
+                }
+            }
         }
 
         fn generic_type_for_name(&mut self, name: &str, span: crate::lexer::Span) -> Type {
@@ -725,6 +1131,7 @@ mod tests {
         );
         let explicit = ParseType::Lambda(ast::TypeLambda {
             params: vec![AstGenericParamDecl {
+                unsized_bound: None,
                 name: Ident {
                     name: "T".to_string(),
                     span: Span::test(),

@@ -825,5 +825,8 @@ A few of the remaining important features which are planned but still missing:
 - RockDoc
 - Windows/Macos support
 - Release for other arch than x64
+- If-Let deconstruction
+- Derive
+- Proc macro
 
 - Self-host the compiler

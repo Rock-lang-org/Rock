@@ -16,7 +16,9 @@ use crate::ids::{Idx, TypeVarId};
 use crate::infer::constraints::{Constraint, ConstraintOwner, ConstraintStore, ObligationState};
 use crate::infer::{InferenceEngine, UnifyError};
 use crate::language_items::LanguageItems;
+use crate::traits::evidence::implied_trait_bounds;
 use crate::type_services::facts::TypeFacts;
+use crate::type_services::layout::{Sizedness, TypeLayout};
 use crate::type_services::normalize::TypeNormalizer;
 use crate::types::{CallableKind, CaptureKind, GenericParamId, TraitBound, Type};
 
@@ -248,8 +250,9 @@ fn solve_constraints_in_place_mode(
         let resolved_right = engine.resolve(&right);
         let mut probe = engine.clone_for_probe();
         if let Err(error) = probe.unify(&resolved_left, &resolved_right) {
-            if !contains_unresolved_type(&resolved_left)
-                && !contains_unresolved_type(&resolved_right)
+            if matches!(error, UnifyError::ObjectMatchLimit { .. })
+                || (!contains_unresolved_type(&resolved_left)
+                    && !contains_unresolved_type(&resolved_right))
             {
                 errors.push(SolveError {
                     kind: SolveErrorKind::Unify { context, error },
@@ -297,8 +300,9 @@ fn solve_constraints_in_place_mode(
         if let Err(error) =
             unify_argument_coercion(&mut probe, &resolved_actual, &resolved_expected)
         {
-            if !contains_unresolved_type(&resolved_actual)
-                && !contains_unresolved_type(&resolved_expected)
+            if matches!(error, UnifyError::ObjectMatchLimit { .. })
+                || (!contains_unresolved_type(&resolved_actual)
+                    && !contains_unresolved_type(&resolved_expected))
             {
                 errors.push(SolveError {
                     kind: SolveErrorKind::Unify { context, error },
@@ -350,9 +354,14 @@ fn solve_constraints_in_place_mode(
                 match &resolved {
                     Type::TypeVar(type_var) => {
                         // Still a free variable — will become a Generic param.
-                        generic_bounds.entry(*type_var).or_default().extend(
-                            trait_bounds_with_supertraits(&resolved, &resolved_bound, traits),
-                        );
+                        generic_bounds
+                            .entry(*type_var)
+                            .or_default()
+                            .extend(implied_trait_bounds(
+                                traits,
+                                &resolved,
+                                std::slice::from_ref(&resolved_bound),
+                            ));
                         if finalize_pending
                             && engine.kind_of_type_var(*type_var)
                                 == crate::type_services::kind::Kind::Type
@@ -588,6 +597,10 @@ fn solve_structural_constraints_to_fixed_point(
                             ObligationState::Solved
                         }
                     }
+                    Err(UnifyError::ObjectMatchPending { .. }) => {
+                        *engine = probe;
+                        ObligationState::Pending
+                    }
                     Err(_) => {
                         if contains_unresolved_type(&engine.resolve(&left))
                             || contains_unresolved_type(&engine.resolve(&right))
@@ -619,6 +632,10 @@ fn solve_structural_constraints_to_fixed_point(
                             } else {
                                 ObligationState::Solved
                             }
+                        }
+                        Err(UnifyError::ObjectMatchPending { .. }) => {
+                            *engine = probe;
+                            ObligationState::Pending
                         }
                         Err(_) => {
                             if contains_unresolved_type(&resolved_actual)
@@ -1046,75 +1063,6 @@ fn contains_inference_pending_type(ty: &Type) -> bool {
     })
 }
 
-fn trait_bounds_with_supertraits(
-    subject: &Type,
-    initial: &TraitBound,
-    traits: &HashMap<DefId, crate::hir::HirTrait>,
-) -> Vec<TraitBound> {
-    fn expand(
-        subject: &Type,
-        bound: TraitBound,
-        traits: &HashMap<DefId, crate::hir::HirTrait>,
-        visiting: &mut std::collections::HashSet<crate::types::Predicate>,
-        output: &mut Vec<TraitBound>,
-    ) {
-        let key = crate::types::Predicate::Trait {
-            subject: subject.clone(),
-            trait_id: bound.trait_id,
-            args: bound.type_args.clone(),
-        };
-        if !visiting.insert(key.clone()) {
-            return;
-        }
-        if !output.contains(&bound) {
-            output.push(bound.clone());
-        }
-        if let Some(trait_def) = traits.get(&bound.trait_id) {
-            let mut subst = crate::selection::generic_substitution_for_owner(
-                &trait_def.generic_params,
-                &bound.type_args,
-            );
-            let target_id = trait_def.target.as_ref().map(|target| target.id).unwrap_or(
-                crate::types::GenericParamId {
-                    owner: trait_def.id,
-                    index: trait_def.generic_params.len() as u32,
-                },
-            );
-            subst.insert(target_id, subject.clone());
-            for predicate in &trait_def.predicates {
-                let crate::types::Predicate::Trait {
-                    subject: implied_subject,
-                    trait_id,
-                    args,
-                } = predicate.substitute_generics(&subst);
-                if implied_subject == *subject {
-                    expand(
-                        subject,
-                        TraitBound {
-                            trait_id,
-                            type_args: args,
-                        },
-                        traits,
-                        visiting,
-                        output,
-                    );
-                }
-            }
-        }
-        visiting.remove(&key);
-    }
-
-    let mut output = Vec::new();
-    expand(
-        subject,
-        initial.clone(),
-        traits,
-        &mut std::collections::HashSet::new(),
-        &mut output,
-    );
-    output
-}
-
 /// Check whether `ty` has an impl of the canonical trait ID in the given impl list.
 ///
 /// Matches on the `type_name` field of `HirImpl`. Generic impls (with
@@ -1130,7 +1078,7 @@ fn impl_exists_for(
     builtin_traits: BuiltinTraitIds,
 ) -> bool {
     if builtin_traits.sized == Some(trait_id) {
-        return type_is_sized(ty);
+        return TypeLayout::sizedness(ty, &|_| Sizedness::Unknown) == Sizedness::Sized;
     }
 
     if let Some(satisfied) = callable_trait_satisfied(ty, trait_id, trait_args, builtin_traits) {
@@ -1158,6 +1106,41 @@ fn impl_exists_for(
         builtin_traits,
         &mut std::collections::HashSet::new(),
     )
+}
+
+/// The same marker-owned protocol authority used by ordinary trait obligations.
+pub(crate) fn object_protocol_origin(
+    ty: &Type,
+    bound: &TraitBound,
+    impls: &HashMap<DefId, HirImpl>,
+    structs: &HashMap<DefId, HirStruct>,
+    enums: &HashMap<DefId, HirEnum>,
+    items: &LanguageItems<DefId>,
+) -> Option<crate::hir::HirObjectWitnessOrigin> {
+    use crate::hir::HirObjectWitnessOrigin;
+    use crate::language_items::LanguageItemRole;
+    let builtin = BuiltinTraitIds::from_language_items(items);
+    if callable_trait_satisfied(ty, bound.trait_id, &bound.type_args, builtin) == Some(true) {
+        let kind = items
+            .callable_protocols()
+            .find(|(_, id, _)| *id == bound.trait_id)?
+            .0;
+        return Some(HirObjectWitnessOrigin::Callable { kind });
+    }
+    if !bound.type_args.is_empty() {
+        return None;
+    }
+    let role = if builtin.sized == Some(bound.trait_id) {
+        LanguageItemRole::Sized
+    } else if builtin.send == Some(bound.trait_id) {
+        LanguageItemRole::Send
+    } else if builtin.sync == Some(bound.trait_id) {
+        LanguageItemRole::Sync
+    } else {
+        return None;
+    };
+    impl_exists_for(ty, bound.trait_id, &[], impls, structs, enums, builtin)
+        .then_some(HirObjectWitnessOrigin::Auto { role })
 }
 
 fn explicit_impl_exists_for(
@@ -1320,6 +1303,10 @@ fn auto_trait_satisfied(
     };
 
     let satisfied = match ty {
+        Type::ObjectSelf { .. } => false,
+        Type::Object(object) => std::iter::once(&object.principal)
+            .chain(&object.guarantees)
+            .any(|bound| bound.trait_id == trait_id && bound.type_args.is_empty()),
         Type::I8
         | Type::I16
         | Type::I32
@@ -1469,41 +1456,6 @@ fn impl_trait_args_match(
         })
 }
 
-fn type_is_sized(ty: &Type) -> bool {
-    match ty {
-        Type::Slice(_) | Type::Str => false,
-        Type::Array(inner, _) => type_is_sized(inner),
-        Type::Tuple(elems) => elems.iter().all(type_is_sized),
-        Type::I8
-        | Type::I16
-        | Type::I32
-        | Type::I64
-        | Type::U8
-        | Type::U16
-        | Type::U32
-        | Type::U64
-        | Type::F32
-        | Type::F64
-        | Type::Bool
-        | Type::Char
-        | Type::Unit
-        | Type::Never
-        | Type::Struct { .. }
-        | Type::Enum { .. }
-        | Type::Reference { .. }
-        | Type::Pointer(_)
-        | Type::Function { .. } => true,
-        Type::Generic(_)
-        | Type::Projection { .. }
-        | Type::TypeVar(_)
-        | Type::Constructor { .. }
-        | Type::Apply { .. }
-        | Type::Lambda { .. }
-        | Type::BoundVar { .. }
-        | Type::Error => false,
-    }
-}
-
 fn impl_receiver_owner_matches(
     ty: &Type,
     imp: &HirImpl,
@@ -1615,6 +1567,50 @@ mod tests {
 
     fn def_id(index: u32) -> DefId {
         DefId::new(CrateId(0), LocalDefId(index))
+    }
+
+    #[test]
+    fn sized_obligations_agree_with_selection_without_generic_evidence() {
+        let sized_id = def_id(800);
+        let builtin_traits = BuiltinTraitIds {
+            sized: Some(sized_id),
+            ..BuiltinTraitIds::default()
+        };
+        let traits = HashMap::new();
+        let impls = HashMap::new();
+        let structs = HashMap::new();
+        let enums = HashMap::new();
+        let bounds = crate::hir::HirGenericBounds::new();
+        let selection =
+            crate::selection::SelectionService::new(&traits, &impls, Some(sized_id), None, &bounds);
+        let bound = TraitBound {
+            trait_id: sized_id,
+            type_args: Vec::new(),
+        };
+        let generic = Type::Generic(GenericParamId {
+            owner: def_id(801),
+            index: 0,
+        });
+
+        for (ty, expected) in [
+            (Type::Tuple(vec![Type::I64, Type::Bool]), true),
+            (Type::Array(Box::new(Type::U8), 0), true),
+            (Type::Tuple(vec![Type::I64, Type::Str]), false),
+            (Type::Slice(Box::new(Type::U8)), false),
+            (Type::Array(Box::new(generic.clone()), 2), false),
+            (Type::Pointer(Box::new(generic)), true),
+        ] {
+            assert_eq!(
+                impl_exists_for(&ty, sized_id, &[], &impls, &structs, &enums, builtin_traits),
+                expected,
+                "inference disagrees for {ty:?}"
+            );
+            assert_eq!(
+                selection.trait_bound_satisfied(&ty, &bound),
+                expected,
+                "selection disagrees for {ty:?}"
+            );
+        }
     }
 
     fn test_impl(type_name: &str, owner_id: DefId, trait_id: DefId) -> HirImpl {

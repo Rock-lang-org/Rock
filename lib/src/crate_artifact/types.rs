@@ -22,6 +22,7 @@ pub struct ArtifactExport {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ArtifactCrateInterface {
+    pub object_abi: crate::products::object_abi::ProductObjectAbi,
     pub root_export_ids: BTreeMap<String, ArtifactExport>,
     pub canonical_names: BTreeMap<DefId, String>,
     pub functions: BTreeMap<DefId, ProductFunctionInterface>,
@@ -60,6 +61,10 @@ impl ArtifactCrateInterface {
         canonical_name: String,
         trt: crate::hir::HirTraitFor<P>,
     ) {
+        self.object_abi.trait_members.insert(
+            trt.id,
+            crate::products::object_abi::declaration_member_order(&trt.signatures),
+        );
         self.canonical_names.insert(trt.id, canonical_name);
         self.traits
             .insert(trt.id, ProductTraitInterface::from(&trt));

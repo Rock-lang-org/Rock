@@ -210,7 +210,10 @@ fn collect_statement_places(statement: &StatementData, table: &mut PlacePathTabl
 
 fn collect_rvalue_places(rvalue: &Rvalue, table: &mut PlacePathTable) {
     match rvalue {
-        Rvalue::Use(operand) | Rvalue::Cast(operand, _) | Rvalue::UnaryOp(_, operand) => {
+        Rvalue::Object(operand, _)
+        | Rvalue::Use(operand)
+        | Rvalue::Cast(operand, _)
+        | Rvalue::UnaryOp(_, operand) => {
             collect_operand_place(operand, table);
         }
         Rvalue::Ref(_, place) | Rvalue::Discriminant(place) => {
@@ -254,6 +257,7 @@ fn collect_terminator_places(terminator: &Terminator, table: &mut PlacePathTable
             table.intern(place.clone());
         }
         Terminator::Goto(_)
+        | Terminator::Unreachable { .. }
         | Terminator::GotoWithOrigin { .. }
         | Terminator::Return
         | Terminator::ReturnWithOrigin { .. } => {}

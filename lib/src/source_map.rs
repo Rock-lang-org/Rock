@@ -967,6 +967,9 @@ fn record_type_references(
     map: &mut SemanticSourceMap,
 ) {
     match ty {
+        ast::ParseType::Object(object) => {
+            for ty in object.types() { record_type_references(ty, generic_ids, resolver, map); }
+        }
         ast::ParseType::Type(inner) => {
             if let Some(generic) = generic_ids.get(&inner.name) {
                 map.record_reference(
@@ -1078,6 +1081,9 @@ fn record_associated_type_references(
     map: &mut SemanticSourceMap,
 ) {
     match ty {
+        ast::ParseType::Object(object) => {
+            for ty in object.types() { record_associated_type_references(ty, owner, associated_types, map); }
+        }
         ast::ParseType::Associated { base, member } => {
             if let Some(associated) = associated_types.get(&member.name) {
                 map.record_reference_in_scope(
@@ -1314,6 +1320,7 @@ fn ast_expression_span(expression: &ast::Expression) -> Option<Span> {
                 }),
                 ast::Operand::SelfIdent(ident) => Some(ident.span.clone()),
                 ast::Operand::CallHole(span) => Some(span.clone()),
+                ast::Operand::Open(open) => Some(open.span.clone()),
                 ast::Operand::Instance(instance) => {
                     instance.name.path.first().map(|segment| match segment {
                         ast::IdentOrType::Ident(ident) => ident.span.clone(),
@@ -1333,6 +1340,9 @@ fn ast_expression_span(expression: &ast::Expression) -> Option<Span> {
 
 fn collect_parse_type_name_spans(ty: &ast::ParseType, output: &mut HashMap<String, Span>) {
     match ty {
+        ast::ParseType::Object(object) => {
+            for ty in object.types() { collect_parse_type_name_spans(ty, output); }
+        }
         ast::ParseType::Type(inner) => {
             output
                 .entry(inner.name.clone())

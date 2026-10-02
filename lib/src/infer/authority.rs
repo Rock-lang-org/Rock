@@ -53,6 +53,7 @@ pub(super) enum AuthorityObligationKind {
     Field,
     TryBranch,
     FromResidual,
+    ObjectCoercion,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -203,6 +204,13 @@ pub(super) fn run_authority_obligation(
             strict,
             try_strict,
         ),
+        AuthorityObligationKind::ObjectCoercion => materialize_authority_site(
+            hir,
+            obligation.owner,
+            obligation.site.clone().expect("selection obligation site"),
+            strict,
+            try_strict,
+        ),
     };
     hir.constraint_store.replace_owner(previous_owner);
     let result = result?;
@@ -325,6 +333,18 @@ fn collect_authority_sites(
         suppress_field_slot: bool,
     ) {
         match &node.kind {
+            HirExprKind::Open { source, body, .. } => {
+                expr(source, engine, output, false);
+                block(body, engine, output);
+            }
+            HirExprKind::OwnedObjectCall { owner, args, .. } => {
+                // Identity/protocol authority is complete. Type dependencies
+                // remain part of propagation, not unresolved selection slots.
+                expr(owner, engine, output, false);
+                for arg in args {
+                    expr(arg, engine, output, false);
+                }
+            }
             HirExprKind::Call(callee, args, target) => {
                 if !native_call_type(&callee.ty)
                     && !matches!(callee.kind, HirExprKind::FieldAccess(..))
@@ -442,6 +462,26 @@ fn collect_authority_sites(
             | HirExprKind::TupleIndex(inner, _)
             | HirExprKind::UnaryOp(_, inner)
             | HirExprKind::ArrayRepeat(inner, _) => expr(inner, engine, output, false),
+            HirExprKind::ObjectCoercion(inner, coercion) => {
+                if coercion.evidence.is_none() {
+                    let kind = AuthorityObligationKind::ObjectCoercion;
+                    let mut types = vec![inner.ty.clone(), coercion.target.clone()];
+                    let mut nested = inner.as_ref();
+                    while let HirExprKind::ObjectCoercion(child, coercion) = &nested.kind {
+                        types.push(child.ty.clone());
+                        types.push(coercion.target.clone());
+                        nested = child;
+                    }
+                    output.push((
+                        kind,
+                        AuthoritySiteId::new(kind, &node.span),
+                        "directional object coercion".into(),
+                        node.span.clone(),
+                        dependencies(types, engine),
+                    ));
+                }
+                expr(inner, engine, output, false);
+            }
             HirExprKind::If {
                 condition,
                 then_branch,
@@ -529,6 +569,7 @@ fn materialize_authority_site(
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct AuthorityCounts {
+    pending_coercions: usize,
     methods: usize,
     pending_methods: usize,
     residuals: usize,
@@ -542,7 +583,10 @@ pub(super) fn pending_authority_error(
     owners: Option<&HashSet<ConstraintOwner>>,
     obligations: &[AuthorityObligation],
 ) -> ResolveError {
-    let message = if authority_counts(hir, owners).pending_residuals > 0 {
+    let message = if authority_counts(hir, owners).pending_coercions > 0 {
+        "cannot resolve object coercion because its source or destination remains unresolved"
+            .to_string()
+    } else if authority_counts(hir, owners).pending_residuals > 0 {
         "cannot resolve '?' because its carrier or enclosing residual remains unresolved"
             .to_string()
     } else if authority_counts(hir, owners).pending_methods > 0 {
@@ -592,6 +636,12 @@ fn first_pending_field(
 
     fn expr(node: &HirExpr, engine: &crate::infer::InferenceEngine) -> Option<(String, Type)> {
         match &node.kind {
+            HirExprKind::Open { source, body, .. } => {
+                expr(source, engine).or_else(|| block(body, engine))
+            }
+            HirExprKind::OwnedObjectCall { owner, args, .. } => {
+                expr(owner, engine).or_else(|| args.iter().find_map(|arg| expr(arg, engine)))
+            }
             HirExprKind::FieldAccess(receiver, name, None) => {
                 Some((name.clone(), engine.resolve(&receiver.ty)))
             }
@@ -606,6 +656,7 @@ fn first_pending_field(
             | HirExprKind::Deref(operand)
             | HirExprKind::Ref(_, operand)
             | HirExprKind::Cast(operand, _)
+            | HirExprKind::ObjectCoercion(operand, _)
             | HirExprKind::TupleIndex(operand, _)
             | HirExprKind::UnaryOp(_, operand)
             | HirExprKind::ArrayRepeat(operand, _) => expr(operand, engine),
@@ -773,7 +824,8 @@ fn authority_pass_result(
     AuthorityPassResult {
         progress: before_generation != hir.engine.rigid_substitution_generation()
             || before_counts != after_counts,
-        pending: after_counts.pending_methods > 0
+        pending: after_counts.pending_coercions > 0
+            || after_counts.pending_methods > 0
             || after_counts.pending_residuals > 0
             || after_counts.pending_fields > 0,
         ambiguous: false,
@@ -798,6 +850,17 @@ fn authority_counts(
 
     fn expr(node: &HirExpr, counts: &mut AuthorityCounts) {
         match &node.kind {
+            HirExprKind::Open { source, body, .. } => {
+                expr(source, counts);
+                block(body, counts);
+            }
+            HirExprKind::OwnedObjectCall { owner, args, .. } => {
+                counts.methods += 1;
+                expr(owner, counts);
+                for arg in args {
+                    expr(arg, counts);
+                }
+            }
             HirExprKind::MethodCall(receiver, _, args, _, target) => {
                 if target.is_some() {
                     counts.methods += 1;
@@ -847,6 +910,10 @@ fn authority_counts(
             | HirExprKind::TupleIndex(inner, _)
             | HirExprKind::UnaryOp(_, inner)
             | HirExprKind::ArrayRepeat(inner, _) => expr(inner, counts),
+            HirExprKind::ObjectCoercion(inner, coercion) => {
+                counts.pending_coercions += usize::from(coercion.evidence.is_none());
+                expr(inner, counts);
+            }
             HirExprKind::If {
                 condition,
                 then_branch,
@@ -950,6 +1017,22 @@ fn collect_block_type_vars(
     ) {
         collect_type_vars(&engine.resolve(&node.ty), output);
         match &node.kind {
+            HirExprKind::Open {
+                source,
+                binding,
+                body,
+            } => {
+                binding.visit_types(&mut |ty| collect_type_vars(&engine.resolve(ty), output));
+                expr(source, engine, output);
+                collect_block_type_vars(body, engine, output);
+            }
+            HirExprKind::OwnedObjectCall { owner, args, call } => {
+                call.visit_types(&mut |ty| collect_type_vars(&engine.resolve(ty), output));
+                expr(owner, engine, output);
+                for arg in args {
+                    expr(arg, engine, output);
+                }
+            }
             HirExprKind::Call(callee, args, _) | HirExprKind::MethodCall(callee, _, args, _, _) => {
                 expr(callee, engine, output);
                 for arg in args {
@@ -972,6 +1055,7 @@ fn collect_block_type_vars(
             | HirExprKind::Deref(inner)
             | HirExprKind::Ref(_, inner)
             | HirExprKind::Cast(inner, _)
+            | HirExprKind::ObjectCoercion(inner, _)
             | HirExprKind::TupleIndex(inner, _)
             | HirExprKind::UnaryOp(_, inner)
             | HirExprKind::ArrayRepeat(inner, _) => expr(inner, engine, output),
@@ -1171,6 +1255,16 @@ fn propagate_expr(
         );
     }
     match &mut expr.kind {
+        HirExprKind::Open { source, body, .. } => {
+            propagate_expr(hir, source, constrained_vars, errors);
+            propagate_block(hir, body, constrained_vars, errors);
+        }
+        HirExprKind::OwnedObjectCall { owner, args, .. } => {
+            propagate_expr(hir, owner, constrained_vars, errors);
+            for arg in args {
+                propagate_expr(hir, arg, constrained_vars, errors);
+            }
+        }
         HirExprKind::Call(callee, args, _) => {
             // Establish the call-site scheme before descending into deferred
             // arguments so their method authority can use the parameter type.
@@ -1225,7 +1319,10 @@ fn propagate_expr(
         HirExprKind::FieldAccess(receiver, _, _)
         | HirExprKind::Deref(receiver)
         | HirExprKind::Ref(_, receiver)
-        | HirExprKind::Cast(receiver, _) => propagate_expr(hir, receiver, constrained_vars, errors),
+        | HirExprKind::Cast(receiver, _)
+        | HirExprKind::ObjectCoercion(receiver, _) => {
+            propagate_expr(hir, receiver, constrained_vars, errors)
+        }
         HirExprKind::TupleIndex(receiver, index) => {
             propagate_expr(hir, receiver, constrained_vars, errors);
             if let Type::Tuple(elements) = hir.engine.resolve(&receiver.ty) {
@@ -1905,6 +2002,16 @@ fn collect_unresolved_authority_vars(
         output: &mut HashSet<crate::ids::TypeVarId>,
     ) {
         match &node.kind {
+            HirExprKind::Open { source, body, .. } => {
+                expr(source, engine, output);
+                collect_unresolved_authority_vars(body, engine, output);
+            }
+            HirExprKind::OwnedObjectCall { owner, args, .. } => {
+                expr(owner, engine, output);
+                for arg in args {
+                    expr(arg, engine, output);
+                }
+            }
             HirExprKind::Call(callee, args, target) => {
                 if target.is_none() {
                     if let HirExprKind::FieldAccess(receiver, _, _) = &callee.kind {
@@ -1947,6 +2054,7 @@ fn collect_unresolved_authority_vars(
             | HirExprKind::Deref(inner)
             | HirExprKind::Ref(_, inner)
             | HirExprKind::Cast(inner, _)
+            | HirExprKind::ObjectCoercion(inner, _)
             | HirExprKind::TupleIndex(inner, _)
             | HirExprKind::UnaryOp(_, inner)
             | HirExprKind::ArrayRepeat(inner, _) => expr(inner, engine, output),
@@ -2061,11 +2169,14 @@ fn materialize_pending(
         effective_trait_methods: &hir.imported_effective_trait_methods,
         resolver: &hir.resolver,
         structs: &struct_ids,
+        enums: &hir.enums,
         engine: RefCell::new(&mut hir.engine),
         try_protocol: hir.language_items.try_protocol.clone(),
         unsafe_context: Cell::new(false),
         mutable_locals: HashSet::new(),
         local_bindings: HashMap::new(),
+        pending_coercion_dependencies: HashSet::new(),
+        opened_witnesses: Vec::new(),
         next_local_id: 0,
         ambiguous: false,
         selected_site,
@@ -2158,11 +2269,14 @@ struct MethodAuthorityContext<'a> {
     effective_trait_methods: &'a HashMap<(DefId, DefId), DefId>,
     resolver: &'a crate::collect::resolver::ResolverTables,
     structs: &'a HashMap<DefId, crate::hir::HirStruct>,
+    enums: &'a HashMap<DefId, crate::hir::HirEnum>,
     engine: RefCell<&'a mut crate::infer::InferenceEngine>,
     try_protocol: Option<TryLanguageItems<DefId>>,
     unsafe_context: Cell<bool>,
     mutable_locals: HashSet<HirLocalId>,
     local_bindings: HashMap<HirLocalId, (String, Type, bool)>,
+    pending_coercion_dependencies: HashSet<crate::ids::TypeVarId>,
+    opened_witnesses: Vec<crate::hir::HirOpenBinding>,
     next_local_id: u32,
     ambiguous: bool,
     selected_site: Option<AuthoritySiteId>,
@@ -2171,6 +2285,100 @@ struct MethodAuthorityContext<'a> {
 }
 
 impl MethodAuthorityContext<'_> {
+    fn materialize_owned_call(
+        &mut self,
+        receiver: &HirExpr,
+        name: &str,
+        args: &[HirExpr],
+        result: &Type,
+        span: &crate::lexer::Span,
+        errors: &mut Vec<ResolveError>,
+    ) -> Result<Option<HirExpr>, ()> {
+        let owner = HirExpr {
+            ty: self.resolved_type(&receiver.ty),
+            ..receiver.clone()
+        };
+        let (selected, mut call) = match crate::hir::owned_objects::select(
+            &owner,
+            name,
+            self.traits,
+            &self.language_items,
+            &self.service(),
+            self.opened_witnesses
+                .iter()
+                .rev()
+                .find(|binding| binding.matches_owner(&owner.ty)),
+        ) {
+            Ok(Some(selected)) => selected,
+            Ok(None) => return Ok(None),
+            Err(message) => {
+                errors.push(ResolveError::with_span(message, span.clone()));
+                return Err(());
+            }
+        };
+        let Some(function) = &selected.function else {
+            errors.push(ResolveError::with_span(
+                "consuming member has no declaration".into(),
+                span.clone(),
+            ));
+            return Err(());
+        };
+        if function.is_unsafe && !self.unsafe_context.get() {
+            errors.push(ResolveError::with_span(
+                "unsafe consuming member requires an unsafe block".into(),
+                span.clone(),
+            ));
+            return Err(());
+        }
+        if args.len() != selected.substituted_params.len() {
+            errors.push(ResolveError::with_span(
+                "consuming object call requires all declared arguments".into(),
+                span.clone(),
+            ));
+            return Err(());
+        }
+        let mut substitution = selected.owner_substitution.clone();
+        for parameter in &function.generic_params {
+            substitution.entry(parameter.id).or_insert_with(|| {
+                self.engine
+                    .borrow_mut()
+                    .fresh_type_var_at_kind(span.clone(), parameter.kind.clone())
+            });
+        }
+        let params = selected
+            .substituted_params
+            .iter()
+            .map(|param| param.ty.substitute_generics(&substitution))
+            .collect::<Vec<_>>();
+        let ret = selected.return_type.substitute_generics(&substitution);
+        let callee = HirExpr {
+            ty: Type::function(params, ret.clone()),
+            kind: HirExprKind::Unit,
+            span: span.clone(),
+        };
+        let mut arguments = args.to_vec();
+        self.materialize_callable_arguments(&callee, &mut arguments, errors);
+        let result_check = self.engine.borrow_mut().unify(result, &ret);
+        if let Err(error) = result_check {
+            errors.push(ResolveError::with_span(
+                error.render(&self.engine.borrow()),
+                span.clone(),
+            ));
+            return Err(());
+        }
+        self.record_selected_bounds(&selected, &substitution, "consuming object method");
+        call.method = selected.target_with_substitution(&substitution, |ty| self.resolved_type(ty));
+        Ok(Some(HirExpr {
+            ty: self.resolved_type(&ret),
+            span: span.clone(),
+            kind: HirExprKind::OwnedObjectCall {
+                owner: Box::new(owner),
+                args: arguments,
+                call,
+            },
+        }))
+    }
+
     fn display_type(&self, ty: &Type) -> String {
         self.engine.borrow().display_type(ty)
     }
@@ -2194,7 +2402,36 @@ impl MethodAuthorityContext<'_> {
     }
 
     fn materialize_function(&mut self, function: &mut HirFunction, errors: &mut Vec<ResolveError>) {
+        self.pending_coercion_dependencies.clear();
+        let mut sites = Vec::new();
+        collect_authority_sites(&function.body, &self.engine.borrow(), &mut sites);
+        for (kind, _, _, _, dependencies) in sites {
+            if kind == AuthorityObligationKind::ObjectCoercion {
+                self.pending_coercion_dependencies.extend(dependencies);
+            }
+        }
         self.bounds = function.generic_bounds.clone();
+        if let Some(implementation) = self.impls.values().find(|implementation| {
+            implementation
+                .methods
+                .values()
+                .any(|method| method.id == function.id)
+        }) {
+            self.bounds
+                .relaxed_sized
+                .extend(implementation.bounds.relaxed_sized.iter().copied());
+            self.bounds
+                .predicates
+                .extend(implementation.bounds.predicates.clone());
+            for (parameter, assumptions) in &implementation.bounds {
+                let existing = self.bounds.entry(*parameter).or_default();
+                for assumption in assumptions {
+                    if !existing.contains(assumption) {
+                        existing.push(assumption.clone());
+                    }
+                }
+            }
+        }
         self.mutable_locals.clear();
         self.local_bindings.clear();
         self.next_local_id = 0;
@@ -2227,10 +2464,48 @@ impl MethodAuthorityContext<'_> {
         callee: &HirExpr,
         args: &[HirExpr],
         function_id: DefId,
+        errors: &mut Vec<ResolveError>,
     ) {
         let Some(function) = self.functions.get(&function_id).cloned() else {
             return;
         };
+        let template = Type::function_with_safety(
+            function
+                .params
+                .iter()
+                .map(|parameter| parameter.ty.clone())
+                .collect(),
+            function.ret_type.clone(),
+            FunctionSafety::from_is_unsafe(function.is_unsafe),
+        );
+        let mut substitutions = HashMap::new();
+        if type_pattern_matches(
+            &template,
+            &self.resolved_type(&callee.ty),
+            &mut substitutions,
+        ) {
+            for parameter in &function.generic_params {
+                if parameter.maybe_unsized
+                    || function
+                        .generic_bounds
+                        .relaxed_sized
+                        .contains(&parameter.id)
+                    || parameter.kind != crate::type_services::kind::Kind::Type
+                {
+                    continue;
+                }
+                if let Some(actual) = substitutions.get(&parameter.id) {
+                    if crate::collect::sizedness::storage_is_unsized(
+                        actual,
+                        &self.bounds,
+                        self.traits,
+                        self.sized_trait_id,
+                    ) {
+                        errors.push(ResolveError::with_span("generic type argument requires Sized; the declaration must explicitly relax this with ?Sized".into(), callee.span.clone()));
+                    }
+                }
+            }
+        }
         if function.is_method
             || !function.generic_params.is_empty()
             || function.params.iter().any(|param| param.is_ref)
@@ -2365,6 +2640,26 @@ impl MethodAuthorityContext<'_> {
 
     fn collect_local_bindings_expr(&mut self, expr: &HirExpr) {
         match &expr.kind {
+            HirExprKind::Open {
+                source,
+                binding,
+                body,
+            } => {
+                self.record_local_binding(
+                    binding.value.local_id,
+                    &binding.value.name,
+                    binding.value.ty.clone(),
+                    binding.value.mutable,
+                );
+                self.collect_local_bindings_expr(source);
+                self.collect_local_bindings_block(body);
+            }
+            HirExprKind::OwnedObjectCall { owner, args, .. } => {
+                self.collect_local_bindings_expr(owner);
+                for arg in args {
+                    self.collect_local_bindings_expr(arg);
+                }
+            }
             HirExprKind::If {
                 condition,
                 then_branch,
@@ -2418,6 +2713,7 @@ impl MethodAuthorityContext<'_> {
             | HirExprKind::Deref(expr)
             | HirExprKind::Ref(_, expr)
             | HirExprKind::Cast(expr, _)
+            | HirExprKind::ObjectCoercion(expr, _)
             | HirExprKind::TupleIndex(expr, _) => self.collect_local_bindings_expr(expr),
             HirExprKind::Assign(left, right) | HirExprKind::BinOp(_, left, right) => {
                 self.collect_local_bindings_expr(left);
@@ -2545,6 +2841,22 @@ impl MethodAuthorityContext<'_> {
         else {
             return None;
         };
+        if matches!(inner.as_ref(), Type::Object(_)) {
+            let span = expr.span.clone();
+            let place = HirExpr {
+                ty: inner.as_ref().clone(),
+                kind: HirExprKind::Deref(Box::new(expr)),
+                span: span.clone(),
+            };
+            return Some(HirExpr {
+                ty: Type::Reference {
+                    mutable: false,
+                    inner,
+                },
+                kind: HirExprKind::Ref(false, Box::new(place)),
+                span,
+            });
+        }
         Some(HirExpr {
             ty: Type::Reference {
                 mutable: false,
@@ -2609,7 +2921,7 @@ impl MethodAuthorityContext<'_> {
         match adjustment {
             ReceiverAdjustment::AutorefShared | ReceiverAdjustment::AutorefMut => {
                 let resolved = self.resolved_type(&expr.ty);
-                if !matches!(resolved, Type::Str | Type::Slice(_)) {
+                if !matches!(resolved, Type::Str | Type::Slice(_) | Type::Object(_)) {
                     return expr;
                 }
                 let mutable = matches!(adjustment, ReceiverAdjustment::AutorefMut);
@@ -2891,7 +3203,52 @@ impl MethodAuthorityContext<'_> {
         _expected_ty: Option<&Type>,
         errors: &mut Vec<ResolveError>,
     ) -> Option<SelectedMethod> {
+        // A producer's directional coercion has priority over backwards method
+        // inference. Choosing an impl here would freeze a concrete Self/result
+        // before that producer can reveal an existential object receiver.
+        let resolved_receiver = self.resolved_type(&receiver.ty);
+        let mut receiver_head = &resolved_receiver;
+        while let Type::Reference { inner, .. } = receiver_head {
+            receiver_head = inner;
+        }
+        if matches!(receiver_head, Type::TypeVar(variable) if self.pending_coercion_dependencies.contains(variable))
+        {
+            return None;
+        }
         let receiver_candidates = self.receiver_adjustment_candidates(receiver.clone());
+        let receiver_ty = self.resolved_type(&receiver.ty);
+        let pointee = match &receiver_ty {
+            Type::Reference { inner, .. } => inner.as_ref(),
+            ty => ty,
+        };
+        if let Type::Object(object) = pointee {
+            let bounds = std::iter::once(object.principal.clone())
+                .chain(object.guarantees.iter().cloned())
+                .collect::<Vec<_>>();
+            match self.service().select_bound_method(
+                &receiver_candidates,
+                &bounds,
+                method_name,
+                pointee.clone(),
+            ) {
+                Ok(mut selected) => {
+                    if let Err(message) =
+                        crate::hir::object_methods::adapt(&mut selected, self.traits, object)
+                    {
+                        errors.push(ResolveError::with_span(message, receiver.span.clone()));
+                        return None;
+                    }
+                    return Some(selected);
+                }
+                Err(error) => {
+                    errors.push(ResolveError::with_span(
+                        self.display_selection_error(&error),
+                        receiver.span.clone(),
+                    ));
+                    return None;
+                }
+            }
+        }
         if let Type::TypeVar(id) = self.resolved_type(&receiver.ty) {
             let bounds = self.engine.borrow().get_bounds(id);
             if !bounds.is_empty() {
@@ -2929,6 +3286,47 @@ impl MethodAuthorityContext<'_> {
         let mut proven = Vec::new();
         let mut deferred = Vec::new();
         for candidate in &receiver_candidates {
+            let ty = self.resolved_type(&candidate.expr.ty);
+            let pointee = match &ty {
+                Type::Reference { inner, .. } => inner.as_ref(),
+                ty => ty,
+            };
+            if let Type::Object(object) = pointee {
+                if proven.is_empty() {
+                    let roots = std::iter::once(object.principal.clone())
+                        .chain(object.guarantees.iter().cloned())
+                        .collect::<Vec<_>>();
+                    let candidates = self.receiver_adjustment_candidates(candidate.expr.clone());
+                    match self.service().select_bound_method(
+                        &candidates,
+                        &roots,
+                        method_name,
+                        pointee.clone(),
+                    ) {
+                        Ok(mut selected) => {
+                            if let Err(message) = crate::hir::object_methods::adapt(
+                                &mut selected,
+                                self.traits,
+                                object,
+                            ) {
+                                errors
+                                    .push(ResolveError::with_span(message, receiver.span.clone()));
+                                return None;
+                            }
+                            return Some(selected);
+                        }
+                        Err(crate::selection::SelectionDiagnostic::NoImplementation { .. }) => {}
+                        Err(error) => {
+                            errors.push(ResolveError::with_span(
+                                self.display_selection_error(&error),
+                                receiver.span.clone(),
+                            ));
+                            return None;
+                        }
+                    }
+                }
+                continue;
+            }
             let mut selected = self.service().select_concrete_method_candidates(
                 std::slice::from_ref(candidate),
                 method_name,
@@ -3130,6 +3528,151 @@ impl MethodAuthorityContext<'_> {
     }
 
     fn materialize_expr(&mut self, expr: &mut HirExpr, errors: &mut Vec<ResolveError>) {
+        if let HirExprKind::ObjectCoercion(inner, coercion) = &mut expr.kind {
+            self.materialize_expr(inner, errors);
+            if coercion.evidence.is_some()
+                || !self.visit_authority_slot(AuthorityObligationKind::ObjectCoercion, &expr.span)
+            {
+                return;
+            }
+            let source = self.resolved_type(&inner.ty);
+            let target = self.resolved_type(&coercion.target);
+            if super::owner_coercion::is_owner_destination(&target) {
+                if crate::type_services::visit::type_any(&source, |ty| {
+                    matches!(ty, Type::TypeVar(_))
+                }) {
+                    return;
+                }
+                let mut value = (**inner).clone();
+                value.ty = source.clone();
+                if source == target {
+                    *expr = value;
+                    return;
+                }
+                let local_id = HirLocalId(self.next_local_id);
+                self.next_local_id += 1;
+                match super::owner_coercion::lower(
+                    value,
+                    &target,
+                    &self.service(),
+                    &self.language_items,
+                    local_id,
+                ) {
+                    Ok(lowered) => {
+                        *expr = lowered;
+                        self.materialize_expr(expr, errors);
+                    }
+                    Err(message) => {
+                        errors.push(ResolveError::with_span(message, expr.span.clone()))
+                    }
+                }
+                return;
+            }
+            let is_object = matches!(&target, Type::Reference { inner, .. } | Type::Pointer(inner) if matches!(inner.as_ref(), Type::Object(_)));
+            let unresolved = |ty: &Type| {
+                crate::type_services::visit::type_any(ty, |ty| matches!(ty, Type::TypeVar(_)))
+            };
+            if !is_object {
+                if let (
+                    Type::Reference {
+                        mutable: source_mut,
+                        inner: source_inner,
+                    },
+                    Type::Reference {
+                        mutable: target_mut,
+                        inner: target_inner,
+                    },
+                ) = (&source, &target)
+                {
+                    if (!target_mut || *source_mut)
+                        && matches!(source_inner.as_ref(), Type::Array(_, _))
+                        && matches!(target_inner.as_ref(), Type::Slice(_))
+                    {
+                        if let Some(value) =
+                            self.array_ref_to_slice_ref((**inner).clone(), *target_mut)
+                        {
+                            let result = self.engine.borrow_mut().unify(&value.ty, &target);
+                            match result {
+                                Ok(()) => *expr = value,
+                                Err(error) => errors.push(ResolveError::with_span(
+                                    error.render(&self.engine.borrow()),
+                                    expr.span.clone(),
+                                )),
+                            }
+                            return;
+                        }
+                    }
+                }
+                // Waiting avoids prematurely identifying a concrete pointee with
+                // an object inferred from a different call or return site.
+                let potential = matches!(&source, Type::TypeVar(_) | Type::Reference { .. });
+                if unresolved(&target) && potential && !self.strict {
+                    return;
+                }
+                let result = self.engine.borrow_mut().unify(&source, &target);
+                if let Err(error) = result {
+                    errors.push(ResolveError::with_span(
+                        error.render(&self.engine.borrow()),
+                        expr.span.clone(),
+                    ));
+                } else {
+                    let mut value = (**inner).clone();
+                    value.ty = self.resolved_type(&value.ty);
+                    *expr = value;
+                }
+                return;
+            }
+            let inferred = match &source {
+                Type::Reference { inner, .. } | Type::Pointer(inner) => match inner.as_ref() {
+                    Type::TypeVar(id) => Some(self.engine.borrow().get_bounds(*id)),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if (unresolved(&source) && inferred.as_ref().is_none_or(|bounds| bounds.is_empty()))
+                || unresolved(&target)
+            {
+                return;
+            }
+            let context = super::object_coercion::ObjectEvidenceContext {
+                traits: self.traits,
+                impls: self.impls,
+                structs: self.structs,
+                enums: self.enums,
+                language_items: &self.language_items,
+                bounds: &self.bounds,
+            };
+            let proof = match &source {
+                Type::Reference { inner, .. } | Type::Pointer(inner)
+                    if matches!(inner.as_ref(), Type::Witness(_)) =>
+                {
+                    let Type::Witness(witness) = inner.as_ref() else {
+                        unreachable!()
+                    };
+                    self.opened_witnesses
+                        .iter()
+                        .rev()
+                        .find(|binding| binding.witness == *witness)
+                        .ok_or_else(|| {
+                            "opened object coercion has no dominating dictionary".to_string()
+                        })
+                        .and_then(|binding| {
+                            context.prove_opened(&source, &target, *witness, &binding.object)
+                        })
+                }
+                _ => context.prove_with_assumptions(&source, &target, inferred.as_deref()),
+            };
+            match proof {
+                Ok(evidence) => {
+                    inner.ty = source;
+                    coercion.target = target.clone();
+                    coercion.evidence = Some(evidence);
+                    expr.ty = target;
+                }
+                Err(message) => errors.push(ResolveError::with_span(message, expr.span.clone())),
+            }
+            return;
+        }
         if matches!(&expr.kind, HirExprKind::Call(callee, _, _) if !native_call_type(&callee.ty) && !matches!(callee.kind, HirExprKind::FieldAccess(_, _, None)))
             && (self.visit_authority_slot(AuthorityObligationKind::CallableCall, &expr.span)
                 || self.visit_authority_slot(AuthorityObligationKind::DeferredCall, &expr.span))
@@ -3137,6 +3680,26 @@ impl MethodAuthorityContext<'_> {
             self.materialize_value_call(expr, errors);
         }
         match &mut expr.kind {
+            HirExprKind::OwnedObjectCall { owner, args, call } => {
+                self.materialize_expr(owner, errors);
+                for arg in args {
+                    self.materialize_expr(arg, errors);
+                }
+                call.visit_types_mut(&mut |ty| *ty = self.resolved_type(ty));
+                expr.ty = self.resolved_type(&expr.ty);
+            }
+            HirExprKind::Open {
+                source,
+                binding,
+                body,
+            } => {
+                self.materialize_expr(source, errors);
+                binding.visit_types_mut(&mut |ty| *ty = self.resolved_type(ty));
+                self.opened_witnesses.push(binding.clone());
+                self.materialize_block(body, errors);
+                self.opened_witnesses.pop();
+                expr.ty = self.resolved_type(&expr.ty);
+            }
             HirExprKind::Call(callee, args, target) => {
                 let deferred_member = matches!(callee.kind, HirExprKind::FieldAccess(_, _, _));
                 let selected_site = deferred_member.then(|| {
@@ -3156,12 +3719,21 @@ impl MethodAuthorityContext<'_> {
                     self.materialize_callable_arguments(callee, args, errors);
                     if let Some(crate::hir::HirCallTarget::Function(function_id)) = target.as_ref()
                     {
-                        self.materialize_direct_function_call(&expr.ty, callee, args, *function_id);
+                        self.materialize_direct_function_call(
+                            &expr.ty,
+                            callee,
+                            args,
+                            *function_id,
+                            errors,
+                        );
                     }
                     return;
                 }
-                let (mut receiver, method_name) = match &callee.kind {
+                let (receiver, method_name) = match &mut callee.kind {
                     HirExprKind::FieldAccess(receiver, method_name, None) => {
+                        // Child sites must update the actual tree even when this
+                        // invocation is materializing a different authority slot.
+                        self.materialize_expr(receiver, errors);
                         (receiver.as_ref().clone(), method_name.clone())
                     }
                     _ => {
@@ -3177,17 +3749,30 @@ impl MethodAuthorityContext<'_> {
                     }
                 };
                 if selected_site == Some(false) {
-                    self.materialize_expr(&mut receiver, errors);
                     for arg in args.iter_mut() {
                         self.materialize_expr(arg, errors);
                     }
                     return;
                 }
-                self.materialize_expr(&mut receiver, errors);
                 for arg in args.iter_mut() {
                     self.materialize_expr(arg, errors);
                 }
-                let Some(mut selected) = self.select_deferred_method(
+                match self.materialize_owned_call(
+                    &receiver,
+                    &method_name,
+                    args,
+                    &expr.ty,
+                    &expr.span,
+                    errors,
+                ) {
+                    Ok(Some(owned)) => {
+                        *expr = owned;
+                        return;
+                    }
+                    Ok(None) => {}
+                    Err(()) => return,
+                }
+                let Some(selected) = self.select_deferred_method(
                     &receiver,
                     &method_name,
                     args,
@@ -3203,13 +3788,10 @@ impl MethodAuthorityContext<'_> {
                     }
                     return;
                 };
-                selected.receiver = receiver.clone();
-                let adjusted_receiver = match selected.receiver_adjustment {
-                    ReceiverAdjustment::TraitDeref => self
-                        .trait_deref_candidate(receiver.clone())
-                        .unwrap_or_else(|| receiver.clone()),
-                    adjustment => self.apply_receiver_adjustment(receiver.clone(), adjustment),
-                };
+                let adjusted_receiver = self.apply_receiver_adjustment(
+                    selected.receiver.clone(),
+                    selected.receiver_adjustment,
+                );
 
                 let Some(function) = selected.function.as_ref() else {
                     errors.push(ResolveError::with_span(
@@ -3412,6 +3994,7 @@ impl MethodAuthorityContext<'_> {
             HirExprKind::Deref(receiver)
             | HirExprKind::Ref(_, receiver)
             | HirExprKind::Cast(receiver, _)
+            | HirExprKind::ObjectCoercion(receiver, _)
             | HirExprKind::TupleIndex(receiver, _) => self.materialize_expr(receiver, errors),
             HirExprKind::If {
                 condition,
@@ -3984,6 +4567,25 @@ impl MethodAuthorityContext<'_> {
         seen: &mut HashSet<HirLocalId>,
     ) {
         match &expr.kind {
+            HirExprKind::Open { source, .. } => {
+                self.collect_method_value_captures(source, receiver_mode, captures, seen);
+            }
+            HirExprKind::OwnedObjectCall { owner, args, .. } => {
+                self.collect_method_value_captures(
+                    owner,
+                    Some(crate::types::ReceiverMode::Move),
+                    captures,
+                    seen,
+                );
+                for arg in args {
+                    self.collect_method_value_captures(
+                        arg,
+                        Some(crate::types::ReceiverMode::Move),
+                        captures,
+                        seen,
+                    );
+                }
+            }
             HirExprKind::ResolvedVar(HirVarRef {
                 target: HirVarTarget::Local(local_id),
                 ..
@@ -4013,14 +4615,14 @@ impl MethodAuthorityContext<'_> {
             | HirExprKind::TupleIndex(base, _)
             | HirExprKind::Deref(base)
             | HirExprKind::Ref(_, base)
-            | HirExprKind::Cast(base, _) => {
+            | HirExprKind::Cast(base, _)
+            | HirExprKind::ObjectCoercion(base, _) => {
                 self.collect_method_value_captures(base, receiver_mode, captures, seen)
             }
             _ => {}
         }
     }
 
-    #[allow(dead_code)]
     fn materialize_method_value(
         &mut self,
         expr: &mut HirExpr,
@@ -4067,15 +4669,60 @@ impl MethodAuthorityContext<'_> {
         let target = selected.target_with_substitution(&substitution, |ty| self.resolved_type(ty));
         let adjusted_receiver =
             self.apply_receiver_adjustment(selected.receiver.clone(), selected.receiver_adjustment);
-        let call = HirExpr {
-            ty: call_ret.clone(),
-            kind: HirExprKind::MethodCall(
+        let mut owned_binding = None;
+        let kind = if function.self_receiver == Some(crate::types::ReceiverMode::Move)
+            && (crate::hir::owned_objects::object(&receiver.ty).is_some()
+                || self
+                    .opened_witnesses
+                    .iter()
+                    .any(|binding| binding.matches_owner(&receiver.ty)))
+        {
+            match crate::hir::owned_objects::prove(
+                &receiver.ty,
+                target,
+                self.traits,
+                &self.language_items,
+                &self.service(),
+                self.opened_witnesses
+                    .iter()
+                    .rev()
+                    .find(|binding| binding.matches_owner(&receiver.ty)),
+            ) {
+                Ok(call) => {
+                    let local_id = self.fresh_local_id();
+                    let name = "<owned-method-self>".to_string();
+                    let owner = HirExpr {
+                        ty: receiver.ty.clone(),
+                        span: receiver.span.clone(),
+                        kind: HirExprKind::ResolvedVar(HirVarRef {
+                            name: name.clone(),
+                            target: HirVarTarget::Local(local_id),
+                        }),
+                    };
+                    owned_binding = Some((local_id, name, receiver.clone()));
+                    HirExprKind::OwnedObjectCall {
+                        owner: Box::new(owner),
+                        args: call_args,
+                        call,
+                    }
+                }
+                Err(message) => {
+                    errors.push(ResolveError::with_span(message, expr.span.clone()));
+                    return;
+                }
+            }
+        } else {
+            HirExprKind::MethodCall(
                 Box::new(adjusted_receiver),
                 method_name,
                 call_args,
                 function.self_receiver,
                 Some(target),
-            ),
+            )
+        };
+        let call = HirExpr {
+            ty: call_ret.clone(),
+            kind,
             span: expr.span.clone(),
         };
         let body = HirBlock {
@@ -4083,24 +4730,64 @@ impl MethodAuthorityContext<'_> {
             stmts: vec![HirStmt::Expr(call)],
         };
         let mut captures = Vec::new();
-        self.collect_method_value_captures(
-            &receiver,
-            function.self_receiver,
-            &mut captures,
-            &mut HashSet::new(),
-        );
+        if let Some((local_id, name, owner)) = &owned_binding {
+            captures.push(HirClosureCapture {
+                local_id: *local_id,
+                name: name.clone(),
+                ty: owner.ty.clone(),
+                mutable: false,
+                kind: HirClosureCaptureKind::Move,
+            });
+        } else {
+            self.collect_method_value_captures(
+                &receiver,
+                function.self_receiver,
+                &mut captures,
+                &mut HashSet::new(),
+            );
+        }
         let params = lambda_params.iter().map(|param| param.ty.clone()).collect();
-        expr.ty = self.lambda_function_type(
+        let lambda_ty = self.lambda_function_type(
             params,
             call_ret.clone(),
             FunctionSafety::from_is_unsafe(function.is_unsafe),
             &captures,
         );
-        expr.kind = HirExprKind::Lambda {
-            params: lambda_params,
-            body,
-            captures,
+        let check = self.engine.borrow_mut().unify(&expr.ty, &lambda_ty);
+        if let Err(error) = check {
+            errors.push(ResolveError::with_span(
+                error.render(&self.engine.borrow()),
+                expr.span.clone(),
+            ));
+            return;
+        }
+        expr.ty = lambda_ty;
+        let lambda = HirExpr {
+            ty: expr.ty.clone(),
+            span: expr.span.clone(),
+            kind: HirExprKind::Lambda {
+                params: lambda_params,
+                body,
+                captures,
+            },
         };
+        if let Some((local_id, name, owner)) = owned_binding {
+            expr.kind = HirExprKind::Block(HirBlock {
+                ty: expr.ty.clone(),
+                stmts: vec![
+                    HirStmt::Let {
+                        name,
+                        local_id,
+                        ty: owner.ty.clone(),
+                        value: owner,
+                        mutable: false,
+                    },
+                    HirStmt::Expr(lambda),
+                ],
+            });
+        } else {
+            expr.kind = lambda.kind;
+        }
     }
 
     fn materialize_field_access(&mut self, expr: &mut HirExpr, errors: &mut Vec<ResolveError>) {
@@ -4109,6 +4796,43 @@ impl MethodAuthorityContext<'_> {
         };
         self.materialize_expr(receiver, errors);
         receiver.ty = self.engine.borrow().resolve(&receiver.ty);
+        if location.is_none() {
+            match crate::hir::owned_objects::select(
+                receiver,
+                field_name,
+                self.traits,
+                &self.language_items,
+                &self.service(),
+                self.opened_witnesses
+                    .iter()
+                    .rev()
+                    .find(|binding| binding.matches_owner(&receiver.ty)),
+            ) {
+                Ok(Some((selected, _))) => {
+                    if selected
+                        .function
+                        .as_ref()
+                        .is_some_and(|function| function.is_unsafe)
+                        && !self.unsafe_context.get()
+                    {
+                        errors.push(ResolveError::with_span(
+                            "unsafe consuming method value requires an unsafe block".into(),
+                            expr.span.clone(),
+                        ));
+                        return;
+                    }
+                    let receiver = receiver.as_ref().clone();
+                    let name = field_name.clone();
+                    self.materialize_method_value(expr, receiver, name, selected, errors);
+                    return;
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    errors.push(ResolveError::with_span(message, expr.span.clone()));
+                    return;
+                }
+            }
+        }
         if let Type::Reference { inner, .. } = &receiver.ty {
             let dereferenced = HirExpr {
                 ty: inner.as_ref().clone(),

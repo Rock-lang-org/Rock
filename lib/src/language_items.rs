@@ -6,6 +6,13 @@ use crate::ids::{AssocTypeId, VariantId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum LanguageItemRole {
+    ObjectOwner,
+    ObjectOwnerAllocate,
+    ObjectOwnerUnique,
+    OwnerIntoParts,
+    OwnerFromParts,
+    OwnerAllocate,
+    OwnerRelease,
     Sized,
     Drop,
     Fold,
@@ -35,7 +42,14 @@ pub enum LanguageItemRole {
 }
 
 impl LanguageItemRole {
-    pub const ALL_NAMES: [&str; 26] = [
+    pub const ALL_NAMES: [&str; 33] = [
+        "object_owner",
+        "object_owner_allocate",
+        "object_owner_unique",
+        "owner_into_parts",
+        "owner_from_parts",
+        "owner_allocate",
+        "owner_release",
         "sized",
         "drop",
         "fold",
@@ -66,6 +80,13 @@ impl LanguageItemRole {
 
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ObjectOwner => "object_owner",
+            Self::ObjectOwnerAllocate => "object_owner_allocate",
+            Self::ObjectOwnerUnique => "object_owner_unique",
+            Self::OwnerIntoParts => "owner_into_parts",
+            Self::OwnerFromParts => "owner_from_parts",
+            Self::OwnerAllocate => "owner_allocate",
+            Self::OwnerRelease => "owner_release",
             Self::Sized => "sized",
             Self::Drop => "drop",
             Self::Fold => "fold",
@@ -101,6 +122,13 @@ impl FromStr for LanguageItemRole {
 
     fn from_str(role: &str) -> Result<Self, Self::Err> {
         match role {
+            "object_owner" => Ok(Self::ObjectOwner),
+            "object_owner_allocate" => Ok(Self::ObjectOwnerAllocate),
+            "object_owner_unique" => Ok(Self::ObjectOwnerUnique),
+            "owner_into_parts" => Ok(Self::OwnerIntoParts),
+            "owner_from_parts" => Ok(Self::OwnerFromParts),
+            "owner_allocate" => Ok(Self::OwnerAllocate),
+            "owner_release" => Ok(Self::OwnerRelease),
             "sized" => Ok(Self::Sized),
             "drop" => Ok(Self::Drop),
             "fold" => Ok(Self::Fold),
@@ -229,6 +257,9 @@ pub struct RangeLanguageItems<D> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanguageItems<D> {
+    pub object_owner: Option<ObjectOwnerLanguageItems<D>>,
+    pub object_owner_allocate: Option<OwnerOperationLanguageItems<D>>,
+    pub object_owner_unique: Option<OwnerOperationLanguageItems<D>>,
     pub sized: Option<SizedLanguageItems<D>>,
     pub drop: Option<DropLanguageItems<D>>,
     pub fold: Option<FoldLanguageItems<D>>,
@@ -243,9 +274,26 @@ pub struct LanguageItems<D> {
     pub range: Option<RangeLanguageItems<D>>,
 }
 
+/// Unsafe ownership transport. State is independent of the erased pointee.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectOwnerLanguageItems<D> {
+    pub trait_id: D,
+    pub into_parts_id: D,
+    pub from_parts_id: D,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerOperationLanguageItems<D> {
+    pub trait_id: D,
+    pub method_id: D,
+}
+
 impl<D> Default for LanguageItems<D> {
     fn default() -> Self {
         Self {
+            object_owner: None,
+            object_owner_allocate: None,
+            object_owner_unique: None,
             sized: None,
             drop: None,
             fold: None,
@@ -349,6 +397,41 @@ pub fn merge_language_item_providers_all<'a, D: Clone + 'a>(
     providers.sort_by_key(|(name, _)| *name);
 
     let mut conflicts = Vec::new();
+    let object_owner = merge_protocol(
+        &providers,
+        "object_owner",
+        |items| items.object_owner.as_ref(),
+        &mut conflicts,
+    );
+    let object_owner_allocate = merge_protocol(
+        &providers,
+        "object_owner_allocate",
+        |items| items.object_owner_allocate.as_ref(),
+        &mut conflicts,
+    );
+    let object_owner_unique = merge_protocol(
+        &providers,
+        "object_owner_unique",
+        |items| items.object_owner_unique.as_ref(),
+        &mut conflicts,
+    );
+    for (provider, items) in &providers {
+        for (present, protocol) in [
+            (
+                items.object_owner_allocate.is_some(),
+                "object_owner_allocate",
+            ),
+            (items.object_owner_unique.is_some(), "object_owner_unique"),
+        ] {
+            if present && items.object_owner.is_none() {
+                conflicts.push(LanguageItemProviderConflict::MissingRequired {
+                    provider: (*provider).into(),
+                    protocol,
+                    required: "object_owner",
+                });
+            }
+        }
+    }
     let sized = merge_protocol(
         &providers,
         "sized",
@@ -442,6 +525,9 @@ pub fn merge_language_item_providers_all<'a, D: Clone + 'a>(
 
     if conflicts.is_empty() {
         Ok(LanguageItems {
+            object_owner,
+            object_owner_allocate,
+            object_owner_unique,
             sized,
             drop,
             fold,

@@ -23,6 +23,7 @@ pub struct MirAgreementReport {
     pub stale_projection_facts: usize,
     pub invalid_backend_contract: usize,
     pub backend_contract_errors: Vec<MirBackendContractError>,
+    pub object_contract_errors: Vec<super::MirObjectError>,
 }
 
 impl MirAgreementReport {
@@ -43,6 +44,9 @@ impl MirAgreementReport {
 
 pub fn check_mir_runtime_agreement(program: &MirProgram) -> MirAgreementReport {
     let mut report = MirAgreementReport::default();
+    report.object_contract_errors = super::validate_object_contract(program);
+    report.invalid_backend_contract += report.object_contract_errors.len();
+    report.invalid_backend_contract += super::validate_erased_contract(program).len();
     let type_view = TypeView::new(&program.type_context);
     let callable_contract = CallableContract::new(program);
     let backend_contract = BackendContract::new(program);
@@ -152,7 +156,8 @@ pub fn check_mir_runtime_agreement(program: &MirProgram) -> MirAgreementReport {
 }
 
 fn validate_runtime_requirements(program: &MirProgram, report: &mut MirAgreementReport) {
-    let observed = crate::mir::backend_contract::runtime_requirements_for_functions(
+    let observed = crate::mir::backend_contract::runtime_requirements_for_backend(
+        &program.backend_contract,
         program.functions.values(),
     );
 
@@ -254,6 +259,15 @@ fn validate_layout_template_type_id(
     };
 
     match ty {
+        Ty::Object(object) => {
+            report.invalid_layout_ids += 1;
+            for child in object.children() {
+                validate_layout_template_type_id(program, *child, generic_params, report);
+            }
+        }
+        Ty::ObjectSelf { .. } | Ty::Witness(_) => {
+            report.invalid_type_ids += 1;
+        }
         Ty::Slice(inner) | Ty::Reference { inner, .. } | Ty::Pointer(inner) => {
             validate_layout_template_type_id(program, *inner, generic_params, report);
         }
@@ -498,6 +512,19 @@ fn validate_type_nominal_layout(
     report: &mut MirAgreementReport,
 ) {
     match ty {
+        Type::Object(object) => {
+            for child in object.children() {
+                validate_type_nominal_layout(
+                    type_context,
+                    backend_contract,
+                    child,
+                    seen_nominals,
+                    report,
+                );
+            }
+        }
+        Type::ObjectSelf { .. } => {}
+        Type::Witness(_) => report.invalid_type_ids += 1,
         Type::Struct { id, args } => {
             if seen_nominals.insert(*id) && !backend_contract.structs.contains(id) {
                 report.invalid_layout_ids += 1;
@@ -679,6 +706,16 @@ fn validate_type_id(program: &MirProgram, id: TypeId, report: &mut MirAgreementR
     }
 
     match ty {
+        Ty::Object(_) => {
+            // ObjectSelf is bound inside this signature, never a runtime value;
+            // the object contract validates that distinct binder environment.
+            if !program.backend_contract.object_schemas.contains_key(&id) {
+                report.invalid_type_ids += 1;
+            }
+        }
+        Ty::ObjectSelf { .. } | Ty::Witness(_) => {
+            report.invalid_type_ids += 1;
+        }
         Ty::Slice(inner) | Ty::Reference { inner, .. } | Ty::Pointer(inner) => {
             validate_type_id(program, *inner, report);
         }
@@ -749,7 +786,7 @@ fn validate_rvalue_type_ids(
     report: &mut MirAgreementReport,
 ) {
     match rvalue {
-        Rvalue::Use(operand) => {
+        Rvalue::Object(operand, _) | Rvalue::Use(operand) => {
             validate_runtime_operand(program, operand, true, report);
             if callable_contract.is_missing(operand) {
                 report.missing_callable_metadata += 1;
@@ -794,6 +831,7 @@ fn validate_rvalue_layout_ids(
         }
         Rvalue::Aggregate(kind, _) => validate_aggregate_layout_id(backend_contract, kind, report),
         Rvalue::Use(_)
+        | Rvalue::Object(_, _)
         | Rvalue::Cast(_, _)
         | Rvalue::Closure(_)
         | Rvalue::BinaryOp(_, _, _)
@@ -887,7 +925,7 @@ fn validate_call_constant_operands(
     let indirect_params = function_operand_params(program, function, func);
 
     let metadata_args_valid = match metadata_intrinsic {
-        Some(crate::mir::MirIntrinsicId::SizeOf) => {
+        Some(crate::mir::MirIntrinsicId::SizeOf | crate::mir::MirIntrinsicId::AlignOf) => {
             args.len() == 1 && matches!(args[0], Operand::Constant(Constant::TypeId(_)))
         }
         Some(crate::mir::MirIntrinsicId::ArrayLen) => {

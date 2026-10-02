@@ -152,6 +152,15 @@ impl Monomorphizer {
             }
         }
         self.register_imported_function_instances(crate_ctx);
+        self.object_traits
+            .extend(program.traits.iter().map(|(id, tr)| (*id, tr.clone())));
+        if let Err(error) = self.import_object_abis(crate_ctx) {
+            self.diagnostics.push(
+                crate::diagnostic::Diagnostic::for_internal(error)
+                    .with_code(crate::diagnostic::DiagnosticCode::Mono),
+            );
+            return;
+        }
         self.register_effective_trait_methods(program);
         self.register_nominal_field_types(program);
         let mut impls = program
@@ -1016,6 +1025,11 @@ mod tests {
             std::mem::replace(&mut mono.instances, crate::mono::InstanceRegistry::new())
                 .into_parts();
         crate::mono::MonomorphizedProgram {
+            erased: mono.erased.clone(),
+            erased_invocations: mono.erased_invocations.clone(),
+            owned_object_calls: mono.owned_object_calls.clone(),
+            object_schemas: mono.object_schemas.clone(),
+            vtables: mono.vtables.clone(),
             program,
             instances,
             pre_mir_instance_bodies,

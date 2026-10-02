@@ -115,6 +115,28 @@ impl Lowerer {
             }
         }
         let span = receiver.span.clone();
+        let resolved = self.engine.resolve(&receiver.ty);
+        let pointee = match &resolved {
+            Type::Reference { inner, .. } => inner.as_ref(),
+            ty => ty,
+        };
+        if let Type::Object(object) = pointee {
+            let candidates = self.receiver_adjustment_candidates(receiver.clone());
+            return match crate::hir::object_methods::select_callable(
+                &self.selection_service(),
+                self.items.traits_for_selection(),
+                &self.language_items,
+                &candidates,
+                object,
+                member_name,
+            ) {
+                Ok(selected) => selected,
+                Err(message) => {
+                    self.diagnostics.push_selection_with_span(message, span);
+                    None
+                }
+            };
+        }
         let mut candidates = self.receiver_adjustment_candidates(receiver);
         for candidate in &mut candidates {
             candidate.expr.ty =
@@ -129,6 +151,31 @@ impl Lowerer {
                         | HirExprKind::TupleIndex(..)
                         | HirExprKind::Deref(_)
                 );
+        }
+        for candidate in &candidates {
+            let pointee = match &candidate.expr.ty {
+                Type::Reference { inner, .. } => inner.as_ref(),
+                ty => ty,
+            };
+            if let Type::Object(object) = pointee {
+                let object_candidates = self.receiver_adjustment_candidates(candidate.expr.clone());
+                match crate::hir::object_methods::select_callable(
+                    &self.selection_service(),
+                    self.items.traits_for_selection(),
+                    &self.language_items,
+                    &object_candidates,
+                    object,
+                    member_name,
+                ) {
+                    Ok(Some(selected)) => return Some(selected),
+                    Ok(None) => {}
+                    Err(message) => {
+                        self.diagnostics
+                            .push_selection_with_span(message, span.clone());
+                        return None;
+                    }
+                }
+            }
         }
         let result = self.selection_service().select_callable_method(
             &candidates,

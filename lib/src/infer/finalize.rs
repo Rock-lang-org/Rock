@@ -308,6 +308,18 @@ fn finalize_stmt(ctx: &mut FinalizeCtx<'_>, stmt: &mut HirStmt) {
 fn finalize_expr(ctx: &mut FinalizeCtx<'_>, expr: &mut HirExpr) {
     expr.ty = ctx.finalize(&expr.ty);
     match &mut expr.kind {
+        HirExprKind::Open { source, binding, body } => {
+            finalize_expr(ctx, source);
+            binding.visit_types_mut(&mut |ty| *ty = ctx.finalize(ty));
+            finalize_block(ctx, body);
+        }
+        HirExprKind::OwnedObjectCall { owner, args, call } => {
+            finalize_expr(ctx, owner);
+            for arg in args {
+                finalize_expr(ctx, arg);
+            }
+            call.visit_types_mut(&mut |ty| *ty = ctx.finalize(ty));
+        }
         HirExprKind::BinOp(_, lhs, rhs) => {
             finalize_expr(ctx, lhs);
             finalize_expr(ctx, rhs);
@@ -433,6 +445,10 @@ fn finalize_expr(ctx: &mut FinalizeCtx<'_>, expr: &mut HirExpr) {
         HirExprKind::Cast(inner, target) => {
             finalize_expr(ctx, inner);
             *target = ctx.finalize(target);
+        }
+        HirExprKind::ObjectCoercion(inner, coercion) => {
+            finalize_expr(ctx, inner);
+            coercion.visit_types_mut(&mut |ty| *ty = ctx.finalize(ty));
         }
         HirExprKind::Assign(left, right) => {
             finalize_expr(ctx, left);

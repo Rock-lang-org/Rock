@@ -2,32 +2,49 @@
 > stdlib::alloc::Layout
 > stdlib::alloc::checked_alloc
 > stdlib::deref::Deref
+> stdlib::deref::DerefMut
 > stdlib::drop::Drop
 > stdlib::drop::drop_in_place
+> stdlib::sized::Sized
+> stdlib::object_owner::ObjectOwner
+> stdlib::object_owner::ObjectOwnerAllocate
+> stdlib::object_owner::ObjectOwnerUnique
 
-unsafe box_ptr_as_ref: *T -> &T
+unsafe box_ptr_as_ref: *T -> &T where T: ?Sized
 unsafe box_ptr_as_ref = ptr -> unsafe &*ptr
 
-unsafe box_ptr_as_mut: *T -> &mut T
+unsafe box_ptr_as_mut: *T -> &mut T where T: ?Sized
 unsafe box_ptr_as_mut = ptr -> unsafe &mut *ptr
 
-< struct Box T
+< struct BoxState
+    < base: *U8
+    < bytes: I64
+    < alignment: I64
+
+< struct Box (T: ?Sized)
     raw_ptr: *T
+    raw_base: *U8
     raw_bytes: I64
+    raw_alignment: I64
 
 impl Box T
     new: T -> Box T
     new = value ->
         bytes = ~SizeOf value
+        alignment = ~AlignOf value
         layout = Layout
             size: bytes
-            align: 1
-        ptr: *T = (checked_alloc layout) as *T
+            align: alignment
+        base = checked_alloc layout
+        ptr: *T = base as *T
         unsafe *ptr = value
-        return Box T
+        Box T
             raw_ptr: ptr
+            raw_base: base
             raw_bytes: bytes
+            raw_alignment: alignment
 
+impl Box T where T: ?Sized
     @as_ptr: *T
     @as_ptr = -> self.raw_ptr
     @as_ref: &T
@@ -35,14 +52,52 @@ impl Box T
     ^@as_mut: &mut T
     ^@as_mut = -> unsafe box_ptr_as_mut self.raw_ptr
 
-impl Deref for Box T
+impl Deref for Box T where T: ?Sized
     type Target = T
     @* = -> self.as_ref!
 
-impl Drop for Box T
-    ~@drop = ->
+impl DerefMut for Box T where T: ?Sized
+    type Target = T
+    ^@* = -> self.as_mut!
+
+impl Drop for Box T where T: ?Sized
+    ~@drop = !->
         layout = Layout
             size: self.raw_bytes
-            align: 1
+            align: self.raw_alignment
         unsafe drop_in_place self.raw_ptr
-        unsafe Global::dealloc (self.raw_ptr as *U8), layout
+        unsafe Global::dealloc self.raw_base, layout
+
+impl ObjectOwner BoxState for Box
+    unsafe into_parts = owner ->
+        state = BoxState
+            base: owner.raw_base
+            bytes: owner.raw_bytes
+            alignment: owner.raw_alignment
+        parts = (owner.raw_ptr, state)
+        ~Forget owner
+        parts
+    unsafe from_parts = pointer, state -> Box
+        raw_ptr: pointer
+        raw_base: state.base
+        raw_bytes: state.bytes
+        raw_alignment: state.alignment
+
+impl ObjectOwnerAllocate BoxState for Box
+    unsafe allocate = bytes, alignment ->
+        layout = Layout
+            size: bytes
+            align: alignment
+        base = checked_alloc layout
+        state = BoxState
+            base: base
+            bytes: bytes
+            alignment: alignment
+        (base, state)
+
+impl ObjectOwnerUnique BoxState for Box
+    unsafe release = _, state !->
+        layout = Layout
+            size: state.bytes
+            align: state.alignment
+        Global::dealloc state.base, layout

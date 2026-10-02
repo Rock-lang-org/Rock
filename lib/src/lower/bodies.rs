@@ -37,6 +37,11 @@ fn collect_generic_names_from_parse_type<F>(
     F: Fn(&str) -> bool,
 {
     match ty {
+        ast::ParseType::Object(object) => {
+            for ty in object.types() {
+                collect_generic_names_from_parse_type(ty, generic_params, is_known_type_name);
+            }
+        }
         ast::ParseType::Type(inner) => {
             if inner.generics.is_empty()
                 && !is_builtin_type_name(&inner.name)
@@ -561,6 +566,9 @@ impl Lowerer {
                 // Reuse the collected bounds, including constructor predicates.
                 // Re-parsing only named type subjects here loses HKT impl bounds.
                 let mut impl_bounds = self.items.impl_def(impl_id).unwrap().bounds.clone();
+                impl_bounds
+                    .relaxed_sized
+                    .extend(func.generic_bounds.relaxed_sized.iter().copied());
                 for (param, bounds) in &func.generic_bounds {
                     impl_bounds
                         .entry(*param)
@@ -578,7 +586,9 @@ impl Lowerer {
                     .map(|items| items.trait_id)
                 {
                     for generic in &type_generics {
-                        if generic.kind != crate::type_services::kind::Kind::Type {
+                        if generic.kind != crate::type_services::kind::Kind::Type
+                            || impl_bounds.relaxed_sized.contains(&generic.id)
+                        {
                             continue;
                         }
                         impl_bounds
@@ -590,7 +600,9 @@ impl Lowerer {
                             });
                     }
                     for generic in &func.generic_params {
-                        if generic.kind != crate::type_services::kind::Kind::Type {
+                        if generic.kind != crate::type_services::kind::Kind::Type
+                            || impl_bounds.relaxed_sized.contains(&generic.id)
+                        {
                             continue;
                         }
                         impl_bounds

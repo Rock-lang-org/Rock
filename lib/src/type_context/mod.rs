@@ -54,6 +54,11 @@ pub enum Ty {
         inner: TypeId,
     },
     Pointer(TypeId),
+    Object(Box<crate::types::ObjectType<TypeId>>),
+    ObjectSelf {
+        depth: u32,
+    },
+    Witness(crate::types::WitnessId),
     TypeVar(TypeVarId),
     Generic(GenericParamId),
     Projection {
@@ -258,6 +263,9 @@ impl TypeContext {
                 return false;
             };
             let children_are_valid = match ty {
+                Ty::Object(object) => object
+                    .children()
+                    .all(|child| visit(context, *child, visiting, valid)),
                 Ty::Slice(inner) | Ty::Reference { inner, .. } | Ty::Pointer(inner) => {
                     visit(context, *inner, visiting, valid)
                 }
@@ -294,6 +302,7 @@ impl TypeContext {
                 }
                 Ty::Lambda { body, .. } => visit(context, *body, visiting, valid),
                 Ty::I8
+                | Ty::ObjectSelf { .. }
                 | Ty::I16
                 | Ty::I32
                 | Ty::I64
@@ -342,6 +351,12 @@ impl TypeContext {
         );
         match ty {
             Type::I8 => self.intern_ty(Ty::I8),
+            Type::ObjectSelf { depth } => self.intern_ty(Ty::ObjectSelf { depth: *depth }),
+            Type::Witness(witness) => self.intern_ty(Ty::Witness(*witness)),
+            Type::Object(object) => {
+                let object = object.map_types(|ty| self.intern_type(ty));
+                self.intern_ty(Ty::Object(Box::new(object)))
+            }
             Type::I16 => self.intern_ty(Ty::I16),
             Type::I32 => self.intern_ty(Ty::I32),
             Type::I64 => self.intern_ty(Ty::I64),
@@ -455,6 +470,9 @@ impl TypeContext {
 
     pub fn type_for(&self, id: TypeId) -> Type {
         match self.ty(id) {
+            Ty::ObjectSelf { depth } => Type::ObjectSelf { depth: *depth },
+            Ty::Witness(witness) => Type::Witness(*witness),
+            Ty::Object(object) => Type::Object(Box::new(object.map_types(|id| self.type_for(*id)))),
             Ty::I8 => Type::I8,
             Ty::I16 => Type::I16,
             Ty::I32 => Type::I32,
@@ -548,6 +566,13 @@ impl TypeContext {
 
     fn ty_for_existing_type(&self, ty: &Type) -> Option<Ty> {
         Some(match ty {
+            Type::ObjectSelf { depth } => Ty::ObjectSelf { depth: *depth },
+            Type::Witness(witness) => Ty::Witness(*witness),
+            Type::Object(object) => Ty::Object(Box::new(
+                object
+                    .try_map_types(|ty| self.id_for_type(ty).ok_or(()))
+                    .ok()?,
+            )),
             Type::I8 => Ty::I8,
             Type::I16 => Ty::I16,
             Type::I32 => Ty::I32,

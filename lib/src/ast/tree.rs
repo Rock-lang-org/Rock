@@ -186,6 +186,7 @@ pub struct AssociatedTypeDef {
 pub struct WhereClause {
     pub subject: ParseType,
     pub trait_bound: Option<ParseType>,
+    pub relaxed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -193,6 +194,7 @@ pub enum ParseType {
     Function(Vec<ParseType>),
     Type(ParseTypeInner),
     Application(TypeApplication),
+    Object(ObjectTypeSyntax),
     Lambda(TypeLambda),
     Hole(TypeHole),
     Associated {
@@ -213,11 +215,43 @@ pub enum ParseType {
     Unit(Span),
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObjectTypeSyntax {
+    pub base: Box<ParseType>,
+    pub qualifiers: Vec<ObjectQualifier>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ObjectQualifier {
+    Trait(ParseType),
+    Binding {
+        owner: Option<Box<ParseType>>,
+        member: Ident,
+        ty: ParseType,
+    },
+}
+
+impl ObjectTypeSyntax {
+    /// Type-valued children, excluding associated member names (which are not binders).
+    pub fn types(&self) -> impl Iterator<Item = &ParseType> {
+        std::iter::once(self.base.as_ref()).chain(self.qualifiers.iter().flat_map(|qualifier| {
+            match qualifier {
+                ObjectQualifier::Trait(ty) => [Some(ty), None],
+                ObjectQualifier::Binding { owner, ty, .. } => [owner.as_deref(), Some(ty)],
+            }
+            .into_iter()
+            .flatten()
+        }))
+    }
+}
+
 impl ParseType {
     pub fn span(&self) -> Span {
         match self {
             ParseType::Type(inner) => inner.span.clone(),
             ParseType::Application(application) => application.span.clone(),
+            ParseType::Object(object) => object.span.clone(),
             ParseType::Lambda(lambda) => lambda.span.clone(),
             ParseType::Hole(hole) => hole.span.clone(),
             ParseType::Associated { base, member } => Span::new(
@@ -242,6 +276,7 @@ impl ParseType {
         match self {
             ParseType::Type(inner) => inner.name.clone(),
             ParseType::Application(application) => application.constructor.type_name(),
+            ParseType::Object(object) => object.base.type_name(),
             ParseType::Lambda(_) => "<type lambda>".to_string(),
             ParseType::Hole(_) => "_".to_string(),
             ParseType::Associated { base, member } => format!("{}::{}", base.name, member.name),
@@ -293,6 +328,7 @@ pub struct ParseTypeInner {
 pub struct GenericParamDecl {
     pub name: Ident,
     pub kind: Option<TypeApplication>,
+    pub unsized_bound: Option<ParseType>,
     pub span: Span,
 }
 
@@ -457,7 +493,17 @@ pub enum Operand {
     Match(Box<Match>),
     Loop(Box<Loop>),
     Unsafe(Block, Span),
+    Open(Box<Open>),
     Expression(Box<Expression>), // parenthesis
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Open {
+    pub source: Expression,
+    pub witness: Ident,
+    pub value: Ident,
+    pub body: Block,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -1484,13 +1484,26 @@ fn runtime_requirements_are_derived_from_mir_and_consumed_by_codegen() {
     );
 
     let builder = production_source("mir/builder/mod.rs");
+    let backend_requirements = function_body(
+        &backend_contract,
+        "pub fn runtime_requirements_for_backend<'a>(",
+    );
+    assert_present(
+        &backend_requirements,
+        &[
+            "runtime_requirements_for_functions(functions)",
+            "contract.callables.values()",
+            "descriptor.drop.requires_heap_free()",
+            "MirRuntimeHelper::HeapFree",
+        ],
+    );
     let builder_runtime_requirements = function_body(
         &builder,
         "fn populate_backend_contract_runtime_requirements(",
     );
     assert_present(
         &builder_runtime_requirements,
-        &["runtime_requirements_for_functions(functions.values())"],
+        &["runtime_requirements_for_backend(contract, functions.values())"],
     );
 
     let agreement = production_source("mir/agreement.rs");
@@ -1501,7 +1514,7 @@ fn runtime_requirements_are_derived_from_mir_and_consumed_by_codegen() {
     assert_present(
         &agreement_runtime_requirements,
         &[
-            "runtime_requirements_for_functions(",
+            "runtime_requirements_for_backend(",
             ".difference(&program.backend_contract.runtime_requirements)",
             ".difference(&observed)",
         ],
@@ -1528,7 +1541,7 @@ fn runtime_requirements_are_derived_from_mir_and_consumed_by_codegen() {
     assert_present(
         &validation,
         &[
-            "runtime_requirements_for_functions(",
+            "runtime_requirements_for_backend(",
             "runtime requirement mismatch",
         ],
     );

@@ -288,10 +288,16 @@ pub(super) fn apply_active_loan_statement_transfer(
     stmt: &StatementData,
 ) {
     match &stmt.kind {
-        StatementKind::Assign(dest, Rvalue::Use(Operand::Move(src))) => {
+        StatementKind::Assign(
+            dest,
+            Rvalue::Use(Operand::Move(src)) | Rvalue::Object(Operand::Move(src), _),
+        ) => {
             state.transfer_owner(src.local, dest.local);
         }
-        StatementKind::Assign(dest, Rvalue::Use(Operand::Copy(src))) => {
+        StatementKind::Assign(
+            dest,
+            Rvalue::Use(Operand::Copy(src)) | Rvalue::Object(Operand::Copy(src), _),
+        ) => {
             if tracks_local_reference_liveness(func, type_context, backend_contract, src.local) {
                 state.copy_owner(src.local, dest.local);
             }
@@ -300,7 +306,11 @@ pub(super) fn apply_active_loan_statement_transfer(
             if matches!(
                 place.projection.first(),
                 Some(crate::mir::Projection::Deref)
-            ) && local_is_reference(func, type_context, place.local) =>
+            ) && (local_is_reference(func, type_context, place.local)
+                || func
+                    .local_decls
+                    .get(place.local.0)
+                    .is_some_and(|decl| target_is_pointer(type_context, decl.ty))) =>
         {
             state.copy_owner(place.local, dest.local);
         }
@@ -334,6 +344,10 @@ pub(super) fn apply_active_loan_statement_transfer(
                     && target_is_pointer(type_context, *target)
                 {
                     state.transfer_owner(place.local, dest.local);
+                } else if local_is_reference(func, type_context, place.local)
+                    && target_is_pointer(type_context, *target)
+                {
+                    state.copy_owner(place.local, dest.local);
                 }
             }
         }
@@ -349,24 +363,55 @@ fn apply_active_loan_terminator_transfer(
     term: &Terminator,
 ) {
     let Terminator::Call {
-        args, destination, ..
+        func: callee,
+        args,
+        destination,
+        ..
     } = term
     else {
         return;
     };
 
+    if matches!(
+        callee,
+        Operand::Constant(
+            crate::mir::Constant::VirtualTarget(_) | crate::mir::Constant::OwnedObjectCall(_)
+        )
+    ) {
+        // Unknown implementations may return any input borrow and store it through
+        // any mutable input. Metadata itself never creates an origin.
+        for arg in args {
+            let (Operand::Copy(source) | Operand::Move(source)) = arg else {
+                continue;
+            };
+            if local_contains_reference(func, type_context, backend_contract, destination.local) {
+                state.copy_owner(source.local, destination.local);
+            }
+            for target in args {
+                let (Operand::Copy(target) | Operand::Move(target)) = target else {
+                    continue;
+                };
+                if local_is_mutable_reference(func, type_context, target.local) {
+                    state.copy_owner(source.local, target.local);
+                }
+            }
+        }
+        return;
+    }
     if !local_contains_reference(func, type_context, backend_contract, destination.local) {
         return;
     }
 
-    let Some(Operand::Copy(source) | Operand::Move(source)) = args.first() else {
-        return;
-    };
-    if !source.projection.is_empty() || !local_is_reference(func, type_context, source.local) {
-        return;
+    // Aggregate/raw handles can carry payload loans through ordinary protocol
+    // split/rebuild calls; their physical pointer fields do not end those loans.
+    for arg in args {
+        let (Operand::Copy(source) | Operand::Move(source)) = arg else {
+            continue;
+        };
+        if local_contains_reference(func, type_context, backend_contract, source.local) {
+            state.copy_owner(source.local, destination.local);
+        }
     }
-
-    state.copy_owner(source.local, destination.local);
 }
 
 fn local_contains_reference(
@@ -435,6 +480,7 @@ fn compute_successors(func: &MirFunction) -> Vec<Vec<usize>> {
                     successors[block_idx].push(target.0);
                 }
                 crate::mir::Terminator::Return
+                | crate::mir::Terminator::Unreachable { .. }
                 | crate::mir::Terminator::ReturnWithOrigin { .. } => {}
             }
         }
@@ -485,7 +531,7 @@ fn type_id_contains_reference(view: TypeView<'_>, ty: TypeId) -> bool {
     type_id_contains_reference_with_contract(view, &backend_contract, ty)
 }
 
-fn type_id_contains_reference_with_contract(
+pub(crate) fn type_id_contains_reference_with_contract(
     view: TypeView<'_>,
     backend_contract: &MirBackendContract,
     ty: TypeId,
@@ -505,11 +551,13 @@ fn type_id_contains_reference_inner(
     }
 
     match view.ty(ty) {
+        Ty::Object(_) => true,
+        Ty::ObjectSelf { .. } | Ty::Witness(_) => true,
         Ty::Reference { .. } => true,
         Ty::Tuple(elems) => elems
             .iter()
             .any(|elem| type_id_contains_reference_inner(view, backend_contract, *elem, seen)),
-        Ty::Array { inner, .. } | Ty::Slice(inner) => {
+        Ty::Array { inner, .. } | Ty::Slice(inner) | Ty::Pointer(inner) => {
             type_id_contains_reference_inner(view, backend_contract, *inner, seen)
         }
         Ty::Function {
@@ -624,7 +672,6 @@ fn type_id_contains_reference_inner(
         | Ty::Char
         | Ty::Unit
         | Ty::Str
-        | Ty::Pointer(_)
         | Ty::TypeVar(_)
         | Ty::Generic(_)
         | Ty::Constructor { .. }
@@ -668,6 +715,8 @@ fn type_contains_reference_for_structural_type(
 
     match ty {
         Type::Reference { .. } => true,
+        Type::Object(_) => true,
+        Type::ObjectSelf { .. } | Type::Witness(_) => true,
         Type::Tuple(elems) => elems.iter().any(|elem| {
             type_contains_reference_for_structural_type(view, backend_contract, elem, seen)
         }),
@@ -783,7 +832,7 @@ fn type_contains_reference_for_structural_type(
                     type_contains_reference_for_structural_type(view, backend_contract, arg, seen)
                 })
         }
-        Type::Lambda { body, .. } => {
+        Type::Pointer(body) | Type::Lambda { body, .. } => {
             type_contains_reference_for_structural_type(view, backend_contract, body, seen)
         }
         Type::I8
@@ -801,7 +850,6 @@ fn type_contains_reference_for_structural_type(
         | Type::Char
         | Type::Unit
         | Type::Never
-        | Type::Pointer(_)
         | Type::TypeVar(_)
         | Type::Generic(_)
         | Type::Constructor { .. }
@@ -1066,6 +1114,7 @@ fn apply_terminator_liveness(term: &Terminator, live: &mut LocalSet, reference_l
             insert_locals(live, locals);
         }
         Terminator::Goto(_)
+        | Terminator::Unreachable { .. }
         | Terminator::GotoWithOrigin { .. }
         | Terminator::Return
         | Terminator::ReturnWithOrigin { .. } => {}
@@ -1078,7 +1127,9 @@ fn rvalue_reference_uses(rvalue: &Rvalue, reference_locals: &LocalSet) -> Vec<Lo
     match rvalue {
         Rvalue::Use(op) => operand_reference_uses(op, reference_locals, &mut locals),
         Rvalue::Ref(_, place) => place_reference_uses_vec(place, reference_locals, &mut locals),
-        Rvalue::Cast(op, _) => operand_reference_uses(op, reference_locals, &mut locals),
+        Rvalue::Object(op, _) | Rvalue::Cast(op, _) => {
+            operand_reference_uses(op, reference_locals, &mut locals)
+        }
         Rvalue::BinaryOp(_, a, b) => {
             operand_reference_uses(a, reference_locals, &mut locals);
             operand_reference_uses(b, reference_locals, &mut locals);
@@ -1169,7 +1220,7 @@ mod tests {
     }
 
     #[test]
-    fn type_id_contains_reference_matches_structural_pointer_and_projection_behavior() {
+    fn type_id_contains_reference_tracks_pointer_payload_and_projection_borrows() {
         let trait_id = DefId::new(CrateId(0), LocalDefId(10));
         let reference = Type::Reference {
             mutable: false,
@@ -1196,10 +1247,13 @@ mod tests {
             let id = context.intern_type(&ty);
             let view = crate::type_context::TypeView::new(&context);
 
-            assert_eq!(
-                type_id_contains_reference(view, id),
-                TypeFacts::contains_reference(&ty)
-            );
+            // Borrowck also tracks loans carried by raw payload transport;
+            // structural reference presence deliberately excludes raw pointers.
+            let expected = match &ty {
+                Type::Pointer(payload) => TypeFacts::contains_reference(payload),
+                _ => TypeFacts::contains_reference(&ty),
+            };
+            assert_eq!(type_id_contains_reference(view, id), expected);
         }
     }
 

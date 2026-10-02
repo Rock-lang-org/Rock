@@ -35,6 +35,7 @@ fn ast_expr_operand_span(operand: &AstExprOperand<'_>) -> Option<Span> {
             ast::Operand::Literal(literal) => Some(literal.span.clone()),
             ast::Operand::Ident(path) => path_span(&path.path),
             ast::Operand::CallHole(span) => Some(span.clone()),
+            ast::Operand::Open(open) => Some(open.span.clone()),
             ast::Operand::SelfIdent(ident) => Some(ident.span.clone()),
             ast::Operand::Instance(instance) => path_span(&instance.name.path),
             ast::Operand::Tuple(tuple) => tuple.elements.first().and_then(ast_expr_span),
@@ -1890,13 +1891,7 @@ impl Lowerer {
         if let Some(ann) = &primary.type_annotation {
             self.source_map.record_type_annotation(ann.span());
             let ann_ty = self.lower_parse_type(ann);
-            if let Err(e) = self.engine.unify(&result.ty, &ann_ty) {
-                self.diagnostics.push_type_with_span(
-                    format!("Type annotation mismatch: {}", e.render(&self.engine)),
-                    ann.span(),
-                );
-            }
-            result.ty = ann_ty;
+            result = self.coerce_argument_to_expected(result, &ann_ty);
         }
 
         // Apply secondaries (function calls, field access, indexing)
@@ -2003,6 +1998,7 @@ impl Lowerer {
     fn lower_operand_with_use(&mut self, operand: &ast::Operand, use_kind: ExprUse) -> HirExpr {
         match operand {
             ast::Operand::Literal(lit) => self.lower_literal(lit),
+            ast::Operand::Open(open) => self.lower_open(open),
             ast::Operand::Ident(path) => self.lower_identifier_path(path),
             ast::Operand::CallHole(span) => {
                 self.diagnostics.push_with_span(

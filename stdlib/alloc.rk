@@ -1,7 +1,7 @@
 
-> stdlib::libc::malloc
 > stdlib::libc::free
-> stdlib::libc::realloc
+> stdlib::libc::posix_memalign
+> stdlib::libc::memcpy
 > stdlib::libc::exit
 
 < struct Layout
@@ -12,11 +12,37 @@
 
 impl Global
     unsafe alloc: Layout -> *U8
-    unsafe alloc = layout -> malloc layout.size
+    unsafe alloc = layout ->
+        if layout.size < 0 || layout.align <= 0
+            exit (1 as I32)
+        if (~I64And layout.align, (layout.align - 1)) != 0
+            exit (1 as I32)
+        // POSIX requires pointer-sized alignment; zero-sized owners still get
+        // a unique, aligned allocation which free can release normally.
+        pointer_alignment = ~SizeOf (0 as *U8)
+        alignment = if layout.align < pointer_alignment then pointer_alignment else layout.align
+        bytes = if layout.size == 0 then 1 else layout.size
+        mut pointer: *U8 = 0 as *U8
+        result = posix_memalign ((&mut pointer) as *(*U8)), alignment, bytes
+        if result != (0 as I32)
+            0 as *U8
+        else
+            pointer
     unsafe dealloc: *U8 -> Layout -> ()
     unsafe dealloc = ptr, layout -> free ptr
     unsafe realloc: *U8 -> Layout -> I64 -> *U8
-    unsafe realloc = ptr, old_layout, new_size -> realloc ptr, new_size
+    unsafe realloc = ptr, old_layout, new_size ->
+        layout = Layout
+            size: new_size
+            align: old_layout.align
+        replacement = Global::alloc layout
+        if (replacement as I64) == 0
+            return replacement
+        count = if old_layout.size < new_size then old_layout.size else new_size
+        if count > 0 && (ptr as I64) != 0
+            memcpy replacement, ptr, count
+        Global::dealloc ptr, old_layout
+        replacement
 
 require_non_zero_size: I64 -> ()
 < require_non_zero_size = size ->
@@ -53,7 +79,6 @@ checked_grow_capacity: I64 -> I64
 
 checked_alloc: Layout -> *U8
 < checked_alloc = layout ->
-    require_non_zero_size layout.size
     ptr = unsafe Global::alloc layout
     if (ptr as I64) == 0
         exit (1 as I32)

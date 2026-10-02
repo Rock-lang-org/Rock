@@ -399,6 +399,12 @@ pub fn walk_operand<'a, V: Visitor<'a>>(visitor: &mut V, operand: &'a Operand) {
         Operand::Expression(e) => visitor.visit_expression(e),
         Operand::Match(m) => visitor.visit_match(m),
         Operand::Unsafe(block, _) => visitor.visit_block(block),
+        Operand::Open(open) => {
+            visitor.visit_expression(&open.source);
+            visitor.visit_ident(&open.witness);
+            visitor.visit_ident(&open.value);
+            visitor.visit_block(&open.body);
+        }
     }
 }
 
@@ -499,6 +505,16 @@ pub fn walk_array<'a, V: Visitor<'a>>(visitor: &mut V, arr: &'a Array) {
 
 pub fn walk_parse_type<'a, V: Visitor<'a>>(visitor: &mut V, ty: &'a ParseType) {
     match ty {
+        ParseType::Object(object) => {
+            for ty in object.types() {
+                visitor.visit_parse_type(ty);
+            }
+            for qualifier in &object.qualifiers {
+                if let ObjectQualifier::Binding { member, .. } = qualifier {
+                    visitor.visit_ident(member);
+                }
+            }
+        }
         ParseType::Slice(ty) => {
             visitor.visit_parse_type(ty);
         }
@@ -539,6 +555,9 @@ pub fn walk_parse_type_inner<'a, V: Visitor<'a>>(visitor: &mut V, ty: &'a ParseT
 
 pub fn walk_generic_param_decl<'a, V: Visitor<'a>>(visitor: &mut V, param: &'a GenericParamDecl) {
     visitor.visit_ident(&param.name);
+    if let Some(bound) = &param.unsized_bound {
+        visitor.visit_parse_type(bound);
+    }
     if let Some(kind) = &param.kind {
         walk_list!(visitor, visit_parse_type, &kind.args);
     }

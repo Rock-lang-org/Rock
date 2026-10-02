@@ -344,7 +344,10 @@ impl InitializationAnalysis {
 
     fn apply_rvalue_moves(&self, state: &mut InitMap, rvalue: &Rvalue, info: &MoveInfo) {
         match rvalue {
-            Rvalue::Use(operand) | Rvalue::Cast(operand, _) | Rvalue::UnaryOp(_, operand) => {
+            Rvalue::Object(operand, _)
+            | Rvalue::Use(operand)
+            | Rvalue::Cast(operand, _)
+            | Rvalue::UnaryOp(_, operand) => {
                 self.move_operand_if_move(state, operand, info);
             }
             Rvalue::BinaryOp(_, lhs, rhs) => {

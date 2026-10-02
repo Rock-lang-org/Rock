@@ -1,0 +1,30 @@
+// Unsafe external ownership contracts. State must not depend on the payload T.
+// into_parts transfers (not copies) the owner's payload and state without
+// destroying either; from_parts reconstructs exactly that transferred owner.
+// The pointer must retain provenance, allocation base and all metadata. An
+// implementation may not change allocation, reference counts, or payload bytes
+// merely because its pointer metadata changes. Each state is consumed once.
+
+> stdlib::sized::Sized
+
+lang object_owner
+< trait ObjectOwner State for F _
+    lang owner_into_parts
+    unsafe into_parts: F T -> (*T, State) where T: ?Sized
+    lang owner_from_parts
+    unsafe from_parts: *T -> State -> F T where T: ?Sized
+
+// Returns uninitialized storage for the requested nonnegative size and
+// power-of-two alignment. Failure must not return an unusable allocation.
+lang object_owner_allocate
+< trait ObjectOwnerAllocate State for F _
+    lang owner_allocate
+    unsafe allocate: I64 -> I64 -> (*U8, State)
+
+// Only uniquely owned payloads may implement this capability. release is called
+// after the payload has been consumed/destroyed and MUST NOT destroy it again.
+// Shared reference-counted owners intentionally do not implement this trait.
+lang object_owner_unique
+< trait ObjectOwnerUnique State for F _
+    lang owner_release
+    unsafe release: *U8 -> State -> ()

@@ -168,10 +168,10 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
     fn local_origin(&self, local: Local) -> Option<ReferenceOrigin> {
         self.local_decl(local).map(|decl| match decl.source {
             LocalSource::Argument => {
-                if self.local_type_is_reference(local)
-                    || self.local_type_is_pointer(local)
-                    || self.local_type_contains_reference(local)
-                {
+                // Contained raw handles carry incoming payload origins too.
+                // This is value transport, not a borrow of the argument's own
+                // storage (which origins_for_borrowed_place keeps local).
+                if self.local_type_tracks_origin(local) {
                     ReferenceOrigin::Param(local)
                 } else {
                     ReferenceOrigin::Local(local)
@@ -283,14 +283,22 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
 
     fn origins_for_borrowed_place(&self, state: &ReferenceOriginState, place: &Place) -> OriginSet {
         let normalized = Self::normalized_place(place.clone());
-        if normalized.projection.is_empty()
-            && !self.local_type_is_reference(normalized.local)
+        if !self.local_type_is_reference(normalized.local)
             && !self.local_type_is_pointer(normalized.local)
+            && !normalized
+                .projection
+                .iter()
+                .any(|projection| matches!(projection, Projection::Deref))
         {
-            return self
-                .local_origin(normalized.local)
-                .map(|origin| HashSet::from([origin]))
-                .unwrap_or_default();
+            // Borrowing storage is different from moving out a contained
+            // reference: even an argument containing loans owns local storage.
+            return HashSet::from([
+                match self.local_decl(normalized.local).map(|decl| &decl.source) {
+                    Some(LocalSource::Temporary) => ReferenceOrigin::Temporary(normalized.local),
+                    Some(LocalSource::ClosureCapture) => ReferenceOrigin::Param(normalized.local),
+                    _ => ReferenceOrigin::Local(normalized.local),
+                },
+            ]);
         }
 
         let origins = self.origins_for_place(state, place);
@@ -371,7 +379,7 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
                     &mut temporaries,
                 );
             }
-            Rvalue::Use(operand) | Rvalue::Cast(operand, _) => {
+            Rvalue::Object(operand, _) | Rvalue::Use(operand) | Rvalue::Cast(operand, _) => {
                 Self::collect_temporary_origins(
                     self.origins_for_operand(state, operand),
                     &mut temporaries,
@@ -583,7 +591,7 @@ impl Analysis for ReferenceEscapeAnalysis<'_> {
                 let origins = self.origins_for_borrowed_place(state, place);
                 self.assign_origins(state, dest, origins);
             }
-            Rvalue::Use(operand) | Rvalue::Cast(operand, _) => {
+            Rvalue::Object(operand, _) | Rvalue::Use(operand) | Rvalue::Cast(operand, _) => {
                 let origins = self.origins_for_operand(state, operand);
                 self.assign_origins(state, dest, origins);
             }
@@ -906,6 +914,8 @@ fn type_id_tracks_origin_inner(
     }
 
     match view.ty(ty) {
+        Ty::Object(_) => true,
+        Ty::ObjectSelf { .. } => true,
         Ty::Reference { .. } => true,
         Ty::Pointer(_) if include_pointers => true,
         Ty::Tuple(elems) => elems.iter().any(|elem| {
@@ -1064,7 +1074,8 @@ fn type_id_tracks_origin_inner(
         | Ty::Never
         | Ty::Pointer(_)
         | Ty::Error => false,
-        Ty::Generic(_)
+        Ty::Witness(_)
+        | Ty::Generic(_)
         | Ty::TypeVar(_)
         | Ty::Constructor { .. }
         | Ty::Apply { .. }
@@ -1086,6 +1097,8 @@ fn type_id_tracks_origin_for_structural_type(
 
     match ty {
         Type::Reference { .. } => true,
+        Type::Object(_) => true,
+        Type::ObjectSelf { .. } => true,
         Type::Pointer(_) if include_pointers => true,
         Type::Tuple(elems) => elems.iter().any(|elem| {
             type_id_tracks_origin_for_structural_type(
@@ -1276,9 +1289,11 @@ fn type_id_tracks_origin_for_structural_type(
             include_pointers,
             seen,
         ),
-        Type::Generic(_) | Type::TypeVar(_) | Type::Constructor { .. } | Type::BoundVar { .. } => {
-            true
-        }
+        Type::Witness(_)
+        | Type::Generic(_)
+        | Type::TypeVar(_)
+        | Type::Constructor { .. }
+        | Type::BoundVar { .. } => true,
         Type::I8
         | Type::I16
         | Type::I32
@@ -1513,7 +1528,6 @@ impl BorrowChecker {
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
     ) -> Diagnostics {
         let mut diagnostics = Diagnostics::default();
-        let type_view = TypeView::new(type_context);
         let mut move_validation = MoveValidationContext::new(type_context, backend_contract);
 
         let init_analysis = InitializationAnalysis::new(func, type_context);
@@ -1559,6 +1573,7 @@ impl BorrowChecker {
                 Self::check_statement_loans(
                     stmt,
                     type_context,
+                    backend_contract,
                     &loan_table,
                     &live_loans,
                     func,
@@ -1575,36 +1590,16 @@ impl BorrowChecker {
 
                 init_analysis.apply_statement(&mut state, stmt);
 
-                if let StatementKind::Assign(dest, Rvalue::Use(Operand::Move(src))) = &stmt.kind {
-                    active_loans.transfer_owner(src.local, dest.local);
-                }
-
-                if let StatementKind::Assign(dest, Rvalue::Use(Operand::Copy(src))) = &stmt.kind {
-                    active_loans.copy_owner(src.local, dest.local);
-                }
-
-                if let StatementKind::Assign(dest, Rvalue::Cast(op, target)) = &stmt.kind {
-                    if let Operand::Copy(place) | Operand::Move(place) = op {
-                        if func
-                            .local_decls
-                            .get(place.local.0)
-                            .is_some_and(|decl| type_id_is_mut_reference(type_view, decl.ty))
-                            && type_id_is_pointer(type_view, *target)
-                        {
-                            active_loans.transfer_owner(place.local, dest.local);
-                        }
-                    }
-                }
-
-                if matches!(stmt.kind, StatementKind::Assign(_, Rvalue::Aggregate(_, _))) {
-                    apply_active_loan_statement_transfer(
-                        &mut active_loans,
-                        func,
-                        type_context,
-                        backend_contract,
-                        stmt,
-                    );
-                }
+                // Replay exactly the transfer used to compute block-entry loans.
+                // Keeping a second operand-specific path here loses object and
+                // reborrow owners before their next use in the same block.
+                apply_active_loan_statement_transfer(
+                    &mut active_loans,
+                    func,
+                    type_context,
+                    backend_contract,
+                    stmt,
+                );
 
                 let location = crate::mir::borrowck::location::Location::new(
                     crate::mir::BasicBlockId(block_idx),
@@ -1630,6 +1625,8 @@ impl BorrowChecker {
             if let Some(term) = &block.terminator {
                 Self::check_terminator(
                     term,
+                    type_context,
+                    backend_contract,
                     &init_analysis,
                     &state,
                     &loan_table,
@@ -1819,7 +1816,7 @@ impl BorrowChecker {
 
         match &stmt.kind {
             StatementKind::Assign(_dest, rvalue) => match rvalue {
-                Rvalue::Use(operand) => {
+                Rvalue::Object(operand, _) | Rvalue::Use(operand) => {
                     match operand {
                         Operand::Move(place) => move_validation.validate_move(
                             place,
@@ -1921,6 +1918,7 @@ impl BorrowChecker {
     fn check_statement_loans(
         stmt: &StatementData,
         type_context: &crate::type_context::TypeContext,
+        backend_contract: &MirBackendContract,
         table: &LoanTable,
         active_loans: &LoanState,
         func: &MirFunction,
@@ -2006,7 +2004,7 @@ impl BorrowChecker {
                 AccessKind::Move => {
                     Self::check_place_loan_access(
                         &event.place,
-                        LoanKind::Mut,
+                        Self::move_access_kind(type_context, backend_contract, func, &event.place),
                         table,
                         active_loans,
                         func,
@@ -2068,6 +2066,8 @@ impl BorrowChecker {
 
     fn check_terminator(
         term: &Terminator,
+        type_context: &crate::type_context::TypeContext,
+        backend_contract: &MirBackendContract,
         init_analysis: &InitializationAnalysis,
         state: &InitMap,
         table: &LoanTable,
@@ -2092,7 +2092,16 @@ impl BorrowChecker {
                 AccessKind::Move | AccessKind::Drop => {
                     Self::check_place_loan_access(
                         &event.place,
-                        LoanKind::Mut,
+                        if event.kind == AccessKind::Move {
+                            Self::move_access_kind(
+                                type_context,
+                                backend_contract,
+                                func,
+                                &event.place,
+                            )
+                        } else {
+                            LoanKind::Mut
+                        },
                         table,
                         active_loans,
                         func,
@@ -2141,6 +2150,35 @@ impl BorrowChecker {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn move_access_kind(
+        type_context: &crate::type_context::TypeContext,
+        contract: &MirBackendContract,
+        func: &MirFunction,
+        place: &Place,
+    ) -> LoanKind {
+        let mut prefix = Place {
+            local: place.local,
+            projection: Vec::new(),
+        };
+        let mut raw_read = false;
+        for projection in &place.projection {
+            if *projection == Projection::Deref {
+                raw_read = contract
+                    .place_type_id(type_context, func, &prefix)
+                    .is_some_and(|id| matches!(type_context.try_ty(id), Some(Ty::Pointer(_))));
+            }
+            prefix.projection.push(projection.clone());
+        }
+        // A raw-pointer read transfers the loaded value, not the initialization
+        // of an aliased safe place. Writes/drops and safe-reference moves retain
+        // their exclusive-access checks; unsafe admission remains frontend-owned.
+        if raw_read {
+            LoanKind::Shared
+        } else {
+            LoanKind::Mut
         }
     }
 
@@ -2249,24 +2287,188 @@ mod tests {
 
     use super::{
         type_id_contains_reference, type_id_is_mut_reference, type_id_is_pointer,
-        type_id_tracks_origin,
+        type_id_tracks_origin, MissingSummaryMode, ReferenceEscapeAnalysis, ReferenceOriginState,
     };
     use crate::diagnostic::{DiagnosticCode, Diagnostics};
     use crate::ids::{AssocTypeId, CrateId, DefId, InstanceId, LocalDefId};
     use crate::mir::borrowck::BorrowChecker;
     use crate::mir::{
-        BasicBlock, Constant, DropObligationKind, Local, LocalDecl, MirAssert, MirAssertKind,
-        MirBackendContract, MirCallable, MirCallableKey, MirClosure, MirClosureCapture,
-        MirClosureCaptureKind, MirClosureId, MirDropObligation, MirEnumVariantLayout, MirFunction,
-        MirFunctionId, MirNominalLayout, MirOwnershipMetadata, MirProgram, MirProjectionKey,
-        MirVariantLayoutFields, Mutability, Operand, Place, Projection, ReferenceOrigin, Rvalue,
-        StatementData, Terminator,
+        BasicBlock, Constant, DropObligationKind, Local, LocalDecl, LocalSource, MirAssert,
+        MirAssertKind, MirBackendContract, MirCallable, MirCallableKey, MirClosure,
+        MirClosureCapture, MirClosureCaptureKind, MirClosureId, MirDropObligation,
+        MirEnumVariantLayout, MirFunction, MirFunctionId, MirNominalLayout, MirOwnershipMetadata,
+        MirProgram, MirProjectionKey, MirVariantLayoutFields, Mutability, Operand, Place,
+        Projection, ReferenceOrigin, Rvalue, StatementData, Terminator,
     };
     use crate::type_context::{TypeContext, TypeView};
     use crate::types::{GenericParamId, Type};
 
     fn test_type_id(type_context: &mut TypeContext, ty: Type) -> crate::ids::TypeId {
         type_context.intern_type(&ty)
+    }
+
+    #[test]
+    fn consuming_aggregate_return_distinguishes_contained_borrow_from_owned_storage() {
+        let mut tc = TypeContext::new();
+        let reference = Type::Reference {
+            inner: Box::new(Type::I64),
+            mutable: false,
+        };
+        let aggregate = tc.intern_type(&Type::Tuple(vec![reference.clone()]));
+        let mut function = reference_return_function(&mut tc, MirOwnershipMetadata::default());
+        function.arg_count = 1;
+        function.local_decls[1].ty = aggregate;
+        function.local_decls[1].source = crate::mir::LocalSource::Argument;
+        let field = Place {
+            local: Local(1),
+            projection: vec![Projection::Field {
+                index: 0,
+                identity: None,
+            }],
+        };
+        let destination = Place {
+            local: Local(0),
+            projection: vec![],
+        };
+        function.basic_blocks[0].statements = vec![StatementData::assign(
+            destination.clone(),
+            Rvalue::Use(Operand::Copy(field.clone())),
+            None,
+        )];
+        let origins = BorrowChecker::reference_return_origins(
+            &function,
+            &tc,
+            &MirBackendContract::default(),
+            &HashMap::new(),
+        );
+        assert_eq!(origins, HashSet::from([ReferenceOrigin::Param(Local(1))]));
+
+        let borrowed_storage = tc.intern_type(&Type::Reference {
+            inner: Box::new(reference),
+            mutable: false,
+        });
+        function.ret_type = borrowed_storage;
+        function.local_decls[0].ty = borrowed_storage;
+        function.basic_blocks[0].statements = vec![StatementData::assign(
+            destination,
+            Rvalue::Ref(Mutability::Not, field),
+            None,
+        )];
+        let origins = BorrowChecker::reference_return_origins(
+            &function,
+            &tc,
+            &MirBackendContract::default(),
+            &HashMap::new(),
+        );
+        assert_eq!(origins, HashSet::from([ReferenceOrigin::Local(Local(1))]));
+    }
+
+    #[test]
+    fn raw_owner_parts_transport_parameter_origins_without_borrowing_owner_storage() {
+        let mut tc = TypeContext::new();
+        let pointer_ty = Type::Pointer(Box::new(Type::I64));
+        let owner = tc.intern_type(&Type::Tuple(vec![pointer_ty.clone()]));
+        let parts = tc.intern_type(&Type::Tuple(vec![pointer_ty.clone(), Type::Unit]));
+        let pointer = tc.intern_type(&pointer_ty);
+        let unit = tc.intern_type(&Type::Unit);
+        let mut split = reference_return_function(&mut tc, MirOwnershipMetadata::default());
+        split.arg_count = 1;
+        split.ret_type = parts;
+        split.local_decls[0].ty = parts;
+        split.local_decls[1].ty = owner;
+        split.local_decls[1].source = LocalSource::Argument;
+        split.local_decls.truncate(2);
+        let local = |ty, source| LocalDecl {
+            ty,
+            source,
+            mutability: Mutability::Not,
+            name: None,
+            span: None,
+        };
+        split
+            .local_decls
+            .push(local(parts, LocalSource::UserBinding));
+        split
+            .local_decls
+            .push(local(pointer, LocalSource::Temporary));
+        split.local_decls.push(local(unit, LocalSource::Temporary));
+        let place = |index| Place {
+            local: Local(index),
+            projection: vec![],
+        };
+        let field = Place {
+            local: Local(1),
+            projection: vec![Projection::Field {
+                index: 0,
+                identity: None,
+            }],
+        };
+        split.basic_blocks[0].statements = vec![
+            StatementData::assign(place(3), Rvalue::Use(Operand::Copy(field.clone())), None),
+            StatementData::assign(
+                place(4),
+                Rvalue::Use(Operand::Constant(Constant::Unit)),
+                None,
+            ),
+            StatementData::assign(
+                place(2),
+                Rvalue::Aggregate(
+                    crate::mir::AggregateKind::Tuple,
+                    vec![Operand::Copy(place(3)), Operand::Copy(place(4))],
+                ),
+                None,
+            ),
+            StatementData::assign(place(0), Rvalue::Use(Operand::Move(place(2))), None),
+        ];
+        let contract = MirBackendContract::default();
+        let origins =
+            BorrowChecker::reference_return_origins(&split, &tc, &contract, &HashMap::new());
+        assert_eq!(origins, HashSet::from([ReferenceOrigin::Param(Local(1))]));
+
+        // A caller's hidden stack origin must survive substitution of that
+        // parameter summary; the transferred raw handle is not borrow-free.
+        let summaries = HashMap::from([(split.id.clone(), origins)]);
+        let mut caller = split.clone();
+        caller.arg_count = 0;
+        caller.local_decls[1].source = LocalSource::UserBinding;
+        let analysis = ReferenceEscapeAnalysis::new(
+            &caller,
+            &tc,
+            &contract,
+            &summaries,
+            MissingSummaryMode::Conservative,
+        );
+        let mut state = ReferenceOriginState::default();
+        state.origins.insert(
+            field.clone(),
+            HashSet::from([ReferenceOrigin::Local(Local(1))]),
+        );
+        let MirFunctionId::Function(split_id) = &split.id else {
+            unreachable!()
+        };
+        let callee = Operand::Constant(Constant::Callable(MirCallable::Resolved(
+            MirCallableKey::Function(*split_id),
+        )));
+        assert_eq!(
+            analysis.call_return_origins(&state, &callee, &[Operand::Move(place(1))], &place(0)),
+            HashSet::from([ReferenceOrigin::Local(Local(1))])
+        );
+
+        let borrowed_storage = tc.intern_type(&Type::Reference {
+            inner: Box::new(pointer_ty),
+            mutable: false,
+        });
+        split.ret_type = borrowed_storage;
+        split.local_decls[0].ty = borrowed_storage;
+        split.basic_blocks[0].statements = vec![StatementData::assign(
+            place(0),
+            Rvalue::Ref(Mutability::Not, field),
+            None,
+        )];
+        assert_eq!(
+            BorrowChecker::reference_return_origins(&split, &tc, &contract, &HashMap::new()),
+            HashSet::from([ReferenceOrigin::Local(Local(1))])
+        );
     }
 
     #[test]
@@ -4150,6 +4352,93 @@ mod tests {
 
         BorrowChecker::check_function(&function, &type_context)
             .expect("raw-pointer pointee moves are not moves out of the reference");
+    }
+
+    #[test]
+    fn raw_reinterpret_read_keeps_shared_loan_but_not_exclusive_move_access() {
+        let mut tc = TypeContext::new();
+        let i64 = tc.intern_type(&Type::I64);
+        let reference = tc.intern_type(&Type::Reference {
+            inner: Box::new(Type::I64),
+            mutable: false,
+        });
+        let pointer = tc.intern_type(&Type::Pointer(Box::new(Type::I64)));
+        let mut function = reference_return_function(&mut tc, MirOwnershipMetadata::default());
+        function.arg_count = 1;
+        function.ret_type = i64;
+        function.local_decls.truncate(2);
+        function.local_decls[0].ty = i64;
+        function.local_decls[1].ty = i64;
+        function.local_decls[1].source = LocalSource::Argument;
+        function.local_decls.push(LocalDecl {
+            ty: reference,
+            source: LocalSource::Temporary,
+            mutability: Mutability::Not,
+            name: None,
+            span: None,
+        });
+        function.local_decls.push(LocalDecl {
+            ty: pointer,
+            source: LocalSource::Temporary,
+            mutability: Mutability::Not,
+            name: None,
+            span: None,
+        });
+        let place = |index| Place {
+            local: Local(index),
+            projection: Vec::new(),
+        };
+        function.basic_blocks[0].statements = vec![
+            StatementData::assign(place(2), Rvalue::Ref(Mutability::Not, place(1)), None),
+            StatementData::assign(
+                place(3),
+                Rvalue::Cast(Operand::Copy(place(2)), pointer),
+                None,
+            ),
+            StatementData::assign(
+                place(0),
+                Rvalue::Use(Operand::Move(Place {
+                    local: Local(3),
+                    projection: vec![Projection::Deref],
+                })),
+                None,
+            ),
+        ];
+        BorrowChecker::check_function(&function, &tc)
+            .expect("raw reinterpret load is a read of the shared source");
+        assert_eq!(
+            BorrowChecker::move_access_kind(
+                &tc,
+                &MirBackendContract::default(),
+                &function,
+                &Place {
+                    local: Local(3),
+                    projection: vec![Projection::Deref]
+                }
+            ),
+            super::LoanKind::Shared
+        );
+        assert_eq!(
+            BorrowChecker::move_access_kind(
+                &tc,
+                &MirBackendContract::default(),
+                &function,
+                &Place {
+                    local: Local(2),
+                    projection: vec![Projection::Deref]
+                }
+            ),
+            super::LoanKind::Mut
+        );
+        assert_eq!(
+            BorrowChecker::move_access_kind(
+                &tc,
+                &MirBackendContract::default(),
+                &function,
+                &place(1)
+            ),
+            super::LoanKind::Mut
+        );
     }
 
     fn immutable_binding_mut_borrow_function(

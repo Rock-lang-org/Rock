@@ -266,6 +266,34 @@ impl FormatNode for Ident {
 impl FormatNode for ParseType {
     fn fmt_with<W: Write>(&self, context: &mut FormatContext, f: &mut W) -> fmt::Result {
         match self {
+            ParseType::Object(object) => {
+                object.base.fmt_with(context, f)?;
+                write!(f, " {{ ")?;
+                for (index, qualifier) in object.qualifiers.iter().enumerate() {
+                    if index != 0 {
+                        write!(f, ", ")?;
+                    }
+                    match qualifier {
+                        crate::ast::ObjectQualifier::Trait(ty) => {
+                            write!(f, "(")?;
+                            ty.fmt_with(context, f)?;
+                            write!(f, ")")?;
+                        }
+                        crate::ast::ObjectQualifier::Binding { owner, member, ty } => {
+                            if let Some(owner) = owner {
+                                write!(f, "(")?;
+                                owner.fmt_with(context, f)?;
+                                write!(f, ")::")?;
+                            }
+                            member.fmt_with(context, f)?;
+                            write!(f, " = (")?;
+                            ty.fmt_with(context, f)?;
+                            write!(f, ")")?;
+                        }
+                    }
+                }
+                write!(f, " }}")
+            }
             ParseType::Function(types) => {
                 let was_inside_fn_type_decl = context.inside_fn_type_decl;
                 if was_inside_fn_type_decl {
@@ -366,6 +394,13 @@ impl FormatNode for ParseTypeInner {
 
 impl FormatNode for GenericParamDecl {
     fn fmt_with<W: Write>(&self, context: &mut FormatContext, f: &mut W) -> fmt::Result {
+        if let Some(bound) = &self.unsized_bound {
+            write!(f, "(")?;
+            self.name.fmt_with(context, f)?;
+            write!(f, ": ?")?;
+            bound.fmt_with(context, f)?;
+            return write!(f, ")");
+        }
         self.name.fmt_with(context, f)?;
         if let Some(kind) = &self.kind {
             if kind.args.is_empty() {
@@ -448,6 +483,9 @@ impl FormatNode for WhereClause {
         self.subject.fmt_with(context, f)?;
         if let Some(trait_bound) = &self.trait_bound {
             write!(f, ": ")?;
+            if self.relaxed {
+                write!(f, "?")?;
+            }
             trait_bound.fmt_with(context, f)?;
         }
         Ok(())
@@ -478,6 +516,9 @@ impl FormatNode for FunctionSig {
                 clause.subject.fmt_with(context, f)?;
                 if let Some(trait_bound) = &clause.trait_bound {
                     write!(f, ": ")?;
+                    if clause.relaxed {
+                        write!(f, "?")?;
+                    }
                     trait_bound.fmt_with(context, f)?;
                 }
             }

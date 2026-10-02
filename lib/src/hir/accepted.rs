@@ -184,6 +184,14 @@ fn convert_expr(expr: HirExpr) -> Result<AcceptedHirExpr, Vec<String>> {
     let ty = expr.ty;
     let span = expr.span;
     let kind = match expr.kind {
+        HirExprKind::Open { source, binding, body } => HirExprKindFor::Open {
+            source: Box::new(convert_expr(*source)?), binding, body: convert_block(body)?,
+        },
+        HirExprKind::OwnedObjectCall { owner, args, call } => HirExprKindFor::OwnedObjectCall {
+            owner: Box::new(convert_expr(*owner)?),
+            args: convert_exprs(args)?,
+            call,
+        },
         HirExprKind::IntLiteral(value) => HirExprKindFor::IntLiteral(value),
         HirExprKind::FloatLiteral(value) => HirExprKindFor::FloatLiteral(value),
         HirExprKind::BoolLiteral(value) => HirExprKindFor::BoolLiteral(value),
@@ -310,6 +318,12 @@ fn convert_expr(expr: HirExpr) -> Result<AcceptedHirExpr, Vec<String>> {
         HirExprKind::Deref(inner) => HirExprKindFor::Deref(Box::new(convert_expr(*inner)?)),
         HirExprKind::Cast(inner, target) => {
             HirExprKindFor::Cast(Box::new(convert_expr(*inner)?), target)
+        }
+        HirExprKind::ObjectCoercion(inner, coercion) => {
+            if coercion.evidence.is_none() || coercion.target != ty {
+                return Err(vec!["invalid or unresolved object coercion".to_string()]);
+            }
+            HirExprKindFor::ObjectCoercion(Box::new(convert_expr(*inner)?), coercion)
         }
         HirExprKind::Assign(left, right) => HirExprKindFor::Assign(
             Box::new(convert_expr(*left)?),
@@ -465,6 +479,14 @@ fn unresolve_stmt(stmt: HirStmtFor<AcceptedHir>) -> HirStmt {
 #[cfg(test)]
 fn unresolve_expr(expr: AcceptedHirExpr) -> HirExpr {
     let kind = match expr.kind {
+        HirExprKindFor::Open { source, binding, body } => HirExprKindFor::Open {
+            source: Box::new(unresolve_expr(*source)), binding, body: unresolve_block(body),
+        },
+        HirExprKindFor::OwnedObjectCall { owner, args, call } => HirExprKindFor::OwnedObjectCall {
+            owner: Box::new(unresolve_expr(*owner)),
+            args: args.into_iter().map(unresolve_expr).collect(),
+            call,
+        },
         HirExprKindFor::IntLiteral(value) => HirExprKindFor::IntLiteral(value),
         HirExprKindFor::FloatLiteral(value) => HirExprKindFor::FloatLiteral(value),
         HirExprKindFor::BoolLiteral(value) => HirExprKindFor::BoolLiteral(value),
@@ -606,6 +628,9 @@ fn unresolve_expr(expr: AcceptedHirExpr) -> HirExpr {
         HirExprKindFor::Deref(inner) => HirExprKindFor::Deref(Box::new(unresolve_expr(*inner))),
         HirExprKindFor::Cast(inner, target) => {
             HirExprKindFor::Cast(Box::new(unresolve_expr(*inner)), target)
+        }
+        HirExprKindFor::ObjectCoercion(inner, coercion) => {
+            HirExprKindFor::ObjectCoercion(Box::new(unresolve_expr(*inner)), coercion)
         }
         HirExprKindFor::Assign(left, right) => HirExprKindFor::Assign(
             Box::new(unresolve_expr(*left)),

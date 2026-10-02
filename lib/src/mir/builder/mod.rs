@@ -1,5 +1,7 @@
 mod blocks;
+mod erased;
 mod expr;
+mod object;
 
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -35,6 +37,12 @@ type HirExpr = crate::hir::HirExprFor<AcceptedHir>;
 type HirExprKind = crate::hir::HirExprKindFor<AcceptedHir>;
 
 pub struct MirBuilder<'a> {
+    erased_invocations:
+        std::collections::BTreeMap<super::MirErasedInvocationKey, super::MirErasedCall>,
+    owned_object_calls:
+        std::collections::BTreeMap<super::MirOwnedObjectKey, super::MirOwnedObjectPlan>,
+    object_schemas: std::collections::BTreeMap<TypeId, super::MirObjectSchema>,
+    vtables: std::collections::BTreeMap<super::MirVtableId, super::MirVtable>,
     program: &'a HirProgram,
     type_context: &'a RefCell<TypeContext>,
     blocks: Vec<BasicBlock>,
@@ -208,6 +216,10 @@ impl<'a> MirBuilder<'a> {
 
     pub fn new(program: &'a HirProgram, type_context: &'a RefCell<TypeContext>) -> Self {
         Self {
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             type_context,
             blocks: Vec::new(),
@@ -333,6 +345,10 @@ impl<'a> MirBuilder<'a> {
                 direct_drop_types.clone(),
             )
             .with_source_map(&program.source_map);
+            builder.object_schemas = program.object_schemas.clone();
+            builder.vtables = program.vtables.clone();
+            builder.erased_invocations = program.erased_invocations.clone();
+            builder.owned_object_calls = program.owned_object_calls.clone();
             builder.callable_instances_by_def_id = callable_instances_by_def_id.clone();
             builder
                 .method_def_ids
@@ -496,7 +512,7 @@ impl<'a> MirBuilder<'a> {
         functions: &std::collections::BTreeMap<MirFunctionId, MirFunction>,
     ) {
         contract.runtime_requirements =
-            super::backend_contract::runtime_requirements_for_functions(functions.values());
+            super::backend_contract::runtime_requirements_for_backend(contract, functions.values());
     }
 
     fn mir_contract_local_body_symbol(
@@ -628,7 +644,12 @@ impl<'a> MirBuilder<'a> {
             Operand::Constant(Constant::String(_)) => type_context.id_for_type(&Type::Str),
             Operand::Constant(Constant::Unit) => type_context.id_for_type(&Type::Unit),
             Operand::Constant(Constant::TypeId(id)) => Some(*id),
-            Operand::Constant(Constant::Callable(_)) => None,
+            Operand::Constant(
+                Constant::Callable(_)
+                | Constant::VirtualTarget(_)
+                | Constant::ErasedCall(_)
+                | Constant::OwnedObjectCall(_),
+            ) => None,
         }
     }
 
@@ -757,6 +778,10 @@ impl<'a> MirBuilder<'a> {
         bodies: &MirInstanceBodies,
     ) -> super::MirBackendContract {
         let mut contract = crate::mir::MirBackendContract::default();
+        contract.object_schemas = program.object_schemas.clone();
+        contract.vtables = program.vtables.clone();
+        contract.erased = program.erased.clone();
+        contract.owned_object_calls = program.owned_object_calls.clone();
         Self::populate_backend_contract_externs(&mut contract, &program.program, type_context);
         Self::populate_backend_contract_nominal_layouts(
             &mut contract,
@@ -891,6 +916,8 @@ impl<'a> MirBuilder<'a> {
             type_context,
         );
         Self::populate_backend_contract_drop_glue(&mut contract, &program.generated_drop_instances);
+        Self::populate_object_adapters(&mut contract, type_context);
+        Self::populate_erased_contract(&mut contract, program, functions, type_context);
 
         contract
     }
@@ -1914,7 +1941,10 @@ impl<'a> MirBuilder<'a> {
 
     fn record_rvalue_moves(&mut self, rvalue: &Rvalue) {
         match rvalue {
-            Rvalue::Use(operand) | Rvalue::Cast(operand, _) | Rvalue::UnaryOp(_, operand) => {
+            Rvalue::Object(operand, _)
+            | Rvalue::Use(operand)
+            | Rvalue::Cast(operand, _)
+            | Rvalue::UnaryOp(_, operand) => {
                 self.record_operand_move(operand);
             }
             Rvalue::BinaryOp(_, lhs, rhs) => {
@@ -3293,6 +3323,11 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(instance_id, function);
         let mono = crate::mono::MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances: std::collections::BTreeMap::from([(
                 instance_id,
@@ -3396,6 +3431,11 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(caller_instance, caller);
         let mono = crate::mono::MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances: std::collections::BTreeMap::from([
                 (
@@ -3501,6 +3541,11 @@ mod tests {
         let mut type_context = crate::type_context::TypeContext::new();
         let _ = crate::hir::collect_hir_type_ids(&program, &mut type_context);
         let mono = crate::mono::MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances: std::collections::BTreeMap::new(),
             pre_mir_instance_bodies: crate::mono::PreMirInstanceBodies::new(),
@@ -3536,6 +3581,11 @@ mod tests {
         let instance_id = InstanceId(90);
         let function_id = DefId::new(CrateId(0), LocalDefId(90));
         let mono = crate::mono::MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program: empty_program(),
             instances: std::collections::BTreeMap::from([(
                 instance_id,
@@ -3637,6 +3687,11 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(instance_id, function);
         let mono = crate::mono::MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances: std::collections::BTreeMap::from([(
                 instance_id,
@@ -3823,6 +3878,11 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(InstanceId(0), function);
         let mono = crate::mono::MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances: std::collections::BTreeMap::from([(
                 InstanceId(0),
@@ -3987,6 +4047,11 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(InstanceId(0), function);
         let mono = crate::mono::MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances: std::collections::BTreeMap::from([(
                 InstanceId(0),
@@ -4135,6 +4200,11 @@ mod tests {
         let mut type_context = TypeContext::new();
         let ret_type = type_context.intern_type(&outer_projection);
         let mono = crate::mono::MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances: std::collections::BTreeMap::new(),
             pre_mir_instance_bodies: crate::mono::PreMirInstanceBodies::new(),
@@ -4227,6 +4297,11 @@ mod tests {
         let ret_type = type_context.intern_type(&projection);
         let function_id = DefId::new(CrateId(0), LocalDefId(41));
         let mono = crate::mono::MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program: HirProgram::from_accepted_id_parts_with_names_and_canonical_names(
                 std::collections::HashMap::new(),
                 std::collections::HashMap::new(),
@@ -5147,6 +5222,11 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(instance_id, function);
         let mut monomorphized = MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances: std::collections::BTreeMap::from([(
                 instance_id,
@@ -5241,6 +5321,11 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(instance_id, function.clone());
         let mut monomorphized = MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances: std::collections::BTreeMap::from([(
                 instance_id,
@@ -5338,6 +5423,11 @@ mod tests {
             },
         );
         let monomorphized = MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances,
             pre_mir_instance_bodies,
@@ -5436,6 +5526,11 @@ mod tests {
             },
         );
         let monomorphized = MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program,
             instances,
             pre_mir_instance_bodies,

@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub(super) mod object_abi;
+
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
@@ -42,6 +44,7 @@ pub(super) struct SerializedCompilerProducts {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(super) struct SerializedProductInterface {
+    pub object_abi: object_abi::SerializedObjectAbi,
     pub functions: BTreeMap<ProductDefId, SerializedProductFunctionInterface>,
     pub structs: BTreeMap<ProductDefId, SerializedProductStructInterface>,
     pub enums: BTreeMap<ProductDefId, SerializedProductEnumInterface>,
@@ -290,6 +293,7 @@ pub(super) struct SerializedTraitBound {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SerializedGenericBounds {
+    pub relaxed_sized: Vec<ProductGenericParamId>,
     pub bounds: Vec<(ProductGenericParamId, Vec<SerializedTraitBound>)>,
     pub predicates: Vec<SerializedPredicate>,
 }
@@ -351,6 +355,11 @@ pub(super) struct SerializedHirExpr {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) enum SerializedHirExprKind {
+    Open {
+        source: Box<SerializedHirExpr>,
+        binding: SerializedOpenBinding,
+        body: SerializedHirBlock,
+    },
     IntLiteral(i64),
     FloatLiteral(f64),
     BoolLiteral(bool),
@@ -438,6 +447,12 @@ pub(super) enum SerializedHirExprKind {
     Ref(bool, Box<SerializedHirExpr>),
     Deref(Box<SerializedHirExpr>),
     Cast(Box<SerializedHirExpr>, ProductTypeId),
+    ObjectCoercion(Box<SerializedHirExpr>, SerializedObjectCoercion),
+    OwnedObjectCall {
+        owner: Box<SerializedHirExpr>,
+        args: Vec<SerializedHirExpr>,
+        call: SerializedOwnedObjectCall,
+    },
     Assign(Box<SerializedHirExpr>, Box<SerializedHirExpr>),
     Intrinsic {
         name: String,
@@ -478,6 +493,134 @@ pub(super) struct SerializedHirMethodCallTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct SerializedOwnedObjectCall {
+    method: SerializedHirMethodCallTarget,
+    object: ProductTypeId,
+    state: ProductTypeId,
+    into_owner: ProductTypeId,
+    into_parts: SerializedHirMethodCallTarget,
+    release_owner: ProductTypeId,
+    release: SerializedHirMethodCallTarget,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct SerializedOpenBinding {
+    witness: ProductWitnessId,
+    value: SerializedHirParam,
+    object: ProductTypeId,
+    source_ty: ProductTypeId,
+    owner: Option<SerializedOpenOwner>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct SerializedOpenOwner {
+    state_ty: ProductTypeId,
+    into_owner: ProductTypeId,
+    into_parts: SerializedHirMethodCallTarget,
+    from_owner: ProductTypeId,
+    from_parts: SerializedHirMethodCallTarget,
+}
+
+impl SerializedOpenBinding {
+    fn encode(
+        binding: &crate::hir::HirOpenBinding,
+        encoder: &mut ProductTypeEncoder,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            witness: ProductWitnessId::encode(binding.witness),
+            value: SerializedHirParam::encode(&binding.value, encoder)?,
+            object: encoder.encode_type(&Type::Object(Box::new(binding.object.clone())))?,
+            source_ty: encoder.encode_type(&binding.source_ty)?,
+            owner: binding
+                .owner
+                .as_ref()
+                .map(|owner| {
+                    Ok::<_, String>(SerializedOpenOwner {
+                        state_ty: encoder.encode_type(&owner.state_ty)?,
+                        into_owner: encoder.encode_type(&owner.into_parts.owner_ty)?,
+                        into_parts: SerializedHirMethodCallTarget::encode(
+                            &owner.into_parts.method,
+                            encoder,
+                        )?,
+                        from_owner: encoder.encode_type(&owner.from_parts.owner_ty)?,
+                        from_parts: SerializedHirMethodCallTarget::encode(
+                            &owner.from_parts.method,
+                            encoder,
+                        )?,
+                    })
+                })
+                .transpose()?,
+        })
+    }
+
+    fn decode(
+        self,
+        decoder: &mut ProductTypeDecoder<'_>,
+    ) -> Result<crate::hir::HirOpenBinding, String> {
+        let Type::Object(object) = decoder.decode_type(self.object)? else {
+            return Err("opening schema must reference an object type row".into());
+        };
+        Ok(crate::hir::HirOpenBinding {
+            witness: self.witness.decode(),
+            value: self.value.decode(decoder)?,
+            object: *object,
+            source_ty: decoder.decode_type(self.source_ty)?,
+            owner: self
+                .owner
+                .map(|owner| {
+                    Ok::<_, String>(crate::hir::HirOpenOwner {
+                        state_ty: decoder.decode_type(owner.state_ty)?,
+                        into_parts: crate::hir::HirStaticMethodTarget {
+                            owner_ty: decoder.decode_type(owner.into_owner)?,
+                            method: owner.into_parts.decode(decoder)?,
+                        },
+                        from_parts: crate::hir::HirStaticMethodTarget {
+                            owner_ty: decoder.decode_type(owner.from_owner)?,
+                            method: owner.from_parts.decode(decoder)?,
+                        },
+                    })
+                })
+                .transpose()?,
+        })
+    }
+}
+
+impl SerializedOwnedObjectCall {
+    fn encode(
+        call: &crate::hir::HirOwnedObjectCall,
+        encoder: &mut ProductTypeEncoder,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            method: SerializedHirMethodCallTarget::encode(&call.method, encoder)?,
+            object: encoder.encode_type(&call.object)?,
+            state: encoder.encode_type(&call.state)?,
+            into_owner: encoder.encode_type(&call.into_parts.owner_ty)?,
+            into_parts: SerializedHirMethodCallTarget::encode(&call.into_parts.method, encoder)?,
+            release_owner: encoder.encode_type(&call.release.owner_ty)?,
+            release: SerializedHirMethodCallTarget::encode(&call.release.method, encoder)?,
+        })
+    }
+    fn decode(
+        self,
+        decoder: &mut ProductTypeDecoder<'_>,
+    ) -> Result<crate::hir::HirOwnedObjectCall, String> {
+        Ok(crate::hir::HirOwnedObjectCall {
+            method: self.method.decode(decoder)?,
+            object: decoder.decode_type(self.object)?,
+            state: decoder.decode_type(self.state)?,
+            into_parts: crate::hir::HirStaticMethodTarget {
+                owner_ty: decoder.decode_type(self.into_owner)?,
+                method: self.into_parts.decode(decoder)?,
+            },
+            release: crate::hir::HirStaticMethodTarget {
+                owner_ty: decoder.decode_type(self.release_owner)?,
+                method: self.release.decode(decoder)?,
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) enum SerializedHirSelectedMethodTarget {
     ImplMethod {
         impl_id: crate::ids::DefId,
@@ -503,6 +646,163 @@ pub(super) struct SerializedHirSelectedTraitMember {
 pub(super) struct SerializedHirTypeBinding {
     pub param: crate::types::GenericParamId,
     pub ty: ProductTypeId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct SerializedObjectCoercion {
+    target: ProductTypeId,
+    evidence: SerializedObjectEvidence,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum SerializedObjectEvidence {
+    Concrete {
+        source: ProductTypeId,
+        views: Vec<SerializedObjectView>,
+    },
+    Upcast {
+        source: ProductTypeId,
+        target: ProductTypeId,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SerializedObjectView {
+    trait_id: crate::ids::DefId,
+    type_args: Vec<ProductTypeId>,
+    origin: SerializedObjectOrigin,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum SerializedObjectOrigin {
+    Impl {
+        impl_id: crate::ids::DefId,
+        substitution: Vec<SerializedHirTypeBinding>,
+    },
+    Bound,
+    Callable {
+        kind: crate::types::CallableKind,
+    },
+    Auto {
+        role: crate::language_items::LanguageItemRole,
+    },
+}
+
+impl SerializedObjectCoercion {
+    fn encode(
+        value: &crate::hir::HirObjectCoercion,
+        encoder: &mut ProductTypeEncoder,
+    ) -> Result<Self, String> {
+        use crate::hir::{HirObjectEvidence as E, HirObjectWitnessOrigin as O};
+        let evidence = match value
+            .evidence
+            .as_ref()
+            .ok_or("unresolved object coercion in artifact")?
+        {
+            E::Upcast { source, target } => SerializedObjectEvidence::Upcast {
+                source: encoder.encode_type(source)?,
+                target: encoder.encode_type(target)?,
+            },
+            E::Concrete { source, views } => SerializedObjectEvidence::Concrete {
+                source: encoder.encode_type(source)?,
+                views: views
+                    .iter()
+                    .map(|view| {
+                        Ok(SerializedObjectView {
+                            trait_id: view.trait_ref.trait_id,
+                            type_args: view
+                                .trait_ref
+                                .type_args
+                                .iter()
+                                .map(|ty| encoder.encode_type(ty))
+                                .collect::<Result<_, _>>()?,
+                            origin: match &view.origin {
+                                O::Impl {
+                                    impl_id,
+                                    substitution,
+                                } => SerializedObjectOrigin::Impl {
+                                    impl_id: *impl_id,
+                                    substitution: substitution
+                                        .iter()
+                                        .map(|binding| {
+                                            Ok(SerializedHirTypeBinding {
+                                                param: binding.param,
+                                                ty: encoder.encode_type(&binding.ty)?,
+                                            })
+                                        })
+                                        .collect::<Result<_, String>>()?,
+                                },
+                                O::Bound => SerializedObjectOrigin::Bound,
+                                O::Callable { kind } => {
+                                    SerializedObjectOrigin::Callable { kind: *kind }
+                                }
+                                O::Auto { role } => SerializedObjectOrigin::Auto { role: *role },
+                            },
+                        })
+                    })
+                    .collect::<Result<_, String>>()?,
+            },
+        };
+        Ok(Self {
+            target: encoder.encode_type(&value.target)?,
+            evidence,
+        })
+    }
+
+    fn decode(
+        self,
+        decoder: &mut ProductTypeDecoder<'_>,
+    ) -> Result<crate::hir::HirObjectCoercion, String> {
+        use crate::hir::{HirObjectEvidence as E, HirObjectWitnessOrigin as O};
+        let evidence = match self.evidence {
+            SerializedObjectEvidence::Upcast { source, target } => E::Upcast {
+                source: decoder.decode_type(source)?,
+                target: decoder.decode_type(target)?,
+            },
+            SerializedObjectEvidence::Concrete { source, views } => E::Concrete {
+                source: decoder.decode_type(source)?,
+                views: views
+                    .into_iter()
+                    .map(|view| {
+                        Ok(crate::hir::HirObjectView {
+                            trait_ref: crate::types::TraitBound {
+                                trait_id: view.trait_id,
+                                type_args: view
+                                    .type_args
+                                    .into_iter()
+                                    .map(|ty| decoder.decode_type(ty))
+                                    .collect::<Result<_, _>>()?,
+                            },
+                            origin: match view.origin {
+                                SerializedObjectOrigin::Impl {
+                                    impl_id,
+                                    substitution,
+                                } => O::Impl {
+                                    impl_id,
+                                    substitution: substitution
+                                        .into_iter()
+                                        .map(|binding| {
+                                            Ok(crate::hir::HirTypeBinding {
+                                                param: binding.param,
+                                                ty: decoder.decode_type(binding.ty)?,
+                                            })
+                                        })
+                                        .collect::<Result<_, String>>()?,
+                                },
+                                SerializedObjectOrigin::Bound => O::Bound,
+                                SerializedObjectOrigin::Callable { kind } => O::Callable { kind },
+                                SerializedObjectOrigin::Auto { role } => O::Auto { role },
+                            },
+                        })
+                    })
+                    .collect::<Result<_, String>>()?,
+            },
+        };
+        Ok(crate::hir::HirObjectCoercion {
+            target: decoder.decode_type(self.target)?,
+            evidence: Some(evidence),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -599,7 +899,46 @@ pub(super) fn validate_portable_artifact_limits_with_initial_string_bytes(
             crate::products::MAX_PRODUCT_ARTIFACT_TYPE_ROWS
         ));
     }
-    validate_type_table_graph(&artifact.type_table)?;
+    let mut components = Vec::new();
+    let mut abi_nodes = artifact
+        .products
+        .interface
+        .object_abi
+        .trait_members
+        .values()
+        .map(Vec::len)
+        .sum::<usize>();
+    for schema in &artifact.products.interface.object_abi.schemas {
+        if !matches!(
+            artifact.type_table.rows.get(schema.object.0 as usize),
+            Some(ProductTypeRow::Object(_))
+        ) {
+            return Err("object ABI schema root is not an object signature".into());
+        }
+        abi_nodes = abi_nodes
+            .saturating_add(1)
+            .saturating_add(schema.views.len())
+            .saturating_add(schema.slots.len());
+        for slot in &schema.slots {
+            if slot.params.len() > crate::products::MAX_PRODUCT_ARTIFACT_GENERIC_PARAMS
+                || slot.trait_args.len() > crate::products::MAX_PRODUCT_ARTIFACT_GENERIC_PARAMS
+            {
+                return Err("object ABI slot parameter limit exceeded".into());
+            }
+            components.extend(slot.trait_args.iter().copied());
+        }
+        for slot in &schema.erased_slots {
+            abi_nodes = abi_nodes
+                .saturating_add(1)
+                .saturating_add(slot.signature.parameters.len())
+                .saturating_add(slot.signature.layouts.len());
+            components.extend(slot.trait_args.iter().copied());
+        }
+    }
+    if abi_nodes > crate::products::MAX_PRODUCT_ARTIFACT_DECLARATIONS {
+        return Err("object ABI declaration limit exceeded".into());
+    }
+    validate_type_table_graph_with_object_components(&artifact.type_table, &components)?;
 
     let interface = &artifact.products.interface;
     let declaration_count = interface
@@ -1015,8 +1354,16 @@ impl serde::ser::SerializeStructVariant for &mut ProductStringValidator {
 }
 
 fn validate_type_table_graph(table: &ProductTypeTable) -> Result<(), String> {
+    validate_type_table_graph_with_object_components(table, &[])
+}
+
+fn validate_type_table_graph_with_object_components(
+    table: &ProductTypeTable,
+    components: &[ProductTypeId],
+) -> Result<(), String> {
     fn children(row: &ProductTypeRow) -> Vec<ProductTypeId> {
         match row {
+            ProductTypeRow::Object(object) => object.children().collect(),
             ProductTypeRow::Slice(inner)
             | ProductTypeRow::Array(inner, _)
             | ProductTypeRow::Pointer(inner)
@@ -1042,6 +1389,8 @@ fn validate_type_table_graph(table: &ProductTypeTable) -> Result<(), String> {
                 .collect(),
             ProductTypeRow::Lambda { body, .. } => vec![*body],
             ProductTypeRow::I8
+            | ProductTypeRow::ObjectSelf { .. }
+            | ProductTypeRow::Witness(_)
             | ProductTypeRow::I16
             | ProductTypeRow::I32
             | ProductTypeRow::I64
@@ -1066,6 +1415,7 @@ fn validate_type_table_graph(table: &ProductTypeTable) -> Result<(), String> {
         table: &ProductTypeTable,
         id: ProductTypeId,
         binders: &mut Vec<usize>,
+        object_depth: usize,
         stack: &mut Vec<ProductTypeId>,
         nodes: &mut usize,
     ) -> Result<(), String> {
@@ -1082,6 +1432,11 @@ fn validate_type_table_graph(table: &ProductTypeTable) -> Result<(), String> {
             .rows
             .get(id.0 as usize)
             .ok_or_else(|| format!("unknown product type id {}", id.0))?;
+        if let ProductTypeRow::ObjectSelf { depth } = row {
+            if *depth as usize >= object_depth {
+                return Err(format!("out-of-scope product object Self depth {depth}"));
+            }
+        }
         *nodes = nodes.saturating_add(1);
         if *nodes > crate::products::MAX_PRODUCT_ARTIFACT_NORMALIZATION_NODES {
             return Err(format!(
@@ -1111,11 +1466,13 @@ fn validate_type_table_graph(table: &ProductTypeTable) -> Result<(), String> {
                 ));
             }
             binders.push(params.len());
-            visit(table, *body, binders, stack, nodes)?;
+            visit(table, *body, binders, object_depth, stack, nodes)?;
             binders.pop();
         } else {
             for child in children(row) {
-                visit(table, child, binders, stack, nodes)?;
+                let child_object_depth =
+                    object_depth + usize::from(matches!(row, ProductTypeRow::Object(_)));
+                visit(table, child, binders, child_object_depth, stack, nodes)?;
             }
         }
         stack.pop();
@@ -1124,6 +1481,24 @@ fn validate_type_table_graph(table: &ProductTypeTable) -> Result<(), String> {
 
     let mut referenced = vec![false; table.rows.len()];
     for row in &table.rows {
+        if let ProductTypeRow::Object(object) = row {
+            if object
+                .guarantees
+                .len()
+                .saturating_add(object.bindings.len())
+                > crate::products::MAX_PRODUCT_ARTIFACT_DECLARATIONS
+            {
+                return Err("Product artifact object evidence limit exceeded".to_string());
+            }
+            for bound in std::iter::once(&object.principal)
+                .chain(&object.guarantees)
+                .chain(object.bindings.iter().map(|binding| &binding.trait_ref))
+            {
+                if bound.args.len() > crate::products::MAX_PRODUCT_ARTIFACT_GENERIC_PARAMS {
+                    return Err("Product artifact object trait argument limit exceeded".to_string());
+                }
+            }
+        }
         for child in children(row) {
             let Some(slot) = referenced.get_mut(child.0 as usize) else {
                 return Err(format!("unknown product type id {}", child.0));
@@ -1132,12 +1507,29 @@ fn validate_type_table_graph(table: &ProductTypeTable) -> Result<(), String> {
         }
     }
     let mut nodes = 0usize;
+    // Only schema trait-argument positions open this implicit object binder.
+    // Ordinary declaration roots are still validated independently by decoding.
+    for component in components {
+        let referenced = referenced
+            .get_mut(component.0 as usize)
+            .ok_or_else(|| format!("unknown product type id {}", component.0))?;
+        *referenced = true;
+        visit(
+            table,
+            *component,
+            &mut Vec::new(),
+            1,
+            &mut Vec::new(),
+            &mut nodes,
+        )?;
+    }
     for (index, is_referenced) in referenced.iter().enumerate() {
         if !is_referenced {
             visit(
                 table,
                 ProductTypeId(index as u32),
                 &mut Vec::new(),
+                0,
                 &mut Vec::new(),
                 &mut nodes,
             )?;
@@ -1255,11 +1647,13 @@ impl SerializedProductInterface {
             )?,
             effective_trait_methods: interface.effective_trait_methods.clone(),
             language_items: interface.language_items.clone(),
+            object_abi: object_abi::SerializedObjectAbi::encode(&interface.object_abi, encoder)?,
         })
     }
 
     fn decode(self, decoder: &mut ProductTypeDecoder<'_>) -> Result<ProductInterface, String> {
         Ok(ProductInterface {
+            object_abi: self.object_abi.decode(decoder)?,
             functions: decode_map(
                 self.functions,
                 decoder,
@@ -2240,6 +2634,22 @@ impl SerializedHirExprKind {
         encoder: &mut ProductTypeEncoder,
     ) -> Result<Self, String> {
         Ok(match value {
+            crate::hir::HirExprKindFor::OwnedObjectCall { owner, args, call } => {
+                Self::OwnedObjectCall {
+                    owner: Box::new(SerializedHirExpr::encode(owner, encoder)?),
+                    args: encode_exprs(args, encoder)?,
+                    call: SerializedOwnedObjectCall::encode(call, encoder)?,
+                }
+            }
+            crate::hir::HirExprKindFor::Open {
+                source,
+                binding,
+                body,
+            } => Self::Open {
+                source: Box::new(SerializedHirExpr::encode(source, encoder)?),
+                binding: SerializedOpenBinding::encode(binding, encoder)?,
+                body: SerializedHirBlock::encode(body, encoder)?,
+            },
             crate::hir::HirExprKindFor::IntLiteral(value) => Self::IntLiteral(*value),
             crate::hir::HirExprKindFor::FloatLiteral(value) => Self::FloatLiteral(*value),
             crate::hir::HirExprKindFor::BoolLiteral(value) => Self::BoolLiteral(*value),
@@ -2409,6 +2819,10 @@ impl SerializedHirExprKind {
                 Box::new(SerializedHirExpr::encode(inner, encoder)?),
                 encoder.encode_type(ty)?,
             ),
+            crate::hir::HirExprKindFor::ObjectCoercion(inner, coercion) => Self::ObjectCoercion(
+                Box::new(SerializedHirExpr::encode(inner, encoder)?),
+                SerializedObjectCoercion::encode(coercion, encoder)?,
+            ),
             crate::hir::HirExprKindFor::Assign(lhs, rhs) => Self::Assign(
                 Box::new(SerializedHirExpr::encode(lhs, encoder)?),
                 Box::new(SerializedHirExpr::encode(rhs, encoder)?),
@@ -2425,6 +2839,22 @@ impl SerializedHirExprKind {
         decoder: &mut ProductTypeDecoder<'_>,
     ) -> Result<crate::hir::HirExprKindFor<crate::hir::AcceptedHir>, String> {
         Ok(match self {
+            Self::OwnedObjectCall { owner, args, call } => {
+                crate::hir::HirExprKindFor::OwnedObjectCall {
+                    owner: Box::new(owner.decode(decoder)?),
+                    args: decode_exprs(args, decoder)?,
+                    call: call.decode(decoder)?,
+                }
+            }
+            Self::Open {
+                source,
+                binding,
+                body,
+            } => crate::hir::HirExprKindFor::Open {
+                source: Box::new(source.decode(decoder)?),
+                binding: binding.decode(decoder)?,
+                body: body.decode(decoder)?,
+            },
             Self::IntLiteral(value) => crate::hir::HirExprKindFor::IntLiteral(value),
             Self::FloatLiteral(value) => crate::hir::HirExprKindFor::FloatLiteral(value),
             Self::BoolLiteral(value) => crate::hir::HirExprKindFor::BoolLiteral(value),
@@ -2586,6 +3016,10 @@ impl SerializedHirExprKind {
             Self::Cast(inner, ty) => crate::hir::HirExprKindFor::Cast(
                 Box::new(inner.decode(decoder)?),
                 decoder.decode_type(ty)?,
+            ),
+            Self::ObjectCoercion(inner, coercion) => crate::hir::HirExprKindFor::ObjectCoercion(
+                Box::new(inner.decode(decoder)?),
+                coercion.decode(decoder)?,
             ),
             Self::Assign(lhs, rhs) => crate::hir::HirExprKindFor::Assign(
                 Box::new(lhs.decode(decoder)?),
@@ -3038,6 +3472,12 @@ fn encode_generic_bounds(
         .collect::<Result<Vec<_>, String>>()?;
     encoded.sort_by_key(|(param, _)| *param);
     Ok(SerializedGenericBounds {
+        relaxed_sized: bounds
+            .relaxed_sized
+            .iter()
+            .copied()
+            .map(encode_generic_param_id)
+            .collect(),
         bounds: encoded,
         predicates: bounds
             .predicates
@@ -3069,6 +3509,11 @@ fn decode_generic_bounds(
         .into_iter()
         .map(|predicate| predicate.decode(decoder))
         .collect::<Result<_, _>>()?;
+    decoded.relaxed_sized = bounds
+        .relaxed_sized
+        .into_iter()
+        .map(decode_generic_param_id)
+        .collect();
     Ok(decoded)
 }
 
@@ -3076,6 +3521,7 @@ fn encode_generic_param_decls(decls: &[GenericParamDecl]) -> Vec<ProductGenericP
     decls
         .iter()
         .map(|decl| ProductGenericParamDecl {
+            maybe_unsized: decl.maybe_unsized,
             id: encode_generic_param_id(decl.id),
             name: decl.name.clone(),
             kind: decl.kind.clone(),
@@ -3087,6 +3533,7 @@ fn decode_generic_param_decls(decls: Vec<ProductGenericParamDecl>) -> Vec<Generi
     decls
         .into_iter()
         .map(|decl| GenericParamDecl {
+            maybe_unsized: decl.maybe_unsized,
             id: decode_generic_param_id(decl.id),
             name: decl.name,
             kind: decl.kind,
@@ -3119,6 +3566,7 @@ pub(super) struct ProductGenericParamId {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(super) struct ProductGenericParamDecl {
+    pub maybe_unsized: bool,
     pub id: ProductGenericParamId,
     pub name: String,
     pub kind: Kind,
@@ -3242,7 +3690,50 @@ impl From<ProductNominalTypeKind> for crate::types::NominalTypeKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(super) struct ProductObjectTrait {
+    id: ProductDefId,
+    args: Vec<ProductTypeId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(super) struct ProductObjectBinding {
+    trait_ref: ProductObjectTrait,
+    member: AssocTypeId,
+    ty: ProductTypeId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(super) struct ProductObjectType {
+    principal: ProductObjectTrait,
+    guarantees: Vec<ProductObjectTrait>,
+    bindings: Vec<ProductObjectBinding>,
+}
+
+impl ProductObjectType {
+    fn children(&self) -> impl Iterator<Item = ProductTypeId> + '_ {
+        self.principal
+            .args
+            .iter()
+            .copied()
+            .chain(
+                self.guarantees
+                    .iter()
+                    .flat_map(|bound| bound.args.iter().copied()),
+            )
+            .chain(self.bindings.iter().flat_map(|binding| {
+                binding
+                    .trait_ref
+                    .args
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(binding.ty))
+            }))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(super) enum ProductTypeRow {
+    Witness(ProductWitnessId),
     I8,
     I16,
     I32,
@@ -3281,6 +3772,10 @@ pub(super) enum ProductTypeRow {
         inner: ProductTypeId,
     },
     Pointer(ProductTypeId),
+    Object(ProductObjectType),
+    ObjectSelf {
+        depth: u32,
+    },
     Generic(ProductGenericParamId),
     Projection {
         ty: ProductTypeId,
@@ -3305,6 +3800,28 @@ pub(super) enum ProductTypeRow {
         index: u32,
         kind: Kind,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(super) struct ProductWitnessId {
+    owner: ProductDefId,
+    local: u32,
+}
+
+impl ProductWitnessId {
+    fn encode(witness: crate::types::WitnessId) -> Self {
+        Self {
+            owner: product_def_id(witness.owner),
+            local: witness.local.0,
+        }
+    }
+
+    fn decode(self) -> crate::types::WitnessId {
+        crate::types::WitnessId {
+            owner: def_id(self.owner),
+            local: crate::ids::HirLocalId(self.local),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -3343,8 +3860,46 @@ impl ProductTypeEncoder {
         types.iter().map(|ty| self.encode_type(ty)).collect()
     }
 
+    fn encode_object_bound(
+        &mut self,
+        bound: &crate::types::TraitBound,
+    ) -> Result<ProductObjectTrait, String> {
+        Ok(ProductObjectTrait {
+            id: product_def_id(bound.trait_id),
+            args: self.encode_types(&bound.type_args)?,
+        })
+    }
+
     fn encode_row(&mut self, ty: &Type) -> Result<ProductTypeRow, String> {
         Ok(match ty {
+            Type::Witness(witness) => ProductTypeRow::Witness(ProductWitnessId::encode(*witness)),
+            Type::ObjectSelf { depth } => ProductTypeRow::ObjectSelf { depth: *depth },
+            Type::Object(object) => {
+                if object.conflicting_binding().is_some()
+                    || object.guarantees.contains(&object.principal)
+                {
+                    return Err("noncanonical trait object signature".to_string());
+                }
+                ProductTypeRow::Object(ProductObjectType {
+                    principal: self.encode_object_bound(&object.principal)?,
+                    guarantees: object
+                        .guarantees
+                        .iter()
+                        .map(|bound| self.encode_object_bound(bound))
+                        .collect::<Result<_, _>>()?,
+                    bindings: object
+                        .bindings
+                        .iter()
+                        .map(|binding| {
+                            Ok(ProductObjectBinding {
+                                trait_ref: self.encode_object_bound(&binding.key.trait_ref)?,
+                                member: binding.key.member,
+                                ty: self.encode_type(&binding.ty)?,
+                            })
+                        })
+                        .collect::<Result<_, String>>()?,
+                })
+            }
             Type::I8 => ProductTypeRow::I8,
             Type::I16 => ProductTypeRow::I16,
             Type::I32 => ProductTypeRow::I32,
@@ -3450,6 +4005,7 @@ impl ProductTypeEncoder {
 pub(super) struct ProductTypeDecoder<'a> {
     table: &'a ProductTypeTable,
     stack: Vec<ProductTypeId>,
+    decoded_nodes: usize,
 }
 
 impl<'a> ProductTypeDecoder<'a> {
@@ -3457,10 +4013,28 @@ impl<'a> ProductTypeDecoder<'a> {
         Self {
             table,
             stack: Vec::new(),
+            decoded_nodes: 0,
         }
     }
 
     pub(super) fn decode_type(&mut self, id: ProductTypeId) -> Result<Type, String> {
+        self.decode_type_in_object_scope(id, 0)
+    }
+
+    pub(super) fn decode_object_component(&mut self, id: ProductTypeId) -> Result<Type, String> {
+        self.decode_type_in_object_scope(id, 1)
+    }
+
+    fn decode_type_in_object_scope(
+        &mut self,
+        id: ProductTypeId,
+        object_depth: u32,
+    ) -> Result<Type, String> {
+        self.decoded_nodes = self.decoded_nodes.saturating_add(1);
+        if self.decoded_nodes > crate::products::MAX_PRODUCT_ARTIFACT_NORMALIZATION_NODES {
+            return Err("Product artifact decoded type node limit exceeded".into());
+        }
+        let root = self.stack.is_empty();
         let row = self
             .table
             .rows
@@ -3473,15 +4047,57 @@ impl<'a> ProductTypeDecoder<'a> {
         self.stack.push(id);
         let decoded = self.decode_row(row);
         self.stack.pop();
-        decoded
+        let decoded = decoded?;
+        if root {
+            object_abi::validate_component_scope(&decoded, object_depth)?;
+        }
+        Ok(decoded)
     }
 
     pub(super) fn decode_types(&mut self, ids: &[ProductTypeId]) -> Result<Vec<Type>, String> {
         ids.iter().map(|id| self.decode_type(*id)).collect()
     }
 
+    fn decode_object_bound(
+        &mut self,
+        bound: &ProductObjectTrait,
+    ) -> Result<crate::types::TraitBound, String> {
+        Ok(crate::types::TraitBound {
+            trait_id: def_id(bound.id),
+            type_args: self.decode_types(&bound.args)?,
+        })
+    }
+
     fn decode_row(&mut self, row: &ProductTypeRow) -> Result<Type, String> {
         Ok(match row {
+            ProductTypeRow::Witness(witness) => Type::Witness(witness.decode()),
+            ProductTypeRow::ObjectSelf { depth } => Type::ObjectSelf { depth: *depth },
+            ProductTypeRow::Object(encoded) => {
+                let mut object =
+                    crate::types::ObjectType::new(self.decode_object_bound(&encoded.principal)?);
+                for bound in &encoded.guarantees {
+                    let bound = self.decode_object_bound(bound)?;
+                    if bound == object.principal || !object.guarantees.insert(bound) {
+                        return Err("duplicate trait object guarantee".to_string());
+                    }
+                }
+                for binding in &encoded.bindings {
+                    let binding = crate::types::ObjectBinding {
+                        key: crate::types::ObjectAssociatedType {
+                            trait_ref: self.decode_object_bound(&binding.trait_ref)?,
+                            member: binding.member,
+                        },
+                        ty: self.decode_type(binding.ty)?,
+                    };
+                    if !object.bindings.insert(binding) {
+                        return Err("duplicate trait object associated binding".to_string());
+                    }
+                }
+                if object.conflicting_binding().is_some() {
+                    return Err("conflicting trait object associated binding".to_string());
+                }
+                Type::Object(Box::new(object))
+            }
             ProductTypeRow::I8 => Type::I8,
             ProductTypeRow::I16 => Type::I16,
             ProductTypeRow::I32 => Type::I32,
@@ -3642,6 +4258,142 @@ mod tests {
 
     fn def(local: u32) -> DefId {
         DefId::new(CrateId(0), LocalDefId(local))
+    }
+
+    #[test]
+    fn portable_open_binding_round_trip_keeps_descriptor_and_local_identity() {
+        let witness = crate::types::WitnessId {
+            owner: def(2),
+            local: crate::ids::HirLocalId(7),
+        };
+        let object = crate::types::ObjectType::new(crate::types::TraitBound {
+            trait_id: def(4),
+            type_args: vec![],
+        });
+        let binding = crate::hir::HirOpenBinding {
+            witness,
+            value: crate::hir::HirParam {
+                name: "value".into(),
+                local_id: witness.local,
+                ty: Type::Reference {
+                    mutable: true,
+                    inner: Box::new(Type::Witness(witness)),
+                },
+                mutable: false,
+                is_ref: true,
+            },
+            source_ty: Type::Reference {
+                mutable: true,
+                inner: Box::new(Type::Object(Box::new(object.clone()))),
+            },
+            object: object.clone(),
+            owner: None,
+        };
+        let mut encoder = super::ProductTypeEncoder::new();
+        let encoded = super::SerializedOpenBinding::encode(&binding, &mut encoder).unwrap();
+        let table = encoder.finish();
+        assert!(table
+            .rows
+            .iter()
+            .any(|row| matches!(row, ProductTypeRow::Witness(id) if id.decode() == witness)));
+        let mut decoder = super::ProductTypeDecoder::new(&table);
+        let decoded = encoded.decode(&mut decoder).unwrap();
+        assert_eq!(decoded.witness, witness);
+        assert_eq!(decoded.value.local_id, witness.local);
+        assert_eq!(decoded.value.ty, binding.value.ty);
+        assert_eq!(decoded.object, object);
+        assert_eq!(decoded.source_ty, binding.source_ty);
+    }
+
+    #[test]
+    fn portable_object_self_is_scoped_only_by_object_signatures() {
+        let signature = super::ProductObjectType {
+            principal: super::ProductObjectTrait {
+                id: super::product_def_id(def(1)),
+                args: vec![ProductTypeId(0)],
+            },
+            guarantees: vec![],
+            bindings: vec![],
+        };
+        let mut table = ProductTypeTable {
+            rows: vec![
+                ProductTypeRow::ObjectSelf { depth: 0 },
+                ProductTypeRow::Object(signature),
+            ],
+        };
+        super::validate_type_table_graph(&table).unwrap();
+        table.rows[0] = ProductTypeRow::ObjectSelf { depth: 1 };
+        assert!(super::validate_type_table_graph(&table)
+            .unwrap_err()
+            .contains("out-of-scope product object Self"));
+        table.rows[0] = ProductTypeRow::ObjectSelf { depth: 0 };
+        table.rows[1] = ProductTypeRow::Lambda {
+            params: vec![Kind::Type],
+            body: ProductTypeId(0),
+        };
+        assert!(super::validate_type_table_graph(&table)
+            .unwrap_err()
+            .contains("out-of-scope product object Self"));
+    }
+
+    #[test]
+    fn portable_object_type_roundtrips_instantiated_associated_bindings() {
+        let mut object = crate::types::ObjectType::new(crate::types::TraitBound {
+            trait_id: def(1),
+            type_args: vec![Type::I64],
+        });
+        object.guarantees.insert(crate::types::TraitBound {
+            trait_id: def(2),
+            type_args: vec![],
+        });
+        object.guarantees.insert(crate::types::TraitBound {
+            trait_id: def(1),
+            type_args: vec![Type::Bool],
+        });
+        for (arg, ty) in [(Type::I64, Type::Bool), (Type::Bool, Type::I64)] {
+            object.bindings.insert(crate::types::ObjectBinding {
+                key: crate::types::ObjectAssociatedType {
+                    trait_ref: crate::types::TraitBound {
+                        trait_id: def(1),
+                        type_args: vec![arg],
+                    },
+                    member: AssocTypeId(3),
+                },
+                ty,
+            });
+        }
+        let ty = Type::Object(Box::new(object));
+        let mut encoder = super::ProductTypeEncoder::new();
+        let id = encoder.encode_type(&ty).unwrap();
+        let table = encoder.finish();
+        super::validate_type_table_graph(&table).unwrap();
+        assert_eq!(decode_type_for_test(&table, id).unwrap(), ty);
+    }
+
+    #[test]
+    fn portable_object_type_rejects_duplicate_guarantees_and_invalid_children() {
+        let bound = super::ProductObjectTrait {
+            id: super::product_def_id(def(1)),
+            args: vec![],
+        };
+        let mut table = ProductTypeTable {
+            rows: vec![ProductTypeRow::Object(super::ProductObjectType {
+                principal: bound.clone(),
+                guarantees: vec![bound],
+                bindings: vec![],
+            })],
+        };
+        assert!(decode_type_for_test(&table, ProductTypeId(0))
+            .unwrap_err()
+            .contains("duplicate trait object"));
+        let ProductTypeRow::Object(object) = &mut table.rows[0] else {
+            unreachable!()
+        };
+        object.guarantees.clear();
+        object.principal.args.push(ProductTypeId(123));
+        assert!(super::validate_type_table_graph(&table)
+            .unwrap_err()
+            .contains("unknown product type id"));
     }
 
     fn unit_expr() -> SerializedHirExpr {

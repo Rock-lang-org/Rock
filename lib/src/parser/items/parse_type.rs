@@ -78,18 +78,106 @@ fn parse_type_application(stream: Input) -> IResult<ParseType> {
         }
     }
 
-    if args.is_empty() {
-        Ok((stream, constructor))
+    let ty = if args.is_empty() {
+        constructor
     } else {
-        Ok((
-            stream,
-            ParseType::Application(TypeApplication {
-                constructor: Box::new(constructor),
-                args,
-                span: join_spans(&constructor_span, &end_span),
-            }),
-        ))
+        ParseType::Application(TypeApplication {
+            constructor: Box::new(constructor),
+            args,
+            span: join_spans(&constructor_span, &end_span),
+        })
+    };
+    if matches!(peek_token(&stream), Some(TokenType::OpenBrace)) {
+        parse_object_qualifiers(stream, ty)
+    } else {
+        Ok((stream, ty))
     }
+}
+
+fn skip_object_layout(mut stream: Input) -> IResult<()> {
+    while matches!(
+        peek_token(&stream),
+        Some(TokenType::Eol | TokenType::Indent(_))
+    ) {
+        stream = stream.consume()?.0;
+    }
+    Ok((stream, ()))
+}
+
+fn parse_object_qualifiers(stream: Input, base: ParseType) -> IResult<ParseType> {
+    use crate::ast::{ObjectQualifier, ObjectTypeSyntax};
+    let (mut stream, _) = TokenType::OpenBrace.process(stream)?;
+    let mut qualifiers = Vec::new();
+    stream = skip_object_layout(stream)?.0;
+    if matches!(peek_token(&stream), Some(TokenType::CloseBrace)) {
+        return Err(ParseError::UnexpectedToken(
+            "object qualifier".to_string(),
+            stream.seek()?,
+        ));
+    }
+    loop {
+        stream = skip_object_layout(stream)?.0;
+        if matches!(peek_token(&stream), Some(TokenType::CloseBrace)) {
+            break;
+        }
+        let (after_head, head) = parse_type_atom(stream)?;
+        stream = after_head;
+        let (owner, member) = if matches!(peek_token(&stream), Some(TokenType::DoubleColon)) {
+            stream = TokenType::DoubleColon.process(stream)?.0;
+            let (next, member) = type_token_with_span(stream)?;
+            stream = next;
+            (Some(Box::new(head.clone())), Some(member))
+        } else {
+            match &head {
+                ParseType::Type(inner) if inner.generics.is_empty() => (
+                    None,
+                    Some(crate::ast::Ident {
+                        name: inner.name.clone(),
+                        span: inner.span.clone(),
+                    }),
+                ),
+                ParseType::Associated { base, member } => (
+                    Some(Box::new(ParseType::Type(base.clone()))),
+                    Some(member.clone()),
+                ),
+                _ => (None, None),
+            }
+        };
+        if matches!(peek_token(&stream), Some(TokenType::Equal)) {
+            let Some(member) = member else {
+                return Err(ParseError::UnexpectedToken(
+                    "associated member name".to_string(),
+                    stream.seek()?,
+                ));
+            };
+            stream = TokenType::Equal.process(stream)?.0;
+            let (next, ty) = parse_type_atom(stream)?;
+            stream = next;
+            qualifiers.push(ObjectQualifier::Binding { owner, member, ty });
+        } else {
+            if owner.is_some() {
+                return Err(ParseError::UnexpectedToken(
+                    "'=' after associated member".to_string(),
+                    stream.seek()?,
+                ));
+            }
+            qualifiers.push(ObjectQualifier::Trait(head));
+        }
+        stream = skip_object_layout(stream)?.0;
+        if matches!(peek_token(&stream), Some(TokenType::CloseBrace)) {
+            break;
+        }
+        stream = TokenType::Coma.process(stream)?.0;
+    }
+    let (stream, close) = stream.consume()?;
+    Ok((
+        stream,
+        ParseType::Object(ObjectTypeSyntax {
+            span: join_spans(&base.span(), &close.span),
+            base: Box::new(base),
+            qualifiers,
+        }),
+    ))
 }
 
 fn parse_type_atom(stream: Input) -> IResult<ParseType> {
@@ -387,6 +475,20 @@ fn parse_constructor_param_inner(
             ));
         }
         let (next_stream, _) = TokenType::Colon.process(stream)?;
+        if matches!(peek_token(&next_stream), Some(TokenType::Interogation)) {
+            let (next_stream, _) = TokenType::Interogation.process(next_stream)?;
+            let (stream, bound) = parse_type(next_stream)?;
+            let span = join_spans(&name.span, &bound.span());
+            return Ok((
+                stream,
+                GenericParamDecl {
+                    name,
+                    kind: None,
+                    unsized_bound: Some(bound),
+                    span,
+                },
+            ));
+        }
         let kind_start = next_stream.seek()?;
         let (stream, kind) = parse_type(next_stream)?;
         if !is_explicit_kind_syntax(&kind) {
@@ -400,6 +502,7 @@ fn parse_constructor_param_inner(
             stream,
             GenericParamDecl {
                 name,
+                unsized_bound: None,
                 kind: Some(TypeApplication {
                     constructor: Box::new(kind),
                     args: Vec::new(),
@@ -461,6 +564,7 @@ fn parse_constructor_param_inner(
         GenericParamDecl {
             name,
             kind: Some(application),
+            unsized_bound: None,
             span,
         },
     ))
@@ -492,6 +596,7 @@ pub fn parse_plain_generic_param(stream: Input) -> IResult<GenericParamDecl> {
         GenericParamDecl {
             name,
             kind: None,
+            unsized_bound: None,
             span,
         },
     ))

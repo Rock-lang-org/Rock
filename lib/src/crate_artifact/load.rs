@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+mod object_abi;
+
 use crate::collect::resolver::ResolverTables;
 use crate::crate_artifact::{ArtifactCrateInterface, ArtifactExport};
 use crate::crate_system::{
@@ -13,6 +15,7 @@ use crate::products::{
     ProductEnumInterface, ProductExternInterface, ProductFunctionInterface, ProductImplInterface,
     ProductLocalDefId, ProductStructInterface, ProductTraitInterface, ProductTypeAliasInterface,
 };
+use crate::traits::objects::{ObjectTraitProvider, TraitTypeHeader};
 use crate::type_services::normalize::{TypeNormalizationEnv, TypeNormalizer};
 use crate::types::{GenericParamDecl, GenericParamId, NominalTypeKind, Type};
 
@@ -94,8 +97,7 @@ struct ProductNominalTypeValidator {
     structs: BTreeSet<ProductDefId>,
     enums: BTreeSet<ProductDefId>,
     type_aliases: BTreeSet<ProductDefId>,
-    traits: BTreeMap<ProductDefId, BTreeSet<AssocTypeId>>,
-    trait_generic_counts: BTreeMap<ProductDefId, usize>,
+    traits: BTreeMap<ProductDefId, TraitTypeHeader>,
     trait_methods: BTreeMap<ProductDefId, BTreeMap<String, ProductDefId>>,
     trait_signatures: BTreeMap<ProductDefId, BTreeMap<String, ProductDefId>>,
     impls: BTreeSet<ProductDefId>,
@@ -111,8 +113,7 @@ struct ProductNominalTypeValidator {
     dependency_structs: BTreeSet<ProductDefId>,
     dependency_enums: BTreeSet<ProductDefId>,
     dependency_type_aliases: BTreeSet<ProductDefId>,
-    dependency_traits: BTreeMap<ProductDefId, BTreeSet<AssocTypeId>>,
-    dependency_trait_generic_counts: BTreeMap<ProductDefId, usize>,
+    dependency_traits: BTreeMap<ProductDefId, TraitTypeHeader>,
     dependency_trait_methods: BTreeMap<ProductDefId, BTreeMap<String, ProductDefId>>,
     dependency_trait_signatures: BTreeMap<ProductDefId, BTreeMap<String, ProductDefId>>,
     dependency_impls: BTreeSet<ProductDefId>,
@@ -127,14 +128,19 @@ struct ProductNominalTypeValidator {
     dependency_externs: BTreeSet<ProductDefId>,
 }
 
+impl ObjectTraitProvider for ProductNominalTypeValidator {
+    fn object_trait(&self, id: DefId) -> Option<TraitTypeHeader> {
+        self.trait_type_header(ProductDefId::from(id)).cloned()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct ProductDependencyDefinitions {
     normalization_env: TypeNormalizationEnv,
     structs: BTreeSet<ProductDefId>,
     enums: BTreeSet<ProductDefId>,
     type_aliases: BTreeSet<ProductDefId>,
-    traits: BTreeMap<ProductDefId, BTreeSet<AssocTypeId>>,
-    trait_generic_counts: BTreeMap<ProductDefId, usize>,
+    traits: BTreeMap<ProductDefId, TraitTypeHeader>,
     trait_methods: BTreeMap<ProductDefId, BTreeMap<String, ProductDefId>>,
     trait_signatures: BTreeMap<ProductDefId, BTreeMap<String, ProductDefId>>,
     impls: BTreeSet<ProductDefId>,
@@ -152,7 +158,7 @@ struct ProductDependencyDefinitions {
 }
 
 impl ProductDependencyDefinitions {
-    fn from_context(ctx: &CrateContext, remap: &ProductIdentityRemap) -> Self {
+    fn from_context(ctx: &CrateContext, remap: &ProductIdentityRemap) -> Result<Self, String> {
         let consumer_to_product_crate: BTreeMap<CrateId, ProductCrateId> = remap
             .crate_ids
             .iter()
@@ -255,16 +261,22 @@ impl ProductDependencyDefinitions {
                     continue;
                 };
 
-                defs.traits.insert(
-                    trait_id,
-                    trait_def
-                        .associated_types
-                        .iter()
-                        .map(|assoc| assoc.id)
-                        .collect(),
+                let mut header = TraitTypeHeader::new(
+                    &trait_def.generic_params,
+                    trait_def.target.as_ref(),
+                    &trait_def.associated_types,
+                    &trait_def.predicates,
                 );
-                defs.trait_generic_counts
-                    .insert(trait_id, trait_def.generic_params.len());
+                header.try_remap_def_ids(&mut |id| {
+                    let id = product_id_for_def(id).ok_or_else(|| {
+                        format!("dependency trait header references unmapped definition {id:?}")
+                    })?;
+                    Ok::<_, String>(DefId::new(
+                        CrateId(id.crate_id.0),
+                        LocalDefId(id.local_id.0),
+                    ))
+                })?;
+                defs.traits.insert(trait_id, header);
                 defs.trait_methods.insert(
                     trait_id,
                     trait_def
@@ -335,7 +347,7 @@ impl ProductDependencyDefinitions {
             );
         }
 
-        defs
+        Ok(defs)
     }
 }
 
@@ -474,12 +486,12 @@ impl ProductNominalTypeValidator {
         products: &CompilerProducts,
         remap: &ProductIdentityRemap,
         ctx: &CrateContext,
-    ) -> Self {
-        Self::from_products_with_dependencies(
+    ) -> Result<Self, String> {
+        Ok(Self::from_products_with_dependencies(
             products,
             remap,
-            ProductDependencyDefinitions::from_context(ctx, remap),
-        )
+            ProductDependencyDefinitions::from_context(ctx, remap)?,
+        ))
     }
 
     fn from_products_with_dependencies(
@@ -488,7 +500,6 @@ impl ProductNominalTypeValidator {
         dependencies: ProductDependencyDefinitions,
     ) -> Self {
         let mut impls = BTreeSet::new();
-        let mut trait_generic_counts = BTreeMap::new();
         let mut trait_methods = BTreeMap::new();
         let mut trait_signatures = BTreeMap::new();
         let mut impl_traits = BTreeMap::new();
@@ -527,7 +538,6 @@ impl ProductNominalTypeValidator {
                 trait_def.target.iter(),
                 &local_id,
             );
-            trait_generic_counts.insert(*id, trait_def.generic_params.len());
             trait_methods.insert(
                 *id,
                 trait_def
@@ -662,15 +672,15 @@ impl ProductNominalTypeValidator {
                 .map(|(id, trait_def)| {
                     (
                         *id,
-                        trait_def
-                            .associated_types
-                            .iter()
-                            .map(|assoc| assoc.id)
-                            .collect(),
+                        TraitTypeHeader::new(
+                            &trait_def.generic_params,
+                            trait_def.target.as_ref(),
+                            &trait_def.associated_types,
+                            &trait_def.predicates,
+                        ),
                     )
                 })
                 .collect(),
-            trait_generic_counts,
             trait_methods,
             trait_signatures,
             impls,
@@ -687,7 +697,6 @@ impl ProductNominalTypeValidator {
             dependency_enums: dependencies.enums,
             dependency_type_aliases: dependencies.type_aliases,
             dependency_traits: dependencies.traits,
-            dependency_trait_generic_counts: dependencies.trait_generic_counts,
             dependency_trait_methods: dependencies.trait_methods,
             dependency_trait_signatures: dependencies.trait_signatures,
             dependency_impls: dependencies.impls,
@@ -949,7 +958,10 @@ impl ProductNominalTypeValidator {
                 ));
             };
 
-            if !associated_types.contains(&assoc_type_id) {
+            if !associated_types
+                .associated_types
+                .contains_key(&assoc_type_id)
+            {
                 return Err(format!(
                     "Product artifact references unknown associated type ID {} on trait {}",
                     assoc_type_id.raw(),
@@ -964,7 +976,10 @@ impl ProductNominalTypeValidator {
                 ));
             };
 
-            if !associated_types.contains(&assoc_type_id) {
+            if !associated_types
+                .associated_types
+                .contains_key(&assoc_type_id)
+            {
                 return Err(format!(
                     "Product artifact references unknown dependency associated type ID {} on trait {}::{}",
                     assoc_type_id.raw(),
@@ -978,10 +993,15 @@ impl ProductNominalTypeValidator {
     }
 
     fn trait_generic_count(&self, trait_id: ProductDefId) -> Option<usize> {
+        self.trait_type_header(trait_id)
+            .map(|header| header.generic_params.len())
+    }
+
+    fn trait_type_header(&self, trait_id: ProductDefId) -> Option<&TraitTypeHeader> {
         if trait_id.crate_id == self.local_crate {
-            self.trait_generic_counts.get(&trait_id).copied()
+            self.traits.get(&trait_id)
         } else {
-            self.dependency_trait_generic_counts.get(&trait_id).copied()
+            self.dependency_traits.get(&trait_id)
         }
     }
 
@@ -1602,6 +1622,13 @@ fn extern_crate_from_products(
     let interface = interface_from_products(products, &crate_name, remap, ctx, &language_items)?;
     let resolver = resolver_from_products(products, &crate_name, remap, ctx)?;
     let cross_crate_hir = cross_crate_hir_from_products(products, &crate_name, remap, ctx)?;
+    super::owned_calls::validate(
+        &interface,
+        &cross_crate_hir,
+        &language_items,
+        &crate_name,
+        ctx,
+    )?;
     let prelude_export_ids = normalize_product_prelude_exports(
         products,
         remap,
@@ -1629,7 +1656,7 @@ fn validate_product_type_fields(
     let child_validator =
         ProductChildLocationValidator::from_products_with_context(products, remap, ctx);
     let type_validator =
-        ProductNominalTypeValidator::from_products_with_context(products, remap, ctx);
+        ProductNominalTypeValidator::from_products_with_context(products, remap, ctx)?;
 
     for (id, function) in &products.interface.functions {
         remap_function_interface_id(function.clone(), *id, remap, &type_validator)?;
@@ -1736,6 +1763,20 @@ fn validate_product_interface_rows(products: &CompilerProducts) -> Result<(), St
         }
         for (signature_name, signature) in &trait_def.signatures {
             validate_product_interface_signature_name("trait", *id, signature_name, signature)?;
+            if let Some(body) = trait_def
+                .methods
+                .values()
+                .find(|method| method.id == signature.id)
+            {
+                if body.params != signature.params
+                    || body.ret_type != signature.ret
+                    || body.self_receiver != signature.self_receiver
+                    || body.is_unsafe != signature.is_unsafe
+                {
+                    return Err(format!("Product artifact default member {:?} has inconsistent signature/body declarations: {:?} -> {:?} versus {:?} -> {:?}", signature.id, signature.params, signature.ret, body.params, body.ret_type));
+                }
+                continue;
+            }
             record_product_nested_callable_id(
                 &mut callable_ids,
                 local_crate,
@@ -2511,6 +2552,13 @@ fn remap_generic_bounds(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<(), String> {
     let mut original = std::mem::take(bounds);
+    bounds.relaxed_sized = std::mem::take(&mut original.relaxed_sized)
+        .into_iter()
+        .map(|mut parameter| {
+            parameter.owner = remap.def_id(ProductDefId::from(parameter.owner))?;
+            Ok(parameter)
+        })
+        .collect::<Result<_, String>>()?;
     let predicates = std::mem::take(&mut original.predicates);
     for (mut generic_param, mut trait_bounds) in original {
         generic_param.owner = remap.def_id(ProductDefId::from(generic_param.owner))?;
@@ -2578,6 +2626,10 @@ fn remap_type_def_ids(
             mut ty: crate::types::Type,
         ) -> Result<crate::types::Type, Self::Error> {
             match &mut ty {
+                crate::types::Type::Object(object) => {
+                    object
+                        .try_remap_trait_ids(&mut |id| self.remap.def_id(ProductDefId::from(id)))?;
+                }
                 crate::types::Type::Struct { id, .. } => {
                     let product_id = ProductDefId::from(*id);
                     self.validator.validate_struct(product_id)?;
@@ -2632,6 +2684,9 @@ fn remap_type_def_ids(
                     let product_id = ProductDefId::from(param.owner);
                     param.owner = self.remap.def_id(product_id)?;
                 }
+                crate::types::Type::Witness(witness) => {
+                    witness.owner = self.remap.def_id(ProductDefId::from(witness.owner))?;
+                }
                 _ => {}
             }
 
@@ -2639,6 +2694,12 @@ fn remap_type_def_ids(
         }
     }
 
+    let admitted =
+        crate::traits::objects::admit_type_objects(ty, validator, &validator.normalization_env)
+            .map_err(|error| format!("Product artifact object admission failed: {error}"))?;
+    if admitted != *ty {
+        return Err("Product artifact contains a noncanonical object signature".to_string());
+    }
     let remapped = crate::type_services::visit::try_fold_type(
         ty.clone(),
         &mut ProductTypeRemapper { remap, validator },
@@ -2752,6 +2813,54 @@ fn remap_expr_child_locations_with_scope<P: crate::hir::HirPhase>(
     remap_type_def_ids(&mut expr.ty, remap, type_validator)?;
 
     match &mut expr.kind {
+        HirExprKindFor::OwnedObjectCall { owner, args, call } => {
+            remap_type_def_ids(&mut call.object, remap, type_validator)?;
+            remap_type_def_ids(&mut call.state, remap, type_validator)?;
+            remap_type_def_ids(&mut call.into_parts.owner_ty, remap, type_validator)?;
+            remap_type_def_ids(&mut call.release.owner_ty, remap, type_validator)?;
+            remap_method_target_child_location(&mut call.method, remap, type_validator)?;
+            remap_method_target_child_location(&mut call.into_parts.method, remap, type_validator)?;
+            remap_method_target_child_location(&mut call.release.method, remap, type_validator)?;
+            remap_expr_child_locations_with_scope(
+                owner,
+                remap,
+                validator,
+                type_validator,
+                local_scope,
+                depth + 1,
+            )?;
+            for arg in args {
+                remap_expr_child_locations_with_scope(
+                    arg,
+                    remap,
+                    validator,
+                    type_validator,
+                    local_scope,
+                    depth + 1,
+                )?;
+            }
+            Ok(())
+        }
+        HirExprKindFor::Open { source, binding, body } => {
+            remap_expr_child_locations_with_scope(source, remap, validator, type_validator, local_scope, depth + 1)?;
+            binding.witness.owner = remap.def_id(ProductDefId::from(binding.witness.owner))?;
+            remap_type_def_ids(&mut binding.value.ty, remap, type_validator)?;
+            remap_type_def_ids(&mut binding.source_ty, remap, type_validator)?;
+            let mut object = crate::types::Type::Object(Box::new(binding.object.clone()));
+            remap_type_def_ids(&mut object, remap, type_validator)?;
+            let crate::types::Type::Object(object) = object else { return Err("opening schema changed category during remapping".into()); };
+            binding.object = *object;
+            if let Some(owner) = &mut binding.owner {
+                remap_type_def_ids(&mut owner.state_ty, remap, type_validator)?;
+                for operation in [&mut owner.into_parts, &mut owner.from_parts] {
+                    remap_type_def_ids(&mut operation.owner_ty, remap, type_validator)?;
+                    remap_method_target_child_location(&mut operation.method, remap, type_validator)?;
+                }
+            }
+            let mut opened_scope = local_scope.clone();
+            if !opened_scope.insert(binding.value.local_id) { return Err("opening reuses an existing local identity".into()); }
+            remap_block_child_locations(body, remap, validator, type_validator, &mut opened_scope, depth + 1)
+        }
         HirExprKindFor::IntLiteral(_)
         | HirExprKindFor::FloatLiteral(_)
         | HirExprKindFor::BoolLiteral(_)
@@ -3194,6 +3303,50 @@ fn remap_expr_child_locations_with_scope<P: crate::hir::HirPhase>(
                 depth + 1,
             )
         }
+        HirExprKindFor::ObjectCoercion(value, coercion) => {
+            let mut result = Ok(());
+            coercion.visit_types_mut(&mut |ty| {
+                if result.is_ok() {
+                    result = remap_type_def_ids(ty, remap, type_validator);
+                }
+            });
+            result?;
+            match coercion
+                .evidence
+                .as_mut()
+                .ok_or("artifact object coercion lacks evidence")?
+            {
+                crate::hir::HirObjectEvidence::Concrete { views, .. } => {
+                    for view in views {
+                        view.trait_ref.trait_id =
+                            remap.def_id(ProductDefId::from(view.trait_ref.trait_id))?;
+                        if let crate::hir::HirObjectWitnessOrigin::Impl {
+                            impl_id,
+                            substitution,
+                        } = &mut view.origin
+                        {
+                            *impl_id = remap.def_id(ProductDefId::from(*impl_id))?;
+                            for binding in substitution {
+                                binding.param.owner =
+                                    remap.def_id(ProductDefId::from(binding.param.owner))?;
+                            }
+                        }
+                    }
+                }
+                crate::hir::HirObjectEvidence::Upcast { .. } => {}
+            }
+            if coercion.target != expr.ty {
+                return Err("artifact object coercion target mismatch".to_string());
+            }
+            remap_expr_child_locations_with_scope(
+                value,
+                remap,
+                validator,
+                type_validator,
+                local_scope,
+                depth + 1,
+            )
+        }
         HirExprKindFor::Intrinsic { args, .. } => {
             for arg in args {
                 remap_expr_child_locations_with_scope(
@@ -3489,7 +3642,7 @@ fn interface_from_products(
     language_items: &crate::hir::HirLanguageItems,
 ) -> Result<super::ArtifactCrateInterface, String> {
     let type_validator =
-        ProductNominalTypeValidator::from_products_with_context(products, remap, ctx);
+        ProductNominalTypeValidator::from_products_with_context(products, remap, ctx)?;
     let mut canonical_names = BTreeMap::new();
     for (id, name) in &products.identity_table.display_names {
         if let Some(def_id) = product_def_id_to_existing_def_id(products, remap, *id)? {
@@ -3626,7 +3779,24 @@ fn interface_from_products(
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
 
+    let mut object_abi = products.interface.object_abi.clone();
+    // Components under the implicit schema Self binder are validated through
+    // their owning object signature and the ordered member declaration below.
+    for schema in &object_abi.schemas {
+        for ty in std::iter::once(&schema.object).chain(&schema.views).chain(
+            schema.slots.iter().flat_map(|slot| {
+                slot.params
+                    .iter()
+                    .map(|p| &p.ty)
+                    .chain([&slot.ret, &slot.abi_ret])
+            }),
+        ) {
+            remap_type_def_ids(&mut ty.clone(), remap, &type_validator)?;
+        }
+    }
+    object_abi.try_remap_def_ids(&mut |id| remap.def_id(ProductDefId::from(id)))?;
     let interface = super::ArtifactCrateInterface {
+        object_abi,
         root_export_ids,
         canonical_names,
         functions,
@@ -3713,6 +3883,7 @@ fn interface_from_products(
         return Err(coherence_errors.join("\n"));
     }
 
+    object_abi::admit(&interface, ctx, products.link.object_path.is_some())?;
     Ok(interface)
 }
 
@@ -3791,7 +3962,7 @@ fn cross_crate_hir_from_products(
     remap: &ProductIdentityRemap,
     ctx: &CrateContext,
 ) -> Result<super::ArtifactCrossCrateHir, String> {
-    let dependencies = ProductDependencyDefinitions::from_context(ctx, remap);
+    let dependencies = ProductDependencyDefinitions::from_context(ctx, remap)?;
     validate_product_body_rows_have_interface(products)?;
     validate_product_method_authority_maps(products, &dependencies)?;
 
@@ -5004,8 +5175,7 @@ mod product_tests {
     ) {
         products
             .interface
-            .traits
-            .insert(id, ProductTraitInterface::from(&trait_def));
+            .insert_trait(id, ProductTraitInterface::from(&trait_def));
     }
 
     fn insert_interface_impl(products: &mut CompilerProducts, id: ProductDefId, imp: HirImpl) {
@@ -6386,8 +6556,9 @@ mod product_tests {
         let (base, _cleanup) = temp_test_dir("rejects_previous_format_before_mutation");
         let artifact_path = base.join("old.rkca");
         let mut preamble = Vec::new();
+        let previous_format = crate::products::PRODUCT_ARTIFACT_FORMAT_VERSION - 1;
         preamble.extend_from_slice(&PRODUCT_ARTIFACT_MAGIC);
-        preamble.extend_from_slice(&43u32.to_le_bytes());
+        preamble.extend_from_slice(&previous_format.to_le_bytes());
         preamble.extend_from_slice(&0u64.to_le_bytes());
         preamble.extend_from_slice(&0u64.to_le_bytes());
         fs::write(&artifact_path, preamble).unwrap();
@@ -6398,7 +6569,9 @@ mod product_tests {
             .load_product_artifact_from_path_with_type_context(artifact_path, &mut type_context)
             .unwrap_err();
 
-        assert!(error.contains("Unsupported product artifact format 43"));
+        assert!(error.contains(&format!(
+            "Unsupported product artifact format {previous_format}"
+        )));
         assert!(ctx.product_crate_ids.is_empty());
         assert!(type_context.id_for_type(&Type::I64).is_none());
     }
@@ -7186,7 +7359,10 @@ mod product_tests {
                                         None,
                                         vec![Type::Struct {
                                             id: struct_def,
-                                            args: Vec::new(),
+                                            args: vec![Type::Enum {
+                                                id: enum_def,
+                                                args: Vec::new(),
+                                            }],
                                         }],
                                         Vec::new(),
                                     ),
@@ -7201,7 +7377,10 @@ mod product_tests {
                                     None,
                                     vec![Type::Struct {
                                         id: struct_def,
-                                        args: Vec::new(),
+                                        args: vec![Type::Enum {
+                                            id: enum_def,
+                                            args: Vec::new(),
+                                        }],
                                     }],
                                     Vec::new(),
                                 )])],
@@ -7228,7 +7407,10 @@ mod product_tests {
                         local_id: crate::ids::HirLocalId(0),
                         ty: Type::Struct {
                             id: struct_def,
-                            args: Vec::new(),
+                            args: vec![Type::Enum {
+                                id: enum_def,
+                                args: Vec::new(),
+                            }],
                         },
                         mutable: false,
                         is_ref: false,
@@ -7257,7 +7439,10 @@ mod product_tests {
                 ty: Type::function(
                     vec![Type::Struct {
                         id: struct_def,
-                        args: Vec::new(),
+                        args: vec![Type::Enum {
+                            id: enum_def,
+                            args: Vec::new(),
+                        }],
                     }],
                     Type::Enum {
                         id: enum_def,
@@ -7286,7 +7471,7 @@ mod product_tests {
             HirStruct {
                 id: struct_def,
                 name: "dep::Widget".to_string(),
-                generic_params: Vec::new(),
+                generic_params: generic_params(struct_def, &["T"]),
                 fields: Vec::new(),
             },
         );
@@ -7381,7 +7566,10 @@ mod product_tests {
             nested_args,
             &vec![Type::Struct {
                 id: struct_owner,
-                args: Vec::new(),
+                args: vec![Type::Enum {
+                    id: enum_owner,
+                    args: Vec::new()
+                }],
             }]
         );
         let HirPattern::Enum(_, _, _, enum_payloads) = &or_patterns[1] else {
@@ -7397,7 +7585,10 @@ mod product_tests {
             enum_nested_args,
             &vec![Type::Struct {
                 id: struct_owner,
-                args: Vec::new(),
+                args: vec![Type::Enum {
+                    id: enum_owner,
+                    args: Vec::new()
+                }],
             }]
         );
         let HirStmt::Expr(HirExpr {
@@ -7417,7 +7608,10 @@ mod product_tests {
             params[0].ty,
             Type::Struct {
                 id: struct_owner,
-                args: Vec::new(),
+                args: vec![Type::Enum {
+                    id: enum_owner,
+                    args: Vec::new()
+                }],
             }
         );
         assert_eq!(
@@ -7442,7 +7636,10 @@ mod product_tests {
             Type::function(
                 vec![Type::Struct {
                     id: struct_owner,
-                    args: Vec::new(),
+                    args: vec![Type::Enum {
+                        id: enum_owner,
+                        args: Vec::new()
+                    }],
                 }],
                 Type::Enum {
                     id: enum_owner,
@@ -7595,6 +7792,139 @@ mod product_tests {
         let validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
         (products, remap, validator)
+    }
+
+    #[test]
+    fn product_artifact_remaps_object_trait_and_associated_member_owners() {
+        let (_, remap, validator) = product_with_projection_trait(AssocTypeId(0));
+        let principal = crate::types::TraitBound {
+            trait_id: DefId::new(CrateId(0), LocalDefId(4)),
+            type_args: vec![],
+        };
+        let mut object = crate::types::ObjectType::new(principal.clone());
+        object.bindings.insert(crate::types::ObjectBinding {
+            key: crate::types::ObjectAssociatedType {
+                trait_ref: principal,
+                member: AssocTypeId(0),
+            },
+            ty: Type::I64,
+        });
+        let mut ty = Type::Object(Box::new(object));
+        super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap();
+        let Type::Object(object) = ty else {
+            panic!("object expected")
+        };
+        assert_eq!(
+            object.principal.trait_id,
+            DefId::new(CrateId(7), LocalDefId(4))
+        );
+        assert_eq!(
+            object.bindings.first().unwrap().key.trait_ref.trait_id,
+            object.principal.trait_id
+        );
+    }
+
+    #[test]
+    fn product_artifact_rejects_invalid_object_evidence_before_remapping() {
+        let (_, remap, validator) = product_with_projection_trait(AssocTypeId(0));
+        for (trait_id, args, member) in [
+            (4, vec![], AssocTypeId(99)),
+            (99, vec![], AssocTypeId(0)),
+            (4, vec![Type::I64], AssocTypeId(0)),
+        ] {
+            let principal = crate::types::TraitBound {
+                trait_id: DefId::new(CrateId(0), LocalDefId(trait_id)),
+                type_args: args,
+            };
+            let mut object = crate::types::ObjectType::new(principal.clone());
+            object.bindings.insert(crate::types::ObjectBinding {
+                key: crate::types::ObjectAssociatedType {
+                    trait_ref: principal,
+                    member,
+                },
+                ty: Type::I64,
+            });
+            let mut ty = Type::Object(Box::new(object));
+            let original = ty.clone();
+            assert!(super::remap_type_def_ids(&mut ty, &remap, &validator).is_err());
+            assert_eq!(ty, original);
+        }
+    }
+
+    #[test]
+    fn product_artifact_rejects_object_trait_argument_and_target_kind_mismatches() {
+        let (_, remap, mut validator) = product_with_projection_trait(AssocTypeId(0));
+        let trait_id = DefId::new(CrateId(0), LocalDefId(4));
+        let product_id = ProductDefId::from(trait_id);
+        let unary = crate::type_services::kind::Kind::arrow(
+            crate::type_services::kind::Kind::Type,
+            crate::type_services::kind::Kind::Type,
+        );
+        validator
+            .traits
+            .get_mut(&product_id)
+            .unwrap()
+            .generic_params
+            .push(crate::types::GenericParamDecl::new(
+                crate::types::GenericParamId {
+                    owner: trait_id,
+                    index: 0,
+                },
+                "F",
+                unary.clone(),
+            ));
+        let mut ty = Type::Object(Box::new(crate::types::ObjectType::new(
+            crate::types::TraitBound {
+                trait_id,
+                type_args: vec![Type::I64],
+            },
+        )));
+        assert!(super::remap_type_def_ids(&mut ty, &remap, &validator)
+            .unwrap_err()
+            .contains("argument kind mismatch"));
+        let header = validator.traits.get_mut(&product_id).unwrap();
+        header.generic_params.clear();
+        header.target = Some(crate::types::GenericParamDecl::new(
+            crate::types::GenericParamId {
+                owner: trait_id,
+                index: 0,
+            },
+            "F",
+            unary,
+        ));
+        let mut ty = Type::Object(Box::new(crate::types::ObjectType::new(
+            crate::types::TraitBound {
+                trait_id,
+                type_args: vec![],
+            },
+        )));
+        assert!(super::remap_type_def_ids(&mut ty, &remap, &validator)
+            .unwrap_err()
+            .contains("value-kind target"));
+    }
+
+    #[test]
+    fn product_artifact_rejects_object_associated_binding_kind_mismatch() {
+        let (_, remap, validator) = product_with_projection_trait(AssocTypeId(0));
+        let principal = crate::types::TraitBound {
+            trait_id: DefId::new(CrateId(0), LocalDefId(4)),
+            type_args: vec![],
+        };
+        let mut object = crate::types::ObjectType::new(principal.clone());
+        object.bindings.insert(crate::types::ObjectBinding {
+            key: crate::types::ObjectAssociatedType {
+                trait_ref: principal,
+                member: AssocTypeId(0),
+            },
+            ty: Type::Lambda {
+                params: vec![crate::type_services::kind::Kind::Type],
+                body: Box::new(Type::I64),
+            },
+        });
+        let mut ty = Type::Object(Box::new(object));
+        assert!(super::remap_type_def_ids(&mut ty, &remap, &validator)
+            .unwrap_err()
+            .contains("binding kind mismatch"));
     }
 
     #[test]
@@ -9392,7 +9722,8 @@ mod product_tests {
             &app_products,
             &remap,
             &ctx,
-        );
+        )
+        .unwrap();
         let mut reference = HirVarRef {
             name: "dep::Box::make".to_string(),
             target: HirVarTarget::Function(product_hir_def_id(dep_method_product_id)),
@@ -9475,7 +9806,8 @@ mod product_tests {
             &app_products,
             &remap,
             &ctx,
-        );
+        )
+        .unwrap();
         let mut expr = HirExpr {
             kind: HirExprKindFor::MethodCall(
                 Box::new(HirExpr {
@@ -9969,7 +10301,6 @@ mod product_tests {
             enums: BTreeSet::new(),
             type_aliases: BTreeSet::new(),
             traits: BTreeMap::new(),
-            trait_generic_counts: BTreeMap::new(),
             trait_methods: BTreeMap::new(),
             trait_signatures: BTreeMap::new(),
             impls: BTreeSet::new(),
@@ -9986,7 +10317,6 @@ mod product_tests {
             dependency_enums: BTreeSet::new(),
             dependency_type_aliases: BTreeSet::new(),
             dependency_traits: BTreeMap::new(),
-            dependency_trait_generic_counts: BTreeMap::new(),
             dependency_trait_methods: BTreeMap::new(),
             dependency_trait_signatures: BTreeMap::new(),
             dependency_impls: BTreeSet::new(),
@@ -10180,7 +10510,7 @@ mod product_tests {
             .trait_default_methods
             .insert(product_method_id, method.clone());
         let mut interface = ProductInterface::default();
-        interface.traits.insert(
+        interface.insert_trait(
             product_trait_id,
             ProductTraitInterface::from(&HirTrait {
                 target: None,
@@ -10684,7 +11014,7 @@ mod product_tests {
             .trait_default_methods
             .insert(method_product_id, method.clone());
         let mut interface = ProductInterface::default();
-        interface.traits.insert(
+        interface.insert_trait(
             trait_product_id,
             ProductTraitInterface::from(&HirTrait {
                 target: None,

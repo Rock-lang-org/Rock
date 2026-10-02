@@ -89,12 +89,14 @@ pub(super) fn parse_where_clause(stream: Input) -> IResult<WhereClause> {
     let (stream, subject) = parse_type(stream)?;
     if matches!(stream.seek()?.token_type, TokenType::Colon) {
         let (stream, _) = TokenType::Colon.process(stream)?;
+        let (stream, relaxed) = TokenType::Interogation.opt().process(stream)?;
         let (stream, trait_bound) = parse_type(stream)?;
         Ok((
             stream,
             WhereClause {
                 subject,
                 trait_bound: Some(trait_bound),
+                relaxed: relaxed.is_some(),
             },
         ))
     } else {
@@ -103,6 +105,7 @@ pub(super) fn parse_where_clause(stream: Input) -> IResult<WhereClause> {
             WhereClause {
                 subject,
                 trait_bound: None,
+                relaxed: false,
             },
         ))
     }

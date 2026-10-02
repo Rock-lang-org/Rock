@@ -118,6 +118,24 @@ pub enum HirTypeLocation {
         owner: DefId,
         path: Vec<usize>,
     },
+    /// Static proof terms (including owner constructors), in type visitor order.
+    OpenEvidence {
+        owner: DefId,
+        path: Vec<usize>,
+        index: usize,
+    },
+    /// Static proof terms (including owner constructors), in type visitor order.
+    OwnedObjectCallEvidence {
+        owner: DefId,
+        path: Vec<usize>,
+        index: usize,
+    },
+    /// Static coercion proof terms, not necessarily runtime storage types.
+    ObjectCoercionEvidence {
+        owner: DefId,
+        path: Vec<usize>,
+        index: usize,
+    },
     MethodCallTraitArg {
         owner: DefId,
         path: Vec<usize>,
@@ -706,6 +724,43 @@ fn collect_expr<P: HirPhase>(
     );
 
     match &expr.kind {
+        HirExprKind::Open { source, binding, body } => {
+            let mut index = 0;
+            binding.visit_types(&mut |ty| {
+                record_type(context, ids, HirTypeLocation::OpenEvidence { owner, path: path.clone(), index }, ty);
+                index += 1;
+            });
+            let mut source_path = path.clone();
+            source_path.push(0);
+            collect_expr(owner, source, source_path, context, ids);
+            let mut body_path = path;
+            body_path.push(1);
+            collect_block(owner, body, body_path, context, ids);
+        }
+        HirExprKind::OwnedObjectCall {
+            owner: value,
+            args,
+            call,
+        } => {
+            let mut index = 0;
+            call.visit_types(&mut |ty| {
+                record_type(
+                    context,
+                    ids,
+                    HirTypeLocation::OwnedObjectCallEvidence {
+                        owner,
+                        path: path.clone(),
+                        index,
+                    },
+                    ty,
+                );
+                index += 1;
+            });
+            collect_expr(owner, value, child_path(&path, 0), context, ids);
+            for (index, arg) in args.iter().enumerate() {
+                collect_expr(owner, arg, child_path(&path, index + 1), context, ids);
+            }
+        }
         HirExprKind::ArrayLiteral(elems) | HirExprKind::TupleLiteral(elems) => {
             for (index, elem) in elems.iter().enumerate() {
                 collect_expr(owner, elem, child_path(&path, index), context, ids);
@@ -731,6 +786,23 @@ fn collect_expr<P: HirPhase>(
                 },
                 target_ty,
             );
+            collect_expr(owner, inner, child_path(&path, 0), context, ids);
+        }
+        HirExprKind::ObjectCoercion(inner, coercion) => {
+            let mut index = 0;
+            coercion.visit_types(&mut |ty| {
+                record_type(
+                    context,
+                    ids,
+                    HirTypeLocation::ObjectCoercionEvidence {
+                        owner,
+                        path: path.clone(),
+                        index,
+                    },
+                    ty,
+                );
+                index += 1;
+            });
             collect_expr(owner, inner, child_path(&path, 0), context, ids);
         }
         HirExprKind::BinOp(_, receiver, index) => {

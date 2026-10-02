@@ -25,7 +25,7 @@ impl SelectionService<'_> {
             // receiver must not silently fall back to consuming FnOnce.
             for candidate in candidates {
                 let ty = &candidate.expr.ty;
-                let mut available = self.trait_bounds_with_supertraits(ty, &bounds(ty));
+                let mut available = self.implied_trait_bounds(ty, &bounds(ty));
                 if let Some((params, ret, callable_kind, safety)) = native_signature(ty) {
                     if *callable_kind <= kind && *safety == crate::types::FunctionSafety::Safe {
                         available.push(TraitBound {

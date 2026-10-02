@@ -8,5 +8,7 @@ lang drop
     lang method
     ~@drop: ()
 
-unsafe drop_in_place: *T -> ()
+> stdlib::sized::Sized
+
+unsafe drop_in_place: *T -> () where T: ?Sized
 < unsafe drop_in_place = ptr -> unsafe ~DropInPlace ptr

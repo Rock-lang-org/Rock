@@ -8,6 +8,7 @@
 < extern malloc: I64 -> *U8
 < extern free: *U8 -> ()
 < extern realloc: *U8 -> I64 -> *U8
+< extern posix_memalign: *(*U8) -> I64 -> I64 -> I32
 
 // Memory operations
 < extern memcpy: *U8 -> *U8 -> I64 -> *U8

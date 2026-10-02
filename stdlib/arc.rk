@@ -1,5 +1,4 @@
-// Atomically reference-counted shared ownership.
-
+// Shared ownership keeps allocation/count state independent of the pointee.
 > stdlib::alloc::Global
 > stdlib::alloc::Layout
 > stdlib::alloc::checked_alloc
@@ -9,50 +8,87 @@
 > stdlib::drop::Drop
 > stdlib::drop::drop_in_place
 > stdlib::libc::exit
+> stdlib::sized::Sized
+> stdlib::object_owner::ObjectOwner
+> stdlib::object_owner::ObjectOwnerAllocate
 
-struct ArcInner T
+< struct ArcHeader
     < refs: AtomicU64
-    < value: T
+    < base: *U8
+    < bytes: I64
+    < alignment: I64
 
-< struct Arc T
-    inner: *ArcInner T
+< struct Arc (T: ?Sized)
+    payload: *T
+    header: *ArcHeader
+
+allocate_arc: I64 -> I64 -> (*U8, *ArcHeader)
+allocate_arc = bytes, alignment ->
+    layout = Layout
+        size: bytes
+        align: alignment
+    base = checked_alloc layout
+    state = ArcHeader
+        refs: AtomicU64::new (1 as U64)
+        base: base
+        bytes: bytes
+        alignment: alignment
+    header_layout = Layout
+        size: ~SizeOf state
+        align: ~AlignOf state
+    header = (checked_alloc header_layout) as *ArcHeader
+    unsafe *header = state
+    (base, header)
 
 impl Arc T
     new: T -> Arc T
     new = value ->
-        null = 0 as *ArcInner T
-        bytes = ~SizeOf (unsafe *null)
-        layout = Layout
-            size: bytes
-            align: 1
-        inner = (checked_alloc layout) as *ArcInner T
-        unsafe *inner = ArcInner T
-            refs: AtomicU64::new (1 as U64)
-            value: value
+        parts = allocate_arc (~SizeOf value), (~AlignOf value)
+        pointer: *T = parts.0 as *T
+        unsafe *pointer = value
         Arc T
-            inner: inner
+            payload: pointer
+            header: parts.1
 
-impl Clone for Arc T
+impl Clone for Arc T where T: ?Sized
     @clone = ->
-        refs = unsafe &(*self.inner).refs
+        refs = unsafe &(*self.header).refs
         previous = refs.fetch_add (1 as U64)
         if ~U64Eq previous, (~U64Not (0 as U64))
             exit (1 as I32)
         Arc T
-            inner: self.inner
+            payload: self.payload
+            header: self.header
 
-impl Deref for Arc T
+impl Deref for Arc T where T: ?Sized
     type Target = T
-    @* = -> unsafe &(*self.inner).value
+    @* = -> unsafe &*self.payload
 
-impl Drop for Arc T
-    ~@drop = ->
-        refs = unsafe &(*self.inner).refs
+impl Drop for Arc T where T: ?Sized
+    ~@drop = !->
+        refs = unsafe &(*self.header).refs
         previous = refs.fetch_sub (1 as U64)
         if ~U64Eq previous, (1 as U64)
-            unsafe drop_in_place self.inner
+            base = unsafe (*self.header).base
             layout = Layout
-                size: ~SizeOf (unsafe *self.inner)
-                align: 1
-            unsafe Global::dealloc (self.inner as *U8), layout
-        return
+                size: unsafe (*self.header).bytes
+                align: unsafe (*self.header).alignment
+            header_layout = Layout
+                size: ~SizeOf (unsafe *self.header)
+                align: ~AlignOf (unsafe *self.header)
+            unsafe drop_in_place self.payload
+            unsafe Global::dealloc base, layout
+            unsafe drop_in_place self.header
+            unsafe Global::dealloc (self.header as *U8), header_layout
+
+impl ObjectOwner (*ArcHeader) for Arc
+    unsafe into_parts = owner ->
+        parts = (owner.payload, owner.header)
+        ~Forget owner
+        parts
+    unsafe from_parts = pointer, state -> Arc
+        payload: pointer
+        header: state
+
+impl ObjectOwnerAllocate (*ArcHeader) for Arc
+    unsafe allocate = bytes, alignment -> allocate_arc bytes, alignment

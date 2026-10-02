@@ -202,7 +202,28 @@ impl MethodAuthorityContext<'_> {
             },
             None,
         );
-        let selected = match selection {
+        let object_selection = if let Type::Object(object) = native_ty {
+            match crate::hir::object_methods::select_callable(
+                &self.service(),
+                self.traits,
+                &self.language_items,
+                &candidates,
+                object,
+                None,
+            ) {
+                Ok(selected) => selected,
+                Err(message) => {
+                    errors.push(ResolveError::with_span(message, expr.span.clone()));
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let selected = match object_selection
+            .map(|selected| Ok(Some(selected)))
+            .unwrap_or(selection)
+        {
             Ok(Some(selected)) => selected,
             Ok(None) => {
                 if self.strict {

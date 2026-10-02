@@ -62,7 +62,7 @@ pub fn is_intrinsic_name(name: &str) -> bool {
         | "BoolAnd" | "BoolOr" | "BoolXor" | "BoolNot"
         // Array / memory
         | "ArrayLen"
-        | "PtrOffset" | "MakeArr" | "BorrowSlice" | "BorrowSliceMut" | "BorrowStr" | "ArrPtr" | "SizeOf"
+        | "PtrOffset" | "MakeArr" | "BorrowSlice" | "BorrowSliceMut" | "BorrowStr" | "ArrPtr" | "SizeOf" | "AlignOf" | "SizeOfValue" | "AlignOfValue"
         | "DropInPlace" | "Forget"
         | "AtomicU64Exchange" | "AtomicU64FetchAdd" | "AtomicU64FetchSub" | "AtomicU64Store"
     )
@@ -158,7 +158,7 @@ pub fn infer_intrinsic_return_type(name: &str, args: &[HirExpr]) -> Type {
             }
             return Type::Pointer(Box::new(Type::U8));
         }
-        "SizeOf" => return Type::I64,
+        "SizeOf" | "AlignOf" | "SizeOfValue" | "AlignOfValue" => return Type::I64,
         _ => {}
     }
 
@@ -232,7 +232,7 @@ pub fn infer_intrinsic_arg_types(name: &str) -> Vec<Type> {
             return vec![Type::Pointer(Box::new(Type::U64)), Type::U64]
         }
         "BorrowStr" => return vec![Type::Pointer(Box::new(Type::U8)), Type::I64],
-        "SizeOf" => return vec![],
+        "SizeOf" | "AlignOf" | "SizeOfValue" | "AlignOfValue" => return vec![],
         _ => {}
     }
 

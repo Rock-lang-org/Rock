@@ -1,10 +1,22 @@
 use crate::type_services::projection::{ProjectionNormalizer, ProjectionProvider};
-use crate::types::Type;
+use crate::types::{GenericParamId, Type};
 
 pub struct TypeLayout;
 
+/// Whether a type has a fixed size for each valid instantiation.
+/// This does not imply that its layout is known or valid for concrete MIR.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sizedness {
+    Sized,
+    Unsized,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeTypeError {
+    ObjectRequiresEvidence,
+    UnboundObjectSelf,
+    WitnessRequiresScopedDescriptor,
     UnsaturatedConstructor,
     AbstractApplication,
     TypeLambda,
@@ -16,6 +28,58 @@ pub enum RuntimeTypeError {
 }
 
 impl TypeLayout {
+    /// Classify a normalized type using the caller's generic-bound evidence.
+    /// Missing evidence remains unknown rather than proving unsizedness.
+    pub fn sizedness(
+        ty: &Type,
+        generic_sizedness: &impl Fn(GenericParamId) -> Sizedness,
+    ) -> Sizedness {
+        match ty {
+            Type::Slice(_) | Type::Str | Type::Object(_) => Sizedness::Unsized,
+            Type::Array(inner, _) => Self::sizedness(inner, generic_sizedness),
+            Type::Tuple(elements) => {
+                let mut result = Sizedness::Sized;
+                for element in elements {
+                    match Self::sizedness(element, generic_sizedness) {
+                        Sizedness::Unsized => return Sizedness::Unsized,
+                        Sizedness::Unknown => result = Sizedness::Unknown,
+                        Sizedness::Sized => {}
+                    }
+                }
+                result
+            }
+            Type::I8
+            | Type::ObjectSelf { .. }
+            | Type::Witness(_)
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::F32
+            | Type::F64
+            | Type::Bool
+            | Type::Char
+            | Type::Unit
+            | Type::Never
+            | Type::Struct { .. }
+            | Type::Enum { .. }
+            | Type::Reference { .. }
+            | Type::Pointer(_)
+            | Type::Function { .. } => Sizedness::Sized,
+            Type::Generic(param) => generic_sizedness(*param),
+            Type::Projection { .. }
+            | Type::TypeVar(_)
+            | Type::Constructor { .. }
+            | Type::Apply { .. }
+            | Type::Lambda { .. }
+            | Type::BoundVar { .. }
+            | Type::Error => Sizedness::Unknown,
+        }
+    }
+
     pub fn validate_runtime_type(ty: &Type) -> Result<(), RuntimeTypeError> {
         let mut result = Ok(());
         crate::type_services::visit::visit_type(ty, &mut |nested: &Type| {
@@ -23,6 +87,9 @@ impl TypeLayout {
                 return;
             }
             result = match nested {
+                Type::Object(_) => Err(RuntimeTypeError::ObjectRequiresEvidence),
+                Type::ObjectSelf { .. } => Err(RuntimeTypeError::UnboundObjectSelf),
+                Type::Witness(_) => Err(RuntimeTypeError::WitnessRequiresScopedDescriptor),
                 Type::Constructor { .. } => Err(RuntimeTypeError::UnsaturatedConstructor),
                 Type::Apply { .. } => Err(RuntimeTypeError::AbstractApplication),
                 Type::Lambda { .. } => Err(RuntimeTypeError::TypeLambda),
@@ -118,6 +185,76 @@ mod tests {
 
     fn def_id(index: u32) -> DefId {
         DefId::new(CrateId(0), LocalDefId(index))
+    }
+
+    #[test]
+    fn sizedness_preserves_missing_generic_evidence_in_aggregates() {
+        let param = GenericParamId {
+            owner: def_id(1),
+            index: 0,
+        };
+        let aggregate = Type::Tuple(vec![
+            Type::I64,
+            Type::Array(Box::new(Type::Generic(param)), 2),
+        ]);
+
+        assert_eq!(
+            TypeLayout::sizedness(&aggregate, &|_| Sizedness::Unknown),
+            Sizedness::Unknown
+        );
+        assert_eq!(
+            TypeLayout::sizedness(&aggregate, &|id| {
+                assert_eq!(id, param);
+                Sizedness::Sized
+            }),
+            Sizedness::Sized
+        );
+
+        // Definite unsizedness must not depend on the order of unresolved fields.
+        for elements in [
+            vec![aggregate.clone(), Type::Str],
+            vec![Type::Str, aggregate],
+        ] {
+            assert_eq!(
+                TypeLayout::sizedness(&Type::Tuple(elements), &|_| Sizedness::Unknown),
+                Sizedness::Unsized
+            );
+        }
+    }
+
+    #[test]
+    fn sized_indirection_does_not_admit_unresolved_concrete_mir() {
+        let generic = Type::Generic(GenericParamId {
+            owner: def_id(2),
+            index: 0,
+        });
+        for handle in [
+            Type::Reference {
+                mutable: false,
+                inner: Box::new(generic.clone()),
+            },
+            Type::Pointer(Box::new(generic)),
+        ] {
+            assert_eq!(
+                TypeLayout::sizedness(&handle, &|_| panic!("pointee evidence is unnecessary")),
+                Sizedness::Sized
+            );
+            assert_eq!(
+                TypeLayout::validate_runtime_type(&handle),
+                Err(RuntimeTypeError::Generic)
+            );
+        }
+
+        let slice_ref = Type::Reference {
+            mutable: true,
+            inner: Box::new(Type::Slice(Box::new(Type::U8))),
+        };
+        assert_eq!(
+            TypeLayout::sizedness(&slice_ref, &|_| Sizedness::Unknown),
+            Sizedness::Sized
+        );
+        assert!(TypeLayout::is_fat_pointer_shape(&slice_ref));
+        assert_eq!(TypeLayout::validate_runtime_type(&slice_ref), Ok(()));
     }
 
     #[test]

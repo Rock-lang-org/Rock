@@ -24,6 +24,12 @@ impl<'ctx> CodeGen<'ctx> {
         constant: &Constant,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match constant {
+            Constant::ErasedCall(_) => Err(CodegenError::backend_contract(
+                "erased call selector used as a runtime value",
+            )),
+            Constant::VirtualTarget(_) | Constant::OwnedObjectCall(_) => Err(
+                CodegenError::backend_contract("virtual selector used as a runtime value"),
+            ),
             Constant::Int(value) => Ok(self
                 .context
                 .i64_type()

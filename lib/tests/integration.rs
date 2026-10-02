@@ -1387,7 +1387,8 @@ fn stdlib_cache_publish_replaces_stale_ready_entry_atomically() {
 }
 
 fn stdlib_artifact_path() -> PathBuf {
-    static STDLIB_ARTIFACT: OnceLock<PathBuf> = OnceLock::new();
+    static STDLIB_ARTIFACT: OnceLock<Result<PathBuf, rock_lib::diagnostic::Diagnostics>> =
+        OnceLock::new();
 
     STDLIB_ARTIFACT
         .get_or_init(|| {
@@ -1402,14 +1403,14 @@ fn stdlib_artifact_path() -> PathBuf {
             let ready_path = artifact_dir.join("ready");
             let lock_path = artifact_dir.with_extension("lock");
             if stdlib_cache_entry_is_ready(&artifact_path, &object_path, &ready_path) {
-                return artifact_path;
+                return Ok(artifact_path);
             }
 
             let Some(_cache_lock) = acquire_cache_lock(&lock_path) else {
-                return artifact_path;
+                return Ok(artifact_path);
             };
             if stdlib_cache_entry_is_ready(&artifact_path, &object_path, &ready_path) {
-                return artifact_path;
+                return Ok(artifact_path);
             }
 
             let build_dir = artifact_dir.with_extension(format!("building-{}", std::process::id()));
@@ -1434,8 +1435,7 @@ fn stdlib_artifact_path() -> PathBuf {
                 no_prelude: false,
                 no_std: true,
                 sysroot: None,
-            })
-            .expect("Failed to compile stdlib product artifact for integration tests");
+            })?;
             let mut products = output
                 .products
                 .expect("stdlib compile should produce product data");
@@ -1449,8 +1449,10 @@ fn stdlib_artifact_path() -> PathBuf {
 
             publish_stdlib_cache_dir(&build_dir, &artifact_dir, &ready_path)
                 .expect("Failed to publish stdlib product artifact cache");
-            artifact_path
+            Ok(artifact_path)
         })
+        .as_ref()
+        .expect("Failed to compile stdlib product artifact for integration tests")
         .clone()
 }
 
@@ -16656,6 +16658,70 @@ main = ->
     );
 
     assert_eq!(output.trim(), "2");
+}
+
+#[test]
+fn distinct_supertrait_instantiations_do_not_silently_select_one_method() {
+    for parents in [
+        "Self: Tag I64, Self: Tag Bool",
+        "Self: Tag Bool, Self: Tag I64",
+    ] {
+        let source = format!(
+            r#"trait Tag A
+    @tag: I64
+
+trait Both where {parents}
+
+struct Item
+
+impl Tag I64 for Item
+    @tag = -> 1
+
+impl Tag Bool for Item
+    @tag = -> 2
+
+impl Both for Item
+
+read: T -> I64 where T: Both
+read = value -> value.tag!
+
+main = -> read Item
+"#
+        );
+        compile_should_fail(&source, "Ambiguous selection");
+    }
+}
+
+#[test]
+fn diamond_supertraits_select_a_shared_instantiated_method_once() {
+    let exit_code = compile_and_run_without_stdlib(
+        r#"trait Base A
+    @value: I64
+
+trait Left A where Self: Base A
+
+trait Right A where Self: Base A
+
+trait Diamond A where Self: Left A, Self: Right A
+
+struct Item
+
+impl Base I64 for Item
+    @value = -> 42
+
+impl Left I64 for Item
+
+impl Right I64 for Item
+
+impl Diamond I64 for Item
+
+read: T -> I64 where T: Diamond I64
+read = value -> value.value!
+
+main = -> read Item
+"#,
+    );
+    assert_eq!(exit_code, 42);
 }
 
 #[test]

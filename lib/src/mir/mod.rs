@@ -8,7 +8,13 @@ pub mod backend_contract;
 pub mod borrowck;
 pub mod builder;
 pub mod dataflow;
+pub mod erased;
 pub mod identity;
+pub mod object;
+pub mod object_adapters;
+pub use erased::*;
+pub use object::*;
+pub use object_adapters::*;
 
 use crate::ids::{DefId, InstanceId, TypeId, VariantId};
 use crate::lexer::Span;
@@ -423,6 +429,10 @@ pub enum Constant {
     String(String),
     Char(char),
     Callable(MirCallable),
+    /// A call selector, legal only in a Call's `func`; args[0] supplies metadata.
+    VirtualTarget(MirVirtualTarget),
+    OwnedObjectCall(MirOwnedObjectKey),
+    ErasedCall(MirErasedCall),
     TypeId(crate::ids::TypeId),
     Unit,
 }
@@ -438,6 +448,7 @@ pub enum Rvalue {
     Use(Operand),
     Ref(Mutability, Place),
     Cast(Operand, TypeId),
+    Object(Operand, MirObjectConversion),
     Closure(MirClosure),
     BinaryOp(MirBinOp, Operand, Operand),
     UnaryOp(MirUnaryOp, Operand),
@@ -532,6 +543,9 @@ pub enum StatementKind {
 
 #[derive(Debug, Clone)]
 pub enum Terminator {
+    Unreachable {
+        origin: MirOrigin,
+    },
     Goto(BasicBlockId),
     GotoWithOrigin {
         target: BasicBlockId,
@@ -607,6 +621,7 @@ impl Terminator {
                 MirOrigin::synthetic(MirSyntheticOrigin::ControlFlow, None)
             }
             Self::GotoWithOrigin { origin, .. }
+            | Self::Unreachable { origin }
             | Self::SwitchIntWithOrigin { origin, .. }
             | Self::ReturnWithOrigin { origin }
             | Self::DropWithOrigin { origin, .. } => origin.clone(),

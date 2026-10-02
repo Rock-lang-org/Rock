@@ -16,6 +16,10 @@ use crate::lexer::Span;
 use crate::types::ReceiverMode;
 use crate::types::{GenericParamId, TraitBound, Type};
 
+pub(crate) mod object_methods;
+pub(crate) mod existential;
+pub(crate) mod owned_objects;
+
 mod sealed {
     pub trait Sealed {}
 }
@@ -619,6 +623,7 @@ impl HirProgram {
 
     pub(crate) fn validate_accepted_types(&self) -> Vec<String> {
         let mut errors = Vec::new();
+        existential::validate_program(self, &mut errors);
         let normalization_env = self.type_normalization_env();
         let mut predicate_rows = Vec::new();
         for trait_def in self.traits.values() {
@@ -709,6 +714,23 @@ impl HirProgram {
         locations.sort_by_key(|(location, _)| format!("{location:?}"));
         for (location, type_id) in locations {
             let ty = type_context.type_for(type_id);
+            if crate::type_services::visit::type_any(&ty, |ty| {
+                matches!(ty, Type::Object(_) | Type::ObjectSelf { .. })
+            }) {
+                match crate::traits::objects::admit_type_objects(
+                    &ty,
+                    &self.traits,
+                    &normalization_env,
+                ) {
+                    Ok(admitted) if admitted != ty => errors.push(format!(
+                        "accepted HIR contains a noncanonical object signature at {location:?}"
+                    )),
+                    Err(error) => errors.push(format!(
+                        "accepted HIR contains invalid object evidence at {location:?}: {error}"
+                    )),
+                    _ => {}
+                }
+            }
             if type_contains_backend_forbidden_sentinel(&ty) {
                 errors.push(format!(
                     "accepted HIR contains unresolved type at {location:?}: {ty:?}"
@@ -1603,6 +1625,26 @@ fn validate_method_authorities_in_expr(
     errors: &mut Vec<String>,
 ) {
     match &expr.kind {
+        HirExprKindFor::OwnedObjectCall { owner, args, call } => {
+            validate_method_authorities_in_expr(program, owner, errors);
+            for arg in args {
+                validate_method_authorities_in_expr(program, arg, errors);
+            }
+            for target in [&call.method, &call.into_parts.method, &call.release.method] {
+                validate_method_target_authority(program, target, errors);
+            }
+            if let Err(message) = owned_objects::validate(program, owner, args, &expr.ty, call) {
+                errors.push(message);
+            }
+        }
+        HirExprKindFor::Open { source, binding, body } => {
+            validate_method_authorities_in_expr(program, source, errors);
+            validate_method_authorities_in_block(program, body, errors);
+            if let Some(owner) = &binding.owner {
+                validate_method_target_authority(program, &owner.into_parts.method, errors);
+                validate_method_target_authority(program, &owner.from_parts.method, errors);
+            }
+        }
         HirExprKindFor::MethodCall(receiver, _, args, self_receiver, target) => {
             validate_method_authorities_in_expr(program, receiver, errors);
             for arg in args {
@@ -1610,7 +1652,70 @@ fn validate_method_authorities_in_expr(
             }
             match target {
                 Some(target) => {
+                    let receiver_value = match &receiver.ty {
+                        Type::Reference { inner, .. } => inner.as_ref(),
+                        ty => ty,
+                    };
+                    if matches!(receiver_value, Type::Object(_))
+                        && matches!(target.target, HirSelectedMethodTarget::ImplMethod { .. })
+                    {
+                        errors.push(
+                            "concrete impl method authority cannot target an object receiver"
+                                .into(),
+                        );
+                    }
                     validate_method_target_authority(program, target, errors);
+                    if let HirSelectedMethodTarget::TraitMethod {
+                        trait_id,
+                        trait_args,
+                        dispatch: HirTraitDispatchKind::Object,
+                        ..
+                    } = &target.target
+                    {
+                        if !matches!(&receiver.ty, Type::Reference { mutable, .. } if *self_receiver != Some(ReceiverMode::Mut) || *mutable)
+                        {
+                            errors.push("virtual borrowed receiver does not supply the selected access mode".into());
+                        }
+                        let object = match &receiver.ty {
+                            Type::Reference { inner, .. } => inner.as_ref(),
+                            ty => ty,
+                        };
+                        match object {
+                            Type::Object(object) => {
+                                match object_methods::signature(&program.traits, target, object) {
+                                    Ok((params, result)) => {
+                                        if result != expr.ty
+                                            || params.len() != args.len()
+                                            || params
+                                                .iter()
+                                                .zip(args)
+                                                .any(|(expected, actual)| expected != &actual.ty)
+                                        {
+                                            errors.push("virtual call public signature disagrees with its canonical member (including borrowed Self result adaptation)".into());
+                                        }
+                                    }
+                                    Err(message) => errors.push(message),
+                                }
+                                let roots = std::iter::once(object.principal.clone())
+                                    .chain(object.guarantees.iter().cloned())
+                                    .collect::<Vec<_>>();
+                                let available = crate::traits::evidence::implied_trait_bounds(
+                                    &program.traits,
+                                    &Type::ObjectSelf { depth: 0 },
+                                    &roots,
+                                );
+                                if !available.contains(&TraitBound {
+                                    trait_id: *trait_id,
+                                    type_args: trait_args.clone(),
+                                }) {
+                                    errors.push("virtual method authority is outside the object's guaranteed views".to_string());
+                                }
+                            }
+                            _ => errors.push(
+                                "virtual method authority requires an object receiver".to_string(),
+                            ),
+                        }
+                    }
                     let expected = method_target_self_receiver(program, target);
                     if expected == Some(None) {
                         errors.push("method-call authority references a static method".to_string());
@@ -1744,6 +1849,17 @@ fn validate_method_authorities_in_expr(
         | HirExprKindFor::Deref(inner)
         | HirExprKindFor::Cast(inner, _) => {
             validate_method_authorities_in_expr(program, inner, errors)
+        }
+        HirExprKindFor::ObjectCoercion(inner, coercion) => {
+            if coercion.evidence.is_none() {
+                errors.push("object coercion has no evidence".to_string());
+            }
+            if coercion.target != expr.ty {
+                errors.push("object coercion target disagrees with expression type".to_string());
+            }
+            // Directional proof validation is scope-aware and belongs to the
+            // existential validator, including ordinary non-opened coercions.
+            validate_method_authorities_in_expr(program, inner, errors);
         }
         HirExprKindFor::BinOp(_, left, right) | HirExprKindFor::Assign(left, right) => {
             validate_method_authorities_in_expr(program, left, errors);
@@ -2076,6 +2192,14 @@ fn hir_expr_is_codegen_concrete<P: HirPhase>(expr: &HirExprFor<P>) -> bool {
     }
 
     match &expr.kind {
+        HirExprKindFor::Open { .. } => false,
+        HirExprKindFor::OwnedObjectCall { owner, args, call } => {
+            let mut concrete = true;
+            call.visit_types(&mut |ty| concrete &= hir_type_is_codegen_concrete(ty));
+            concrete
+                && hir_expr_is_codegen_concrete(owner)
+                && args.iter().all(hir_expr_is_codegen_concrete)
+        }
         HirExprKindFor::IntLiteral(_)
         | HirExprKindFor::FloatLiteral(_)
         | HirExprKindFor::BoolLiteral(_)
@@ -2100,6 +2224,11 @@ fn hir_expr_is_codegen_concrete<P: HirPhase>(expr: &HirExprFor<P>) -> bool {
         | HirExprKindFor::Ref(_, base)
         | HirExprKindFor::UnaryOp(_, base)
         | HirExprKindFor::Cast(base, _) => hir_expr_is_codegen_concrete(base),
+        HirExprKindFor::ObjectCoercion(base, coercion) => {
+            let mut concrete = coercion.evidence.is_some();
+            coercion.visit_types(&mut |ty| concrete &= hir_type_is_codegen_concrete(ty));
+            concrete && hir_expr_is_codegen_concrete(base)
+        }
         HirExprKindFor::BinOp(_, base, index) | HirExprKindFor::Assign(base, index) => {
             hir_expr_is_codegen_concrete(base) && hir_expr_is_codegen_concrete(index)
         }
@@ -2576,6 +2705,8 @@ fn single_mangled_name(names: &[String]) -> Option<&String> {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HirGenericBounds {
+    /// Explicit relaxation of the default sized requirement, keyed by identity.
+    pub relaxed_sized: std::collections::BTreeSet<GenericParamId>,
     bounds: HashMap<GenericParamId, Vec<TraitBound>>,
     #[serde(default)]
     pub predicates: Vec<crate::types::Predicate>,
@@ -2590,6 +2721,7 @@ impl HirGenericBounds {
         Self {
             bounds,
             predicates: Vec::new(),
+            relaxed_sized: Default::default(),
         }
     }
 }
@@ -2753,6 +2885,9 @@ pub struct HirSelectedTraitMember {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HirTraitDispatchKind {
+    Object,
+    /// The descriptor/dictionary capability belongs to a dominating Open.
+    Opened(crate::types::WitnessId),
     TraitBound,
     CurrentTrait,
     UnresolvedGeneric,
@@ -2762,6 +2897,262 @@ pub enum HirTraitDispatchKind {
 pub struct HirTypeBinding {
     pub param: GenericParamId,
     pub ty: Type,
+}
+
+/// Expected-type conversion carrying the proof chosen by the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HirObjectCoercion {
+    pub target: Type,
+    pub evidence: Option<HirObjectEvidence>,
+}
+
+/// Consuming virtual dispatch authorized by an external unique-owner contract.
+/// The owner expression remains an owning operand until MIR borrow checking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HirOwnedObjectCall {
+    pub method: HirMethodCallTarget,
+    pub object: Type,
+    pub state: Type,
+    pub into_parts: HirStaticMethodTarget,
+    pub release: HirStaticMethodTarget,
+}
+
+impl HirOwnedObjectCall {
+    pub fn visit_types(&self, visitor: &mut impl FnMut(&Type)) {
+        visitor(&self.object);
+        visitor(&self.state);
+        visitor(&self.into_parts.owner_ty);
+        visitor(&self.release.owner_ty);
+        for method in [&self.method, &self.into_parts.method, &self.release.method] {
+            for ty in method.trait_args() {
+                visitor(ty);
+            }
+            for binding in method
+                .owner_substitution
+                .iter()
+                .chain(&method.method_substitution)
+            {
+                visitor(&binding.ty);
+            }
+        }
+    }
+
+    pub fn visit_types_mut(&mut self, visitor: &mut impl FnMut(&mut Type)) {
+        visitor(&mut self.object);
+        visitor(&mut self.state);
+        visitor(&mut self.into_parts.owner_ty);
+        visitor(&mut self.release.owner_ty);
+        self.method.for_each_type_mut(&mut *visitor);
+        self.into_parts.method.for_each_type_mut(&mut *visitor);
+        self.release.method.for_each_type_mut(visitor);
+    }
+
+    pub fn for_each_def_id_mut(&mut self, mut visit: impl FnMut(&mut DefId)) {
+        self.method.for_each_def_id_mut(&mut visit);
+        self.into_parts.method.for_each_def_id_mut(&mut visit);
+        self.release.method.for_each_def_id_mut(visit);
+    }
+}
+
+impl HirObjectCoercion {
+    pub fn visit_types(&self, visitor: &mut impl FnMut(&Type)) {
+        visitor(&self.target);
+        match &self.evidence {
+            Some(HirObjectEvidence::Concrete { source, views }) => {
+                visitor(source);
+                for view in views {
+                    for arg in &view.trait_ref.type_args {
+                        visitor(arg);
+                    }
+                    if let HirObjectWitnessOrigin::Impl { substitution, .. } = &view.origin {
+                        for binding in substitution {
+                            visitor(&binding.ty);
+                        }
+                    }
+                }
+            }
+            Some(HirObjectEvidence::Upcast { source, target }) => {
+                visitor(source);
+                visitor(target);
+            }
+            None => {}
+        }
+    }
+
+    pub fn visit_types_mut(&mut self, visitor: &mut impl FnMut(&mut Type)) {
+        visitor(&mut self.target);
+        match &mut self.evidence {
+            Some(HirObjectEvidence::Concrete { source, views }) => {
+                visitor(source);
+                for view in views {
+                    for arg in &mut view.trait_ref.type_args {
+                        visitor(arg);
+                    }
+                    if let HirObjectWitnessOrigin::Impl { substitution, .. } = &mut view.origin {
+                        for binding in substitution {
+                            visitor(&mut binding.ty);
+                        }
+                    }
+                }
+            }
+            Some(HirObjectEvidence::Upcast { source, target }) => {
+                visitor(source);
+                visitor(target);
+            }
+            None => {}
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HirObjectEvidence {
+    Concrete {
+        source: Type,
+        views: Vec<HirObjectView>,
+    },
+    Upcast {
+        source: Type,
+        target: Type,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HirObjectView {
+    pub trait_ref: TraitBound,
+    pub origin: HirObjectWitnessOrigin,
+}
+
+fn validate_object_coercion<P: HirPhase>(
+    program: &HirProgram,
+    input: &HirExprFor<P>,
+    coercion: &HirObjectCoercion,
+) -> Result<(), String> {
+    validate_object_coercion_with_assumptions(program, input, coercion, None)
+}
+
+fn validate_object_coercion_with_assumptions<P: HirPhase>(
+    program: &HirProgram,
+    input: &HirExprFor<P>,
+    coercion: &HirObjectCoercion,
+    inferred: Option<&[TraitBound]>,
+) -> Result<(), String> {
+    fn parameter_bounds(
+        program: &HirProgram,
+        parameter: GenericParamId,
+    ) -> Option<&HirGenericBounds> {
+        program
+            .functions
+            .get(&parameter.owner)
+            .map(|function| &function.generic_bounds)
+            .or_else(|| {
+                program
+                    .impls
+                    .get(&parameter.owner)
+                    .map(|implementation| &implementation.bounds)
+            })
+            .or_else(|| {
+                program
+                    .impls
+                    .values()
+                    .flat_map(|implementation| implementation.methods.values())
+                    .find(|method| method.id == parameter.owner)
+                    .map(|method| &method.generic_bounds)
+            })
+    }
+    let mut assumptions = HirGenericBounds::default();
+    crate::type_services::visit::visit_type(&input.ty, &mut |ty: &Type| {
+        if let Type::Generic(parameter) = ty {
+            if let Some(bounds) =
+                parameter_bounds(program, *parameter).and_then(|bounds| bounds.get(parameter))
+            {
+                assumptions.insert(*parameter, bounds.clone());
+            }
+        }
+    });
+    let context = crate::infer::object_coercion::ObjectEvidenceContext {
+        traits: &program.traits,
+        impls: &program.impls,
+        structs: &program.structs,
+        enums: &program.enums,
+        language_items: &program.language_items,
+        bounds: &assumptions,
+    };
+    let expected = context.prove_with_assumptions(&input.ty, &coercion.target, inferred)?;
+    let actual = coercion.evidence.as_ref().ok_or("object coercion has no evidence")?;
+    validate_object_evidence(&expected, actual)
+}
+
+fn validate_object_evidence(expected: &HirObjectEvidence, actual: &HirObjectEvidence) -> Result<(), String> {
+    let invalid = || "invalid borrowed object coercion evidence".to_string();
+    match (expected, actual) {
+        (
+            HirObjectEvidence::Concrete {
+                source: expected_source,
+                views: expected_views,
+            },
+            HirObjectEvidence::Concrete { source, views },
+        ) => {
+            if source != expected_source || views.len() != expected_views.len() {
+                return Err(invalid());
+            }
+            let mut seen = HashSet::new();
+            for view in views {
+                if !seen.insert(&view.trait_ref) {
+                    return Err(invalid());
+                }
+                let expected = expected_views
+                    .iter()
+                    .find(|expected| expected.trait_ref == view.trait_ref)
+                    .ok_or_else(invalid)?;
+                match (&expected.origin, &view.origin) {
+                    (
+                        HirObjectWitnessOrigin::Impl {
+                            impl_id: expected_id,
+                            substitution: expected,
+                        },
+                        HirObjectWitnessOrigin::Impl {
+                            impl_id,
+                            substitution,
+                        },
+                    ) => {
+                        let actual: HashMap<_, _> = substitution
+                            .iter()
+                            .map(|binding| (binding.param, &binding.ty))
+                            .collect();
+                        if impl_id != expected_id
+                            || actual.len() != substitution.len()
+                            || actual.len() != expected.len()
+                            || expected.iter().any(|binding| {
+                                actual.get(&binding.param).copied() != Some(&binding.ty)
+                            })
+                        {
+                            return Err(invalid());
+                        }
+                    }
+                    (expected, actual) if expected == actual => {}
+                    _ => return Err(invalid()),
+                }
+            }
+        }
+        (expected, actual) if expected == actual => {}
+        _ => return Err(invalid()),
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HirObjectWitnessOrigin {
+    Impl {
+        impl_id: DefId,
+        substitution: Vec<HirTypeBinding>,
+    },
+    Bound,
+    Callable {
+        kind: crate::types::CallableKind,
+    },
+    Auto {
+        role: crate::language_items::LanguageItemRole,
+    },
 }
 
 impl HirMethodCallTarget {
@@ -2886,10 +3277,12 @@ impl HirMethodCallTarget {
             HirSelectedMethodTarget::TraitMethod {
                 trait_id,
                 member_id,
+                dispatch,
                 ..
             } => {
                 visit(trait_id);
                 visit(member_id);
+                if let HirTraitDispatchKind::Opened(witness) = dispatch { visit(&mut witness.owner); }
             }
         }
         for binding in self
@@ -3087,6 +3480,11 @@ pub struct HirStructPatternField {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HirExprKindFor<P: HirPhase> {
+    Open {
+        source: Box<HirExprFor<P>>,
+        binding: HirOpenBinding,
+        body: HirBlockFor<P>,
+    },
     /// Integer literal
     IntLiteral(i64),
     /// Float literal
@@ -3195,6 +3593,13 @@ pub enum HirExprKindFor<P: HirPhase> {
     Deref(Box<HirExprFor<P>>),
     /// Type cast
     Cast(Box<HirExprFor<P>>, Type),
+    /// Object creation or upcast; never an equality constraint on its source.
+    ObjectCoercion(Box<HirExprFor<P>>, HirObjectCoercion),
+    OwnedObjectCall {
+        owner: Box<HirExprFor<P>>,
+        args: Vec<HirExprFor<P>>,
+        call: HirOwnedObjectCall,
+    },
     /// Assignment (for mutable variables, field assignment)
     Assign(Box<HirExprFor<P>>, Box<HirExprFor<P>>),
     /// Compiler intrinsic (maps directly to LLVM operation)
@@ -3206,6 +3611,61 @@ pub enum HirExprKindFor<P: HirPhase> {
 }
 
 pub type HirExprKind = HirExprKindFor<UnresolvedHir>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HirOpenBinding {
+    pub witness: crate::types::WitnessId,
+    pub value: HirParam,
+    pub object: crate::types::ObjectType,
+    pub source_ty: Type,
+    pub owner: Option<HirOpenOwner>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HirOpenOwner {
+    pub state_ty: Type,
+    pub into_parts: HirStaticMethodTarget,
+    pub from_parts: HirStaticMethodTarget,
+}
+
+impl HirOpenBinding {
+    pub(crate) fn matches_owner(&self, ty: &Type) -> bool {
+        matches!(ty, Type::Struct { args, .. } if args.as_slice() == [Type::Witness(self.witness)])
+    }
+
+    pub fn visit_types(&self, visit: &mut impl FnMut(&Type)) {
+        visit(&Type::Witness(self.witness));
+        visit(&self.value.ty);
+        visit(&self.source_ty);
+        visit(&Type::Object(Box::new(self.object.clone())));
+        if let Some(owner) = &self.owner {
+            visit(&owner.state_ty);
+            for operation in [&owner.into_parts, &owner.from_parts] {
+                visit(&operation.owner_ty);
+                for ty in operation.method.trait_args() { visit(ty); }
+                for binding in operation.method.owner_substitution.iter().chain(&operation.method.method_substitution) { visit(&binding.ty); }
+            }
+        }
+    }
+
+    pub fn visit_types_mut(&mut self, visit: &mut impl FnMut(&mut Type)) {
+        let mut witness = Type::Witness(self.witness);
+        visit(&mut witness);
+        if let Type::Witness(witness) = witness { self.witness = witness; }
+        visit(&mut self.value.ty);
+        visit(&mut self.source_ty);
+        let mut object = Type::Object(Box::new(self.object.clone()));
+        visit(&mut object);
+        if let Type::Object(object) = object { self.object = *object; }
+        if let Some(owner) = &mut self.owner {
+            visit(&mut owner.state_ty);
+            for operation in [&mut owner.into_parts, &mut owner.from_parts] {
+                visit(&mut operation.owner_ty);
+                operation.method.for_each_type_mut(&mut *visit);
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BinOp {
@@ -3531,6 +3991,34 @@ fn substitute_typevars_in_expr_with_targets(
     substitute_typevar_in_type(&mut expr.ty, target_ids, target_generic_ids, concrete_ty);
     substitute_generic_param_in_type(&mut expr.ty, target_generic_ids, concrete_ty);
     match &mut expr.kind {
+        HirExprKindFor::Open { source, binding, body } => {
+            substitute_typevars_in_expr_with_targets(source, target_ids, target_generic_ids, concrete_ty);
+            binding.visit_types_mut(&mut |ty| {
+                substitute_typevar_in_type(ty, target_ids, target_generic_ids, concrete_ty);
+                substitute_generic_param_in_type(ty, target_generic_ids, concrete_ty);
+            });
+            substitute_typevars_in_block(body, target_ids, target_generic_ids, concrete_ty);
+        }
+        HirExprKindFor::OwnedObjectCall { owner, args, call } => {
+            substitute_typevars_in_expr_with_targets(
+                owner,
+                target_ids,
+                target_generic_ids,
+                concrete_ty,
+            );
+            for arg in args {
+                substitute_typevars_in_expr_with_targets(
+                    arg,
+                    target_ids,
+                    target_generic_ids,
+                    concrete_ty,
+                );
+            }
+            call.visit_types_mut(&mut |ty| {
+                substitute_typevar_in_type(ty, target_ids, target_generic_ids, concrete_ty);
+                substitute_generic_param_in_type(ty, target_generic_ids, concrete_ty);
+            });
+        }
         HirExprKindFor::IntLiteral(_)
         | HirExprKindFor::FloatLiteral(_)
         | HirExprKindFor::BoolLiteral(_)
@@ -3793,6 +4281,18 @@ fn substitute_typevars_in_expr_with_targets(
             substitute_typevar_in_type(ty, target_ids, target_generic_ids, concrete_ty);
             substitute_generic_param_in_type(ty, target_generic_ids, concrete_ty);
         }
+        HirExprKindFor::ObjectCoercion(expr, coercion) => {
+            substitute_typevars_in_expr_with_targets(
+                expr,
+                target_ids,
+                target_generic_ids,
+                concrete_ty,
+            );
+            coercion.visit_types_mut(&mut |ty| {
+                substitute_typevar_in_type(ty, target_ids, target_generic_ids, concrete_ty);
+                substitute_generic_param_in_type(ty, target_generic_ids, concrete_ty);
+            });
+        }
         HirExprKindFor::Intrinsic { args, .. } => {
             for a in args.iter_mut() {
                 substitute_typevars_in_expr_with_targets(
@@ -3821,6 +4321,66 @@ mod tests {
     };
     use crate::ids::{AssocTypeId, CrateId, DefId, FieldId, LocalDefId, VariantId};
     use crate::types::{GenericParamDecl, GenericParamId, Type};
+
+    #[test]
+    fn accepted_hir_rejects_concrete_authority_for_object_receiver() {
+        let path = std::env::temp_dir().join("rock_object_authority_validation/main.rk");
+        let source = "trait View\n    @view: &Self\nstruct Number\n    < inner: I64\nimpl View for Number\n    @view = -> self\nread: &View -> &View\nread = object -> object.view!\nmain = !-> ()\n";
+        let analysis = crate::analyze(&crate::Config {
+            entry_file: path.clone(),
+            no_std: true,
+            no_prelude: true,
+            source_providers: vec![crate::SourceProvider::Virtual {
+                path,
+                text: source.into(),
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+        let mut program = analysis.hir.program.into_program();
+        let implementation = program
+            .impls
+            .values()
+            .find(|implementation| implementation.trait_id.is_some())
+            .unwrap();
+        let impl_id = implementation.id;
+        let method_id = implementation.methods["view"].id;
+        let function = program
+            .functions
+            .values_mut()
+            .find(|function| function.name == "read")
+            .unwrap();
+        let Some(crate::hir::HirStmtFor::Expr(call)) = function.body.stmts.last_mut() else {
+            panic!("call tail")
+        };
+        let crate::hir::HirExprKindFor::MethodCall(_, _, _, _, target) = &mut call.kind else {
+            panic!("virtual call")
+        };
+        let HirSelectedMethodTarget::TraitMethod {
+            trait_id,
+            member_id,
+            trait_args,
+            ..
+        } = target.target.clone()
+        else {
+            panic!("canonical object authority")
+        };
+        target.target = HirSelectedMethodTarget::ImplMethod {
+            impl_id,
+            method_id,
+            selected_trait: Some(HirSelectedTraitMember {
+                trait_id,
+                member_id,
+                trait_args,
+            }),
+        };
+        let errors = AcceptedHirProgram::revalidate_for_test(program).unwrap_err();
+        assert!(
+            errors.iter().any(|error| error
+                .contains("concrete impl method authority cannot target an object receiver")),
+            "{errors:?}"
+        );
+    }
 
     fn def_id(index: u32) -> DefId {
         DefId::new(CrateId(0), LocalDefId(index))

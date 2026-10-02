@@ -16,6 +16,7 @@ use crate::selection::types::{
     ReceiverAdjustment, ReceiverCandidate, SelectedConstructorMember, SelectedMethod,
     SelectedOrigin, SelectionDiagnostic,
 };
+use crate::type_services::layout::{Sizedness, TypeLayout};
 use crate::types::{GenericParamId, TraitBound, Type};
 
 pub struct SelectionService<'a> {
@@ -1460,24 +1461,29 @@ impl<'a> SelectionService<'a> {
             }
         }
 
-        let target_ids = candidates
+        let targets = candidates
             .iter()
             .filter_map(|candidate| {
-                Some((candidate.target.trait_id()?, candidate.target.method_id()?))
+                Some(HirSelectedTraitMember {
+                    trait_id: candidate.target.trait_id()?,
+                    member_id: candidate.target.method_id()?,
+                    trait_args: candidate.target.trait_args().to_vec(),
+                })
             })
             .collect::<std::collections::HashSet<_>>();
-        if target_ids.len() != 1 {
-            return Err(if target_ids.is_empty() {
+        if targets.len() != 1 {
+            return Err(if targets.is_empty() {
                 SelectionDiagnostic::NoImplementation {
                     operation: method_name.to_string(),
                     receiver: receiver_ty.clone(),
                 }
             } else {
-                let mut candidate_ids = target_ids
+                let mut candidate_ids = targets
                     .into_iter()
-                    .map(|(_, method_id)| method_id)
+                    .map(|target| target.member_id)
                     .collect::<Vec<_>>();
                 candidate_ids.sort();
+                candidate_ids.dedup();
                 SelectionDiagnostic::AmbiguousCandidates {
                     operation: method_name.to_string(),
                     receiver: receiver_ty.clone(),
@@ -1503,10 +1509,7 @@ impl<'a> SelectionService<'a> {
     ) -> Vec<SelectedMethod> {
         let mut candidates = Vec::new();
 
-        for bound in self
-            .trait_bounds_with_supertraits(&self_param_ty, bounds)
-            .iter()
-        {
+        for bound in self.implied_trait_bounds(&self_param_ty, bounds).iter() {
             let Some(trait_def) = self
                 .trait_def_for_member(bound.trait_id, method_name)
                 .cloned()
@@ -1964,7 +1967,13 @@ impl<'a> SelectionService<'a> {
         }
 
         if self.is_builtin_sized_trait(bound.trait_id) {
-            return self.type_is_sized(ty);
+            return TypeLayout::sizedness(ty, &|param| {
+                if self.assumed_trait_bound_satisfied(&Type::Generic(param), bound) {
+                    Sizedness::Sized
+                } else {
+                    Sizedness::Unknown
+                }
+            }) == Sizedness::Sized;
         }
 
         // The same impl may solve a structurally smaller obligation (for
@@ -1987,128 +1996,26 @@ impl<'a> SelectionService<'a> {
         satisfied
     }
 
-    pub(crate) fn trait_bounds_with_supertraits(
+    pub(crate) fn implied_trait_bounds(
         &self,
         subject: &Type,
         bounds: &[TraitBound],
     ) -> Vec<TraitBound> {
-        fn expand(
-            service: &SelectionService<'_>,
-            subject: &Type,
-            bound: TraitBound,
-            visiting: &mut std::collections::HashSet<crate::types::Predicate>,
-            output: &mut Vec<TraitBound>,
-        ) {
-            let key = crate::types::Predicate::Trait {
-                subject: subject.clone(),
-                trait_id: bound.trait_id,
-                args: bound.type_args.clone(),
-            };
-            if !visiting.insert(key.clone()) {
-                return;
-            }
-            if !output.contains(&bound) {
-                output.push(bound.clone());
-            }
-
-            if let Some(trait_def) = service.traits.get(&bound.trait_id) {
-                let mut subst = crate::selection::generic_substitution_for_owner(
-                    &trait_def.generic_params,
-                    &bound.type_args,
-                );
-                let target_id =
-                    trait_def
-                        .target
-                        .as_ref()
-                        .map(|target| target.id)
-                        .unwrap_or(GenericParamId {
-                            owner: trait_def.id,
-                            index: trait_def.generic_params.len() as u32,
-                        });
-                subst.insert(target_id, subject.clone());
-                for predicate in &trait_def.predicates {
-                    let crate::types::Predicate::Trait {
-                        subject: implied_subject,
-                        trait_id,
-                        args,
-                    } = predicate.substitute_generics(&subst);
-                    if implied_subject == *subject {
-                        expand(
-                            service,
-                            subject,
-                            TraitBound {
-                                trait_id,
-                                type_args: args,
-                            },
-                            visiting,
-                            output,
-                        );
-                    }
-                }
-            }
-            visiting.remove(&key);
-        }
-
-        let mut output = Vec::new();
-        let mut visiting = std::collections::HashSet::new();
-        for bound in bounds {
-            expand(self, subject, bound.clone(), &mut visiting, &mut output);
-        }
-        output.sort_by_key(|bound| (bound.trait_id, format!("{:?}", bound.type_args)));
-        output
+        crate::traits::evidence::implied_trait_bounds(self.traits, subject, bounds)
     }
 
     fn assumed_trait_bound_satisfied(&self, ty: &Type, bound: &TraitBound) -> bool {
         if let Type::Generic(param) = ty {
-            return self.current_impl_bounds.get(param).is_some_and(|bounds| {
-                self.trait_bounds_with_supertraits(ty, bounds)
-                    .contains(bound)
-            });
+            return self
+                .current_impl_bounds
+                .get(param)
+                .is_some_and(|bounds| self.implied_trait_bounds(ty, bounds).contains(bound));
         }
         false
     }
 
     fn is_builtin_sized_trait(&self, trait_id: DefId) -> bool {
         self.sized_trait_id == Some(trait_id)
-    }
-
-    fn type_is_sized(&self, ty: &Type) -> bool {
-        match ty {
-            Type::Slice(_) | Type::Str => false,
-            Type::Array(inner, _) => self.type_is_sized(inner),
-            Type::Tuple(elems) => elems.iter().all(|elem| self.type_is_sized(elem)),
-            Type::I8
-            | Type::I16
-            | Type::I32
-            | Type::I64
-            | Type::U8
-            | Type::U16
-            | Type::U32
-            | Type::U64
-            | Type::F32
-            | Type::F64
-            | Type::Bool
-            | Type::Char
-            | Type::Unit
-            | Type::Never
-            | Type::Struct { .. }
-            | Type::Enum { .. }
-            | Type::Reference { .. }
-            | Type::Pointer(_)
-            | Type::Function { .. } => true,
-            Type::Generic(param) => self.current_impl_bounds.get(param).is_some_and(|bounds| {
-                bounds
-                    .iter()
-                    .any(|bound| self.is_builtin_sized_trait(bound.trait_id))
-            }),
-            Type::Projection { .. }
-            | Type::TypeVar(_)
-            | Type::Constructor { .. }
-            | Type::Apply { .. }
-            | Type::Lambda { .. }
-            | Type::BoundVar { .. }
-            | Type::Error => false,
-        }
     }
 
     fn impl_matches_receiver_type(&self, imp: &HirImpl, receiver_ty: &Type) -> bool {
@@ -3090,6 +2997,74 @@ mod tests {
 
         assert!(service.is_builtin_sized_trait(marked_sized_id));
         assert!(!service.is_builtin_sized_trait(unmarked_id));
+    }
+
+    #[test]
+    fn sized_aggregate_uses_generic_supertrait_evidence_by_id() {
+        let sized_id = def_id(800);
+        let child_id = def_id(801);
+        let param = GenericParamId {
+            owner: def_id(802),
+            index: 0,
+        };
+        let traits = HashMap::from([(
+            child_id,
+            HirTrait {
+                id: child_id,
+                name: "HasLayout".to_string(),
+                generic_params: Vec::new(),
+                target: None,
+                predicates: vec![crate::types::Predicate::Trait {
+                    subject: Type::Generic(GenericParamId {
+                        owner: child_id,
+                        index: 0,
+                    }),
+                    trait_id: sized_id,
+                    args: Vec::new(),
+                }],
+                associated_types: Vec::new(),
+                methods: HashMap::new(),
+                signatures: HashMap::new(),
+            },
+        )]);
+        let bounds = HashMap::from([(
+            param,
+            vec![TraitBound {
+                trait_id: child_id,
+                type_args: Vec::new(),
+            }],
+        )])
+        .into();
+        let impls = HashMap::new();
+        let service = SelectionService::new(&traits, &impls, Some(sized_id), None, &bounds);
+        let sized_bound = TraitBound {
+            trait_id: sized_id,
+            type_args: Vec::new(),
+        };
+        let aggregate = Type::Tuple(vec![
+            Type::I64,
+            Type::Array(Box::new(Type::Generic(param)), 2),
+        ]);
+
+        assert!(service.trait_bound_satisfied(&aggregate, &sized_bound));
+        assert!(!service.trait_bound_satisfied(
+            &Type::Tuple(vec![aggregate.clone(), Type::Str]),
+            &sized_bound,
+        ));
+
+        let no_bounds = HirGenericBounds::new();
+        let no_evidence = SelectionService::new(&traits, &impls, Some(sized_id), None, &no_bounds);
+        assert!(!no_evidence.trait_bound_satisfied(&aggregate, &sized_bound));
+
+        let different_marker =
+            SelectionService::new(&traits, &impls, Some(def_id(803)), None, &bounds);
+        assert!(!different_marker.trait_bound_satisfied(
+            &aggregate,
+            &TraitBound {
+                trait_id: def_id(803),
+                type_args: Vec::new(),
+            },
+        ));
     }
 
     #[test]

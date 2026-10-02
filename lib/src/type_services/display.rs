@@ -134,8 +134,94 @@ pub fn display_type_with_context<'a>(
     UserTypeDisplay { ty, context }
 }
 
+fn write_object(
+    object: &crate::types::ObjectType,
+    context: Option<&TypeDisplayContext>,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    fn bound(
+        bound: &crate::types::TraitBound,
+        context: Option<&TypeDisplayContext>,
+        f: &mut fmt::Formatter<'_>,
+    ) -> fmt::Result {
+        if let Some(context) = context {
+            write!(
+                f,
+                "{}",
+                context
+                    .definition_name(bound.trait_id)
+                    .unwrap_or("<unknown trait>")
+            )?;
+        } else {
+            write!(
+                f,
+                "trait#{}:{}",
+                bound.trait_id.crate_id.0, bound.trait_id.local.0
+            )?;
+        }
+        if !bound.type_args.is_empty() {
+            write!(f, "<")?;
+            for (index, arg) in bound.type_args.iter().enumerate() {
+                if index > 0 {
+                    write!(f, ", ")?;
+                }
+                if let Some(context) = context {
+                    write_user_type(arg, context, f)?;
+                } else {
+                    write_type(arg, f)?;
+                }
+            }
+            write!(f, ">")?;
+        }
+        Ok(())
+    }
+    bound(&object.principal, context, f)?;
+    if object.guarantees.is_empty() && object.bindings.is_empty() {
+        return Ok(());
+    }
+    write!(f, " {{ ")?;
+    let mut first = true;
+    for guarantee in &object.guarantees {
+        if !first {
+            write!(f, ", ")?;
+        }
+        first = false;
+        bound(guarantee, context, f)?;
+    }
+    for binding in &object.bindings {
+        if !first {
+            write!(f, ", ")?;
+        }
+        first = false;
+        bound(&binding.key.trait_ref, context, f)?;
+        let key = AssociatedTypeKey {
+            owner: binding.key.trait_ref.trait_id,
+            assoc_type_id: binding.key.member,
+        };
+        if let Some(context) = context {
+            write!(
+                f,
+                "::{} = ",
+                context
+                    .associated_types
+                    .get(&key)
+                    .map(String::as_str)
+                    .unwrap_or("<unknown associated type>")
+            )?;
+            write_user_type(&binding.ty, context, f)?;
+        } else {
+            write!(f, "::assoc#{} = ", binding.key.member.0)?;
+            write_type(&binding.ty, f)?;
+        }
+    }
+    write!(f, " }}")
+}
+
 pub fn write_type(ty: &Type, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match ty {
+        Type::Object(object) => write_object(object, None, f),
+        Type::ObjectSelf { depth } => write!(f, "object-self^{depth}"),
+        Type::Witness(witness) => write!(f, "witness({:?}:{:?})", witness.owner, witness.local),
         Type::I8 => write!(f, "I8"),
         Type::I16 => write!(f, "I16"),
         Type::I32 => write!(f, "I32"),
@@ -282,6 +368,9 @@ fn write_user_type(
     f: &mut fmt::Formatter<'_>,
 ) -> fmt::Result {
     match ty {
+        Type::Object(object) => write_object(object, Some(context), f),
+        Type::ObjectSelf { .. } => write!(f, "<hidden Self>"),
+        Type::Witness(_) => write!(f, "<opened witness>"),
         Type::I8 => write!(f, "I8"),
         Type::I16 => write!(f, "I16"),
         Type::I32 => write!(f, "I32"),

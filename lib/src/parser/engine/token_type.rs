@@ -21,6 +21,8 @@ fn token_type_description(tt: &TokenType) -> String {
         TokenType::OpenParen => "'('".to_string(),
         TokenType::CloseParen => "')'".to_string(),
         TokenType::OpenBracket => "'['".to_string(),
+        TokenType::OpenBrace => "'{'".to_string(),
+        TokenType::CloseBrace => "'}'".to_string(),
         TokenType::CloseBracket => "']'".to_string(),
         TokenType::Char(_) => "character literal".to_string(),
         TokenType::String(_) => "string literal".to_string(),

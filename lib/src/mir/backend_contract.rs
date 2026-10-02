@@ -12,6 +12,7 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MirCallableKey {
+    ObjectAdapter(super::MirObjectAdapterKey),
     Function(DefId),
     Extern(DefId),
     Instance(InstanceId),
@@ -26,7 +27,7 @@ pub enum MirLinkage {
     Internal,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MirPassMode {
     Direct,
     Pointer,
@@ -108,6 +109,7 @@ fn receiver_pass_mode(receiver_ty: TypeId, type_context: &TypeContext) -> MirPas
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MirCallableKind {
+    ObjectAdapter(super::MirObjectAdapter),
     LocalBody { function_id: MirFunctionId },
     Extern { link_name: String, variadic: bool },
     ObjectProvided,
@@ -161,6 +163,10 @@ pub struct MirArtifactExport {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MirBackendContract {
+    pub owned_object_calls: BTreeMap<super::MirOwnedObjectKey, super::MirOwnedObjectPlan>,
+    pub erased: super::MirErasedContract,
+    pub object_schemas: BTreeMap<TypeId, super::MirObjectSchema>,
+    pub vtables: BTreeMap<super::MirVtableId, super::MirVtable>,
     pub callables: BTreeMap<MirCallableKey, MirCallableDecl>,
     pub function_bodies: BTreeMap<MirFunctionId, MirCallableKey>,
     pub nominal_layouts: BTreeMap<DefId, MirNominalLayout>,
@@ -350,6 +356,38 @@ pub fn runtime_requirements_for_functions<'a>(
                     | StatementKind::StorageDead(_) => {}
                 }
             }
+        }
+    }
+    requirements
+}
+
+/// Runtime requirements of both ordinary MIR and executable contract adapters.
+pub fn runtime_requirements_for_backend<'a>(
+    contract: &MirBackendContract,
+    functions: impl IntoIterator<Item = &'a MirFunction>,
+) -> BTreeSet<MirRuntimeHelper> {
+    let mut requirements = runtime_requirements_for_functions(functions);
+    if contract
+        .erased
+        .descriptors
+        .values()
+        .any(|descriptor| descriptor.drop.requires_heap_free())
+    {
+        requirements.insert(MirRuntimeHelper::HeapFree);
+    }
+    for declaration in contract.callables.values() {
+        let needs_free = match &declaration.kind {
+            MirCallableKind::ObjectAdapter(super::MirObjectAdapter::PayloadDrop(plan)) => {
+                plan.requires_heap_free()
+            }
+            MirCallableKind::ObjectAdapter(super::MirObjectAdapter::NativeCallable {
+                release_environment,
+                ..
+            }) => *release_environment,
+            _ => false,
+        };
+        if needs_free {
+            requirements.insert(MirRuntimeHelper::HeapFree);
         }
     }
     requirements
@@ -727,6 +765,7 @@ fn validate_function_callable_operands(
                 validate_operand_callable_contract(contract, function, discr, seen_resolved, errors)
             }
             Terminator::Return
+            | Terminator::Unreachable { .. }
             | Terminator::ReturnWithOrigin { .. }
             | Terminator::Goto(_)
             | Terminator::GotoWithOrigin { .. }
@@ -744,7 +783,10 @@ fn validate_rvalue_callable_operands(
     errors: &mut Vec<MirBackendContractError>,
 ) {
     match rvalue {
-        Rvalue::Use(operand) | Rvalue::Cast(operand, _) | Rvalue::UnaryOp(_, operand) => {
+        Rvalue::Object(operand, _)
+        | Rvalue::Use(operand)
+        | Rvalue::Cast(operand, _)
+        | Rvalue::UnaryOp(_, operand) => {
             validate_operand_callable_contract(contract, function, operand, seen_resolved, errors)
         }
         Rvalue::BinaryOp(_, left, right) => {

@@ -166,6 +166,12 @@ impl FormatNode for Operand {
                 write!(f, "unsafe")?;
                 display_block(context, block, true, f)
             }
+            Operand::Open(open) => {
+                write!(f, "open ")?;
+                open.source.fmt_with(context, f)?;
+                write!(f, " as {}, {}", open.witness.name, open.value.name)?;
+                display_block(context, &open.body, true, f)
+            }
         }
     }
 }

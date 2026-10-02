@@ -620,20 +620,82 @@ impl<'ctx> CodeGen<'ctx> {
                     other
                 ))),
             },
-            MirIntrinsicId::SizeOf => {
-                let elem_ty = match &arg_types[0] {
-                    Type::Pointer(inner) => inner.as_ref(),
-                    ty => ty,
+            MirIntrinsicId::SizeOf | MirIntrinsicId::AlignOf => {
+                let llvm_ty = self.llvm_type(&arg_types[0]);
+                let size_val = if intrinsic == MirIntrinsicId::AlignOf {
+                    self.context.struct_type(&[llvm_ty], false).get_alignment()
+                } else {
+                    llvm_ty
+                        .size_of()
+                        .ok_or_else(|| CodegenError::layout("SizeOf requires a sized type"))?
                 };
-                let llvm_ty = self.llvm_type(elem_ty);
-                let size_val = llvm_ty
-                    .size_of()
-                    .unwrap_or_else(|| self.context.i64_type().const_int(8, false));
                 let size_i64 = self
                     .builder
                     .build_int_cast(size_val, self.context.i64_type(), "sizeof_i64")
                     .map_err(|e| CodegenError::from(format!("SizeOf cast: {}", e)))?;
                 Ok(Some(size_i64.into()))
+            }
+            MirIntrinsicId::SizeOfValue
+            | MirIntrinsicId::AlignOfValue
+            | MirIntrinsicId::DropInPlace => {
+                if arg_types.len() != 1 || compiled_args.len() != 1 {
+                    return Err(CodegenError::backend_contract(
+                        "metadata intrinsic requires one handle",
+                    ));
+                }
+                let (Type::Reference { inner, .. } | Type::Pointer(inner)) = &arg_types[0] else {
+                    return Err(CodegenError::backend_contract(
+                        "metadata intrinsic requires a pointer or reference",
+                    ));
+                };
+                if matches!(inner.as_ref(), Type::Object(_)) {
+                    return self.compile_object_metadata_intrinsic(
+                        intrinsic,
+                        compiled_args[0],
+                        inner,
+                    );
+                }
+                if intrinsic == MirIntrinsicId::DropInPlace {
+                    return Err(CodegenError::backend_contract(
+                        "concrete DropInPlace must be lowered to MIR drop",
+                    ));
+                }
+                let element = match inner.as_ref() {
+                    Type::Slice(element) => element.as_ref(),
+                    Type::Str => &Type::U8,
+                    ty => ty,
+                };
+                let llvm_ty = self.llvm_type(element);
+                let layout = if intrinsic == MirIntrinsicId::AlignOfValue {
+                    self.context.struct_type(&[llvm_ty], false).get_alignment()
+                } else {
+                    llvm_ty
+                        .size_of()
+                        .ok_or_else(|| CodegenError::layout("unsized value layout"))?
+                };
+                let layout = self
+                    .builder
+                    .build_int_cast(layout, self.context.i64_type(), "value.layout")
+                    .map_err(|e| CodegenError::from(e.to_string()))?;
+                if intrinsic == MirIntrinsicId::SizeOfValue
+                    && matches!(inner.as_ref(), Type::Slice(_) | Type::Str)
+                {
+                    let length = self
+                        .builder
+                        .build_extract_value(
+                            compiled_args[0].into_struct_value(),
+                            1,
+                            "slice.length",
+                        )
+                        .map_err(|e| CodegenError::from(e.to_string()))?
+                        .into_int_value();
+                    return self
+                        .builder
+                        .build_int_mul(layout, length, "slice.bytes")
+                        .map(|v| Some(v.into()))
+                        .map_err(|e| CodegenError::from(e.to_string()));
+                }
+                Ok(Some(layout.into()))
             }
             MirIntrinsicId::Forget => Ok(None),
             other => Err(CodegenError::from(format!("Unknown intrinsic: {}", other))),
@@ -834,14 +896,15 @@ impl<'ctx> CodeGen<'ctx> {
                     other
                 ))),
             },
-            MirIntrinsicId::SizeOf => {
-                let elem_ty = match self.type_view().ty(arg_type_ids[0]) {
-                    Ty::Pointer(inner) => self.llvm_type_id(*inner),
-                    _ => self.llvm_type_id(arg_type_ids[0]),
+            MirIntrinsicId::SizeOf | MirIntrinsicId::AlignOf => {
+                let elem_ty = self.llvm_type_id(arg_type_ids[0]);
+                let size_val = if intrinsic == MirIntrinsicId::AlignOf {
+                    self.context.struct_type(&[elem_ty], false).get_alignment()
+                } else {
+                    elem_ty
+                        .size_of()
+                        .ok_or_else(|| CodegenError::layout("SizeOf requires a sized type"))?
                 };
-                let size_val = elem_ty
-                    .size_of()
-                    .unwrap_or_else(|| self.context.i64_type().const_int(8, false));
                 let size_i64 = self
                     .builder
                     .build_int_cast(size_val, self.context.i64_type(), "sizeof_i64")
@@ -862,6 +925,10 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn type_id_contains_projection(&self, id: TypeId) -> bool {
         match self.type_view().ty(id) {
+            Ty::ObjectSelf { .. } | Ty::Witness(_) => false,
+            Ty::Object(object) => object
+                .children()
+                .any(|child| self.type_id_contains_projection(*child)),
             Ty::Projection { .. } => true,
             Ty::Slice(inner) | Ty::Pointer(inner) | Ty::Reference { inner, .. } => {
                 self.type_id_contains_projection(*inner)

@@ -1246,6 +1246,10 @@ impl Monomorphizer {
         }
 
         match &mut expr.kind {
+            HirExprKind::Open { source, body, .. } => {
+                self.update_self_types_expr(source, self_type);
+                self.update_self_types(body, self_type);
+            }
             HirExprKind::Var(_)
             | HirExprKind::ResolvedVar(_)
             | HirExprKind::IntLiteral(_)
@@ -1267,7 +1271,10 @@ impl Monomorphizer {
                     self.update_self_types_expr(arg, self_type);
                 }
             }
-            HirExprKind::MethodCall(recv, _, args, _, _) => {
+            HirExprKind::MethodCall(recv, _, args, _, _)
+            | HirExprKind::OwnedObjectCall {
+                owner: recv, args, ..
+            } => {
                 self.update_self_types_expr(recv, self_type);
                 for arg in args {
                     self.update_self_types_expr(arg, self_type);
@@ -1333,7 +1340,8 @@ impl Monomorphizer {
             }
             HirExprKind::Ref(_, inner)
             | HirExprKind::Deref(inner)
-            | HirExprKind::Cast(inner, _) => {
+            | HirExprKind::Cast(inner, _)
+            | HirExprKind::ObjectCoercion(inner, _) => {
                 self.update_self_types_expr(inner, self_type);
             }
             HirExprKind::Assign(lhs, rhs) => {

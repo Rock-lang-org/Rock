@@ -23,8 +23,13 @@ mod hir_types {
 }
 
 mod callable;
+mod erased;
 mod external;
 mod methods;
+mod object;
+pub(crate) mod object_schema;
+#[cfg(test)]
+mod object_tests;
 mod process;
 mod registry;
 mod specialize;
@@ -266,6 +271,11 @@ pub fn monomorphize(
     let (instances, pre_mir_instance_bodies) = mono.instances.into_parts();
     Ok(MonomorphizedProgram {
         program,
+        erased: mono.erased,
+        erased_invocations: mono.erased_invocations,
+        owned_object_calls: mono.owned_object_calls,
+        object_schemas: mono.object_schemas,
+        vtables: mono.vtables,
         instances,
         pre_mir_instance_bodies,
         generated_drop_instances: mono.generated_drop_instances,
@@ -315,6 +325,11 @@ pub(crate) fn monomorphize_with_crates(
     let (instances, pre_mir_instance_bodies) = mono.instances.into_parts();
     Ok(MonomorphizedProgram {
         program,
+        erased: mono.erased,
+        erased_invocations: mono.erased_invocations,
+        owned_object_calls: mono.owned_object_calls,
+        object_schemas: mono.object_schemas,
+        vtables: mono.vtables,
         instances,
         pre_mir_instance_bodies,
         generated_drop_instances: mono.generated_drop_instances,
@@ -324,6 +339,13 @@ pub(crate) fn monomorphize_with_crates(
 }
 
 struct Monomorphizer {
+    erased: crate::mir::MirErasedContract,
+    erased_invocations: BTreeMap<crate::mir::MirErasedInvocationKey, crate::mir::MirErasedCall>,
+    owned_object_calls: BTreeMap<crate::mir::MirOwnedObjectKey, crate::mir::MirOwnedObjectPlan>,
+    producer_trait_members: BTreeMap<DefId, Vec<DefId>>,
+    object_traits: HashMap<DefId, crate::hir::HirTraitFor<crate::hir::AcceptedHir>>,
+    object_schemas: BTreeMap<TypeId, crate::mir::MirObjectSchema>,
+    vtables: BTreeMap<crate::mir::MirVtableId, crate::mir::MirVtable>,
     language_items: crate::hir::HirLanguageItems,
     /// Concrete function payloads, selected exclusively by canonical identity.
     concrete_functions: HashMap<DefId, HirFunction>,
@@ -547,9 +569,57 @@ impl Monomorphizer {
         }
     }
 
+    fn write_object_bound(&self, bound: &crate::types::TraitBound<TypeId>) -> String {
+        let mut output = String::new();
+        self.write_def_id(&mut output, bound.trait_id);
+        Self::push_text(&mut output, &bound.type_args.len().to_string());
+        for arg in &bound.type_args {
+            self.write_type_id(&mut output, *arg);
+        }
+        output
+    }
+
     fn write_type_id(&self, output: &mut String, id: TypeId) {
         Self::write_kind(output, self.type_context.kind(id));
         match self.type_context.ty(id) {
+            Ty::Witness(witness) => {
+                output.push('W');
+                self.write_def_id(output, witness.owner);
+                Self::push_text(output, &witness.local.0.to_string());
+            }
+            Ty::ObjectSelf { depth } => {
+                output.push('w');
+                Self::push_text(output, &depth.to_string());
+            }
+            Ty::Object(object) => {
+                output.push('O');
+                Self::push_text(output, &self.write_object_bound(&object.principal));
+                let mut guarantees: Vec<_> = object
+                    .guarantees
+                    .iter()
+                    .map(|bound| self.write_object_bound(bound))
+                    .collect();
+                guarantees.sort();
+                Self::push_text(output, &guarantees.len().to_string());
+                for guarantee in guarantees {
+                    Self::push_text(output, &guarantee);
+                }
+                let mut bindings: Vec<_> = object
+                    .bindings
+                    .iter()
+                    .map(|binding| {
+                        let mut key = self.write_object_bound(&binding.key.trait_ref);
+                        Self::push_text(&mut key, &binding.key.member.0.to_string());
+                        self.write_type_id(&mut key, binding.ty);
+                        key
+                    })
+                    .collect();
+                bindings.sort();
+                Self::push_text(output, &bindings.len().to_string());
+                for binding in bindings {
+                    Self::push_text(output, &binding);
+                }
+            }
             Ty::I8 => output.push_str("i8"),
             Ty::I16 => output.push_str("i16"),
             Ty::I32 => output.push_str("i32"),
@@ -1073,10 +1143,33 @@ impl Monomorphizer {
         method_ids: &HashSet<DefId>,
     ) {
         match &expr.kind {
-            HirExprKind::MethodCall(receiver, name, args, _, _target) => {
+            HirExprKind::Open { source, body, .. } => {
+                self.validate_materialized_expr(owner, source, method_ids);
+                self.validate_materialized_block(owner, body, method_ids);
+            }
+            HirExprKind::OwnedObjectCall {
+                owner: receiver,
+                args,
+                ..
+            } => {
                 self.validate_materialized_expr(owner, receiver, method_ids);
                 for arg in args {
                     self.validate_materialized_expr(owner, arg, method_ids);
+                }
+            }
+            HirExprKind::MethodCall(receiver, name, args, _, target) => {
+                self.validate_materialized_expr(owner, receiver, method_ids);
+                for arg in args {
+                    self.validate_materialized_expr(owner, arg, method_ids);
+                }
+                if matches!(
+                    target.target,
+                    crate::hir::HirSelectedMethodTarget::TraitMethod {
+                        dispatch: crate::hir::HirTraitDispatchKind::Object,
+                        ..
+                    }
+                ) {
+                    return;
                 }
                 self.diagnostics.push(
                     crate::diagnostic::Diagnostic::for_internal(
@@ -1131,7 +1224,8 @@ impl Monomorphizer {
             | HirExprKind::UnaryOp(_, base)
             | HirExprKind::Ref(_, base)
             | HirExprKind::Deref(base)
-            | HirExprKind::Cast(base, _) => {
+            | HirExprKind::Cast(base, _)
+            | HirExprKind::ObjectCoercion(base, _) => {
                 self.validate_materialized_expr(owner, base, method_ids)
             }
             HirExprKind::ArrayLiteral(values) | HirExprKind::TupleLiteral(values) => {
@@ -1213,6 +1307,13 @@ impl Monomorphizer {
 
     fn new() -> Self {
         Self {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            producer_trait_members: BTreeMap::new(),
+            object_traits: HashMap::new(),
+            object_schemas: BTreeMap::new(),
+            vtables: BTreeMap::new(),
             language_items: crate::hir::HirLanguageItems::default(),
             concrete_functions: HashMap::new(),
             generic_functions: HashMap::new(),
@@ -1300,6 +1401,29 @@ impl Monomorphizer {
     }
 
     fn monomorphize_drop_fields_for_type(&mut self, ty: &Type) {
+        match ty {
+            Type::Tuple(fields) => {
+                for field in fields {
+                    self.monomorphize_drop_for_type(field, None);
+                }
+                return;
+            }
+            Type::Array(element, len) => {
+                if *len != 0 {
+                    self.monomorphize_drop_for_type(element, None);
+                }
+                return;
+            }
+            Type::Function { captures, .. } => {
+                for capture in captures {
+                    if capture.kind == crate::types::CaptureKind::Move {
+                        self.monomorphize_drop_for_type(&capture.ty, None);
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
         let (Type::Struct { id, args } | Type::Enum { id, args }) = ty else {
             return;
         };

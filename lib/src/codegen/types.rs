@@ -180,7 +180,7 @@ impl<'ctx> CodeGen<'ctx> {
         );
 
         match ret_type {
-            Type::Unit => self.context.void_type().fn_type(&params, false),
+            Type::Unit | Type::Never => self.context.void_type().fn_type(&params, false),
             _ => self.llvm_type(ret_type).fn_type(&params, false),
         }
     }
@@ -244,7 +244,7 @@ impl<'ctx> CodeGen<'ctx> {
             Type::Char => self.context.i32_type().into(),
             Type::Unit => self.context.i64_type().into(),
             Type::Str => self.slice_layout_type().into(),
-            Type::Never => self.context.i64_type().into(),
+            Type::Never => self.context.struct_type(&[], false).into(),
             Type::Slice(_) => self.slice_layout_type().into(),
             Type::Array(inner, len) => self.llvm_type(inner).array_type(*len as u32).into(),
             Type::Tuple(elems) => {
@@ -285,6 +285,11 @@ impl<'ctx> CodeGen<'ctx> {
                 self.context.struct_type(&layout_types, false).into()
             }
             Type::Function { .. } => self.callable_type().into(),
+            Type::Reference { inner, .. } | Type::Pointer(inner)
+                if matches!(inner.as_ref(), Type::Object(_)) =>
+            {
+                self.object_handle_type().into()
+            }
             Type::Reference { .. } | Type::Pointer(_) if self.is_fat_pointer_type(ty) => {
                 self.slice_layout_type().into()
             }
@@ -292,6 +297,9 @@ impl<'ctx> CodeGen<'ctx> {
                 self.context.ptr_type(AddressSpace::default()).into()
             }
             Type::TypeVar(_)
+            | Type::Object(_)
+            | Type::ObjectSelf { .. }
+            | Type::Witness(_)
             | Type::Generic(_)
             | Type::Projection { .. }
             | Type::Constructor { .. }
@@ -415,7 +423,10 @@ impl<'ctx> CodeGen<'ctx> {
             Type::F64 => self.context.f64_type().const_float(0.0).into(),
             Type::Bool => self.context.bool_type().const_int(0, false).into(),
             Type::Char => self.context.i32_type().const_int(0, false).into(),
-            Type::Unit | Type::Never => self.context.i64_type().const_int(0, false).into(),
+            Type::Unit => self.context.i64_type().const_int(0, false).into(),
+            // Bottom values are only carriers in unreachable code; never calls
+            // and returns terminate control flow rather than returning bytes.
+            Type::Never => self.context.struct_type(&[], false).get_undef().into(),
             // Str is a fat pointer - use zero struct
             Type::Str => {
                 let llvm_ty = self.llvm_type(&Type::Str);
@@ -430,6 +441,11 @@ impl<'ctx> CodeGen<'ctx> {
                 llvm_ty.const_zero().into()
             }
             Type::Function { .. } => self.callable_type().const_zero().into(),
+            Type::Reference { inner, .. } | Type::Pointer(inner)
+                if matches!(inner.as_ref(), Type::Object(_)) =>
+            {
+                self.object_handle_type().const_zero().into()
+            }
             Type::Reference { .. } | Type::Pointer(_) if self.is_fat_pointer_type(ty) => {
                 self.llvm_type(ty).const_zero().into()
             }
@@ -439,6 +455,9 @@ impl<'ctx> CodeGen<'ctx> {
                 .const_null()
                 .into(),
             Type::TypeVar(_)
+            | Type::Object(_)
+            | Type::ObjectSelf { .. }
+            | Type::Witness(_)
             | Type::Generic(_)
             | Type::Projection { .. }
             | Type::Constructor { .. }

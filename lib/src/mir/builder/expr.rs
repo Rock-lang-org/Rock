@@ -84,6 +84,155 @@ impl<'a> MirBuilder<'a> {
         let span = Some(expr.span.clone());
 
         match &expr.kind {
+            HirExprKind::Open { .. } => {
+                panic!("scoped witness body reached concrete MIR builder")
+            }
+            HirExprKind::OwnedObjectCall { owner, args, call } => {
+                let owner_ty = self.type_id_for(&owner.ty);
+                let object = self.type_id_for(&call.object);
+                let trait_args = call
+                    .method
+                    .trait_args()
+                    .iter()
+                    .map(|ty| self.type_id_for(ty))
+                    .collect::<Vec<_>>();
+                let concrete_slot = self.object_schemas[&object].slots.iter().position(|slot| {
+                    Some(slot.trait_id) == call.method.trait_id()
+                        && Some(slot.member_id) == call.method.method_id()
+                        && slot.trait_args == trait_args
+                });
+                let slot = if let Some(slot) = concrete_slot {
+                    crate::mir::MirOwnedObjectSlot::Concrete(slot as u32)
+                } else {
+                    let slot = self.object_schemas[&object]
+                        .erased_slots
+                        .iter()
+                        .position(|slot| {
+                            Some(slot.trait_id) == call.method.trait_id()
+                                && Some(slot.member_id) == call.method.method_id()
+                                && slot.trait_args == trait_args
+                        })
+                        .expect("mono validated owned erased slot");
+                    let type_args = self.object_schemas[&object].erased_slots[slot]
+                        .signature
+                        .parameters
+                        .iter()
+                        .skip(1)
+                        .map(|parameter| {
+                            let binding = call
+                                .method
+                                .method_substitution
+                                .iter()
+                                .chain(&call.method.owner_substitution)
+                                .find(|binding| binding.param == parameter.source)
+                                .expect("accepted owned erased substitution");
+                            self.type_id_for(&binding.ty)
+                        })
+                        .collect();
+                    crate::mir::MirOwnedObjectSlot::Erased {
+                        slot: slot as u32,
+                        type_args,
+                    }
+                };
+                let key = crate::mir::MirOwnedObjectKey {
+                    owner: owner_ty,
+                    object,
+                    slot,
+                };
+                assert!(
+                    self.owned_object_calls.contains_key(&key),
+                    "mono owned protocol evidence"
+                );
+                let mut operands = Vec::new();
+                for (index, argument) in std::iter::once(owner.as_ref())
+                    .chain(args.iter())
+                    .enumerate()
+                {
+                    let local = self.new_local_from_expr(argument.ty.clone(), argument);
+                    self.emit_storage_live(local, Some(argument.span.clone()));
+                    let place = Place {
+                        local,
+                        projection: Vec::new(),
+                    };
+                    self.lower_expr(argument, place.clone());
+                    operands.push(if index == 0 {
+                        Operand::Move(place)
+                    } else {
+                        self.operand_for_place(&argument.ty, place, false)
+                    });
+                }
+                let Some(block) = self.current_block else {
+                    return;
+                };
+                let next = self.new_block();
+                self.set_terminator(
+                    block,
+                    Terminator::Call {
+                        func: Operand::Constant(Constant::OwnedObjectCall(key)),
+                        args: operands,
+                        destination: dest.clone(),
+                        target: next,
+                        span: span.clone(),
+                    },
+                );
+                if matches!(expr.ty, Type::Never) {
+                    self.blocks[next.0].terminator = Some(Terminator::Unreachable {
+                        origin: self.source_origin(span),
+                    });
+                    self.current_block = None;
+                } else {
+                    self.current_block = Some(next);
+                    self.mark_place_initialized(&dest, span);
+                }
+            }
+            HirExprKind::ObjectCoercion(inner, coercion) => {
+                let local = self.new_local_from_expr(inner.ty.clone(), inner);
+                self.emit_storage_live(local, Some(inner.span.clone()));
+                let place = Place {
+                    local,
+                    projection: Vec::new(),
+                };
+                self.lower_expr(inner, place.clone());
+                let operand = self.operand_for_place(&inner.ty, place, false);
+                let conversion = match coercion
+                    .evidence
+                    .as_ref()
+                    .expect("accepted coercion evidence")
+                {
+                    crate::hir::HirObjectEvidence::Concrete { source, .. } => {
+                        let (Type::Reference { inner: object, .. } | Type::Pointer(object)) =
+                            &coercion.target
+                        else {
+                            unreachable!("validated object handle")
+                        };
+                        let object = self.type_id_for(object);
+                        let concrete = self.type_id_for(source);
+                        let id = self
+                            .vtables
+                            .iter()
+                            .find(|(_, table)| table.object == object && table.concrete == concrete)
+                            .map(|(id, _)| *id)
+                            .expect("mono materialized object vtable");
+                        super::super::MirObjectConversion::Concrete(id)
+                    }
+                    crate::hir::HirObjectEvidence::Upcast { source, target } => {
+                        let source = self.type_id_for(source);
+                        let target = self.type_id_for(target);
+                        if source == target {
+                            self.emit_assign(dest, Rvalue::Use(operand), span);
+                            return;
+                        }
+                        let view = self.object_schemas[&source]
+                            .views
+                            .iter()
+                            .position(|id| *id == target)
+                            .expect("validated producer view link")
+                            as u32;
+                        super::super::MirObjectConversion::Upcast { source, view }
+                    }
+                };
+                self.emit_assign(dest, Rvalue::Object(operand, conversion), span);
+            }
             HirExprKind::IntLiteral(val) => {
                 self.emit_assign(
                     dest,
@@ -655,6 +804,9 @@ impl<'a> MirBuilder<'a> {
                 };
                 self.lower_expr(rhs, rhs_place.clone());
 
+                if self.current_block.is_none() {
+                    return;
+                }
                 let lhs_place_opt = self.lower_place(lhs);
 
                 if let Some(lhs_place) = lhs_place_opt {
@@ -802,6 +954,9 @@ impl<'a> MirBuilder<'a> {
                     arg_operands.push(self.operand_for_place(&arg_ty, arg_place, false));
                 }
 
+                if self.current_block.is_none() {
+                    return;
+                }
                 let merge_block = self.new_block();
 
                 if let Some(current) = self.current_block {
@@ -817,8 +972,21 @@ impl<'a> MirBuilder<'a> {
                     );
                 }
 
-                self.current_block = Some(merge_block);
-                self.mark_place_initialized(&dest, span.clone());
+                let mut callable_type = &func.ty;
+                while let Type::Reference { inner, .. } = callable_type {
+                    callable_type = inner;
+                }
+                if matches!(expr.ty, Type::Never)
+                    || matches!(callable_type, Type::Function { ret, .. } if matches!(ret.as_ref(), Type::Never))
+                {
+                    self.blocks[merge_block.0].terminator = Some(Terminator::Unreachable {
+                        origin: self.source_origin(span.clone()),
+                    });
+                    self.current_block = None;
+                } else {
+                    self.current_block = Some(merge_block);
+                    self.mark_place_initialized(&dest, span.clone());
+                }
             }
             HirExprKind::Intrinsic { name, args } => {
                 let intrinsic = MirIntrinsicId::from_name(name)
@@ -826,32 +994,34 @@ impl<'a> MirBuilder<'a> {
                 if intrinsic == MirIntrinsicId::DropInPlace && args.len() == 1 {
                     let arg = &args[0];
                     if let Type::Pointer(pointee_ty) = &arg.ty {
-                        let mut pointee_place = if let Some(place) = self.lower_place(arg) {
-                            place
-                        } else {
-                            let arg_temp = self.new_local_from_expr(arg.ty.clone(), arg);
-                            self.emit_storage_live(arg_temp, Some(arg.span.clone()));
-                            let arg_place = Place {
-                                local: arg_temp,
-                                projection: vec![],
+                        if !matches!(pointee_ty.as_ref(), Type::Object(_)) {
+                            let mut pointee_place = if let Some(place) = self.lower_place(arg) {
+                                place
+                            } else {
+                                let arg_temp = self.new_local_from_expr(arg.ty.clone(), arg);
+                                self.emit_storage_live(arg_temp, Some(arg.span.clone()));
+                                let arg_place = Place {
+                                    local: arg_temp,
+                                    projection: vec![],
+                                };
+                                self.lower_expr_with_context(arg, arg_place.clone(), true);
+                                arg_place
                             };
-                            self.lower_expr_with_context(arg, arg_place.clone(), true);
-                            arg_place
-                        };
-                        pointee_place.projection.push(Projection::Deref);
-                        self.emit_drop_for_place(pointee_ty, pointee_place, None);
-                        self.emit_assign(
-                            dest,
-                            Rvalue::Use(Operand::Constant(Constant::Unit)),
-                            span,
-                        );
-                        return;
+                            pointee_place.projection.push(Projection::Deref);
+                            self.emit_drop_for_place(pointee_ty, pointee_place, None);
+                            self.emit_assign(
+                                dest,
+                                Rvalue::Use(Operand::Constant(Constant::Unit)),
+                                span,
+                            );
+                            return;
+                        }
                     }
                 }
 
                 let mut arg_operands = Vec::new();
                 for (index, arg) in args.iter().enumerate() {
-                    if intrinsic == MirIntrinsicId::SizeOf {
+                    if matches!(intrinsic, MirIntrinsicId::SizeOf | MirIntrinsicId::AlignOf) {
                         arg_operands.push(Operand::Constant(Constant::TypeId(
                             self.type_id_for(&arg.ty),
                         )));
@@ -915,7 +1085,12 @@ impl<'a> MirBuilder<'a> {
                 };
 
                 if let HirExprKind::Deref(inner) = &base.kind {
-                    if !*mutable && matches!(inner.ty, Type::Reference { .. }) {
+                    // Weakening an exclusive reference creates a shared loan;
+                    // forwarding the original operand would move/repaint it.
+                    if !*mutable
+                        && matches!(inner.ty, Type::Reference { mutable: false, .. })
+                        && inner.ty == expr.ty
+                    {
                         self.lower_expr(inner, dest);
                         return;
                     }
@@ -970,6 +1145,123 @@ impl<'a> MirBuilder<'a> {
                     deref_place.projection.push(Projection::Deref);
                     let operand = self.operand_for_place(&expr.ty, deref_place, borrow_context);
                     self.emit_assign(dest, Rvalue::Use(operand), span);
+                }
+            }
+            HirExprKind::MethodCall(receiver, _, args, _, target)
+                if matches!(
+                    target.target,
+                    crate::hir::HirSelectedMethodTarget::TraitMethod {
+                        dispatch: crate::hir::HirTraitDispatchKind::Object,
+                        ..
+                    }
+                ) =>
+            {
+                let Type::Reference { inner: object, .. } = &receiver.ty else {
+                    panic!("virtual receiver must retain its borrowed handle")
+                };
+                let object = self.type_id_for(object);
+                let trait_args = target
+                    .trait_args()
+                    .iter()
+                    .map(|ty| self.type_id_for(ty))
+                    .collect::<Vec<_>>();
+                let slot = self.object_schemas[&object].slots.iter().position(|slot| {
+                    Some(slot.trait_id) == target.trait_id()
+                        && Some(slot.member_id) == target.method_id()
+                        && slot.trait_args == trait_args
+                });
+                let (call_target, never) = if let Some(slot) = slot {
+                    let never = matches!(
+                        self.type_context.borrow().type_for(
+                            self.object_schemas[&object].slots[slot]
+                                .signature
+                                .ret
+                                .semantic_ty
+                        ),
+                        Type::Never
+                    );
+                    (
+                        Constant::VirtualTarget(crate::mir::MirVirtualTarget {
+                            object,
+                            slot: slot as u32,
+                        }),
+                        never,
+                    )
+                } else {
+                    let slot = self.object_schemas[&object]
+                        .erased_slots
+                        .iter()
+                        .position(|slot| {
+                            Some(slot.trait_id) == target.trait_id()
+                                && Some(slot.member_id) == target.method_id()
+                                && slot.trait_args == trait_args
+                        })
+                        .expect("mono validated erased slot");
+                    let type_args = self.object_schemas[&object].erased_slots[slot]
+                        .signature
+                        .parameters
+                        .iter()
+                        .skip(1)
+                        .map(|parameter| {
+                            let binding = target
+                                .method_substitution
+                                .iter()
+                                .chain(&target.owner_substitution)
+                                .find(|binding| binding.param == parameter.source)
+                                .expect("accepted method binding");
+                            self.type_id_for(&binding.ty)
+                        })
+                        .collect();
+                    let key = crate::mir::MirErasedInvocationKey {
+                        object,
+                        slot: slot as u32,
+                        type_args,
+                    };
+                    (
+                        Constant::ErasedCall(
+                            self.erased_invocations
+                                .get(&key)
+                                .expect("mono produced erased call evidence")
+                                .clone(),
+                        ),
+                        matches!(expr.ty, Type::Never),
+                    )
+                };
+                let mut operands = Vec::new();
+                for argument in std::iter::once(receiver.as_ref()).chain(args.iter()) {
+                    let local = self.new_local_from_expr(argument.ty.clone(), argument);
+                    self.emit_storage_live(local, Some(argument.span.clone()));
+                    let place = Place {
+                        local,
+                        projection: Vec::new(),
+                    };
+                    self.lower_expr(argument, place.clone());
+                    operands.push(self.operand_for_place(&argument.ty, place, false));
+                }
+                if self.current_block.is_none() {
+                    return;
+                }
+                let next = self.new_block();
+                if let Some(block) = self.current_block {
+                    self.set_terminator(
+                        block,
+                        Terminator::Call {
+                            func: Operand::Constant(call_target),
+                            args: operands,
+                            destination: dest.clone(),
+                            target: next,
+                            span: span.clone(),
+                        },
+                    );
+                }
+                if never {
+                    self.blocks[next.0].terminator = Some(Terminator::Unreachable {
+                        origin: self.source_origin(span),
+                    });
+                    self.current_block = None;
+                } else {
+                    self.current_block = Some(next);
+                    self.mark_place_initialized(&dest, span);
                 }
             }
             HirExprKind::MethodCall(_, method_name, _, _, target) => {

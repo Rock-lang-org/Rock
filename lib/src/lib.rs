@@ -326,6 +326,11 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
     }
 
     // Phase 6: Code generation
+    if let (Some(products), Some(remap)) = (&mut products, product_id_remap.as_ref()) {
+        products
+            .attach_object_schemas(&mir_program, remap)
+            .map_err(|error| Diagnostics(vec![diagnostic::Diagnostic::for_internal(error)]))?;
+    }
     let context = Context::create();
     let module_name = module_name_from_entry(&config.entry_file);
     let symbol_namespace = config
@@ -1180,6 +1185,11 @@ mod tests {
         pre_mir_instance_bodies.insert(InstanceId(0), main.clone());
         pre_mir_instance_bodies.insert(InstanceId(1), unused.clone());
         let mut monomorphized = MonomorphizedProgram {
+            erased: Default::default(),
+            erased_invocations: Default::default(),
+            owned_object_calls: Default::default(),
+            object_schemas: Default::default(),
+            vtables: Default::default(),
             program: crate::hir::HirProgramFor::<crate::hir::AcceptedHir>::from_accepted_id_parts_with_names_and_canonical_names(
                 HashMap::from([
                     (main_id, main.clone()),

@@ -35,6 +35,17 @@ pub enum UnifyError {
         left: Type,
         right: Type,
     },
+    ObjectMatchPending {
+        left: Type,
+        right: Type,
+    },
+    ObjectMatchLimit {
+        left: Type,
+        right: Type,
+    },
+    ObjectBinderEscape {
+        ty: Type,
+    },
     BinderEscape {
         ty: Type,
     },
@@ -102,6 +113,9 @@ impl UnifyError {
                 display(left),
                 display(right)
             ),
+            Self::ObjectMatchPending { left, right } => format!("ambiguous object trait arguments: {} vs {}", display(left), display(right)),
+            Self::ObjectMatchLimit { .. } => "object signature matching resource limit exceeded".to_string(),
+            Self::ObjectBinderEscape { ty } => format!("hidden Self escapes its object signature through {}", display(ty)),
             Self::BinderEscape { ty } => {
                 format!("type lambda binder escapes while inferring {}", display(ty))
             }
@@ -153,6 +167,10 @@ impl UnifyError {
 
 fn display_normalize_error(error: &NormalizeError, display: &impl Fn(&Type) -> String) -> String {
     match error {
+        NormalizeError::Substitution(error) => format!("type substitution failed: {error}"),
+        NormalizeError::ConflictingObjectBinding(_) => {
+            "conflicting associated-type bindings in trait object".to_string()
+        }
         NormalizeError::AliasCycle(_) => "type alias cycle".to_string(),
         NormalizeError::DepthLimit { limit } => {
             format!("type normalization depth limit exceeded ({limit})")
@@ -198,6 +216,8 @@ pub struct InferenceEngine {
     /// Origin span for each fresh type variable (for error messages)
     pub var_spans: HashMap<TypeVarId, Span>,
     var_kinds: HashMap<TypeVarId, Kind>,
+    witness_scopes: HashMap<TypeVarId, Vec<crate::types::WitnessId>>,
+    active_witnesses: Vec<crate::types::WitnessId>,
     normalization_env: TypeNormalizationEnv,
     type_display_context: crate::type_services::display::TypeDisplayContext,
 }
@@ -625,6 +645,26 @@ mod tests {
     }
 
     #[test]
+    fn committing_probes_preserves_unobserved_worklist_notifications() {
+        let mut engine = InferenceEngine::new();
+        let first = engine.fresh_type_var();
+        let second = engine.fresh_type_var();
+        engine.unify(&first, &Type::I64).unwrap();
+        let mut probe = engine.clone_for_probe();
+        probe.unify(&second, &Type::Bool).unwrap();
+        engine.commit_probe(probe);
+        // Callable propagation can commit an unchanged probe after completing a
+        // nested coercion, before the authority worklist drains its events.
+        engine.commit_probe(engine.clone_for_probe());
+        assert_eq!(
+            engine.take_changed_type_vars(),
+            vec![TypeVarId(0), TypeVarId(1)]
+        );
+        assert_eq!(engine.resolve(&first), Type::I64);
+        assert_eq!(engine.resolve(&second), Type::Bool);
+    }
+
+    #[test]
     fn fresh_type_var_returns_typed_type_var_id() {
         let mut engine = InferenceEngine::new();
 
@@ -993,6 +1033,8 @@ impl InferenceEngine {
             trait_bounds: HashMap::new(),
             var_spans: HashMap::new(),
             var_kinds: HashMap::new(),
+            witness_scopes: HashMap::new(),
+            active_witnesses: Vec::new(),
             normalization_env: TypeNormalizationEnv::new(),
             type_display_context: Default::default(),
         }
@@ -1015,6 +1057,8 @@ impl InferenceEngine {
             trait_bounds: HashMap::new(),
             var_spans: HashMap::new(),
             var_kinds,
+            witness_scopes: HashMap::new(),
+            active_witnesses: Vec::new(),
             normalization_env,
             type_display_context: Default::default(),
         }
@@ -1030,6 +1074,8 @@ impl InferenceEngine {
             trait_bounds: self.trait_bounds.clone(),
             var_spans: self.var_spans.clone(),
             var_kinds: self.var_kinds.clone(),
+            witness_scopes: self.witness_scopes.clone(),
+            active_witnesses: self.active_witnesses.clone(),
             normalization_env: self.normalization_env.clone(),
             type_display_context: self.type_display_context.clone(),
         }
@@ -1054,7 +1100,12 @@ impl InferenceEngine {
     }
 
     pub(crate) fn commit_probe(&mut self, mut probe: Self) {
-        let changed = probe.take_changed_type_vars();
+        // A probe owns only its new events. Committing it must not discard
+        // earlier unifications that the enclosing worklist has not observed.
+        let mut changed = self.take_changed_type_vars();
+        changed.extend(probe.take_changed_type_vars());
+        changed.sort();
+        changed.dedup();
         let generation_delta = probe
             .substitution_generation
             .wrapping_sub(self.substitution_generation);
@@ -1181,8 +1232,18 @@ impl InferenceEngine {
         self.fresh_type_var_of_kind(Kind::Type)
     }
 
+    pub(crate) fn enter_witness_scope(&mut self, witness: crate::types::WitnessId) {
+        self.active_witnesses.push(witness);
+    }
+
+    pub(crate) fn exit_witness_scope(&mut self, witness: crate::types::WitnessId) {
+        debug_assert_eq!(self.active_witnesses.pop(), Some(witness));
+    }
+
     pub fn fresh_type_var_of_kind(&mut self, kind: Kind) -> Type {
         let id = self.next_var.fresh();
+        self.witness_scopes
+            .insert(id, self.active_witnesses.clone());
         self.var_kinds.insert(id, kind.clone());
         self.normalization_env.register_inference_kind(id, kind);
         Type::TypeVar(id)
@@ -1195,6 +1256,8 @@ impl InferenceEngine {
 
     pub fn fresh_type_var_at_kind(&mut self, span: Span, kind: Kind) -> Type {
         let id = self.next_var.fresh();
+        self.witness_scopes
+            .insert(id, self.active_witnesses.clone());
         self.var_spans.insert(id, span);
         self.var_kinds.insert(id, kind.clone());
         self.normalization_env.register_inference_kind(id, kind);
@@ -1287,6 +1350,9 @@ impl InferenceEngine {
         match (&a, &b) {
             (Type::TypeVar(id), _) => self.bind_type_var(*id, b),
             (_, Type::TypeVar(id)) => self.bind_type_var(*id, a),
+            (Type::Object(left), Type::Object(right)) => {
+                super::object_unify::unify_objects(self, left, right)
+            }
             (Type::Never, _) | (_, Type::Never) => Ok(()),
             (Type::Error, _) | (_, Type::Error) => Ok(()),
             (Type::Tuple(elements), Type::Unit) | (Type::Unit, Type::Tuple(elements))
@@ -1533,6 +1599,18 @@ impl InferenceEngine {
     }
 
     fn bind_type_var(&mut self, id: TypeVarId, ty: Type) -> Result<(), UnifyError> {
+        let allowed = self.witness_scopes.get(&id).cloned().unwrap_or_default();
+        if crate::type_services::visit::type_any(
+            &ty,
+            |nested| matches!(nested, Type::Witness(witness) if !allowed.contains(witness)),
+        ) {
+            return Err(UnifyError::Message(
+                "opened witness escapes its inference scope; repackage the value".into(),
+            ));
+        }
+        if crate::type_services::substitution::has_free_object_self(&ty) {
+            return Err(UnifyError::ObjectBinderEscape { ty });
+        }
         if self.substitutions.get(&id) == Some(&ty) {
             return Ok(());
         }
@@ -1556,6 +1634,20 @@ impl InferenceEngine {
         }
         if self.occurs_in(id, &ty) {
             return Err(UnifyError::InfiniteType { variable: id, ty });
+        }
+        // Restrict nested unknowns too: an outer variable bound to (inner,)
+        // must not acquire a witness later through the inner variable.
+        let mut nested_vars = Vec::new();
+        crate::type_services::visit::visit_type(&ty, &mut |nested: &Type| {
+            if let Type::TypeVar(variable) = nested {
+                nested_vars.push(*variable);
+            }
+        });
+        for variable in nested_vars {
+            self.witness_scopes
+                .entry(variable)
+                .or_default()
+                .retain(|witness| allowed.contains(witness));
         }
         if let (Type::TypeVar(target_id), Some(span)) = (&ty, self.var_spans.get(&id).cloned()) {
             self.var_spans.entry(*target_id).or_insert(span);
@@ -1797,6 +1889,9 @@ impl InferenceEngine {
 
     fn has_escaping_bound_var(ty: &Type, binder_depth: u32) -> bool {
         match ty {
+            Type::Object(object) => object
+                .children()
+                .any(|child| Self::has_escaping_bound_var(child, binder_depth)),
             Type::BoundVar { depth, .. } => *depth >= binder_depth,
             Type::Slice(inner) | Type::Pointer(inner) => {
                 Self::has_escaping_bound_var(inner, binder_depth)
@@ -2046,6 +2141,7 @@ impl InferenceEngine {
     pub fn occurs_in(&self, var: TypeVarId, ty: &Type) -> bool {
         let ty = self.resolve(ty);
         match &ty {
+            Type::Object(object) => object.children().any(|child| self.occurs_in(var, child)),
             Type::TypeVar(id) => *id == var,
             Type::Slice(inner) | Type::Pointer(inner) => self.occurs_in(var, inner),
             Type::Array(inner, _) => self.occurs_in(var, inner),
@@ -2117,5 +2213,55 @@ impl InferenceEngine {
 impl Default for InferenceEngine {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod witness_scope_tests {
+    use super::InferenceEngine;
+    use crate::ids::{CrateId, DefId, HirLocalId, LocalDefId};
+    use crate::types::{Type, WitnessId};
+
+    fn witness(local: u32) -> WitnessId {
+        WitnessId {
+            owner: DefId::new(CrateId(0), LocalDefId(0)),
+            local: HirLocalId(local),
+        }
+    }
+
+    #[test]
+    fn opened_witness_inference_is_local_and_rigid() {
+        let mut engine = InferenceEngine::new();
+        let outer = engine.fresh_type_var();
+        let witness = witness(0);
+        engine.enter_witness_scope(witness);
+        let inner = engine.fresh_type_var();
+        assert!(engine.unify(&outer, &Type::Witness(witness)).is_err());
+        engine.unify(&inner, &Type::Witness(witness)).unwrap();
+        assert_eq!(engine.resolve(&inner), Type::Witness(witness));
+        assert!(engine.unify(&Type::Witness(witness), &Type::I64).is_err());
+        engine.exit_witness_scope(witness);
+    }
+
+    #[test]
+    fn witness_cannot_escape_later_through_a_nested_inference_alias() {
+        let mut engine = InferenceEngine::new();
+        let outer = engine.fresh_type_var();
+        let witness = witness(0);
+        engine.enter_witness_scope(witness);
+        let inner = engine.fresh_type_var();
+        engine
+            .unify(&outer, &Type::Tuple(vec![inner.clone()]))
+            .unwrap();
+        assert!(engine.unify(&inner, &Type::Witness(witness)).is_err());
+        engine.exit_witness_scope(witness);
+    }
+
+    #[test]
+    fn different_openings_have_independent_rigid_type_identity() {
+        let mut engine = InferenceEngine::new();
+        assert!(engine
+            .unify(&Type::Witness(witness(0)), &Type::Witness(witness(1)))
+            .is_err());
     }
 }

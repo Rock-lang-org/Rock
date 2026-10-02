@@ -7,23 +7,31 @@ use crate::lower::Lowerer;
 
 impl Lowerer {
     pub(crate) fn lower_if(&mut self, if_expr: &ast::If) -> HirExpr {
+        self.lower_if_expected(if_expr, None)
+    }
+
+    pub(crate) fn lower_if_expected(
+        &mut self,
+        if_expr: &ast::If,
+        expected: Option<&Type>,
+    ) -> HirExpr {
         let condition = self.lower_expression(&if_expr.condition.expression);
         let span = condition.span.clone();
         let _ = self.engine.unify(&condition.ty, &Type::Bool);
 
         self.push_scope();
-        let then_branch = self.lower_block(&if_expr.then);
+        let then_branch = self.lower_block_expected(&if_expr.then, expected);
         self.pop_scope();
 
         let else_branch = if_expr.else_.as_ref().map(|else_| match else_ {
             ast::Else::Block(block) => {
                 self.push_scope();
-                let b = self.lower_block(block);
+                let b = self.lower_block_expected(block, expected);
                 self.pop_scope();
                 b
             }
             ast::Else::If(nested_if) => {
-                let nested = self.lower_if(nested_if);
+                let nested = self.lower_if_expected(nested_if, expected);
                 HirBlock {
                     ty: nested.ty.clone(),
                     stmts: vec![HirStmt::Expr(nested)],
@@ -49,6 +57,14 @@ impl Lowerer {
     }
 
     pub(crate) fn lower_match(&mut self, match_expr: &ast::Match) -> HirExpr {
+        self.lower_match_expected(match_expr, None)
+    }
+
+    pub(crate) fn lower_match_expected(
+        &mut self,
+        match_expr: &ast::Match,
+        expected: Option<&Type>,
+    ) -> HirExpr {
         let mut scrutinee = self.lower_expression(&match_expr.expr);
         let span = scrutinee.span.clone();
         scrutinee.ty = match self.engine.normalize_resolved_type(&scrutinee.ty) {
@@ -75,7 +91,7 @@ impl Lowerer {
                 );
                 let guard = arm.condition.as_ref().map(|c| self.lower_expression(c));
 
-                let body = self.lower_block(&arm.body);
+                let body = self.lower_block_expected(&arm.body, expected);
                 result_ty = Some(match result_ty.take() {
                     Some(current) => self.merge_control_flow_types(&current, &body.ty, &span),
                     None => body.ty.clone(),

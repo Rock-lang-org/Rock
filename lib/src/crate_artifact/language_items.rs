@@ -24,6 +24,9 @@ pub(super) fn language_items_from_products(
 
     let language_items = &products.interface.language_items;
     Ok(HirLanguageItems {
+        object_owner: language_items.object_owner.as_ref().map(|items| Ok::<_, String>(crate::language_items::ObjectOwnerLanguageItems { trait_id: remap.def_id(items.trait_id)?, into_parts_id: remap.def_id(items.into_parts_id)?, from_parts_id: remap.def_id(items.from_parts_id)? })).transpose()?,
+        object_owner_allocate: language_items.object_owner_allocate.as_ref().map(|items| Ok::<_, String>(crate::language_items::OwnerOperationLanguageItems { trait_id: remap.def_id(items.trait_id)?, method_id: remap.def_id(items.method_id)? })).transpose()?,
+        object_owner_unique: language_items.object_owner_unique.as_ref().map(|items| Ok::<_, String>(crate::language_items::OwnerOperationLanguageItems { trait_id: remap.def_id(items.trait_id)?, method_id: remap.def_id(items.method_id)? })).transpose()?,
         fold: language_items
             .fold
             .as_ref()
@@ -164,6 +167,9 @@ pub(super) fn language_items_from_products(
 pub(super) fn validate_product_language_items(products: &CompilerProducts) -> Result<(), String> {
     let language_items = &products.interface.language_items;
     if language_items.sized.is_none()
+        && language_items.object_owner.is_none()
+        && language_items.object_owner_allocate.is_none()
+        && language_items.object_owner_unique.is_none()
         && language_items.drop.is_none()
         && language_items.fold.is_none()
         && language_items.index.is_none()
@@ -189,6 +195,15 @@ pub(super) fn validate_product_language_items(products: &CompilerProducts) -> Re
     validate_product_index_mut_impls(products, language_items)?;
 
     let program = product_language_item_program(products)?;
+    let owner_items = HirLanguageItems {
+        object_owner: language_items.object_owner.as_ref().map(|items| crate::language_items::ObjectOwnerLanguageItems { trait_id: product_def_id(items.trait_id), into_parts_id: product_def_id(items.into_parts_id), from_parts_id: product_def_id(items.from_parts_id) }),
+        object_owner_allocate: language_items.object_owner_allocate.as_ref().map(|items| crate::language_items::OwnerOperationLanguageItems { trait_id: product_def_id(items.trait_id), method_id: product_def_id(items.method_id) }),
+        object_owner_unique: language_items.object_owner_unique.as_ref().map(|items| crate::language_items::OwnerOperationLanguageItems { trait_id: product_def_id(items.trait_id), method_id: product_def_id(items.method_id) }),
+        ..HirLanguageItems::default()
+    };
+    if let Some(id) = language_items.object_owner.as_ref().map(|items| items.trait_id).or_else(|| language_items.object_owner_allocate.as_ref().map(|items| items.trait_id)).or_else(|| language_items.object_owner_unique.as_ref().map(|items| items.trait_id)) {
+        validate_bundle(&program, Some(("object_owner", id, owner_items)))?;
+    }
     validate_bundle(
         &program,
         language_items.fold.as_ref().map(|items| {
@@ -787,6 +802,9 @@ fn validate_product_local_ids(
     local_crate: ProductCrateId,
 ) -> Result<(), String> {
     let mut ids = Vec::new();
+    if let Some(items) = &language_items.object_owner { ids.extend([("object_owner.trait", items.trait_id), ("object_owner.into_parts", items.into_parts_id), ("object_owner.from_parts", items.from_parts_id)]); }
+    if let Some(items) = &language_items.object_owner_allocate { ids.extend([("object_owner_allocate.trait", items.trait_id), ("object_owner_allocate.method", items.method_id)]); }
+    if let Some(items) = &language_items.object_owner_unique { ids.extend([("object_owner_unique.trait", items.trait_id), ("object_owner_unique.method", items.method_id)]); }
     if let Some(items) = &language_items.fold {
         ids.extend([
             ("fold.trait", items.trait_id),
@@ -959,6 +977,14 @@ fn product_language_item_ids(products: &CompilerProducts) -> BTreeSet<ProductDef
     let mut member_ids = BTreeSet::new();
     let mut assoc_ids = BTreeSet::new();
     let mut variant_ids = BTreeSet::new();
+    if let Some(items) = &language_items.object_owner {
+        ids.extend([items.trait_id, items.into_parts_id, items.from_parts_id]);
+        member_ids.extend([items.into_parts_id, items.from_parts_id]);
+    }
+    for items in [&language_items.object_owner_allocate, &language_items.object_owner_unique].into_iter().flatten() {
+        ids.extend([items.trait_id, items.method_id]);
+        member_ids.insert(items.method_id);
+    }
     if let Some(items) = &language_items.fold {
         ids.insert(items.trait_id);
         ids.insert(items.method_id);
@@ -1252,7 +1278,7 @@ mod tests {
         };
 
         let mut interface = ProductInterface::default();
-        interface.traits.insert(
+        interface.insert_trait(
             sized,
             crate::products::ProductTraitInterface::from(&trait_def(
                 sized,
@@ -1261,7 +1287,7 @@ mod tests {
                 Vec::new(),
             )),
         );
-        interface.traits.insert(
+        interface.insert_trait(
             drop_trait,
             crate::products::ProductTraitInterface::from(&trait_def(
                 drop_trait,
@@ -1275,7 +1301,7 @@ mod tests {
                 )],
             )),
         );
-        interface.traits.insert(
+        interface.insert_trait(
             index_trait,
             crate::products::ProductTraitInterface::from(&trait_def(
                 index_trait,
@@ -1295,7 +1321,7 @@ mod tests {
                 )],
             )),
         );
-        interface.traits.insert(
+        interface.insert_trait(
             index_mut_trait,
             crate::products::ProductTraitInterface::from(&trait_def(
                 index_mut_trait,
@@ -1315,7 +1341,7 @@ mod tests {
                 )],
             )),
         );
-        interface.traits.insert(
+        interface.insert_trait(
             try_trait,
             crate::products::ProductTraitInterface::from(&trait_def(
                 try_trait,
@@ -1335,7 +1361,7 @@ mod tests {
                 )],
             )),
         );
-        interface.traits.insert(
+        interface.insert_trait(
             residual_trait,
             crate::products::ProductTraitInterface::from(&trait_def(
                 residual_trait,
@@ -1373,6 +1399,9 @@ mod tests {
             }),
         );
         interface.language_items = LanguageItems {
+            object_owner: None,
+            object_owner_allocate: None,
+            object_owner_unique: None,
             fold: None,
             sized: Some(SizedLanguageItems { trait_id: sized }),
             drop: Some(DropLanguageItems {
@@ -2427,7 +2456,7 @@ mod tests {
         let mut products = valid_products();
         let other_trait = product_id(13);
         let other_method = product_id(14);
-        products.interface.traits.insert(
+        products.interface.insert_trait(
             other_trait,
             crate::products::ProductTraitInterface::from(&trait_def(
                 other_trait,

@@ -182,6 +182,15 @@ fn multiline_operator_continuation(stream: Input) -> IResult<(Operator, Expressi
     // Parse operator and expression WITHOUT increasing indent context
     // This allows subsequent continuations at the same indent level
     // A stuck prefix operator starts the nested body, not an infix continuation.
+    // Ampersand has its own token, so apply the same adjacency/mutability
+    // distinction used for inline reference arguments before consuming it.
+    if matches!(
+        stream.tokens.first().map(|token| &token.token_type),
+        Some(TokenType::Ampersand)
+    ) && not_inline_call_operator(stream).is_ok()
+    {
+        return Err(ParseError::Fail);
+    }
     (
         operator_token.or(ampersand_token),
         expression_without_spaced_dot,
@@ -257,7 +266,10 @@ pub fn primary_expr(stream: Input) -> IResult<PrimaryExpr> {
 }
 
 pub fn operand(stream: Input) -> IResult<Operand> {
-    super::do_expression
+    reset_inside_argument_list(super::parse_open)
+        .map(Box::new)
+        .map(Operand::Open)
+        .or(super::do_expression)
         .or(reset_inside_argument_list(parse_if)
             .map(Box::new)
             .map(Operand::If))
