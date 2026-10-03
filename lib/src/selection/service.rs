@@ -9,8 +9,8 @@ use crate::hir::{
 };
 use crate::ids::{AssocTypeId, DefId};
 use crate::selection::matching::{
-    constructor_target_from_applied_type, constructor_target_substitution,
-    impl_receiver_pattern_substitution, type_pattern_matches,
+    constructor_application_arguments, constructor_target_from_applied_type,
+    constructor_target_substitution, impl_receiver_pattern_substitution, type_pattern_matches,
 };
 use crate::selection::types::{
     ReceiverAdjustment, ReceiverCandidate, SelectedConstructorMember, SelectedMethod,
@@ -692,6 +692,82 @@ impl<'a> SelectionService<'a> {
                 operation: "type-constructor inference".to_string(),
                 receiver: actual.clone(),
                 candidates: candidates.iter().map(|(impl_id, _)| *impl_id).collect(),
+            }),
+        }
+    }
+
+    /// Prove an applied carrier's unary constructor and independent trait
+    /// arguments using its canonical constructor impl and actual obligations.
+    pub(crate) fn infer_unary_constructor_application(
+        &self,
+        actual: &Type,
+        trait_id: DefId,
+    ) -> Result<Option<(Type, Type, Vec<Type>)>, SelectionDiagnostic> {
+        use crate::type_services::kind::Kind;
+        if self
+            .traits
+            .get(&trait_id)
+            .and_then(|definition| definition.target.as_ref())
+            .is_none_or(|target| target.kind != Kind::arrow(Kind::Type, Kind::Type))
+        {
+            return Ok(None);
+        }
+        let candidates = self
+            .impl_ids_in_order()
+            .filter_map(|id| self.impls.get(&id))
+            .filter(|imp| imp.trait_id == Some(trait_id))
+            .filter_map(|imp| {
+                let (constructor, substitution) =
+                    constructor_target_from_applied_type(&imp.receiver_pattern, actual)?;
+                if matches!(&constructor, Type::Lambda { params, .. } if params.as_slice() != [Kind::Type]) {
+                    return None;
+                }
+                let arguments = constructor_application_arguments(&constructor, actual)?;
+                let [payload] = arguments.as_slice() else {
+                    return None;
+                };
+                if self
+                    .impl_bound_obligations(imp, &substitution)?
+                    .iter()
+                    .any(|(subject, bound)| !self.trait_bound_satisfied(subject, bound))
+                {
+                    return None;
+                }
+                let trait_args = imp
+                    .trait_arg_types
+                    .iter()
+                    .map(|ty| ty.substitute_generics(&substitution))
+                    .collect::<Vec<_>>();
+                // Any contextual generic in State must come from a fixed
+                // constructor argument, never the applied payload or an
+                // unconstrained implementation parameter.
+                if trait_args.iter().any(|ty| {
+                    crate::type_services::visit::type_any(ty, |nested| match nested {
+                        Type::TypeVar(_) | Type::Error => true,
+                        Type::Generic(parameter) => {
+                            !crate::type_services::visit::type_any(&constructor, |fixed| {
+                                fixed == &Type::Generic(*parameter)
+                            })
+                        }
+                        _ => false,
+                    })
+                }) {
+                    return None;
+                }
+                Some((imp.id, constructor, payload.clone(), trait_args))
+            })
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [(_, constructor, payload, trait_args)] => Ok(Some((
+                constructor.clone(),
+                payload.clone(),
+                trait_args.clone(),
+            ))),
+            [] => Ok(None),
+            _ => Err(SelectionDiagnostic::AmbiguousCandidates {
+                operation: "unary constructor application".into(),
+                receiver: actual.clone(),
+                candidates: candidates.iter().map(|candidate| candidate.0).collect(),
             }),
         }
     }

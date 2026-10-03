@@ -61,7 +61,7 @@ impl From<DefId> for ProductDefId {
     }
 }
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 53;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 55;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;
@@ -1171,7 +1171,18 @@ impl CompilerProducts {
                 false,
             );
             record_id_remap(&mut id_remap, requested_id, id);
-            record_name(&mut identity_table, id, &alias.name);
+            let canonical_name = hir
+                .program
+                .indexes
+                .type_aliases_by_id
+                .get(&alias.id)
+                .ok_or_else(|| {
+                    format!(
+                        "type alias {:?} has no canonical declaration name",
+                        alias.id
+                    )
+                })?;
+            record_name(&mut identity_table, id, canonical_name);
             let mut alias = alias.clone();
             let original_id = alias.id;
             alias.id = product_def_id_to_def_id(id);
@@ -1482,7 +1493,21 @@ fn product_language_items_from_program<P: HirPhase>(
     let object_owner_allocate = language_items
         .object_owner_allocate
         .as_ref()
-        .map(|items| owner_operation("object_owner_allocate", items))
+        .map(|items| {
+            map_product_language_item_bundle(
+                "object_owner_allocate",
+                &[items.trait_id, items.method_id, items.cancel_id],
+                current_def_ids,
+                id_remap,
+            )
+            .map(|ids| {
+                ids.map(|ids| crate::language_items::OwnerAllocateLanguageItems {
+                    trait_id: ids[0],
+                    method_id: ids[1],
+                    cancel_id: ids[2],
+                })
+            })
+        })
         .transpose()?
         .flatten();
     let object_owner_unique = language_items
@@ -1822,6 +1847,20 @@ fn assert_valid_product_type_ids(ty: &crate::types::Type) {
     use crate::types::Type;
 
     crate::type_services::visit::visit_type(ty, &mut |nested: &Type| match nested {
+        Type::Exists(package) => {
+            for bound in std::iter::once(&package.bounds.principal)
+                .chain(&package.bounds.guarantees)
+                .chain(
+                    package
+                        .bounds
+                        .bindings
+                        .iter()
+                        .map(|binding| &binding.key.trait_ref),
+                )
+            {
+                assert_valid_product_input_def_id(bound.trait_id);
+            }
+        }
         Type::Object(object) => {
             for bound in std::iter::once(&object.principal)
                 .chain(&object.guarantees)
@@ -1931,7 +1970,26 @@ fn assert_valid_product_stmt_ids<P: HirPhase>(stmt: &crate::hir::HirStmtFor<P>) 
 fn assert_valid_product_expr_ids<P: HirPhase>(expr: &crate::hir::HirExprFor<P>) {
     assert_valid_product_type_ids(&expr.ty);
     match &expr.kind {
-        crate::hir::HirExprKindFor::Open { source, binding, body } => {
+        crate::hir::HirExprKindFor::PackagePack { payload, proof } => {
+            assert_valid_product_expr_ids(payload);
+            proof.visit_types(&mut assert_valid_product_type_ids);
+            let mut proof = proof.clone();
+            proof.for_each_def_id_mut(|id| assert_valid_product_input_def_id(*id));
+        }
+        crate::hir::HirExprKindFor::PackageOpen {
+            source,
+            binding,
+            body,
+        } => {
+            assert_valid_product_expr_ids(source);
+            binding.visit_types(&mut assert_valid_product_type_ids);
+            assert_valid_product_block_ids(body);
+        }
+        crate::hir::HirExprKindFor::Open {
+            source,
+            binding,
+            body,
+        } => {
             assert_valid_product_expr_ids(source);
             binding.visit_types(&mut assert_valid_product_type_ids);
             if let Some(owner) = &binding.owner {
@@ -2605,7 +2663,24 @@ where
 {
     remap_type(&mut expr.ty);
     match &mut expr.kind {
-        crate::hir::HirExprKindFor::Open { source, binding, body } => {
+        crate::hir::HirExprKindFor::PackagePack { payload, proof } => {
+            remap_expr_types(payload, remap_type);
+            proof.visit_types_mut(remap_type);
+        }
+        crate::hir::HirExprKindFor::PackageOpen {
+            source,
+            binding,
+            body,
+        } => {
+            remap_expr_types(source, remap_type);
+            binding.visit_types_mut(remap_type);
+            remap_block_types(body, remap_type);
+        }
+        crate::hir::HirExprKindFor::Open {
+            source,
+            binding,
+            body,
+        } => {
             remap_expr_types(source, remap_type);
             binding.visit_types_mut(remap_type);
             remap_block_types(body, remap_type);
@@ -2823,7 +2898,19 @@ fn remap_expr_location_product_ids<P: HirPhase>(
     id_remap: &ProductIdRemap,
 ) {
     match &mut expr.kind {
-        crate::hir::HirExprKindFor::Open { source, binding, body } => {
+        crate::hir::HirExprKindFor::PackagePack { payload, proof } => {
+            remap_expr_location_product_ids(payload, id_remap);
+            proof.for_each_def_id_mut(|id| remap_product_def_id_owner(id, id_remap));
+        }
+        crate::hir::HirExprKindFor::PackageOpen { source, body, .. } => {
+            remap_expr_location_product_ids(source, id_remap);
+            remap_block_location_product_ids(body, id_remap);
+        }
+        crate::hir::HirExprKindFor::Open {
+            source,
+            binding,
+            body,
+        } => {
             remap_expr_location_product_ids(source, id_remap);
             if let Some(owner) = &mut binding.owner {
                 remap_method_target_product_ids(&mut owner.into_parts.method, id_remap);
@@ -3586,7 +3673,25 @@ fn remap_expr_owned_type_ids<P: HirPhase>(
 ) {
     remap_type_owned_generic_owner(&mut expr.ty, old_id, new_id);
     match &mut expr.kind {
-        crate::hir::HirExprKindFor::Open { source, binding, body } => {
+        crate::hir::HirExprKindFor::PackagePack { payload, proof } => {
+            remap_expr_owned_type_ids(payload, old_id, new_id);
+            proof.visit_types_mut(&mut |ty| remap_type_owned_generic_owner(ty, old_id, new_id));
+            proof.for_each_def_id_mut(|id| remap_def_id_if_matches(id, old_id, new_id));
+        }
+        crate::hir::HirExprKindFor::PackageOpen {
+            source,
+            binding,
+            body,
+        } => {
+            remap_expr_owned_type_ids(source, old_id, new_id);
+            binding.visit_types_mut(&mut |ty| remap_type_owned_generic_owner(ty, old_id, new_id));
+            remap_block_owned_type_ids(body, old_id, new_id);
+        }
+        crate::hir::HirExprKindFor::Open {
+            source,
+            binding,
+            body,
+        } => {
             remap_expr_owned_type_ids(source, old_id, new_id);
             binding.visit_types_mut(&mut |ty| remap_type_owned_generic_owner(ty, old_id, new_id));
             if let Some(owner) = &mut binding.owner {
@@ -3799,7 +3904,11 @@ fn remap_method_target_owned_type_ids(
     new_id: DefId,
 ) {
     target.for_each_type_mut(|ty| remap_type_owned_generic_owner(ty, old_id, new_id));
-    if let HirSelectedMethodTarget::TraitMethod { dispatch: crate::hir::HirTraitDispatchKind::Opened(witness), .. } = &mut target.target {
+    if let HirSelectedMethodTarget::TraitMethod {
+        dispatch: crate::hir::HirTraitDispatchKind::Opened(witness),
+        ..
+    } = &mut target.target
+    {
         remap_def_id_if_matches(&mut witness.owner, old_id, new_id);
     }
     for binding in target
@@ -4028,6 +4137,60 @@ mod tests {
             ProductLinkData::default(),
         )
         .map(|(products, _)| products)
+    }
+
+    #[test]
+    fn concrete_signature_scoped_function_keeps_its_canonical_portable_body() {
+        let path = std::path::PathBuf::from("/virtual/scoped_export/provider.rk");
+        let analysis = crate::analyze(&crate::Config {
+            entry_file: path.clone(),
+            current_crate_name: Some("scoped_provider".into()),
+            no_std: true,
+            no_prelude: true,
+            source_providers: vec![crate::SourceProvider::Virtual {
+                path,
+                text: r#"
+< trait Sum
+    @sum: &Self -> I64
+read_same: &Sum -> I64
+< read_same = object ->
+    open object as T, value
+        value.sum value
+main = !-> ()
+"#
+                .into(),
+            }],
+            ..crate::Config::default()
+        })
+        .unwrap();
+        let function = analysis
+            .hir
+            .program
+            .functions
+            .values()
+            .find(|function| function.name == "read_same")
+            .unwrap();
+        assert!(function.generic_params.is_empty());
+        assert!(crate::hir::hir_function_signature_is_codegen_concrete(
+            function
+        ));
+        assert!(!crate::hir::hir_function_is_codegen_concrete(function));
+        let products = products_from_hir(&analysis.hir).unwrap();
+        let id = ProductDefId::from(function.id);
+        assert!(products.interface.functions.contains_key(&id));
+        let bytes = products.to_artifact_bytes().unwrap();
+        let decoded = CompilerProducts::from_artifact_bytes(&bytes).unwrap();
+        let body = &decoded.bodies.functions[&id];
+        let crate::hir::HirStmtFor::Expr(expression) = &body.body.stmts[0] else {
+            panic!("expected scoped body")
+        };
+        let crate::hir::HirExprKindFor::Open { binding, .. } = &expression.kind else {
+            panic!("expected portable opening")
+        };
+        assert_eq!(binding.witness.owner, body.id);
+        assert_eq!(binding.witness.local, binding.value.local_id);
+        // Codegen must separately attach the actual native wrapper symbol.
+        assert!(!decoded.link.records.contains_key(&id));
     }
 
     #[test]
@@ -4689,7 +4852,7 @@ mod tests {
         };
         let value = HirParam {
             name: "value".into(),
-            local_id: crate::ids::HirLocalId(4),
+            local_id: witness.local,
             ty: value_ty.clone(),
             mutable: false,
             is_ref: true,
@@ -4763,7 +4926,7 @@ mod tests {
             ..witness
         };
         assert_eq!(binding.witness, expected);
-        assert_eq!(binding.value.local_id, crate::ids::HirLocalId(4));
+        assert_eq!(binding.value.local_id, witness.local);
         assert_eq!(
             binding.value.ty,
             Type::Reference {
@@ -7625,7 +7788,6 @@ mod tests {
 
     #[test]
     fn product_artifact_format_version_matches_shared_contract() {
-        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 52);
         assert_eq!(
             PRODUCT_ARTIFACT_FORMAT_VERSION,
             rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION

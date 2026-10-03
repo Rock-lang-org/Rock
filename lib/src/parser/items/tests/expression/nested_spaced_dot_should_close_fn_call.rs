@@ -24,43 +24,46 @@ fn nested_spaced_dot_should_close_fn_call() {
                 })],
             }),
             secondaries: Some(vec![
-                SecondaryExpr::Arguments(vec![
-                    Argument {
-                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
-                                    name: "a".to_string(),
-                                    span: Span::test(),
-                                })],
-                            }),
-                            secondaries: None,
-                            type_annotation: None,
-                        })),
-                    },
-                    Argument {
-                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Expression(Box::new(Expression::UnaryExpr(
-                                UnaryExpr::PrimaryExpr(PrimaryExpr {
-                                    operand: Operand::Ident(IdentifierPath {
-                                        path: vec![IdentOrType::Ident(Ident {
-                                            name: "b".to_string(),
-                                            span: Span::test(),
-                                        })],
-                                    }),
-                                    secondaries: Some(vec![SecondaryExpr::Dot(
-                                        IdentOrNumber::Ident(Ident {
-                                            name: "lol".to_string(),
-                                            span: Span::test(),
-                                        })
-                                    )]),
-                                    type_annotation: None,
-                                })
-                            ))),
-                            secondaries: None,
-                            type_annotation: None,
-                        })),
-                    },
-                ]),
+                SecondaryExpr::Arguments(
+                    vec![
+                        Argument {
+                            arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Ident(IdentifierPath {
+                                    path: vec![IdentOrType::Ident(Ident {
+                                        name: "a".to_string(),
+                                        span: Span::test(),
+                                    })],
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            })),
+                        },
+                        Argument {
+                            arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Expression(Box::new(Expression::UnaryExpr(
+                                    UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                        operand: Operand::Ident(IdentifierPath {
+                                            path: vec![IdentOrType::Ident(Ident {
+                                                name: "b".to_string(),
+                                                span: Span::test(),
+                                            })],
+                                        }),
+                                        secondaries: Some(vec![SecondaryExpr::Dot(
+                                            IdentOrNumber::Ident(Ident {
+                                                name: "lol".to_string(),
+                                                span: Span::test(),
+                                            })
+                                        )]),
+                                        type_annotation: None,
+                                    })
+                                ))),
+                                secondaries: None,
+                                type_annotation: None,
+                            })),
+                        },
+                    ],
+                    Span::new("/test.rk".into(), 4, input.find(" .toto").unwrap())
+                ),
                 SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
                     name: "toto".to_string(),
                     span: Span::test(),

@@ -29,50 +29,53 @@ fn call_expression() {
                     },
                 })],
             }),
-            secondaries: Some(vec![SecondaryExpr::Arguments(vec![
-                Argument {
-                    arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                        operand: Operand::Literal(Literal {
-                            kind: crate::ast::LiteralKind::Number(1),
-                            span: Span {
-                                start: 6,
-                                end: 7,
-                                file_path: PathBuf::from("/test.rk"),
-                            },
-                        }),
-                        secondaries: None,
-                        type_annotation: None,
-                    })),
-                },
-                Argument {
-                    arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                        operand: Operand::Literal(Literal {
-                            kind: crate::ast::LiteralKind::Number(2),
-                            span: Span {
-                                start: 9,
-                                end: 10,
-                                file_path: PathBuf::from("/test.rk"),
-                            },
-                        }),
-                        secondaries: None,
-                        type_annotation: None,
-                    })),
-                },
-                Argument {
-                    arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                        operand: Operand::Literal(Literal {
-                            kind: crate::ast::LiteralKind::Number(3),
-                            span: Span {
-                                start: 12,
-                                end: 13,
-                                file_path: PathBuf::from("/test.rk"),
-                            },
-                        }),
-                        secondaries: None,
-                        type_annotation: None,
-                    })),
-                },
-            ])]),
+            secondaries: Some(vec![SecondaryExpr::Arguments(
+                vec![
+                    Argument {
+                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                            operand: Operand::Literal(Literal {
+                                kind: crate::ast::LiteralKind::Number(1),
+                                span: Span {
+                                    start: 6,
+                                    end: 7,
+                                    file_path: PathBuf::from("/test.rk"),
+                                },
+                            }),
+                            secondaries: None,
+                            type_annotation: None,
+                        })),
+                    },
+                    Argument {
+                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                            operand: Operand::Literal(Literal {
+                                kind: crate::ast::LiteralKind::Number(2),
+                                span: Span {
+                                    start: 9,
+                                    end: 10,
+                                    file_path: PathBuf::from("/test.rk"),
+                                },
+                            }),
+                            secondaries: None,
+                            type_annotation: None,
+                        })),
+                    },
+                    Argument {
+                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                            operand: Operand::Literal(Literal {
+                                kind: crate::ast::LiteralKind::Number(3),
+                                span: Span {
+                                    start: 12,
+                                    end: 13,
+                                    file_path: PathBuf::from("/test.rk"),
+                                },
+                            }),
+                            secondaries: None,
+                            type_annotation: None,
+                        })),
+                    },
+                ],
+                Span::new("/test.rk".into(), 6, input.len()),
+            )]),
             type_annotation: None,
         })),
     );
@@ -93,7 +96,8 @@ fn call_expression_accepts_prefix_deref_arguments() {
     let Expression::UnaryExpr(UnaryExpr::PrimaryExpr(primary)) = expression else {
         panic!("expected call expression, got {expression:?}");
     };
-    let Some(SecondaryExpr::Arguments(args)) = primary.secondaries.as_ref().and_then(|s| s.first())
+    let Some(SecondaryExpr::Arguments(args, _)) =
+        primary.secondaries.as_ref().and_then(|s| s.first())
     else {
         panic!("expected call arguments, got {primary:?}");
     };
@@ -120,7 +124,8 @@ fn call_expression_accepts_mut_reference_first_argument() {
     let Expression::UnaryExpr(UnaryExpr::PrimaryExpr(primary)) = expression else {
         panic!("expected call expression, got {expression:?}");
     };
-    let Some(SecondaryExpr::Arguments(args)) = primary.secondaries.as_ref().and_then(|s| s.first())
+    let Some(SecondaryExpr::Arguments(args, _)) =
+        primary.secondaries.as_ref().and_then(|s| s.first())
     else {
         panic!("expected call arguments, got {primary:?}");
     };
@@ -144,7 +149,8 @@ fn call_expression_accepts_adjacent_shared_reference_argument() {
     let Expression::UnaryExpr(UnaryExpr::PrimaryExpr(primary)) = expression else {
         panic!("expected call expression, got {expression:?}");
     };
-    let Some(SecondaryExpr::Arguments(args)) = primary.secondaries.as_ref().and_then(|s| s.first())
+    let Some(SecondaryExpr::Arguments(args, _)) =
+        primary.secondaries.as_ref().and_then(|s| s.first())
     else {
         panic!("expected call arguments, got {primary:?}");
     };
@@ -168,7 +174,8 @@ fn cast_in_call_binds_to_argument() {
     let Expression::UnaryExpr(UnaryExpr::PrimaryExpr(primary)) = expression else {
         panic!("expected call expression, got {expression:?}");
     };
-    let Some(SecondaryExpr::Arguments(args)) = primary.secondaries.as_ref().and_then(|s| s.first())
+    let Some(SecondaryExpr::Arguments(args, _)) =
+        primary.secondaries.as_ref().and_then(|s| s.first())
     else {
         panic!("expected call arguments, got {primary:?}");
     };
@@ -206,7 +213,8 @@ fn call_expression_accepts_argument_holes() {
     let Expression::UnaryExpr(UnaryExpr::PrimaryExpr(primary)) = expression else {
         panic!("expected call expression, got {expression:?}");
     };
-    let Some(SecondaryExpr::Arguments(args)) = primary.secondaries.as_ref().and_then(|s| s.first())
+    let Some(SecondaryExpr::Arguments(args, _)) =
+        primary.secondaries.as_ref().and_then(|s| s.first())
     else {
         panic!("expected call arguments, got {primary:?}");
     };
@@ -235,7 +243,8 @@ fn multiline_call_expression_accepts_argument_holes() {
     let Expression::UnaryExpr(UnaryExpr::PrimaryExpr(primary)) = expression else {
         panic!("expected call expression, got {expression:?}");
     };
-    let Some(SecondaryExpr::Arguments(args)) = primary.secondaries.as_ref().and_then(|s| s.first())
+    let Some(SecondaryExpr::Arguments(args, _)) =
+        primary.secondaries.as_ref().and_then(|s| s.first())
     else {
         panic!("expected call arguments, got {primary:?}");
     };
@@ -274,7 +283,8 @@ fn multiline_wildcard_lambda_is_not_parsed_as_a_call_hole() {
     let Expression::UnaryExpr(UnaryExpr::PrimaryExpr(primary)) = expression else {
         panic!("expected call expression, got {expression:?}");
     };
-    let Some(SecondaryExpr::Arguments(args)) = primary.secondaries.as_ref().and_then(|s| s.first())
+    let Some(SecondaryExpr::Arguments(args, _)) =
+        primary.secondaries.as_ref().and_then(|s| s.first())
     else {
         panic!("expected call arguments, got {primary:?}");
     };

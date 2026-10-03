@@ -45,6 +45,17 @@ fn collect_generic_names_from_parse_type<F>(
     F: Fn(&str) -> bool,
 {
     match ty {
+        ast::ParseType::Exists(package) => {
+            let mut names = Vec::new();
+            for ty in package.types() {
+                collect_generic_names_from_parse_type(ty, &mut names, is_known_type_name);
+            }
+            for name in names {
+                if name != package.parameter.name.name && !generic_params.contains(&name) {
+                    generic_params.push(name);
+                }
+            }
+        }
         ast::ParseType::Object(object) => {
             for ty in object.types() {
                 collect_generic_names_from_parse_type(ty, generic_params, is_known_type_name);
@@ -106,6 +117,14 @@ fn collect_constructor_generic_kinds<F>(
     F: Fn(&str) -> bool,
 {
     match ty {
+        ast::ParseType::Exists(package) => {
+            let mut local = HashMap::new();
+            for ty in package.types() {
+                collect_constructor_generic_kinds(ty, &mut local, is_known_type_name);
+            }
+            local.remove(&package.parameter.name.name);
+            kinds.extend(local);
+        }
         ast::ParseType::Object(object) => {
             for ty in object.types() {
                 collect_constructor_generic_kinds(ty, kinds, is_known_type_name);
@@ -160,6 +179,15 @@ fn collect_constructor_generic_kinds<F>(
 
 fn parse_type_name_span(ty: &ast::ParseType, name: &str) -> Option<crate::lexer::Span> {
     match ty {
+        ast::ParseType::Exists(package) => {
+            if name == package.parameter.name.name {
+                None
+            } else {
+                package
+                    .types()
+                    .find_map(|ty| parse_type_name_span(ty, name))
+            }
+        }
         ast::ParseType::Object(object) => {
             object.types().find_map(|ty| parse_type_name_span(ty, name))
         }
@@ -233,6 +261,27 @@ fn collect_declared_generic_kinds<F>(
     }
 
     match ty {
+        ast::ParseType::Exists(package) => {
+            let mut local = HashMap::new();
+            let mut local_conflicts = Vec::new();
+            for ty in package.types() {
+                collect_declared_generic_kinds(
+                    ty,
+                    &mut local,
+                    &mut local_conflicts,
+                    is_known_type_name,
+                );
+            }
+            local.remove(&package.parameter.name.name);
+            for (name, kind) in local {
+                record(&name, kind, kinds, conflicts);
+            }
+            conflicts.extend(
+                local_conflicts
+                    .into_iter()
+                    .filter(|(name, _, _)| name != &package.parameter.name.name),
+            );
+        }
         ast::ParseType::Object(object) => {
             for ty in object.types() {
                 collect_declared_generic_kinds(ty, kinds, conflicts, is_known_type_name);

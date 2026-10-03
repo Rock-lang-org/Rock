@@ -12,6 +12,26 @@ use crate::lower::Lowerer;
 use crate::type_services::facts::TypeFacts;
 use crate::types::{GenericParamId, TraitBound, Type};
 
+fn call_expression_span(callee: &HirExpr, suffix: &Span) -> Span {
+    fn start(expression: &HirExpr) -> &Span {
+        match &expression.kind {
+            HirExprKind::FieldAccess(receiver, _, _) | HirExprKind::TupleIndex(receiver, _)
+                if receiver.span.file_path == expression.span.file_path =>
+            {
+                start(receiver)
+            }
+            _ => &expression.span,
+        }
+    }
+    let first = start(callee);
+    if first.file_path == suffix.file_path && first.start <= suffix.end {
+        Span::new(first.file_path.clone(), first.start, suffix.end)
+    } else {
+        // Preserve the actual suffix owner for cross-file macro origins.
+        suffix.clone()
+    }
+}
+
 impl Lowerer {
     fn lambda_from_expression(expr: &ast::Expression) -> Option<&ast::LambdaDecl> {
         let ast::Expression::UnaryExpr(ast::UnaryExpr::PrimaryExpr(primary)) = expr else {
@@ -163,15 +183,12 @@ impl Lowerer {
     }
 
     fn propagate_call_argument_bounds(&mut self, expected: &Type, actual: &Type) {
+        // Infer bound arguments from the source without fixing an open handle
+        // destination; contextual callbacks need these facts before coercion.
         let bounds = match expected {
             Type::TypeVar(id) => self.engine.get_bounds(*id),
             _ => Vec::new(),
         };
-        let mut probe = self.engine.clone_for_probe();
-        if probe.unify(expected, actual).is_err() {
-            return;
-        }
-        self.engine.commit_probe(probe);
         let actual = self.engine.resolve(actual);
         for bound in bounds {
             if !bound.type_args.iter().any(|arg| {
@@ -845,7 +862,11 @@ impl Lowerer {
     ) -> HirExpr {
         let span = expr.span.clone();
         match secondary {
-            ast::SecondaryExpr::Arguments(args) => {
+            ast::SecondaryExpr::Arguments(args, suffix_span) => {
+                // Keep the callee/member token for semantic references; the
+                // value expression includes the receiver and consumed suffix.
+                let callee_span = expr.span.clone();
+                let span = call_expression_span(&expr, suffix_span);
                 let mut expr = expr;
                 let mut hir_args: Vec<HirExpr>;
 
@@ -975,7 +996,7 @@ impl Lowerer {
                         };
                         if let Some(method_id) = target.method_id() {
                             self.record_source_reference(
-                                span.clone(),
+                                callee_span.clone(),
                                 crate::source_map::SourceSymbol::Definition(method_id),
                             );
                         }
@@ -1059,6 +1080,27 @@ impl Lowerer {
                         let mut expected_params = expected
                             .as_ref()
                             .and_then(|ty| self.callable_argument_parameters(ty));
+                        if let (Some(params), Some(call_params)) =
+                            (&mut expected_params, &expected_param_types)
+                        {
+                            // A deferred handle coercion must not hide the source
+                            // type from a later callback's contextual parameters.
+                            // Probe only: the destination may still become an object.
+                            let mut context = self.engine.clone_for_probe();
+                            for (param, arg) in call_params.iter().zip(&hir_args) {
+                                let actual = match &arg.kind {
+                                    HirExprKind::ObjectCoercion(source, _) => &source.ty,
+                                    _ => &arg.ty,
+                                };
+                                let mut probe = context.clone_for_probe();
+                                if probe.unify(param, actual).is_ok() {
+                                    context = probe;
+                                }
+                            }
+                            for param in params {
+                                *param = context.resolve(param);
+                            }
+                        }
                         if lambda.parameters.len() == 1
                             && !expected.as_ref().is_some_and(|ty| {
                                 matches!(self.engine.resolve(ty), Type::Function { .. })
@@ -1084,9 +1126,12 @@ impl Lowerer {
                     }
                     hir_args.push(match expected {
                         Some(expected) => {
-                            let hir_arg = self.coerce_argument_to_expected(hir_arg, &expected);
-                            self.propagate_call_argument_bounds(&expected, &hir_arg.ty);
-                            hir_arg
+                            let actual = match &hir_arg.kind {
+                                HirExprKind::ObjectCoercion(source, _) => &source.ty,
+                                _ => &hir_arg.ty,
+                            };
+                            self.propagate_call_argument_bounds(&expected, actual);
+                            self.coerce_argument_to_expected(hir_arg, &expected)
                         }
                         None => hir_arg,
                     });
@@ -1514,6 +1559,16 @@ impl Lowerer {
             ast::SecondaryExpr::Dot(ident_or_num) => match ident_or_num {
                 ast::IdentOrNumber::Ident(ident) => {
                     let span = ident.span.clone();
+                    if self.shared_package_member_requires_mutable_access(&expr, &ident.name) {
+                        self.diagnostics.push_type_with_span(
+                            format!(
+                                "Cannot call mutable receiver method '{}' through shared package access",
+                                ident.name,
+                            ),
+                            span.clone(),
+                        );
+                        return self.error_expression_at(span);
+                    }
                     if method_as_value {
                         if let Some(value) = self.lower_owned_object_method_value(
                             expr.clone(),
@@ -2950,6 +3005,7 @@ mod tests {
                 args.into_iter()
                     .map(|arg| crate::ast::Argument { arg })
                     .collect(),
+                Span::test(),
             )]),
             type_annotation: None,
         }))
@@ -3277,7 +3333,7 @@ mod tests {
 
         let lowered = lowerer.apply_secondary(
             field,
-            &SecondaryExpr::Arguments(Vec::new()),
+            &SecondaryExpr::Arguments(Vec::new(), Span::test()),
             ExprUse::Value,
             false,
         );
@@ -3308,7 +3364,7 @@ mod tests {
 
         let lowered = lowerer.apply_secondary(
             field,
-            &SecondaryExpr::Arguments(Vec::new()),
+            &SecondaryExpr::Arguments(Vec::new(), Span::test()),
             ExprUse::Value,
             false,
         );
@@ -3345,7 +3401,7 @@ mod tests {
 
         let lowered = lowerer.apply_secondary(
             field,
-            &SecondaryExpr::Arguments(Vec::new()),
+            &SecondaryExpr::Arguments(Vec::new(), Span::test()),
             ExprUse::Value,
             false,
         );
@@ -3373,7 +3429,7 @@ mod tests {
 
         let lowered = lowerer.apply_secondary(
             field,
-            &SecondaryExpr::Arguments(Vec::new()),
+            &SecondaryExpr::Arguments(Vec::new(), Span::test()),
             ExprUse::Value,
             false,
         );
@@ -3465,7 +3521,7 @@ mod tests {
 
         let lowered = lowerer.apply_secondary(
             field,
-            &SecondaryExpr::Arguments(Vec::new()),
+            &SecondaryExpr::Arguments(Vec::new(), Span::test()),
             ExprUse::Value,
             false,
         );
@@ -3525,7 +3581,7 @@ mod tests {
 
         let lowered = lowerer.apply_secondary(
             field,
-            &SecondaryExpr::Arguments(Vec::new()),
+            &SecondaryExpr::Arguments(Vec::new(), Span::test()),
             ExprUse::Value,
             false,
         );
@@ -3581,7 +3637,7 @@ mod tests {
         );
         let lowered = lowerer.apply_secondary(
             method_field,
-            &SecondaryExpr::Arguments(Vec::new()),
+            &SecondaryExpr::Arguments(Vec::new(), Span::test()),
             ExprUse::Value,
             false,
         );
@@ -3639,18 +3695,21 @@ mod tests {
         };
         let lowered = lowerer.apply_secondary(
             field,
-            &SecondaryExpr::Arguments(vec![crate::ast::Argument {
-                arg: crate::ast::Expression::UnaryExpr(crate::ast::UnaryExpr::PrimaryExpr(
-                    crate::ast::PrimaryExpr {
-                        operand: crate::ast::Operand::Literal(crate::ast::Literal {
-                            kind: crate::ast::LiteralKind::Number(1),
-                            span: Span::test(),
-                        }),
-                        secondaries: None,
-                        type_annotation: None,
-                    },
-                )),
-            }]),
+            &SecondaryExpr::Arguments(
+                vec![crate::ast::Argument {
+                    arg: crate::ast::Expression::UnaryExpr(crate::ast::UnaryExpr::PrimaryExpr(
+                        crate::ast::PrimaryExpr {
+                            operand: crate::ast::Operand::Literal(crate::ast::Literal {
+                                kind: crate::ast::LiteralKind::Number(1),
+                                span: Span::test(),
+                            }),
+                            secondaries: None,
+                            type_annotation: None,
+                        },
+                    )),
+                }],
+                Span::test(),
+            ),
             ExprUse::Value,
             false,
         );

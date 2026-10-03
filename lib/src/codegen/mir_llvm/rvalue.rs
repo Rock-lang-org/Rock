@@ -29,6 +29,9 @@ impl<'ctx> CodeGen<'ctx> {
         expected_ty: Option<&Type>,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match rvalue {
+            Rvalue::Package(operand, plan) => {
+                self.compile_package_pack(function, context, operand, plan)
+            }
             Rvalue::Object(operand, conversion) => {
                 self.compile_object_conversion(function, context, operand, conversion)
             }

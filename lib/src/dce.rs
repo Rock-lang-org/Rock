@@ -179,7 +179,8 @@ fn collect_instance_edges_mir_rvalue(
     missing_instance_edges: &mut BTreeSet<InstanceId>,
 ) {
     match rvalue {
-        Rvalue::Object(operand, _)
+        Rvalue::Package(operand, _)
+        | Rvalue::Object(operand, _)
         | Rvalue::Use(operand)
         | Rvalue::Cast(operand, _)
         | Rvalue::UnaryOp(_, operand) => {
@@ -283,6 +284,28 @@ fn instance_roots(program: &MonomorphizedProgram, bodies: &MirInstanceBodies) ->
                     MirCallableKey::ObjectAdapter(
                         crate::mir::MirObjectAdapterKey::ConsumingMethod { target, .. },
                     ) => Some(*target),
+                    _ => None,
+                }),
+        );
+        // Erased bodies are emitted independently of concrete MIR bodies;
+        // their native bridges keep the exact selected instance/link alive.
+        roots.extend(
+            program
+                .erased
+                .functions
+                .values()
+                .filter_map(|function| function.body.as_ref())
+                .flat_map(|body| &body.blocks)
+                .flat_map(|block| &block.statements)
+                .filter_map(|statement| match &statement.value {
+                    crate::mir::MirErasedRvalue::NativeCall {
+                        target: MirCallableKey::Instance(id),
+                        ..
+                    }
+                    | crate::mir::MirErasedRvalue::NativeApply {
+                        target: MirCallableKey::Instance(id),
+                        ..
+                    } => Some(*id),
                     _ => None,
                 }),
         );
@@ -554,6 +577,178 @@ mod tests {
             }),
             ty: Type::function(Vec::new(), Type::Unit),
             span: Span::test(),
+        }
+    }
+
+    #[test]
+    fn erased_native_bridge_retains_exact_instance_and_builder_link_evidence() {
+        use crate::mir::{
+            MirErasedAssignment, MirErasedBasicBlock, MirErasedBody, MirErasedFunction,
+            MirErasedKey, MirErasedLocal, MirErasedOperand, MirErasedParameter, MirErasedPlace,
+            MirErasedRvalue, MirErasedSignature, MirErasedTerminator, MirErasedType, MirLinkage,
+        };
+
+        for imported in [false, true] {
+            let main_def = DefId::new(CrateId(0), LocalDefId(10));
+            let native_def = DefId::new(CrateId(u32::from(imported)), LocalDefId(21));
+            let native_instance = InstanceId(1);
+            let receiver = Type::Reference {
+                inner: Box::new(Type::I64),
+                mutable: false,
+            };
+            let mut native = empty_function(native_def, "sum");
+            add_param(&mut native, "self", receiver.clone());
+            native.ret_type = Type::I64;
+            native.body = HirBlock {
+                ty: Type::I64,
+                stmts: vec![HirStmt::Return(Some(HirExpr {
+                    kind: HirExprKind::IntLiteral(42),
+                    ty: Type::I64,
+                    span: Span::test(),
+                }))],
+            };
+            native.is_method = true;
+            native.self_receiver = Some(crate::types::ReceiverMode::Shared);
+            if imported {
+                native.body.stmts.clear();
+            }
+            let origin = InstanceOrigin::ImplMethod {
+                owner: InstanceImplOwner::Named(DefId::new(native_def.crate_id, LocalDefId(20))),
+                method: native_def,
+            };
+            let mut program = monomorphized_with_instances(vec![
+                instance_record(
+                    InstanceId(0),
+                    InstanceOrigin::Function(main_def),
+                    "main",
+                    "main",
+                    Some(unit_return_function(main_def, "main")),
+                    false,
+                ),
+                instance_record(
+                    native_instance,
+                    origin,
+                    "producer::sum",
+                    "canonical_native_sum",
+                    Some(native),
+                    imported,
+                ),
+                instance_record(
+                    InstanceId(2),
+                    InstanceOrigin::Function(DefId::new(CrateId(0), LocalDefId(22))),
+                    "producer::sum",
+                    "unrelated_same_name",
+                    Some(unit_return_function(
+                        DefId::new(CrateId(0), LocalDefId(22)),
+                        "producer::sum",
+                    )),
+                    false,
+                ),
+            ]);
+            let scalar = program.type_context.intern_type(&Type::I64);
+            let native_ref = program.type_context.intern_type(&receiver);
+            let key = MirErasedKey {
+                definition: native_def,
+                static_args: vec![scalar],
+            };
+            program.erased.functions.insert(
+                key.clone(),
+                MirErasedFunction {
+                    key,
+                    symbol: "erased_native_sum".into(),
+                    linkage: MirLinkage::Internal,
+                    signature: MirErasedSignature {
+                        parameters: vec![MirErasedParameter {
+                            source: crate::types::GenericParamId {
+                                owner: native_def,
+                                index: 0,
+                            },
+                            kind: crate::type_services::kind::Kind::Type,
+                        }],
+                        params: vec![MirErasedType::Concrete(native_ref)],
+                        ret: MirErasedType::Concrete(scalar),
+                        dictionaries: vec![],
+                        layouts: vec![
+                            MirErasedType::Parameter(0),
+                            MirErasedType::Concrete(native_ref),
+                            MirErasedType::Concrete(scalar),
+                        ],
+                        require_borrow_free: Default::default(),
+                    },
+                    body: Some(MirErasedBody {
+                        locals: vec![
+                            MirErasedType::Concrete(native_ref),
+                            MirErasedType::Concrete(scalar),
+                        ],
+                        mutable_locals: Default::default(),
+                        scopes: vec![],
+                        blocks: vec![MirErasedBasicBlock {
+                            statements: vec![MirErasedAssignment {
+                                destination: MirErasedLocal(1),
+                                value: MirErasedRvalue::NativeCall {
+                                    target: MirCallableKey::Instance(native_instance),
+                                    args: vec![MirErasedOperand::Copy(MirErasedPlace::local(
+                                        MirErasedLocal(0),
+                                    ))],
+                                },
+                            }],
+                            terminator: MirErasedTerminator::Return(MirErasedOperand::Copy(
+                                MirErasedPlace::local(MirErasedLocal(1)),
+                            )),
+                        }],
+                    }),
+                },
+            );
+            let mut bodies =
+                crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut program);
+            let report = super::prune_unreachable_instances(&mut program, &mut bodies);
+            assert_eq!(report.retained_instances, 2);
+            assert_eq!(report.removed_instances, 1);
+            assert!(report.missing_instance_edges.is_empty());
+            assert!(!program.instances.contains_key(&InstanceId(2)));
+            let mir = crate::mir::builder::MirBuilder::build_monomorphized_with_instance_bodies(
+                &program, &bodies,
+            );
+            let target = MirCallableKey::Instance(native_instance);
+            let callable = &mir.backend_contract.callables[&target];
+            assert_eq!(callable.source_def_id, Some(native_def));
+            assert_eq!(callable.llvm_symbol, "canonical_native_sum");
+            assert_eq!(
+                matches!(callable.kind, crate::mir::MirCallableKind::ObjectProvided),
+                imported
+            );
+            let links = mir
+                .backend_contract
+                .artifact_exports
+                .iter()
+                .filter(|link| link.origin_def_id == Some(native_def))
+                .collect::<Vec<_>>();
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].provided_by_object, imported);
+            assert_eq!(links[0].has_body, !imported);
+            assert!(links[0].substitution_empty && !links[0].is_specialization);
+            assert_eq!(links[0].backend_symbol, callable.llvm_symbol);
+            let errors = crate::mir::validate_erased_contract(&mir);
+            assert!(errors.is_empty(), "{errors:?}");
+
+            // An absent registry target stays an error; reachability cannot
+            // manufacture a callable or provider link from the erased key.
+            program.instances.remove(&native_instance);
+            bodies.retain(|id, _| id != native_instance);
+            let missing = super::prune_unreachable_instances(&mut program, &mut bodies);
+            assert_eq!(missing.missing_instance_edges, vec![native_instance]);
+            let invalid = crate::mir::builder::MirBuilder::build_monomorphized_with_instance_bodies(
+                &program, &bodies,
+            );
+            assert!(!invalid.backend_contract.callables.contains_key(&target));
+            assert!(!invalid
+                .backend_contract
+                .artifact_exports
+                .iter()
+                .any(|link| link.origin_def_id == Some(native_def)));
+            assert!(crate::mir::validate_erased_contract(&invalid)
+                .iter()
+                .any(|(_, error)| *error == crate::mir::MirErasedError::MissingCallable));
         }
     }
 

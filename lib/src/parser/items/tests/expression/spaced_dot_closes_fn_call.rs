@@ -24,32 +24,35 @@ fn spaced_dot_closes_fn_call() {
                 })],
             }),
             secondaries: Some(vec![
-                SecondaryExpr::Arguments(vec![
-                    Argument {
-                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
-                                    name: "a".to_string(),
-                                    span: Span::test(),
-                                })],
-                            }),
-                            secondaries: None,
-                            type_annotation: None,
-                        })),
-                    },
-                    Argument {
-                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
-                                    name: "b".to_string(),
-                                    span: Span::test(),
-                                })],
-                            }),
-                            secondaries: None,
-                            type_annotation: None,
-                        })),
-                    },
-                ]),
+                SecondaryExpr::Arguments(
+                    vec![
+                        Argument {
+                            arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Ident(IdentifierPath {
+                                    path: vec![IdentOrType::Ident(Ident {
+                                        name: "a".to_string(),
+                                        span: Span::test(),
+                                    })],
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            })),
+                        },
+                        Argument {
+                            arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Ident(IdentifierPath {
+                                    path: vec![IdentOrType::Ident(Ident {
+                                        name: "b".to_string(),
+                                        span: Span::test(),
+                                    })],
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            })),
+                        },
+                    ],
+                    Span::new("/test.rk".into(), 4, input.find(" .bar").unwrap())
+                ),
                 SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
                     name: "bar".to_string(),
                     span: Span::test(),
@@ -77,7 +80,7 @@ fn spaced_dot_closes_fn_call_after_infix_argument() {
     let Some(secondaries) = primary.secondaries else {
         panic!("expected call arguments and dot call");
     };
-    let SecondaryExpr::Arguments(arguments) = &secondaries[0] else {
+    let SecondaryExpr::Arguments(arguments, _) = &secondaries[0] else {
         panic!("expected call arguments, got {:?}", secondaries[0]);
     };
 

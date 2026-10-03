@@ -56,6 +56,17 @@ fn collect_generic_names_from_parse_type<F>(
     F: Fn(&str) -> bool,
 {
     match ty {
+        ast::ParseType::Exists(package) => {
+            let mut names = Vec::new();
+            for ty in package.types() {
+                collect_generic_names_from_parse_type(ty, &mut names, is_known_type_name);
+            }
+            for name in names {
+                if name != package.parameter.name.name && !generic_params.contains(&name) {
+                    generic_params.push(name);
+                }
+            }
+        }
         ast::ParseType::Object(object) => {
             for ty in object.types() {
                 collect_generic_names_from_parse_type(ty, generic_params, is_known_type_name);
@@ -291,6 +302,7 @@ pub(crate) struct CollectContext {
     pub(crate) object_type_uses: Vec<super::objects::ObjectTypeUse>,
     pub(crate) sized_storage_uses: Vec<super::sizedness::SizedStorageUse>,
     pub(crate) object_qualifier_uses: Vec<super::objects::ObjectQualifierUse>,
+    pub(crate) existential_type_uses: Vec<super::objects::ExistentialTypeUse>,
     pub(crate) type_vars: DeclarationTypeVars,
     pub(crate) scope: DeclarationScope,
     pub(crate) structs: HashMap<String, HirStruct>,
@@ -350,6 +362,82 @@ pub(crate) struct LocalCollection {
 }
 
 impl TypeLoweringContext for CollectContext {
+    fn finish_existential_type(
+        &mut self,
+        binder: crate::types::ExistentialBinder,
+        bounds: Vec<Type>,
+        payload: Type,
+        binders: Vec<Vec<crate::type_services::kind::Kind>>,
+        span: Span,
+    ) -> Type {
+        let placeholder = self.type_vars.fresh_type_var_at(span.clone());
+        let mut parameters = std::collections::BTreeSet::new();
+        for ty in bounds.iter().chain(std::iter::once(&payload)) {
+            crate::type_services::visit::visit_type(ty, &mut |ty: &Type| {
+                if let Type::Generic(parameter) = ty {
+                    parameters.insert(*parameter);
+                }
+            });
+        }
+        let parameters = parameters.into_iter().collect::<Vec<_>>();
+        let mut groups = Vec::new();
+        if !parameters.is_empty() {
+            let mut kinds = Vec::new();
+            for parameter in &parameters {
+                match TypeLowerer::kind_of(self, &Type::Generic(*parameter)) {
+                    Ok(kind) => kinds.push(kind),
+                    Err(message) => {
+                        self.push_type_error(message, span);
+                        return Type::Error;
+                    }
+                }
+            }
+            groups.push(kinds);
+        }
+        groups.extend(binders.clone());
+        let kind =
+            groups
+                .iter()
+                .rev()
+                .fold(crate::type_services::kind::Kind::Type, |output, group| {
+                    group.iter().rev().fold(output, |output, input| {
+                        crate::type_services::kind::Kind::arrow(input.clone(), output)
+                    })
+                });
+        let mut application = placeholder.clone();
+        if !parameters.is_empty() {
+            application = Type::Apply {
+                constructor: Box::new(application),
+                args: parameters.iter().copied().map(Type::Generic).collect(),
+            };
+        }
+        for (index, group) in binders.iter().enumerate() {
+            application = Type::Apply {
+                constructor: Box::new(application),
+                args: group
+                    .iter()
+                    .enumerate()
+                    .map(|(parameter, kind)| Type::BoundVar {
+                        depth: (binders.len() - index - 1) as u32,
+                        index: parameter as u32,
+                        kind: kind.clone(),
+                    })
+                    .collect(),
+            };
+        }
+        self.existential_type_uses
+            .push(super::objects::ExistentialTypeUse {
+                placeholder,
+                binder,
+                bounds,
+                payload,
+                parameters,
+                groups,
+                kind,
+                span,
+            });
+        application
+    }
     fn nominal_type_params(&self, id: crate::ids::DefId) -> Vec<crate::types::GenericParamDecl> {
         self.structs
             .values()
@@ -575,6 +663,11 @@ impl TypeLoweringContext for CollectContext {
         &self,
         env: &mut crate::type_services::normalize::TypeNormalizationEnv,
     ) {
+        for usage in &self.existential_type_uses {
+            if let Type::TypeVar(id) = usage.placeholder {
+                env.register_inference_kind(id, usage.kind.clone());
+            }
+        }
         for usage in &self.object_qualifier_uses {
             if let Type::TypeVar(id) = usage.placeholder {
                 env.register_inference_kind(id, usage.kind.clone());
@@ -727,6 +820,7 @@ impl CollectContext {
             object_type_uses: Vec::new(),
             sized_storage_uses: Vec::new(),
             object_qualifier_uses: Vec::new(),
+            existential_type_uses: Vec::new(),
             type_vars: DeclarationTypeVars::new(),
             scope: DeclarationScope::new(),
             structs: HashMap::new(),
@@ -829,6 +923,7 @@ impl CollectContext {
             object_type_uses: _,
             sized_storage_uses: _,
             object_qualifier_uses: _,
+            existential_type_uses: _,
             type_vars,
             scope: _,
             structs,
@@ -1289,7 +1384,12 @@ impl CollectContext {
             return;
         }
 
-        if self.enums.contains_key(&canonical_source) {
+        if self.enums.contains_key(&canonical_source)
+            || self
+                .type_aliases
+                .get(&canonical_source)
+                .is_some_and(|alias| alias.id == export.id)
+        {
             self.import_aliases
                 .insert(short_name.clone(), canonical_source.clone());
             if is_explicit && record_canonical_aliases {

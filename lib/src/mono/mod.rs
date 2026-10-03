@@ -37,7 +37,7 @@ mod substitute;
 
 use crate::collect::resolver::ResolverTables;
 use crate::crate_system::CrateContext;
-use crate::diagnostic::{DiagnosticCode, Diagnostics};
+use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
 use crate::hir::{self, AcceptedHirProgram};
 use crate::ids::{DefId, HirLocalId, TypeId};
 use crate::infer::ResolvedHirProgram;
@@ -384,6 +384,8 @@ struct Monomorphizer {
     var_types: HashMap<HirLocalId, TypeId>,
     /// Nominal field types keyed by canonical struct/enum identity for recursive drop glue.
     nominal_field_types: HashMap<DefId, Vec<Type>>,
+    nominal_field_ids: HashMap<DefId, Vec<crate::ids::FieldId>>,
+    nominal_generic_params: HashMap<DefId, Vec<GenericParamId>>,
     /// Source spans for nominal fields used while materializing recursive drop glue.
     nominal_field_spans: HashMap<DefId, Vec<Option<crate::lexer::Span>>>,
     /// Drop impl instance keys currently being specialized for automatic drop glue.
@@ -582,6 +584,44 @@ impl Monomorphizer {
     fn write_type_id(&self, output: &mut String, id: TypeId) {
         Self::write_kind(output, self.type_context.kind(id));
         match self.type_context.ty(id) {
+            Ty::Exists(package) => {
+                output.push('E');
+                Self::write_kind(output, &package.binder.kind);
+                output.push(if package.binder.maybe_unsized {
+                    'u'
+                } else {
+                    's'
+                });
+                Self::push_text(output, &self.write_object_bound(&package.bounds.principal));
+                let mut guarantees = package
+                    .bounds
+                    .guarantees
+                    .iter()
+                    .map(|bound| self.write_object_bound(bound))
+                    .collect::<Vec<_>>();
+                guarantees.sort();
+                Self::push_text(output, &guarantees.len().to_string());
+                for guarantee in guarantees {
+                    Self::push_text(output, &guarantee);
+                }
+                let mut bindings = package
+                    .bounds
+                    .bindings
+                    .iter()
+                    .map(|binding| {
+                        let mut key = self.write_object_bound(&binding.key.trait_ref);
+                        Self::push_text(&mut key, &binding.key.member.0.to_string());
+                        self.write_type_id(&mut key, binding.ty);
+                        key
+                    })
+                    .collect::<Vec<_>>();
+                bindings.sort();
+                Self::push_text(output, &bindings.len().to_string());
+                for binding in bindings {
+                    Self::push_text(output, &binding);
+                }
+                self.write_type_id(output, package.payload);
+            }
             Ty::Witness(witness) => {
                 output.push('W');
                 self.write_def_id(output, witness.owner);
@@ -914,6 +954,22 @@ impl Monomorphizer {
         func.generic_params.is_empty() && hir::hir_function_is_codegen_concrete(func)
     }
 
+    fn register_processed_function_instance(&mut self, name: &str, func: &HirFunction) {
+        if !Self::should_register_function_instance(func) {
+            // These functions were already admitted as concrete. Silently
+            // discarding a failed body bypasses MIR ownership validation.
+            self.diagnostics.push(
+                Diagnostic::for_internal(format!(
+                    "concrete function {:?} did not produce a complete runtime body",
+                    func.id,
+                ))
+                .with_code(DiagnosticCode::Mono),
+            );
+            return;
+        }
+        self.register_function_instance(name, func);
+    }
+
     fn register_impl_method_instance(
         &mut self,
         imp: &HirImpl,
@@ -1143,7 +1199,8 @@ impl Monomorphizer {
         method_ids: &HashSet<DefId>,
     ) {
         match &expr.kind {
-            HirExprKind::Open { source, body, .. } => {
+            HirExprKind::Open { source, body, .. }
+            | HirExprKind::PackageOpen { source, body, .. } => {
                 self.validate_materialized_expr(owner, source, method_ids);
                 self.validate_materialized_block(owner, body, method_ids);
             }
@@ -1225,7 +1282,8 @@ impl Monomorphizer {
             | HirExprKind::Ref(_, base)
             | HirExprKind::Deref(base)
             | HirExprKind::Cast(base, _)
-            | HirExprKind::ObjectCoercion(base, _) => {
+            | HirExprKind::ObjectCoercion(base, _)
+            | HirExprKind::PackagePack { payload: base, .. } => {
                 self.validate_materialized_expr(owner, base, method_ids)
             }
             HirExprKind::ArrayLiteral(values) | HirExprKind::TupleLiteral(values) => {
@@ -1320,6 +1378,8 @@ impl Monomorphizer {
             function_names_by_id: HashMap::new(),
             var_types: HashMap::new(),
             nominal_field_types: HashMap::new(),
+            nominal_field_ids: HashMap::new(),
+            nominal_generic_params: HashMap::new(),
             nominal_field_spans: HashMap::new(),
             instances: InstanceRegistry::new(),
             type_context: TypeContext::new(),
@@ -1350,8 +1410,22 @@ impl Monomorphizer {
 
     fn register_nominal_field_types(&mut self, program: &HirProgram) {
         self.nominal_field_types.clear();
+        self.nominal_field_ids.clear();
+        self.nominal_generic_params.clear();
         self.nominal_field_spans.clear();
         for strukt in program.structs.values() {
+            self.nominal_field_ids.insert(
+                strukt.id,
+                strukt.fields.iter().map(|field| field.id).collect(),
+            );
+            self.nominal_generic_params.insert(
+                strukt.id,
+                strukt
+                    .generic_params
+                    .iter()
+                    .map(|parameter| parameter.id)
+                    .collect(),
+            );
             self.nominal_field_types.insert(
                 strukt.id,
                 strukt.fields.iter().map(|field| field.ty.clone()).collect(),

@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::mir::{
-    BasicBlock, BasicBlockId, Local, MirBackendContract, MirFunction, MirProjectionKey, Operand,
-    Place, Projection, Rvalue, StatementData, StatementKind, Terminator,
+    BasicBlock, BasicBlockId, Local, MirBackendContract, MirFunction, MirFunctionId,
+    MirProjectionKey, Operand, Place, Projection, ReferenceOrigin, Rvalue, StatementData,
+    StatementKind, Terminator,
 };
 
 use crate::ids::{AssocTypeId, DefId, LoanId, TypeId};
@@ -122,6 +123,7 @@ pub fn compute_active_loan_entries(
         table,
         loan_at_location,
         reference_liveness,
+        &HashMap::new(),
     )
 }
 
@@ -132,6 +134,7 @@ pub fn compute_active_loan_entries_with_contract(
     table: &LoanTable,
     loan_at_location: &LoanLocationIndex,
     reference_liveness: &ReferenceLiveness,
+    return_summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
 ) -> Vec<LoanState> {
     let analysis = ActiveLoanAnalysis::new(
         type_context,
@@ -139,6 +142,7 @@ pub fn compute_active_loan_entries_with_contract(
         table,
         loan_at_location,
         reference_liveness,
+        return_summaries,
     );
     compute_active_loan_entries_fixpoint(&analysis, func)
 }
@@ -188,6 +192,7 @@ pub(super) struct ActiveLoanAnalysis<'a> {
     table: &'a LoanTable,
     loan_at_location: &'a LoanLocationIndex,
     reference_liveness: &'a ReferenceLiveness,
+    return_summaries: &'a HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
 }
 
 impl<'a> ActiveLoanAnalysis<'a> {
@@ -197,6 +202,7 @@ impl<'a> ActiveLoanAnalysis<'a> {
         table: &'a LoanTable,
         loan_at_location: &'a LoanLocationIndex,
         reference_liveness: &'a ReferenceLiveness,
+        return_summaries: &'a HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
     ) -> Self {
         Self {
             type_context,
@@ -204,6 +210,7 @@ impl<'a> ActiveLoanAnalysis<'a> {
             table,
             loan_at_location,
             reference_liveness,
+            return_summaries,
         }
     }
 }
@@ -268,6 +275,7 @@ impl Analysis for ActiveLoanAnalysis<'_> {
                 self.type_context,
                 self.backend_contract,
                 term,
+                self.return_summaries,
             );
         }
         for loan_id in self.loan_at_location.loan_ids_at(terminator_location) {
@@ -288,15 +296,40 @@ pub(super) fn apply_active_loan_statement_transfer(
     stmt: &StatementData,
 ) {
     match &stmt.kind {
+        StatementKind::Assign(dest, Rvalue::Use(Operand::Move(src) | Operand::Copy(src)))
+            if backend_contract
+                .place_type_id(type_context, func, dest)
+                .is_some_and(|ty| target_is_pointer(type_context, ty)) =>
+        {
+            state.copy_owner_as_raw(src.local, dest.local);
+            if matches!(
+                &stmt.kind,
+                StatementKind::Assign(_, Rvalue::Use(Operand::Move(_)))
+            ) && src.local != dest.local
+            {
+                state.release_owner(src.local);
+            }
+        }
+        StatementKind::Assign(dest, Rvalue::Use(Operand::Move(src) | Operand::Copy(src)))
+            if matches!(src.projection.first(), Some(Projection::Deref))
+                && local_is_reference(func, type_context, src.local) =>
+        {
+            // Reading a stored value is not borrowing the receiver's storage.
+            state.copy_contents_owner(src.local, dest.local);
+        }
         StatementKind::Assign(
             dest,
-            Rvalue::Use(Operand::Move(src)) | Rvalue::Object(Operand::Move(src), _),
+            Rvalue::Use(Operand::Move(src))
+            | Rvalue::Object(Operand::Move(src), _)
+            | Rvalue::Package(Operand::Move(src), _),
         ) => {
             state.transfer_owner(src.local, dest.local);
         }
         StatementKind::Assign(
             dest,
-            Rvalue::Use(Operand::Copy(src)) | Rvalue::Object(Operand::Copy(src), _),
+            Rvalue::Use(Operand::Copy(src))
+            | Rvalue::Object(Operand::Copy(src), _)
+            | Rvalue::Package(Operand::Copy(src), _),
         ) => {
             if tracks_local_reference_liveness(func, type_context, backend_contract, src.local) {
                 state.copy_owner(src.local, dest.local);
@@ -312,7 +345,12 @@ pub(super) fn apply_active_loan_statement_transfer(
                     .get(place.local.0)
                     .is_some_and(|decl| target_is_pointer(type_context, decl.ty))) =>
         {
-            state.copy_owner(place.local, dest.local);
+            state.copy_owner_for_borrow(place.local, dest.local);
+        }
+        StatementKind::Assign(dest, Rvalue::Ref(_, place)) => {
+            // The new storage loan is activated separately. Preserve loans
+            // contained in the borrowed value even when its original binding dies.
+            state.copy_owner_as_contents(place.local, dest.local);
         }
         StatementKind::Assign(dest, Rvalue::Aggregate(_, operands)) => {
             for operand in operands {
@@ -329,10 +367,13 @@ pub(super) fn apply_active_loan_statement_transfer(
                 }
                 match operand {
                     Operand::Copy(_) => {
-                        state.copy_owner(place.local, dest.local);
+                        state.copy_owner_as_contents(place.local, dest.local);
                     }
                     Operand::Move(_) => {
-                        state.transfer_owner(place.local, dest.local);
+                        state.copy_owner_as_contents(place.local, dest.local);
+                        if place.local != dest.local {
+                            state.release_owner(place.local);
+                        }
                     }
                     Operand::Constant(_) => unreachable!(),
                 }
@@ -343,11 +384,18 @@ pub(super) fn apply_active_loan_statement_transfer(
                 if local_is_mutable_reference(func, type_context, place.local)
                     && target_is_pointer(type_context, *target)
                 {
-                    state.transfer_owner(place.local, dest.local);
-                } else if local_is_reference(func, type_context, place.local)
+                    state.copy_owner_as_raw(place.local, dest.local);
+                    if place.local != dest.local {
+                        state.release_owner(place.local);
+                    }
+                } else if (local_is_reference(func, type_context, place.local)
+                    || func
+                        .local_decls
+                        .get(place.local.0)
+                        .is_some_and(|decl| target_is_pointer(type_context, decl.ty)))
                     && target_is_pointer(type_context, *target)
                 {
-                    state.copy_owner(place.local, dest.local);
+                    state.copy_owner_as_raw(place.local, dest.local);
                 }
             }
         }
@@ -361,6 +409,7 @@ fn apply_active_loan_terminator_transfer(
     type_context: &TypeContext,
     backend_contract: &MirBackendContract,
     term: &Terminator,
+    return_summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
 ) {
     let Terminator::Call {
         func: callee,
@@ -398,8 +447,60 @@ fn apply_active_loan_terminator_transfer(
         }
         return;
     }
-    if !local_contains_reference(func, type_context, backend_contract, destination.local) {
+    if !tracks_local_reference_liveness(func, type_context, backend_contract, destination.local) {
         return;
+    }
+
+    if let Operand::Constant(crate::mir::Constant::Callable(callable)) = callee {
+        if let Some(summary) = callable
+            .function_id()
+            .and_then(|id| return_summaries.get(&id))
+            .filter(|summary| {
+                summary.iter().all(|origin| match origin {
+                    ReferenceOrigin::Param(local)
+                    | ReferenceOrigin::ParamContents(local)
+                    | ReferenceOrigin::ParamBorrowedContents(local) => local
+                        .0
+                        .checked_sub(1)
+                        .is_some_and(|index| index < args.len()),
+                    ReferenceOrigin::Static => true,
+                    ReferenceOrigin::UnknownExternal
+                    | ReferenceOrigin::Local(_)
+                    | ReferenceOrigin::Temporary(_) => false,
+                })
+            })
+        {
+            // The body summary is authority: borrowed storage and transferred
+            // contents are distinct, regardless of nominal/source names.
+            for origin in summary {
+                let parameter = match origin {
+                    ReferenceOrigin::Param(local)
+                    | ReferenceOrigin::ParamBorrowedContents(local)
+                    | ReferenceOrigin::ParamContents(local) => *local,
+                    _ => continue,
+                };
+                let Some(Operand::Copy(source) | Operand::Move(source)) =
+                    parameter.0.checked_sub(1).and_then(|index| args.get(index))
+                else {
+                    continue;
+                };
+                if backend_contract
+                    .place_type_id(type_context, func, destination)
+                    .is_some_and(|ty| target_is_pointer(type_context, ty))
+                {
+                    state.copy_owner_as_raw(source.local, destination.local);
+                } else if matches!(origin, ReferenceOrigin::ParamContents(_))
+                    && local_is_reference(func, type_context, source.local)
+                {
+                    state.copy_contents_owner(source.local, destination.local);
+                } else if matches!(origin, ReferenceOrigin::ParamBorrowedContents(_)) {
+                    state.copy_owner_for_borrow(source.local, destination.local);
+                } else {
+                    state.copy_owner(source.local, destination.local);
+                }
+            }
+            return;
+        }
     }
 
     // Aggregate/raw handles can carry payload loans through ordinary protocol
@@ -408,8 +509,15 @@ fn apply_active_loan_terminator_transfer(
         let (Operand::Copy(source) | Operand::Move(source)) = arg else {
             continue;
         };
-        if local_contains_reference(func, type_context, backend_contract, source.local) {
-            state.copy_owner(source.local, destination.local);
+        if tracks_local_reference_liveness(func, type_context, backend_contract, source.local) {
+            if backend_contract
+                .place_type_id(type_context, func, destination)
+                .is_some_and(|ty| target_is_pointer(type_context, ty))
+            {
+                state.copy_owner_as_raw(source.local, destination.local);
+            } else {
+                state.copy_owner_for_borrow(source.local, destination.local);
+            }
         }
     }
 }
@@ -551,6 +659,7 @@ fn type_id_contains_reference_inner(
     }
 
     match view.ty(ty) {
+        Ty::Exists(_) => true,
         Ty::Object(_) => true,
         Ty::ObjectSelf { .. } | Ty::Witness(_) => true,
         Ty::Reference { .. } => true,
@@ -714,6 +823,7 @@ fn type_contains_reference_for_structural_type(
     }
 
     match ty {
+        Type::Exists(_) => true,
         Type::Reference { .. } => true,
         Type::Object(_) => true,
         Type::ObjectSelf { .. } | Type::Witness(_) => true,
@@ -1127,7 +1237,7 @@ fn rvalue_reference_uses(rvalue: &Rvalue, reference_locals: &LocalSet) -> Vec<Lo
     match rvalue {
         Rvalue::Use(op) => operand_reference_uses(op, reference_locals, &mut locals),
         Rvalue::Ref(_, place) => place_reference_uses_vec(place, reference_locals, &mut locals),
-        Rvalue::Object(op, _) | Rvalue::Cast(op, _) => {
+        Rvalue::Package(op, _) | Rvalue::Object(op, _) | Rvalue::Cast(op, _) => {
             operand_reference_uses(op, reference_locals, &mut locals)
         }
         Rvalue::BinaryOp(_, a, b) => {
@@ -1204,6 +1314,7 @@ mod tests {
     use crate::type_context::TypeContext;
     use crate::type_services::facts::TypeFacts;
     use crate::types::{AssociatedTypeKey, GenericParamId, Type};
+    use std::collections::HashMap;
 
     use super::super::accesses::AccessKind;
     use super::super::borrows::BorrowData;
@@ -1343,6 +1454,7 @@ mod tests {
             &table,
             &by_location,
             &reference_liveness,
+            &HashMap::new(),
         );
         let block = &func.basic_blocks[0];
         let mut state = entries[0].clone();
@@ -2312,12 +2424,14 @@ mod tests {
         let grouped = LoanLocationIndex::for_function(&table, &func);
         let reference_liveness = compute_reference_liveness(&func, &type_context);
         let backend_contract = MirBackendContract::default();
+        let return_summaries = HashMap::new();
         let analysis = ActiveLoanAnalysis::new(
             &type_context,
             &backend_contract,
             &table,
             &grouped,
             &reference_liveness,
+            &return_summaries,
         );
 
         let results = crate::mir::dataflow::run_fixpoint(&analysis, &func);
@@ -2712,6 +2826,131 @@ mod tests {
         let loan_id = table.iter().next().expect("loan").id;
 
         assert!(entries[1].owners(loan_id).contains(Local(3)));
+    }
+
+    #[test]
+    fn proven_contents_return_releases_receiver_storage_but_keeps_payload_live() {
+        let mut type_context = TypeContext::new();
+        let reference = Type::Reference {
+            inner: Box::new(Type::I64),
+            mutable: false,
+        };
+        let contents = Type::Tuple(vec![reference.clone()]);
+        let borrowed_contents = Type::Reference {
+            inner: Box::new(contents.clone()),
+            mutable: false,
+        };
+        let i64 = type_id(&mut type_context, Type::I64);
+        let reference = type_id(&mut type_context, reference);
+        let contents = type_id(&mut type_context, contents);
+        let borrowed_contents = type_id(&mut type_context, borrowed_contents);
+        let place = |local| Place {
+            local: Local(local),
+            projection: vec![],
+        };
+        let callee_id = MirFunctionId::Function(DefId::new(CrateId(1), LocalDefId(2)));
+        let function = MirFunction {
+            id: MirFunctionId::Function(DefId::new(CrateId(0), LocalDefId(1))),
+            name: "return_contents".into(),
+            basic_blocks: vec![
+                BasicBlock {
+                    statements: vec![
+                        StatementData::assign(
+                            place(2),
+                            Rvalue::Ref(Mutability::Not, place(1)),
+                            None,
+                        ),
+                        StatementData::assign(
+                            place(3),
+                            Rvalue::Aggregate(AggregateKind::Tuple, vec![Operand::Copy(place(2))]),
+                            None,
+                        ),
+                        StatementData::assign(
+                            place(4),
+                            Rvalue::Ref(Mutability::Not, place(3)),
+                            None,
+                        ),
+                    ],
+                    terminator: Some(Terminator::Call {
+                        func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
+                            MirCallableKey::Function(DefId::new(CrateId(1), LocalDefId(2))),
+                        ))),
+                        args: vec![Operand::Copy(place(4))],
+                        destination: place(5),
+                        target: BasicBlockId(1),
+                        span: Some(crate::lexer::Span::test()),
+                    }),
+                },
+                BasicBlock {
+                    statements: vec![StatementData::assign(
+                        place(0),
+                        Rvalue::Use(Operand::Copy(place(5))),
+                        None,
+                    )],
+                    terminator: Some(Terminator::Return),
+                },
+            ],
+            local_decls: [
+                contents,
+                i64,
+                reference,
+                contents,
+                borrowed_contents,
+                contents,
+            ]
+            .into_iter()
+            .map(|ty| LocalDecl {
+                ty,
+                mutability: Mutability::Not,
+                name: None,
+                span: None,
+                source: crate::mir::LocalSource::UserBinding,
+            })
+            .collect(),
+            closure_captures: vec![],
+            arg_count: 0,
+            ret_type: contents,
+            ownership: Default::default(),
+        };
+        let borrows = crate::mir::borrowck::borrows::collect_function_borrows(&function);
+        let table = LoanTable::from_borrows(&borrows);
+        let payload = table
+            .iter()
+            .find(|loan| loan.initial_owner == Local(2))
+            .unwrap()
+            .id;
+        let storage = table
+            .iter()
+            .find(|loan| loan.initial_owner == Local(4))
+            .unwrap()
+            .id;
+        let locations = LoanLocationIndex::for_function(&table, &function);
+        let liveness = compute_reference_liveness(&function, &type_context);
+        let contract = MirBackendContract::default();
+        for origin in [
+            crate::mir::ReferenceOrigin::ParamContents(Local(1)),
+            crate::mir::ReferenceOrigin::Param(Local(1)),
+            crate::mir::ReferenceOrigin::UnknownExternal,
+        ] {
+            let summaries =
+                HashMap::from([(callee_id.clone(), std::collections::HashSet::from([origin]))]);
+            let entries = compute_active_loan_entries_with_contract(
+                &function,
+                &type_context,
+                &contract,
+                &table,
+                &locations,
+                &liveness,
+                &summaries,
+            );
+            assert!(entries[1].is_active(payload), "{origin:?}");
+            assert!(entries[1].owner_contains(payload, Local(5)), "{origin:?}");
+            assert_eq!(
+                entries[1].is_active(storage),
+                origin != crate::mir::ReferenceOrigin::ParamContents(Local(1)),
+                "{origin:?}",
+            );
+        }
     }
 
     #[test]

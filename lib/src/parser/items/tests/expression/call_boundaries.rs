@@ -56,11 +56,11 @@ fn multiline_chain_follows_completed_inline_call() {
             matches!(
                 secondaries(&parsed),
                 [
-                    SecondaryExpr::Arguments(_),
+                    SecondaryExpr::Arguments(_, _),
                     SecondaryExpr::Dot(_),
-                    SecondaryExpr::Arguments(_),
+                    SecondaryExpr::Arguments(_, _),
                     SecondaryExpr::Dot(_),
-                    SecondaryExpr::Arguments(_)
+                    SecondaryExpr::Arguments(_, _)
                 ]
             ),
             "{source}: {parsed:?}"
@@ -71,7 +71,7 @@ fn multiline_chain_follows_completed_inline_call() {
 #[test]
 fn multiline_chain_can_explicitly_belong_to_an_argument() {
     let parsed = parse("consume (make arg\n    .finish!)");
-    let [SecondaryExpr::Arguments(arguments)] = secondaries(&parsed) else {
+    let [SecondaryExpr::Arguments(arguments, _)] = secondaries(&parsed) else {
         panic!("expected a single outer call: {parsed:?}");
     };
     let Operand::Expression(inner) = &primary(&arguments[0].arg).operand else {
@@ -80,9 +80,9 @@ fn multiline_chain_can_explicitly_belong_to_an_argument() {
     assert!(matches!(
         secondaries(inner),
         [
-            SecondaryExpr::Arguments(_),
+            SecondaryExpr::Arguments(_, _),
             SecondaryExpr::Dot(_),
-            SecondaryExpr::Arguments(_)
+            SecondaryExpr::Arguments(_, _)
         ]
     ));
 }
@@ -108,7 +108,7 @@ fn call_result_propagation_precedes_any_following_infix_operator() {
         assert_eq!(actual.value, operator);
         assert!(matches!(
             call.secondaries.as_deref(),
-            Some([SecondaryExpr::Arguments(_), SecondaryExpr::Interogation])
+            Some([SecondaryExpr::Arguments(_, _), SecondaryExpr::Interogation])
         ));
     }
 }
@@ -125,7 +125,11 @@ fn call_result_propagation_precedes_suffixes_and_reapplication() {
         assert!(
             matches!(
                 secondaries(&parsed),
-                [SecondaryExpr::Arguments(_), SecondaryExpr::Interogation, ..]
+                [
+                    SecondaryExpr::Arguments(_, _),
+                    SecondaryExpr::Interogation,
+                    ..
+                ]
             ),
             "{source}: {parsed:?}"
         );
@@ -136,7 +140,7 @@ fn call_result_propagation_precedes_suffixes_and_reapplication() {
     };
     assert!(matches!(
         secondaries(&inner),
-        [SecondaryExpr::Arguments(_), SecondaryExpr::Interogation]
+        [SecondaryExpr::Arguments(_, _), SecondaryExpr::Interogation]
     ));
 }
 
@@ -151,7 +155,7 @@ fn call_result_propagation_completes_expression_arguments_and_nested_calls() {
         assert!(
             matches!(
                 secondaries(&parsed),
-                [SecondaryExpr::Arguments(_), SecondaryExpr::Interogation]
+                [SecondaryExpr::Arguments(_, _), SecondaryExpr::Interogation]
             ),
             "{source}: {parsed:?}"
         );
@@ -172,14 +176,14 @@ fn argument_delimiters_keep_inner_propagation_local() {
     ] {
         let parsed = parse(source);
         assert!(
-            matches!(secondaries(&parsed), [SecondaryExpr::Arguments(_)]),
+            matches!(secondaries(&parsed), [SecondaryExpr::Arguments(_, _)]),
             "{source}: {parsed:?}"
         );
     }
     let parsed = parse("consume (left?), right?");
     assert!(matches!(
         secondaries(&parsed),
-        [SecondaryExpr::Arguments(_), SecondaryExpr::Interogation]
+        [SecondaryExpr::Arguments(_, _), SecondaryExpr::Interogation]
     ));
 }
 
@@ -189,4 +193,31 @@ fn ungrouped_propagation_ends_the_call_before_a_comma() {
         crate::parser::parse_string("main = -> consume left?, right\n", &Config::default(),)
             .is_err()
     );
+}
+
+#[test]
+fn call_suffix_spans_cover_consumed_bang_and_comma_arguments() {
+    for (source, suffix, count) in [
+        ("hello!", "!", 0),
+        ("hello !", "!", 0),
+        ("value.rebuild!", "!", 0),
+        ("value.accept left, right", "left, right", 2),
+        ("consume (left, right)", "(left, right)", 1),
+    ] {
+        let parsed = parse(source);
+        let Some(SecondaryExpr::Arguments(arguments, span)) = secondaries(&parsed).last() else {
+            panic!("expected final call suffix: {parsed:?}")
+        };
+        assert_eq!(arguments.len(), count);
+        assert_eq!(span.file_path, std::path::PathBuf::from("/test.rk"));
+        assert_eq!(span.start, source.find(suffix).unwrap());
+        assert_eq!(span.end, source.len());
+        assert_eq!(&source[span.start..span.end], suffix);
+        // The member reference is still the identifier, not the call suffix.
+        if let Some(SecondaryExpr::Dot(IdentOrNumber::Ident(member))) = secondaries(&parsed).first()
+        {
+            assert_eq!(&source[member.span.start..member.span.end], member.name);
+            assert!(member.span.end <= span.start);
+        }
+    }
 }

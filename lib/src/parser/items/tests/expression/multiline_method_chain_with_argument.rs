@@ -64,7 +64,7 @@ fn multiline_method_chain_with_argument() {
             }
 
             match &secondaries[2] {
-                SecondaryExpr::Arguments(args) => {
+                SecondaryExpr::Arguments(args, _) => {
                     assert_eq!(args.len(), 1, "Expected exactly one argument");
                     // Verify the argument is (toto.tata) - a parenthesized expression
                     match &args[0].arg {

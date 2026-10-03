@@ -37,6 +37,17 @@ fn collect_generic_names_from_parse_type<F>(
     F: Fn(&str) -> bool,
 {
     match ty {
+        ast::ParseType::Exists(package) => {
+            let mut names = Vec::new();
+            for ty in package.types() {
+                collect_generic_names_from_parse_type(ty, &mut names, is_known_type_name);
+            }
+            for name in names {
+                if name != package.parameter.name.name && !generic_params.contains(&name) {
+                    generic_params.push(name);
+                }
+            }
+        }
         ast::ParseType::Object(object) => {
             for ty in object.types() {
                 collect_generic_names_from_parse_type(ty, generic_params, is_known_type_name);

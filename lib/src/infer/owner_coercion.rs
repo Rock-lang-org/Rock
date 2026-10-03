@@ -2,10 +2,14 @@
 use crate::hir::*;
 use crate::ids::{DefId, HirLocalId};
 use crate::selection::{type_pattern_matches, SelectionService};
-use crate::types::{FunctionSafety, NominalTypeKind, Type};
+use crate::types::{FunctionSafety, TraitBound, Type};
 
 pub(crate) fn is_owner_destination(ty: &Type) -> bool {
-    matches!(ty, Type::Struct { args, .. } if matches!(args.as_slice(), [Type::Object(_)]))
+    // This only defers a candidate coercion; the constructor impl determines
+    // which slot is the payload and must prove split/rebuild before admission.
+    matches!(ty, Type::Struct { args, .. } if args.iter().any(|arg| {
+        crate::type_services::visit::type_any(arg, |nested| matches!(nested, Type::Object(_)))
+    }))
 }
 
 pub(crate) fn select_operation(
@@ -104,48 +108,59 @@ pub(crate) fn lower(
     language_items: &HirLanguageItems,
     local_id: HirLocalId,
 ) -> Result<HirExpr, String> {
-    let Type::Struct {
-        id,
-        args: destination,
-    } = target
-    else {
-        return Err("owner destination must be a unary nominal owner".into());
+    let Type::Struct { id, .. } = target else {
+        return Err("owner destination must be a nominal owner".into());
     };
-    let Type::Struct {
-        id: source_id,
-        args: source,
-    } = &value.ty
-    else {
+    let Type::Struct { id: source_id, .. } = &value.ty else {
         return Err("owner coercion requires an owned source".into());
     };
-    if source_id != id || source.len() != 1 || destination.len() != 1 {
+    if source_id != id {
         return Err("owner coercion must preserve the exact owner constructor".into());
     }
     let protocol = language_items
         .object_owner
         .as_ref()
         .ok_or("owner coercion requires an explicitly provided object_owner protocol")?;
-    let constructor = Type::Constructor {
-        id: *id,
-        flavor: NominalTypeKind::Struct,
-    };
-    let state = service
-        .infer_trait_arguments(&constructor, protocol.trait_id)
+    let (constructor, source, state) = service
+        .infer_unary_constructor_application(&value.ty, protocol.trait_id)
+        .map_err(|error| error.message())?
         .ok_or(
             "owner coercion requires one proven constructor implementation with independent State",
         )?;
+    let (destination_constructor, destination, destination_state) = service
+        .infer_unary_constructor_application(target, protocol.trait_id)
+        .map_err(|error| error.message())?
+        .ok_or("owner destination requires a proven constructor application")?;
+    if constructor != destination_constructor || state != destination_state {
+        return Err("owner coercion must preserve the exact owner constructor and State".into());
+    }
+    if !matches!(&destination, Type::Object(_)) {
+        return Err("owner coercion must convert the constructor's payload slot".into());
+    }
     let [state_ty] = state.as_slice() else {
         return Err("invalid object_owner State arity".into());
     };
     if crate::type_services::visit::type_any(state_ty, |ty| {
         matches!(
             ty,
-            Type::Generic(_) | Type::TypeVar(_) | Type::ObjectSelf { .. }
+            Type::TypeVar(_) | Type::Error | Type::ObjectSelf { .. } | Type::Witness(_)
         )
-    }) || crate::type_services::layout::TypeLayout::sizedness(state_ty, &|_| {
-        crate::type_services::layout::Sizedness::Unknown
-    }) != crate::type_services::layout::Sizedness::Sized
-    {
+    }) || !language_items.sized.as_ref().map_or_else(
+        || {
+            crate::type_services::layout::TypeLayout::sizedness(state_ty, &|_| {
+                crate::type_services::layout::Sizedness::Unknown
+            }) == crate::type_services::layout::Sizedness::Sized
+        },
+        |sized| {
+            service.trait_bound_satisfied(
+                state_ty,
+                &TraitBound {
+                    trait_id: sized.trait_id,
+                    type_args: Vec::new(),
+                },
+            )
+        },
+    ) {
         return Err(
             "owner State must be a uniquely determined sized type independent of its payload"
                 .into(),
@@ -153,10 +168,10 @@ pub(crate) fn lower(
     }
     let span = value.span.clone();
     let parts_ty = Type::Tuple(vec![
-        Type::Pointer(Box::new(source[0].clone())),
+        Type::Pointer(Box::new(source.clone())),
         state_ty.clone(),
     ]);
-    let pointer_ty = Type::Pointer(Box::new(destination[0].clone()));
+    let pointer_ty = Type::Pointer(Box::new(destination));
     let operation =
         |member, params: Vec<Type>, ret: Type| -> Result<(HirExpr, HirCallTarget), String> {
             let instantiated = Type::function_with_safety(params, ret, FunctionSafety::Unsafe);
@@ -197,7 +212,7 @@ pub(crate) fn lower(
         }),
     };
     let pointer = HirExpr {
-        ty: Type::Pointer(Box::new(source[0].clone())),
+        ty: Type::Pointer(Box::new(source)),
         span: span.clone(),
         kind: HirExprKind::TupleIndex(Box::new(parts.clone()), 0),
     };

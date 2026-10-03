@@ -642,14 +642,23 @@ impl Lowerer {
                         .map(|method| method.id)
                 })
                 .expect("candidate trait member exists");
-            let trait_args = trait_def
-                .generic_params
-                .iter()
-                .map(|param| {
-                    self.engine
-                        .fresh_type_var_at_kind(span.clone(), param.kind.clone())
-                })
-                .collect::<Vec<_>>();
+            // A constructor impl may fix trait arguments that never mention
+            // its payload (for example independent allocation State). Recover
+            // those arguments before exact member selection, rather than
+            // asking structural matching to equate them with fresh variables.
+            let trait_args = self
+                .selection_service()
+                .infer_trait_arguments(target_ty, trait_id)
+                .unwrap_or_else(|| {
+                    trait_def
+                        .generic_params
+                        .iter()
+                        .map(|param| {
+                            self.engine
+                                .fresh_type_var_at_kind(span.clone(), param.kind.clone())
+                        })
+                        .collect::<Vec<_>>()
+                });
             match self.selection_service().select_constructor_trait_member(
                 target_ty,
                 trait_id,
@@ -840,14 +849,15 @@ impl Lowerer {
             .iter()
             .map(|ty| direct.resolve(ty))
             .collect::<Vec<_>>();
-        let exact = match self
-            .selection_service()
-            .select_trait_impl_strict(&owner, trait_id, &direct_args)
-        {
-            Ok(_) => true,
-            Err(crate::selection::SelectionDiagnostic::NoImplementation { .. }) => false,
-            Err(_) => return,
-        };
+        let exact =
+            match self
+                .selection_service()
+                .select_trait_impl_strict(&owner, trait_id, &direct_args)
+            {
+                Ok(_) => true,
+                Err(crate::selection::SelectionDiagnostic::NoImplementation { .. }) => false,
+                Err(_) => return,
+            };
         if exact {
             // A proven exact implementation fixes the ordinary argument
             // type before deferred object coercion can keep it open.
@@ -1670,12 +1680,43 @@ impl Lowerer {
         current_kind: HirClosureCaptureKind,
     ) {
         match &expr.kind {
-            HirExprKind::Open { source, binding, body } => {
+            HirExprKind::PackagePack { payload, .. } => {
+                let kind = Self::lambda_capture_kind_for_value(&payload.ty, current_kind);
+                self.collect_lambda_captures_expr(payload, defined, used, capture_kinds, kind);
+            }
+            HirExprKind::PackageOpen {
+                source,
+                binding,
+                body,
+            } => {
                 let kind = Self::lambda_capture_kind_for_value(&source.ty, current_kind);
                 self.collect_lambda_captures_expr(source, defined, used, capture_kinds, kind);
                 let mut inner_defined = defined.clone();
                 inner_defined.insert(binding.value.name.clone());
-                self.collect_lambda_captures_block(body, &mut inner_defined, used, capture_kinds, current_kind);
+                self.collect_lambda_captures_block(
+                    body,
+                    &mut inner_defined,
+                    used,
+                    capture_kinds,
+                    current_kind,
+                );
+            }
+            HirExprKind::Open {
+                source,
+                binding,
+                body,
+            } => {
+                let kind = Self::lambda_capture_kind_for_value(&source.ty, current_kind);
+                self.collect_lambda_captures_expr(source, defined, used, capture_kinds, kind);
+                let mut inner_defined = defined.clone();
+                inner_defined.insert(binding.value.name.clone());
+                self.collect_lambda_captures_block(
+                    body,
+                    &mut inner_defined,
+                    used,
+                    capture_kinds,
+                    current_kind,
+                );
             }
             HirExprKind::OwnedObjectCall { owner, args, .. } => {
                 self.collect_lambda_captures_expr(

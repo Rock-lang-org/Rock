@@ -1,7 +1,7 @@
-use crate::lexer::{Token, TokenType};
+use crate::lexer::{Span, Token, TokenType};
 use crate::parser::{
-    engine::*, Argument, Expression, Ident, IdentOrNumber, IdentOrType, Operand, Operator,
-    PrimaryExpr, RangeExpr, SecondaryExpr, Tuple, UnaryExpr,
+    engine::*, Argument, Expression, Ident, IdentOrNumber, IdentOrType, IdentifierPath, Operand,
+    Operator, ParseType, PrimaryExpr, RangeExpr, SecondaryExpr, Tuple, UnaryExpr,
 };
 
 use super::{
@@ -266,9 +266,12 @@ pub fn primary_expr(stream: Input) -> IResult<PrimaryExpr> {
 }
 
 pub fn operand(stream: Input) -> IResult<Operand> {
-    reset_inside_argument_list(super::parse_open)
+    parse_pack
         .map(Box::new)
-        .map(Operand::Open)
+        .map(Operand::Pack)
+        .or(reset_inside_argument_list(super::parse_open)
+            .map(Box::new)
+            .map(Operand::Open))
         .or(super::do_expression)
         .or(reset_inside_argument_list(parse_if)
             .map(Box::new)
@@ -305,6 +308,63 @@ pub fn operand(stream: Input) -> IResult<Operand> {
         .or(preceded(not(operator), ident_path.map(Operand::Ident)))
         .process(stream)
         .map_err(|e| e.with_context("operand"))
+}
+
+fn parse_pack(stream: Input) -> IResult<crate::ast::Pack> {
+    let (after_name, name) = ident(stream)?;
+    if name.name != "pack" {
+        return Err(ParseError::ShortCircuit);
+    }
+    // Recognize the typed target before committing the contextual word;
+    // ordinary calls named `pack` retain their existing expression grammar.
+    let Ok((after_type, target)) = parenthesis(parse_type).process(after_name) else {
+        return Err(ParseError::ShortCircuit);
+    };
+    if !matches!(after_type.seek()?.token_type, TokenType::OpenParen) {
+        return Err(ParseError::ShortCircuit);
+    }
+    let tuple_payload = tuple.map(|tuple| {
+        Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+            operand: Operand::Tuple(tuple),
+            secondaries: None,
+            type_annotation: None,
+        }))
+    });
+    let unit_payload = (
+        get_span,
+        TokenType::OpenParen,
+        get_span,
+        TokenType::CloseParen,
+    )
+        .map(|(start, _, end, _)| {
+            let span = Span::new(start.file_path, start.start, end.end);
+            Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                operand: Operand::Ident(IdentifierPath {
+                    path: vec![IdentOrType::Type(ParseType::Unit(span))],
+                }),
+                secondaries: None,
+                type_annotation: None,
+            }))
+        });
+    let (rest, payload) = tuple_payload
+        .or(unit_payload)
+        .or(parenthesis(reset_inside_argument_list(expression)))
+        .process(after_type.clone())?;
+    let consumed = after_type.tokens.len() - rest.tokens.len();
+    let end = after_type
+        .tokens
+        .get(consumed.saturating_sub(1))
+        .map(|token| token.span.end)
+        .unwrap_or(target.span().end);
+    let span = Span::new(name.span.file_path.clone(), name.span.start, end);
+    Ok((
+        rest,
+        crate::ast::Pack {
+            target,
+            payload,
+            span,
+        },
+    ))
 }
 
 pub fn multiline_tuple(stream: Input) -> IResult<Vec<Expression>> {
@@ -410,7 +470,7 @@ pub fn secondary(stream: Input) -> IResult<SecondaryExpr> {
     let result = indice
         .map(SecondaryExpr::Indice)
         .or(dot.map(SecondaryExpr::Dot))
-        .or(arguments.map(SecondaryExpr::Arguments))
+        .or(arguments_secondary)
         .or(TokenType::Interogation.map(|_| SecondaryExpr::Interogation))
         .process(stream)?;
 
@@ -423,6 +483,28 @@ pub fn secondary(stream: Input) -> IResult<SecondaryExpr> {
     }
 
     Ok((stream, secondary))
+}
+
+fn arguments_secondary(stream: Input) -> IResult<SecondaryExpr> {
+    let (rest, arguments) = arguments(stream)?;
+    let consumed = &stream.tokens[..stream.tokens.len() - rest.tokens.len()];
+    let first = consumed.first().ok_or(ParseError::Fail)?;
+    let last = consumed.last().ok_or(ParseError::Fail)?;
+    // Macro-origin tokens may have different source owners; never invent a
+    // range across files. The terminal suffix token still has exact provenance.
+    let span = if consumed
+        .iter()
+        .all(|token| token.span.file_path == first.span.file_path)
+    {
+        consumed.iter().fold(first.span.clone(), |mut span, token| {
+            span.start = span.start.min(token.span.start);
+            span.end = span.end.max(token.span.end);
+            span
+        })
+    } else {
+        last.span.clone()
+    };
+    Ok((rest, SecondaryExpr::Arguments(arguments, span)))
 }
 
 pub fn arguments(stream: Input) -> IResult<Vec<Argument>> {

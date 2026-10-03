@@ -51,8 +51,8 @@ impl TypeLoweringContext for Lowerer {
     }
 
     fn existing_generic_type(&self, name: &str) -> Option<Type> {
-        if let Some((_, binding)) = self.opened_witnesses.iter().rev().find(|(binder, _)| binder == name) {
-            return Some(Type::Witness(binding.witness));
+        if let Some(witness) = self.opened_witness_for_name(name) {
+            return Some(Type::Witness(witness));
         }
         if let Some(parameter) = self
             .body_context
@@ -79,7 +79,26 @@ impl TypeLoweringContext for Lowerer {
         span: crate::lexer::Span,
     ) -> Type {
         match crate::traits::objects::admit_type_objects(&ty, self, env) {
-            Ok(ty) => ty,
+            Ok(ty) => {
+                let structs = self
+                    .items
+                    .structures()
+                    .map(|(id, definition)| (id, definition.clone()))
+                    .collect();
+                let enums = self
+                    .items
+                    .enumerations()
+                    .map(|(id, definition)| (id, definition.clone()))
+                    .collect();
+                if let Err(message) = crate::type_services::existential::validate_package_layouts(
+                    &ty, &structs, &enums, env,
+                ) {
+                    self.push_type_error(message, span);
+                    Type::Error
+                } else {
+                    ty
+                }
+            }
             Err(error) => {
                 self.push_type_error(error.to_string(), span);
                 Type::Error

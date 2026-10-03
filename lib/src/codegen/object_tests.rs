@@ -71,6 +71,19 @@ pub(super) fn insert_body(
     program.functions.insert(body.id.clone(), body);
 }
 
+pub(super) fn insert_descriptor(program: &mut MirProgram, ty: TypeId) {
+    let drop = payload_drop_plan(&program.backend_contract, &mut program.type_context, ty).unwrap();
+    let fields = match &drop.children {
+        MirPayloadDropChildren::Fields(fields) => fields.iter().map(|field| field.ty).collect(),
+        _ => Vec::new(),
+    };
+    program
+        .backend_contract
+        .erased
+        .descriptors
+        .insert(ty, MirTypeDescriptor { ty, drop, fields });
+}
+
 /// Real contract fixture: the selected supertrait entry is not a prefix slot.
 pub(super) fn object_program(mutable: bool) -> MirProgram {
     let mut tc = TypeContext::new();
@@ -313,6 +326,7 @@ pub(super) fn object_program(mutable: bool) -> MirProgram {
         &[],
         false,
     );
+    insert_descriptor(&mut program, scalar);
     program
 }
 

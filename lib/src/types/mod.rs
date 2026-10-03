@@ -13,6 +13,45 @@ use crate::type_services::visit::{
 mod object;
 pub use object::{ObjectAssociatedType, ObjectBinding, ObjectType};
 
+/// A lexical package binder; its source spelling is not semantic identity.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ExistentialBinder {
+    pub kind: Kind,
+    pub maybe_unsized: bool,
+}
+
+/// Bounds and payload share one de Bruijn binder group, independently of Self.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ExistentialType<T: Ord = Type> {
+    pub binder: ExistentialBinder,
+    pub bounds: ObjectType<T>,
+    pub payload: T,
+}
+
+impl<T: Ord> ExistentialType<T> {
+    pub fn children(&self) -> impl Iterator<Item = &T> {
+        self.bounds.children().chain(std::iter::once(&self.payload))
+    }
+
+    pub fn try_map_types<U: Ord, E>(
+        &self,
+        mut map: impl FnMut(&T) -> Result<U, E>,
+    ) -> Result<ExistentialType<U>, E> {
+        Ok(ExistentialType {
+            binder: self.binder.clone(),
+            bounds: self.bounds.try_map_types(&mut map)?,
+            payload: map(&self.payload)?,
+        })
+    }
+
+    pub fn map_types<U: Ord>(&self, mut map: impl FnMut(&T) -> U) -> ExistentialType<U> {
+        match self.try_map_types::<U, std::convert::Infallible>(|ty| Ok(map(ty))) {
+            Ok(package) => package,
+            Err(never) => match never {},
+        }
+    }
+}
+
 /// A rigid, descriptor-backed type bound by an opening in one canonical body.
 /// Local IDs are preserved when the owning definition is remapped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -261,6 +300,8 @@ pub enum Type {
     Pointer(Box<Type>),
     /// An unsized existential trait view with explicit associated-type evidence.
     Object(Box<ObjectType>),
+    /// Uniform inline payload with one shared hidden witness and its evidence.
+    Exists(Box<ExistentialType>),
     /// Hidden sized receiver bound by an object signature. Depth counts object
     /// binders independently of type-lambda binders.
     ObjectSelf {
@@ -332,6 +373,7 @@ where
             Type::Object(object) => {
                 object.try_remap_trait_ids(self.remap)?;
             }
+            Type::Exists(package) => package.bounds.try_remap_trait_ids(self.remap)?,
             _ => {}
         }
         crate::type_services::visit::try_fold_type_children(ty, self)

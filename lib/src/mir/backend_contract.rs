@@ -163,6 +163,7 @@ pub struct MirArtifactExport {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MirBackendContract {
+    pub packages: BTreeMap<TypeId, super::MirPackageSchema>,
     pub owned_object_calls: BTreeMap<super::MirOwnedObjectKey, super::MirOwnedObjectPlan>,
     pub erased: super::MirErasedContract,
     pub object_schemas: BTreeMap<TypeId, super::MirObjectSchema>,
@@ -783,7 +784,8 @@ fn validate_rvalue_callable_operands(
     errors: &mut Vec<MirBackendContractError>,
 ) {
     match rvalue {
-        Rvalue::Object(operand, _)
+        Rvalue::Package(operand, _)
+        | Rvalue::Object(operand, _)
         | Rvalue::Use(operand)
         | Rvalue::Cast(operand, _)
         | Rvalue::UnaryOp(_, operand) => {

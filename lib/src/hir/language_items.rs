@@ -99,25 +99,40 @@ fn validate_owners<P: HirPhase>(program: &HirProgramFor<P>, errors: &mut Vec<Str
         operations.push((owner.trait_id, owner.into_parts_id, R::OwnerIntoParts));
         operations.push((owner.trait_id, owner.from_parts_id, R::OwnerFromParts));
     }
-    for (item, role) in [
-        (
-            &program.language_items.object_owner_allocate,
-            R::OwnerAllocate,
-        ),
-        (&program.language_items.object_owner_unique, R::OwnerRelease),
-    ] {
-        if let Some(item) = item {
-            if program
-                .language_items
-                .object_owner
-                .as_ref()
-                .is_none_or(|owner| owner.trait_id.crate_id != item.trait_id.crate_id)
-            {
-                errors.push(format!(
-                    "{role} requires object_owner from the same provider"
-                ));
-            }
-            operations.push((item.trait_id, item.method_id, role));
+    if let Some(item) = &program.language_items.object_owner_allocate {
+        operations.push((item.trait_id, item.method_id, R::OwnerAllocate));
+        operations.push((item.trait_id, item.cancel_id, R::OwnerCancel));
+        if item.method_id == item.cancel_id {
+            errors.push("owner_cancel must be distinct from owner_allocate".into());
+        }
+    }
+    if let Some(item) = &program.language_items.object_owner_unique {
+        operations.push((item.trait_id, item.method_id, R::OwnerRelease));
+    }
+    for (trait_id, role) in [
+        program
+            .language_items
+            .object_owner_allocate
+            .as_ref()
+            .map(|item| (item.trait_id, R::OwnerAllocate)),
+        program
+            .language_items
+            .object_owner_unique
+            .as_ref()
+            .map(|item| (item.trait_id, R::OwnerRelease)),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if program
+            .language_items
+            .object_owner
+            .as_ref()
+            .is_none_or(|owner| owner.trait_id.crate_id != trait_id.crate_id)
+        {
+            errors.push(format!(
+                "{role} requires object_owner from the same provider"
+            ));
         }
     }
     for (trait_id, member_id, role) in operations {
@@ -168,6 +183,13 @@ fn validate_owners<P: HirPhase>(program: &HirProgramFor<P>, errors: &mut Vec<Str
         }
         let params = method.params();
         let byte_pointer = Type::Pointer(Box::new(Type::U8));
+        if matches!(role, R::OwnerAllocate | R::OwnerCancel)
+            && bounds
+                .relaxed_sized
+                .contains(&definition.generic_params[0].id)
+        {
+            errors.push(format!("{label} must preserve a sized State bound"));
+        }
         if role == R::OwnerAllocate {
             if parameters
                 .iter()
@@ -186,7 +208,7 @@ fn validate_owners<P: HirPhase>(program: &HirProgramFor<P>, errors: &mut Vec<Str
             }
             continue;
         }
-        if role == R::OwnerRelease {
+        if matches!(role, R::OwnerRelease | R::OwnerCancel) {
             if parameters
                 .iter()
                 .any(|parameter| parameter.id.owner == member_id)
@@ -1284,6 +1306,88 @@ mod tests {
     use crate::types::{GenericParamDecl, GenericParamId, Type};
 
     use super::validate_language_items;
+
+    const VALID_ALLOCATION_SOURCE: &str = r#"
+lang sized
+< trait LayoutKnown
+lang object_owner
+< trait Transport State for F _
+    lang owner_into_parts
+    unsafe split: F T -> (*T, State) where T: ?LayoutKnown
+    lang owner_from_parts
+    unsafe rebuild: *T -> State -> F T where T: ?LayoutKnown
+lang object_owner_allocate
+< trait Reservation State for F _
+    lang owner_allocate
+    unsafe reserve: I64 -> I64 -> (*U8, State)
+    lang owner_cancel
+    unsafe abandon: *U8 -> State -> ()
+main = !-> ()
+"#;
+
+    #[test]
+    fn cancellation_revalidates_constructor_kind_and_state_authority() {
+        for mutation in 0..6 {
+            let mut hir = resolved_language_item_program(VALID_ALLOCATION_SOURCE);
+            let program = hir.program.program_mut_for_test();
+            let items = program
+                .language_items
+                .object_owner_allocate
+                .clone()
+                .unwrap();
+            let declaration = program.traits.get_mut(&items.trait_id).unwrap();
+            match mutation {
+                0 => {
+                    declaration.target.as_mut().unwrap().kind =
+                        crate::type_services::kind::Kind::Type
+                }
+                1 => declaration.generic_params[0].maybe_unsized = true,
+                2 => {
+                    declaration.generic_params[0].kind = crate::type_services::kind::Kind::arrow(
+                        crate::type_services::kind::Kind::Type,
+                        crate::type_services::kind::Kind::Type,
+                    )
+                }
+                3 => {
+                    program
+                        .language_items
+                        .object_owner_allocate
+                        .as_mut()
+                        .unwrap()
+                        .cancel_id = items.method_id
+                }
+                4 => {
+                    let split = program
+                        .language_items
+                        .object_owner
+                        .as_ref()
+                        .unwrap()
+                        .into_parts_id;
+                    program
+                        .language_items
+                        .object_owner_allocate
+                        .as_mut()
+                        .unwrap()
+                        .cancel_id = split;
+                }
+                _ => {
+                    let state = declaration.generic_params[0].id;
+                    declaration
+                        .signatures
+                        .get_mut("abandon")
+                        .unwrap()
+                        .generic_bounds
+                        .relaxed_sized
+                        .insert(state);
+                }
+            }
+            let errors = super::validate_language_items(program);
+            assert!(
+                !errors.is_empty(),
+                "forged allocation protocol {mutation} accepted"
+            );
+        }
+    }
 
     const VALID_DROP_SOURCE: &str = r#"lang drop
 < trait Release

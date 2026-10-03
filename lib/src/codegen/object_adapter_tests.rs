@@ -1,4 +1,6 @@
-use super::object_tests::{definition, insert_body, local, object_program, place};
+use super::object_tests::{
+    definition, insert_body, insert_descriptor, local, object_program, place,
+};
 use crate::ids::InstanceId;
 use crate::mir::*;
 use crate::type_context::TypeContext;
@@ -371,6 +373,7 @@ fn native_callable_program(mutable: bool) -> MirProgram {
         &[],
         false,
     );
+    insert_descriptor(&mut program, concrete);
     program
 }
 
@@ -515,6 +518,7 @@ fn payload_program(payload_ty: Type) -> (MirProgram, MirCallableKey) {
             drop: Some(key.clone()),
         },
     );
+    insert_descriptor(&mut program, payload);
     program.backend_contract.runtime_requirements =
         crate::mir::backend_contract::runtime_requirements_for_backend(
             &program.backend_contract,
@@ -907,6 +911,7 @@ fn consuming_entry_adapter_obeys_concrete_direct_and_indirect_value_abis() {
             },
         );
         add_owned_consuming_caller(&mut program, scalar, pointer, object, erased);
+        insert_descriptor(&mut program, scalar);
         let context = Context::create();
         let mut codegen = super::CodeGen::new(&context, "consume-adapter");
         codegen.compile_program_from_mir(&program).unwrap();
@@ -919,7 +924,7 @@ fn consuming_entry_adapter_obeys_concrete_direct_and_indirect_value_abis() {
         RELEASED.store(0, Ordering::SeqCst);
         engine.add_global_mapping(
             &codegen.module.get_function("release.owner").unwrap(),
-            release as usize,
+            release as *const () as usize,
         );
         unsafe {
             assert_eq!(
@@ -1155,8 +1160,13 @@ fn owned_erased_call_transfers_payload_and_initializes_result_before_release() {
         body: Some(MirErasedBody {
             locals: vec![MirErasedType::Concrete(scalar), parameter],
             mutable_locals: Default::default(),
-            statements: vec![],
-            result: MirErasedOperand::Move(MirErasedPlace::local(MirErasedLocal(1))),
+            scopes: vec![],
+            blocks: vec![MirErasedBasicBlock {
+                statements: vec![],
+                terminator: MirErasedTerminator::Return(MirErasedOperand::Move(
+                    MirErasedPlace::local(MirErasedLocal(1)),
+                )),
+            }],
         }),
     };
     let mut program = MirProgram {

@@ -925,6 +925,13 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn type_id_contains_projection(&self, id: TypeId) -> bool {
         match self.type_view().ty(id) {
+            Ty::Exists(package) => {
+                self.type_id_contains_projection(package.payload)
+                    || package
+                        .bounds
+                        .children()
+                        .any(|child| self.type_id_contains_projection(*child))
+            }
             Ty::ObjectSelf { .. } | Ty::Witness(_) => false,
             Ty::Object(object) => object
                 .children()

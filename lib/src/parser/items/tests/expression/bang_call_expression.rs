@@ -28,7 +28,10 @@ fn bang_call_expression() {
                     },
                 })],
             }),
-            secondaries: Some(vec![SecondaryExpr::Arguments(vec![])]),
+            secondaries: Some(vec![SecondaryExpr::Arguments(
+                vec![],
+                Span::new("/test.rk".into(), 5, input.len())
+            )]),
             type_annotation: None,
         })),
     );

@@ -915,6 +915,32 @@ mod tests {
     }
 
     #[test]
+    fn callable_safety_coercion_is_directional_through_returns_and_tuples() {
+        let safe = Type::function(Vec::new(), Type::I64);
+        let unsafe_ = Type::unsafe_function(Vec::new(), Type::I64);
+        for (source, target) in [
+            (safe.clone(), unsafe_.clone()),
+            (
+                Type::Tuple(vec![Type::Tuple(vec![safe.clone()]), Type::Bool]),
+                Type::Tuple(vec![Type::Tuple(vec![unsafe_.clone()]), Type::Bool]),
+            ),
+            (
+                Type::function(vec![Type::Bool], safe),
+                Type::function(vec![Type::Bool], unsafe_),
+            ),
+        ] {
+            assert!(InferenceEngine::new().unify(&source, &target).is_ok());
+            assert!(InferenceEngine::new().unify(&target, &source).is_err());
+            assert!(InferenceEngine::new()
+                .unify_invariant(&source, &target)
+                .is_err());
+            assert!(InferenceEngine::new()
+                .unify_invariant(&target, &source)
+                .is_err());
+        }
+    }
+
+    #[test]
     fn function_unification_preserves_closure_metadata_through_type_variables() {
         let mut engine = InferenceEngine::new();
         let variable = engine.fresh_type_var();
@@ -1352,6 +1378,10 @@ impl InferenceEngine {
             (_, Type::TypeVar(id)) => self.bind_type_var(*id, a),
             (Type::Object(left), Type::Object(right)) => {
                 super::object_unify::unify_objects(self, left, right)
+            }
+            (Type::Exists(left), Type::Exists(right)) if left.binder == right.binder => {
+                super::object_unify::unify_objects(self, &left.bounds, &right.bounds)?;
+                self.unify_invariant(&left.payload, &right.payload)
             }
             (Type::Never, _) | (_, Type::Never) => Ok(()),
             (Type::Error, _) | (_, Type::Error) => Ok(()),
@@ -1889,6 +1919,9 @@ impl InferenceEngine {
 
     fn has_escaping_bound_var(ty: &Type, binder_depth: u32) -> bool {
         match ty {
+            Type::Exists(package) => package
+                .children()
+                .any(|child| Self::has_escaping_bound_var(child, binder_depth.saturating_add(1))),
             Type::Object(object) => object
                 .children()
                 .any(|child| Self::has_escaping_bound_var(child, binder_depth)),
@@ -2141,6 +2174,7 @@ impl InferenceEngine {
     pub fn occurs_in(&self, var: TypeVarId, ty: &Type) -> bool {
         let ty = self.resolve(ty);
         match &ty {
+            Type::Exists(package) => package.children().any(|child| self.occurs_in(var, child)),
             Type::Object(object) => object.children().any(|child| self.occurs_in(var, child)),
             Type::TypeVar(id) => *id == var,
             Type::Slice(inner) | Type::Pointer(inner) => self.occurs_in(var, inner),

@@ -11,6 +11,7 @@ pub(crate) struct FoldLoopContext {
     name: String,
     stop_variant: HirVariantLocation,
     next_variant: HirVariantLocation,
+    return_ty: Type,
     exit_ty: Type,
     callback_ty: Type,
     span: Span,
@@ -74,6 +75,16 @@ impl FoldLoopContext {
 }
 
 impl Lowerer {
+    pub(crate) fn source_return_type(&mut self) -> Option<Type> {
+        // Transport types belong to synthesized callbacks, not source returns.
+        self.fold_loop_stack
+            .iter()
+            .flatten()
+            .next()
+            .map(|context| context.return_ty.clone())
+            .or_else(|| self.current_body_return_type())
+    }
+
     fn fold_pattern_is_irrefutable(&self, pattern: &HirPattern) -> bool {
         match pattern {
             HirPattern::Wildcard | HirPattern::Binding { .. } => true,
@@ -262,6 +273,7 @@ impl Lowerer {
             name: enumeration.name.clone(),
             stop_variant,
             next_variant,
+            return_ty: return_ty.clone(),
             exit_ty,
             callback_ty: callback_ty.clone(),
             span: span.clone(),

@@ -39,38 +39,45 @@ fn complex_secondaries() {
                     name: "world".to_string(),
                     span: Span::test(),
                 })),
-                SecondaryExpr::Arguments(vec![
-                    Argument {
-                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Literal(Literal {
-                                kind: crate::ast::LiteralKind::Number(1),
-                                span: Span::test(),
-                            }),
-                            secondaries: None,
-                            type_annotation: None,
-                        })),
-                    },
-                    Argument {
-                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Literal(Literal {
-                                kind: crate::ast::LiteralKind::Number(2),
-                                span: Span::test(),
-                            }),
-                            secondaries: None,
-                            type_annotation: None,
-                        })),
-                    },
-                    Argument {
-                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Literal(Literal {
-                                kind: crate::ast::LiteralKind::Number(3),
-                                span: Span::test(),
-                            }),
-                            secondaries: None,
-                            type_annotation: None,
-                        })),
-                    },
-                ]),
+                SecondaryExpr::Arguments(
+                    vec![
+                        Argument {
+                            arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Literal(Literal {
+                                    kind: crate::ast::LiteralKind::Number(1),
+                                    span: Span::test(),
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            })),
+                        },
+                        Argument {
+                            arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Literal(Literal {
+                                    kind: crate::ast::LiteralKind::Number(2),
+                                    span: Span::test(),
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            })),
+                        },
+                        Argument {
+                            arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Literal(Literal {
+                                    kind: crate::ast::LiteralKind::Number(3),
+                                    span: Span::test(),
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            })),
+                        },
+                    ],
+                    Span::new(
+                        "/test.rk".into(),
+                        input.find("1, 2, 3").unwrap(),
+                        input.len(),
+                    ),
+                ),
             ]),
             type_annotation: None,
         })),

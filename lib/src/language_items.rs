@@ -39,16 +39,18 @@ pub enum LanguageItemRole {
     RangeToInclusive,
     RangeExclusive,
     RangeInclusive,
+    OwnerCancel,
 }
 
 impl LanguageItemRole {
-    pub const ALL_NAMES: [&str; 33] = [
+    pub const ALL_NAMES: [&str; 34] = [
         "object_owner",
         "object_owner_allocate",
         "object_owner_unique",
         "owner_into_parts",
         "owner_from_parts",
         "owner_allocate",
+        "owner_cancel",
         "owner_release",
         "sized",
         "drop",
@@ -86,6 +88,7 @@ impl LanguageItemRole {
             Self::OwnerIntoParts => "owner_into_parts",
             Self::OwnerFromParts => "owner_from_parts",
             Self::OwnerAllocate => "owner_allocate",
+            Self::OwnerCancel => "owner_cancel",
             Self::OwnerRelease => "owner_release",
             Self::Sized => "sized",
             Self::Drop => "drop",
@@ -128,6 +131,7 @@ impl FromStr for LanguageItemRole {
             "owner_into_parts" => Ok(Self::OwnerIntoParts),
             "owner_from_parts" => Ok(Self::OwnerFromParts),
             "owner_allocate" => Ok(Self::OwnerAllocate),
+            "owner_cancel" => Ok(Self::OwnerCancel),
             "owner_release" => Ok(Self::OwnerRelease),
             "sized" => Ok(Self::Sized),
             "drop" => Ok(Self::Drop),
@@ -258,7 +262,7 @@ pub struct RangeLanguageItems<D> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanguageItems<D> {
     pub object_owner: Option<ObjectOwnerLanguageItems<D>>,
-    pub object_owner_allocate: Option<OwnerOperationLanguageItems<D>>,
+    pub object_owner_allocate: Option<OwnerAllocateLanguageItems<D>>,
     pub object_owner_unique: Option<OwnerOperationLanguageItems<D>>,
     pub sized: Option<SizedLanguageItems<D>>,
     pub drop: Option<DropLanguageItems<D>>,
@@ -280,6 +284,13 @@ pub struct ObjectOwnerLanguageItems<D> {
     pub trait_id: D,
     pub into_parts_id: D,
     pub from_parts_id: D,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerAllocateLanguageItems<D> {
+    pub trait_id: D,
+    pub method_id: D,
+    pub cancel_id: D,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -585,7 +596,8 @@ mod tests {
     use super::{
         merge_language_item_providers, merge_language_item_providers_all, DropLanguageItems,
         FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, IndexLanguageItems,
-        IndexMutLanguageItems, LanguageItemProviderConflict, LanguageItems, SendLanguageItems,
+        IndexMutLanguageItems, LanguageItemProviderConflict, LanguageItems,
+        ObjectOwnerLanguageItems, OwnerAllocateLanguageItems, SendLanguageItems,
         SizedLanguageItems, SyncLanguageItems,
     };
 
@@ -700,6 +712,34 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "language-item provider 'mutable' claims protocol 'index_mut' without required protocol 'index'",
+        );
+    }
+
+    #[test]
+    fn merge_language_items_preserves_allocation_cancellation_without_unique_extraction() {
+        let provider = LanguageItems {
+            object_owner: Some(ObjectOwnerLanguageItems {
+                trait_id: def_id(1, 1),
+                into_parts_id: def_id(1, 2),
+                from_parts_id: def_id(1, 3),
+            }),
+            object_owner_allocate: Some(OwnerAllocateLanguageItems {
+                trait_id: def_id(1, 4),
+                method_id: def_id(1, 5),
+                cancel_id: def_id(1, 6),
+            }),
+            ..LanguageItems::default()
+        };
+        let merged = merge_language_item_providers([("provider", &provider)]).unwrap();
+        assert_eq!(merged.object_owner_allocate, provider.object_owner_allocate);
+        assert!(merged.object_owner_unique.is_none());
+        let missing_owner = LanguageItems {
+            object_owner: None,
+            ..provider.clone()
+        };
+        assert!(merge_language_item_providers([("provider", &missing_owner)]).is_err());
+        assert!(
+            merge_language_item_providers([("first", &provider), ("second", &provider)]).is_err()
         );
     }
 

@@ -49,7 +49,7 @@ fn multiline_arguments_with_nested_multiline_dots() {
 
             // Check arguments
             match &secondaries[1] {
-                SecondaryExpr::Arguments(args) => {
+                SecondaryExpr::Arguments(args, _) => {
                     assert_eq!(args.len(), 2, "Expected 2 arguments");
 
                     // First argument: arg1.method1.method2

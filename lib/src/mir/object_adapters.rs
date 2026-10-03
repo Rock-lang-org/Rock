@@ -44,6 +44,7 @@ pub struct MirPayloadDropPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MirPayloadDropChildren {
     None,
+    Package,
     Fields(Vec<MirPayloadDropPlan>),
     Array {
         len: usize,
@@ -62,6 +63,7 @@ impl MirPayloadDropPlan {
         self.user_drop.is_some()
             || match &self.children {
                 MirPayloadDropChildren::None => false,
+                MirPayloadDropChildren::Package => true,
                 MirPayloadDropChildren::Fields(fields)
                 | MirPayloadDropChildren::Variants(fields) => fields.iter().any(Self::has_drop),
                 MirPayloadDropChildren::Array { len, element } => *len != 0 && element.has_drop(),
@@ -73,6 +75,7 @@ impl MirPayloadDropPlan {
     pub fn requires_heap_free(&self) -> bool {
         match &self.children {
             MirPayloadDropChildren::None => false,
+            MirPayloadDropChildren::Package => false,
             MirPayloadDropChildren::Fields(fields) | MirPayloadDropChildren::Variants(fields) => {
                 fields.iter().any(Self::requires_heap_free)
             }
@@ -215,16 +218,17 @@ pub fn payload_drop_plan(
         }
         let structural = contract.normalize_type(tc, &tc.type_for(ty));
         let children = match &structural {
+            Type::Exists(_) => MirPayloadDropChildren::Package,
             Type::Tuple(fields) => {
                 let mut plans = Vec::new();
                 for field in fields {
-                    let field = tc.intern_type(field);
+                    let field = super::intern_backend_type(tc, field);
                     plans.push(build(contract, tc, field, active)?);
                 }
                 MirPayloadDropChildren::Fields(plans)
             }
             Type::Array(element, len) => {
-                let element = tc.intern_type(element);
+                let element = super::intern_backend_type(tc, element);
                 MirPayloadDropChildren::Array {
                     len: *len,
                     element: Box::new(build(contract, tc, element, active)?),
@@ -241,7 +245,7 @@ pub fn payload_drop_plan(
                             mutable: capture.kind == crate::types::CaptureKind::MutableBorrow,
                         },
                     };
-                    let field = tc.intern_type(&field);
+                    let field = super::intern_backend_type(tc, &field);
                     fields.push(build(contract, tc, field, active)?);
                 }
                 MirPayloadDropChildren::ClosureEnvironment {
@@ -309,7 +313,7 @@ pub fn payload_drop_plan(
                 };
                 let mut plans = Vec::new();
                 for field in types {
-                    let field = tc.intern_type(&field);
+                    let field = super::intern_backend_type(tc, &field);
                     plans.push(build(contract, tc, field, active)?);
                 }
                 if variants.is_some() {

@@ -1,5 +1,6 @@
 use crate::ast;
 use crate::hir::{HirEnum, HirStruct, HirTrait, HirTypeAlias};
+use crate::lexer::Span;
 use crate::type_services::kind::Kind;
 use crate::type_services::normalize::{TypeNormalizationEnv, TypeNormalizer};
 use crate::types::{AssociatedTypeKey, GenericParamDecl, GenericParamId, NominalTypeKind, Type};
@@ -11,6 +12,24 @@ pub(crate) enum ResolvedNominalType {
 }
 
 pub(crate) trait TypeLoweringContext {
+    fn finish_existential_type(
+        &mut self,
+        binder: crate::types::ExistentialBinder,
+        bounds: Vec<Type>,
+        payload: Type,
+        _binders: Vec<Vec<Kind>>,
+        span: Span,
+    ) -> Type {
+        let mut env = TypeNormalizationEnv::new();
+        self.populate_type_normalization_env(&mut env);
+        match assemble_existential(binder, bounds, payload, &env) {
+            Ok(ty) => ty,
+            Err(message) => {
+                self.push_type_error(message, span);
+                Type::Error
+            }
+        }
+    }
     fn nominal_type_params(&self, _id: crate::ids::DefId) -> Vec<GenericParamDecl> {
         Vec::new()
     }
@@ -167,6 +186,42 @@ pub(crate) fn resolve_object_bindings(
 }
 
 pub(crate) struct TypeLowerer;
+
+pub(crate) fn assemble_existential(
+    binder: crate::types::ExistentialBinder,
+    bounds: Vec<Type>,
+    payload: Type,
+    env: &TypeNormalizationEnv,
+) -> Result<Type, String> {
+    let mut bounds = bounds.into_iter();
+    let first = bounds
+        .next()
+        .ok_or("an existential package requires a principal trait bound")?;
+    let Type::Object(mut signature) = TypeNormalizer::new(env)
+        .normalize(&first)
+        .map_err(|e| e.to_string())?
+    else {
+        return Err("existential bounds must be trait signatures".into());
+    };
+    for bound in bounds {
+        let Type::Object(extra) = TypeNormalizer::new(env)
+            .normalize(&bound)
+            .map_err(|e| e.to_string())?
+        else {
+            return Err("existential bounds must be trait signatures".into());
+        };
+        signature.guarantees.insert(extra.principal.clone());
+        signature
+            .guarantees
+            .extend(extra.guarantees.iter().cloned());
+        signature.bindings.extend(extra.bindings.iter().cloned());
+    }
+    Ok(Type::Exists(Box::new(crate::types::ExistentialType {
+        binder,
+        bounds: *signature,
+        payload,
+    })))
+}
 
 pub(crate) fn constructor_kind(params: &[crate::types::GenericParamDecl]) -> Kind {
     params.iter().rev().fold(Kind::Type, |output, param| {
@@ -367,7 +422,9 @@ impl TypeLowerer {
         let mut env = TypeNormalizationEnv::new();
         context.populate_type_normalization_env(&mut env);
         let ty = Self::lower_raw(context, parse_type, false, &env, &mut Vec::new());
-        if crate::type_services::visit::type_any(&ty, |ty| matches!(ty, Type::Object(_))) {
+        if crate::type_services::visit::type_any(&ty, |ty| {
+            matches!(ty, Type::Object(_) | Type::Exists(_))
+        }) {
             context.admit_object_type(ty, &env, parse_type.span())
         } else {
             ty
@@ -420,7 +477,7 @@ impl TypeLowerer {
                     context.push_type_error("nominal type argument requires Sized; declare an explicitly relaxed parameter to accept unsized pointees".into(), span);
                     Type::Error
                 } else if crate::type_services::visit::type_any(&ty, |ty| {
-                    matches!(ty, Type::Object(_))
+                    matches!(ty, Type::Object(_) | Type::Exists(_))
                 }) {
                     context.admit_object_type(ty, env, span)
                 } else {
@@ -442,6 +499,72 @@ impl TypeLowerer {
         binders: &mut Vec<Vec<(String, Kind)>>,
     ) -> Type {
         match parse_type {
+            ast::ParseType::Exists(syntax) => {
+                let kind = lower_generic_param_kind(syntax.parameter.kind.as_ref());
+                if kind != Kind::Type {
+                    context.push_type_error(
+                        "constructor-kind existential descriptor application is not implemented"
+                            .into(),
+                        syntax.parameter.span.clone(),
+                    );
+                    return Type::Error;
+                }
+                if syntax.parameter.unsized_bound.is_some()
+                    || syntax.where_clauses.iter().any(|clause| clause.relaxed)
+                {
+                    context.push_type_error(
+                        "existential packages currently require a Sized witness".into(),
+                        syntax.span.clone(),
+                    );
+                    return Type::Error;
+                }
+                binders.push(vec![(syntax.parameter.name.name.clone(), kind.clone())]);
+                let mut bounds = Vec::new();
+                let mut invalid = false;
+                for clause in &syntax.where_clauses {
+                    let subject = Self::lower_raw(context, &clause.subject, false, env, binders);
+                    if subject
+                        != (Type::BoundVar {
+                            depth: 0,
+                            index: 0,
+                            kind: kind.clone(),
+                        })
+                    {
+                        context.push_type_error(
+                            "existential bounds must constrain their own witness".into(),
+                            clause.subject.span(),
+                        );
+                        invalid = true;
+                    }
+                    if let Some(bound) = &clause.trait_bound {
+                        bounds.push(Self::lower_raw(context, bound, false, env, binders));
+                    } else {
+                        context.push_type_error(
+                            "existential witness requires an explicit trait bound".into(),
+                            clause.subject.span(),
+                        );
+                        invalid = true;
+                    }
+                }
+                let payload = Self::lower_raw(context, &syntax.payload, false, env, binders);
+                binders.pop();
+                if invalid {
+                    return Type::Error;
+                }
+                context.finish_existential_type(
+                    crate::types::ExistentialBinder {
+                        kind,
+                        maybe_unsized: false,
+                    },
+                    bounds,
+                    payload,
+                    binders
+                        .iter()
+                        .map(|group| group.iter().map(|(_, kind)| kind.clone()).collect())
+                        .collect(),
+                    syntax.span.clone(),
+                )
+            }
             ast::ParseType::Object(syntax) => {
                 let raw = Self::lower_raw(context, &syntax.base, false, env, binders);
                 let base = match Self::normalize_component(context, env, &raw) {

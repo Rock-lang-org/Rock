@@ -201,6 +201,7 @@ impl Monomorphizer {
             if is_entrypoint
                 || (!function_requires_downstream_specialization(&func)
                     && hir_function_is_codegen_concrete(&func))
+                || Self::requires_scoped_entry(&func)
             {
                 self.register_concrete_function(name.clone(), func);
             } else {
@@ -285,9 +286,7 @@ impl Monomorphizer {
                 .get(&id)
                 .expect("registered function must retain canonical display metadata")
                 .clone();
-            if Self::should_register_function_instance(&func) {
-                self.register_function_instance(&name, &func);
-            }
+            self.register_processed_function_instance(&name, &func);
             program.names.functions_by_name.insert(name, id);
             program.functions.insert(id, func);
         }

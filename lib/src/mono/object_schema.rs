@@ -210,6 +210,14 @@ pub(crate) fn method_needs_erasure<P: HirPhase>(
             owner: declaration.id,
             index: declaration.generic_params.len() as u32,
         });
+    let hidden_self = |ty: &Type| {
+        crate::type_services::visit::type_any(
+            ty,
+            |ty| matches!(ty, Type::Generic(id) if *id == self_id),
+        )
+    };
+    let borrowed_self_result = matches!(&signature.ret, Type::Reference { inner, .. }
+        if matches!(inner.as_ref(), Type::Generic(id) if *id == self_id));
     signature.generic_params.iter().any(|p| {
         p.id != self_id
             && !declaration
@@ -217,6 +225,10 @@ pub(crate) fn method_needs_erasure<P: HirPhase>(
                 .iter()
                 .any(|owner| owner.id == p.id)
     })
+        // The concrete object ABI replaces only its receiver and a direct
+        // borrowed-Self result. Other Self positions need scoped descriptors.
+        || signature.params.iter().skip(1).any(hidden_self)
+        || (!borrowed_self_result && hidden_self(&signature.ret))
 }
 
 pub(crate) fn erased_object_method_abi<P: HirPhase>(
@@ -466,4 +478,210 @@ pub(crate) fn erased_bound_schemas<P: HirPhase>(
         }
     }
     Ok(dictionaries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hir::{AcceptedHir, HirTraitFor};
+    use crate::ids::{CrateId, DefId, LocalDefId};
+    use crate::mir::MirErasedType;
+    use crate::mono::Monomorphizer;
+    use crate::types::GenericParamDecl;
+
+    #[test]
+    fn nongeneric_self_input_uses_erased_schema_and_preserves_native_abi_guard() {
+        let trait_id = DefId::new(CrateId(0), LocalDefId(10));
+        let member_id = DefId::new(CrateId(0), LocalDefId(11));
+        let self_id = GenericParamId {
+            owner: trait_id,
+            index: 0,
+        };
+        let self_ref = Type::Reference {
+            inner: Box::new(Type::Generic(self_id)),
+            mutable: false,
+        };
+        let signature = HirFunctionSig {
+            id: member_id,
+            name: "sum".into(),
+            generic_params: vec![],
+            params: vec![self_ref.clone(), self_ref.clone()],
+            ret: Type::I64,
+            generic_bounds: Default::default(),
+            self_receiver: Some(ReceiverMode::Shared),
+            is_unsafe: false,
+        };
+        let declaration: HirTraitFor<AcceptedHir> = HirTraitFor {
+            id: trait_id,
+            name: "Sum".into(),
+            generic_params: vec![],
+            target: Some(GenericParamDecl::type_param(self_id, "Self")),
+            predicates: vec![],
+            associated_types: vec![],
+            methods: HashMap::new(),
+            signatures: HashMap::from([("sum".into(), signature.clone())]),
+        };
+        let bound = TraitBound {
+            trait_id,
+            type_args: vec![],
+        };
+        let object = Type::Object(Box::new(ObjectType::new(bound.clone())));
+        let mut mono = Monomorphizer::new();
+        mono.identity_context = crate::mono::CompilationIdentityContext::new(
+            CrateId(0),
+            crate::products::ProductCrateIdentity::local("consumer".into()),
+            std::collections::BTreeMap::from([(
+                CrateId(1),
+                crate::products::ProductCrateIdentity::local("producer".into()),
+            )]),
+        );
+        assert!(method_needs_erasure(&declaration, &signature));
+        assert!(
+            object_method_abi(
+                &object,
+                &bound,
+                &declaration,
+                &signature,
+                &mono.normalization_env,
+            )
+            .is_err(),
+            "the ordinary concrete ABI must still reject hidden Self inputs"
+        );
+        mono.object_traits.insert(trait_id, declaration.clone());
+        mono.producer_trait_members
+            .insert(trait_id, vec![member_id]);
+        let object_id = mono.ensure_object_schema(&object).unwrap();
+        let schema = &mono.object_schemas[&object_id];
+        assert!(schema.slots.is_empty());
+        assert_eq!(schema.erased_slots.len(), 1);
+        let slot = &schema.erased_slots[0];
+        assert_eq!(slot.member_id, member_id);
+        assert_eq!(slot.signature.parameters.len(), 1);
+        let hidden_ref = MirErasedType::Reference {
+            inner: Box::new(MirErasedType::Parameter(0)),
+            mutable: false,
+        };
+        assert_eq!(slot.signature.params, vec![hidden_ref.clone(), hidden_ref]);
+        assert_eq!(
+            slot.signature.ret,
+            MirErasedType::Concrete(mono.type_context.id_for_type(&Type::I64).unwrap())
+        );
+        let slot = slot.clone();
+
+        let mut reader = signature;
+        reader.params.truncate(1);
+        assert!(!method_needs_erasure(&declaration, &reader));
+        assert!(object_method_abi(
+            &object,
+            &bound,
+            &declaration,
+            &reader,
+            &mono.normalization_env,
+        )
+        .is_ok());
+        reader.ret = self_ref;
+        assert!(!method_needs_erasure(&declaration, &reader));
+        assert_eq!(
+            object_method_abi(
+                &object,
+                &bound,
+                &declaration,
+                &reader,
+                &mono.normalization_env,
+            )
+            .unwrap()
+            .result,
+            MirObjectResult::BorrowedSelf { mutable: false }
+        );
+        reader.ret = Type::Generic(self_id);
+        assert!(method_needs_erasure(&declaration, &reader));
+        reader.ret = Type::Tuple(vec![Type::Generic(self_id), Type::I64]);
+        assert!(method_needs_erasure(&declaration, &reader));
+
+        // Imported interface/body-provider rows share one canonical impl and
+        // one native link. Selection must not count those rows as ambiguity.
+        use crate::mono::hir_types::{HirBlock, HirFunction, HirImpl, HirParam};
+        let impl_id = DefId::new(CrateId(1), LocalDefId(20));
+        let method_id = DefId::new(CrateId(1), LocalDefId(21));
+        let native_ref = Type::Reference {
+            inner: Box::new(Type::I64),
+            mutable: false,
+        };
+        let method = HirFunction {
+            id: method_id,
+            name: "sum".into(),
+            generic_params: vec![],
+            generic_bounds: Default::default(),
+            params: (0..2)
+                .map(|index| HirParam {
+                    name: format!("input{index}"),
+                    local_id: crate::ids::HirLocalId(index),
+                    ty: native_ref.clone(),
+                    mutable: false,
+                    is_ref: false,
+                })
+                .collect(),
+            ret_type: Type::I64,
+            body: HirBlock {
+                stmts: vec![],
+                ty: Type::I64,
+            },
+            is_curried: false,
+            is_method: true,
+            self_receiver: Some(ReceiverMode::Shared),
+            is_unsafe: false,
+        };
+        let implementation = HirImpl {
+            id: impl_id,
+            owner: crate::hir::HirImplOwner::Named("Scalar".into()),
+            type_name: "Scalar".into(),
+            type_generics: vec![],
+            receiver_pattern: crate::hir::HirImplReceiverPattern::Exact(Type::I64),
+            trait_name: Some("Sum".into()),
+            trait_id: Some(trait_id),
+            trait_generics: vec![],
+            trait_arg_types: vec![],
+            associated_types: vec![],
+            bounds: Default::default(),
+            methods: HashMap::from([("sum".into(), method.clone())]),
+        };
+        let origin = mono.method_instance_origin(&implementation, &method);
+        let instance = mono.instances.intern(
+            crate::mono::InstanceKey::new(origin.clone(), vec![]),
+            |id| crate::mono::InstanceRecord {
+                id,
+                origin,
+                substitution: vec![],
+                symbols: crate::mono::InstanceSymbols::new("producer::sum", "canonical_native_sum"),
+                declared: Some(method),
+                provided_by_object: true,
+                is_specialization: false,
+            },
+        );
+        mono.effective_trait_methods
+            .insert((impl_id, member_id), method_id);
+        mono.trait_impls
+            .insert(trait_id, vec![implementation.clone(), implementation]);
+        let key = mono
+            .materialize_erased_object_method(
+                &Type::I64,
+                &slot,
+                &[crate::hir::HirObjectView {
+                    trait_ref: bound,
+                    origin: crate::hir::HirObjectWitnessOrigin::Impl {
+                        impl_id,
+                        substitution: vec![],
+                    },
+                }],
+                &crate::lexer::Span::test(),
+            )
+            .unwrap();
+        assert_eq!(key.definition, method_id);
+        assert!(mono.instances.pre_mir_body(instance).is_none());
+        assert!(matches!(
+            &mono.erased.functions[&key].body.as_ref().unwrap().blocks[0].statements[0].value,
+            crate::mir::MirErasedRvalue::NativeCall { target: crate::mir::MirCallableKey::Instance(selected), .. }
+                if *selected == instance
+        ));
+    }
 }

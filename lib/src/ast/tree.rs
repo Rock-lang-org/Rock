@@ -195,6 +195,7 @@ pub enum ParseType {
     Type(ParseTypeInner),
     Application(TypeApplication),
     Object(ObjectTypeSyntax),
+    Exists(Box<ExistentialTypeSyntax>),
     Lambda(TypeLambda),
     Hole(TypeHole),
     Associated {
@@ -220,6 +221,23 @@ pub struct ObjectTypeSyntax {
     pub base: Box<ParseType>,
     pub qualifiers: Vec<ObjectQualifier>,
     pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExistentialTypeSyntax {
+    pub parameter: GenericParamDecl,
+    pub where_clauses: Vec<WhereClause>,
+    pub payload: Box<ParseType>,
+    pub span: Span,
+}
+
+impl ExistentialTypeSyntax {
+    pub fn types(&self) -> impl Iterator<Item = &ParseType> {
+        self.where_clauses
+            .iter()
+            .flat_map(|clause| std::iter::once(&clause.subject).chain(clause.trait_bound.iter()))
+            .chain(std::iter::once(self.payload.as_ref()))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -252,6 +270,7 @@ impl ParseType {
             ParseType::Type(inner) => inner.span.clone(),
             ParseType::Application(application) => application.span.clone(),
             ParseType::Object(object) => object.span.clone(),
+            ParseType::Exists(package) => package.span.clone(),
             ParseType::Lambda(lambda) => lambda.span.clone(),
             ParseType::Hole(hole) => hole.span.clone(),
             ParseType::Associated { base, member } => Span::new(
@@ -277,6 +296,7 @@ impl ParseType {
             ParseType::Type(inner) => inner.name.clone(),
             ParseType::Application(application) => application.constructor.type_name(),
             ParseType::Object(object) => object.base.type_name(),
+            ParseType::Exists(_) => "<existential package>".to_string(),
             ParseType::Lambda(_) => "<type lambda>".to_string(),
             ParseType::Hole(_) => "_".to_string(),
             ParseType::Associated { base, member } => format!("{}::{}", base.name, member.name),
@@ -494,6 +514,7 @@ pub enum Operand {
     Loop(Box<Loop>),
     Unsafe(Block, Span),
     Open(Box<Open>),
+    Pack(Box<Pack>),
     Expression(Box<Expression>), // parenthesis
 }
 
@@ -503,6 +524,13 @@ pub struct Open {
     pub witness: Ident,
     pub value: Ident,
     pub body: Block,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Pack {
+    pub target: ParseType,
+    pub payload: Expression,
     pub span: Span,
 }
 
@@ -674,7 +702,7 @@ pub enum IdentOrNumber {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SecondaryExpr {
-    Arguments(Vec<Argument>),
+    Arguments(Vec<Argument>, Span),
     Indice(Box<Expression>), // Boxing here to keep the enum size low
     Dot(IdentOrNumber),
     Interogation,

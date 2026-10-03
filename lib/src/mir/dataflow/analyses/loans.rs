@@ -132,14 +132,63 @@ impl LoanTable {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoanState {
     active: BitSet<LoanId>,
-    owners: Vec<LocalSet>,
+    owners: Vec<LoanOwners>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct LoanOwners {
+    storage: LocalSet,
+    contents: LocalSet,
+    /// Provenance/lifetime carriers, not safe-reference access permissions.
+    raw: LocalSet,
+    /// A reference reconstructed from a raw carrier retains its lifetime lease;
+    /// the separately collected borrow supplies its shared/exclusive access kind.
+    borrowed_raw: LocalSet,
+}
+
+impl LoanOwners {
+    fn all(&self) -> LocalSet {
+        let mut owners = self.storage.clone();
+        owners.join(&self.contents);
+        owners.join(&self.raw);
+        owners.join(&self.borrowed_raw);
+        owners
+    }
+
+    fn is_empty(&self) -> bool {
+        self.storage.is_empty()
+            && self.contents.is_empty()
+            && self.raw.is_empty()
+            && self.borrowed_raw.is_empty()
+    }
+
+    fn contains(&self, local: Local) -> bool {
+        self.storage.contains(local)
+            || self.contents.contains(local)
+            || self.raw.contains(local)
+            || self.borrowed_raw.contains(local)
+    }
+
+    fn remove(&mut self, local: Local) -> bool {
+        self.storage.remove(local)
+            | self.contents.remove(local)
+            | self.raw.remove(local)
+            | self.borrowed_raw.remove(local)
+    }
+
+    fn join(&mut self, other: &Self) -> bool {
+        self.storage.join(&other.storage)
+            | self.contents.join(&other.contents)
+            | self.raw.join(&other.raw)
+            | self.borrowed_raw.join(&other.borrowed_raw)
+    }
 }
 
 impl LoanState {
     pub fn new(loan_count: usize) -> Self {
         Self {
             active: BitSet::with_capacity(loan_count),
-            owners: (0..loan_count).map(|_| LocalSet::new()).collect(),
+            owners: (0..loan_count).map(|_| LoanOwners::default()).collect(),
         }
     }
 
@@ -157,19 +206,19 @@ impl LoanState {
         };
         self.ensure_len(id.index() + 1);
         let active_changed = self.active.insert(id);
-        let owner_changed = self.owners[id.index()].insert(loan.initial_owner);
+        let owner_changed = self.owners[id.index()].storage.insert(loan.initial_owner);
         active_changed || owner_changed
     }
 
     pub fn add_owner(&mut self, id: LoanId, owner: Local) -> bool {
         self.ensure_len(id.index() + 1);
         let active_changed = self.active.insert(id);
-        let owner_changed = self.owners[id.index()].insert(owner);
+        let owner_changed = self.owners[id.index()].storage.insert(owner);
         active_changed || owner_changed
     }
 
-    pub fn owners(&self, id: LoanId) -> &LocalSet {
-        &self.owners[id.index()]
+    pub fn owners(&self, id: LoanId) -> LocalSet {
+        self.owners[id.index()].all()
     }
 
     pub fn active_ids(&self) -> impl Iterator<Item = LoanId> + '_ {
@@ -182,12 +231,25 @@ impl LoanState {
             .is_some_and(|owners| owners.contains(local))
     }
 
+    fn safe_owner_contains(&self, id: LoanId, local: Local) -> bool {
+        self.owners
+            .get(id.index())
+            .is_some_and(|owners| owners.storage.contains(local) || owners.contents.contains(local))
+    }
+
     pub fn transfer_owner(&mut self, from: Local, to: Local) -> bool {
         let mut changed = false;
         for owners in &mut self.owners {
-            if owners.remove(from) {
-                changed = true;
-                changed |= owners.insert(to);
+            for group in [
+                &mut owners.storage,
+                &mut owners.contents,
+                &mut owners.raw,
+                &mut owners.borrowed_raw,
+            ] {
+                if group.remove(from) {
+                    changed = true;
+                    changed |= group.insert(to);
+                }
             }
         }
         changed
@@ -196,11 +258,89 @@ impl LoanState {
     pub fn copy_owner(&mut self, from: Local, to: Local) -> bool {
         let mut changed = false;
         for owners in &mut self.owners {
-            if owners.contains(from) {
-                changed |= owners.insert(to);
+            for group in [
+                &mut owners.storage,
+                &mut owners.contents,
+                &mut owners.raw,
+                &mut owners.borrowed_raw,
+            ] {
+                if group.contains(from) {
+                    changed |= group.insert(to);
+                }
             }
         }
         changed
+    }
+
+    /// Embed an input value's loans in an aggregate or borrowed container view.
+    pub fn copy_owner_as_contents(&mut self, from: Local, to: Local) -> bool {
+        let mut changed = false;
+        for owners in &mut self.owners {
+            if owners.storage.contains(from) || owners.contents.contains(from) {
+                changed |= owners.contents.insert(to);
+            }
+            if owners.raw.contains(from) {
+                changed |= owners.raw.insert(to);
+            }
+            if owners.borrowed_raw.contains(from) {
+                changed |= owners.borrowed_raw.insert(to);
+            }
+        }
+        changed
+    }
+
+    /// A proven returned-content effect does not retain a receiver-storage loan.
+    pub fn copy_contents_owner(&mut self, from: Local, to: Local) -> bool {
+        let mut changed = false;
+        for owners in &mut self.owners {
+            if owners.contents.contains(from) {
+                changed |= owners.contents.insert(to);
+            }
+            if owners.raw.contains(from) {
+                changed |= owners.raw.insert(to);
+            }
+            if owners.borrowed_raw.contains(from) {
+                changed |= owners.borrowed_raw.insert(to);
+            }
+        }
+        changed
+    }
+
+    /// Preserve actual provenance without granting a raw carrier safe loan rights.
+    pub fn copy_owner_as_raw(&mut self, from: Local, to: Local) -> bool {
+        let mut changed = false;
+        for owners in &mut self.owners {
+            if owners.contains(from) {
+                changed |= owners.raw.insert(to);
+            }
+        }
+        changed
+    }
+
+    pub fn copy_owner_for_borrow(&mut self, from: Local, to: Local) -> bool {
+        let mut changed = false;
+        for owners in &mut self.owners {
+            if owners.storage.contains(from) {
+                changed |= owners.storage.insert(to);
+            }
+            if owners.contents.contains(from) {
+                changed |= owners.contents.insert(to);
+            }
+            if owners.raw.contains(from) || owners.borrowed_raw.contains(from) {
+                changed |= owners.borrowed_raw.insert(to);
+            }
+        }
+        changed
+    }
+
+    fn access_through_raw_lease_owner(&self, id: LoanId, place: &Place) -> bool {
+        self.owners.get(id.index()).is_some_and(|owners| {
+            matches!(place.projection.first(), Some(Projection::Deref))
+                && (owners.borrowed_raw.contains(place.local)
+                    || (owners.raw.contains(place.local) && owners.borrowed_raw.is_empty()))
+                && owners.storage.is_empty()
+                && owners.contents.is_empty()
+        })
     }
 
     pub fn release_owner(&mut self, local: Local) -> bool {
@@ -222,7 +362,7 @@ impl LoanState {
     {
         let mut changed = false;
         for (index, owners) in self.owners.iter_mut().enumerate() {
-            let current: Vec<_> = owners.iter().collect();
+            let current: Vec<_> = owners.all().iter().collect();
             for owner in current {
                 if !keep(owner) {
                     changed |= owners.remove(owner);
@@ -238,7 +378,8 @@ impl LoanState {
     pub fn join(&mut self, other: &Self) -> bool {
         let mut changed = self.active.join(&other.active);
         if self.owners.len() < other.owners.len() {
-            self.owners.resize_with(other.owners.len(), LocalSet::new);
+            self.owners
+                .resize_with(other.owners.len(), LoanOwners::default);
             changed = true;
         }
         for (index, owners) in other.owners.iter().enumerate() {
@@ -249,7 +390,7 @@ impl LoanState {
 
     fn ensure_len(&mut self, len: usize) {
         if self.owners.len() < len {
-            self.owners.resize_with(len, LocalSet::new);
+            self.owners.resize_with(len, LoanOwners::default);
         }
     }
 }
@@ -303,7 +444,13 @@ impl LoanAnalysis {
             let Some(loan) = table.get(loan_id) else {
                 continue;
             };
-            if Self::access_through_mutable_loan_owner(&original_place, loan_id, loan, active_loans)
+            if active_loans.access_through_raw_lease_owner(loan_id, &original_place)
+                || Self::access_through_mutable_loan_owner(
+                    &original_place,
+                    loan_id,
+                    loan,
+                    active_loans,
+                )
             {
                 continue;
             }
@@ -347,7 +494,7 @@ impl LoanAnalysis {
     ) -> bool {
         // The owner of an exclusive loan may both read and write through it.
         loan.kind == LoanKind::Mut
-            && active_loans.owner_contains(loan_id, place.local)
+            && active_loans.safe_owner_contains(loan_id, place.local)
             && matches!(place.projection.first(), Some(Projection::Deref))
     }
 
@@ -561,6 +708,35 @@ mod tests {
         assert!(left.owners(first).contains(Local(3)));
         assert!(left.release_owner(Local(2)));
         assert!(!left.owners(first).contains(Local(2)));
+    }
+
+    #[test]
+    fn returned_contents_keep_payload_loan_without_receiver_storage_loan() {
+        let mut table = LoanTable::new();
+        let payload = table.push(loan_data(LoanId(0), Local(1)));
+        let receiver_storage = table.push(loan_data(LoanId(1), Local(3)));
+        let mut state = LoanState::new(table.len());
+        state.activate(payload, &table);
+        state.copy_owner_as_contents(Local(1), Local(2));
+        state.release_owner(Local(1));
+        state.copy_owner_as_contents(Local(2), Local(3));
+        state.activate(receiver_storage, &table);
+        let mut opaque = state.clone();
+        opaque.copy_owner(Local(3), Local(4));
+        state.copy_contents_owner(Local(3), Local(4));
+        for owner in [Local(2), Local(3)] {
+            state.release_owner(owner);
+            opaque.release_owner(owner);
+        }
+        assert!(state.is_active(payload));
+        assert!(state.owner_contains(payload, Local(4)));
+        assert!(!state.is_active(receiver_storage));
+        assert!(
+            opaque.is_active(receiver_storage),
+            "missing evidence must retain storage conservatively",
+        );
+        state.release_owner(Local(4));
+        assert!(!state.is_active(payload));
     }
 
     #[test]

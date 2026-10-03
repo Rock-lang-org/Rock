@@ -845,6 +845,15 @@ impl<'a> FirstOrderUnifier<'a> {
         }
 
         match (&left, &right) {
+            (Type::Exists(left), Type::Exists(right)) => {
+                crate::type_services::existential::package_children(left, right).is_some_and(
+                    |children| {
+                        children
+                            .into_iter()
+                            .all(|(left, right)| self.unify(left, right))
+                    },
+                )
+            }
             (Type::Slice(left), Type::Slice(right))
             | (Type::Pointer(left), Type::Pointer(right)) => self.unify(left, right),
             (Type::Array(left, left_len), Type::Array(right, right_len)) => {
@@ -992,6 +1001,11 @@ impl<'a> FirstOrderUnifier<'a> {
         let ty = self.resolve_head(ty);
         if ty == Type::Generic(id) {
             return true;
+        }
+        if crate::type_services::existential::validate_lexical_binders(&ty).is_err()
+            || crate::type_services::substitution::has_free_object_self(&ty)
+        {
+            return false;
         }
         let mut generics = HashSet::new();
         ty.collect_generic_params(&mut generics);

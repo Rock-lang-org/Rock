@@ -308,7 +308,24 @@ fn finalize_stmt(ctx: &mut FinalizeCtx<'_>, stmt: &mut HirStmt) {
 fn finalize_expr(ctx: &mut FinalizeCtx<'_>, expr: &mut HirExpr) {
     expr.ty = ctx.finalize(&expr.ty);
     match &mut expr.kind {
-        HirExprKind::Open { source, binding, body } => {
+        HirExprKind::PackagePack { payload, proof } => {
+            finalize_expr(ctx, payload);
+            proof.visit_types_mut(&mut |ty| *ty = ctx.finalize(ty));
+        }
+        HirExprKind::PackageOpen {
+            source,
+            binding,
+            body,
+        } => {
+            finalize_expr(ctx, source);
+            binding.visit_types_mut(&mut |ty| *ty = ctx.finalize(ty));
+            finalize_block(ctx, body);
+        }
+        HirExprKind::Open {
+            source,
+            binding,
+            body,
+        } => {
             finalize_expr(ctx, source);
             binding.visit_types_mut(&mut |ty| *ty = ctx.finalize(ty));
             finalize_block(ctx, body);

@@ -8,8 +8,8 @@ pub mod control_flow;
 pub mod crates;
 pub(crate) mod diagnostics;
 pub mod error;
-pub mod expression;
 mod existential;
+pub mod expression;
 pub mod function;
 pub(crate) mod inference_scc;
 pub mod intrinsics;
@@ -92,6 +92,7 @@ pub struct Lowerer {
     pub(crate) source_scope_stack: Vec<u32>,
     pub(crate) fold_loop_stack: Vec<Option<control_flow::fold_loop::FoldLoopContext>>,
     pub(crate) opened_witnesses: Vec<(String, HirOpenBinding)>,
+    pub(crate) opened_packages: Vec<(String, HirPackageOpenBinding)>,
 }
 
 impl Lowerer {
@@ -242,6 +243,7 @@ impl Lowerer {
             source_scope_stack: Vec::new(),
             fold_loop_stack: Vec::new(),
             opened_witnesses: Vec::new(),
+            opened_packages: Vec::new(),
         }
     }
 
@@ -630,8 +632,8 @@ impl Lowerer {
         name: &str,
         _span: crate::lexer::Span,
     ) -> Option<Type> {
-        if let Some((_, binding)) = self.opened_witnesses.iter().rev().find(|(binder, _)| binder == name) {
-            return Some(Type::Witness(binding.witness));
+        if let Some(witness) = self.opened_witness_for_name(name) {
+            return Some(Type::Witness(witness));
         }
         if let Some(param) = self
             .body_context

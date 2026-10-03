@@ -120,6 +120,37 @@ fn default_nominal_parameter_rejects_an_unsized_argument() {
     assert!(rock_lib::analyze(&config(source)).is_err());
 }
 
+#[test]
+fn partially_applied_owner_accepts_generic_allocator_state() {
+    let source = format!(
+        "{PROTOCOL}{}",
+        r#"
+trait Value
+    @value: I64
+struct Number
+    < inner: I64
+impl Value for Number
+    @value = -> self.inner
+struct Allocator
+    < tag: I64
+struct State A
+    < allocator: A
+struct Shell A, (T: ?LayoutKnown)
+    < pointer: *T
+    < state: State A
+impl Transport (State A) for Shell A, _
+    unsafe split = owner -> (owner.pointer, owner.state)
+    unsafe rebuild = pointer, state -> Shell
+        pointer: pointer
+        state: state
+erase: Shell Allocator, Number -> Shell Allocator, Value
+erase = owner -> owner
+main = !-> ()
+"#
+    );
+    rock_lib::analyze(&config(&source)).unwrap();
+}
+
 fn stdlib_artifact() -> std::path::PathBuf {
     static ARTIFACT: std::sync::OnceLock<
         Result<std::path::PathBuf, rock_lib::diagnostic::Diagnostics>,
@@ -257,9 +288,12 @@ main = ->
     layout = Layout
         size: 0
         align: 64
+    release_layout = Layout
+        size: layout.size
+        align: layout.align
     pointer = checked_alloc layout
     aligned = ~I64Eq (~I64And (pointer as I64), 63), 0
-    unsafe Global::dealloc pointer, layout
+    unsafe Global::dealloc pointer, release_layout
     if aligned then 42 else 1
 "#
         ),

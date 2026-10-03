@@ -1,4 +1,5 @@
 mod test_parse_array_type;
+mod test_parse_exists;
 mod test_parse_fn_type;
 mod test_parse_hkt;
 mod test_parse_nested_fn_type;

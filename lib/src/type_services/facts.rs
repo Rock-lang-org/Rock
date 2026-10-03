@@ -83,21 +83,31 @@ impl TypeFacts {
     }
 
     pub fn is_concrete(ty: &Type) -> bool {
-        let mut concrete = true;
-        crate::type_services::visit::visit_type(ty, &mut |nested: &Type| {
-            concrete &= !matches!(
-                nested,
-                Type::TypeVar(_)
-                    | Type::Generic(_)
-                    | Type::Witness(_)
-                    | Type::Projection { .. }
-                    | Type::Constructor { .. }
-                    | Type::Apply { .. }
-                    | Type::Lambda { .. }
-                    | Type::BoundVar { .. }
-            );
-        });
-        concrete && !crate::type_services::substitution::has_free_object_self(ty)
+        struct Concrete(bool);
+        impl crate::type_services::visit::TypeVisitor for Concrete {
+            fn visit_type(&mut self, ty: &Type) {
+                if matches!(ty, Type::Exists(_)) {
+                    self.0 &= TypeFacts::object_type_is_closed(ty)
+                        && crate::type_services::existential::validate_lexical_binders(ty).is_ok();
+                    return;
+                }
+                self.0 &= !matches!(
+                    ty,
+                    Type::TypeVar(_)
+                        | Type::Generic(_)
+                        | Type::Witness(_)
+                        | Type::Projection { .. }
+                        | Type::Constructor { .. }
+                        | Type::Apply { .. }
+                        | Type::Lambda { .. }
+                        | Type::BoundVar { .. }
+                );
+                crate::type_services::visit::visit_type_children(ty, self);
+            }
+        }
+        let mut concrete = Concrete(true);
+        crate::type_services::visit::visit_type(ty, &mut concrete);
+        concrete.0 && !crate::type_services::substitution::has_free_object_self(ty)
     }
 
     fn closed_constructor_value(ty: &Type) -> bool {
@@ -131,6 +141,12 @@ impl TypeFacts {
         fn runtime_type(ty: &Type) -> bool {
             match ty {
                 Type::Object(_) => TypeFacts::object_type_is_closed(ty),
+                Type::Exists(package) => {
+                    package.binder.kind == crate::type_services::kind::Kind::Type
+                        && !package.binder.maybe_unsized
+                        && crate::type_services::existential::validate_lexical_binders(ty).is_ok()
+                        && TypeFacts::object_type_is_closed(ty)
+                }
                 Type::ObjectSelf { .. } => false,
                 Type::Slice(inner) | Type::Array(inner, _) | Type::Pointer(inner) => {
                     runtime_type(inner)
@@ -183,6 +199,7 @@ impl TypeFacts {
     pub fn is_copy(ty: &Type) -> bool {
         match ty {
             Type::Object(_) => false,
+            Type::Exists(package) => Self::is_copy(&package.payload),
             Type::ObjectSelf { .. } => false,
             Type::I8 | Type::I16 | Type::I32 | Type::I64 => true,
             Type::U8 | Type::U16 | Type::U32 | Type::U64 => true,
@@ -221,6 +238,7 @@ impl TypeFacts {
     {
         match ty(id) {
             Ty::Object(_) => false,
+            Ty::Exists(package) => Self::is_copy_id(package.payload, ty),
             Ty::ObjectSelf { .. } => false,
             Ty::I8
             | Ty::I16
@@ -267,6 +285,8 @@ impl TypeFacts {
             Type::Witness(_) => true,
             Type::ObjectSelf { .. } => true,
             Type::Object(_) => true,
+            // Hidden payload borrows survive closure of the witness scope.
+            Type::Exists(_) => true,
             Type::Reference { .. } => true,
             Type::Array(inner, _) | Type::Slice(inner) => Self::contains_reference(inner),
             Type::Tuple(elems)

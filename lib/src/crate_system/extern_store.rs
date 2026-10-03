@@ -278,13 +278,20 @@ impl ExternCrateLink {
 fn impl_link_shape_is_codegen_concrete(imp: &HirImpl) -> bool {
     imp.type_generics.is_empty()
         && match &imp.receiver_pattern {
-            crate::hir::HirImplReceiverPattern::Exact(ty)
-            | crate::hir::HirImplReceiverPattern::Constructor(ty) => type_is_codegen_concrete(ty),
+            crate::hir::HirImplReceiverPattern::Exact(ty) => type_is_codegen_concrete(ty),
+            // Constructor-owned static methods have runtime signatures, but
+            // their owner is a closed type-level argument, not a runtime value.
+            crate::hir::HirImplReceiverPattern::Constructor(ty) => {
+                crate::type_services::facts::TypeFacts::is_concrete_type_argument(ty)
+            }
             crate::hir::HirImplReceiverPattern::SliceFamily { element } => {
                 type_is_codegen_concrete(element)
             }
         }
-        && imp.trait_arg_types.iter().all(type_is_codegen_concrete)
+        && imp
+            .trait_arg_types
+            .iter()
+            .all(crate::type_services::facts::TypeFacts::is_concrete_type_argument)
         && imp
             .associated_types
             .iter()

@@ -183,6 +183,7 @@ fn parse_object_qualifiers(stream: Input, base: ParseType) -> IResult<ParseType>
 fn parse_type_atom(stream: Input) -> IResult<ParseType> {
     let token = stream.seek()?;
     match &token.token_type {
+        TokenType::Ident(word) if word == "exists" => parse_existential_type(stream),
         TokenType::Type(_) => parse_named_type(stream),
         TokenType::Underscore => {
             let (stream, token) = stream.consume()?;
@@ -415,6 +416,40 @@ fn parse_lambda_param(stream: Input) -> IResult<GenericParamDecl> {
     }
 }
 
+fn parse_existential_type(stream: Input) -> IResult<ParseType> {
+    let (stream, start) = stream.consume()?;
+    let (stream, parameter) = if matches!(peek_token(&stream), Some(TokenType::OpenParen)) {
+        parse_parenthesized_constructor_param(stream)?
+    } else if matches!(peek_nth(&stream, 1), Some(TokenType::Underscore)) {
+        parse_constructor_param_inner(stream, false)?
+    } else {
+        parse_plain_generic_param(stream)?
+    };
+    let (mut stream, _) = TokenType::Keyword("where".into()).process(stream)?;
+    let mut where_clauses = Vec::new();
+    loop {
+        let (next, clause) = super::parse_where_clause(stream)?;
+        where_clauses.push(clause);
+        stream = next;
+        if !matches!(peek_token(&stream), Some(TokenType::Coma)) {
+            break;
+        }
+        stream = TokenType::Coma.process(stream)?.0;
+    }
+    let (stream, _) = TokenType::Keyword("in".into()).process(stream)?;
+    let (stream, payload) = parse_type(stream)?;
+    let span = join_spans(&start.span, &payload.span());
+    Ok((
+        stream,
+        ParseType::Exists(Box::new(crate::ast::ExistentialTypeSyntax {
+            parameter,
+            where_clauses,
+            payload: Box::new(payload),
+            span,
+        })),
+    ))
+}
+
 pub fn parse_generic_param_list(mut stream: Input) -> IResult<Vec<GenericParamDecl>> {
     let mut params = Vec::new();
     if !starts_generic_param(&stream) {
@@ -618,6 +653,7 @@ fn starts_type_atom(stream: &Input) -> bool {
         | Ok(TokenType::OpenBracket)
         | Ok(TokenType::Ampersand) => true,
         Ok(TokenType::StuckOperator(op)) => op == "*",
+        Ok(TokenType::Ident(word)) => word == "exists",
         _ => false,
     }
 }

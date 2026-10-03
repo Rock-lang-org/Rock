@@ -38,6 +38,73 @@ pub enum MirErasedType<T = TypeId> {
         constructor: Box<Self>,
         args: Vec<Self>,
     },
+    /// Rigid body-local binder, supplied by a dominating Open, never a public ABI parameter.
+    /// Keep body-only extensions last to preserve serialized public signature tags.
+    Scoped(u32),
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use bincode::Options;
+
+    use super::MirErasedType;
+    use crate::ids::{CrateId, DefId, LocalDefId};
+    use crate::types::NominalTypeKind;
+
+    #[test]
+    fn erased_type_public_wire_tags_survive_body_only_extensions() {
+        let cases: Vec<(u32, MirErasedType<u32>)> = vec![
+            (0, MirErasedType::Concrete(17)),
+            (1, MirErasedType::Parameter(2)),
+            (
+                2,
+                MirErasedType::Reference {
+                    inner: Box::new(MirErasedType::Parameter(2)),
+                    mutable: false,
+                },
+            ),
+            (
+                3,
+                MirErasedType::Pointer(Box::new(MirErasedType::Concrete(17))),
+            ),
+            (4, MirErasedType::Tuple(vec![MirErasedType::Concrete(17)])),
+            (
+                5,
+                MirErasedType::Array {
+                    element: Box::new(MirErasedType::Concrete(17)),
+                    len: 3,
+                },
+            ),
+            (
+                6,
+                MirErasedType::Nominal {
+                    id: DefId::new(CrateId(1), LocalDefId(7)),
+                    flavor: NominalTypeKind::Struct,
+                    args: vec![MirErasedType::Parameter(2)],
+                },
+            ),
+            (
+                7,
+                MirErasedType::Apply {
+                    constructor: Box::new(MirErasedType::Parameter(0)),
+                    args: vec![MirErasedType::Concrete(17)],
+                },
+            ),
+        ];
+        for (tag, ty) in cases {
+            let bytes = bincode::DefaultOptions::new()
+                .with_fixint_encoding()
+                .serialize(&ty)
+                .unwrap();
+            assert_eq!(&bytes[..4], &tag.to_le_bytes());
+            let restored: MirErasedType<u32> = bincode::DefaultOptions::new()
+                .with_fixint_encoding()
+                .reject_trailing_bytes()
+                .deserialize(&bytes)
+                .unwrap();
+            assert_eq!(restored, ty);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -115,6 +182,7 @@ impl<T> MirErasedType<T> {
         Ok(match self {
             Self::Concrete(ty) => MirErasedType::Concrete(map(ty)?),
             Self::Parameter(index) => MirErasedType::Parameter(*index),
+            Self::Scoped(index) => MirErasedType::Scoped(*index),
             Self::Reference { inner, mutable } => MirErasedType::Reference {
                 inner: Box::new(inner.map_types(map)?),
                 mutable: *mutable,
@@ -152,7 +220,7 @@ impl<T> MirErasedType<T> {
         remap: &mut impl FnMut(DefId) -> Result<DefId, E>,
     ) -> Result<(), E> {
         match self {
-            Self::Concrete(_) | Self::Parameter(_) => {}
+            Self::Concrete(_) | Self::Parameter(_) | Self::Scoped(_) => {}
             Self::Reference { inner, .. } | Self::Pointer(inner) => {
                 inner.try_remap_nominals(remap)?
             }
@@ -275,13 +343,61 @@ pub enum MirErasedLiteral {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirErasedRvalue {
+    PackageOpen {
+        scope: u32,
+        source: MirErasedOperand,
+    },
+    PackagePack {
+        payload: MirErasedOperand,
+        plan: super::MirPackagePackPlan,
+    },
     Use(MirErasedOperand),
     Literal(MirErasedLiteral),
     Aggregate(Vec<MirErasedOperand>),
+    NativeAggregate {
+        ty: TypeId,
+        fields: Vec<MirErasedOperand>,
+    },
     /// A scoped address, not an implicit owned allocation or metadata value.
     Borrow {
         place: MirErasedPlace,
         mutable: bool,
+    },
+    Open {
+        scope: u32,
+        source: MirErasedOperand,
+    },
+    /// Uses the table retained by Open; no implementation search or forged metadata.
+    Reclose {
+        scope: u32,
+        value: MirErasedOperand,
+        object: TypeId,
+    },
+    OpenedCall {
+        scope: u32,
+        slot: u32,
+        receiver: MirErasedPlace,
+        args: Vec<MirErasedOperand>,
+    },
+    /// An erased producer slot instantiated by a dominating scoped descriptor.
+    OpenedErasedCall {
+        scope: u32,
+        slot: u32,
+        type_args: Vec<MirErasedType>,
+        dictionaries: Vec<u32>,
+        receiver: MirErasedPlace,
+        args: Vec<MirErasedOperand>,
+    },
+    /// Exact concrete callable selected while producing a native erased bridge.
+    NativeCall {
+        target: MirCallableKey,
+        args: Vec<MirErasedOperand>,
+    },
+    /// An ordinary concrete call from a scoped body, never a native erased
+    /// bridge or evidence that permits specializing a runtime witness.
+    NativeApply {
+        target: MirCallableKey,
+        args: Vec<MirErasedOperand>,
     },
     Call {
         target: MirErasedKey,
@@ -318,8 +434,54 @@ pub struct MirErasedBody {
     pub locals: Vec<MirErasedType>,
     /// Source-authorized mutable bindings; a dictionary does not grant write access.
     pub mutable_locals: BTreeSet<MirErasedLocal>,
+    pub scopes: Vec<MirErasedScope>,
+    /// Entry is block zero. Every edge carries initialization, move and loan state.
+    pub blocks: Vec<MirErasedBasicBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirErasedScope {
+    pub witness: crate::types::WitnessId,
+    pub object: TypeId,
+    pub source: MirErasedScopeSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MirErasedScopeSource {
+    Object { mutable: bool },
+    Package { package: TypeId },
+}
+
+impl MirErasedScope {
+    /// Package access is checked against the actual place; no package-wide
+    /// mutability permission is manufactured from witness evidence.
+    fn allows_mutable_place(&self) -> bool {
+        match self.source {
+            MirErasedScopeSource::Object { mutable } => mutable,
+            MirErasedScopeSource::Package { .. } => true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MirErasedBlock(pub u32);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirErasedBasicBlock {
     pub statements: Vec<MirErasedAssignment>,
-    pub result: MirErasedOperand,
+    pub terminator: MirErasedTerminator,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MirErasedTerminator {
+    Goto(MirErasedBlock),
+    Branch {
+        condition: MirErasedOperand,
+        then_block: MirErasedBlock,
+        else_block: MirErasedBlock,
+    },
+    Return(MirErasedOperand),
+    Unreachable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -405,6 +567,8 @@ pub struct MirErasedContract {
     pub descriptors: BTreeMap<TypeId, MirTypeDescriptor>,
     pub dictionaries: BTreeMap<MirDictionaryId, MirConcreteDictionary>,
     pub constructor_kinds: BTreeMap<DefId, Kind>,
+    /// Concrete wrappers delegate their whole body, including early exits, to this entry.
+    pub scoped_entries: BTreeMap<DefId, MirErasedKey>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -431,6 +595,60 @@ pub fn validate_erased_contract(
     let mut errors = Vec::new();
     let contract = &program.backend_contract;
     let tc = &program.type_context;
+    for package in contract.packages.keys() {
+        if !super::package_schema_is_valid(contract, tc, *package) {
+            errors.push((None, MirErasedError::InvalidType));
+        }
+    }
+    for function in program.functions.values() {
+        for statement in function
+            .basic_blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+        {
+            if let super::StatementKind::Assign(destination, value) = &statement.kind {
+                if let Some(package) = contract
+                    .place_type_id(tc, function, destination)
+                    .filter(|id| matches!(tc.try_ty(*id), Some(crate::type_context::Ty::Exists(_))))
+                {
+                    if !matches!(value, super::Rvalue::Package(_, _)) {
+                        let valid = match value {
+                            super::Rvalue::Use(
+                                super::Operand::Move(place) | super::Operand::Copy(place),
+                            ) => contract.place_type_id(tc, function, place) == Some(package),
+                            _ => false,
+                        };
+                        if !valid {
+                            errors.push((None, MirErasedError::InvalidType));
+                        }
+                    }
+                }
+            }
+            let super::StatementKind::Assign(destination, super::Rvalue::Package(source, plan)) =
+                &statement.kind
+            else {
+                continue;
+            };
+            let source_type = match source {
+                super::Operand::Move(place) | super::Operand::Copy(place) => {
+                    contract.place_type_id(tc, function, place)
+                }
+                _ => None,
+            };
+            let valid = super::package_plan_is_valid(contract, tc, plan, &[], &[])
+                && contract.place_type_id(tc, function, destination) == Some(plan.package)
+                && match plan.witness {
+                    super::MirPackageWitnessEvidence::Concrete { witness, .. } => {
+                        super::package_payload_type(plan.package, &tc.type_for(witness), tc)
+                            .is_ok_and(|payload| source_type == tc.id_for_type(&payload))
+                    }
+                    _ => false,
+                };
+            if !valid {
+                errors.push((None, MirErasedError::InvalidType));
+            }
+        }
+    }
     for (id, descriptor) in &contract.erased.descriptors {
         let expected_fields = match &descriptor.drop.children {
             super::MirPayloadDropChildren::Fields(fields) => {
@@ -530,6 +748,74 @@ pub fn validate_erased_contract(
         if let Err(error) = validate_erased_function(function, contract, tc) {
             errors.push((Some(key.clone()), error));
         }
+        if let Some(body) = &function.body {
+            for statement in body.blocks.iter().flat_map(|block| &block.statements) {
+                let (target, bridge) = match &statement.value {
+                    MirErasedRvalue::NativeCall { target, .. } => (target, true),
+                    MirErasedRvalue::NativeApply { target, .. } => (target, false),
+                    _ => continue,
+                };
+                let valid = contract.callable(target).is_some_and(|declaration| {
+                    let params = declaration
+                        .signature
+                        .params
+                        .iter()
+                        .map(|param| param.semantic_ty)
+                        .collect::<Vec<_>>();
+                    if params.iter().chain(std::iter::once(&declaration.signature.ret.semantic_ty))
+                        .any(|id| !tc.type_id_tree_is_valid(*id))
+                        || ![false, true].into_iter().any(|is_method| {
+                            declaration.signature
+                                == super::MirCallableSignature::from_instance_type_ids(
+                                    &params,
+                                    declaration.signature.ret.semantic_ty,
+                                    is_method,
+                                    tc,
+                                )
+                        })
+                    {
+                        return false;
+                    }
+                    if matches!(declaration.kind, super::MirCallableKind::ObjectProvided) {
+                        // The provider's body is in its linked object, not this
+                        // program. Require its exact canonical native link row.
+                        let definition = if bridge { Some(key.definition) } else { declaration.source_def_id };
+                        return definition.is_some_and(|definition| imported_native_link_is_valid(definition, target, declaration, contract))
+                            && matches!(target, super::MirCallableKey::Instance(id)
+                                if !program.functions.contains_key(&super::MirFunctionId::Instance(*id)));
+                    }
+                    let super::MirCallableKind::LocalBody { function_id: id } = &declaration.kind
+                    else {
+                        return false;
+                    };
+                    let Some(native) = program.functions.get(id) else {
+                        return false;
+                    };
+                    if contract.function_bodies.get(id) != Some(target)
+                        || native.arg_count != declaration.signature.params.len()
+                        || native
+                            .local_decls
+                            .get(1..1 + native.arg_count)
+                            .map(|locals| locals.iter().map(|local| local.ty).collect::<Vec<_>>())
+                            != Some(
+                                declaration
+                                    .signature
+                                    .params
+                                    .iter()
+                                    .map(|param| param.semantic_ty)
+                                    .collect(),
+                            )
+                        || native.ret_type != declaration.signature.ret.semantic_ty
+                    {
+                        return false;
+                    }
+                    true
+                });
+                if !valid {
+                    errors.push((Some(key.clone()), MirErasedError::MissingCallable));
+                }
+            }
+        }
     }
     for function in program.functions.values() {
         for block in &function.basic_blocks {
@@ -545,6 +831,7 @@ pub fn validate_erased_contract(
                         _,
                         super::Rvalue::Use(op)
                         | super::Rvalue::Object(op, _)
+                        | super::Rvalue::Package(op, _)
                         | super::Rvalue::Cast(op, _)
                         | super::Rvalue::UnaryOp(_, op),
                     ) => check_value(op),
@@ -604,6 +891,9 @@ pub fn erased_entry_matches_object_slot(
     concrete: TypeId,
     tc: &crate::type_context::TypeContext,
 ) -> bool {
+    if native_bridge_source(function).is_some_and(|source| source != concrete) {
+        return false;
+    }
     let signature = &slot.signature;
     if function.signature.parameters != signature.parameters
         || function.signature.layouts.len() != signature.layouts.len()
@@ -814,6 +1104,18 @@ fn validate_erased_call_inner(
     let tc = &program.type_context;
     let signature = call.target.signature(contract)?;
     let bindings = validate_erased_environment(contract, tc, call)?;
+    if let MirErasedCallTarget::Direct(key) = &call.target {
+        let callee = contract
+            .erased
+            .functions
+            .get(key)
+            .ok_or(MirErasedError::MissingCallable)?;
+        if native_bridge_source(callee)
+            .is_some_and(|source| call.type_args.first() != Some(&source))
+        {
+            return Err(MirErasedError::InvalidType);
+        }
+    }
     let witness = matches!(call.target, MirErasedCallTarget::Virtual(_));
     if args.len() != signature.params.len() {
         return Err(MirErasedError::InvalidType);
@@ -881,9 +1183,21 @@ impl MirErasedType {
         tc: &mut crate::type_context::TypeContext,
         env: &crate::type_services::normalize::TypeNormalizationEnv,
     ) -> Result<Self, MirErasedError> {
+        Self::from_type_scoped(ty, parameters, witness, &BTreeMap::new(), tc, env)
+    }
+
+    pub fn from_type_scoped(
+        ty: &crate::types::Type,
+        parameters: &BTreeMap<GenericParamId, u32>,
+        witness: Option<u32>,
+        scopes: &BTreeMap<crate::types::WitnessId, u32>,
+        tc: &mut crate::type_context::TypeContext,
+        env: &crate::type_services::normalize::TypeNormalizationEnv,
+    ) -> Result<Self, MirErasedError> {
         use crate::types::Type;
-        if !crate::type_services::visit::type_any(ty, |ty| matches!(ty, Type::Generic(_)))
-            && !crate::type_services::substitution::has_free_object_self(ty)
+        if !crate::type_services::visit::type_any(ty, |ty| {
+            matches!(ty, Type::Generic(_) | Type::Witness(_))
+        }) && !crate::type_services::substitution::has_free_object_self(ty)
         {
             return Ok(Self::Concrete(
                 tc.intern_normalized_type(ty, env)
@@ -891,6 +1205,9 @@ impl MirErasedType {
             ));
         }
         Ok(match ty {
+            Type::Witness(id) => {
+                Self::Scoped(*scopes.get(id).ok_or(MirErasedError::UnboundParameter)?)
+            }
             Type::Generic(id) => {
                 Self::Parameter(*parameters.get(id).ok_or(MirErasedError::UnboundParameter)?)
             }
@@ -898,20 +1215,24 @@ impl MirErasedType {
                 Self::Parameter(witness.ok_or(MirErasedError::UnboundParameter)?)
             }
             Type::Reference { inner, mutable } => Self::Reference {
-                inner: Box::new(Self::from_type(inner, parameters, witness, tc, env)?),
+                inner: Box::new(Self::from_type_scoped(
+                    inner, parameters, witness, scopes, tc, env,
+                )?),
                 mutable: *mutable,
             },
-            Type::Pointer(inner) => Self::Pointer(Box::new(Self::from_type(
-                inner, parameters, witness, tc, env,
+            Type::Pointer(inner) => Self::Pointer(Box::new(Self::from_type_scoped(
+                inner, parameters, witness, scopes, tc, env,
             )?)),
             Type::Tuple(fields) => Self::Tuple(
                 fields
                     .iter()
-                    .map(|ty| Self::from_type(ty, parameters, witness, tc, env))
+                    .map(|ty| Self::from_type_scoped(ty, parameters, witness, scopes, tc, env))
                     .collect::<Result<_, _>>()?,
             ),
             Type::Array(element, len) => Self::Array {
-                element: Box::new(Self::from_type(element, parameters, witness, tc, env)?),
+                element: Box::new(Self::from_type_scoped(
+                    element, parameters, witness, scopes, tc, env,
+                )?),
                 len: *len,
             },
             Type::Struct { id, args } | Type::Enum { id, args } => Self::Nominal {
@@ -923,14 +1244,21 @@ impl MirErasedType {
                 },
                 args: args
                     .iter()
-                    .map(|ty| Self::from_type(ty, parameters, witness, tc, env))
+                    .map(|ty| Self::from_type_scoped(ty, parameters, witness, scopes, tc, env))
                     .collect::<Result<_, _>>()?,
             },
             Type::Apply { constructor, args } => Self::Apply {
-                constructor: Box::new(Self::from_type(constructor, parameters, witness, tc, env)?),
+                constructor: Box::new(Self::from_type_scoped(
+                    constructor,
+                    parameters,
+                    witness,
+                    scopes,
+                    tc,
+                    env,
+                )?),
                 args: args
                     .iter()
-                    .map(|ty| Self::from_type(ty, parameters, witness, tc, env))
+                    .map(|ty| Self::from_type_scoped(ty, parameters, witness, scopes, tc, env))
                     .collect::<Result<_, _>>()?,
             },
             _ => return Err(MirErasedError::UnsupportedOperation),
@@ -940,6 +1268,7 @@ impl MirErasedType {
     pub fn contains_parameter(&self, index: u32) -> bool {
         match self {
             Self::Parameter(parameter) => *parameter == index,
+            Self::Scoped(_) => false,
             Self::Concrete(_) => false,
             Self::Reference { inner, .. } | Self::Pointer(inner) => inner.contains_parameter(index),
             Self::Tuple(fields) | Self::Nominal { args: fields, .. } => {
@@ -950,6 +1279,28 @@ impl MirErasedType {
                 constructor.contains_parameter(index)
                     || args.iter().any(|ty| ty.contains_parameter(index))
             }
+        }
+    }
+
+    pub fn scoped_binders(&self, binders: &mut BTreeSet<u32>) {
+        match self {
+            Self::Scoped(index) => {
+                binders.insert(*index);
+            }
+            Self::Reference { inner, .. } | Self::Pointer(inner) => inner.scoped_binders(binders),
+            Self::Tuple(fields) | Self::Nominal { args: fields, .. } => {
+                for field in fields {
+                    field.scoped_binders(binders);
+                }
+            }
+            Self::Array { element, .. } => element.scoped_binders(binders),
+            Self::Apply { constructor, args } => {
+                constructor.scoped_binders(binders);
+                for argument in args {
+                    argument.scoped_binders(binders);
+                }
+            }
+            Self::Concrete(_) | Self::Parameter(_) => {}
         }
     }
 
@@ -1022,6 +1373,7 @@ impl MirErasedType {
                 .get(*index as usize)
                 .map(|p| p.kind.clone())
                 .ok_or(MirErasedError::UnboundParameter),
+            Self::Scoped(_) => Ok(Kind::Type),
             Self::Reference { inner, .. } | Self::Pointer(inner) => {
                 if inner.kind(signature, contract, tc)? == Kind::Type {
                     Ok(Kind::Type)
@@ -1087,6 +1439,7 @@ impl MirErasedType {
                 tc.type_for(*id)
             }
             Self::Parameter(index) => argument(*index).ok_or(MirErasedError::UnboundParameter)?,
+            Self::Scoped(_) => return Err(MirErasedError::UnboundParameter),
             Self::Reference { inner, mutable } => Type::Reference {
                 inner: Box::new(inner.instantiate_using(argument, tc)?),
                 mutable: *mutable,
@@ -1147,6 +1500,7 @@ impl MirErasedType {
                 .get(*index as usize)
                 .cloned()
                 .ok_or(MirErasedError::UnboundParameter)?,
+            Self::Scoped(index) => Self::Scoped(*index),
             Self::Concrete(id) => Self::Concrete(*id),
             Self::Reference { inner, mutable } => Self::Reference {
                 inner: Box::new(inner.substitute(bindings)?),
@@ -1254,9 +1608,14 @@ fn leaves(
                 return Err(MirErasedError::InvalidType);
             }
             let ty = tc.type_for(*id);
-            if crate::type_services::visit::type_any(&ty, |ty| {
-                matches!(ty, Type::Generic(_) | Type::TypeVar(_) | Type::Error)
-            }) || crate::type_services::substitution::has_free_object_self(&ty)
+            if !matches!(ty, Type::Exists(_))
+                && crate::type_services::visit::type_any(&ty, |ty| {
+                    matches!(
+                        ty,
+                        Type::Witness(_) | Type::Generic(_) | Type::TypeVar(_) | Type::Error
+                    )
+                })
+                || crate::type_services::substitution::has_free_object_self(&ty)
             {
                 return Err(MirErasedError::InvalidType);
             }
@@ -1266,7 +1625,7 @@ fn leaves(
                 return Err(MirErasedError::InvalidType);
             }
         }
-        MirErasedType::Parameter(_) => {}
+        MirErasedType::Parameter(_) | MirErasedType::Scoped(_) => {}
         MirErasedType::Reference { inner, .. } | MirErasedType::Pointer(inner) => {
             leaves(inner, contract, tc)?
         }
@@ -1291,6 +1650,27 @@ pub fn validate_erased_signature(
     contract: &super::MirBackendContract,
     tc: &crate::type_context::TypeContext,
 ) -> Result<(), MirErasedError> {
+    let mut scoped = BTreeSet::new();
+    for ty in
+        signature
+            .params
+            .iter()
+            .chain(std::iter::once(&signature.ret))
+            .chain(&signature.layouts)
+            .chain(&signature.require_borrow_free)
+            .chain(signature.dictionaries.iter().flat_map(|dictionary| {
+                std::iter::once(&dictionary.subject)
+                    .chain(&dictionary.trait_args)
+                    .chain(dictionary.members.iter().flat_map(|member| {
+                        member.params.iter().chain(std::iter::once(&member.ret))
+                    }))
+            }))
+    {
+        ty.scoped_binders(&mut scoped);
+    }
+    if !scoped.is_empty() {
+        return Err(MirErasedError::UnboundParameter);
+    }
     for (index, parameter) in signature.parameters.iter().enumerate() {
         if parameter.kind == Kind::Type
             && !signature
@@ -1352,7 +1732,7 @@ pub fn validate_erased_signature(
     Ok(())
 }
 
-/// Validate the bound environment and linear value transfers before lowering.
+/// Validate the bound environment and CFG value transfers before lowering.
 pub fn validate_erased_function(
     function: &MirErasedFunction,
     contract: &super::MirBackendContract,
@@ -1379,25 +1759,131 @@ pub fn validate_erased_function(
         if ty.kind(signature, contract, tc)? != Kind::Type {
             return Err(MirErasedError::KindMismatch);
         }
-        if !signature.layouts.contains(ty)
+        let mut scoped = BTreeSet::new();
+        ty.scoped_binders(&mut scoped);
+        if scoped
+            .iter()
+            .any(|index| *index as usize >= body.scopes.len())
+        {
+            return Err(MirErasedError::UnboundParameter);
+        }
+        let scoped_layout = match ty {
+            MirErasedType::Scoped(_) => true,
+            _ => {
+                super::erased_uniform_layout(contract, &mut tc.clone(), ty).is_ok()
+                    || scoped.iter().any(|index| {
+                        body.scopes.get(*index as usize).is_some_and(|scope| {
+                            let MirErasedScopeSource::Package { package } = scope.source else {
+                                return false;
+                            };
+                            super::scoped_package_payload(
+                                package,
+                                *index,
+                                scope.witness,
+                                &mut tc.clone(),
+                            )
+                            .is_ok_and(|payload| payload == *ty)
+                        })
+                    })
+            }
+        };
+        if !scoped.is_empty() && !scoped_layout {
+            return Err(MirErasedError::MissingLayout);
+        }
+        if scoped.is_empty()
+            && !signature.layouts.contains(ty)
             && !matches!(ty, MirErasedType::Concrete(id) if contract.erased.descriptors.contains_key(id))
         {
             return Err(MirErasedError::MissingLayout);
         }
     }
-    let mut initialized = vec![false; body.locals.len()];
-    initialized[..signature.params.len()].fill(true);
-    let mut origins = vec![BTreeSet::<usize>::new(); body.locals.len()];
-    for (index, origin) in origins.iter_mut().take(signature.params.len()).enumerate() {
-        origin.insert(index);
+    let mut witnesses = BTreeSet::new();
+    for scope in &body.scopes {
+        if scope.witness.owner != function.key.definition
+            || !witnesses.insert(scope.witness)
+            || !contract.object_schemas.contains_key(&scope.object)
+        {
+            return Err(MirErasedError::InvalidType);
+        }
+        if let MirErasedScopeSource::Package { package } = scope.source {
+            if !super::package_schema_is_valid(contract, tc, package)
+                || contract.packages[&package].object != scope.object
+            {
+                return Err(MirErasedError::InvalidType);
+            }
+        }
     }
-    let mut local_borrows = vec![BTreeSet::<u32>::new(); body.locals.len()];
+    if body.blocks.is_empty() {
+        return Err(MirErasedError::InvalidLocal);
+    }
+    let mut reachable = BTreeSet::new();
+    let mut pending_blocks = vec![MirErasedBlock(0)];
+    while let Some(index) = pending_blocks.pop() {
+        if !reachable.insert(index) {
+            continue;
+        }
+        let block = body
+            .blocks
+            .get(index.0 as usize)
+            .ok_or(MirErasedError::InvalidLocal)?;
+        match &block.terminator {
+            MirErasedTerminator::Goto(target) => pending_blocks.push(*target),
+            MirErasedTerminator::Branch {
+                then_block,
+                else_block,
+                ..
+            } => {
+                pending_blocks.extend([*then_block, *else_block]);
+            }
+            MirErasedTerminator::Return(_) | MirErasedTerminator::Unreachable => {}
+        }
+    }
+    if body.blocks.iter().enumerate().any(|(index, block)| {
+        !reachable.contains(&MirErasedBlock(index as u32))
+            && (!block.statements.is_empty()
+                || block.terminator != MirErasedTerminator::Unreachable)
+    }) {
+        return Err(MirErasedError::InvalidLocal);
+    }
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    enum Origin {
+        Parameter(usize),
+        Storage(u32),
+    }
+    #[derive(Clone, PartialEq, Eq)]
+    struct State {
+        initialized: Vec<bool>,
+        possibly_live: Vec<bool>,
+        origins: Vec<BTreeSet<Origin>>,
+        borrows: Vec<BTreeSet<u32>>,
+        opened: Vec<bool>,
+        payload_sources: Vec<Option<u32>>,
+    }
+    let mut entry = State {
+        initialized: vec![false; body.locals.len()],
+        possibly_live: vec![false; body.locals.len()],
+        origins: vec![BTreeSet::new(); body.locals.len()],
+        borrows: vec![BTreeSet::new(); body.locals.len()],
+        opened: vec![false; body.scopes.len()],
+        payload_sources: vec![None; body.locals.len()],
+    };
+    entry.initialized[..signature.params.len()].fill(true);
+    entry.possibly_live[..signature.params.len()].fill(true);
+    for (index, origin) in entry
+        .origins
+        .iter_mut()
+        .take(signature.params.len())
+        .enumerate()
+    {
+        origin.insert(Origin::Parameter(index));
+    }
     fn operand(
         op: &MirErasedOperand,
         function: &MirErasedFunction,
         contract: &super::MirBackendContract,
         tc: &crate::type_context::TypeContext,
         initialized: &mut [bool],
+        possibly_live: &mut [bool],
         borrows: &[BTreeSet<u32>],
     ) -> Result<MirErasedType, MirErasedError> {
         let (place, moving) = match op {
@@ -1418,236 +1904,1034 @@ pub fn validate_erased_function(
             }
             if borrows
                 .iter()
-                .zip(initialized.iter())
+                .zip(possibly_live.iter())
                 .any(|(borrow, live)| *live && borrow.contains(&place.local.0))
             {
                 return Err(MirErasedError::BorrowConflict);
             }
             initialized[place.local.0 as usize] = false;
+            possibly_live[place.local.0 as usize] = false;
         } else if !copy_proven(&ty, tc) {
             return Err(MirErasedError::CopyWithoutProof);
         }
         Ok(ty)
     }
-    for statement in &body.statements {
-        let dest = statement.destination.0 as usize;
-        let expected = body.locals.get(dest).ok_or(MirErasedError::InvalidLocal)?;
-        if initialized[dest] {
-            return Err(MirErasedError::InvalidLocal);
-        }
-        let mut result_origins = BTreeSet::new();
-        let mut result_borrows = BTreeSet::new();
-        let receiver_initialized = match &statement.value {
-            MirErasedRvalue::DictionaryCall { receiver, .. } => initialized
-                .get(receiver.local.0 as usize)
-                .copied()
-                .unwrap_or(false),
-            _ => true,
+    let mut entries = vec![None; body.blocks.len()];
+    entries[0] = Some(entry);
+    let mut pending = std::collections::VecDeque::from([0usize]);
+    while let Some(block_index) = pending.pop_front() {
+        let Some(mut state) = entries[block_index].clone() else {
+            continue;
         };
-        let receiver_borrowed = match &statement.value {
-            MirErasedRvalue::DictionaryCall { receiver, .. } => local_borrows
-                .iter()
-                .zip(&initialized)
-                .any(|(borrow, live)| *live && borrow.contains(&receiver.local.0)),
-            _ => false,
-        };
-        let mut use_operand = |op: &MirErasedOperand| {
-            let place = match op {
-                MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
-            };
-            let ty = operand(op, function, contract, tc, &mut initialized, &local_borrows)?;
-            result_origins.extend(origins[place.local.0 as usize].iter().copied());
-            result_borrows.extend(local_borrows[place.local.0 as usize].iter().copied());
-            Ok::<_, MirErasedError>(ty)
-        };
-        let actual = match &statement.value {
-            MirErasedRvalue::Use(op) => use_operand(op)?,
-            MirErasedRvalue::Literal(value) => MirErasedType::Concrete(
-                tc.id_for_type(&match value {
-                    MirErasedLiteral::Int(_) => Type::I64,
-                    MirErasedLiteral::Bool(_) => Type::Bool,
-                    MirErasedLiteral::Unit => Type::Unit,
-                })
-                .ok_or(MirErasedError::InvalidType)?,
-            ),
-            MirErasedRvalue::Aggregate(values) => MirErasedType::Tuple(
-                values
-                    .iter()
-                    .map(&mut use_operand)
-                    .collect::<Result<_, _>>()?,
-            ),
-            MirErasedRvalue::Borrow { place, mutable } => {
-                if !initialized
-                    .get(place.local.0 as usize)
-                    .copied()
-                    .unwrap_or(false)
-                {
-                    return Err(MirErasedError::UninitializedOrMoved);
-                }
-                if *mutable {
-                    return Err(MirErasedError::UnsupportedOperation);
-                }
-                result_borrows.insert(place.local.0);
-                MirErasedType::Reference {
-                    inner: Box::new(erased_place_type(function, place, contract, tc)?),
-                    mutable: false,
-                }
+        let State {
+            initialized,
+            possibly_live,
+            origins,
+            borrows: local_borrows,
+            opened,
+            payload_sources,
+        } = &mut state;
+        let block = &body.blocks[block_index];
+        for statement in &block.statements {
+            let dest = statement.destination.0 as usize;
+            let expected = body.locals.get(dest).ok_or(MirErasedError::InvalidLocal)?;
+            let mut scoped = BTreeSet::new();
+            expected.scoped_binders(&mut scoped);
+            if !matches!(
+                statement.value,
+                MirErasedRvalue::Open { .. } | MirErasedRvalue::PackageOpen { .. }
+            ) && scoped.iter().any(|index| !opened[*index as usize])
+            {
+                return Err(MirErasedError::UnboundParameter);
             }
-            MirErasedRvalue::Call {
-                target,
-                type_args,
-                dictionaries,
-                args,
-            } => {
-                let callee = contract
-                    .erased
-                    .functions
-                    .get(target)
-                    .ok_or(MirErasedError::MissingCallable)?;
-                if type_args.len() != callee.signature.parameters.len()
-                    || dictionaries.len() != callee.signature.dictionaries.len()
-                    || args.len() != callee.signature.params.len()
-                {
-                    return Err(MirErasedError::InvalidType);
+            if possibly_live[dest] {
+                return Err(MirErasedError::InvalidLocal);
+            }
+            let mut result_origins = BTreeSet::new();
+            let mut result_borrows = BTreeSet::new();
+            let mut payload_source = None;
+            let receiver_initialized = match &statement.value {
+                MirErasedRvalue::DictionaryCall { receiver, .. }
+                | MirErasedRvalue::OpenedCall { receiver, .. }
+                | MirErasedRvalue::OpenedErasedCall { receiver, .. } => initialized
+                    .get(receiver.local.0 as usize)
+                    .copied()
+                    .unwrap_or(false),
+                _ => true,
+            };
+            let receiver_borrowed = match &statement.value {
+                MirErasedRvalue::DictionaryCall { receiver, .. }
+                | MirErasedRvalue::OpenedCall { receiver, .. }
+                | MirErasedRvalue::OpenedErasedCall { receiver, .. } => local_borrows
+                    .iter()
+                    .zip(possibly_live.iter())
+                    .any(|(borrow, live)| *live && borrow.contains(&receiver.local.0)),
+                _ => false,
+            };
+            let receiver_mutably_borrowed = match &statement.value {
+                MirErasedRvalue::OpenedCall { receiver, .. }
+                | MirErasedRvalue::OpenedErasedCall { receiver, .. } => local_borrows
+                    .iter()
+                    .zip(possibly_live.iter())
+                    .enumerate()
+                    .any(|(index, (borrow, live))| {
+                        *live
+                            && borrow.contains(&receiver.local.0)
+                            && erased_type_has_mutable_reference(&body.locals[index], tc)
+                    }),
+                _ => false,
+            };
+            let mut use_operand = |op: &MirErasedOperand| {
+                let place = match op {
+                    MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
+                };
+                let ty = operand(
+                    op,
+                    function,
+                    contract,
+                    tc,
+                    initialized,
+                    possibly_live,
+                    local_borrows,
+                )?;
+                result_origins.extend(origins[place.local.0 as usize].iter().copied());
+                result_borrows.extend(local_borrows[place.local.0 as usize].iter().copied());
+                Ok::<_, MirErasedError>(ty)
+            };
+            let actual = match &statement.value {
+                MirErasedRvalue::PackageOpen { scope, source } => {
+                    let evidence = body
+                        .scopes
+                        .get(*scope as usize)
+                        .ok_or(MirErasedError::UnboundParameter)?;
+                    let MirErasedScopeSource::Package { package } = evidence.source else {
+                        return Err(MirErasedError::InvalidType);
+                    };
+                    if opened[*scope as usize]
+                        || !matches!(source, MirErasedOperand::Move(place) if place.projection.is_empty())
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    if use_operand(source)? != MirErasedType::Concrete(package) {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    opened[*scope as usize] = true;
+                    payload_source = Some(*scope);
+                    super::scoped_package_payload(
+                        package,
+                        *scope,
+                        evidence.witness,
+                        &mut tc.clone(),
+                    )?
                 }
-                for (ty, parameter) in type_args.iter().zip(&callee.signature.parameters) {
-                    if ty.kind(signature, contract, tc)? != parameter.kind {
-                        return Err(MirErasedError::KindMismatch);
+                MirErasedRvalue::PackagePack { payload, plan } => {
+                    if !super::package_plan_is_valid(contract, tc, plan, &body.scopes, opened) {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    let actual = use_operand(payload)?;
+                    let scope = match plan.witness {
+                        super::MirPackageWitnessEvidence::Scoped { scope, .. } => Some(scope),
+                        _ => None,
+                    };
+                    let witness = scope
+                        .and_then(|index| body.scopes.get(index as usize))
+                        .map(|scope| Type::Witness(scope.witness));
+                    let witness = match (&plan.witness, witness) {
+                        (super::MirPackageWitnessEvidence::Concrete { witness, .. }, _) => {
+                            tc.type_for(*witness)
+                        }
+                        (_, Some(witness)) => witness,
+                        _ => return Err(MirErasedError::UnboundParameter),
+                    };
+                    let expected_payload = super::package_payload_type(plan.package, &witness, tc)?;
+                    let expected_payload = MirErasedType::from_type_scoped(
+                        &expected_payload,
+                        &BTreeMap::new(),
+                        None,
+                        &body
+                            .scopes
+                            .iter()
+                            .enumerate()
+                            .map(|(index, scope)| (scope.witness, index as u32))
+                            .collect(),
+                        &mut tc.clone(),
+                        &Default::default(),
+                    )?;
+                    if !erased_types_agree(&actual, &expected_payload, tc)
+                        || !super::package_plan_is_valid(contract, tc, plan, &body.scopes, opened)
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    if let super::MirPackagePayloadDescriptor::FromPackage(scope) =
+                        plan.payload_descriptor
+                    {
+                        let place = match payload {
+                            MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
+                        };
+                        if !place.projection.is_empty()
+                            || payload_sources[place.local.0 as usize] != Some(scope)
+                        {
+                            return Err(MirErasedError::InvalidType);
+                        }
+                    }
+                    MirErasedType::Concrete(plan.package)
+                }
+                MirErasedRvalue::Open { scope, source } => {
+                    let schema = body
+                        .scopes
+                        .get(*scope as usize)
+                        .ok_or(MirErasedError::UnboundParameter)?;
+                    if opened[*scope as usize] {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    let MirErasedScopeSource::Object { mutable } = schema.source else {
+                        return Err(MirErasedError::InvalidType);
+                    };
+                    let source_ty = use_operand(source)?.instantiate(&[], tc)?;
+                    if !matches!(source_ty, Type::Reference { inner, mutable }
+                    if tc.id_for_type(&inner) == Some(schema.object) && mutable == schema.allows_mutable_place())
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    opened[*scope as usize] = true;
+                    MirErasedType::Reference {
+                        inner: Box::new(MirErasedType::Scoped(*scope)),
+                        mutable,
                     }
                 }
-                for requirement in &callee.signature.require_borrow_free {
+                MirErasedRvalue::Reclose {
+                    scope,
+                    value,
+                    object,
+                } => {
+                    let evidence = body
+                        .scopes
+                        .get(*scope as usize)
+                        .ok_or(MirErasedError::UnboundParameter)?;
+                    if !opened[*scope as usize] {
+                        return Err(MirErasedError::UnboundParameter);
+                    }
+                    let source = use_operand(value)?;
+                    let MirErasedType::Reference { inner, mutable } = source else {
+                        return Err(MirErasedError::InvalidType);
+                    };
+                    if *inner != MirErasedType::Scoped(*scope)
+                        || (mutable && !evidence.allows_mutable_place())
+                        || (evidence.object != *object
+                            && !contract.object_schemas[&evidence.object]
+                                .views
+                                .contains(object))
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    MirErasedType::Concrete(
+                        tc.id_for_type(&Type::Reference {
+                            inner: Box::new(tc.type_for(*object)),
+                            mutable,
+                        })
+                        .ok_or(MirErasedError::MissingLayout)?,
+                    )
+                }
+                MirErasedRvalue::OpenedCall {
+                    scope,
+                    slot,
+                    receiver,
+                    args,
+                } => {
+                    let evidence = body
+                        .scopes
+                        .get(*scope as usize)
+                        .ok_or(MirErasedError::UnboundParameter)?;
+                    if !opened[*scope as usize] || !receiver_initialized {
+                        return Err(MirErasedError::UninitializedOrMoved);
+                    }
+                    let slot = contract.object_schemas[&evidence.object]
+                        .slots
+                        .get(*slot as usize)
+                        .ok_or(MirErasedError::MissingCallable)?;
+                    if erased_place_type(function, receiver, contract, tc)?
+                        != MirErasedType::Scoped(*scope)
+                        || slot.receiver == ReceiverMode::Move
+                        || (slot.receiver == ReceiverMode::Mut && !evidence.allows_mutable_place())
+                        || args.len() + 1 != slot.signature.params.len()
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    if (slot.receiver == ReceiverMode::Mut && receiver_borrowed)
+                        || (slot.receiver == ReceiverMode::Shared && receiver_mutably_borrowed)
+                    {
+                        return Err(MirErasedError::BorrowConflict);
+                    }
+                    if slot.receiver == ReceiverMode::Mut
+                        && !erased_place_is_writable(function, receiver, contract, tc)?
+                    {
+                        return Err(MirErasedError::BorrowConflict);
+                    }
+                    for (arg, expected) in args.iter().zip(slot.signature.params.iter().skip(1)) {
+                        if slot.receiver == ReceiverMode::Mut
+                            && erased_type_may_borrow(
+                                &MirErasedType::Concrete(expected.semantic_ty),
+                                signature,
+                                contract,
+                                tc,
+                            )
+                        {
+                            // Retention through a mutable hidden receiver needs a
+                            // checked origin envelope, not just a matching native ABI.
+                            return Err(MirErasedError::UnsupportedOperation);
+                        }
+                        if use_operand(arg)? != MirErasedType::Concrete(expected.semantic_ty) {
+                            return Err(MirErasedError::InvalidType);
+                        }
+                    }
+                    result_origins.extend(origins[receiver.local.0 as usize].iter().copied());
+                    result_borrows.extend(local_borrows[receiver.local.0 as usize].iter().copied());
                     if erased_type_may_borrow(
-                        &requirement.substitute(type_args)?,
+                        &MirErasedType::Concrete(slot.signature.ret.semantic_ty),
                         signature,
                         contract,
                         tc,
                     ) {
-                        return Err(MirErasedError::UnsupportedOperation);
+                        result_borrows.insert(receiver.local.0);
+                        if !erased_place_reborrows_reference(function, receiver, contract, tc) {
+                            result_origins.insert(Origin::Storage(receiver.local.0));
+                        }
+                    }
+                    match slot.result {
+                        super::MirObjectResult::BorrowedSelf { mutable } => {
+                            MirErasedType::Reference {
+                                inner: Box::new(MirErasedType::Scoped(*scope)),
+                                mutable,
+                            }
+                        }
+                        super::MirObjectResult::Direct => {
+                            MirErasedType::Concrete(slot.signature.ret.semantic_ty)
+                        }
                     }
                 }
-                for (index, required) in dictionaries.iter().zip(&callee.signature.dictionaries) {
-                    if signature.dictionaries.get(*index as usize)
-                        != Some(&required.substitute(type_args)?)
+                MirErasedRvalue::OpenedErasedCall {
+                    scope,
+                    slot,
+                    type_args,
+                    dictionaries,
+                    receiver,
+                    args,
+                } => {
+                    let evidence = body
+                        .scopes
+                        .get(*scope as usize)
+                        .ok_or(MirErasedError::UnboundParameter)?;
+                    if !opened[*scope as usize] || !receiver_initialized {
+                        return Err(MirErasedError::UninitializedOrMoved);
+                    }
+                    let slot = contract.object_schemas[&evidence.object]
+                        .erased_slots
+                        .get(*slot as usize)
+                        .ok_or(MirErasedError::MissingCallable)?;
+                    if type_args.first() != Some(&MirErasedType::Scoped(*scope))
+                        || erased_place_type(function, receiver, contract, tc)?
+                            != MirErasedType::Scoped(*scope)
+                        || args.len() + 1 != slot.signature.params.len()
                     {
-                        return Err(MirErasedError::InvalidDictionary);
-                    }
-                }
-                for layout in &callee.signature.layouts {
-                    let layout = layout.substitute(type_args)?;
-                    if !signature.layouts.contains(&layout)
-                        && !matches!(&layout, MirErasedType::Concrete(id) if contract.erased.descriptors.contains_key(id))
-                    {
-                        return Err(MirErasedError::MissingLayout);
-                    }
-                }
-                for (arg, expected) in args.iter().zip(&callee.signature.params) {
-                    if use_operand(arg)? != expected.substitute(type_args)? {
                         return Err(MirErasedError::InvalidType);
                     }
-                }
-                callee.signature.ret.substitute(type_args)?
-            }
-            MirErasedRvalue::DictionaryCall {
-                dictionary,
-                member,
-                receiver,
-                args,
-            } => {
-                let dictionary = signature
-                    .dictionaries
-                    .get(*dictionary as usize)
-                    .ok_or(MirErasedError::InvalidDictionary)?;
-                let member = dictionary
-                    .members
-                    .get(*member as usize)
-                    .ok_or(MirErasedError::InvalidDictionary)?;
-                if !receiver_initialized {
-                    return Err(MirErasedError::UninitializedOrMoved);
-                }
-                if erased_place_type(function, receiver, contract, tc)? != dictionary.subject {
-                    return Err(MirErasedError::InvalidDictionary);
-                }
-                if member.receiver != ReceiverMode::Move && args.iter().any(|arg| matches!(arg, MirErasedOperand::Move(place) if place.local == receiver.local)) { return Err(MirErasedError::BorrowConflict); }
-                if member.receiver == ReceiverMode::Mut {
-                    let mut writable = body.mutable_locals.contains(&receiver.local);
-                    let mut prefix = MirErasedPlace::local(receiver.local);
-                    for projection in &receiver.projection {
-                        if *projection == MirErasedProjection::Deref {
-                            writable = match erased_place_type(function, &prefix, contract, tc)? {
-                                MirErasedType::Reference { mutable, .. } => mutable,
-                                MirErasedType::Concrete(id) => {
-                                    matches!(tc.type_for(id), Type::Reference { mutable: true, .. })
-                                }
-                                _ => false,
-                            };
-                        }
-                        prefix.projection.push(projection.clone());
-                    }
-                    if !writable {
-                        return Err(MirErasedError::BorrowConflict);
-                    }
-                    if receiver_borrowed {
-                        return Err(MirErasedError::BorrowConflict);
-                    }
-                }
-                if member.receiver == ReceiverMode::Move {
-                    use_operand(&MirErasedOperand::Move(receiver.clone()))?;
-                }
-                if args.len() + 1 != member.params.len() {
-                    return Err(MirErasedError::InvalidDictionary);
-                }
-                for (arg, expected) in args.iter().zip(member.params.iter().skip(1)) {
-                    if erased_type_may_borrow(expected, signature, contract, tc) {
+                    if slot.receiver == ReceiverMode::Move {
                         return Err(MirErasedError::UnsupportedOperation);
                     }
-                    if use_operand(arg)? != *expected {
-                        return Err(MirErasedError::InvalidDictionary);
+                    if slot.receiver == ReceiverMode::Mut
+                        && (!evidence.allows_mutable_place()
+                            || receiver_borrowed
+                            || !erased_place_is_writable(function, receiver, contract, tc)?)
+                    {
+                        return Err(MirErasedError::BorrowConflict);
+                    }
+                    if slot.receiver == ReceiverMode::Shared && receiver_mutably_borrowed {
+                        return Err(MirErasedError::BorrowConflict);
+                    }
+                    validate_body_erased_environment(
+                        &slot.signature,
+                        type_args,
+                        dictionaries,
+                        signature,
+                        opened,
+                        contract,
+                        tc,
+                    )?;
+                    if slot
+                        .signature
+                        .params
+                        .first()
+                        .ok_or(MirErasedError::InvalidType)?
+                        .substitute(type_args)?
+                        != (MirErasedType::Reference {
+                            inner: Box::new(MirErasedType::Scoped(*scope)),
+                            mutable: slot.receiver == ReceiverMode::Mut,
+                        })
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    for (arg, expected) in args.iter().zip(slot.signature.params.iter().skip(1)) {
+                        let expected = expected.substitute(type_args)?;
+                        if slot.receiver == ReceiverMode::Mut
+                            && erased_type_may_borrow(&expected, signature, contract, tc)
+                        {
+                            return Err(MirErasedError::UnsupportedOperation);
+                        }
+                        if !erased_types_agree(&use_operand(arg)?, &expected, tc) {
+                            return Err(MirErasedError::InvalidType);
+                        }
+                    }
+                    let ret = slot.signature.ret.substitute(type_args)?;
+                    result_origins.extend(origins[receiver.local.0 as usize].iter().copied());
+                    result_borrows.extend(local_borrows[receiver.local.0 as usize].iter().copied());
+                    if erased_type_may_borrow(&ret, signature, contract, tc) {
+                        result_borrows.insert(receiver.local.0);
+                        if !erased_place_reborrows_reference(function, receiver, contract, tc) {
+                            result_origins.insert(Origin::Storage(receiver.local.0));
+                        }
+                    }
+                    ret
+                }
+                MirErasedRvalue::NativeCall { target, args } => {
+                    let callee = contract
+                        .callable(target)
+                        .ok_or(MirErasedError::MissingCallable)?;
+                    if matches!(callee.kind, super::MirCallableKind::ObjectProvided)
+                        && !imported_native_link_is_valid(
+                            function.key.definition,
+                            target,
+                            callee,
+                            contract,
+                        )
+                    {
+                        return Err(MirErasedError::MissingCallable);
+                    }
+                    if !matches!(
+                        callee.kind,
+                        super::MirCallableKind::LocalBody { .. }
+                            | super::MirCallableKind::ObjectProvided
+                    ) || args.len() != callee.signature.params.len()
+                        || signature.params.len() != callee.signature.params.len()
+                        || callee.source_def_id != Some(function.key.definition)
+                        || signature.parameters.len() != 1
+                        || !signature.dictionaries.is_empty()
+                        || signature
+                            .params
+                            .iter()
+                            .chain(std::iter::once(&signature.ret))
+                            .any(|ty| {
+                                ty.instantiate(&[], tc).map_or(true, |ty| {
+                                    !crate::type_services::facts::TypeFacts::is_codegen_concrete(
+                                        &ty,
+                                    )
+                                })
+                            })
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    let source = *function
+                        .key
+                        .static_args
+                        .first()
+                        .ok_or(MirErasedError::InvalidType)?;
+                    if !tc.type_id_tree_is_valid(source)
+                        || !crate::type_services::facts::TypeFacts::is_codegen_concrete(
+                            &tc.type_for(source),
+                        )
+                        || function.key.static_args.iter().any(|id| {
+                            !tc.type_id_tree_is_valid(*id)
+                            || !crate::type_services::facts::TypeFacts::is_concrete_type_argument(
+                                &tc.type_for(*id),
+                            )
+                        })
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    let receiver = signature
+                        .params
+                        .first()
+                        .ok_or(MirErasedError::InvalidType)?
+                        .instantiate(&[], tc)?;
+                    let receiver_source = match receiver {
+                        Type::Reference { inner, .. } => *inner,
+                        receiver => receiver,
+                    };
+                    if receiver_source != tc.type_for(source) {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    if !tc.type_id_tree_is_valid(callee.signature.ret.semantic_ty)
+                        || callee.signature.ret.abi_ty != callee.signature.ret.semantic_ty
+                        || callee
+                            .signature
+                            .params
+                            .iter()
+                            .any(|parameter| !tc.type_id_tree_is_valid(parameter.semantic_ty))
+                        || !erased_types_agree(
+                            &signature.ret,
+                            &MirErasedType::Concrete(callee.signature.ret.semantic_ty),
+                            tc,
+                        )
+                        || signature.params.iter().zip(&callee.signature.params).any(
+                            |(expected, parameter)| {
+                                !erased_types_agree(
+                                    expected,
+                                    &MirErasedType::Concrete(parameter.semantic_ty),
+                                    tc,
+                                )
+                            },
+                        )
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    for (index, parameter) in callee.signature.params.iter().enumerate() {
+                        if !matches!(
+                            tc.type_for(parameter.semantic_ty),
+                            Type::Reference { mutable: true, .. }
+                        ) {
+                            continue;
+                        }
+                        // A native ABI does not authorize storing another input's
+                        // hidden region in mutable receiver storage.
+                        if callee
+                            .signature
+                            .params
+                            .iter()
+                            .enumerate()
+                            .any(|(other, parameter)| {
+                                other != index
+                                    && erased_type_may_borrow(
+                                        &MirErasedType::Concrete(parameter.semantic_ty),
+                                        signature,
+                                        contract,
+                                        tc,
+                                    )
+                            })
+                        {
+                            return Err(MirErasedError::UnsupportedOperation);
+                        }
+                    }
+                    for (arg, parameter) in args.iter().zip(&callee.signature.params) {
+                        if !erased_types_agree(
+                            &use_operand(arg)?,
+                            &MirErasedType::Concrete(parameter.semantic_ty),
+                            tc,
+                        ) {
+                            return Err(MirErasedError::InvalidType);
+                        }
+                    }
+                    MirErasedType::Concrete(callee.signature.ret.semantic_ty)
+                }
+                MirErasedRvalue::NativeApply { target, args } => {
+                    let callee = contract
+                        .callable(target)
+                        .ok_or(MirErasedError::MissingCallable)?;
+                    if !matches!(
+                        callee.kind,
+                        super::MirCallableKind::LocalBody { .. }
+                            | super::MirCallableKind::ObjectProvided
+                    ) || args.len() != callee.signature.params.len()
+                        || callee.signature.ret.semantic_ty != callee.signature.ret.abi_ty
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    if matches!(callee.kind, super::MirCallableKind::ObjectProvided)
+                        && !callee.source_def_id.is_some_and(|definition| {
+                            imported_native_link_is_valid(definition, target, callee, contract)
+                        })
+                    {
+                        return Err(MirErasedError::MissingCallable);
+                    }
+                    for (index, parameter) in callee.signature.params.iter().enumerate() {
+                        if matches!(
+                            tc.type_for(parameter.semantic_ty),
+                            Type::Reference { mutable: true, .. }
+                        ) && callee.signature.params.iter().enumerate().any(
+                            |(other, parameter)| {
+                                other != index
+                                    && erased_type_may_borrow(
+                                        &MirErasedType::Concrete(parameter.semantic_ty),
+                                        signature,
+                                        contract,
+                                        tc,
+                                    )
+                            },
+                        ) {
+                            return Err(MirErasedError::UnsupportedOperation);
+                        }
+                    }
+                    for (arg, parameter) in args.iter().zip(&callee.signature.params) {
+                        if !erased_types_agree(
+                            &use_operand(arg)?,
+                            &MirErasedType::Concrete(parameter.semantic_ty),
+                            tc,
+                        ) {
+                            return Err(MirErasedError::InvalidType);
+                        }
+                    }
+                    MirErasedType::Concrete(callee.signature.ret.semantic_ty)
+                }
+                MirErasedRvalue::NativeAggregate { ty, fields } => {
+                    let descriptor = contract
+                        .erased
+                        .descriptors
+                        .get(ty)
+                        .ok_or(MirErasedError::MissingLayout)?;
+                    if !matches!(tc.type_for(*ty), Type::Struct { .. })
+                        || fields.len() != descriptor.fields.len()
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    for (field, expected) in fields.iter().zip(&descriptor.fields) {
+                        if !erased_types_agree(
+                            &use_operand(field)?,
+                            &MirErasedType::Concrete(*expected),
+                            tc,
+                        ) {
+                            return Err(MirErasedError::InvalidType);
+                        }
+                    }
+                    MirErasedType::Concrete(*ty)
+                }
+                MirErasedRvalue::Use(op) => {
+                    let place = match op {
+                        MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
+                    };
+                    if place.projection.is_empty() {
+                        payload_source = payload_sources[place.local.0 as usize];
+                    }
+                    use_operand(op)?
+                }
+                MirErasedRvalue::Literal(value) => MirErasedType::Concrete(
+                    tc.id_for_type(&match value {
+                        MirErasedLiteral::Int(_) => Type::I64,
+                        MirErasedLiteral::Bool(_) => Type::Bool,
+                        MirErasedLiteral::Unit => Type::Unit,
+                    })
+                    .ok_or(MirErasedError::InvalidType)?,
+                ),
+                MirErasedRvalue::Aggregate(values) => MirErasedType::Tuple(
+                    values
+                        .iter()
+                        .map(&mut use_operand)
+                        .collect::<Result<_, _>>()?,
+                ),
+                MirErasedRvalue::Borrow { place, mutable } => {
+                    if !initialized
+                        .get(place.local.0 as usize)
+                        .copied()
+                        .unwrap_or(false)
+                    {
+                        return Err(MirErasedError::UninitializedOrMoved);
+                    }
+                    if *mutable && !erased_place_is_writable(function, place, contract, tc)? {
+                        return Err(MirErasedError::BorrowConflict);
+                    }
+                    if local_borrows
+                        .iter()
+                        .zip(possibly_live.iter())
+                        .enumerate()
+                        .any(|(index, (loans, live))| {
+                            *live
+                                && loans.contains(&place.local.0)
+                                && (*mutable
+                                    || erased_type_has_mutable_reference(&body.locals[index], tc))
+                        })
+                    {
+                        return Err(MirErasedError::BorrowConflict);
+                    }
+                    result_origins.extend(origins[place.local.0 as usize].iter().copied());
+                    result_borrows.extend(local_borrows[place.local.0 as usize].iter().copied());
+                    if !erased_place_reborrows_reference(function, place, contract, tc) {
+                        result_origins.insert(Origin::Storage(place.local.0));
+                    }
+                    result_borrows.insert(place.local.0);
+                    MirErasedType::Reference {
+                        inner: Box::new(erased_place_type(function, place, contract, tc)?),
+                        mutable: *mutable,
                     }
                 }
-                if member.receiver != ReceiverMode::Move {
-                    result_origins.extend(origins[receiver.local.0 as usize].iter().copied());
+                MirErasedRvalue::Call {
+                    target,
+                    type_args,
+                    dictionaries,
+                    args,
+                } => {
+                    let callee = contract
+                        .erased
+                        .functions
+                        .get(target)
+                        .ok_or(MirErasedError::MissingCallable)?;
+                    if native_bridge_source(callee).is_some_and(|source| {
+                        type_args.first() != Some(&MirErasedType::Concrete(source))
+                    }) {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    if args.len() != callee.signature.params.len() {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    validate_body_erased_environment(
+                        &callee.signature,
+                        type_args,
+                        dictionaries,
+                        signature,
+                        opened,
+                        contract,
+                        tc,
+                    )?;
+                    for (arg, expected) in args.iter().zip(&callee.signature.params) {
+                        if !erased_types_agree(
+                            &use_operand(arg)?,
+                            &expected.substitute(type_args)?,
+                            tc,
+                        ) {
+                            return Err(MirErasedError::InvalidType);
+                        }
+                    }
+                    callee.signature.ret.substitute(type_args)?
                 }
-                if erased_type_may_borrow(&member.ret, signature, contract, tc) {
-                    result_borrows.insert(receiver.local.0);
+                MirErasedRvalue::DictionaryCall {
+                    dictionary,
+                    member,
+                    receiver,
+                    args,
+                } => {
+                    let dictionary = signature
+                        .dictionaries
+                        .get(*dictionary as usize)
+                        .ok_or(MirErasedError::InvalidDictionary)?;
+                    let member = dictionary
+                        .members
+                        .get(*member as usize)
+                        .ok_or(MirErasedError::InvalidDictionary)?;
+                    if !receiver_initialized {
+                        return Err(MirErasedError::UninitializedOrMoved);
+                    }
+                    if erased_place_type(function, receiver, contract, tc)? != dictionary.subject {
+                        return Err(MirErasedError::InvalidDictionary);
+                    }
+                    if member.receiver != ReceiverMode::Move && args.iter().any(|arg| matches!(arg, MirErasedOperand::Move(place) if place.local == receiver.local)) { return Err(MirErasedError::BorrowConflict); }
+                    if member.receiver == ReceiverMode::Mut {
+                        if !erased_place_is_writable(function, receiver, contract, tc)? {
+                            return Err(MirErasedError::BorrowConflict);
+                        }
+                        if receiver_borrowed {
+                            return Err(MirErasedError::BorrowConflict);
+                        }
+                    }
+                    if member.receiver == ReceiverMode::Move {
+                        use_operand(&MirErasedOperand::Move(receiver.clone()))?;
+                    }
+                    if args.len() + 1 != member.params.len() {
+                        return Err(MirErasedError::InvalidDictionary);
+                    }
+                    for (arg, expected) in args.iter().zip(member.params.iter().skip(1)) {
+                        if erased_type_may_borrow(expected, signature, contract, tc) {
+                            return Err(MirErasedError::UnsupportedOperation);
+                        }
+                        if use_operand(arg)? != *expected {
+                            return Err(MirErasedError::InvalidDictionary);
+                        }
+                    }
+                    if member.receiver != ReceiverMode::Move {
+                        result_origins.extend(origins[receiver.local.0 as usize].iter().copied());
+                        result_borrows
+                            .extend(local_borrows[receiver.local.0 as usize].iter().copied());
+                    }
+                    if erased_type_may_borrow(&member.ret, signature, contract, tc) {
+                        result_borrows.insert(receiver.local.0);
+                        if !erased_place_reborrows_reference(function, receiver, contract, tc) {
+                            result_origins.insert(Origin::Storage(receiver.local.0));
+                        }
+                    }
+                    member.ret.clone()
                 }
-                member.ret.clone()
+            };
+            if &actual != expected
+                && !actual
+                    .instantiate(&[], tc)
+                    .ok()
+                    .zip(expected.instantiate(&[], tc).ok())
+                    .is_some_and(|(actual, expected)| actual == expected)
+            {
+                return Err(MirErasedError::InvalidType);
+            }
+            initialized[dest] = true;
+            possibly_live[dest] = true;
+            if !erased_type_may_borrow(&actual, signature, contract, tc) {
+                result_borrows.clear();
+                result_origins.retain(|origin| !matches!(origin, Origin::Storage(_)));
+            }
+            origins[dest] = result_origins;
+            local_borrows[dest] = result_borrows;
+            payload_sources[dest] = payload_source;
+        }
+        let successors = match &block.terminator {
+            MirErasedTerminator::Goto(target) => vec![*target],
+            MirErasedTerminator::Branch {
+                condition,
+                then_block,
+                else_block,
+            } => {
+                let condition_ty = operand(
+                    condition,
+                    function,
+                    contract,
+                    tc,
+                    initialized,
+                    possibly_live,
+                    local_borrows,
+                )?;
+                if condition_ty.instantiate(&[], tc)? != Type::Bool {
+                    return Err(MirErasedError::InvalidType);
+                }
+                vec![*then_block, *else_block]
+            }
+            MirErasedTerminator::Unreachable => Vec::new(),
+            MirErasedTerminator::Return(result) => {
+                let returned = match result {
+                    MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
+                };
+                if origins
+                    .get(returned.local.0 as usize)
+                    .ok_or(MirErasedError::InvalidLocal)?
+                    .iter()
+                    .any(|origin| matches!(origin, Origin::Storage(_)))
+                {
+                    return Err(MirErasedError::BorrowEscape);
+                }
+                if !erased_types_agree(
+                    &operand(
+                        result,
+                        function,
+                        contract,
+                        tc,
+                        initialized,
+                        possibly_live,
+                        local_borrows,
+                    )?,
+                    &signature.ret,
+                    tc,
+                ) {
+                    return Err(MirErasedError::InvalidType);
+                }
+                Vec::new()
             }
         };
-        if &actual != expected
-            && !actual
-                .instantiate(&[], tc)
-                .ok()
-                .zip(expected.instantiate(&[], tc).ok())
-                .is_some_and(|(actual, expected)| actual == expected)
-        {
-            return Err(MirErasedError::InvalidType);
+        for successor in successors {
+            let index = successor.0 as usize;
+            let existing = entries.get_mut(index).ok_or(MirErasedError::InvalidLocal)?;
+            let next = if let Some(previous) = existing.as_ref() {
+                let mut joined = previous.clone();
+                for local in 0..body.locals.len() {
+                    joined.initialized[local] &= state.initialized[local];
+                    joined.possibly_live[local] |= state.possibly_live[local];
+                    joined.origins[local].extend(state.origins[local].iter().copied());
+                    joined.borrows[local].extend(state.borrows[local].iter().copied());
+                    if joined.payload_sources[local] != state.payload_sources[local] {
+                        joined.payload_sources[local] = None;
+                    }
+                }
+                for (target, source) in joined.opened.iter_mut().zip(&state.opened) {
+                    *target &= *source;
+                }
+                joined
+            } else {
+                state.clone()
+            };
+            if existing.as_ref() != Some(&next) {
+                *existing = Some(next);
+                pending.push_back(index);
+            }
         }
-        initialized[dest] = true;
-        origins[dest] = result_origins;
-        local_borrows[dest] = result_borrows;
     }
-    let returned = match &body.result {
-        MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
-    };
-    if !local_borrows
-        .get(returned.local.0 as usize)
-        .ok_or(MirErasedError::InvalidLocal)?
-        .is_empty()
-    {
-        return Err(MirErasedError::BorrowEscape);
+    Ok(())
+}
+
+fn erased_types_agree(
+    actual: &MirErasedType,
+    expected: &MirErasedType,
+    tc: &crate::type_context::TypeContext,
+) -> bool {
+    actual == expected
+        || actual
+            .instantiate(&[], tc)
+            .ok()
+            .zip(expected.instantiate(&[], tc).ok())
+            .is_some_and(|(actual, expected)| actual == expected)
+}
+
+fn imported_native_link_is_valid(
+    definition: DefId,
+    target: &super::MirCallableKey,
+    declaration: &super::MirCallableDecl,
+    contract: &super::MirBackendContract,
+) -> bool {
+    let mut links = contract.artifact_exports.iter().filter(|link| {
+        link.origin_def_id == Some(definition) && link.backend_symbol == declaration.llvm_symbol
+    });
+    matches!(target, super::MirCallableKey::Instance(_))
+        && declaration.source_def_id == Some(definition)
+        && declaration.linkage == super::MirLinkage::External
+        && !declaration.llvm_symbol.is_empty()
+        && !contract.function_bodies.values().any(|body| body == target)
+        && links.next().is_some_and(|link| {
+            link.provided_by_object
+                && link.substitution_empty
+                && !link.has_body
+                && !link.is_specialization
+                && !link.is_drop_glue
+        })
+        && links.next().is_none()
+}
+
+fn native_bridge_source(function: &MirErasedFunction) -> Option<TypeId> {
+    function
+        .body
+        .as_ref()
+        .filter(|body| {
+            body.blocks
+                .iter()
+                .flat_map(|block| &block.statements)
+                .any(|statement| matches!(&statement.value, MirErasedRvalue::NativeCall { .. }))
+        })
+        .and_then(|_| function.key.static_args.first().copied())
+}
+
+fn erased_type_has_mutable_reference(
+    ty: &MirErasedType,
+    tc: &crate::type_context::TypeContext,
+) -> bool {
+    match ty {
+        MirErasedType::Concrete(id) => {
+            crate::type_services::visit::type_any(&tc.type_for(*id), |ty| {
+                matches!(ty, crate::types::Type::Reference { mutable: true, .. })
+            })
+        }
+        MirErasedType::Reference { mutable, .. } => *mutable,
+        MirErasedType::Tuple(fields) => fields
+            .iter()
+            .any(|ty| erased_type_has_mutable_reference(ty, tc)),
+        MirErasedType::Array { element, .. } => erased_type_has_mutable_reference(element, tc),
+        MirErasedType::Pointer(_) => false,
+        _ => true,
     }
-    if operand(
-        &body.result,
-        function,
-        contract,
-        tc,
-        &mut initialized,
-        &local_borrows,
-    )? != signature.ret
+}
+
+fn validate_body_erased_environment(
+    callee: &MirErasedSignature,
+    type_args: &[MirErasedType],
+    dictionaries: &[u32],
+    caller: &MirErasedSignature,
+    opened: &[bool],
+    contract: &super::MirBackendContract,
+    tc: &crate::type_context::TypeContext,
+) -> Result<(), MirErasedError> {
+    if type_args.len() != callee.parameters.len() || dictionaries.len() != callee.dictionaries.len()
     {
         return Err(MirErasedError::InvalidType);
     }
+    for (ty, parameter) in type_args.iter().zip(&callee.parameters) {
+        let mut scoped = BTreeSet::new();
+        ty.scoped_binders(&mut scoped);
+        if scoped
+            .iter()
+            .any(|index| opened.get(*index as usize) != Some(&true))
+        {
+            return Err(MirErasedError::UnboundParameter);
+        }
+        if ty.kind(caller, contract, tc)? != parameter.kind {
+            return Err(MirErasedError::KindMismatch);
+        }
+    }
+    for requirement in &callee.require_borrow_free {
+        if erased_type_may_borrow(&requirement.substitute(type_args)?, caller, contract, tc) {
+            return Err(MirErasedError::UnsupportedOperation);
+        }
+    }
+    for (index, required) in dictionaries.iter().zip(&callee.dictionaries) {
+        if caller.dictionaries.get(*index as usize) != Some(&required.substitute(type_args)?) {
+            return Err(MirErasedError::InvalidDictionary);
+        }
+    }
+    for layout in &callee.layouts {
+        let layout = layout.substitute(type_args)?;
+        if !caller.layouts.contains(&layout)
+            && !layout
+                .instantiate(&[], tc)
+                .ok()
+                .and_then(|ty| tc.id_for_type(&ty))
+                .is_some_and(|id| contract.erased.descriptors.contains_key(&id))
+            && !erased_scoped_layout_is_available(&layout, opened)
+        {
+            return Err(MirErasedError::MissingLayout);
+        }
+    }
     Ok(())
+}
+
+fn erased_place_reborrows_reference(
+    function: &MirErasedFunction,
+    place: &MirErasedPlace,
+    contract: &super::MirBackendContract,
+    tc: &crate::type_context::TypeContext,
+) -> bool {
+    let mut prefix = MirErasedPlace::local(place.local);
+    for projection in &place.projection {
+        if *projection == MirErasedProjection::Deref {
+            // A contained reference carries its pointee's region, just like a
+            // bare reference; borrowing the field's address still uses storage.
+            return match erased_place_type(function, &prefix, contract, tc) {
+                Ok(MirErasedType::Reference { .. }) => true,
+                Ok(MirErasedType::Concrete(id)) => {
+                    matches!(tc.type_for(id), crate::types::Type::Reference { .. })
+                }
+                _ => false,
+            };
+        }
+        prefix.projection.push(projection.clone());
+    }
+    false
+}
+
+fn erased_place_is_writable(
+    function: &MirErasedFunction,
+    place: &MirErasedPlace,
+    contract: &super::MirBackendContract,
+    tc: &crate::type_context::TypeContext,
+) -> Result<bool, MirErasedError> {
+    let mut writable = function
+        .body
+        .as_ref()
+        .is_some_and(|body| body.mutable_locals.contains(&place.local));
+    let mut prefix = MirErasedPlace::local(place.local);
+    for projection in &place.projection {
+        if *projection == MirErasedProjection::Deref {
+            writable = match erased_place_type(function, &prefix, contract, tc)? {
+                MirErasedType::Reference { mutable, .. } => mutable,
+                MirErasedType::Concrete(id) => matches!(
+                    tc.type_for(id),
+                    crate::types::Type::Reference { mutable: true, .. }
+                ),
+                _ => false,
+            };
+        }
+        prefix.projection.push(projection.clone());
+    }
+    Ok(writable)
+}
+
+fn erased_scoped_layout_is_available(ty: &MirErasedType, opened: &[bool]) -> bool {
+    let scope = match ty {
+        MirErasedType::Scoped(scope) => scope,
+        MirErasedType::Reference { inner, .. } | MirErasedType::Pointer(inner) => {
+            let MirErasedType::Scoped(scope) = inner.as_ref() else {
+                return false;
+            };
+            scope
+        }
+        _ => return false,
+    };
+    opened.get(*scope as usize) == Some(&true)
 }
 
 fn erased_type_may_borrow(

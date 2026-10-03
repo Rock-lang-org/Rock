@@ -627,6 +627,84 @@ fn compile_artifact_app_without_stdlib_failure(
 }
 
 #[test]
+fn test_stdlib_owner_allocation_cancel_supports_zero_and_overaligned_storage() {
+    let artifact = shared_stdlib_product_artifact();
+    let products = CompilerProducts::read_artifact_from_path(&artifact).unwrap();
+    let allocation = products
+        .interface
+        .language_items
+        .object_owner_allocate
+        .as_ref()
+        .unwrap();
+    assert_ne!(allocation.method_id, allocation.cancel_id);
+    assert_ne!(
+        allocation.cancel_id,
+        products
+            .interface
+            .language_items
+            .object_owner_unique
+            .as_ref()
+            .unwrap()
+            .method_id
+    );
+    for owner in ["Box", "Arc"] {
+        let source = format!(
+            r#"
+> stdlib::box_type::Box
+> stdlib::arc::Arc
+> stdlib::object_owner::ObjectOwnerAllocate
+main = ->
+    zero = unsafe {owner}::allocate 0, 64
+    if ~I64Eq (zero.0 as I64), 0
+        return 1
+    if ~I64Ne (~I64And (zero.0 as I64), 63), 0
+        return 2
+    unsafe {owner}::cancel zero.0, zero.1
+    aligned = unsafe {owner}::allocate 24, 4096
+    if ~I64Ne (~I64And (aligned.0 as I64), 4095), 0
+        return 3
+    unsafe {owner}::cancel aligned.0, aligned.1
+    42
+"#
+        );
+        assert_eq!(
+            write_and_run_artifact_app(&source, vec![("stdlib".into(), artifact.clone())]),
+            42,
+            "{owner} cancellation must release uninitialized storage without needing a payload"
+        );
+    }
+}
+
+#[test]
+fn test_arc_allocation_cancel_does_not_grant_unique_consumption() {
+    let artifact = shared_stdlib_product_artifact();
+    let diagnostics = compile_artifact_app_without_stdlib_failure(
+        r#"
+> stdlib::arc::Arc
+> stdlib::object_owner::ObjectOwnerAllocate
+trait Take
+    ~@take: I64
+struct Number
+    < value: I64
+impl Take for Number
+    ~@take = -> self.value
+consume: Arc Take -> I64
+consume = owner -> owner.take!
+main = !-> ()
+"#,
+        vec![("stdlib".into(), artifact)],
+    );
+    assert!(
+        diagnostics
+            .0
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("unique")
+                || diagnostic.message.contains("ObjectOwnerUnique")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_compile_with_stdlib_artifact() {
     let hello_path = workspace_root().join("examples").join("hello.rk");
     let temp_dir = temp_test_dir("stdlib_artifact_compile");

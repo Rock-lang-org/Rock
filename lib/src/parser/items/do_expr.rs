@@ -62,15 +62,18 @@ pub fn do_expression(stream: Input) -> IResult<Operand> {
                 operand: Operand::Ident(IdentifierPath {
                     path: vec![IdentOrType::Ident(Ident {
                         name: "bind".into(),
-                        span: bind_span,
+                        span: bind_span.clone(),
                     })],
                 }),
-                secondaries: Some(vec![SecondaryExpr::Arguments(vec![
-                    Argument { arg: action },
-                    Argument {
-                        arg: expr(Operand::Expression(Box::new(callback))),
-                    },
-                ])]),
+                secondaries: Some(vec![SecondaryExpr::Arguments(
+                    vec![
+                        Argument { arg: action },
+                        Argument {
+                            arg: expr(Operand::Expression(Box::new(callback))),
+                        },
+                    ],
+                    bind_span,
+                )]),
                 type_annotation: None,
             }),
         ))];

@@ -162,7 +162,9 @@ fn collect_block<'a>(block: &'a AcceptedHirBlock, calls: &mut Vec<Call<'a>>) {
 
 fn collect_expr<'a>(expr: &'a AcceptedHirExpr, calls: &mut Vec<Call<'a>>) {
     match &expr.kind {
-        HirExprKindFor::Open { source, body, .. } => {
+        HirExprKindFor::PackagePack { payload, .. } => collect_expr(payload, calls),
+        HirExprKindFor::Open { source, body, .. }
+        | HirExprKindFor::PackageOpen { source, body, .. } => {
             collect_expr(source, calls);
             collect_block(body, calls);
         }

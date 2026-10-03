@@ -16,9 +16,10 @@ use crate::lexer::Span;
 use crate::types::ReceiverMode;
 use crate::types::{GenericParamId, TraitBound, Type};
 
-pub(crate) mod object_methods;
 pub(crate) mod existential;
+pub(crate) mod object_methods;
 pub(crate) mod owned_objects;
+pub(crate) mod packages;
 
 mod sealed {
     pub trait Sealed {}
@@ -715,7 +716,10 @@ impl HirProgram {
         for (location, type_id) in locations {
             let ty = type_context.type_for(type_id);
             if crate::type_services::visit::type_any(&ty, |ty| {
-                matches!(ty, Type::Object(_) | Type::ObjectSelf { .. })
+                matches!(
+                    ty,
+                    Type::Object(_) | Type::Exists(_) | Type::ObjectSelf { .. }
+                )
             }) {
                 match crate::traits::objects::admit_type_objects(
                     &ty,
@@ -730,6 +734,16 @@ impl HirProgram {
                     )),
                     _ => {}
                 }
+            }
+            if let Err(message) = crate::type_services::existential::validate_package_layouts(
+                &ty,
+                &self.structs,
+                &self.enums,
+                &normalization_env,
+            ) {
+                errors.push(format!(
+                    "accepted HIR has invalid package/binder authority at {location:?}: {message}"
+                ));
             }
             if type_contains_backend_forbidden_sentinel(&ty) {
                 errors.push(format!(
@@ -1625,6 +1639,13 @@ fn validate_method_authorities_in_expr(
     errors: &mut Vec<String>,
 ) {
     match &expr.kind {
+        HirExprKindFor::PackagePack { payload, .. } => {
+            validate_method_authorities_in_expr(program, payload, errors)
+        }
+        HirExprKindFor::PackageOpen { source, body, .. } => {
+            validate_method_authorities_in_expr(program, source, errors);
+            validate_method_authorities_in_block(program, body, errors);
+        }
         HirExprKindFor::OwnedObjectCall { owner, args, call } => {
             validate_method_authorities_in_expr(program, owner, errors);
             for arg in args {
@@ -1637,7 +1658,11 @@ fn validate_method_authorities_in_expr(
                 errors.push(message);
             }
         }
-        HirExprKindFor::Open { source, binding, body } => {
+        HirExprKindFor::Open {
+            source,
+            binding,
+            body,
+        } => {
             validate_method_authorities_in_expr(program, source, errors);
             validate_method_authorities_in_block(program, body, errors);
             if let Some(owner) = &binding.owner {
@@ -2178,12 +2203,14 @@ fn hir_method_target_is_codegen_concrete(target: &HirMethodCallTarget) -> bool {
 
 fn hir_call_target_is_codegen_concrete(target: &HirCallTarget) -> bool {
     match target {
-        HirCallTarget::StaticMethod(target) => {
-            crate::type_services::facts::TypeFacts::is_concrete_type_argument(&target.owner_ty)
-                && hir_method_target_is_codegen_concrete(&target.method)
-        }
+        HirCallTarget::StaticMethod(target) => hir_static_method_target_is_codegen_concrete(target),
         _ => true,
     }
+}
+
+fn hir_static_method_target_is_codegen_concrete(target: &HirStaticMethodTarget) -> bool {
+    crate::type_services::facts::TypeFacts::is_concrete_type_argument(&target.owner_ty)
+        && hir_method_target_is_codegen_concrete(&target.method)
 }
 
 fn hir_expr_is_codegen_concrete<P: HirPhase>(expr: &HirExprFor<P>) -> bool {
@@ -2192,11 +2219,13 @@ fn hir_expr_is_codegen_concrete<P: HirPhase>(expr: &HirExprFor<P>) -> bool {
     }
 
     match &expr.kind {
-        HirExprKindFor::Open { .. } => false,
+        HirExprKindFor::Open { .. } | HirExprKindFor::PackageOpen { .. } => false,
+        HirExprKindFor::PackagePack { payload, proof } => {
+            hir_expr_is_codegen_concrete(payload)
+                && crate::type_services::facts::TypeFacts::is_codegen_concrete(&proof.witness)
+        }
         HirExprKindFor::OwnedObjectCall { owner, args, call } => {
-            let mut concrete = true;
-            call.visit_types(&mut |ty| concrete &= hir_type_is_codegen_concrete(ty));
-            concrete
+            call.is_codegen_concrete()
                 && hir_expr_is_codegen_concrete(owner)
                 && args.iter().all(hir_expr_is_codegen_concrete)
         }
@@ -2918,6 +2947,15 @@ pub struct HirOwnedObjectCall {
 }
 
 impl HirOwnedObjectCall {
+    fn is_codegen_concrete(&self) -> bool {
+        // Protocol constructors and substitutions are static authority, not runtime layouts.
+        hir_type_is_codegen_concrete(&self.object)
+            && hir_type_is_codegen_concrete(&self.state)
+            && hir_method_target_is_codegen_concrete(&self.method)
+            && hir_static_method_target_is_codegen_concrete(&self.into_parts)
+            && hir_static_method_target_is_codegen_concrete(&self.release)
+    }
+
     pub fn visit_types(&self, visitor: &mut impl FnMut(&Type)) {
         visitor(&self.object);
         visitor(&self.state);
@@ -3078,11 +3116,17 @@ fn validate_object_coercion_with_assumptions<P: HirPhase>(
         bounds: &assumptions,
     };
     let expected = context.prove_with_assumptions(&input.ty, &coercion.target, inferred)?;
-    let actual = coercion.evidence.as_ref().ok_or("object coercion has no evidence")?;
+    let actual = coercion
+        .evidence
+        .as_ref()
+        .ok_or("object coercion has no evidence")?;
     validate_object_evidence(&expected, actual)
 }
 
-fn validate_object_evidence(expected: &HirObjectEvidence, actual: &HirObjectEvidence) -> Result<(), String> {
+fn validate_object_evidence(
+    expected: &HirObjectEvidence,
+    actual: &HirObjectEvidence,
+) -> Result<(), String> {
     let invalid = || "invalid borrowed object coercion evidence".to_string();
     match (expected, actual) {
         (
@@ -3282,7 +3326,9 @@ impl HirMethodCallTarget {
             } => {
                 visit(trait_id);
                 visit(member_id);
-                if let HirTraitDispatchKind::Opened(witness) = dispatch { visit(&mut witness.owner); }
+                if let HirTraitDispatchKind::Opened(witness) = dispatch {
+                    visit(&mut witness.owner);
+                }
             }
         }
         for binding in self
@@ -3480,6 +3526,15 @@ pub struct HirStructPatternField {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HirExprKindFor<P: HirPhase> {
+    PackagePack {
+        payload: Box<HirExprFor<P>>,
+        proof: HirPackagePack,
+    },
+    PackageOpen {
+        source: Box<HirExprFor<P>>,
+        binding: HirPackageOpenBinding,
+        body: HirBlockFor<P>,
+    },
     Open {
         source: Box<HirExprFor<P>>,
         binding: HirOpenBinding,
@@ -3622,6 +3677,90 @@ pub struct HirOpenBinding {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HirPackagePack {
+    pub witness: Type,
+    pub views: Vec<HirObjectView>,
+}
+
+impl HirPackagePack {
+    pub fn for_each_def_id_mut(&mut self, mut visit: impl FnMut(&mut DefId)) {
+        for view in &mut self.views {
+            visit(&mut view.trait_ref.trait_id);
+            if let HirObjectWitnessOrigin::Impl {
+                impl_id,
+                substitution,
+            } = &mut view.origin
+            {
+                visit(impl_id);
+                for binding in substitution {
+                    visit(&mut binding.param.owner);
+                }
+            }
+        }
+    }
+    pub fn visit_types(&self, visit: &mut impl FnMut(&Type)) {
+        visit(&self.witness);
+        for view in &self.views {
+            for ty in &view.trait_ref.type_args {
+                visit(ty);
+            }
+            if let HirObjectWitnessOrigin::Impl { substitution, .. } = &view.origin {
+                for binding in substitution {
+                    visit(&binding.ty);
+                }
+            }
+        }
+    }
+
+    pub fn visit_types_mut(&mut self, visit: &mut impl FnMut(&mut Type)) {
+        visit(&mut self.witness);
+        for view in &mut self.views {
+            for ty in &mut view.trait_ref.type_args {
+                visit(ty);
+            }
+            if let HirObjectWitnessOrigin::Impl { substitution, .. } = &mut view.origin {
+                for binding in substitution {
+                    visit(&mut binding.ty);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HirPackageOpenBinding {
+    pub witness: crate::types::WitnessId,
+    pub value: HirParam,
+    pub source_ty: Type,
+}
+
+impl HirPackageOpenBinding {
+    pub fn visit_types(&self, visit: &mut impl FnMut(&Type)) {
+        visit(&Type::Witness(self.witness));
+        visit(&self.value.ty);
+        visit(&self.source_ty);
+    }
+
+    pub fn visit_types_mut(&mut self, visit: &mut impl FnMut(&mut Type)) {
+        let mut witness = Type::Witness(self.witness);
+        visit(&mut witness);
+        if let Type::Witness(witness) = witness {
+            self.witness = witness;
+        }
+        visit(&mut self.value.ty);
+        visit(&mut self.source_ty);
+    }
+
+    pub fn object_schema(&self) -> Result<crate::types::ObjectType, String> {
+        let Type::Exists(package) = &self.source_ty else {
+            return Err("package opening has no existential source".into());
+        };
+        crate::type_services::substitution::existential_object_schema(package)
+            .map_err(|e| e.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HirOpenOwner {
     pub state_ty: Type,
     pub into_parts: HirStaticMethodTarget,
@@ -3642,8 +3781,17 @@ impl HirOpenBinding {
             visit(&owner.state_ty);
             for operation in [&owner.into_parts, &owner.from_parts] {
                 visit(&operation.owner_ty);
-                for ty in operation.method.trait_args() { visit(ty); }
-                for binding in operation.method.owner_substitution.iter().chain(&operation.method.method_substitution) { visit(&binding.ty); }
+                for ty in operation.method.trait_args() {
+                    visit(ty);
+                }
+                for binding in operation
+                    .method
+                    .owner_substitution
+                    .iter()
+                    .chain(&operation.method.method_substitution)
+                {
+                    visit(&binding.ty);
+                }
             }
         }
     }
@@ -3651,12 +3799,16 @@ impl HirOpenBinding {
     pub fn visit_types_mut(&mut self, visit: &mut impl FnMut(&mut Type)) {
         let mut witness = Type::Witness(self.witness);
         visit(&mut witness);
-        if let Type::Witness(witness) = witness { self.witness = witness; }
+        if let Type::Witness(witness) = witness {
+            self.witness = witness;
+        }
         visit(&mut self.value.ty);
         visit(&mut self.source_ty);
         let mut object = Type::Object(Box::new(self.object.clone()));
         visit(&mut object);
-        if let Type::Object(object) = object { self.object = *object; }
+        if let Type::Object(object) = object {
+            self.object = *object;
+        }
         if let Some(owner) = &mut self.owner {
             visit(&mut owner.state_ty);
             for operation in [&mut owner.into_parts, &mut owner.from_parts] {
@@ -3991,8 +4143,46 @@ fn substitute_typevars_in_expr_with_targets(
     substitute_typevar_in_type(&mut expr.ty, target_ids, target_generic_ids, concrete_ty);
     substitute_generic_param_in_type(&mut expr.ty, target_generic_ids, concrete_ty);
     match &mut expr.kind {
-        HirExprKindFor::Open { source, binding, body } => {
-            substitute_typevars_in_expr_with_targets(source, target_ids, target_generic_ids, concrete_ty);
+        HirExprKindFor::PackagePack { payload, proof } => {
+            substitute_typevars_in_expr_with_targets(
+                payload,
+                target_ids,
+                target_generic_ids,
+                concrete_ty,
+            );
+            proof.visit_types_mut(&mut |ty| {
+                substitute_typevar_in_type(ty, target_ids, target_generic_ids, concrete_ty);
+                substitute_generic_param_in_type(ty, target_generic_ids, concrete_ty);
+            });
+        }
+        HirExprKindFor::PackageOpen {
+            source,
+            binding,
+            body,
+        } => {
+            substitute_typevars_in_expr_with_targets(
+                source,
+                target_ids,
+                target_generic_ids,
+                concrete_ty,
+            );
+            binding.visit_types_mut(&mut |ty| {
+                substitute_typevar_in_type(ty, target_ids, target_generic_ids, concrete_ty);
+                substitute_generic_param_in_type(ty, target_generic_ids, concrete_ty);
+            });
+            substitute_typevars_in_block(body, target_ids, target_generic_ids, concrete_ty);
+        }
+        HirExprKindFor::Open {
+            source,
+            binding,
+            body,
+        } => {
+            substitute_typevars_in_expr_with_targets(
+                source,
+                target_ids,
+                target_generic_ids,
+                concrete_ty,
+            );
             binding.visit_types_mut(&mut |ty| {
                 substitute_typevar_in_type(ty, target_ids, target_generic_ids, concrete_ty);
                 substitute_generic_param_in_type(ty, target_generic_ids, concrete_ty);

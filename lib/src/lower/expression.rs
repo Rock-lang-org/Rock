@@ -36,6 +36,7 @@ fn ast_expr_operand_span(operand: &AstExprOperand<'_>) -> Option<Span> {
             ast::Operand::Ident(path) => path_span(&path.path),
             ast::Operand::CallHole(span) => Some(span.clone()),
             ast::Operand::Open(open) => Some(open.span.clone()),
+            ast::Operand::Pack(pack) => Some(pack.span.clone()),
             ast::Operand::SelfIdent(ident) => Some(ident.span.clone()),
             ast::Operand::Instance(instance) => path_span(&instance.name.path),
             ast::Operand::Tuple(tuple) => tuple.elements.first().and_then(ast_expr_span),
@@ -626,7 +627,7 @@ impl Lowerer {
         let secondaries = primary.secondaries.as_ref()?;
 
         for (secondary_index, secondary) in secondaries.iter().enumerate() {
-            let ast::SecondaryExpr::Arguments(arguments) = secondary else {
+            let ast::SecondaryExpr::Arguments(arguments, _) = secondary else {
                 continue;
             };
 
@@ -637,7 +638,7 @@ impl Lowerer {
 
                 let mut primary = primary.clone();
                 let secondaries = primary.secondaries.as_mut()?;
-                let ast::SecondaryExpr::Arguments(arguments) = &mut secondaries[secondary_index]
+                let ast::SecondaryExpr::Arguments(arguments, _) = &mut secondaries[secondary_index]
                 else {
                     unreachable!();
                 };
@@ -649,7 +650,7 @@ impl Lowerer {
         }
 
         for (secondary_index, secondary) in secondaries.iter().enumerate() {
-            let ast::SecondaryExpr::Arguments(arguments) = secondary else {
+            let ast::SecondaryExpr::Arguments(arguments, _) = secondary else {
                 continue;
             };
             let Some(last_argument) = arguments.last() else {
@@ -670,7 +671,7 @@ impl Lowerer {
             let argument =
                 Self::build_owned_binop_chain(&operands[..=split_at], &operators[..split_at])?;
             let mut call_secondaries = secondaries[..=secondary_index].to_vec();
-            let ast::SecondaryExpr::Arguments(call_arguments) =
+            let ast::SecondaryExpr::Arguments(call_arguments, _) =
                 &mut call_secondaries[secondary_index]
             else {
                 unreachable!();
@@ -1912,7 +1913,7 @@ impl Lowerer {
                     && secondary_use == ExprUse::Value
                     && !matches!(
                         secondaries.get(index + 1),
-                        Some(ast::SecondaryExpr::Arguments(_))
+                        Some(ast::SecondaryExpr::Arguments(_, _))
                     );
                 result = self.apply_secondary(result, secondary, secondary_use, method_as_value);
             }
@@ -1926,7 +1927,7 @@ impl Lowerer {
         let mut parameters = Vec::new();
 
         for secondary in rewritten.secondaries.iter_mut().flatten() {
-            let ast::SecondaryExpr::Arguments(arguments) = secondary else {
+            let ast::SecondaryExpr::Arguments(arguments, _) = secondary else {
                 continue;
             };
 
@@ -1999,6 +2000,7 @@ impl Lowerer {
         match operand {
             ast::Operand::Literal(lit) => self.lower_literal(lit),
             ast::Operand::Open(open) => self.lower_open(open),
+            ast::Operand::Pack(pack) => self.lower_pack(pack),
             ast::Operand::Ident(path) => self.lower_identifier_path(path),
             ast::Operand::CallHole(span) => {
                 self.diagnostics.push_with_span(

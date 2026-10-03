@@ -25,7 +25,12 @@ pub fn object_runtime_type_is_valid(
     tc: &crate::type_context::TypeContext,
     id: TypeId,
 ) -> bool {
-    if object_runtime_type_is_valid_for_schemas(&contract.object_schemas, tc, id) {
+    if tc.type_id_tree_is_valid(id)
+        && !crate::type_services::visit::type_any(&tc.type_for(id), |ty| {
+            matches!(ty, crate::types::Type::Exists(_))
+        })
+        && object_runtime_type_is_valid_for_schemas(&contract.object_schemas, tc, id)
+    {
         return true;
     }
     if !tc.type_id_tree_is_valid(id) {
@@ -77,6 +82,9 @@ pub fn object_runtime_type_is_valid(
     ) -> bool {
         use crate::types::Type;
         match ty {
+            Type::Exists(_) => tc
+                .id_for_type(ty)
+                .is_some_and(|id| super::package_schema_is_valid(contract, tc, id)),
             Type::Object(_) | Type::ObjectSelf { .. } | Type::Witness(_) => false,
             Type::Reference { inner, .. } | Type::Pointer(inner) => {
                 if matches!(inner.as_ref(), Type::Object(_)) {
@@ -281,6 +289,7 @@ pub(crate) fn virtual_argument_requires_summary(
         }
         match &plan.children {
             super::MirPayloadDropChildren::None => false,
+            super::MirPayloadDropChildren::Package => true,
             super::MirPayloadDropChildren::Fields(fields)
             | super::MirPayloadDropChildren::Variants(fields)
             | super::MirPayloadDropChildren::ClosureEnvironment { fields, .. } => {
@@ -833,6 +842,7 @@ fn validate_object_operations(
                     Rvalue::Use(op)
                     | Rvalue::Cast(op, _)
                     | Rvalue::Object(op, _)
+                    | Rvalue::Package(op, _)
                     | Rvalue::UnaryOp(_, op),
                 ) => inspect(op),
                 StatementKind::Assign(_, Rvalue::BinaryOp(_, a, b)) => {
@@ -1196,8 +1206,8 @@ mod runtime_type_tests {
                 trait_id: protocol,
                 type_args: vec![],
             },
-            guarantees: vec![],
-            bindings: vec![],
+            guarantees: Default::default(),
+            bindings: Default::default(),
         }));
         let object = tc.intern_type(&object_ty);
         let wrapper = tc.intern_type(&Type::Struct {

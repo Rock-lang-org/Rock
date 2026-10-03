@@ -64,6 +64,9 @@ pub struct ProjectionNormalizer;
 impl ProjectionNormalizer {
     pub fn normalize<P: ProjectionProvider + ?Sized>(provider: &P, ty: &Type) -> Type {
         match ty {
+            Type::Exists(package) => Type::Exists(Box::new(
+                package.map_types(|child| Self::normalize(provider, child)),
+            )),
             Type::Object(object) => Type::Object(Box::new(
                 object.map_types(|child| Self::normalize(provider, child)),
             )),

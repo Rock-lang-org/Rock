@@ -92,3 +92,14 @@ impl ObjectOwner (*ArcHeader) for Arc
 
 impl ObjectOwnerAllocate (*ArcHeader) for Arc
     unsafe allocate = bytes, alignment -> allocate_arc bytes, alignment
+    unsafe cancel = _, header !->
+        base = unsafe (*header).base
+        layout = Layout
+            size: unsafe (*header).bytes
+            align: unsafe (*header).alignment
+        header_layout = Layout
+            size: ~SizeOf (unsafe *header)
+            align: ~AlignOf (unsafe *header)
+        unsafe Global::dealloc base, layout
+        unsafe drop_in_place header
+        unsafe Global::dealloc (header as *U8), header_layout

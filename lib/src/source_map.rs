@@ -151,6 +151,17 @@ impl SemanticSourceMap {
                             &function.generic_params,
                             &signature.sig,
                         );
+                    } else if let Some(function) = resolver
+                        .canonical_name(item.def_id)
+                        .and_then(|name| resolver.resolve_item_or_alias(name))
+                        .and_then(|id| items.function(id))
+                    {
+                        // Header collection consumes the signature and rebinds its generics.
+                        self.record_function_generics_from_parse(
+                            function.id,
+                            &function.generic_params,
+                            &signature.sig,
+                        );
                     }
                 }
                 ast::TopLevel::FunctionDecl(_function) => {
@@ -302,7 +313,14 @@ impl SemanticSourceMap {
                 .map(|item| item.generic_params.as_slice()),
             ast::TopLevel::FunctionSig(_) => items
                 .function_sig(owner)
-                .map(|item| item.generic_params.as_slice()),
+                .map(|item| item.generic_params.as_slice())
+                .or_else(|| {
+                    resolver
+                        .canonical_name(owner)
+                        .and_then(|name| resolver.resolve_item_or_alias(name))
+                        .and_then(|id| items.function(id))
+                        .map(|item| item.generic_params.as_slice())
+                }),
             _ => None,
         }
         .unwrap_or_default();
@@ -967,8 +985,17 @@ fn record_type_references(
     map: &mut SemanticSourceMap,
 ) {
     match ty {
+        ast::ParseType::Exists(package) => {
+            let mut generics = generic_ids.clone();
+            generics.remove(&package.parameter.name.name);
+            for ty in package.types() {
+                record_type_references(ty, &generics, resolver, map);
+            }
+        }
         ast::ParseType::Object(object) => {
-            for ty in object.types() { record_type_references(ty, generic_ids, resolver, map); }
+            for ty in object.types() {
+                record_type_references(ty, generic_ids, resolver, map);
+            }
         }
         ast::ParseType::Type(inner) => {
             if let Some(generic) = generic_ids.get(&inner.name) {
@@ -1081,8 +1108,15 @@ fn record_associated_type_references(
     map: &mut SemanticSourceMap,
 ) {
     match ty {
+        ast::ParseType::Exists(package) => {
+            for ty in package.types() {
+                record_associated_type_references(ty, owner, associated_types, map);
+            }
+        }
         ast::ParseType::Object(object) => {
-            for ty in object.types() { record_associated_type_references(ty, owner, associated_types, map); }
+            for ty in object.types() {
+                record_associated_type_references(ty, owner, associated_types, map);
+            }
         }
         ast::ParseType::Associated { base, member } => {
             if let Some(associated) = associated_types.get(&member.name) {
@@ -1321,6 +1355,7 @@ fn ast_expression_span(expression: &ast::Expression) -> Option<Span> {
                 ast::Operand::SelfIdent(ident) => Some(ident.span.clone()),
                 ast::Operand::CallHole(span) => Some(span.clone()),
                 ast::Operand::Open(open) => Some(open.span.clone()),
+                ast::Operand::Pack(pack) => Some(pack.span.clone()),
                 ast::Operand::Instance(instance) => {
                     instance.name.path.first().map(|segment| match segment {
                         ast::IdentOrType::Ident(ident) => ident.span.clone(),
@@ -1340,8 +1375,20 @@ fn ast_expression_span(expression: &ast::Expression) -> Option<Span> {
 
 fn collect_parse_type_name_spans(ty: &ast::ParseType, output: &mut HashMap<String, Span>) {
     match ty {
+        ast::ParseType::Exists(package) => {
+            let mut local = HashMap::new();
+            for ty in package.types() {
+                collect_parse_type_name_spans(ty, &mut local);
+            }
+            local.remove(&package.parameter.name.name);
+            for (name, span) in local {
+                output.entry(name).or_insert(span);
+            }
+        }
         ast::ParseType::Object(object) => {
-            for ty in object.types() { collect_parse_type_name_spans(ty, output); }
+            for ty in object.types() {
+                collect_parse_type_name_spans(ty, output);
+            }
         }
         ast::ParseType::Type(inner) => {
             output

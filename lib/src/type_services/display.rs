@@ -219,6 +219,11 @@ fn write_object(
 
 pub fn write_type(ty: &Type, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match ty {
+        Type::Exists(package) => {
+            write!(f, "exists ^0:0 where ^0:0: ")?;
+            write_object(&package.bounds, None, f)?;
+            write!(f, " in {}", display_type(&package.payload))
+        }
         Type::Object(object) => write_object(object, None, f),
         Type::ObjectSelf { depth } => write!(f, "object-self^{depth}"),
         Type::Witness(witness) => write!(f, "witness({:?}:{:?})", witness.owner, witness.local),
@@ -368,6 +373,12 @@ fn write_user_type(
     f: &mut fmt::Formatter<'_>,
 ) -> fmt::Result {
     match ty {
+        Type::Exists(package) => {
+            write!(f, "exists ^0:0 where ^0:0: ")?;
+            write_object(&package.bounds, Some(context), f)?;
+            write!(f, " in ")?;
+            write_user_type(&package.payload, context, f)
+        }
         Type::Object(object) => write_object(object, Some(context), f),
         Type::ObjectSelf { .. } => write!(f, "<hidden Self>"),
         Type::Witness(_) => write!(f, "<opened witness>"),

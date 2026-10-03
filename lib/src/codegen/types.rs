@@ -234,6 +234,15 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         match ty {
+            Type::Exists(_) => {
+                let id = self
+                    .type_context()
+                    .id_for_type(ty)
+                    .expect("validated package type identity");
+                self.package_type(id)
+                    .expect("validated package layout")
+                    .into()
+            }
             Type::I8 | Type::U8 => self.context.i8_type().into(),
             Type::I16 | Type::U16 => self.context.i16_type().into(),
             Type::I32 | Type::U32 => self.context.i32_type().into(),
@@ -433,6 +442,7 @@ impl<'ctx> CodeGen<'ctx> {
                 llvm_ty.const_zero().into()
             }
             Type::Slice(_)
+            | Type::Exists(_)
             | Type::Array(_, _)
             | Type::Struct { .. }
             | Type::Enum { .. }

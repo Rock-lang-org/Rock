@@ -20,7 +20,7 @@ fn application_argument_consumes_infix_expression() {
     else {
         panic!("expected application");
     };
-    let SecondaryExpr::Arguments(arguments) = &secondaries[0] else {
+    let SecondaryExpr::Arguments(arguments, _) = &secondaries[0] else {
         panic!("expected arguments");
     };
 

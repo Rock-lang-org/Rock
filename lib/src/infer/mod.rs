@@ -441,6 +441,9 @@ fn hir_program_from_partial(
         canonical_names_by_id,
     );
     program.type_aliases = type_aliases;
+    // The constructor indexes an empty alias map; publish the collected alias
+    // IDs with the resolver's canonical declaration paths after installation.
+    program.rebuild_indexes_with_canonical_names(canonical_names_by_id);
     program
         .indexes
         .effective_trait_methods

@@ -218,6 +218,15 @@ impl<'a> TypeNormalizer<'a> {
     fn normalize_inner(&mut self, ty: Type, depth: usize) -> Result<Type, NormalizeError> {
         self.bump(depth)?;
         match ty {
+            Type::Exists(package) => {
+                let mut package =
+                    package.try_map_types(|ty| self.normalize_inner(ty.clone(), depth + 1))?;
+                if let Some(key) = package.bounds.conflicting_binding() {
+                    return Err(NormalizeError::ConflictingObjectBinding(key.clone()));
+                }
+                package.bounds.guarantees.remove(&package.bounds.principal);
+                Ok(Type::Exists(Box::new(package)))
+            }
             Type::Object(object) => {
                 let mut object =
                     object.try_map_types(|ty| self.normalize_inner(ty.clone(), depth + 1))?;
@@ -608,6 +617,9 @@ fn contains_bound_group(ty: &Type, nested_depth: u32) -> bool {
     match ty {
         Type::BoundVar { depth, .. } => *depth == nested_depth,
         Type::Lambda { body, .. } => contains_bound_group(body, nested_depth + 1),
+        Type::Exists(package) => package
+            .children()
+            .any(|ty| contains_bound_group(ty, nested_depth + 1)),
         other => type_children(other)
             .into_iter()
             .any(|child| contains_bound_group(child, nested_depth)),
@@ -625,6 +637,9 @@ fn remove_bound_group(ty: &Type, nested_depth: u32) -> Type {
             params: params.clone(),
             body: Box::new(remove_bound_group(body, nested_depth + 1)),
         },
+        Type::Exists(package) => Type::Exists(Box::new(
+            package.map_types(|ty| remove_bound_group(ty, nested_depth + 1)),
+        )),
         other => map_type_children(other, &mut |child| remove_bound_group(child, nested_depth)),
     }
 }
@@ -632,6 +647,7 @@ fn remove_bound_group(ty: &Type, nested_depth: u32) -> Type {
 fn type_children(ty: &Type) -> Vec<&Type> {
     match ty {
         Type::Object(object) => object.children().collect(),
+        Type::Exists(package) => package.children().collect(),
         Type::Slice(inner)
         | Type::Array(inner, _)
         | Type::Reference { inner, .. }
@@ -662,6 +678,7 @@ fn type_children(ty: &Type) -> Vec<&Type> {
 fn map_type_children(ty: &Type, map: &mut impl FnMut(&Type) -> Type) -> Type {
     match ty {
         Type::Object(object) => Type::Object(Box::new(object.map_types(map))),
+        Type::Exists(package) => Type::Exists(Box::new(package.map_types(map))),
         Type::Slice(inner) => Type::Slice(Box::new(map(inner))),
         Type::Array(inner, len) => Type::Array(Box::new(map(inner)), *len),
         Type::Tuple(elements) => Type::Tuple(elements.iter().map(&mut *map).collect()),

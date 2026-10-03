@@ -1246,7 +1246,8 @@ impl Monomorphizer {
         }
 
         match &mut expr.kind {
-            HirExprKind::Open { source, body, .. } => {
+            HirExprKind::Open { source, body, .. }
+            | HirExprKind::PackageOpen { source, body, .. } => {
                 self.update_self_types_expr(source, self_type);
                 self.update_self_types(body, self_type);
             }
@@ -1341,7 +1342,8 @@ impl Monomorphizer {
             HirExprKind::Ref(_, inner)
             | HirExprKind::Deref(inner)
             | HirExprKind::Cast(inner, _)
-            | HirExprKind::ObjectCoercion(inner, _) => {
+            | HirExprKind::ObjectCoercion(inner, _)
+            | HirExprKind::PackagePack { payload: inner, .. } => {
                 self.update_self_types_expr(inner, self_type);
             }
             HirExprKind::Assign(lhs, rhs) => {

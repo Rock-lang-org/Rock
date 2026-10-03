@@ -50,6 +50,7 @@ where
 
         match ty {
             Type::Object(object) => object.children().any(|ty| recurse(ty, predicate)),
+            Type::Exists(package) => package.children().any(|ty| recurse(ty, predicate)),
             Type::Slice(inner)
             | Type::Array(inner, _)
             | Type::Reference { inner, .. }
@@ -79,6 +80,7 @@ where
             Type::Lambda { body, .. } => recurse(body, predicate),
             Type::I8
             | Type::ObjectSelf { .. }
+            | Type::Witness(_)
             | Type::I16
             | Type::I32
             | Type::I64
@@ -110,6 +112,13 @@ where
     V: TypeVisitor + ?Sized,
 {
     match ty {
+        Type::Exists(package) => {
+            visitor.enter_binders(std::slice::from_ref(&package.binder.kind));
+            for child in package.children() {
+                visitor.visit_type(child);
+            }
+            visitor.exit_binders();
+        }
         Type::Object(object) => {
             visitor.enter_object();
             for child in object.children() {
@@ -164,6 +173,7 @@ where
         }
         Type::I8
         | Type::ObjectSelf { .. }
+        | Type::Witness(_)
         | Type::I16
         | Type::I32
         | Type::I64
@@ -247,6 +257,12 @@ where
     F: TypeFolder + ?Sized,
 {
     match ty {
+        Type::Exists(package) => {
+            folder.enter_binders(std::slice::from_ref(&package.binder.kind));
+            let package = package.map_types(|ty| folder.fold_type(ty.clone()));
+            folder.exit_binders();
+            Type::Exists(Box::new(package))
+        }
         Type::Object(object) => {
             folder.enter_object();
             let object = object.map_types(|ty| folder.fold_type(ty.clone()));
@@ -365,6 +381,12 @@ where
     F: TryTypeFolder + ?Sized,
 {
     Ok(match ty {
+        Type::Exists(package) => {
+            folder.try_enter_binders(std::slice::from_ref(&package.binder.kind))?;
+            let package = package.try_map_types(|ty| folder.try_fold_type(ty.clone()))?;
+            folder.try_exit_binders()?;
+            Type::Exists(Box::new(package))
+        }
         Type::Object(object) => {
             folder.try_enter_object()?;
             let object = object.try_map_types(|ty| folder.try_fold_type(ty.clone()))?;

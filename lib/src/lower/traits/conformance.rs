@@ -140,9 +140,27 @@ fn retarget_generated_default_trait_method_calls_in_expr(
     impl_methods: &HashMap<String, HirFunction>,
 ) {
     match &mut expr.kind {
-        HirExprKind::Open { source, body, .. } => {
-            retarget_generated_default_trait_method_calls_in_expr(source, trait_id, impl_id, impl_methods);
-            retarget_generated_default_trait_method_calls_in_block(body, trait_id, impl_id, impl_methods);
+        HirExprKind::PackagePack { payload, .. } => {
+            retarget_generated_default_trait_method_calls_in_expr(
+                payload,
+                trait_id,
+                impl_id,
+                impl_methods,
+            )
+        }
+        HirExprKind::Open { source, body, .. } | HirExprKind::PackageOpen { source, body, .. } => {
+            retarget_generated_default_trait_method_calls_in_expr(
+                source,
+                trait_id,
+                impl_id,
+                impl_methods,
+            );
+            retarget_generated_default_trait_method_calls_in_block(
+                body,
+                trait_id,
+                impl_id,
+                impl_methods,
+            );
         }
         HirExprKind::OwnedObjectCall { owner, args, .. } => {
             retarget_generated_default_trait_method_calls_in_expr(
@@ -471,7 +489,10 @@ fn apply_generated_default_self_type_in_expr(
     self_type: &Type,
 ) {
     match &mut expr.kind {
-        HirExprKind::Open { source, body, .. } => {
+        HirExprKind::PackagePack { payload, .. } => {
+            apply_generated_default_self_type_in_expr(payload, param_ty, self_type)
+        }
+        HirExprKind::Open { source, body, .. } | HirExprKind::PackageOpen { source, body, .. } => {
             apply_generated_default_self_type_in_expr(source, param_ty, self_type);
             apply_generated_default_self_type_in_block(body, param_ty, self_type);
         }
@@ -617,10 +638,10 @@ fn resolve_generated_default_block_types(engine: &mut InferenceEngine, block: &m
     for stmt in &mut block.stmts {
         resolve_generated_default_stmt_types(engine, stmt);
     }
-    if let Some(HirStmt::Expr(expr) | HirStmt::Return(Some(expr)) | HirStmt::Break(Some(expr))) =
-        block.stmts.last()
-    {
-        block.ty = expr.ty.clone();
+    match block.stmts.last() {
+        Some(HirStmt::Expr(expr) | HirStmt::Return(Some(expr))) => block.ty = expr.ty.clone(),
+        Some(HirStmt::Break(_)) => block.ty = Type::Never,
+        _ => {}
     }
 }
 
@@ -664,7 +685,24 @@ fn resolve_generated_default_pattern_types(engine: &mut InferenceEngine, pattern
 fn resolve_generated_default_expr_types(engine: &mut InferenceEngine, expr: &mut HirExpr) {
     expr.ty = engine.resolve(&expr.ty);
     match &mut expr.kind {
-        HirExprKind::Open { source, binding, body } => {
+        HirExprKind::PackagePack { payload, proof } => {
+            resolve_generated_default_expr_types(engine, payload);
+            proof.visit_types_mut(&mut |ty| *ty = engine.resolve(ty));
+        }
+        HirExprKind::PackageOpen {
+            source,
+            binding,
+            body,
+        } => {
+            resolve_generated_default_expr_types(engine, source);
+            binding.visit_types_mut(&mut |ty| *ty = engine.resolve(ty));
+            resolve_generated_default_block_types(engine, body);
+        }
+        HirExprKind::Open {
+            source,
+            binding,
+            body,
+        } => {
             resolve_generated_default_expr_types(engine, source);
             binding.visit_types_mut(&mut |ty| *ty = engine.resolve(ty));
             resolve_generated_default_block_types(engine, body);
@@ -1488,10 +1526,89 @@ impl TraitConformanceService<'_> {
             );
 
             match &mut expr.kind {
-                HirExprKind::Open { source, binding, body } => {
-                    substitute_trait_impl_types_in_expr(source, impl_type, impl_trait_id, impl_trait_arg_types, impl_associated_types, generic_subst);
-                    binding.visit_types_mut(&mut |ty| *ty = substitute_self(ty, impl_type, impl_trait_id, impl_trait_arg_types, impl_associated_types, generic_subst));
-                    substitute_trait_impl_types_in_block(body, impl_type, impl_trait_id, impl_trait_arg_types, impl_associated_types, generic_subst);
+                HirExprKind::PackagePack { payload, proof } => {
+                    substitute_trait_impl_types_in_expr(
+                        payload,
+                        impl_type,
+                        impl_trait_id,
+                        impl_trait_arg_types,
+                        impl_associated_types,
+                        generic_subst,
+                    );
+                    proof.visit_types_mut(&mut |ty| {
+                        *ty = substitute_self(
+                            ty,
+                            impl_type,
+                            impl_trait_id,
+                            impl_trait_arg_types,
+                            impl_associated_types,
+                            generic_subst,
+                        )
+                    });
+                }
+                HirExprKind::PackageOpen {
+                    source,
+                    binding,
+                    body,
+                } => {
+                    substitute_trait_impl_types_in_expr(
+                        source,
+                        impl_type,
+                        impl_trait_id,
+                        impl_trait_arg_types,
+                        impl_associated_types,
+                        generic_subst,
+                    );
+                    binding.visit_types_mut(&mut |ty| {
+                        *ty = substitute_self(
+                            ty,
+                            impl_type,
+                            impl_trait_id,
+                            impl_trait_arg_types,
+                            impl_associated_types,
+                            generic_subst,
+                        )
+                    });
+                    substitute_trait_impl_types_in_block(
+                        body,
+                        impl_type,
+                        impl_trait_id,
+                        impl_trait_arg_types,
+                        impl_associated_types,
+                        generic_subst,
+                    );
+                }
+                HirExprKind::Open {
+                    source,
+                    binding,
+                    body,
+                } => {
+                    substitute_trait_impl_types_in_expr(
+                        source,
+                        impl_type,
+                        impl_trait_id,
+                        impl_trait_arg_types,
+                        impl_associated_types,
+                        generic_subst,
+                    );
+                    binding.visit_types_mut(&mut |ty| {
+                        *ty = substitute_self(
+                            ty,
+                            impl_type,
+                            impl_trait_id,
+                            impl_trait_arg_types,
+                            impl_associated_types,
+                            generic_subst,
+                        )
+                    });
+                    substitute_trait_impl_types_in_block(
+                        body,
+                        impl_type,
+                        impl_trait_id,
+                        impl_trait_arg_types,
+                        impl_associated_types,
+                        generic_subst,
+                    );
                 }
                 HirExprKind::OwnedObjectCall { owner, args, call } => {
                     substitute_trait_impl_types_in_expr(
@@ -2083,6 +2200,61 @@ impl TraitConformanceService<'_> {
                                 .definition_declaration_span(method.id)
                                 .cloned();
                             let signature_span = method_span.clone();
+                            // A forward trait header may have had no member scheme when
+                            // this inferred impl header was collected. Bind the completed
+                            // scheme here before unification can leak the trait's binder.
+                            if method.generic_params.is_empty()
+                                && !sig.generic_params.is_empty()
+                                && method
+                                    .params
+                                    .iter()
+                                    .map(|parameter| &parameter.ty)
+                                    .chain(std::iter::once(&method.ret_type))
+                                    .any(|ty| {
+                                        crate::type_services::visit::type_any(ty, |ty| {
+                                            matches!(ty, Type::TypeVar(_))
+                                        })
+                                    })
+                            {
+                                method.generic_params = sig.generic_params.clone();
+                                for parameter in &mut method.generic_params {
+                                    remap_generic_param_owner(&mut parameter.id, sig.id, method.id);
+                                }
+                                let mut inherited_bounds = sig.generic_bounds.clone();
+                                remap_generic_bounds_owner(
+                                    &mut inherited_bounds,
+                                    sig.id,
+                                    method.id,
+                                );
+                                method
+                                    .generic_bounds
+                                    .relaxed_sized
+                                    .extend(std::mem::take(&mut inherited_bounds.relaxed_sized));
+                                method
+                                    .generic_bounds
+                                    .predicates
+                                    .extend(std::mem::take(&mut inherited_bounds.predicates));
+                                for (parameter, bounds) in inherited_bounds {
+                                    method
+                                        .generic_bounds
+                                        .entry(parameter)
+                                        .or_default()
+                                        .extend(bounds);
+                                }
+                                substitute_trait_impl_types_in_function(
+                                    method,
+                                    &self_type,
+                                    impl_trait_id,
+                                    &imp.trait_arg_types,
+                                    &impl_associated_types,
+                                    &trait_generic_subst,
+                                );
+                                let mut env = self.engine.normalization_env();
+                                for parameter in &method.generic_params {
+                                    env.register_generic_kind(parameter.id, parameter.kind.clone());
+                                }
+                                self.engine.set_normalization_env(env);
+                            }
                             let signature_method_generics = sig
                                 .generic_params
                                 .iter()
@@ -2851,10 +3023,37 @@ fn remap_expr_generic_owner(expr: &mut HirExpr, old_owner: DefId, new_owner: Def
     remap_type_generic_owner(&mut expr.ty, old_owner, new_owner);
 
     match &mut expr.kind {
-        HirExprKind::Open { source, binding, body } => {
+        HirExprKind::PackagePack { payload, proof } => {
+            remap_expr_generic_owner(payload, old_owner, new_owner);
+            proof.visit_types_mut(&mut |ty| remap_type_generic_owner(ty, old_owner, new_owner));
+            proof.for_each_def_id_mut(|id| {
+                if *id == old_owner {
+                    *id = new_owner;
+                }
+            });
+        }
+        HirExprKind::PackageOpen {
+            source,
+            binding,
+            body,
+        } => {
             remap_expr_generic_owner(source, old_owner, new_owner);
             binding.visit_types_mut(&mut |ty| remap_type_generic_owner(ty, old_owner, new_owner));
-            if binding.witness.owner == old_owner { binding.witness.owner = new_owner; }
+            if binding.witness.owner == old_owner {
+                binding.witness.owner = new_owner;
+            }
+            remap_block_generic_owner(body, old_owner, new_owner);
+        }
+        HirExprKind::Open {
+            source,
+            binding,
+            body,
+        } => {
+            remap_expr_generic_owner(source, old_owner, new_owner);
+            binding.visit_types_mut(&mut |ty| remap_type_generic_owner(ty, old_owner, new_owner));
+            if binding.witness.owner == old_owner {
+                binding.witness.owner = new_owner;
+            }
             remap_block_generic_owner(body, old_owner, new_owner);
         }
         HirExprKind::OwnedObjectCall { owner, args, call } => {
@@ -2888,10 +3087,13 @@ fn remap_expr_generic_owner(expr: &mut HirExpr, old_owner: DefId, new_owner: Def
             remap_expr_generic_owner(lhs, old_owner, new_owner);
             remap_expr_generic_owner(rhs, old_owner, new_owner);
         }
-        HirExprKind::Call(func, args, _) => {
+        HirExprKind::Call(func, args, target) => {
             remap_expr_generic_owner(func, old_owner, new_owner);
             for arg in args {
                 remap_expr_generic_owner(arg, old_owner, new_owner);
+            }
+            if let Some(target) = target {
+                remap_call_authority_owner(target, old_owner, new_owner);
             }
         }
         HirExprKind::MethodCall(func, _, args, _, target) => {
@@ -2907,6 +3109,7 @@ fn remap_expr_generic_owner(expr: &mut HirExpr, old_owner: DefId, new_owner: Def
         HirExprKind::Try {
             expr,
             branch_method,
+            branch_target,
             from_residual_target,
             output_ty,
             residual_ty,
@@ -2916,12 +3119,10 @@ fn remap_expr_generic_owner(expr: &mut HirExpr, old_owner: DefId, new_owner: Def
             remap_expr_generic_owner(expr, old_owner, new_owner);
             if let Some(target) = branch_method {
                 target.for_each_type_mut(|ty| remap_type_generic_owner(ty, old_owner, new_owner));
+                remap_opened_dispatch_owner(target, old_owner, new_owner);
             }
-            if let Some(HirCallTarget::StaticMethod(target)) = from_residual_target {
-                remap_type_generic_owner(&mut target.owner_ty, old_owner, new_owner);
-                target
-                    .method
-                    .for_each_type_mut(|ty| remap_type_generic_owner(ty, old_owner, new_owner));
+            for target in [branch_target, from_residual_target].into_iter().flatten() {
+                remap_call_authority_owner(target, old_owner, new_owner);
             }
             remap_type_generic_owner(output_ty, old_owner, new_owner);
             remap_type_generic_owner(residual_ty, old_owner, new_owner);
@@ -2993,9 +3194,29 @@ fn remap_expr_generic_owner(expr: &mut HirExpr, old_owner: DefId, new_owner: Def
     }
 }
 
-fn remap_opened_dispatch_owner(target: &mut crate::hir::HirMethodCallTarget, old_owner: DefId, new_owner: DefId) {
-    if let crate::hir::HirSelectedMethodTarget::TraitMethod { dispatch: crate::hir::HirTraitDispatchKind::Opened(witness), .. } = &mut target.target {
-        if witness.owner == old_owner { witness.owner = new_owner; }
+fn remap_opened_dispatch_owner(
+    target: &mut crate::hir::HirMethodCallTarget,
+    old_owner: DefId,
+    new_owner: DefId,
+) {
+    if let crate::hir::HirSelectedMethodTarget::TraitMethod {
+        dispatch: crate::hir::HirTraitDispatchKind::Opened(witness),
+        ..
+    } = &mut target.target
+    {
+        if witness.owner == old_owner {
+            witness.owner = new_owner;
+        }
+    }
+}
+
+fn remap_call_authority_owner(target: &mut HirCallTarget, old_owner: DefId, new_owner: DefId) {
+    if let HirCallTarget::StaticMethod(target) = target {
+        remap_type_generic_owner(&mut target.owner_ty, old_owner, new_owner);
+        target
+            .method
+            .for_each_type_mut(|ty| remap_type_generic_owner(ty, old_owner, new_owner));
+        remap_opened_dispatch_owner(&mut target.method, old_owner, new_owner);
     }
 }
 
@@ -3016,6 +3237,27 @@ mod tests {
     use crate::lower::Lowerer;
     use crate::types::ReceiverMode;
     use crate::types::{AssociatedTypeKey, GenericParamDecl, GenericParamId, TraitBound, Type};
+
+    #[test]
+    fn generated_default_break_type_refresh_keeps_the_block_diverging() {
+        let mut engine = crate::infer::InferenceEngine::new();
+        let value_ty = engine.fresh_type_var();
+        engine.unify(&value_ty, &Type::I64).unwrap();
+        let mut block = HirBlock {
+            ty: Type::Never,
+            stmts: vec![HirStmt::Break(Some(HirExpr {
+                ty: value_ty,
+                kind: HirExprKind::IntLiteral(42),
+                span: Span::test(),
+            }))],
+        };
+        super::resolve_generated_default_block_types(&mut engine, &mut block);
+        assert_eq!(block.ty, Type::Never);
+        let HirStmt::Break(Some(value)) = &block.stmts[0] else {
+            panic!("expected break value")
+        };
+        assert_eq!(value.ty, Type::I64);
+    }
 
     fn def_id(index: u32) -> DefId {
         DefId::new(CrateId(0), LocalDefId(index))

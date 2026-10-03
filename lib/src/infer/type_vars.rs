@@ -104,9 +104,35 @@ fn replace_type_vars_in_expr_composite(
 ) {
     expr.ty = replace_type_vars_with_generics_composite(engine, &expr.ty, mapping, composite_types);
     match &mut expr.kind {
-        HirExprKind::Open { source, binding, body } => {
+        HirExprKind::PackagePack { payload, proof } => {
+            replace_type_vars_in_expr_composite(engine, payload, mapping, composite_types);
+            proof.visit_types_mut(&mut |ty| {
+                *ty =
+                    replace_type_vars_with_generics_composite(engine, ty, mapping, composite_types)
+            });
+        }
+        HirExprKind::PackageOpen {
+            source,
+            binding,
+            body,
+        } => {
             replace_type_vars_in_expr_composite(engine, source, mapping, composite_types);
-            binding.visit_types_mut(&mut |ty| *ty = replace_type_vars_with_generics_composite(engine, ty, mapping, composite_types));
+            binding.visit_types_mut(&mut |ty| {
+                *ty =
+                    replace_type_vars_with_generics_composite(engine, ty, mapping, composite_types)
+            });
+            replace_type_vars_in_block_composite(engine, body, mapping, composite_types);
+        }
+        HirExprKind::Open {
+            source,
+            binding,
+            body,
+        } => {
+            replace_type_vars_in_expr_composite(engine, source, mapping, composite_types);
+            binding.visit_types_mut(&mut |ty| {
+                *ty =
+                    replace_type_vars_with_generics_composite(engine, ty, mapping, composite_types)
+            });
             replace_type_vars_in_block_composite(engine, body, mapping, composite_types);
         }
         HirExprKind::OwnedObjectCall { owner, args, call } => {

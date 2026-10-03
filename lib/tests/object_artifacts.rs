@@ -6,6 +6,9 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 struct Scratch(PathBuf);
 impl Drop for Scratch {
     fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
@@ -21,6 +24,7 @@ fn library(root: &Path, name: &str, source: &str, dependencies: Vec<(String, Pat
         no_std: true,
         no_prelude: true,
         no_link: true,
+        emit_llvm: true,
         emit_object: Some(object),
         extern_artifacts: dependencies,
         ..Default::default()
@@ -451,4 +455,114 @@ main = ->
             .contains("object slot signature/result adaptation mismatch")),
         "{error:?}"
     );
+}
+
+#[test]
+fn scoped_self_argument_dispatch_uses_producer_evidence_without_producer_sources() {
+    let root = std::env::temp_dir().join(format!(
+        "rock_opened_object_artifacts_{}_{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let _cleanup = Scratch(root.clone());
+    let contracts = library(
+        &root,
+        "contracts",
+        r#"
+< trait Sum
+    @sum: &Self -> I64
+"#,
+        vec![],
+    );
+    let opening = library(
+        &root,
+        "opening",
+        r#"
+> contracts::Sum
+read_same: &Sum -> I64
+< read_same = object ->
+    open object as T, value
+        value.sum value
+"#,
+        vec![("contracts".into(), contracts.clone())],
+    );
+    let values = library(
+        &root,
+        "values",
+        r#"
+> contracts::Sum
+< struct Number
+    < inner: I64
+< struct Other
+    < first: I64
+    < second: I64
+impl Sum for Number
+    @sum = other -> ~I64Add (self.inner), (other.inner)
+impl Sum for Other
+    @sum = other -> ~I64Add (self.first), (other.second)
+"#,
+        vec![("contracts".into(), contracts.clone())],
+    );
+    let dependencies = vec![
+        ("opening".into(), opening),
+        ("values".into(), values),
+        ("contracts".into(), contracts),
+    ];
+    let producer_files = dependencies
+        .iter()
+        .flat_map(|(name, artifact)| [artifact.clone(), root.join(format!("{name}.o"))])
+        .map(|path| {
+            let bytes = std::fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect::<Vec<_>>();
+    for name in ["contracts", "opening", "values"] {
+        std::fs::remove_file(root.join(format!("{name}.rk"))).unwrap();
+    }
+    let entry = root.join("main.rk");
+    std::fs::write(
+        &entry,
+        r#"
+> opening::read_same
+> values::Number
+> values::Other
+main = ->
+    number = Number
+        inner: 20
+    other = Other
+        first: 0
+        second: 2
+    ~I64Add (read_same &number), (read_same &other)
+"#,
+    )
+    .unwrap();
+    let mut caller = Config {
+        entry_file: entry,
+        output_dir: root.clone(),
+        current_crate_name: Some("caller".into()),
+        no_std: true,
+        no_prelude: true,
+        extern_artifacts: dependencies,
+        ..Default::default()
+    };
+    for opt_level in [0, 3] {
+        caller.opt_level = opt_level;
+        caller.emit_llvm = true;
+        rock_lib::compile(&caller).unwrap();
+        let output = std::process::Command::new(root.join("main"))
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(42),
+            "optimization {opt_level}, status {:?}, fixture {}: {}",
+            output.status,
+            root.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        for (path, bytes) in &producer_files {
+            assert_eq!(&std::fs::read(path).unwrap(), bytes);
+        }
+    }
 }

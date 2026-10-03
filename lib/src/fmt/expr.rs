@@ -123,7 +123,7 @@ impl FormatNode for PrimaryExpr {
             for (i, secondary) in secondaries.iter().enumerate() {
                 secondary.fmt_with(context, f)?;
 
-                if let SecondaryExpr::Arguments(_) = secondary {
+                if let SecondaryExpr::Arguments(_, _) = secondary {
                     if i < secondaries.len() - 1 {
                         if let SecondaryExpr::Dot(_) = secondaries[i + 1] {
                             write!(f, " ")?;
@@ -171,6 +171,13 @@ impl FormatNode for Operand {
                 open.source.fmt_with(context, f)?;
                 write!(f, " as {}, {}", open.witness.name, open.value.name)?;
                 display_block(context, &open.body, true, f)
+            }
+            Operand::Pack(pack) => {
+                write!(f, "pack (")?;
+                pack.target.fmt_with(context, f)?;
+                write!(f, ") (")?;
+                pack.payload.fmt_with(context, f)?;
+                write!(f, ")")
             }
         }
     }
@@ -254,7 +261,7 @@ impl FormatNode for NativeOperator {
 impl FormatNode for SecondaryExpr {
     fn fmt_with<W: Write>(&self, context: &mut FormatContext, f: &mut W) -> fmt::Result {
         match self {
-            SecondaryExpr::Arguments(args) => {
+            SecondaryExpr::Arguments(args, _) => {
                 if args.is_empty() {
                     write!(f, "!")?;
                     return Ok(());

@@ -39,6 +39,10 @@ fn language_item_marker_reports_child_only_root_role() {
         "lang method\ntrait Marker\n    item: I64\n",
         "may only mark a language item member",
     );
+    assert_marker_error(
+        "lang owner_cancel\ntrait Reservation\n",
+        "may only mark a language item member",
+    );
 }
 
 #[test]

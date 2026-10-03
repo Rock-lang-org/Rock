@@ -47,6 +47,13 @@ struct DropPartial {
 }
 
 #[derive(Default)]
+struct OwnerAllocatePartial {
+    root: Option<RootRecord>,
+    method: Option<MethodRecord>,
+    cancel: Option<MethodRecord>,
+}
+
+#[derive(Default)]
 struct OwnerPartial {
     root: Option<RootRecord>,
     into_parts: Option<MethodRecord>,
@@ -108,7 +115,7 @@ struct ProtocolError {
 #[derive(Default)]
 struct BindingState {
     object_owner: OwnerPartial,
-    object_owner_allocate: DropPartial,
+    object_owner_allocate: OwnerAllocatePartial,
     object_owner_unique: DropPartial,
     sized: Option<RootRecord>,
     drop: DropPartial,
@@ -450,6 +457,35 @@ impl BindingState {
                         span: marker.marker.span.clone(),
                     },
                 );
+                // Reject syntax-known receiver misuse before header lowering
+                // tries to construct a value receiver for the constructor F.
+                if role == LanguageItemRole::OwnerCancel {
+                    let receiver_span = trait_decl
+                        .methods
+                        .iter()
+                        .map(|(name, method)| (name, method.self_receiver))
+                        .chain(
+                            trait_decl
+                                .signatures
+                                .iter()
+                                .map(|(name, signature)| (name, signature.self_receiver)),
+                        )
+                        .find_map(|(name, receiver)| {
+                            (name.name == marker.member_name && receiver.is_some())
+                                .then(|| name.span.clone())
+                        });
+                    if let Some(span) = receiver_span {
+                        self.error(
+                            protocol,
+                            Some(role),
+                            format!(
+                                "language item {protocol}.{role} member '{}' must be static, without a receiver",
+                                marker.member_name,
+                            ),
+                            span,
+                        );
+                    }
+                }
             }
             LanguageItemMemberKind::Variant => self.error(
                 protocol,
@@ -582,6 +618,9 @@ impl BindingState {
             (LanguageItemRole::ObjectOwnerAllocate, LanguageItemRole::OwnerAllocate) => {
                 &mut self.object_owner_allocate.method
             }
+            (LanguageItemRole::ObjectOwnerAllocate, LanguageItemRole::OwnerCancel) => {
+                &mut self.object_owner_allocate.cancel
+            }
             (LanguageItemRole::ObjectOwnerUnique, LanguageItemRole::OwnerRelease) => {
                 &mut self.object_owner_unique.method
             }
@@ -700,7 +739,8 @@ impl BindingState {
             (
                 LanguageItemRole::ObjectOwnerAllocate,
                 self.object_owner_allocate.root.clone(),
-                self.object_owner_allocate.method.is_some(),
+                self.object_owner_allocate.method.is_some()
+                    && self.object_owner_allocate.cancel.is_some(),
             ),
             (
                 LanguageItemRole::ObjectOwnerUnique,
@@ -769,10 +809,12 @@ impl BindingState {
             .object_owner_allocate
             .root
             .zip(self.object_owner_allocate.method)
+            .zip(self.object_owner_allocate.cancel)
             .map(
-                |(root, method)| crate::language_items::OwnerOperationLanguageItems {
+                |((root, method), cancel)| crate::language_items::OwnerAllocateLanguageItems {
                     trait_id: root.id,
                     method_id: method.id,
+                    cancel_id: cancel.id,
                 },
             );
         let object_owner_unique = self
@@ -1253,7 +1295,10 @@ fn expected_child_kind(
             LanguageItemRole::ObjectOwner,
             LanguageItemRole::OwnerIntoParts | LanguageItemRole::OwnerFromParts,
         )
-        | (LanguageItemRole::ObjectOwnerAllocate, LanguageItemRole::OwnerAllocate)
+        | (
+            LanguageItemRole::ObjectOwnerAllocate,
+            LanguageItemRole::OwnerAllocate | LanguageItemRole::OwnerCancel,
+        )
         | (LanguageItemRole::ObjectOwnerUnique, LanguageItemRole::OwnerRelease) => {
             Some(LanguageItemMemberKind::Method)
         }
@@ -1310,6 +1355,7 @@ fn role_order(role: LanguageItemRole) -> u8 {
         LanguageItemRole::OwnerFromParts => 30,
         LanguageItemRole::OwnerAllocate => 31,
         LanguageItemRole::OwnerRelease => 32,
+        LanguageItemRole::OwnerCancel => 33,
         LanguageItemRole::Sized => 0,
         LanguageItemRole::Drop => 1,
         LanguageItemRole::Fold => 25,

@@ -44,7 +44,7 @@ fn multiline_arguments_in_method_chain() {
             }
 
             match &secondaries[1] {
-                SecondaryExpr::Arguments(args) => {
+                SecondaryExpr::Arguments(args, _) => {
                     assert_eq!(args.len(), 2);
                 }
                 _ => panic!("Expected arguments"),

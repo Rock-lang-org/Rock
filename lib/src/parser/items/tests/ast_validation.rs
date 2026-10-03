@@ -1132,7 +1132,7 @@ main = -> foo 42
         );
         if let Some(secs) = &pe.secondaries {
             assert!(
-                matches!(secs[0], SecondaryExpr::Arguments(_)),
+                matches!(secs[0], SecondaryExpr::Arguments(_, _)),
                 "First secondary should be Arguments",
             );
         }
@@ -2207,7 +2207,7 @@ fn single_argument_binds_to_function() {
     let secs = pe.secondaries.as_ref().expect("should have secondaries");
     assert_eq!(secs.len(), 1);
     match &secs[0] {
-        SecondaryExpr::Arguments(args) => {
+        SecondaryExpr::Arguments(args, _) => {
             assert_eq!(args.len(), 1);
             assert_eq!(lit_number(&args[0].arg), 42);
         }
@@ -2226,7 +2226,7 @@ fn multiple_arguments_bind_together() {
     let secs = pe.secondaries.as_ref().expect("should have secondaries");
     assert_eq!(secs.len(), 1);
     match &secs[0] {
-        SecondaryExpr::Arguments(args) => {
+        SecondaryExpr::Arguments(args, _) => {
             assert_eq!(args.len(), 3);
             assert_eq!(lit_number(&args[0].arg), 1);
             assert_eq!(lit_number(&args[1].arg), 2);
@@ -2324,7 +2324,9 @@ fn bang_call_has_no_arguments_structure() {
 
     assert_eq!(secs.len(), 1);
     match &secs[0] {
-        SecondaryExpr::Arguments(args) => assert!(args.is_empty(), "bang call should have 0 args"),
+        SecondaryExpr::Arguments(args, _) => {
+            assert!(args.is_empty(), "bang call should have 0 args")
+        }
         other => panic!("expected Arguments, got {:?}", other),
     }
 }
@@ -2735,7 +2737,7 @@ fn nested_lambda_in_assignment() {
             .as_ref()
             .expect("f should have arguments");
         assert_eq!(secs.len(), 1);
-        assert!(matches!(&secs[0], SecondaryExpr::Arguments(args) if args.len() == 1));
+        assert!(matches!(&secs[0], SecondaryExpr::Arguments(args, _) if args.len() == 1));
     } else {
         panic!("expected LambdaDecl, got {:?}", pe.operand);
     }

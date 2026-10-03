@@ -122,18 +122,23 @@ impl Destroy for Later
         unsafe *self.drops = ~I64Add (*self.drops), 1
 "#;
 
-fn application(method: &str) -> String {
+fn application(method: &str, bind_method: bool) -> String {
     let result = if method == "identity" {
         "output.value"
     } else {
         "output"
+    };
+    let call = if bind_method {
+        format!("consume = owner.{method}\n    output = consume input")
+    } else {
+        format!("output = owner.{method} input")
     };
     format!(
         r#"
 {LATER}
 run: Own Take -> Later -> I64
 run = owner, input ->
-    output = owner.{method} input
+    {call}
     {result}
 main = ->
     mut payload_drops = 0
@@ -183,7 +188,7 @@ fn consuming_generic_identity_returns_noncopy_storage_and_drops_payload_once() {
     let entry = root.0.join("main.rk");
     std::fs::write(
         &entry,
-        format!("{OWNER}{SERVICE}{}", application("identity")),
+        format!("{OWNER}{SERVICE}{}", application("identity", false)),
     )
     .unwrap();
     execute(&config(&root.0, entry, vec![]));
@@ -193,7 +198,11 @@ fn consuming_generic_identity_returns_noncopy_storage_and_drops_payload_once() {
 fn consuming_bounded_generic_method_uses_exact_dictionary_and_release() {
     let root = scratch();
     let entry = root.0.join("main.rk");
-    std::fs::write(&entry, format!("{OWNER}{SERVICE}{}", application("read"))).unwrap();
+    std::fs::write(
+        &entry,
+        format!("{OWNER}{SERVICE}{}", application("read", false)),
+    )
+    .unwrap();
     execute(&config(&root.0, entry, vec![]));
 }
 
@@ -221,14 +230,20 @@ fn consuming_generic_entries_accept_later_types_without_rebuilding_producer() {
     std::fs::remove_file(producer).unwrap();
     let entry = root.0.join("main.rk");
     for method in ["identity", "read"] {
-        std::fs::write(&entry, format!("> provider::Own\n> provider::Take\n> provider::Read\n> provider::Destroy\n> provider::make\n{}", application(method))).unwrap();
-        execute(&config(
-            &root.0,
-            entry.clone(),
-            vec![("provider".into(), artifact.clone())],
-        ));
-        assert_eq!(std::fs::read(&object).unwrap(), object_before);
-        assert_eq!(std::fs::read(&artifact).unwrap(), artifact_before);
+        for bind_method in [false, true] {
+            std::fs::write(&entry, format!("> provider::Own\n> provider::Take\n> provider::Read\n> provider::Destroy\n> provider::make\n{}", application(method, bind_method))).unwrap();
+            for opt_level in [0, 3] {
+                let mut consumer = config(
+                    &root.0,
+                    entry.clone(),
+                    vec![("provider".into(), artifact.clone())],
+                );
+                consumer.opt_level = opt_level;
+                execute(&consumer);
+                assert_eq!(std::fs::read(&object).unwrap(), object_before);
+                assert_eq!(std::fs::read(&artifact).unwrap(), artifact_before);
+            }
+        }
     }
 }
 
@@ -237,6 +252,9 @@ fn consuming_generic_call_rejects_a_live_view_or_reused_owner() {
     for body in [
         "view = owner.borrow!\n    owner.identity 1\n    view.peek!",
         "first = owner.identity 1\n    owner.identity first",
+        "view = owner.borrow!\n    consume = owner.identity\n    consume 1\n    view.peek!",
+        "consume = owner.identity\n    view = owner.borrow!\n    view.peek!\n    consume 1",
+        "consume = owner.identity\n    first = consume 1\n    consume first",
     ] {
         let root = scratch();
         let entry = root.0.join("main.rk");
@@ -254,14 +272,15 @@ main = ->
             ),
         )
         .unwrap();
-        let diagnostics = rock_lib::compile(&config(&root.0, entry, vec![])).unwrap_err();
+        let config = config(&root.0, entry, vec![]);
+        let diagnostics = rock_lib::compile(&config).unwrap_err();
         assert!(
             diagnostics
                 .0
                 .iter()
                 .any(|diagnostic| diagnostic.message.contains("borrow")
                     || diagnostic.message.contains("move")),
-            "{diagnostics:?}"
+            "body {body:?}: {diagnostics:?}"
         );
     }
 }

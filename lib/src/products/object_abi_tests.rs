@@ -77,6 +77,7 @@ fn abi_for(
             unreachable!()
         };
         let mut slots = Vec::new();
+        let mut erased_slots = Vec::new();
         for bound in std::iter::once(&signature.principal).chain(signature.guarantees.iter()) {
             let declaration = &traits[&bound.trait_id];
             for member in &abi.trait_members[&bound.trait_id] {
@@ -85,6 +86,32 @@ fn abi_for(
                     .values()
                     .find(|s| s.id == *member)
                     .unwrap();
+                if !signature.generic_params.is_empty() {
+                    let mut context = TypeContext::new();
+                    let (erased_signature, result) =
+                        crate::mono::object_schema::erased_object_method_abi(
+                            &object,
+                            bound,
+                            declaration,
+                            signature,
+                            traits,
+                            &abi.trait_members,
+                            &env,
+                            &mut context,
+                        )
+                        .unwrap();
+                    erased_slots.push(ProductErasedObjectSlot {
+                        trait_id: bound.trait_id,
+                        member_id: *member,
+                        trait_args: bound.type_args.clone(),
+                        receiver: signature.self_receiver.unwrap(),
+                        signature: erased_signature
+                            .map_types(&mut |id| Ok::<_, String>(context.type_for(*id)))
+                            .unwrap(),
+                        result,
+                    });
+                    continue;
+                }
                 let expected = crate::mono::object_schema::object_method_abi(
                     &object,
                     bound,
@@ -123,7 +150,7 @@ fn abi_for(
             .rev()
             .collect();
         abi.schemas.push(ProductObjectSchema {
-            erased_slots: vec![],
+            erased_slots,
             object,
             slots,
             views,
@@ -173,7 +200,10 @@ fn producer_schema_roundtrip_preserves_scoped_self_and_result_adaptation() {
         slot.result,
         MirObjectResult::BorrowedSelf { mutable: false }
     );
-    assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 52);
+    assert_eq!(
+        PRODUCT_ARTIFACT_FORMAT_VERSION,
+        rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION
+    );
 }
 
 #[test]
@@ -255,6 +285,84 @@ fn producer_schema_cannot_bind_a_body_local_witness() {
             1 => schema.slots[0].params[0].ty = witness.clone(),
             2 => schema.slots[0].abi_ret = witness.clone(),
             3 => schema.slots[0].trait_args[0] = witness.clone(),
+            _ => unreachable!(),
+        }
+        let error = malformed.validate_shape().unwrap_err();
+        assert!(error.contains("unbound"), "mutation {mutation}: {error}");
+    }
+}
+
+#[test]
+fn erased_producer_schema_rejects_witnesses_in_every_concrete_leaf() {
+    use crate::mir::MirErasedType;
+
+    let owner = id(0, 1);
+    let dictionary_owner = id(0, 2);
+    let member = id(0, 21);
+    let argument = GenericParamId {
+        owner: member,
+        index: 0,
+    };
+    let mut declaration = trait_decl(owner, true);
+    declaration.signatures.insert(
+        "identity".into(),
+        HirFunctionSig {
+            id: member,
+            name: "identity".into(),
+            generic_params: vec![GenericParamDecl::type_param(argument, "T")],
+            params: vec![
+                Type::Generic(GenericParamId { owner, index: 1 }),
+                Type::Generic(argument),
+            ],
+            ret: Type::Generic(argument),
+            generic_bounds: HashMap::from([(
+                argument,
+                vec![TraitBound {
+                    trait_id: dictionary_owner,
+                    type_args: vec![],
+                }],
+            )])
+            .into(),
+            self_receiver: Some(ReceiverMode::Shared),
+            is_unsafe: false,
+        },
+    );
+    let mut dictionary = trait_decl(dictionary_owner, false);
+    dictionary.signatures.get_mut("view").unwrap().ret = Type::I64;
+    let object = Type::Object(Box::new(ObjectType::new(TraitBound {
+        trait_id: owner,
+        type_args: vec![Type::I64],
+    })));
+    let declarations = HashMap::from([(owner, declaration), (dictionary_owner, dictionary)]);
+    let original = abi_for([object], &declarations);
+    original.validate_shape().unwrap();
+    original
+        .validate_declarations(
+            &declarations,
+            &original.trait_members,
+            &TypeNormalizationEnv::new(),
+        )
+        .unwrap();
+    let witness = Type::Tuple(vec![Type::Witness(crate::types::WitnessId {
+        owner: id(0, 90),
+        local: crate::ids::HirLocalId(3),
+    })]);
+    let leaf = MirErasedType::Concrete(witness.clone());
+    for mutation in 0..9 {
+        let mut malformed = original.clone();
+        let slot = &mut malformed.schemas[0].erased_slots[0];
+        match mutation {
+            0 => slot.trait_args[0] = witness.clone(),
+            1 => slot.signature.params[0] = leaf.clone(),
+            2 => slot.signature.ret = leaf.clone(),
+            3 => slot.signature.layouts.push(leaf.clone()),
+            4 => {
+                slot.signature.require_borrow_free.insert(leaf.clone());
+            }
+            5 => slot.signature.dictionaries[0].subject = leaf.clone(),
+            6 => slot.signature.dictionaries[0].trait_args.push(leaf.clone()),
+            7 => slot.signature.dictionaries[0].members[0].params[0] = leaf.clone(),
+            8 => slot.signature.dictionaries[0].members[0].ret = leaf.clone(),
             _ => unreachable!(),
         }
         let error = malformed.validate_shape().unwrap_err();

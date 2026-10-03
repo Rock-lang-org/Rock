@@ -210,7 +210,8 @@ fn collect_statement_places(statement: &StatementData, table: &mut PlacePathTabl
 
 fn collect_rvalue_places(rvalue: &Rvalue, table: &mut PlacePathTable) {
     match rvalue {
-        Rvalue::Object(operand, _)
+        Rvalue::Package(operand, _)
+        | Rvalue::Object(operand, _)
         | Rvalue::Use(operand)
         | Rvalue::Cast(operand, _)
         | Rvalue::UnaryOp(_, operand) => {

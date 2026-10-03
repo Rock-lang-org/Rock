@@ -127,6 +127,7 @@ fn language_item_top_level(stream: Input) -> IResult<TopLevel> {
             | LanguageItemRole::OwnerIntoParts
             | LanguageItemRole::OwnerFromParts
             | LanguageItemRole::OwnerAllocate
+            | LanguageItemRole::OwnerCancel
             | LanguageItemRole::OwnerRelease
             | LanguageItemRole::Output
             | LanguageItemRole::Residual

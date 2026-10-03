@@ -24,6 +24,7 @@ pub struct MirAgreementReport {
     pub invalid_backend_contract: usize,
     pub backend_contract_errors: Vec<MirBackendContractError>,
     pub object_contract_errors: Vec<super::MirObjectError>,
+    pub erased_contract_errors: Vec<(Option<super::MirErasedKey>, super::MirErasedError)>,
 }
 
 impl MirAgreementReport {
@@ -46,7 +47,8 @@ pub fn check_mir_runtime_agreement(program: &MirProgram) -> MirAgreementReport {
     let mut report = MirAgreementReport::default();
     report.object_contract_errors = super::validate_object_contract(program);
     report.invalid_backend_contract += report.object_contract_errors.len();
-    report.invalid_backend_contract += super::validate_erased_contract(program).len();
+    report.erased_contract_errors = super::validate_erased_contract(program);
+    report.invalid_backend_contract += report.erased_contract_errors.len();
     let type_view = TypeView::new(&program.type_context);
     let callable_contract = CallableContract::new(program);
     let backend_contract = BackendContract::new(program);
@@ -259,6 +261,12 @@ fn validate_layout_template_type_id(
     };
 
     match ty {
+        Ty::Exists(_) => {
+            if !super::package_schema_is_valid(&program.backend_contract, &program.type_context, id)
+            {
+                report.invalid_type_ids += 1;
+            }
+        }
         Ty::Object(object) => {
             report.invalid_layout_ids += 1;
             for child in object.children() {
@@ -512,6 +520,7 @@ fn validate_type_nominal_layout(
     report: &mut MirAgreementReport,
 ) {
     match ty {
+        Type::Exists(_) => {}
         Type::Object(object) => {
             for child in object.children() {
                 validate_type_nominal_layout(
@@ -706,6 +715,12 @@ fn validate_type_id(program: &MirProgram, id: TypeId, report: &mut MirAgreementR
     }
 
     match ty {
+        Ty::Exists(_) => {
+            if !super::package_schema_is_valid(&program.backend_contract, &program.type_context, id)
+            {
+                report.invalid_type_ids += 1;
+            }
+        }
         Ty::Object(_) => {
             // ObjectSelf is bound inside this signature, never a runtime value;
             // the object contract validates that distinct binder environment.
@@ -786,7 +801,7 @@ fn validate_rvalue_type_ids(
     report: &mut MirAgreementReport,
 ) {
     match rvalue {
-        Rvalue::Object(operand, _) | Rvalue::Use(operand) => {
+        Rvalue::Package(operand, _) | Rvalue::Object(operand, _) | Rvalue::Use(operand) => {
             validate_runtime_operand(program, operand, true, report);
             if callable_contract.is_missing(operand) {
                 report.missing_callable_metadata += 1;
@@ -832,6 +847,7 @@ fn validate_rvalue_layout_ids(
         Rvalue::Aggregate(kind, _) => validate_aggregate_layout_id(backend_contract, kind, report),
         Rvalue::Use(_)
         | Rvalue::Object(_, _)
+        | Rvalue::Package(_, _)
         | Rvalue::Cast(_, _)
         | Rvalue::Closure(_)
         | Rvalue::BinaryOp(_, _, _)

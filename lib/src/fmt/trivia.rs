@@ -283,6 +283,7 @@ impl<'a> FormatTrivia<'a> {
     fn parse_type_span(ty: &ParseType) -> Option<&Span> {
         match ty {
             ParseType::Object(object) => Some(&object.span),
+            ParseType::Exists(package) => Some(&package.span),
             ParseType::Type(inner) => Some(&inner.span),
             ParseType::Application(application) => Some(&application.span),
             ParseType::Lambda(lambda) => Some(&lambda.span),

@@ -771,10 +771,12 @@ consume: Own Take -> U -> I64
     products.write_artifact_to_path(&artifact).unwrap();
     let diagnostics = rock_lib::analyze(&consumer).unwrap_err();
     assert!(
-        diagnostics
-            .0
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("owned-object evidence")),
+        diagnostics.0.iter().any(|diagnostic| {
+            diagnostic.code == Some(rock_lib::diagnostic::DiagnosticCode::Artifact)
+                && diagnostic
+                    .message
+                    .contains("invalid transport or unique-release evidence")
+        }),
         "{diagnostics:?}"
     );
     std::fs::remove_dir_all(producer.output_dir).unwrap();

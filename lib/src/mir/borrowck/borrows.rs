@@ -147,14 +147,20 @@ fn collect_terminator_borrows_with_context(
             let summary = callable
                 .function_id()
                 .and_then(|function_id| return_summaries.get(&function_id));
-            let argument_indices: Vec<usize> = if is_opaque || summary.is_none() {
-                (0..args.len()).collect()
+            let argument_indices: Vec<(usize, bool)> = if is_opaque || summary.is_none() {
+                (0..args.len()).map(|index| (index, false)).collect()
             } else {
                 summary
                     .into_iter()
                     .flat_map(|summary| summary.iter())
                     .filter_map(|origin| match origin {
-                        ReferenceOrigin::Param(local) => local.0.checked_sub(1),
+                        ReferenceOrigin::Param(local) => {
+                            local.0.checked_sub(1).map(|index| (index, false))
+                        }
+                        ReferenceOrigin::ParamBorrowedContents(local) => {
+                            local.0.checked_sub(1).map(|index| (index, true))
+                        }
+                        ReferenceOrigin::ParamContents(_) => None,
                         ReferenceOrigin::Local(_)
                         | ReferenceOrigin::Temporary(_)
                         | ReferenceOrigin::Static
@@ -169,7 +175,7 @@ fn collect_terminator_borrows_with_context(
             };
             return argument_indices
                 .into_iter()
-                .filter_map(|index| {
+                .filter_map(|(index, borrowed_contents)| {
                     args.get(index).and_then(|arg| {
                         borrow_from_reference_argument(
                             arg,
@@ -177,7 +183,9 @@ fn collect_terminator_borrows_with_context(
                             kind,
                             created_at,
                             mir_func,
-                            type_view,
+                            type_context,
+                            backend_contract,
+                            borrowed_contents,
                             term_span.clone(),
                         )
                     })
@@ -208,18 +216,23 @@ fn borrow_from_reference_argument(
     kind: AccessKind,
     created_at: Location,
     func: &MirFunction,
-    type_view: TypeView<'_>,
+    type_context: &TypeContext,
+    backend_contract: &MirBackendContract,
+    borrowed_contents: bool,
     origin_span: Option<Span>,
 ) -> Option<BorrowData> {
     let (Operand::Copy(source) | Operand::Move(source)) = arg else {
         return None;
     };
-    let source_decl = func.local_decls.get(source.local.0)?;
-    let mut source_ty = source_decl.ty;
+    let type_view = TypeView::new(type_context);
+    let mut source_ty = backend_contract.place_type_id(type_context, func, source)?;
     let mut deref_count = 0;
     while let Ty::Reference { inner, .. } = type_view.ty(source_ty) {
         deref_count += 1;
         source_ty = *inner;
+    }
+    if deref_count == 0 && borrowed_contents && matches!(type_view.ty(source_ty), Ty::Pointer(_)) {
+        deref_count = 1;
     }
     if deref_count == 0 {
         return None;

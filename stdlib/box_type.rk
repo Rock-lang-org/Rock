@@ -95,6 +95,12 @@ impl ObjectOwnerAllocate BoxState for Box
             alignment: alignment
         (base, state)
 
+    unsafe cancel = _, state !->
+        layout = Layout
+            size: state.bytes
+            align: state.alignment
+        Global::dealloc state.base, layout
+
 impl ObjectOwnerUnique BoxState for Box
     unsafe release = _, state !->
         layout = Layout

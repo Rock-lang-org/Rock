@@ -24,9 +24,38 @@ pub(super) fn language_items_from_products(
 
     let language_items = &products.interface.language_items;
     Ok(HirLanguageItems {
-        object_owner: language_items.object_owner.as_ref().map(|items| Ok::<_, String>(crate::language_items::ObjectOwnerLanguageItems { trait_id: remap.def_id(items.trait_id)?, into_parts_id: remap.def_id(items.into_parts_id)?, from_parts_id: remap.def_id(items.from_parts_id)? })).transpose()?,
-        object_owner_allocate: language_items.object_owner_allocate.as_ref().map(|items| Ok::<_, String>(crate::language_items::OwnerOperationLanguageItems { trait_id: remap.def_id(items.trait_id)?, method_id: remap.def_id(items.method_id)? })).transpose()?,
-        object_owner_unique: language_items.object_owner_unique.as_ref().map(|items| Ok::<_, String>(crate::language_items::OwnerOperationLanguageItems { trait_id: remap.def_id(items.trait_id)?, method_id: remap.def_id(items.method_id)? })).transpose()?,
+        object_owner: language_items
+            .object_owner
+            .as_ref()
+            .map(|items| {
+                Ok::<_, String>(crate::language_items::ObjectOwnerLanguageItems {
+                    trait_id: remap.def_id(items.trait_id)?,
+                    into_parts_id: remap.def_id(items.into_parts_id)?,
+                    from_parts_id: remap.def_id(items.from_parts_id)?,
+                })
+            })
+            .transpose()?,
+        object_owner_allocate: language_items
+            .object_owner_allocate
+            .as_ref()
+            .map(|items| {
+                Ok::<_, String>(crate::language_items::OwnerAllocateLanguageItems {
+                    trait_id: remap.def_id(items.trait_id)?,
+                    method_id: remap.def_id(items.method_id)?,
+                    cancel_id: remap.def_id(items.cancel_id)?,
+                })
+            })
+            .transpose()?,
+        object_owner_unique: language_items
+            .object_owner_unique
+            .as_ref()
+            .map(|items| {
+                Ok::<_, String>(crate::language_items::OwnerOperationLanguageItems {
+                    trait_id: remap.def_id(items.trait_id)?,
+                    method_id: remap.def_id(items.method_id)?,
+                })
+            })
+            .transpose()?,
         fold: language_items
             .fold
             .as_ref()
@@ -196,12 +225,45 @@ pub(super) fn validate_product_language_items(products: &CompilerProducts) -> Re
 
     let program = product_language_item_program(products)?;
     let owner_items = HirLanguageItems {
-        object_owner: language_items.object_owner.as_ref().map(|items| crate::language_items::ObjectOwnerLanguageItems { trait_id: product_def_id(items.trait_id), into_parts_id: product_def_id(items.into_parts_id), from_parts_id: product_def_id(items.from_parts_id) }),
-        object_owner_allocate: language_items.object_owner_allocate.as_ref().map(|items| crate::language_items::OwnerOperationLanguageItems { trait_id: product_def_id(items.trait_id), method_id: product_def_id(items.method_id) }),
-        object_owner_unique: language_items.object_owner_unique.as_ref().map(|items| crate::language_items::OwnerOperationLanguageItems { trait_id: product_def_id(items.trait_id), method_id: product_def_id(items.method_id) }),
+        object_owner: language_items.object_owner.as_ref().map(|items| {
+            crate::language_items::ObjectOwnerLanguageItems {
+                trait_id: product_def_id(items.trait_id),
+                into_parts_id: product_def_id(items.into_parts_id),
+                from_parts_id: product_def_id(items.from_parts_id),
+            }
+        }),
+        object_owner_allocate: language_items.object_owner_allocate.as_ref().map(|items| {
+            crate::language_items::OwnerAllocateLanguageItems {
+                trait_id: product_def_id(items.trait_id),
+                method_id: product_def_id(items.method_id),
+                cancel_id: product_def_id(items.cancel_id),
+            }
+        }),
+        object_owner_unique: language_items.object_owner_unique.as_ref().map(|items| {
+            crate::language_items::OwnerOperationLanguageItems {
+                trait_id: product_def_id(items.trait_id),
+                method_id: product_def_id(items.method_id),
+            }
+        }),
         ..HirLanguageItems::default()
     };
-    if let Some(id) = language_items.object_owner.as_ref().map(|items| items.trait_id).or_else(|| language_items.object_owner_allocate.as_ref().map(|items| items.trait_id)).or_else(|| language_items.object_owner_unique.as_ref().map(|items| items.trait_id)) {
+    if let Some(id) = language_items
+        .object_owner
+        .as_ref()
+        .map(|items| items.trait_id)
+        .or_else(|| {
+            language_items
+                .object_owner_allocate
+                .as_ref()
+                .map(|items| items.trait_id)
+        })
+        .or_else(|| {
+            language_items
+                .object_owner_unique
+                .as_ref()
+                .map(|items| items.trait_id)
+        })
+    {
         validate_bundle(&program, Some(("object_owner", id, owner_items)))?;
     }
     validate_bundle(
@@ -802,9 +864,26 @@ fn validate_product_local_ids(
     local_crate: ProductCrateId,
 ) -> Result<(), String> {
     let mut ids = Vec::new();
-    if let Some(items) = &language_items.object_owner { ids.extend([("object_owner.trait", items.trait_id), ("object_owner.into_parts", items.into_parts_id), ("object_owner.from_parts", items.from_parts_id)]); }
-    if let Some(items) = &language_items.object_owner_allocate { ids.extend([("object_owner_allocate.trait", items.trait_id), ("object_owner_allocate.method", items.method_id)]); }
-    if let Some(items) = &language_items.object_owner_unique { ids.extend([("object_owner_unique.trait", items.trait_id), ("object_owner_unique.method", items.method_id)]); }
+    if let Some(items) = &language_items.object_owner {
+        ids.extend([
+            ("object_owner.trait", items.trait_id),
+            ("object_owner.into_parts", items.into_parts_id),
+            ("object_owner.from_parts", items.from_parts_id),
+        ]);
+    }
+    if let Some(items) = &language_items.object_owner_allocate {
+        ids.extend([
+            ("object_owner_allocate.trait", items.trait_id),
+            ("object_owner_allocate.method", items.method_id),
+            ("object_owner_allocate.cancel", items.cancel_id),
+        ]);
+    }
+    if let Some(items) = &language_items.object_owner_unique {
+        ids.extend([
+            ("object_owner_unique.trait", items.trait_id),
+            ("object_owner_unique.method", items.method_id),
+        ]);
+    }
     if let Some(items) = &language_items.fold {
         ids.extend([
             ("fold.trait", items.trait_id),
@@ -981,7 +1060,11 @@ fn product_language_item_ids(products: &CompilerProducts) -> BTreeSet<ProductDef
         ids.extend([items.trait_id, items.into_parts_id, items.from_parts_id]);
         member_ids.extend([items.into_parts_id, items.from_parts_id]);
     }
-    for items in [&language_items.object_owner_allocate, &language_items.object_owner_unique].into_iter().flatten() {
+    if let Some(items) = &language_items.object_owner_allocate {
+        ids.extend([items.trait_id, items.method_id, items.cancel_id]);
+        member_ids.extend([items.method_id, items.cancel_id]);
+    }
+    if let Some(items) = &language_items.object_owner_unique {
         ids.extend([items.trait_id, items.method_id]);
         member_ids.insert(items.method_id);
     }
@@ -2257,6 +2340,8 @@ mod tests {
     fn product_language_items_remap_every_def_id_at_nonzero_runtime_crate_id() {
         let mut first = valid_products();
         first.crate_identity = ProductCrateIdentity::local("first".to_string());
+        // Reserve a runtime crate ID without claiming the second crate's protocol roles.
+        first.interface.language_items = LanguageItems::default();
         let mut second = valid_products();
         second.crate_identity = ProductCrateIdentity::local("second".to_string());
         let base = std::env::temp_dir().join(format!(

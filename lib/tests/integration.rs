@@ -2165,6 +2165,56 @@ main = ->
 }
 
 #[test]
+fn test_unsafe_callable_branch_joins_execute_both_orders_inside_unsafe() {
+    for (first, second) in [
+        ("safe_reader", "unsafe read_secret"),
+        ("unsafe read_secret", "safe_reader"),
+    ] {
+        for (flag, expected) in [
+            ("true", if first == "safe_reader" { 0 } else { 7 }),
+            ("false", if second == "safe_reader" { 0 } else { 7 }),
+        ] {
+            for (body, projection) in [
+                (
+                    format!("if flag\n        {first}\n    else\n        {second}"),
+                    "",
+                ),
+                (
+                    format!("match flag\n        true => {first}\n        false => {second}"),
+                    "",
+                ),
+                (
+                    format!("if flag\n        ({first}, 0)\n    else\n        ({second}, 1)"),
+                    ".0",
+                ),
+                (
+                    format!(
+                        "match flag\n        true => ({first}, 0)\n        false => ({second}, 1)"
+                    ),
+                    ".0",
+                ),
+            ] {
+                let status = compile_and_run_without_stdlib(&format!(
+                    r#"
+unsafe read_secret: I64
+read_secret = -> 7
+safe_reader: I64
+safe_reader = -> 0
+make_reader = flag ->
+    {body}
+main = ->
+    selected = make_reader {flag}
+    reader = selected{projection}
+    unsafe reader!
+"#
+                ));
+                assert_eq!(status, expected, "{first}, {second}, flag={flag}, {body}");
+            }
+        }
+    }
+}
+
+#[test]
 fn test_unsafe_callable_struct_field_requires_unsafe() {
     compile_should_fail(
         r#"unsafe read_secret: I64
@@ -6231,6 +6281,35 @@ main = ->
     );
 
     assert_eq!(output.trim(), "2000");
+}
+
+#[test]
+fn test_discarded_control_flow_drops_owned_branch_values_once() {
+    let (output, success) = compile_and_run_with_status(
+        r#"
+> stdlib::drop::Drop
+
+struct Tracked
+    < value: I64
+impl Drop for Tracked
+    ~@drop = !-> self.value.println!
+
+main = !->
+    if true
+        Tracked
+            value: 65
+    else
+        ()
+    match false
+        true => ()
+        false =>
+            Tracked
+                value: 66
+    "done".println!
+"#,
+    );
+    assert!(success, "{output}");
+    assert_eq!(output, "65\n66\ndone\n");
 }
 
 #[test]
@@ -14448,20 +14527,25 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_rejects_zero_sized_value() {
-    let (_output, success) = compile_and_run_with_status(
+fn test_stdlib_box_supports_zero_sized_value_and_drops_it_once() {
+    let (output, success) = compile_and_run_with_status(
         r#"
 > stdlib::box_type::Box
+> stdlib::drop::Drop
 
 struct Empty
+impl Drop for Empty
+    ~@drop = !-> 42.println!
 
-main = ->
+main = !->
+    (~SizeOf Empty).println!
     boxed = Box::new Empty
-    0
+    ((boxed.as_ptr!) as I64) != 0 .println!
 "#,
     );
 
-    assert!(!success, "Box::new should reject zero-sized values");
+    assert!(success, "Box::new must support zero-sized owners: {output}");
+    assert_eq!(output, "0\ntrue\n42\n");
 }
 
 #[test]
@@ -16513,7 +16597,7 @@ fn test_trait_default_method_substitutes_generic_trait_self_output_projection() 
         r#"
 trait Project T
     type Output
-    @project: T -> Self::Output
+    @project: Self::Output -> Self::Output
     @project = value -> value
 
 struct Factory
@@ -16521,14 +16605,43 @@ struct Factory
 impl Project I64 for Factory
     type Output = I64
 
+struct Switch
+impl Project Bool for Switch
+    type Output = Bool
+
 main = ->
     factory = Factory
     factory.project 12 .println!
+    switch = Switch
+    switch.project true .println!
     0
 "#,
     );
 
-    assert_eq!(output.trim(), "12");
+    assert_eq!(output.trim(), "12\ntrue");
+}
+
+#[test]
+fn test_trait_default_method_cannot_assume_generic_input_equals_self_output() {
+    compile_should_fail(
+        r#"
+trait Project T
+    type Output
+    @project: T -> Self::Output
+    @project = value -> value
+
+struct Factory
+impl Project I64 for Factory
+    type Output = I64
+
+struct Other
+impl Project I64 for Other
+    type Output = Bool
+
+main = -> 0
+"#,
+        "Type mismatch",
+    );
 }
 
 #[test]
@@ -18021,6 +18134,7 @@ struct ProcMacroSpan {
 
 #[derive(Serialize)]
 #[allow(dead_code)]
+// This external-host fixture mirrors the token-only protocol enum order.
 enum ProcMacroTokenType {
     Ident(String),
     Type(String),
@@ -18040,6 +18154,8 @@ enum ProcMacroTokenType {
     CloseParen,
     OpenBracket,
     CloseBracket,
+    OpenBrace,
+    CloseBrace,
     Char(String),
     String(String),
     Arrow,
@@ -18061,6 +18177,8 @@ enum ProcMacroTokenType {
     Underscore,
     Eol,
     Eof,
+    UnitArrow,
+    DoubleDotEqual,
 }
 
 fn proc_macro_token(token_type: ProcMacroTokenType) -> ProcMacroToken {

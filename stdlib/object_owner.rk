@@ -20,6 +20,10 @@ lang object_owner_allocate
 < trait ObjectOwnerAllocate State for F _
     lang owner_allocate
     unsafe allocate: I64 -> I64 -> (*U8, State)
+    // Consumes only an unpublished allocation returned by allocate. The caller
+    // must first destroy any initialized payload parts; cancel never drops T.
+    lang owner_cancel
+    unsafe cancel: *U8 -> State -> ()
 
 // Only uniquely owned payloads may implement this capability. release is called
 // after the payload has been consumed/destroyed and MUST NOT destroy it again.

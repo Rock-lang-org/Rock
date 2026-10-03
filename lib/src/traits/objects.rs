@@ -140,6 +140,7 @@ pub enum ObjectAdmissionError {
     Substitution(SubstitutionError),
     ResourceLimit,
     UnboundObjectSelf,
+    InvalidExistential(String),
 }
 
 impl std::fmt::Display for ObjectAdmissionError {
@@ -185,6 +186,7 @@ impl std::fmt::Display for ObjectAdmissionError {
             Self::Substitution(error) => write!(f, "object substitution failed: {error}"),
             Self::ResourceLimit => write!(f, "object admission resource limit exceeded"),
             Self::UnboundObjectSelf => write!(f, "object Self escapes its binding signature"),
+            Self::InvalidExistential(message) => write!(f, "{message}"),
         }
     }
 }
@@ -549,7 +551,31 @@ pub fn admit_type_objects(
                     return Err(ObjectAdmissionError::UnboundObjectSelf);
                 }
             }
-            let ty = if let Type::Object(object) = ty {
+            let ty = if let Type::Exists(mut package) = ty {
+                if package.binder.kind != Kind::Type || package.binder.maybe_unsized {
+                    return Err(ObjectAdmissionError::InvalidExistential(
+                        "existential packages currently require a Type-kind Sized witness".into(),
+                    ));
+                }
+                if TypeNormalizer::new(self.environment).kind_of(&package.payload)? != Kind::Type {
+                    return Err(ObjectAdmissionError::InvalidExistential(
+                        "existential payload must have value kind".into(),
+                    ));
+                }
+                let schema =
+                    crate::type_services::substitution::existential_object_schema(&package)?;
+                let admitted =
+                    admit_object_at_depth(&schema, self.provider, self.environment, self.objects)?;
+                package.bounds =
+                    crate::type_services::substitution::existential_bounds_from_object_schema(
+                        &admitted,
+                        &package.binder.kind,
+                    )?;
+                package.payload =
+                    crate::type_services::existential::normalize_payload_bindings(&package)
+                        .map_err(ObjectAdmissionError::InvalidExistential)?;
+                Type::Exists(package)
+            } else if let Type::Object(object) = ty {
                 Type::Object(Box::new(admit_object_at_depth(
                     &object,
                     self.provider,

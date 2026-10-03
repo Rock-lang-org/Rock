@@ -81,14 +81,7 @@ impl Lowerer {
         };
         let (object, witness) = match object_ty {
             Type::Object(object) => (object.as_ref().clone(), None),
-            Type::Witness(witness) => {
-                let binding = self
-                    .opened_witnesses
-                    .iter()
-                    .rev()
-                    .find(|(_, binding)| binding.witness == *witness)?;
-                (binding.1.object.clone(), Some(*witness))
-            }
+            Type::Witness(witness) => (self.opened_object_schema(*witness)?, Some(*witness)),
             _ => return None,
         };
         let bound_object = if let Some(witness) = witness {
@@ -133,5 +126,62 @@ impl Lowerer {
             return None;
         }
         Some(selected)
+    }
+
+    pub(crate) fn shared_package_member_requires_mutable_access(
+        &mut self,
+        receiver: &HirExpr,
+        name: &str,
+    ) -> bool {
+        let Type::Reference {
+            mutable: false,
+            inner,
+        } = self.engine.resolve(&receiver.ty)
+        else {
+            return false;
+        };
+        let Type::Witness(witness) = inner.as_ref() else {
+            return false;
+        };
+        let Some((_, binding)) = self
+            .opened_packages
+            .iter()
+            .rev()
+            .find(|(_, binding)| binding.witness == *witness)
+        else {
+            return false;
+        };
+        let Ok(object) = binding.object_schema().and_then(|object| {
+            object
+                .try_map_types(|ty| {
+                    crate::type_services::substitution::instantiate_object_self(ty, inner.as_ref())
+                })
+                .map_err(|error| error.to_string())
+        }) else {
+            return false;
+        };
+        let bounds = std::iter::once(object.principal)
+            .chain(object.guarantees)
+            .collect::<Vec<_>>();
+        let mut candidates = self.receiver_adjustment_candidates(receiver.clone());
+        let service = self.selection_service();
+        if !matches!(
+            service.select_bound_method(&candidates, &bounds, name, inner.as_ref().clone()),
+            Err(crate::selection::SelectionDiagnostic::NoImplementation { .. })
+        ) {
+            return false;
+        }
+        // Diagnosis-only probe of the same bound member, never executable
+        // selection authority or a grant of mutable receiver capability.
+        for candidate in &mut candidates {
+            candidate.can_autoref_mut = true;
+        }
+        service
+            .select_bound_method(&candidates, &bounds, name, inner.as_ref().clone())
+            .is_ok_and(|selected| {
+                selected.function.as_ref().is_some_and(|function| {
+                    function.self_receiver == Some(crate::types::ReceiverMode::Mut)
+                })
+            })
     }
 }

@@ -124,6 +124,11 @@ pub enum HirTypeLocation {
         path: Vec<usize>,
         index: usize,
     },
+    PackageEvidence {
+        owner: DefId,
+        path: Vec<usize>,
+        index: usize,
+    },
     /// Static proof terms (including owner constructors), in type visitor order.
     OwnedObjectCallEvidence {
         owner: DefId,
@@ -724,10 +729,68 @@ fn collect_expr<P: HirPhase>(
     );
 
     match &expr.kind {
-        HirExprKind::Open { source, binding, body } => {
+        HirExprKind::PackagePack { payload, proof } => {
+            let mut index = 0;
+            proof.visit_types(&mut |ty| {
+                record_type(
+                    context,
+                    ids,
+                    HirTypeLocation::PackageEvidence {
+                        owner,
+                        path: path.clone(),
+                        index,
+                    },
+                    ty,
+                );
+                index += 1;
+            });
+            let mut payload_path = path;
+            payload_path.push(0);
+            collect_expr(owner, payload, payload_path, context, ids);
+        }
+        HirExprKind::PackageOpen {
+            source,
+            binding,
+            body,
+        } => {
             let mut index = 0;
             binding.visit_types(&mut |ty| {
-                record_type(context, ids, HirTypeLocation::OpenEvidence { owner, path: path.clone(), index }, ty);
+                record_type(
+                    context,
+                    ids,
+                    HirTypeLocation::PackageEvidence {
+                        owner,
+                        path: path.clone(),
+                        index,
+                    },
+                    ty,
+                );
+                index += 1;
+            });
+            let mut source_path = path.clone();
+            source_path.push(0);
+            collect_expr(owner, source, source_path, context, ids);
+            let mut body_path = path;
+            body_path.push(1);
+            collect_block(owner, body, body_path, context, ids);
+        }
+        HirExprKind::Open {
+            source,
+            binding,
+            body,
+        } => {
+            let mut index = 0;
+            binding.visit_types(&mut |ty| {
+                record_type(
+                    context,
+                    ids,
+                    HirTypeLocation::OpenEvidence {
+                        owner,
+                        path: path.clone(),
+                        index,
+                    },
+                    ty,
+                );
                 index += 1;
             });
             let mut source_path = path.clone();

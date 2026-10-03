@@ -234,6 +234,7 @@ fn format_path_segment<W: Write>(
         IdentOrType::Type(
             ParseType::Application(_)
                 | ParseType::Lambda(_)
+                | ParseType::Exists(_)
                 | ParseType::Function(_)
                 | ParseType::Hole(_)
         )
@@ -266,6 +267,19 @@ impl FormatNode for Ident {
 impl FormatNode for ParseType {
     fn fmt_with<W: Write>(&self, context: &mut FormatContext, f: &mut W) -> fmt::Result {
         match self {
+            ParseType::Exists(package) => {
+                write!(f, "exists ")?;
+                package.parameter.fmt_with(context, f)?;
+                write!(f, " where ")?;
+                for (index, clause) in package.where_clauses.iter().enumerate() {
+                    if index != 0 {
+                        write!(f, ", ")?;
+                    }
+                    clause.fmt_with(context, f)?;
+                }
+                write!(f, " in ")?;
+                package.payload.fmt_with(context, f)
+            }
             ParseType::Object(object) => {
                 object.base.fmt_with(context, f)?;
                 write!(f, " {{ ")?;
@@ -303,7 +317,8 @@ impl FormatNode for ParseType {
                 }
 
                 for (i, inner) in types.iter().enumerate() {
-                    let needs_parentheses = matches!(inner, ParseType::Lambda(_));
+                    let needs_parentheses =
+                        matches!(inner, ParseType::Lambda(_) | ParseType::Exists(_));
                     if needs_parentheses {
                         write!(f, "(")?;
                     }
@@ -422,9 +437,11 @@ impl FormatNode for GenericParamDecl {
 
 impl FormatNode for TypeApplication {
     fn fmt_with<W: Write>(&self, context: &mut FormatContext, f: &mut W) -> fmt::Result {
-        let needs_parentheses = matches!(self.constructor.as_ref(), ParseType::Lambda(_))
-            || (matches!(self.constructor.as_ref(), ParseType::Function(_))
-                && !context.inside_fn_type_decl);
+        let needs_parentheses = matches!(
+            self.constructor.as_ref(),
+            ParseType::Lambda(_) | ParseType::Exists(_)
+        ) || (matches!(self.constructor.as_ref(), ParseType::Function(_))
+            && !context.inside_fn_type_decl);
         if needs_parentheses {
             write!(f, "(")?;
         }
@@ -434,9 +451,11 @@ impl FormatNode for TypeApplication {
         }
         for (index, arg) in self.args.iter().enumerate() {
             write!(f, " ")?;
-            let arg_needs_parentheses =
-                matches!(arg, ParseType::Application(_) | ParseType::Lambda(_))
-                    || (matches!(arg, ParseType::Function(_)) && !context.inside_fn_type_decl);
+            let arg_needs_parentheses = matches!(
+                arg,
+                ParseType::Application(_) | ParseType::Lambda(_) | ParseType::Exists(_)
+            ) || (matches!(arg, ParseType::Function(_))
+                && !context.inside_fn_type_decl);
             if arg_needs_parentheses {
                 write!(f, "(")?;
             }

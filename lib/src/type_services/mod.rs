@@ -1,8 +1,10 @@
 pub mod display;
+pub mod existential;
 pub mod facts;
 pub mod kind;
 pub mod layout;
 pub mod normalize;
 pub mod projection;
 pub mod substitution;
+pub(crate) mod uniform_layout;
 pub mod visit;

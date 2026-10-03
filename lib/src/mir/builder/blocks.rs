@@ -131,6 +131,24 @@ impl<'a> MirBuilder<'a> {
 
     fn emit_child_drop_chain(&mut self, ty: &Type, place: Place) {
         match ty {
+            Type::Exists(_) => {
+                // The hidden payload is opaque to native MIR; its retained
+                // actual descriptor owns the entire cleanup, not projections.
+                let next_block = self.new_block();
+                self.record_drop_obligation(
+                    place.clone(),
+                    self.type_id_for(ty),
+                    DropObligationKind::Structural,
+                );
+                if let Some(current) = self.current_block {
+                    self.blocks[current.0].terminator = Some(Terminator::drop(
+                        place.clone(),
+                        next_block,
+                        self.drop_origin(&place),
+                    ));
+                }
+                self.current_block = Some(next_block);
+            }
             Type::Struct { id, args } => {
                 self.record_drop_obligation(
                     place.clone(),
@@ -366,6 +384,9 @@ impl<'a> MirBuilder<'a> {
         }
 
         match ty {
+            // Even a uniform payload can own a destructor; only its runtime
+            // descriptor knows the actual witness-instantiated Drop plan.
+            Type::Exists(_) => true,
             Type::Struct { id, args } => {
                 Self::struct_field_types_with_substitution(self.program, *id, args)
                     .iter()
@@ -491,7 +512,9 @@ impl<'a> MirBuilder<'a> {
                         .push((name.clone(), self.var_map.insert(name.clone(), local)));
                 }
                 HirStmt::Expr(expr) => {
-                    if is_last && !matches!(block.ty, Type::Unit) {
+                    // Unit tails are real values too (including the explicit
+                    // !-> tail); write the result before lexical cleanup.
+                    if is_last {
                         self.scope_locals.push(Vec::new());
                         self.lower_expr(expr, dest.clone());
                         let temp_locals = self.scope_locals.pop().unwrap_or_default();

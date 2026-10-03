@@ -355,6 +355,15 @@ pub(super) struct SerializedHirExpr {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) enum SerializedHirExprKind {
+    PackagePack {
+        payload: Box<SerializedHirExpr>,
+        proof: SerializedObjectEvidence,
+    },
+    PackageOpen {
+        source: Box<SerializedHirExpr>,
+        binding: SerializedPackageOpenBinding,
+        body: SerializedHirBlock,
+    },
     Open {
         source: Box<SerializedHirExpr>,
         binding: SerializedOpenBinding,
@@ -513,6 +522,37 @@ pub(super) struct SerializedOpenBinding {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct SerializedPackageOpenBinding {
+    witness: ProductWitnessId,
+    value: SerializedHirParam,
+    source_ty: ProductTypeId,
+}
+
+impl SerializedPackageOpenBinding {
+    fn encode(
+        binding: &crate::hir::HirPackageOpenBinding,
+        encoder: &mut ProductTypeEncoder,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            witness: ProductWitnessId::encode(binding.witness),
+            value: SerializedHirParam::encode(&binding.value, encoder)?,
+            source_ty: encoder.encode_type(&binding.source_ty)?,
+        })
+    }
+
+    fn decode(
+        self,
+        decoder: &mut ProductTypeDecoder<'_>,
+    ) -> Result<crate::hir::HirPackageOpenBinding, String> {
+        Ok(crate::hir::HirPackageOpenBinding {
+            witness: self.witness.decode(),
+            value: self.value.decode(decoder)?,
+            source_ty: decoder.decode_type(self.source_ty)?,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SerializedOpenOwner {
     state_ty: ProductTypeId,
     into_owner: ProductTypeId,
@@ -655,7 +695,7 @@ pub(super) struct SerializedObjectCoercion {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum SerializedObjectEvidence {
+pub(super) enum SerializedObjectEvidence {
     Concrete {
         source: ProductTypeId,
         views: Vec<SerializedObjectView>,
@@ -667,7 +707,7 @@ enum SerializedObjectEvidence {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SerializedObjectView {
+pub(super) struct SerializedObjectView {
     trait_id: crate::ids::DefId,
     type_args: Vec<ProductTypeId>,
     origin: SerializedObjectOrigin,
@@ -1363,6 +1403,9 @@ fn validate_type_table_graph_with_object_components(
 ) -> Result<(), String> {
     fn children(row: &ProductTypeRow) -> Vec<ProductTypeId> {
         match row {
+            ProductTypeRow::Exists {
+                bounds, payload, ..
+            } => bounds.children().chain(std::iter::once(*payload)).collect(),
             ProductTypeRow::Object(object) => object.children().collect(),
             ProductTypeRow::Slice(inner)
             | ProductTypeRow::Array(inner, _)
@@ -1414,7 +1457,7 @@ fn validate_type_table_graph_with_object_components(
     fn visit(
         table: &ProductTypeTable,
         id: ProductTypeId,
-        binders: &mut Vec<usize>,
+        binders: &mut Vec<Vec<Kind>>,
         object_depth: usize,
         stack: &mut Vec<ProductTypeId>,
         nodes: &mut usize,
@@ -1444,14 +1487,14 @@ fn validate_type_table_graph_with_object_components(
                 crate::products::MAX_PRODUCT_ARTIFACT_NORMALIZATION_NODES
             ));
         }
-        if let ProductTypeRow::BoundVar { depth, index, .. } = row {
+        if let ProductTypeRow::BoundVar { depth, index, kind } = row {
             let depth = *depth as usize;
             let Some(scope) = binders.iter().rev().nth(depth) else {
                 return Err(format!("out-of-scope product bound variable depth {depth}"));
             };
-            if *index as usize >= *scope {
+            if scope.get(*index as usize) != Some(kind) {
                 return Err(format!(
-                    "out-of-scope product bound variable index {index} for binder width {scope}"
+                    "out-of-scope or wrong-kind product bound variable index {index} for binder width {}", scope.len()
                 ));
             }
             return Ok(());
@@ -1465,8 +1508,17 @@ fn validate_type_table_graph_with_object_components(
                     crate::products::MAX_PRODUCT_ARTIFACT_GENERIC_PARAMS
                 ));
             }
-            binders.push(params.len());
+            binders.push(params.clone());
             visit(table, *body, binders, object_depth, stack, nodes)?;
+            binders.pop();
+        } else if let ProductTypeRow::Exists { binder, .. } = row {
+            if binder.kind != Kind::Type || binder.maybe_unsized {
+                return Err("unsupported existential package binder representation".into());
+            }
+            binders.push(vec![binder.kind.clone()]);
+            for child in children(row) {
+                visit(table, child, binders, object_depth, stack, nodes)?;
+            }
             binders.pop();
         } else {
             for child in children(row) {
@@ -1481,7 +1533,8 @@ fn validate_type_table_graph_with_object_components(
 
     let mut referenced = vec![false; table.rows.len()];
     for row in &table.rows {
-        if let ProductTypeRow::Object(object) = row {
+        if let ProductTypeRow::Object(object) | ProductTypeRow::Exists { bounds: object, .. } = row
+        {
             if object
                 .guarantees
                 .len()
@@ -2634,6 +2687,29 @@ impl SerializedHirExprKind {
         encoder: &mut ProductTypeEncoder,
     ) -> Result<Self, String> {
         Ok(match value {
+            crate::hir::HirExprKindFor::PackagePack { payload, proof } => Self::PackagePack {
+                payload: Box::new(SerializedHirExpr::encode(payload, encoder)?),
+                proof: SerializedObjectCoercion::encode(
+                    &crate::hir::HirObjectCoercion {
+                        target: proof.witness.clone(),
+                        evidence: Some(crate::hir::HirObjectEvidence::Concrete {
+                            source: proof.witness.clone(),
+                            views: proof.views.clone(),
+                        }),
+                    },
+                    encoder,
+                )?
+                .evidence,
+            },
+            crate::hir::HirExprKindFor::PackageOpen {
+                source,
+                binding,
+                body,
+            } => Self::PackageOpen {
+                source: Box::new(SerializedHirExpr::encode(source, encoder)?),
+                binding: SerializedPackageOpenBinding::encode(binding, encoder)?,
+                body: SerializedHirBlock::encode(body, encoder)?,
+            },
             crate::hir::HirExprKindFor::OwnedObjectCall { owner, args, call } => {
                 Self::OwnedObjectCall {
                     owner: Box::new(SerializedHirExpr::encode(owner, encoder)?),
@@ -2839,6 +2915,37 @@ impl SerializedHirExprKind {
         decoder: &mut ProductTypeDecoder<'_>,
     ) -> Result<crate::hir::HirExprKindFor<crate::hir::AcceptedHir>, String> {
         Ok(match self {
+            Self::PackagePack { payload, proof } => {
+                let SerializedObjectEvidence::Concrete { source, .. } = &proof else {
+                    return Err("package proof cannot be an object upcast".into());
+                };
+                let decoded = SerializedObjectCoercion {
+                    target: *source,
+                    evidence: proof,
+                }
+                .decode(decoder)?;
+                let Some(crate::hir::HirObjectEvidence::Concrete { source, views }) =
+                    decoded.evidence
+                else {
+                    return Err("package proof requires concrete or scoped witness views".into());
+                };
+                crate::hir::HirExprKindFor::PackagePack {
+                    payload: Box::new(payload.decode(decoder)?),
+                    proof: crate::hir::HirPackagePack {
+                        witness: source,
+                        views,
+                    },
+                }
+            }
+            Self::PackageOpen {
+                source,
+                binding,
+                body,
+            } => crate::hir::HirExprKindFor::PackageOpen {
+                source: Box::new(source.decode(decoder)?),
+                binding: binding.decode(decoder)?,
+                body: body.decode(decoder)?,
+            },
             Self::OwnedObjectCall { owner, args, call } => {
                 crate::hir::HirExprKindFor::OwnedObjectCall {
                     owner: Box::new(owner.decode(decoder)?),
@@ -3733,6 +3840,11 @@ impl ProductObjectType {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(super) enum ProductTypeRow {
+    Exists {
+        binder: crate::types::ExistentialBinder,
+        bounds: ProductObjectType,
+        payload: ProductTypeId,
+    },
     Witness(ProductWitnessId),
     I8,
     I16,
@@ -3872,6 +3984,18 @@ impl ProductTypeEncoder {
 
     fn encode_row(&mut self, ty: &Type) -> Result<ProductTypeRow, String> {
         Ok(match ty {
+            Type::Exists(package) => {
+                let ProductTypeRow::Object(bounds) =
+                    self.encode_row(&Type::Object(Box::new(package.bounds.clone())))?
+                else {
+                    return Err("package bound encoding did not produce an object signature".into());
+                };
+                ProductTypeRow::Exists {
+                    binder: package.binder.clone(),
+                    bounds,
+                    payload: self.encode_type(&package.payload)?,
+                }
+            }
             Type::Witness(witness) => ProductTypeRow::Witness(ProductWitnessId::encode(*witness)),
             Type::ObjectSelf { depth } => ProductTypeRow::ObjectSelf { depth: *depth },
             Type::Object(object) => {
@@ -4070,6 +4194,22 @@ impl<'a> ProductTypeDecoder<'a> {
 
     fn decode_row(&mut self, row: &ProductTypeRow) -> Result<Type, String> {
         Ok(match row {
+            ProductTypeRow::Exists {
+                binder,
+                bounds,
+                payload,
+            } => {
+                let Type::Object(bounds) =
+                    self.decode_row(&ProductTypeRow::Object(bounds.clone()))?
+                else {
+                    return Err("package bounds did not decode as an object signature".into());
+                };
+                Type::Exists(Box::new(crate::types::ExistentialType {
+                    binder: binder.clone(),
+                    bounds: *bounds,
+                    payload: self.decode_type(*payload)?,
+                }))
+            }
             ProductTypeRow::Witness(witness) => Type::Witness(witness.decode()),
             ProductTypeRow::ObjectSelf { depth } => Type::ObjectSelf { depth: *depth },
             ProductTypeRow::Object(encoded) => {
@@ -4258,6 +4398,97 @@ mod tests {
 
     fn def(local: u32) -> DefId {
         DefId::new(CrateId(0), LocalDefId(local))
+    }
+
+    #[test]
+    fn portable_package_rows_preserve_lexical_identity_and_reject_wrong_kind() {
+        let hidden = Type::BoundVar {
+            depth: 0,
+            index: 0,
+            kind: Kind::Type,
+        };
+        let package = Type::Exists(Box::new(crate::types::ExistentialType {
+            binder: crate::types::ExistentialBinder {
+                kind: Kind::Type,
+                maybe_unsized: false,
+            },
+            bounds: crate::types::ObjectType::new(crate::types::TraitBound {
+                trait_id: def(4),
+                type_args: vec![],
+            }),
+            payload: Type::Tuple(vec![
+                Type::Reference {
+                    mutable: false,
+                    inner: Box::new(hidden.clone()),
+                },
+                Type::Pointer(Box::new(hidden)),
+            ]),
+        }));
+        let (mut table, ids) = encode_types_for_test(&[package.clone()]).unwrap();
+        super::validate_type_table_graph_with_object_components(&table, &[]).unwrap();
+        assert_eq!(decode_type_for_test(&table, ids[0]).unwrap(), package);
+        let binder = table
+            .rows
+            .iter_mut()
+            .find_map(|row| {
+                if let ProductTypeRow::BoundVar { kind, .. } = row {
+                    Some(kind)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        *binder = Kind::arrow(Kind::Type, Kind::Type);
+        assert!(super::validate_type_table_graph_with_object_components(&table, &[]).is_err());
+    }
+
+    #[test]
+    fn portable_package_binding_is_not_a_fabricated_object_opening() {
+        let witness = crate::types::WitnessId {
+            owner: def(2),
+            local: crate::ids::HirLocalId(7),
+        };
+        let source_ty = Type::Exists(Box::new(crate::types::ExistentialType {
+            binder: crate::types::ExistentialBinder {
+                kind: Kind::Type,
+                maybe_unsized: false,
+            },
+            bounds: crate::types::ObjectType::new(crate::types::TraitBound {
+                trait_id: def(4),
+                type_args: vec![],
+            }),
+            payload: Type::Reference {
+                mutable: false,
+                inner: Box::new(Type::BoundVar {
+                    depth: 0,
+                    index: 0,
+                    kind: Kind::Type,
+                }),
+            },
+        }));
+        let binding = crate::hir::HirPackageOpenBinding {
+            witness,
+            source_ty: source_ty.clone(),
+            value: crate::hir::HirParam {
+                name: "payload".into(),
+                local_id: witness.local,
+                ty: Type::Reference {
+                    mutable: false,
+                    inner: Box::new(Type::Witness(witness)),
+                },
+                is_ref: true,
+                mutable: false,
+            },
+        };
+        let mut encoder = super::ProductTypeEncoder::new();
+        let encoded = super::SerializedPackageOpenBinding::encode(&binding, &mut encoder).unwrap();
+        let table = encoder.finish();
+        let decoded = encoded
+            .decode(&mut super::ProductTypeDecoder::new(&table))
+            .unwrap();
+        assert_eq!(decoded.source_ty, source_ty);
+        assert_eq!(decoded.witness, witness);
+        assert_eq!(decoded.value.ty, binding.value.ty);
     }
 
     #[test]

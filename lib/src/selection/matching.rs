@@ -250,20 +250,49 @@ pub fn constructor_target_from_applied_type(
         };
     }
 
-    let Type::Lambda { params, body } = target else {
-        return None;
-    };
-    let mut args = vec![None; params.len()];
-    if !collect_section_arguments(body, actual, 0, &mut args) {
-        return None;
-    }
-    let args = args.into_iter().collect::<Option<Vec<_>>>()?;
+    let args = constructor_application_arguments(target, actual)?;
     let applied = apply_type_lambda(target, &args)?;
     let mut subst = HashMap::new();
     if !type_pattern_matches(&applied, actual, &mut subst) {
         return None;
     }
     Some((target.substitute_generics(&subst), subst))
+}
+
+/// Recover application arguments from the declared constructor, not nominal
+/// argument order; sections may bind any position or repeated occurrences.
+pub(crate) fn constructor_application_arguments(
+    constructor: &Type,
+    actual: &Type,
+) -> Option<Vec<Type>> {
+    match (constructor, actual) {
+        (
+            Type::Constructor { id, flavor },
+            Type::Struct {
+                id: actual_id,
+                args,
+            },
+        ) if id == actual_id && *flavor == crate::types::NominalTypeKind::Struct => {
+            Some(args.clone())
+        }
+        (
+            Type::Constructor { id, flavor },
+            Type::Enum {
+                id: actual_id,
+                args,
+            },
+        ) if id == actual_id && *flavor == crate::types::NominalTypeKind::Enum => {
+            Some(args.clone())
+        }
+        (Type::Lambda { params, body }, actual) => {
+            let mut args = vec![None; params.len()];
+            if !collect_section_arguments(body, actual, 0, &mut args) {
+                return None;
+            }
+            args.into_iter().collect()
+        }
+        _ => None,
+    }
 }
 
 fn collect_section_arguments(
@@ -273,6 +302,15 @@ fn collect_section_arguments(
     args: &mut [Option<Type>],
 ) -> bool {
     match (pattern, actual) {
+        (Type::Exists(pattern), Type::Exists(actual)) => {
+            crate::type_services::existential::package_children(pattern, actual).is_some_and(
+                |children| {
+                    children
+                        .into_iter()
+                        .all(|(p, a)| collect_section_arguments(p, a, lambda_depth + 1, args))
+                },
+            )
+        }
         (Type::BoundVar { depth, index, .. }, actual) if *depth == lambda_depth => {
             let Some(slot) = args.get_mut(*index as usize) else {
                 return false;
@@ -414,6 +452,15 @@ pub(crate) fn type_pattern_matches_after_subst(pattern: &Type, actual: &Type) ->
         }
     }
     match (pattern, actual) {
+        (Type::Exists(pattern), Type::Exists(actual)) => {
+            crate::type_services::existential::package_children(pattern, actual).is_some_and(
+                |children| {
+                    children
+                        .into_iter()
+                        .all(|(p, a)| type_pattern_matches_after_subst(p, a))
+                },
+            )
+        }
         (
             Type::Struct {
                 id: expected_id,
@@ -589,6 +636,24 @@ pub fn infer_generic_subst_from_types(
     subst: &mut HashMap<GenericParamId, Type>,
 ) {
     match expected {
+        Type::Exists(package) => {
+            if let Type::Exists(actual) = actual {
+                if let Some(children) =
+                    crate::type_services::existential::package_children(package, actual)
+                {
+                    let mut next = subst.clone();
+                    for (expected, actual) in children {
+                        infer_generic_subst_from_types(expected, actual, &mut next);
+                    }
+                    if next.values().all(|ty| {
+                        crate::type_services::existential::validate_lexical_binders(ty).is_ok()
+                            && !crate::type_services::substitution::has_free_object_self(ty)
+                    }) {
+                        *subst = next;
+                    }
+                }
+            }
+        }
         Type::Generic(param) => {
             subst.entry(*param).or_insert_with(|| actual.clone());
         }

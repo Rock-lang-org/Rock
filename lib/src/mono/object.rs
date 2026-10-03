@@ -205,6 +205,25 @@ impl Monomorphizer {
         if !seen.insert(ty.clone()) {
             return Ok(());
         }
+        if let Type::Exists(package) = ty {
+            if package.binder.kind != crate::type_services::kind::Kind::Type
+                || package.binder.maybe_unsized
+            {
+                return Err(
+                    "constructor-kind or unsized existential descriptors are not supported".into(),
+                );
+            }
+            if !self.package_payload_is_executable(&package.payload, &mut Default::default()) {
+                return Err(
+                    "existential payload requires an unsupported uniform backend layout".into(),
+                );
+            }
+            let object = crate::type_services::substitution::existential_object_schema(package)
+                .map_err(|error| error.to_string())?;
+            self.ensure_object_schema(&Type::Object(Box::new(object)))?;
+            self.intern_type(ty);
+            return Ok(());
+        }
         if matches!(ty, Type::Object(_)) {
             if !self.contains_generic(ty) {
                 self.ensure_object_schema(ty)?;
@@ -244,6 +263,52 @@ impl Monomorphizer {
             }
         }
         Ok(())
+    }
+    fn package_payload_is_executable(
+        &self,
+        ty: &Type,
+        active: &mut std::collections::HashSet<Type>,
+    ) -> bool {
+        if !crate::type_services::visit::type_any(ty, |ty| {
+            matches!(
+                ty,
+                Type::BoundVar { .. } | Type::Witness(_) | Type::ObjectSelf { .. }
+            )
+        }) {
+            return true;
+        }
+        match ty {
+            Type::Reference { .. } | Type::Pointer(_) => true,
+            Type::Tuple(fields) => fields
+                .iter()
+                .all(|field| self.package_payload_is_executable(field, active)),
+            Type::Array(element, _) => self.package_payload_is_executable(element, active),
+            Type::Struct { id, args } => {
+                let Some(parameters) = self.nominal_generic_params.get(id) else {
+                    return false;
+                };
+                let Some(fields) = self.nominal_field_types.get(id) else {
+                    return false;
+                };
+                if parameters.len() != args.len() || !active.insert(ty.clone()) {
+                    return false;
+                }
+                let substitution = parameters
+                    .iter()
+                    .copied()
+                    .zip(args.iter().cloned())
+                    .collect();
+                let valid = fields.iter().all(|field| {
+                    self.package_payload_is_executable(
+                        &field.substitute_generics(&substitution),
+                        active,
+                    )
+                });
+                active.remove(ty);
+                valid
+            }
+            _ => false,
+        }
     }
     pub(super) fn ensure_object_schema(&mut self, ty: &Type) -> Result<TypeId, String> {
         let Type::Object(object) = ty else {
@@ -430,7 +495,7 @@ impl Monomorphizer {
         Ok(())
     }
 
-    fn materialize_object_table(
+    pub(super) fn materialize_object_table(
         &mut self,
         object: TypeId,
         source: &Type,

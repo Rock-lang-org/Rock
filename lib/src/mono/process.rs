@@ -73,7 +73,10 @@ impl Monomorphizer {
             .get(&InstanceKey::new(InstanceOrigin::Function(id), Vec::new()))
     }
 
-    fn zero_substitution_callable_instance(&self, id: DefId) -> Option<crate::mono::InstanceId> {
+    pub(super) fn zero_substitution_callable_instance(
+        &self,
+        id: DefId,
+    ) -> Option<crate::mono::InstanceId> {
         self.zero_substitution_function_instance(id)
     }
 
@@ -115,6 +118,7 @@ impl Monomorphizer {
             let is_entrypoint = name == "main" && func.generic_params.is_empty();
             if is_entrypoint
                 || (func.generic_params.is_empty() && hir_function_is_codegen_concrete(&func))
+                || Self::requires_scoped_entry(&func)
             {
                 self.register_concrete_function(name.clone(), func);
             } else {
@@ -164,9 +168,7 @@ impl Monomorphizer {
                 .get(&id)
                 .expect("registered function must retain canonical display metadata")
                 .clone();
-            if Self::should_register_function_instance(&func) {
-                self.register_function_instance(&name, &func);
-            }
+            self.register_processed_function_instance(&name, &func);
             program.names.functions_by_name.insert(name, id);
             program.functions.insert(id, func);
         }
@@ -188,7 +190,7 @@ impl Monomorphizer {
     pub(super) fn process_function(&mut self, mut func: HirFunction) -> HirFunction {
         let previous_owner = self.current_function_owner;
         self.current_function_owner = Some(func.id);
-        self.var_types.clear();
+        let previous_var_types = std::mem::take(&mut self.var_types);
         self.process_params(Some(func.id), &mut func.params);
         func.ret_type = self.substitute_generics(&func.ret_type);
         for ty in func
@@ -204,8 +206,18 @@ impl Monomorphizer {
                 );
             }
         }
-        self.process_block(&mut func.body);
+        match self.lower_scoped_function(&mut func) {
+            Ok(true) => {}
+            Ok(false) => self.process_block(&mut func.body),
+            Err((span, message)) => {
+                self.diagnostics.push(
+                    crate::diagnostic::Diagnostic::new(message, span)
+                        .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                );
+            }
+        }
         self.current_function_owner = previous_owner;
+        self.var_types = previous_var_types;
         func
     }
 
@@ -225,10 +237,12 @@ impl Monomorphizer {
     }
 
     pub(super) fn process_block(&mut self, block: &mut HirBlock) {
+        let enclosing_var_types = self.var_types.clone();
         block.ty = self.substitute_generics(&block.ty);
         for stmt in &mut block.stmts {
             self.process_stmt(stmt);
         }
+        self.var_types = enclosing_var_types;
     }
 
     fn process_stmt(&mut self, stmt: &mut HirStmt) {
@@ -261,6 +275,44 @@ impl Monomorphizer {
         expr.ty = self.substitute_generics(&expr.ty);
 
         match &mut expr.kind {
+            HirExprKind::PackagePack { payload, proof } => {
+                self.process_expr(payload);
+                proof.visit_types_mut(&mut |ty| *ty = self.substitute_generics(ty));
+                let result = self
+                    .ensure_payload_schemas(&expr.ty, &mut Default::default())
+                    .and_then(|_| {
+                        let Type::Exists(package) = &expr.ty else {
+                            return Err("package construction target is not existential".into());
+                        };
+                        let object =
+                            crate::type_services::substitution::existential_object_schema(package)
+                                .map_err(|error| error.to_string())?;
+                        let object = self.ensure_object_schema(&Type::Object(Box::new(object)))?;
+                        self.materialize_object_table(
+                            object,
+                            &proof.witness,
+                            &proof.views,
+                            &expr.span,
+                        )?;
+                        Ok(())
+                    });
+                self.monomorphize_drop_for_type(&payload.ty, Some(payload.span.clone()));
+                if let Err(message) = result {
+                    self.diagnostics.push(
+                        crate::diagnostic::Diagnostic::new(message, expr.span.clone())
+                            .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                    );
+                }
+            }
+            HirExprKind::PackageOpen { .. } => {
+                self.diagnostics.push(
+                    crate::diagnostic::Diagnostic::new(
+                        "package opening requires a descriptor-backed scoped body".into(),
+                        expr.span.clone(),
+                    )
+                    .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                );
+            }
             HirExprKind::Open {
                 source, binding, ..
             } => {
@@ -270,7 +322,7 @@ impl Monomorphizer {
                 // ordinary specialization must not invent a concrete layout.
                 self.diagnostics.push(
                     crate::diagnostic::Diagnostic::new(
-                        "scoped opening requires descriptor-backed body lowering, which is not implemented yet",
+                        "scoped opening requires descriptor-backed body lowering, which is not implemented yet".to_string(),
                         expr.span.clone(),
                     ).with_code(crate::diagnostic::DiagnosticCode::Mono),
                 );
@@ -730,7 +782,7 @@ impl Monomorphizer {
                 body,
                 captures,
             } => {
-                let old_var_types = self.var_types.clone();
+                let old_var_types = std::mem::take(&mut self.var_types);
                 self.process_params(self.current_function_owner, params);
                 for capture in captures {
                     capture.ty = self.substitute_generics(&capture.ty);
@@ -1782,6 +1834,79 @@ mod tests {
         };
 
         assert_eq!(expr.ty, Type::I64);
+    }
+
+    #[test]
+    fn function_local_type_frame_restores_the_enclosing_function() {
+        let mut mono = Monomorphizer::new();
+        let outer_ty = mono.intern_type(&Type::Tuple(vec![Type::I64, Type::Bool]));
+        mono.var_types.insert(HirLocalId(0), outer_ty);
+        let outer_owner = DefId::new(CrateId(0), LocalDefId(981));
+        mono.current_function_owner = Some(outer_owner);
+        let mut function = empty_function(None);
+        function.params = vec![HirParam {
+            name: "argument".into(),
+            local_id: HirLocalId(0),
+            ty: Type::I64,
+            mutable: false,
+            is_ref: false,
+        }];
+        function.ret_type = Type::I64;
+        function.body = HirBlock {
+            stmts: vec![HirStmt::Expr(HirExpr {
+                kind: HirExprKind::ResolvedVar(HirVarRef {
+                    name: "argument".into(),
+                    target: HirVarTarget::Local(HirLocalId(0)),
+                }),
+                ty: Type::I64,
+                span: crate::lexer::Span::test(),
+            })],
+            ty: Type::I64,
+        };
+        let processed = mono.process_function(function);
+        let HirStmt::Expr(argument) = &processed.body.stmts[0] else {
+            panic!("expected argument expression");
+        };
+        assert_eq!(argument.ty, Type::I64);
+        assert_eq!(mono.var_types, HashMap::from([(HirLocalId(0), outer_ty)]));
+        assert_eq!(mono.current_function_owner, Some(outer_owner));
+    }
+
+    #[test]
+    fn nested_block_type_frame_keeps_enclosing_bindings_without_exporting_inner_bindings() {
+        let mut mono = Monomorphizer::new();
+        let outer_ty = mono.intern_type(&Type::I64);
+        mono.var_types.insert(HirLocalId(0), outer_ty);
+        let mut block = HirBlock {
+            stmts: vec![
+                HirStmt::Let {
+                    name: "inner".into(),
+                    local_id: HirLocalId(1),
+                    ty: Type::Bool,
+                    value: HirExpr {
+                        kind: HirExprKind::BoolLiteral(true),
+                        ty: Type::Bool,
+                        span: crate::lexer::Span::test(),
+                    },
+                    mutable: false,
+                },
+                HirStmt::Expr(HirExpr {
+                    kind: HirExprKind::ResolvedVar(HirVarRef {
+                        name: "outer".into(),
+                        target: HirVarTarget::Local(HirLocalId(0)),
+                    }),
+                    ty: Type::I64,
+                    span: crate::lexer::Span::test(),
+                }),
+            ],
+            ty: Type::I64,
+        };
+        mono.process_block(&mut block);
+        let HirStmt::Expr(outer) = &block.stmts[1] else {
+            panic!("expected outer binding expression");
+        };
+        assert_eq!(outer.ty, Type::I64);
+        assert_eq!(mono.var_types, HashMap::from([(HirLocalId(0), outer_ty)]));
     }
 
     #[test]

@@ -25,12 +25,23 @@ pub(crate) struct ObjectQualifierUse {
     pub span: Span,
 }
 
+pub(crate) struct ExistentialTypeUse {
+    pub placeholder: Type,
+    pub binder: crate::types::ExistentialBinder,
+    pub bounds: Vec<Type>,
+    pub payload: Type,
+    pub parameters: Vec<crate::types::GenericParamId>,
+    pub groups: Vec<Vec<crate::type_services::kind::Kind>>,
+    pub kind: crate::type_services::kind::Kind,
+    pub span: Span,
+}
+
 struct ResolveQualifiers(HashMap<Type, Type>);
 
 impl crate::type_services::visit::TypeFolder for ResolveQualifiers {
     fn fold_type(&mut self, ty: Type) -> Type {
         if let Some(resolved) = self.0.get(&ty) {
-            return resolved.clone();
+            return crate::type_services::visit::fold_type_children(resolved.clone(), self);
         }
         crate::type_services::visit::fold_type_children(ty, self)
     }
@@ -77,7 +88,10 @@ fn signature(signature: &mut HirFunctionSig, visit: &mut impl FnMut(&mut Type)) 
 /// Declarations record source-owned uses first; incomplete forward trait headers
 /// must not freeze a partial object view into a signature.
 pub(crate) fn admit_collected_objects(context: &mut CollectContext) {
-    if context.object_type_uses.is_empty() && context.object_qualifier_uses.is_empty() {
+    if context.object_type_uses.is_empty()
+        && context.object_qualifier_uses.is_empty()
+        && context.existential_type_uses.is_empty()
+    {
         return;
     }
     let mut environment = TypeNormalizationEnv::new();
@@ -135,6 +149,62 @@ pub(crate) fn admit_collected_objects(context: &mut CollectContext) {
         };
         resolved.0.insert(usage.placeholder, ty);
     }
+    for mut usage in std::mem::take(&mut context.existential_type_uses) {
+        for bound in &mut usage.bounds {
+            crate::type_services::visit::fold_type_in_place(bound, &mut resolved);
+        }
+        crate::type_services::visit::fold_type_in_place(&mut usage.payload, &mut resolved);
+        let ty = match crate::type_lowering::assemble_existential(
+            usage.binder,
+            usage.bounds,
+            usage.payload,
+            &environment,
+        ) {
+            Ok(mut ty) => {
+                if !usage.parameters.is_empty() {
+                    let depth = (usage.groups.len() - 1) as u32;
+                    let substitution = usage
+                        .parameters
+                        .iter()
+                        .enumerate()
+                        .map(|(index, parameter)| {
+                            (
+                                *parameter,
+                                Type::BoundVar {
+                                    depth,
+                                    index: index as u32,
+                                    kind: usage.groups[0][index].clone(),
+                                },
+                            )
+                        })
+                        .collect();
+                    ty = match crate::type_services::substitution::instantiate(&ty, &substitution) {
+                        Ok(ty) => ty,
+                        Err(error) => {
+                            context.push_error_with_span(error.to_string(), usage.span.clone());
+                            Type::Error
+                        }
+                    };
+                }
+                for group in usage.groups.iter().rev() {
+                    ty = Type::Lambda {
+                        params: group.clone(),
+                        body: Box::new(ty),
+                    };
+                }
+                context.object_type_uses.push(ObjectTypeUse {
+                    ty: ty.clone(),
+                    span: usage.span,
+                });
+                ty
+            }
+            Err(message) => {
+                context.push_error_with_span(message, usage.span);
+                Type::Error
+            }
+        };
+        resolved.0.insert(usage.placeholder, ty);
+    }
     for alias in context.type_aliases.values_mut() {
         crate::type_services::visit::fold_type_in_place(&mut alias.ty, &mut resolved);
     }
@@ -143,6 +213,41 @@ pub(crate) fn admit_collected_objects(context: &mut CollectContext) {
         crate::type_services::visit::fold_type_in_place(&mut usage.ty, &mut resolved);
     }
     let uses = std::mem::take(&mut context.object_type_uses);
+    let mut structs: HashMap<_, _> = context
+        .structs
+        .values()
+        .map(|definition| (definition.id, definition.clone()))
+        .collect();
+    let mut enums: HashMap<_, _> = context
+        .enums
+        .values()
+        .map(|definition| (definition.id, definition.clone()))
+        .collect();
+    for definition in structs.values_mut() {
+        for field in &mut definition.fields {
+            crate::type_services::visit::fold_type_in_place(&mut field.ty, &mut resolved);
+        }
+    }
+    for definition in enums.values_mut() {
+        for variant in &mut definition.variants {
+            match &mut variant.fields {
+                HirVariantFields::Unit => {}
+                HirVariantFields::Positional(fields) => {
+                    for field in fields {
+                        crate::type_services::visit::fold_type_in_place(field, &mut resolved);
+                    }
+                }
+                HirVariantFields::Named(fields) => {
+                    for field in fields {
+                        crate::type_services::visit::fold_type_in_place(
+                            &mut field.ty,
+                            &mut resolved,
+                        );
+                    }
+                }
+            }
+        }
+    }
     let mut invalid = false;
     for mut usage in uses {
         crate::type_services::visit::fold_type_in_place(&mut usage.ty, &mut resolved);
@@ -156,10 +261,20 @@ pub(crate) fn admit_collected_objects(context: &mut CollectContext) {
                 continue;
             }
         }
-        if let Err(error) =
-            crate::traits::objects::admit_type_objects(&usage.ty, &traits, &environment)
-        {
-            context.push_error_with_span(error.to_string(), usage.span);
+        match crate::traits::objects::admit_type_objects(&usage.ty, &traits, &environment) {
+            Ok(admitted) => usage.ty = admitted,
+            Err(error) => {
+                context.push_error_with_span(error.to_string(), usage.span.clone());
+                invalid = true;
+            }
+        }
+        if let Err(error) = crate::type_services::existential::validate_package_layouts(
+            &usage.ty,
+            &structs,
+            &enums,
+            &environment,
+        ) {
+            context.push_error_with_span(error, usage.span);
             invalid = true;
         }
     }
@@ -176,7 +291,9 @@ pub(crate) fn admit_collected_objects(context: &mut CollectContext) {
                 return;
             }
         }
-        if !crate::type_services::visit::type_any(ty, |ty| matches!(ty, Type::Object(_))) {
+        if !crate::type_services::visit::type_any(ty, |ty| {
+            matches!(ty, Type::Object(_) | Type::Exists(_))
+        }) {
             return;
         }
         match crate::traits::objects::admit_type_objects(ty, &traits, &environment) {

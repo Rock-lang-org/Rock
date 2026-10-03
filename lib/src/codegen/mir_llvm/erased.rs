@@ -7,7 +7,7 @@ use inkwell::{module::Linkage, AddressSpace};
 use std::collections::BTreeMap;
 
 impl<'ctx> CodeGen<'ctx> {
-    fn erased_descriptor_type(&self) -> StructType<'ctx> {
+    pub(super) fn erased_descriptor_type(&self) -> StructType<'ctx> {
         let ptr = self.context.ptr_type(AddressSpace::default());
         let word = self.context.i64_type();
         self.context.struct_type(
@@ -42,7 +42,37 @@ impl<'ctx> CodeGen<'ctx> {
         layouts: &BTreeMap<MirErasedType, PointerValue<'ctx>>,
     ) -> Result<PointerValue<'ctx>, CodegenError> {
         if let Some(layout) = layouts.get(ty) {
+            let mut scoped = std::collections::BTreeSet::new();
+            ty.scoped_binders(&mut scoped);
+            if !scoped.is_empty() {
+                return self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        *layout,
+                        "opened.descriptor",
+                    )
+                    .map_err(|e| Self::erased_error(e.to_string()))
+                    .map(|value| value.into_pointer_value());
+            }
             return Ok(*layout);
+        }
+        // Direct scoped handles reuse their canonical descriptor; synthesized
+        // uniform metadata is needed only for broader aggregate layouts.
+        if matches!(ty, MirErasedType::Reference { inner, .. } | MirErasedType::Pointer(inner)
+            if matches!(inner.as_ref(), MirErasedType::Scoped(_)))
+        {
+            return self
+                .module
+                .get_global("rock.descriptor.thin_reference")
+                .map(|global| global.as_pointer_value())
+                .ok_or_else(|| Self::erased_error("thin scoped reference descriptor missing"));
+        }
+        if let Some(global) = self
+            .module
+            .get_global(&format!("rock.uniform.erased.{ty:?}"))
+        {
+            return Ok(global.as_pointer_value());
         }
         if let MirErasedType::Concrete(id) = ty {
             return self
@@ -52,6 +82,14 @@ impl<'ctx> CodeGen<'ctx> {
                 .ok_or_else(|| {
                     Self::erased_error("concrete erased value is missing its descriptor")
                 });
+        }
+        if let Some(descriptor) = ty
+            .instantiate(&[], self.type_context())
+            .ok()
+            .and_then(|ty| self.type_context().id_for_type(&ty))
+            .and_then(|id| self.erased_descriptors.get(&id))
+        {
+            return Ok(descriptor.as_pointer_value());
         }
         Err(Self::erased_error(
             "erased value requires unavailable layout/application evidence",
@@ -183,7 +221,7 @@ impl<'ctx> CodeGen<'ctx> {
             .map(|_| ())
             .map_err(|e| Self::erased_error(e.to_string()))
     }
-    fn drop_erased_value(
+    pub(super) fn drop_erased_value(
         &self,
         address: PointerValue<'ctx>,
         descriptor: PointerValue<'ctx>,
@@ -209,6 +247,45 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Result<(), CodegenError> {
         self.erased_contract = contract.erased.clone();
         let ptr = self.context.ptr_type(AddressSpace::default());
+        if contract.erased.functions.values().any(|function| {
+            function
+                .body
+                .as_ref()
+                .is_some_and(|body| !body.scopes.is_empty())
+        }) {
+            // Opened references are thin native pointers, not payload layouts.
+            let drop = self.module.add_function(
+                "rock.descriptor.thin_reference.drop",
+                self.context
+                    .void_type()
+                    .fn_type(&[ptr.into(), ptr.into()], false),
+                Some(Linkage::Internal),
+            );
+            self.builder
+                .position_at_end(self.context.append_basic_block(drop, "entry"));
+            self.builder
+                .build_return(None)
+                .map_err(|e| Self::erased_error(e.to_string()))?;
+            let global = self.module.add_global(
+                self.erased_descriptor_type(),
+                None,
+                "rock.descriptor.thin_reference",
+            );
+            global.set_initializer(
+                &self.erased_descriptor_type().const_named_struct(&[
+                    ptr.size_of().into(),
+                    self.context
+                        .struct_type(&[ptr.into()], false)
+                        .get_alignment()
+                        .into(),
+                    drop.as_global_value().as_pointer_value().into(),
+                    self.context.i64_type().const_zero().into(),
+                    ptr.const_null().into(),
+                ]),
+            );
+            global.set_constant(true);
+            global.set_linkage(Linkage::Private);
+        }
         for (key, declaration) in &contract.erased.functions {
             let function = self.module.add_function(
                 &declaration.symbol,
@@ -293,6 +370,38 @@ impl<'ctx> CodeGen<'ctx> {
             self.erased_descriptors.insert(*id, global);
         }
         self.emit_erased_dictionaries(contract)?;
+        for schema in contract.packages.values() {
+            if package_payload_drop_free(contract, self.type_context(), schema.package) {
+                self.emit_uniform_descriptor(
+                    &schema.payload_layout,
+                    &format!("rock.uniform.package.{}", schema.package.0),
+                )?;
+            }
+        }
+        for body in contract
+            .erased
+            .functions
+            .values()
+            .filter_map(|entry| entry.body.as_ref())
+        {
+            for ty in &body.locals {
+                let mut scoped = std::collections::BTreeSet::new();
+                ty.scoped_binders(&mut scoped);
+                if !scoped.is_empty() {
+                    if let Ok(layout) =
+                        erased_uniform_layout(contract, &mut self.type_context().clone(), ty)
+                    {
+                        self.emit_uniform_descriptor(
+                            &layout,
+                            &format!("rock.uniform.erased.{ty:?}"),
+                        )?;
+                    }
+                }
+            }
+        }
+        // Tables reference erased declarations and descriptors; bodies can in
+        // turn package those immutable tables, so declare metadata first.
+        self.emit_object_vtables(contract)?;
         for declaration in contract.erased.functions.values() {
             self.emit_erased_body(contract, declaration)?;
         }
@@ -400,9 +509,18 @@ impl<'ctx> CodeGen<'ctx> {
         layouts: &BTreeMap<MirErasedType, PointerValue<'ctx>>,
         contract: &MirBackendContract,
     ) -> Result<PointerValue<'ctx>, CodegenError> {
-        let mut address = *locals
+        let slot = *locals
             .get(place.local.0 as usize)
             .ok_or_else(|| Self::erased_error("erased local missing"))?;
+        let mut address = self
+            .builder
+            .build_load(
+                self.context.ptr_type(AddressSpace::default()),
+                slot,
+                "erased.local.address",
+            )
+            .map_err(|e| Self::erased_error(e.to_string()))?
+            .into_pointer_value();
         let mut prefix = MirErasedPlace::local(place.local);
         for projection in &place.projection {
             let ty = erased_place_type(body, &prefix, contract, self.type_context())
@@ -449,6 +567,26 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(copy)
     }
 
+    fn erased_native_argument(
+        &self,
+        address: PointerValue<'ctx>,
+        parameter: &MirParamAbi,
+    ) -> Result<BasicMetadataValueEnum<'ctx>, CodegenError> {
+        if parameter.pass_mode == MirPassMode::Pointer
+            && !self.type_id_lowers_to_pointer(parameter.semantic_ty)
+        {
+            return Ok(address.into());
+        }
+        self.builder
+            .build_load(
+                self.llvm_type_id(parameter.semantic_ty),
+                address,
+                "erased.native.argument",
+            )
+            .map(|value| value.into())
+            .map_err(|e| Self::erased_error(e.to_string()))
+    }
+
     fn emit_erased_body(
         &mut self,
         contract: &MirBackendContract,
@@ -476,228 +614,870 @@ impl<'ctx> CodeGen<'ctx> {
         }
         let dictionary_base = 1 + body.signature.layouts.len();
         let args_base = dictionary_base + body.signature.dictionaries.len();
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let mut scope_tables = Vec::new();
+        let mut scope_payload_descriptors = Vec::new();
+        for (index, scope) in code.scopes.iter().enumerate() {
+            let descriptor = self
+                .builder
+                .build_alloca(ptr, "opened.descriptor.slot")
+                .map_err(|e| Self::erased_error(e.to_string()))?;
+            let table = self
+                .builder
+                .build_alloca(ptr, "opened.table.slot")
+                .map_err(|e| Self::erased_error(e.to_string()))?;
+            layouts.insert(MirErasedType::Scoped(index as u32), descriptor);
+            scope_tables.push(table);
+            let payload_descriptor = self
+                .builder
+                .build_alloca(ptr, "package.payload.descriptor.slot")
+                .map_err(|e| Self::erased_error(e.to_string()))?;
+            if let MirErasedScopeSource::Package { package } = scope.source {
+                let payload = scoped_package_payload(
+                    package,
+                    index as u32,
+                    scope.witness,
+                    &mut self.type_context().clone(),
+                )
+                .map_err(|error| Self::erased_error(format!("{error:?}")))?;
+                layouts.insert(payload, payload_descriptor);
+            }
+            scope_payload_descriptors.push(payload_descriptor);
+        }
         let mut locals = Vec::new();
-        let mut initialized = vec![false; code.locals.len()];
+        let mut initialized = Vec::new();
         for (index, ty) in code.locals.iter().enumerate() {
+            let flag = self
+                .builder
+                .build_alloca(self.context.bool_type(), "erased.live")
+                .map_err(|e| Self::erased_error(e.to_string()))?;
+            self.builder
+                .build_store(
+                    flag,
+                    self.context
+                        .bool_type()
+                        .const_int(u64::from(index < body.signature.params.len()), false),
+                )
+                .map_err(|e| Self::erased_error(e.to_string()))?;
+            initialized.push(flag);
             let address = if index < body.signature.params.len() {
-                initialized[index] = true;
                 function
                     .get_nth_param((args_base + index) as u32)
                     .ok_or_else(|| Self::erased_error("erased value parameter missing"))?
                     .into_pointer_value()
             } else {
-                self.allocate_erased_local(self.erased_layout(ty, &layouts)?)?
+                let mut scoped = std::collections::BTreeSet::new();
+                ty.scoped_binders(&mut scoped);
+                if scoped.is_empty() {
+                    self.allocate_erased_local(self.erased_layout(ty, &layouts)?)?
+                } else {
+                    ptr.const_null()
+                }
             };
-            locals.push(address);
+            let slot = self
+                .builder
+                .build_alloca(ptr, "erased.local.slot")
+                .map_err(|e| Self::erased_error(e.to_string()))?;
+            self.builder
+                .build_store(slot, address)
+                .map_err(|e| Self::erased_error(e.to_string()))?;
+            locals.push(slot);
         }
-        for statement in &code.statements {
-            let destination = locals[statement.destination.0 as usize];
-            match &statement.value {
-                MirErasedRvalue::Use(operand) => {
-                    let place = match operand {
-                        MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
+        let blocks = code
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                self.context
+                    .append_basic_block(function, &format!("erased.block.{index}"))
+            })
+            .collect::<Vec<_>>();
+        self.builder
+            .build_unconditional_branch(blocks[0])
+            .map_err(|e| Self::erased_error(e.to_string()))?;
+        for (index, block) in code.blocks.iter().enumerate() {
+            self.builder.position_at_end(blocks[index]);
+            for statement in &block.statements {
+                let destination_place = MirErasedPlace::local(statement.destination);
+                if let MirErasedRvalue::PackageOpen { scope, source } = &statement.value {
+                    let evidence = &code.scopes[*scope as usize];
+                    let MirErasedScopeSource::Package { package } = evidence.source else {
+                        return Err(Self::erased_error("package opening has object authority"));
                     };
-                    let source =
-                        self.erased_place_address(body, &locals, place, &layouts, contract)?;
-                    self.move_erased_bytes(
-                        destination,
-                        source,
-                        self.erased_layout(
-                            &code.locals[statement.destination.0 as usize],
-                            &layouts,
-                        )?,
-                    )?;
-                    if matches!(operand, MirErasedOperand::Move(_)) {
-                        initialized[place.local.0 as usize] = false;
-                    }
-                }
-                MirErasedRvalue::Literal(literal) => {
-                    let value: BasicValueEnum = match literal {
-                        MirErasedLiteral::Int(value) => self
-                            .context
-                            .i64_type()
-                            .const_int(*value as u64, true)
-                            .into(),
-                        MirErasedLiteral::Bool(value) => self
-                            .context
-                            .bool_type()
-                            .const_int(u64::from(*value), false)
-                            .into(),
-                        MirErasedLiteral::Unit => self.context.i64_type().const_zero().into(),
-                    };
-                    self.builder
-                        .build_store(destination, value)
-                        .map_err(|e| Self::erased_error(e.to_string()))?;
-                }
-                MirErasedRvalue::Borrow { place, .. } => {
                     let address =
-                        self.erased_place_address(body, &locals, place, &layouts, contract)?;
-                    self.builder
-                        .build_store(destination, address)
-                        .map_err(|e| Self::erased_error(e.to_string()))?;
-                }
-                MirErasedRvalue::Aggregate(operands) => {
-                    let descriptor = self
-                        .erased_layout(&code.locals[statement.destination.0 as usize], &layouts)?;
-                    for (index, operand) in operands.iter().enumerate() {
-                        let place = match operand {
-                            MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
-                        };
-                        let field =
-                            self.erased_field_address(destination, descriptor, index as u32)?;
-                        let ty = erased_place_type(body, place, contract, self.type_context())
-                            .map_err(|e| Self::erased_error(format!("{e:?}")))?;
-                        self.move_erased_bytes(
-                            field,
-                            self.erased_place_address(body, &locals, place, &layouts, contract)?,
-                            self.erased_layout(&ty, &layouts)?,
-                        )?;
-                        if matches!(operand, MirErasedOperand::Move(_)) {
-                            initialized[place.local.0 as usize] = false;
-                        }
-                    }
-                }
-                MirErasedRvalue::Call {
-                    target,
-                    type_args,
-                    dictionaries,
-                    args,
-                } => {
-                    let callee = contract
-                        .erased
-                        .functions
-                        .get(target)
-                        .ok_or_else(|| Self::erased_error("erased callee missing"))?;
-                    let mut values: Vec<BasicMetadataValueEnum> = vec![destination.into()];
-                    for ty in &callee.signature.layouts {
-                        values.push(
-                            self.erased_layout(
-                                &ty.substitute(type_args)
-                                    .map_err(|e| Self::erased_error(format!("{e:?}")))?,
-                                &layouts,
-                            )?
-                            .into(),
-                        );
-                    }
-                    for dictionary in dictionaries {
-                        values.push(
-                            function
-                                .get_nth_param((dictionary_base + *dictionary as usize) as u32)
-                                .ok_or_else(|| {
-                                    Self::erased_error("erased dictionary argument missing")
-                                })?
-                                .into(),
-                        );
-                    }
-                    for operand in args {
-                        let place = match operand {
-                            MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
-                        };
-                        values.push(
-                            self.erased_argument_address(
-                                body, &locals, operand, &layouts, contract,
-                            )?
-                            .into(),
-                        );
-                        if matches!(operand, MirErasedOperand::Move(_)) {
-                            initialized[place.local.0 as usize] = false;
-                        }
-                    }
-                    self.builder
-                        .build_call(self.erased_functions[target], &values, "erased.call")
-                        .map_err(|e| Self::erased_error(e.to_string()))?;
-                }
-                MirErasedRvalue::DictionaryCall {
-                    dictionary,
-                    member,
-                    receiver,
-                    args,
-                } => {
-                    let table = function
-                        .get_nth_param((dictionary_base + *dictionary as usize) as u32)
-                        .ok_or_else(|| Self::erased_error("dictionary parameter missing"))?
-                        .into_pointer_value();
-                    let pointer = unsafe {
-                        self.builder.build_gep(
-                            self.context.ptr_type(AddressSpace::default()),
-                            table,
-                            &[self.context.i64_type().const_int(*member as u64, false)],
-                            "dictionary.entry.address",
-                        )
-                    }
-                    .map_err(|e| Self::erased_error(e.to_string()))?;
-                    let target = self
+                        self.erased_argument_address(body, &locals, source, &layouts, contract)?;
+                    let package_type = self.package_type(package)?;
+                    let table_field = self
                         .builder
-                        .build_load(
-                            self.context.ptr_type(AddressSpace::default()),
-                            pointer,
-                            "dictionary.entry",
-                        )
+                        .build_struct_gep(package_type, address, 1, "package.open.table.address")
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                    let table = self
+                        .builder
+                        .build_load(ptr, table_field, "package.open.table")
                         .map_err(|e| Self::erased_error(e.to_string()))?
                         .into_pointer_value();
-                    let mut values: Vec<BasicMetadataValueEnum> = vec![
-                        destination.into(),
-                        self.erased_place_address(body, &locals, receiver, &layouts, contract)?
-                            .into(),
-                    ];
-                    if body.signature.dictionaries[*dictionary as usize].members[*member as usize]
-                        .receiver
-                        == crate::types::ReceiverMode::Move
-                    {
-                        initialized[receiver.local.0 as usize] = false;
-                    }
-                    for operand in args {
-                        let place = match operand {
-                            MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
-                        };
-                        values.push(
-                            self.erased_argument_address(
-                                body, &locals, operand, &layouts, contract,
-                            )?
-                            .into(),
-                        );
-                        if matches!(operand, MirErasedOperand::Move(_)) {
-                            initialized[place.local.0 as usize] = false;
-                        }
-                    }
-                    let ptr = self.context.ptr_type(AddressSpace::default());
+                    let payload_field = self
+                        .builder
+                        .build_struct_gep(
+                            package_type,
+                            address,
+                            2,
+                            "package.open.payload.descriptor.address",
+                        )
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                    let payload_descriptor = self
+                        .builder
+                        .build_load(ptr, payload_field, "package.open.payload.descriptor")
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                    let descriptor_field = self
+                        .builder
+                        .build_struct_gep(
+                            self.object_table_type(&contract.object_schemas[&evidence.object]),
+                            table,
+                            5,
+                            "package.open.witness.descriptor.address",
+                        )
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                    let witness_descriptor = self
+                        .builder
+                        .build_load(ptr, descriptor_field, "package.open.witness.descriptor")
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
                     self.builder
-                        .build_indirect_call(
-                            self.context
-                                .void_type()
-                                .fn_type(&vec![ptr.into(); values.len()], false),
-                            target,
-                            &values,
-                            "erased.dictionary.call",
+                        .build_store(scope_tables[*scope as usize], table)
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                    self.builder
+                        .build_store(layouts[&MirErasedType::Scoped(*scope)], witness_descriptor)
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                    self.builder
+                        .build_store(
+                            scope_payload_descriptors[*scope as usize],
+                            payload_descriptor,
                         )
                         .map_err(|e| Self::erased_error(e.to_string()))?;
                 }
+                let mut scoped = std::collections::BTreeSet::new();
+                code.locals[statement.destination.0 as usize].scoped_binders(&mut scoped);
+                let destination = if scoped.is_empty() {
+                    self.erased_place_address(
+                        body,
+                        &locals,
+                        &destination_place,
+                        &layouts,
+                        contract,
+                    )?
+                } else {
+                    // The checked Open dominates every descriptor-sized allocation.
+                    let address = self.allocate_erased_local(self.erased_layout(
+                        &code.locals[statement.destination.0 as usize],
+                        &layouts,
+                    )?)?;
+                    self.builder
+                        .build_store(locals[statement.destination.0 as usize], address)
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                    address
+                };
+                match &statement.value {
+                    MirErasedRvalue::PackageOpen { scope, source } => {
+                        let MirErasedScopeSource::Package { package } =
+                            code.scopes[*scope as usize].source
+                        else {
+                            return Err(Self::erased_error("invalid package scope"));
+                        };
+                        let source_address = self
+                            .erased_argument_address(body, &locals, source, &layouts, contract)?;
+                        let payload = self
+                            .builder
+                            .build_struct_gep(
+                                self.package_type(package)?,
+                                source_address,
+                                0,
+                                "package.open.payload",
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        let descriptor = self
+                            .builder
+                            .build_load(
+                                ptr,
+                                scope_payload_descriptors[*scope as usize],
+                                "package.open.actual.descriptor",
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?
+                            .into_pointer_value();
+                        self.move_erased_bytes(destination, payload, descriptor)?;
+                        let MirErasedOperand::Move(place) = source else {
+                            return Err(Self::erased_error("package open must consume its source"));
+                        };
+                        self.builder
+                            .build_store(
+                                initialized[place.local.0 as usize],
+                                self.context.bool_type().const_zero(),
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                    }
+                    MirErasedRvalue::PackagePack { payload, plan } => {
+                        let package_type = self.package_type(plan.package)?;
+                        let payload_address = self
+                            .builder
+                            .build_struct_gep(package_type, destination, 0, "package.pack.payload")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        let source_address = self
+                            .erased_argument_address(body, &locals, payload, &layouts, contract)?;
+                        let descriptor = match plan.payload_descriptor {
+                            MirPackagePayloadDescriptor::Concrete(id) => {
+                                self.erased_descriptors[&id].as_pointer_value()
+                            }
+                            MirPackagePayloadDescriptor::UniformDropFree => self
+                                .module
+                                .get_global(&format!("rock.uniform.package.{}", plan.package.0))
+                                .ok_or_else(|| {
+                                    Self::erased_error("package uniform descriptor missing")
+                                })?
+                                .as_pointer_value(),
+                            MirPackagePayloadDescriptor::FromPackage(scope) => self
+                                .builder
+                                .build_load(
+                                    ptr,
+                                    scope_payload_descriptors[scope as usize],
+                                    "package.repack.actual.descriptor",
+                                )
+                                .map_err(|e| Self::erased_error(e.to_string()))?
+                                .into_pointer_value(),
+                        };
+                        self.move_erased_bytes(payload_address, source_address, descriptor)?;
+                        let table = match plan.witness {
+                            MirPackageWitnessEvidence::Concrete { table, .. } => {
+                                self.object_vtables[&table].as_pointer_value()
+                            }
+                            MirPackageWitnessEvidence::Scoped { scope, view } => {
+                                let table = self
+                                    .builder
+                                    .build_load(
+                                        ptr,
+                                        scope_tables[scope as usize],
+                                        "package.repack.table",
+                                    )
+                                    .map_err(|e| Self::erased_error(e.to_string()))?
+                                    .into_pointer_value();
+                                let schema =
+                                    &contract.object_schemas[&code.scopes[scope as usize].object];
+                                if schema.object == view {
+                                    table
+                                } else {
+                                    let index = schema
+                                        .views
+                                        .iter()
+                                        .position(|candidate| *candidate == view)
+                                        .ok_or_else(|| {
+                                            Self::erased_error("package repack view missing")
+                                        })?;
+                                    self.load_object_entry(table, schema, 4, index as u32)?
+                                }
+                            }
+                        };
+                        let table_field = self
+                            .builder
+                            .build_struct_gep(
+                                package_type,
+                                destination,
+                                1,
+                                "package.pack.table.address",
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        let descriptor_field = self
+                            .builder
+                            .build_struct_gep(
+                                package_type,
+                                destination,
+                                2,
+                                "package.pack.descriptor.address",
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        self.builder
+                            .build_store(table_field, table)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        self.builder
+                            .build_store(descriptor_field, descriptor)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        if let MirErasedOperand::Move(place) = payload {
+                            self.builder
+                                .build_store(
+                                    initialized[place.local.0 as usize],
+                                    self.context.bool_type().const_zero(),
+                                )
+                                .map_err(|e| Self::erased_error(e.to_string()))?;
+                        }
+                    }
+                    MirErasedRvalue::Open { scope, source } => {
+                        let evidence = &code.scopes[*scope as usize];
+                        let address = self
+                            .erased_argument_address(body, &locals, source, &layouts, contract)?;
+                        let value = self
+                            .builder
+                            .build_load(self.object_handle_type(), address, "opened.object")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        let (data, metadata) = self.object_parts(value)?;
+                        let schema = &contract.object_schemas[&evidence.object];
+                        let field = self
+                            .builder
+                            .build_struct_gep(
+                                self.object_table_type(schema),
+                                metadata,
+                                5,
+                                "opened.descriptor.address",
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        let descriptor = self
+                            .builder
+                            .build_load(ptr, field, "opened.payload.descriptor")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        self.builder
+                            .build_store(layouts[&MirErasedType::Scoped(*scope)], descriptor)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        self.builder
+                            .build_store(scope_tables[*scope as usize], metadata)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        self.builder
+                            .build_store(destination, data)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        if let MirErasedOperand::Move(place) = source {
+                            self.builder
+                                .build_store(
+                                    initialized[place.local.0 as usize],
+                                    self.context.bool_type().const_zero(),
+                                )
+                                .map_err(|e| Self::erased_error(e.to_string()))?;
+                        }
+                    }
+                    MirErasedRvalue::Reclose {
+                        scope,
+                        value,
+                        object,
+                    } => {
+                        let source =
+                            self.erased_argument_address(body, &locals, value, &layouts, contract)?;
+                        let data = self
+                            .builder
+                            .build_load(ptr, source, "reclosed.data")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        let mut metadata = self
+                            .builder
+                            .build_load(ptr, scope_tables[*scope as usize], "reclosed.table")
+                            .map_err(|e| Self::erased_error(e.to_string()))?
+                            .into_pointer_value();
+                        let schema = &contract.object_schemas[&code.scopes[*scope as usize].object];
+                        if schema.object != *object {
+                            let index = schema
+                                .views
+                                .iter()
+                                .position(|view| view == object)
+                                .ok_or_else(|| {
+                                    Self::erased_error("reclose has no dominating view evidence")
+                                })?;
+                            metadata = self.load_object_entry(metadata, schema, 4, index as u32)?;
+                        }
+                        let value_handle = self
+                            .builder
+                            .build_insert_value(
+                                self.object_handle_type().get_undef(),
+                                data,
+                                0,
+                                "reclosed.data.handle",
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        let value_handle = self
+                            .builder
+                            .build_insert_value(value_handle, metadata, 1, "reclosed.handle")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        self.builder
+                            .build_store(destination, value_handle.into_struct_value())
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        if let MirErasedOperand::Move(place) = value {
+                            self.builder
+                                .build_store(
+                                    initialized[place.local.0 as usize],
+                                    self.context.bool_type().const_zero(),
+                                )
+                                .map_err(|e| Self::erased_error(e.to_string()))?;
+                        }
+                    }
+                    MirErasedRvalue::OpenedCall {
+                        scope,
+                        slot,
+                        receiver,
+                        args,
+                    } => {
+                        let schema = &contract.object_schemas[&code.scopes[*scope as usize].object];
+                        let member = &schema.slots[*slot as usize];
+                        let metadata = self
+                            .builder
+                            .build_load(ptr, scope_tables[*scope as usize], "opened.call.table")
+                            .map_err(|e| Self::erased_error(e.to_string()))?
+                            .into_pointer_value();
+                        let target = self.load_object_entry(metadata, schema, 3, *slot)?;
+                        let receiver =
+                            self.erased_place_address(body, &locals, receiver, &layouts, contract)?;
+                        let mut values: Vec<BasicMetadataValueEnum> = vec![receiver.into()];
+                        for (operand, parameter) in
+                            args.iter().zip(member.signature.params.iter().skip(1))
+                        {
+                            let address = self.erased_argument_address(
+                                body, &locals, operand, &layouts, contract,
+                            )?;
+                            values.push(self.erased_native_argument(address, parameter)?);
+                            if let MirErasedOperand::Move(place) = operand {
+                                self.builder
+                                    .build_store(
+                                        initialized[place.local.0 as usize],
+                                        self.context.bool_type().const_zero(),
+                                    )
+                                    .map_err(|e| Self::erased_error(e.to_string()))?;
+                            }
+                        }
+                        let result = self
+                            .builder
+                            .build_indirect_call(
+                                self.virtual_function_type(member),
+                                target,
+                                &values,
+                                "opened.call",
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        if let Some(value) = result.try_as_basic_value().left() {
+                            self.builder
+                                .build_store(destination, value)
+                                .map_err(|e| Self::erased_error(e.to_string()))?;
+                        }
+                    }
+                    MirErasedRvalue::OpenedErasedCall {
+                        scope,
+                        slot,
+                        type_args,
+                        dictionaries,
+                        receiver,
+                        args,
+                    } => {
+                        let schema = &contract.object_schemas[&code.scopes[*scope as usize].object];
+                        let signature = &schema.erased_slots[*slot as usize].signature;
+                        let metadata = self
+                            .builder
+                            .build_load(ptr, scope_tables[*scope as usize], "opened.erased.table")
+                            .map_err(|e| Self::erased_error(e.to_string()))?
+                            .into_pointer_value();
+                        let target = self.load_object_entry(metadata, schema, 6, *slot)?;
+                        let mut values: Vec<BasicMetadataValueEnum> = vec![destination.into()];
+                        for layout in &signature.layouts {
+                            let ty = layout
+                                .substitute(type_args)
+                                .map_err(|e| Self::erased_error(format!("{e:?}")))?;
+                            values.push(self.erased_layout(&ty, &layouts)?.into());
+                        }
+                        for dictionary in dictionaries {
+                            values.push(
+                                function
+                                    .get_nth_param((dictionary_base + *dictionary as usize) as u32)
+                                    .ok_or_else(|| {
+                                        Self::erased_error("opened erased dictionary missing")
+                                    })?
+                                    .into(),
+                            );
+                        }
+                        // A borrowed erased receiver is an address of its thin
+                        // reference value, not an address of an object handle.
+                        let data =
+                            self.erased_place_address(body, &locals, receiver, &layouts, contract)?;
+                        let reference = self
+                            .builder
+                            .build_alloca(ptr, "opened.erased.receiver")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        self.builder
+                            .build_store(reference, data)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        values.push(reference.into());
+                        for operand in args {
+                            values.push(
+                                self.erased_argument_address(
+                                    body, &locals, operand, &layouts, contract,
+                                )?
+                                .into(),
+                            );
+                            if let MirErasedOperand::Move(place) = operand {
+                                self.builder
+                                    .build_store(
+                                        initialized[place.local.0 as usize],
+                                        self.context.bool_type().const_zero(),
+                                    )
+                                    .map_err(|e| Self::erased_error(e.to_string()))?;
+                            }
+                        }
+                        self.builder
+                            .build_indirect_call(
+                                self.erased_function_type(signature),
+                                target,
+                                &values,
+                                "opened.erased.call",
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                    }
+                    MirErasedRvalue::NativeCall { target, args }
+                    | MirErasedRvalue::NativeApply { target, args } => {
+                        let declaration = contract.callable(target).ok_or_else(|| {
+                            Self::erased_error("native erased bridge target missing")
+                        })?;
+                        let target = self.adapter_target(target)?;
+                        let mut values = Vec::with_capacity(args.len());
+                        for (operand, parameter) in args.iter().zip(&declaration.signature.params) {
+                            let address = self.erased_argument_address(
+                                body, &locals, operand, &layouts, contract,
+                            )?;
+                            values.push(self.erased_native_argument(address, parameter)?);
+                            if let MirErasedOperand::Move(place) = operand {
+                                self.builder
+                                    .build_store(
+                                        initialized[place.local.0 as usize],
+                                        self.context.bool_type().const_zero(),
+                                    )
+                                    .map_err(|e| Self::erased_error(e.to_string()))?;
+                            }
+                        }
+                        let result = self
+                            .builder
+                            .build_call(target, &values, "erased.native.call")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        if let Some(value) = result.try_as_basic_value().left() {
+                            self.builder
+                                .build_store(destination, value)
+                                .map_err(|e| Self::erased_error(e.to_string()))?;
+                        } else if matches!(
+                            self.structural_type_for(declaration.signature.ret.semantic_ty),
+                            crate::types::Type::Unit
+                        ) {
+                            self.builder
+                                .build_store(destination, self.context.i64_type().const_zero())
+                                .map_err(|e| Self::erased_error(e.to_string()))?;
+                        } else {
+                            return Err(Self::erased_error(
+                                "native erased bridge lost its result value",
+                            ));
+                        }
+                    }
+                    MirErasedRvalue::Use(operand) => {
+                        let place = match operand {
+                            MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
+                        };
+                        let source =
+                            self.erased_place_address(body, &locals, place, &layouts, contract)?;
+                        self.move_erased_bytes(
+                            destination,
+                            source,
+                            self.erased_layout(
+                                &code.locals[statement.destination.0 as usize],
+                                &layouts,
+                            )?,
+                        )?;
+                        if matches!(operand, MirErasedOperand::Move(_)) {
+                            self.builder
+                                .build_store(
+                                    initialized[place.local.0 as usize],
+                                    self.context.bool_type().const_zero(),
+                                )
+                                .map_err(|e| Self::erased_error(e.to_string()))?;
+                        }
+                    }
+                    MirErasedRvalue::Literal(literal) => {
+                        let value: BasicValueEnum = match literal {
+                            MirErasedLiteral::Int(value) => self
+                                .context
+                                .i64_type()
+                                .const_int(*value as u64, true)
+                                .into(),
+                            MirErasedLiteral::Bool(value) => self
+                                .context
+                                .bool_type()
+                                .const_int(u64::from(*value), false)
+                                .into(),
+                            MirErasedLiteral::Unit => self.context.i64_type().const_zero().into(),
+                        };
+                        self.builder
+                            .build_store(destination, value)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                    }
+                    MirErasedRvalue::Borrow { place, .. } => {
+                        let address =
+                            self.erased_place_address(body, &locals, place, &layouts, contract)?;
+                        self.builder
+                            .build_store(destination, address)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                    }
+                    MirErasedRvalue::Aggregate(operands)
+                    | MirErasedRvalue::NativeAggregate {
+                        fields: operands, ..
+                    } => {
+                        let descriptor = self.erased_layout(
+                            &code.locals[statement.destination.0 as usize],
+                            &layouts,
+                        )?;
+                        for (index, operand) in operands.iter().enumerate() {
+                            let place = match operand {
+                                MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => {
+                                    place
+                                }
+                            };
+                            let field =
+                                self.erased_field_address(destination, descriptor, index as u32)?;
+                            let ty = erased_place_type(body, place, contract, self.type_context())
+                                .map_err(|e| Self::erased_error(format!("{e:?}")))?;
+                            self.move_erased_bytes(
+                                field,
+                                self.erased_place_address(
+                                    body, &locals, place, &layouts, contract,
+                                )?,
+                                self.erased_layout(&ty, &layouts)?,
+                            )?;
+                            if matches!(operand, MirErasedOperand::Move(_)) {
+                                self.builder
+                                    .build_store(
+                                        initialized[place.local.0 as usize],
+                                        self.context.bool_type().const_zero(),
+                                    )
+                                    .map_err(|e| Self::erased_error(e.to_string()))?;
+                            }
+                        }
+                    }
+                    MirErasedRvalue::Call {
+                        target,
+                        type_args,
+                        dictionaries,
+                        args,
+                    } => {
+                        let callee = contract
+                            .erased
+                            .functions
+                            .get(target)
+                            .ok_or_else(|| Self::erased_error("erased callee missing"))?;
+                        let mut values: Vec<BasicMetadataValueEnum> = vec![destination.into()];
+                        for ty in &callee.signature.layouts {
+                            values.push(
+                                self.erased_layout(
+                                    &ty.substitute(type_args)
+                                        .map_err(|e| Self::erased_error(format!("{e:?}")))?,
+                                    &layouts,
+                                )?
+                                .into(),
+                            );
+                        }
+                        for dictionary in dictionaries {
+                            values.push(
+                                function
+                                    .get_nth_param((dictionary_base + *dictionary as usize) as u32)
+                                    .ok_or_else(|| {
+                                        Self::erased_error("erased dictionary argument missing")
+                                    })?
+                                    .into(),
+                            );
+                        }
+                        for operand in args {
+                            let place = match operand {
+                                MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => {
+                                    place
+                                }
+                            };
+                            values.push(
+                                self.erased_argument_address(
+                                    body, &locals, operand, &layouts, contract,
+                                )?
+                                .into(),
+                            );
+                            if matches!(operand, MirErasedOperand::Move(_)) {
+                                self.builder
+                                    .build_store(
+                                        initialized[place.local.0 as usize],
+                                        self.context.bool_type().const_zero(),
+                                    )
+                                    .map_err(|e| Self::erased_error(e.to_string()))?;
+                            }
+                        }
+                        self.builder
+                            .build_call(self.erased_functions[target], &values, "erased.call")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                    }
+                    MirErasedRvalue::DictionaryCall {
+                        dictionary,
+                        member,
+                        receiver,
+                        args,
+                    } => {
+                        let table = function
+                            .get_nth_param((dictionary_base + *dictionary as usize) as u32)
+                            .ok_or_else(|| Self::erased_error("dictionary parameter missing"))?
+                            .into_pointer_value();
+                        let pointer = unsafe {
+                            self.builder.build_gep(
+                                self.context.ptr_type(AddressSpace::default()),
+                                table,
+                                &[self.context.i64_type().const_int(*member as u64, false)],
+                                "dictionary.entry.address",
+                            )
+                        }
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                        let target = self
+                            .builder
+                            .build_load(
+                                self.context.ptr_type(AddressSpace::default()),
+                                pointer,
+                                "dictionary.entry",
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?
+                            .into_pointer_value();
+                        let mut values: Vec<BasicMetadataValueEnum> = vec![
+                            destination.into(),
+                            self.erased_place_address(body, &locals, receiver, &layouts, contract)?
+                                .into(),
+                        ];
+                        if body.signature.dictionaries[*dictionary as usize].members
+                            [*member as usize]
+                            .receiver
+                            == crate::types::ReceiverMode::Move
+                        {
+                            self.builder
+                                .build_store(
+                                    initialized[receiver.local.0 as usize],
+                                    self.context.bool_type().const_zero(),
+                                )
+                                .map_err(|e| Self::erased_error(e.to_string()))?;
+                        }
+                        for operand in args {
+                            let place = match operand {
+                                MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => {
+                                    place
+                                }
+                            };
+                            values.push(
+                                self.erased_argument_address(
+                                    body, &locals, operand, &layouts, contract,
+                                )?
+                                .into(),
+                            );
+                            if matches!(operand, MirErasedOperand::Move(_)) {
+                                self.builder
+                                    .build_store(
+                                        initialized[place.local.0 as usize],
+                                        self.context.bool_type().const_zero(),
+                                    )
+                                    .map_err(|e| Self::erased_error(e.to_string()))?;
+                            }
+                        }
+                        let ptr = self.context.ptr_type(AddressSpace::default());
+                        self.builder
+                            .build_indirect_call(
+                                self.context
+                                    .void_type()
+                                    .fn_type(&vec![ptr.into(); values.len()], false),
+                                target,
+                                &values,
+                                "erased.dictionary.call",
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                    }
+                }
+                self.builder
+                    .build_store(
+                        initialized[statement.destination.0 as usize],
+                        self.context.bool_type().const_int(1, false),
+                    )
+                    .map_err(|e| Self::erased_error(e.to_string()))?;
             }
-            initialized[statement.destination.0 as usize] = true;
-        }
-        let result = match &code.result {
-            MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
-        };
-        self.move_erased_bytes(
-            out,
-            self.erased_place_address(body, &locals, result, &layouts, contract)?,
-            self.erased_layout(&body.signature.ret, &layouts)?,
-        )?;
-        if matches!(code.result, MirErasedOperand::Move(_)) {
-            initialized[result.local.0 as usize] = false;
-        }
-        for (index, live) in initialized.into_iter().enumerate().rev() {
-            if live {
-                self.drop_erased_value(
-                    locals[index],
-                    self.erased_layout(&code.locals[index], &layouts)?,
-                )?;
+            match &block.terminator {
+                MirErasedTerminator::Goto(target) => {
+                    self.builder
+                        .build_unconditional_branch(blocks[target.0 as usize])
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                }
+                MirErasedTerminator::Branch {
+                    condition,
+                    then_block,
+                    else_block,
+                } => {
+                    let address =
+                        self.erased_argument_address(body, &locals, condition, &layouts, contract)?;
+                    let value = self
+                        .builder
+                        .build_load(self.context.bool_type(), address, "erased.condition")
+                        .map_err(|e| Self::erased_error(e.to_string()))?
+                        .into_int_value();
+                    if let MirErasedOperand::Move(place) = condition {
+                        self.builder
+                            .build_store(
+                                initialized[place.local.0 as usize],
+                                self.context.bool_type().const_zero(),
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                    }
+                    self.builder
+                        .build_conditional_branch(
+                            value,
+                            blocks[then_block.0 as usize],
+                            blocks[else_block.0 as usize],
+                        )
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                }
+                MirErasedTerminator::Unreachable => {
+                    self.builder
+                        .build_unreachable()
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                }
+                MirErasedTerminator::Return(returned) => {
+                    let result = match returned {
+                        MirErasedOperand::Move(place) | MirErasedOperand::Copy(place) => place,
+                    };
+                    self.move_erased_bytes(
+                        out,
+                        self.erased_place_address(body, &locals, result, &layouts, contract)?,
+                        self.erased_layout(&body.signature.ret, &layouts)?,
+                    )?;
+                    if matches!(returned, MirErasedOperand::Move(_)) {
+                        self.builder
+                            .build_store(
+                                initialized[result.local.0 as usize],
+                                self.context.bool_type().const_zero(),
+                            )
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                    }
+                    for (index, flag) in initialized.iter().enumerate().rev() {
+                        let live = self
+                            .builder
+                            .build_load(self.context.bool_type(), *flag, "erased.drop.live")
+                            .map_err(|e| Self::erased_error(e.to_string()))?
+                            .into_int_value();
+                        let drop_block = self.context.append_basic_block(function, "erased.drop");
+                        let next_block = self
+                            .context
+                            .append_basic_block(function, "erased.drop.next");
+                        self.builder
+                            .build_conditional_branch(live, drop_block, next_block)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        self.builder.position_at_end(drop_block);
+                        self.drop_erased_value(
+                            self.erased_place_address(
+                                body,
+                                &locals,
+                                &MirErasedPlace::local(MirErasedLocal(index as u32)),
+                                &layouts,
+                                contract,
+                            )?,
+                            self.erased_layout(&code.locals[index], &layouts)?,
+                        )?;
+                        self.builder
+                            .build_unconditional_branch(next_block)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        self.builder.position_at_end(next_block);
+                    }
+                    self.builder
+                        .build_return(None)
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                }
             }
         }
-        self.builder
-            .build_return(None)
-            .map(|_| ())
-            .map_err(|e| Self::erased_error(e.to_string()))
+        Ok(())
     }
 
     /// Only the validated owned-call path supplies this payload address. The

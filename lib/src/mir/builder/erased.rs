@@ -59,8 +59,11 @@ impl MirBuilder<'_> {
                     }
                 };
                 let mut signature = MirCallableSignature::from_type_ids(
-                    &[tc.intern_type(&receiver), tc.intern_type(&packed)],
-                    tc.intern_type(ret),
+                    &[
+                        intern_backend_type(tc, &receiver),
+                        intern_backend_type(tc, &packed),
+                    ],
+                    intern_backend_type(tc, ret),
                     MirPassMode::Direct,
                 );
                 signature.params[0].pass_mode = MirPassMode::Pointer;
@@ -115,13 +118,40 @@ impl MirBuilder<'_> {
                 for ty in &body.locals {
                     collect(ty);
                 }
+                for statement in body.blocks.iter().flat_map(|block| &block.statements) {
+                    match &statement.value {
+                        MirErasedRvalue::PackagePack { plan, .. } => {
+                            if let MirPackagePayloadDescriptor::Concrete(id) =
+                                plan.payload_descriptor
+                            {
+                                collect(&MirErasedType::Concrete(id));
+                            }
+                        }
+                        MirErasedRvalue::Call { type_args, .. }
+                        | MirErasedRvalue::OpenedErasedCall { type_args, .. } => {
+                            for ty in type_args {
+                                collect(ty);
+                            }
+                        }
+                        MirErasedRvalue::Use(_)
+                        | MirErasedRvalue::Literal(_)
+                        | MirErasedRvalue::Aggregate(_)
+                        | MirErasedRvalue::NativeAggregate { .. }
+                        | MirErasedRvalue::Borrow { .. }
+                        | MirErasedRvalue::Open { .. }
+                        | MirErasedRvalue::PackageOpen { .. }
+                        | MirErasedRvalue::Reclose { .. }
+                        | MirErasedRvalue::OpenedCall { .. }
+                        | MirErasedRvalue::NativeCall { .. }
+                        | MirErasedRvalue::NativeApply { .. }
+                        | MirErasedRvalue::DictionaryCall { .. } => {}
+                    }
+                }
             }
         }
-        for table in contract
-            .vtables
-            .values()
-            .filter(|table| !table.erased_methods.is_empty())
-        {
+        // Every producer table supports later scoped opening, independently of
+        // whether its own clients select erased methods.
+        for table in contract.vtables.values() {
             needed.insert(table.concrete);
         }
         for dictionary in &dictionaries {
@@ -131,6 +161,13 @@ impl MirBuilder<'_> {
         }
         for function in functions.values() {
             for block in &function.basic_blocks {
+                for statement in &block.statements {
+                    if let StatementKind::Assign(_, Rvalue::Package(_, plan)) = &statement.kind {
+                        if let MirPackagePayloadDescriptor::Concrete(id) = plan.payload_descriptor {
+                            needed.insert(id);
+                        }
+                    }
+                }
                 let Some(Terminator::Call {
                     func: Operand::Constant(selector),
                     ..
@@ -176,7 +213,7 @@ impl MirBuilder<'_> {
                     let ty = layout
                         .instantiate_optional(&bindings, tc)
                         .expect("mono finalized caller descriptor evidence");
-                    needed.insert(tc.intern_type(&ty));
+                    needed.insert(intern_backend_type(tc, &ty));
                 }
             }
         }

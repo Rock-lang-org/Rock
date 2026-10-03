@@ -184,8 +184,27 @@ fn convert_expr(expr: HirExpr) -> Result<AcceptedHirExpr, Vec<String>> {
     let ty = expr.ty;
     let span = expr.span;
     let kind = match expr.kind {
-        HirExprKind::Open { source, binding, body } => HirExprKindFor::Open {
-            source: Box::new(convert_expr(*source)?), binding, body: convert_block(body)?,
+        HirExprKind::PackagePack { payload, proof } => HirExprKindFor::PackagePack {
+            payload: Box::new(convert_expr(*payload)?),
+            proof,
+        },
+        HirExprKind::PackageOpen {
+            source,
+            binding,
+            body,
+        } => HirExprKindFor::PackageOpen {
+            source: Box::new(convert_expr(*source)?),
+            binding,
+            body: convert_block(body)?,
+        },
+        HirExprKind::Open {
+            source,
+            binding,
+            body,
+        } => HirExprKindFor::Open {
+            source: Box::new(convert_expr(*source)?),
+            binding,
+            body: convert_block(body)?,
         },
         HirExprKind::OwnedObjectCall { owner, args, call } => HirExprKindFor::OwnedObjectCall {
             owner: Box::new(convert_expr(*owner)?),
@@ -479,8 +498,27 @@ fn unresolve_stmt(stmt: HirStmtFor<AcceptedHir>) -> HirStmt {
 #[cfg(test)]
 fn unresolve_expr(expr: AcceptedHirExpr) -> HirExpr {
     let kind = match expr.kind {
-        HirExprKindFor::Open { source, binding, body } => HirExprKindFor::Open {
-            source: Box::new(unresolve_expr(*source)), binding, body: unresolve_block(body),
+        HirExprKindFor::PackagePack { payload, proof } => HirExprKindFor::PackagePack {
+            payload: Box::new(unresolve_expr(*payload)),
+            proof,
+        },
+        HirExprKindFor::PackageOpen {
+            source,
+            binding,
+            body,
+        } => HirExprKindFor::PackageOpen {
+            source: Box::new(unresolve_expr(*source)),
+            binding,
+            body: unresolve_block(body),
+        },
+        HirExprKindFor::Open {
+            source,
+            binding,
+            body,
+        } => HirExprKindFor::Open {
+            source: Box::new(unresolve_expr(*source)),
+            binding,
+            body: unresolve_block(body),
         },
         HirExprKindFor::OwnedObjectCall { owner, args, call } => HirExprKindFor::OwnedObjectCall {
             owner: Box::new(unresolve_expr(*owner)),

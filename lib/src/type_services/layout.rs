@@ -15,6 +15,7 @@ pub enum Sizedness {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeTypeError {
     ObjectRequiresEvidence,
+    PackageRequiresEvidence,
     UnboundObjectSelf,
     WitnessRequiresScopedDescriptor,
     UnsaturatedConstructor,
@@ -49,6 +50,7 @@ impl TypeLayout {
                 result
             }
             Type::I8
+            | Type::Exists(_)
             | Type::ObjectSelf { .. }
             | Type::Witness(_)
             | Type::I16
@@ -88,6 +90,7 @@ impl TypeLayout {
             }
             result = match nested {
                 Type::Object(_) => Err(RuntimeTypeError::ObjectRequiresEvidence),
+                Type::Exists(_) => Err(RuntimeTypeError::PackageRequiresEvidence),
                 Type::ObjectSelf { .. } => Err(RuntimeTypeError::UnboundObjectSelf),
                 Type::Witness(_) => Err(RuntimeTypeError::WitnessRequiresScopedDescriptor),
                 Type::Constructor { .. } => Err(RuntimeTypeError::UnsaturatedConstructor),

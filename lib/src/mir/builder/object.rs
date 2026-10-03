@@ -29,10 +29,13 @@ impl MirBuilder<'_> {
                     MirObjectAdapterKey::PayloadDrop(ty) => {
                         let plan = payload_drop_plan(contract, tc, *ty)
                             .expect("accepted sized payload has a complete drop layout");
-                        let receiver = tc.intern_type(&Type::Reference {
-                            inner: Box::new(concrete),
-                            mutable: true,
-                        });
+                        let receiver = intern_backend_type(
+                            tc,
+                            &Type::Reference {
+                                inner: Box::new(concrete),
+                                mutable: true,
+                            },
+                        );
                         let unit = tc.intern_type(&Type::Unit);
                         (
                             MirObjectAdapter::PayloadDrop(plan),
@@ -59,7 +62,7 @@ impl MirBuilder<'_> {
                             }
                         };
                         signature.params[0] = MirParamAbi {
-                            semantic_ty: tc.intern_type(&receiver),
+                            semantic_ty: intern_backend_type(tc, &receiver),
                             pass_mode: MirPassMode::Pointer,
                         };
                         (
@@ -84,7 +87,10 @@ impl MirBuilder<'_> {
                             .signature
                             .clone();
                         signature.params[0] = MirParamAbi {
-                            semantic_ty: tc.intern_type(&Type::Pointer(Box::new(concrete))),
+                            semantic_ty: intern_backend_type(
+                                tc,
+                                &Type::Pointer(Box::new(concrete)),
+                            ),
                             pass_mode: MirPassMode::Pointer,
                         };
                         (

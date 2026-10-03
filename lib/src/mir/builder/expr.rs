@@ -84,8 +84,39 @@ impl<'a> MirBuilder<'a> {
         let span = Some(expr.span.clone());
 
         match &expr.kind {
-            HirExprKind::Open { .. } => {
+            HirExprKind::Open { .. } | HirExprKind::PackageOpen { .. } => {
                 panic!("scoped witness body reached concrete MIR builder")
+            }
+            HirExprKind::PackagePack { payload, proof } => {
+                let local = self.new_local_from_expr(payload.ty.clone(), payload);
+                self.emit_storage_live(local, Some(payload.span.clone()));
+                let place = Place {
+                    local,
+                    projection: Vec::new(),
+                };
+                self.lower_expr(payload, place.clone());
+                let operand = self.operand_for_place(&payload.ty, place, false);
+                let Type::Exists(package) = &expr.ty else {
+                    unreachable!("accepted package construction target")
+                };
+                let object = crate::type_services::substitution::existential_object_schema(package)
+                    .expect("accepted existential bounds");
+                let object = self.type_id_for(&Type::Object(Box::new(object)));
+                let witness = self.type_id_for(&proof.witness);
+                let table = self
+                    .vtables
+                    .iter()
+                    .find(|(_, table)| table.object == object && table.concrete == witness)
+                    .map(|(id, _)| *id)
+                    .expect("mono materialized package witness table");
+                let plan = crate::mir::MirPackagePackPlan {
+                    package: self.type_id_for(&expr.ty),
+                    witness: crate::mir::MirPackageWitnessEvidence::Concrete { witness, table },
+                    payload_descriptor: crate::mir::MirPackagePayloadDescriptor::Concrete(
+                        self.type_id_for(&payload.ty),
+                    ),
+                };
+                self.emit_assign(dest, Rvalue::Package(operand, plan), span);
             }
             HirExprKind::OwnedObjectCall { owner, args, call } => {
                 let owner_ty = self.type_id_for(&owner.ty);
@@ -864,7 +895,27 @@ impl<'a> MirBuilder<'a> {
                 let direct_move_receiver_call =
                     matches!(receiver_mode, Some(crate::types::ReceiverMode::Move));
 
-                let func_operand = if let Some(callable) = callable {
+                let scoped_entry = match target {
+                    Some(crate::hir::HirCallTarget::Function(id)) => {
+                        self.scoped_entries.get(id).cloned()
+                    }
+                    // Mono resolves the wrapper's function call to its exact
+                    // empty-substitution instance before MIR lowering.
+                    Some(crate::hir::HirCallTarget::Instance(instance)) => self
+                        .callable_instances_by_def_id
+                        .iter()
+                        .find(|(_, id)| *id == instance)
+                        .and_then(|(definition, _)| self.scoped_entries.get(definition))
+                        .cloned(),
+                    _ => None,
+                };
+                let func_operand = if let Some(key) = scoped_entry {
+                    Operand::Constant(Constant::ErasedCall(crate::mir::MirErasedCall {
+                        target: crate::mir::MirErasedCallTarget::Direct(key),
+                        type_args: Vec::new(),
+                        dictionaries: Vec::new(),
+                    }))
+                } else if let Some(callable) = callable {
                     Operand::Constant(Constant::Callable(callable))
                 } else {
                     self.lower_indirect_callee(func)

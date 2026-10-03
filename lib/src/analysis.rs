@@ -549,6 +549,11 @@ fn find_local_in_block(block: &AcceptedHirBlock, local: HirLocalId) -> Option<(S
 }
 
 fn find_local_in_expr(expr: &AcceptedHirExpr, local: HirLocalId) -> Option<(String, Type)> {
+    if let HirExprKindFor::PackageOpen { binding, .. } = &expr.kind {
+        if binding.value.local_id == local {
+            return Some((binding.value.name.clone(), binding.value.ty.clone()));
+        }
+    }
     if let HirExprKindFor::Open { binding, .. } = &expr.kind {
         if binding.value.local_id == local {
             return Some((binding.value.name.clone(), binding.value.ty.clone()));
@@ -781,6 +786,11 @@ fn find_witness_object_in_expr(
     expr: &AcceptedHirExpr,
     witness: crate::types::WitnessId,
 ) -> Option<crate::types::ObjectType> {
+    if let HirExprKindFor::PackageOpen { binding, .. } = &expr.kind {
+        if binding.witness == witness {
+            return binding.object_schema().ok();
+        }
+    }
     if let HirExprKindFor::Open { binding, .. } = &expr.kind {
         if binding.witness == witness {
             return Some(binding.object.clone());
@@ -800,11 +810,9 @@ fn find_witness_object_in_expr(
 
 fn visit_expr_children(expr: &AcceptedHirExpr, visit: &mut impl FnMut(HirChild<'_>)) {
     match &expr.kind {
-        HirExprKindFor::Open { source, body, .. } => {
-            visit(HirChild::Expr(source));
-            visit(HirChild::Block(body));
-        }
-        HirExprKindFor::Open { source, body, .. } => {
+        HirExprKindFor::PackagePack { payload, .. } => visit(HirChild::Expr(payload)),
+        HirExprKindFor::Open { source, body, .. }
+        | HirExprKindFor::PackageOpen { source, body, .. } => {
             visit(HirChild::Expr(source));
             visit(HirChild::Block(body));
         }
@@ -906,6 +914,224 @@ mod tests {
         .unwrap()
     }
 
+    const CALLABLE_PROTOCOL: &str = r#"
+lang fn_once
+< trait Call Args, Ret
+    lang output
+    type Output
+    lang method
+    ~@invoke: Args -> Ret
+lang fn_mut
+< trait CallMut Args, Ret where Self: Call Args, Ret
+    lang output
+    type Output
+    lang method
+    ^@invoke_mut: Args -> Ret
+"#;
+
+    fn visit_block_expressions(
+        block: &crate::hir::AcceptedHirBlock,
+        visit: &mut impl FnMut(&crate::hir::AcceptedHirExpr),
+    ) {
+        for statement in &block.stmts {
+            match statement {
+                crate::hir::HirStmtFor::Let { value, .. }
+                | crate::hir::HirStmtFor::Expr(value)
+                | crate::hir::HirStmtFor::Return(Some(value))
+                | crate::hir::HirStmtFor::Break(Some(value)) => visit_expression(value, visit),
+                _ => {}
+            }
+        }
+    }
+
+    fn visit_expression(
+        expression: &crate::hir::AcceptedHirExpr,
+        visit: &mut impl FnMut(&crate::hir::AcceptedHirExpr),
+    ) {
+        visit(expression);
+        super::visit_expr_children(expression, &mut |child| match child {
+            super::HirChild::Expr(expression) => visit_expression(expression, visit),
+            super::HirChild::Block(block) => visit_block_expressions(block, visit),
+        });
+    }
+
+    #[test]
+    fn analysis_fold_returns_preserve_source_and_nested_callback_types() {
+        use crate::hir::HirExprKindFor;
+        use crate::types::Type;
+
+        let source = format!(
+            "{CALLABLE_PROTOCOL}{}",
+            r#"
+lang control_flow
+< enum Signal Stop, State
+    lang break
+    Halt Stop
+    lang continue
+    More State
+lang try
+< trait Propagate
+    lang output
+    type Value
+    lang residual
+    type Error
+    lang branch
+    ~@split: Signal Self::Error, Self::Value
+lang from_residual
+< trait Lift E
+    lang method
+    lift: E -> Self
+lang fold
+< trait Each A
+    lang method
+    ~@scan: S -> B -> Signal R, B where S: CallMut (B, A), (Signal R, B)
+struct Once
+    < value: I64
+impl Each I64 for Once
+    ~@scan = mut step, initial -> step (initial, self.value)
+main = ->
+    source = Once
+        value: 42
+    for outer in source
+        local = -> return outer
+        nested = Once
+            value: local!
+        for inner in nested
+            while false
+                return inner
+            return inner
+    0
+"#
+        );
+        let analysis = analyze(&source);
+        let main = analysis
+            .hir
+            .program
+            .functions
+            .values()
+            .find(|function| function.name == "main")
+            .unwrap();
+        assert_eq!(main.ret_type, Type::I64);
+        let protocol = analysis
+            .hir
+            .program
+            .language_items
+            .try_protocol
+            .as_ref()
+            .unwrap();
+        let mut depths = Vec::new();
+        let mut local_return = None;
+        visit_block_expressions(&main.body, &mut |expression| {
+            if let HirExprKindFor::Lambda { params, .. } = &expression.kind {
+                let Type::Function { ret, .. } = &expression.ty else {
+                    panic!("lambda requires a finalized function type");
+                };
+                if params
+                    .first()
+                    .is_some_and(|param| param.name == "$fold_pair")
+                {
+                    let mut payload = ret.as_ref();
+                    let mut depth = 0;
+                    while let Type::Enum { id, args } = payload {
+                        assert_eq!(*id, protocol.control_flow_enum_id);
+                        assert_eq!(args[1], Type::Unit);
+                        payload = &args[0];
+                        depth += 1;
+                    }
+                    assert_eq!(*payload, Type::I64);
+                    depths.push(depth);
+                } else {
+                    local_return = Some(ret.as_ref().clone());
+                }
+            }
+        });
+        assert_eq!(depths, vec![2, 4]);
+        assert_eq!(local_return, Some(Type::I64));
+    }
+
+    #[test]
+    fn analysis_contextual_callbacks_see_deferred_reference_sources() {
+        use crate::hir::HirExprKindFor;
+        use crate::types::Type;
+
+        let source = format!(
+            "{CALLABLE_PROTOCOL}{}",
+            r#"
+dispatch = mut target, callback ->
+    callback target
+    0
+trait Inspect A
+    ~@item: A
+struct Number
+    < value: I64
+impl Inspect &I64 for &Number
+    ~@item = -> &self.value
+visit: C -> F -> () where C: Inspect T, F: CallMut T, ()
+visit = source, mut callback !-> callback source.item!
+main = !->
+    mut value = 0
+    dispatch &mut value, (slot -> *slot = 41)
+    number = Number
+        value: 42
+    visit &number, (element !-> *element)
+"#
+        );
+        let analysis = analyze(&source);
+        let main = analysis
+            .hir
+            .program
+            .functions
+            .values()
+            .find(|function| function.name == "main")
+            .unwrap();
+        let mut parameter_types = Vec::new();
+        visit_block_expressions(&main.body, &mut |expression| {
+            if let HirExprKindFor::Lambda { params, .. } = &expression.kind {
+                parameter_types.extend(params.iter().map(|param| param.ty.clone()));
+            }
+        });
+        assert_eq!(
+            parameter_types,
+            vec![
+                Type::Reference {
+                    mutable: true,
+                    inner: Box::new(Type::I64),
+                },
+                Type::Reference {
+                    mutable: false,
+                    inner: Box::new(Type::I64),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn analysis_contextual_callback_still_rejects_scalar_dereference() {
+        let source = format!(
+            "{CALLABLE_PROTOCOL}{}",
+            r#"
+dispatch = target, callback ->
+    callback target
+    0
+main = ->
+    dispatch true, (slot -> *slot)
+    0
+"#
+        );
+        let path = PathBuf::from("/virtual/main.rk");
+        let diagnostics = crate::analyze(&Config {
+            entry_file: path.clone(),
+            source_providers: vec![SourceProvider::Virtual { path, text: source }],
+            no_prelude: true,
+            no_std: true,
+            ..Config::default()
+        })
+        .unwrap_err();
+        assert!(diagnostics.0.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("Cannot dereference non-pointer type: Bool")));
+    }
+
     #[test]
     fn analysis_reports_inferred_local_types_and_function_signatures() {
         let source = "id = value -> value\n\nmain = ->\n    answer = id 42\n    answer\n";
@@ -980,6 +1206,30 @@ main = ->
         assert!(parameter.contents.contains("T: Read"), "{parameter:?}");
         assert!(!parameter.contents.contains("trait object"));
 
+        let function = analysis
+            .hir
+            .program
+            .functions
+            .values()
+            .find(|function| function.name == "read_static")
+            .unwrap();
+        let generic = function
+            .generic_params
+            .iter()
+            .find(|parameter| parameter.name == "T")
+            .unwrap();
+        for offset in [
+            source.find("T ->").unwrap(),
+            source.find("T: Read").unwrap(),
+        ] {
+            let (symbol, _) = analysis.hir.source_map.symbol_at(&path, offset).unwrap();
+            assert_eq!(symbol, crate::source_map::SourceSymbol::Generic(generic.id));
+            assert_eq!(
+                analysis.hover(&path, offset).unwrap().contents,
+                parameter.contents
+            );
+        }
+
         let member = analysis
             .hover(&path, source.rfind("read!").unwrap())
             .unwrap();
@@ -1019,6 +1269,40 @@ main = ->
     }
 
     #[test]
+    fn analysis_keeps_shadowed_opening_bounds_distinct() {
+        let source = r#"
+trait First
+    @first: I64
+trait Second
+    @second: I64
+inspect: &First -> &Second -> I64
+inspect = first, second ->
+    open first as T, value
+        result = value.first!
+        open second as T, value
+            ~I64Add result, (value.second!)
+main = -> 0
+"#;
+        let analysis = analyze(source);
+        let path = PathBuf::from("/virtual/main.rk");
+        for (expression, bound, other_bound) in [
+            ("value.first!", "First", "Second"),
+            ("value.second!", "Second", "First"),
+        ] {
+            let hover = analysis
+                .hover(&path, source.find(expression).unwrap())
+                .unwrap();
+            assert!(
+                hover
+                    .contents
+                    .contains(&format!("scoped witness of {bound}")),
+                "{hover:?}"
+            );
+            assert!(!hover.contents.contains(other_bound), "{hover:?}");
+        }
+    }
+
+    #[test]
     fn analysis_errors_keep_virtual_source_for_lsp_conversion() {
         let path = PathBuf::from("/virtual/error.rk");
         let source = "main = ->\n    `\n";
@@ -1038,5 +1322,83 @@ main = ->
             .source
             .as_ref()
             .is_some_and(|source| { source.text == "main = ->\n    `\n" })));
+    }
+
+    #[test]
+    fn call_expression_ranges_are_distinct_from_exact_member_references() {
+        use crate::hir::{HirExprKindFor, HirStmtFor};
+        use crate::source_map::SourceSymbol;
+
+        let source = r#"
+struct Number
+    < value: I64
+impl Number
+    @read: I64
+    @read = -> self.value
+    @add: I64 -> I64 -> I64
+    @add = left, right -> ~I64Add left, right
+ordinary = -> 42
+main = !->
+    value = Number
+        value: 7
+    zero = value.read!
+    answer = value.add 20, 22
+    plain = ordinary!
+"#;
+        let analysis = analyze(source);
+        let path = PathBuf::from("/virtual/main.rk");
+        let function = analysis
+            .hir
+            .program
+            .functions
+            .values()
+            .find(|function| function.name == "main")
+            .unwrap();
+        for (binding, expected, member) in [
+            ("zero", "value.read!", "read"),
+            ("answer", "value.add 20, 22", "add"),
+            ("plain", "ordinary!", "ordinary"),
+        ] {
+            let value = function
+                .body
+                .stmts
+                .iter()
+                .find_map(|statement| match statement {
+                    HirStmtFor::Let { name, value, .. } if name == binding => Some(value),
+                    _ => None,
+                })
+                .unwrap();
+            let start = source.find(expected).unwrap();
+            assert_eq!(
+                value.span,
+                crate::lexer::Span::new(path.clone(), start, start + expected.len())
+            );
+            assert_eq!(&source[value.span.start..value.span.end], expected);
+            let definition = match &value.kind {
+                HirExprKindFor::MethodCall(_, _, _, _, target) => target.method_id().unwrap(),
+                HirExprKindFor::Call(_, _, Some(crate::hir::HirCallTarget::Function(id))) => *id,
+                other => panic!("expected selected call: {other:?}"),
+            };
+            let references = analysis
+                .hir
+                .source_map
+                .reference_spans(&SourceSymbol::Definition(definition))
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(references.len(), 1, "{binding}: {references:?}");
+            assert_eq!(references[0].file_path, path);
+            assert_eq!(&source[references[0].start..references[0].end], member);
+            let hover = analysis.hover(&path, references[0].start).unwrap();
+            assert_eq!(hover.kind, super::HoverKind::Function);
+            assert_eq!(hover.span, references[0]);
+            if binding != "plain" {
+                let (symbol, receiver_span) =
+                    analysis.hir.source_map.symbol_at(&path, start).unwrap();
+                assert!(
+                    matches!(symbol, SourceSymbol::Local { owner, .. } if owner == function.id)
+                );
+                assert_eq!(&source[receiver_span.start..receiver_span.end], "value");
+            }
+        }
     }
 }

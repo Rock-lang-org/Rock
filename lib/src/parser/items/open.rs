@@ -2,7 +2,7 @@ use crate::ast::{Ident, Open};
 use crate::lexer::TokenType;
 use crate::parser::engine::*;
 
-use super::{block, disallow_multiline_fn_call, expression, get_span, ident};
+use super::{block, disallow_multiline_fn_call, expression, get_span, ident, seek};
 
 /// Recognize the complete contextual header before consuming `open`.
 /// The source slice prevents its delimiter `as` from becoming a cast suffix.

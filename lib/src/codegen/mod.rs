@@ -303,6 +303,7 @@ pub(crate) struct CodegenEnumVariantLayout {
 }
 
 pub(crate) struct CodeGen<'ctx> {
+    package_schemas: std::collections::BTreeMap<TypeId, crate::mir::MirPackageSchema>,
     context: &'ctx Context,
     module: Module<'ctx>,
     builder: Builder<'ctx>,
@@ -419,6 +420,7 @@ impl<'ctx> CodeGen<'ctx> {
             erased_descriptors: Default::default(),
             erased_dictionaries: Default::default(),
             erased_contract: Default::default(),
+            package_schemas: Default::default(),
             object_schemas: Default::default(),
             owned_object_calls: Default::default(),
             object_vtables: Default::default(),
@@ -477,9 +479,11 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(crate) fn intern_structural_type(&mut self, ty: &Type) -> TypeId {
-        self.type_context
-            .get_or_insert_with(crate::type_context::TypeContext::new)
-            .intern_type(ty)
+        crate::mir::intern_backend_type(
+            self.type_context
+                .get_or_insert_with(crate::type_context::TypeContext::new),
+            ty,
+        )
     }
 
     pub(crate) fn resolve_mir_callable_symbol(
@@ -618,6 +622,7 @@ impl<'ctx> CodeGen<'ctx> {
             .collect();
         self.drop_glue_callables_by_type =
             mir.backend_contract.drop_glue.clone().into_iter().collect();
+        self.package_schemas = mir.backend_contract.packages.clone();
 
         self.register_mir_nominal_layouts(&mir.backend_contract);
         self.validate_mir_backend_contract(mir)?;
@@ -630,7 +635,6 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(CodegenError::internalize)?;
         self.emit_object_adapters(&mir.backend_contract)?;
         self.emit_erased_program(&mir.backend_contract)?;
-        self.emit_object_vtables(&mir.backend_contract)?;
 
         Ok(())
     }
@@ -821,6 +825,15 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 let place_ty = self.mir_place_type_id_for_contract_validation(function, place)?;
+                if mir.backend_contract.packages.contains_key(&place_ty)
+                    && crate::mir::package_schema_is_valid(
+                        &mir.backend_contract,
+                        &mir.type_context,
+                        place_ty,
+                    )
+                {
+                    continue;
+                }
                 let Some(key) = mir.backend_contract.drop_glue.get(&place_ty) else {
                     if !Self::mir_place_is_projected_return_place(function, place)
                         && self.mir_drop_without_glue_is_noop(place_ty)

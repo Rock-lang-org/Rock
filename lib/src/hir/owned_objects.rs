@@ -422,7 +422,6 @@ mod tests {
     use super::*;
 
     fn program() -> HirProgramFor<AcceptedHir> {
-        let path = std::env::temp_dir().join("rock_owned_hir/main.rk");
         let source = r#"
 lang sized
 < trait Layout
@@ -457,6 +456,11 @@ consume_opened = owner ->
         value.take!
 main = !-> ()
 "#;
+        program_from_source(source)
+    }
+
+    fn program_from_source(source: &str) -> HirProgramFor<AcceptedHir> {
+        let path = std::env::temp_dir().join("rock_owned_hir/main.rk");
         crate::analyze(&crate::Config {
             entry_file: path.clone(),
             no_std: true,
@@ -471,6 +475,160 @@ main = !-> ()
         .hir
         .program
         .into_program()
+    }
+
+    #[test]
+    fn forward_owner_protocol_rebinds_the_complete_relaxed_payload_scheme() {
+        let contract = r#"
+lang object_owner
+< trait Transport State for F _
+    lang owner_into_parts
+    unsafe split: F T -> (*T, State) where T: ?Layout
+    lang owner_from_parts
+    unsafe build: *T -> State -> F T where T: ?Layout
+"#;
+        for forward in [false, true] {
+            let source = format!(
+                r#"
+lang sized
+< trait Layout
+{before}
+struct Own (T: ?Layout)
+    < raw: *T
+impl Transport I64 for Own
+    unsafe split = owner ->
+        parts = (owner.raw, 0)
+        ~Forget owner
+        parts
+    unsafe build = pointer, _ -> Own
+        raw: pointer
+{after}
+lang object_owner_unique
+< trait Unique State for F _
+    lang owner_release
+    unsafe release: *U8 -> State -> ()
+impl Unique I64 for Own
+    unsafe release = _, _ !-> ()
+trait Take
+    ~@take: I64
+consume: Own Take -> I64
+consume = owner -> owner.take!
+main = !-> ()
+"#,
+                before = if forward { "" } else { contract },
+                after = if forward { contract } else { "" }
+            );
+            let program = program_from_source(&source);
+            let transport = program.language_items.object_owner.as_ref().unwrap();
+            let implementation = program
+                .impls
+                .values()
+                .find(|implementation| implementation.trait_id == Some(transport.trait_id))
+                .unwrap();
+            for name in ["split", "build"] {
+                let method = &implementation.methods[name];
+                let [parameter] = method.generic_params.as_slice() else {
+                    panic!("expected one payload parameter");
+                };
+                assert_eq!(parameter.id.owner, method.id, "forward={forward}, {name}");
+                assert!(parameter.maybe_unsized);
+                assert!(method.generic_bounds.relaxed_sized.contains(&parameter.id));
+                assert!(method
+                    .generic_bounds
+                    .get(&parameter.id)
+                    .is_none_or(Vec::is_empty));
+                for ty in method
+                    .params
+                    .iter()
+                    .map(|parameter| &parameter.ty)
+                    .chain(std::iter::once(&method.ret_type))
+                {
+                    assert!(!crate::type_services::visit::type_any(
+                        ty,
+                        |ty| matches!(ty, Type::Generic(id) if id.owner == transport.into_parts_id || id.owner == transport.from_parts_id)
+                    ));
+                }
+            }
+            let mut narrowed = program.clone();
+            let split = narrowed
+                .impls
+                .get_mut(&implementation.id)
+                .unwrap()
+                .methods
+                .get_mut("split")
+                .unwrap();
+            split.generic_params[0].maybe_unsized = false;
+            split.generic_bounds.relaxed_sized.clear();
+            let errors = AcceptedHirProgram::revalidate_for_test(narrowed).unwrap_err();
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.contains("unrestricted ?Sized payload contract")),
+                "{errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn closed_owned_call_keeps_static_constructor_authority_codegen_concrete() {
+        let program = program();
+        let consume = program
+            .functions
+            .values()
+            .find(|function| function.name == "consume")
+            .unwrap();
+        assert!(consume.generic_params.is_empty());
+        assert!(hir_function_is_codegen_concrete(consume));
+        let opened = program
+            .functions
+            .values()
+            .find(|function| function.name == "consume_opened")
+            .unwrap();
+        assert!(!hir_function_is_codegen_concrete(opened));
+        let HirStmtFor::Expr(expression) = &consume.body.stmts[0] else {
+            panic!("expected owned call");
+        };
+        let HirExprKindFor::OwnedObjectCall { call, .. } = &expression.kind else {
+            panic!("expected owned call");
+        };
+        for operation in [&call.into_parts, &call.release] {
+            assert!(matches!(operation.owner_ty, Type::Constructor { .. }));
+            assert!(
+                !crate::type_services::facts::TypeFacts::is_codegen_concrete(&operation.owner_ty)
+            );
+        }
+
+        for mutation in 0..6 {
+            let mut unresolved = consume.clone();
+            let HirStmtFor::Expr(expression) = &mut unresolved.body.stmts[0] else {
+                unreachable!();
+            };
+            let HirExprKindFor::OwnedObjectCall { owner, call, .. } = &mut expression.kind else {
+                unreachable!();
+            };
+            let generic = Type::Generic(crate::types::GenericParamId {
+                owner: consume.id,
+                index: 0,
+            });
+            match mutation {
+                0 => call.state = call.into_parts.owner_ty.clone(),
+                1 => call.object = generic.clone(),
+                2 => owner.ty = generic.clone(),
+                3 => call.into_parts.owner_ty = generic.clone(),
+                4 => call.release.owner_ty = generic.clone(),
+                _ => call.method.method_substitution.push(HirTypeBinding {
+                    param: crate::types::GenericParamId {
+                        owner: consume.id,
+                        index: 0,
+                    },
+                    ty: generic,
+                }),
+            }
+            assert!(
+                !hir_function_is_codegen_concrete(&unresolved),
+                "mutation {mutation}"
+            );
+        }
     }
 
     #[test]
@@ -541,6 +699,15 @@ main = !-> ()
                 }
             }
             let errors = AcceptedHirProgram::revalidate_for_test(forged).unwrap_err();
+            if mutation == 2 {
+                assert!(
+                    errors.iter().any(|error| error.contains(
+                        "consuming object dispatch requires an owning value, not a reference or raw pointer"
+                    )),
+                    "{errors:?}"
+                );
+                continue;
+            }
             assert!(
                 errors
                     .iter()

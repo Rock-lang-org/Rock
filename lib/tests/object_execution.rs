@@ -6,14 +6,23 @@ static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 fn configuration(source: &str) -> Config {
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    let directory = std::env::temp_dir().join(format!("rock_object_execution_{}_{}", std::process::id(), id));
+    let directory = std::env::temp_dir().join(format!(
+        "rock_object_execution_{}_{}",
+        std::process::id(),
+        id
+    ));
     std::fs::create_dir_all(&directory).unwrap();
     let entry = directory.join("main.rk");
     Config {
-        entry_file: entry.clone(), output_dir: directory,
+        entry_file: entry.clone(),
+        output_dir: directory,
         current_crate_name: Some("object_execution".to_string()),
-        no_std: true, no_prelude: true,
-        source_providers: vec![SourceProvider::Virtual { path: entry, text: source.to_string() }],
+        no_std: true,
+        no_prelude: true,
+        source_providers: vec![SourceProvider::Virtual {
+            path: entry,
+            text: source.to_string(),
+        }],
         ..Config::default()
     }
 }
@@ -21,8 +30,14 @@ fn configuration(source: &str) -> Config {
 fn run(source: &str) -> i32 {
     let config = configuration(source);
     rock_lib::compile(&config).unwrap();
-    let result = std::process::Command::new(config.output_dir.join("main")).output().unwrap();
-    assert!(result.stderr.is_empty(), "{}", String::from_utf8_lossy(&result.stderr));
+    let result = std::process::Command::new(config.output_dir.join("main"))
+        .output()
+        .unwrap();
+    assert!(
+        result.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
     let code = result.status.code().expect("normal process exit");
     std::fs::remove_dir_all(&config.output_dir).unwrap();
     code
@@ -30,7 +45,8 @@ fn run(source: &str) -> i32 {
 
 #[test]
 fn source_objects_dispatch_two_implementations_and_a_default() {
-    assert_eq!(run(r#"
+    assert_eq!(
+        run(r#"
 trait Value
     @value: I64
     @next: I64
@@ -51,12 +67,15 @@ main = ->
     second = Second
         inner: 21
     ~I64Add (read &first), (read &second)
-"#), 42);
+"#),
+        42
+    );
 }
 
 #[test]
 fn source_mutable_object_updates_the_original_payload() {
-    assert_eq!(run(r#"
+    assert_eq!(
+        run(r#"
 trait Counter
     ^@bump: ()
     @read: I64
@@ -72,12 +91,15 @@ main = ->
     object.bump!
     object.bump!
     object.read!
-"#), 42);
+"#),
+        42
+    );
 }
 
 #[test]
 fn source_borrowed_self_result_preserves_an_upcastable_view() {
-    assert_eq!(run(r#"
+    assert_eq!(
+        run(r#"
 trait Base
     @read: I64
 trait Derived where Self: Base
@@ -95,12 +117,15 @@ main = ->
     another = derived.view!
     base: &Base = another
     base.read!
-"#), 42);
+"#),
+        42
+    );
 }
 
 #[test]
 fn source_object_cannot_hide_an_escaping_stack_borrow() {
-    let config = configuration(r#"
+    let config = configuration(
+        r#"
 trait Value
     @value: I64
 struct Number
@@ -116,15 +141,25 @@ escape = ->
 main = ->
     object = escape!
     object.value!
-"#);
-    let diagnostics = rock_lib::compile(&config).expect_err("an object must preserve its payload borrow");
-    assert!(diagnostics.0.iter().any(|diagnostic| diagnostic.message.contains("reference") || diagnostic.message.contains("borrow")), "{diagnostics:?}");
+"#,
+    );
+    let diagnostics =
+        rock_lib::compile(&config).expect_err("an object must preserve its payload borrow");
+    assert!(
+        diagnostics
+            .0
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("reference")
+                || diagnostic.message.contains("borrow")),
+        "{diagnostics:?}"
+    );
     std::fs::remove_dir_all(config.output_dir).unwrap();
 }
 
 #[test]
 fn source_forward_inferred_coercion_reaches_virtual_execution() {
-    assert_eq!(run(r#"
+    assert_eq!(
+        run(r#"
 trait Value
     @value: I64
 struct Number
@@ -138,5 +173,7 @@ main = ->
 make = -> Number
     inner: 42
 borrow = value -> value
-"#), 42);
+"#),
+        42
+    );
 }

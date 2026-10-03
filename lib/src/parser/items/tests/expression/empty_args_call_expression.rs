@@ -29,7 +29,10 @@ fn empty_args_call_expression() {
                     },
                 })],
             }),
-            secondaries: Some(vec![SecondaryExpr::Arguments(vec![])]),
+            secondaries: Some(vec![SecondaryExpr::Arguments(
+                vec![],
+                Span::new("/test.rk".into(), 3, input.len())
+            )]),
             type_annotation: None,
         })),
     );
@@ -67,16 +70,26 @@ fn spaced_unit_arg_call_expression() {
             let secondaries = primary.secondaries.as_ref().expect("Expected secondaries");
             assert_eq!(secondaries.len(), 1);
             match &secondaries[0] {
-                SecondaryExpr::Arguments(args) => {
-                    assert_eq!(args.len(), 1, "Expected exactly one argument (the unit value)");
+                SecondaryExpr::Arguments(args, _) => {
+                    assert_eq!(
+                        args.len(),
+                        1,
+                        "Expected exactly one argument (the unit value)"
+                    );
                     // Verify the argument is a unit value (empty tuple)
                     match &args[0].arg {
                         Expression::UnaryExpr(UnaryExpr::PrimaryExpr(arg_primary)) => {
                             match &arg_primary.operand {
                                 Operand::Tuple(tuple) => {
-                                    assert!(tuple.elements.is_empty(), "Expected empty tuple for unit value");
+                                    assert!(
+                                        tuple.elements.is_empty(),
+                                        "Expected empty tuple for unit value"
+                                    );
                                 }
-                                _ => panic!("Expected Tuple operand for unit value, got {:?}", arg_primary.operand),
+                                _ => panic!(
+                                    "Expected Tuple operand for unit value, got {:?}",
+                                    arg_primary.operand
+                                ),
                             }
                         }
                         _ => panic!("Expected UnaryExpr with PrimaryExpr for argument"),
@@ -122,7 +135,7 @@ fn stuck_parens_with_unit_arg() {
             let secondaries = primary.secondaries.as_ref().expect("Expected secondaries");
             assert_eq!(secondaries.len(), 1);
             match &secondaries[0] {
-                SecondaryExpr::Arguments(args) => {
+                SecondaryExpr::Arguments(args, _) => {
                     assert_eq!(args.len(), 1, "Expected exactly one argument");
                     // The argument `(())` is a parenthesized expression containing unit value
                     match &args[0].arg {
@@ -130,23 +143,34 @@ fn stuck_parens_with_unit_arg() {
                             match &arg_primary.operand {
                                 // Direct tuple (for `run ()` case)
                                 Operand::Tuple(tuple) => {
-                                    assert!(tuple.elements.is_empty(), "Expected empty tuple for unit value");
+                                    assert!(
+                                        tuple.elements.is_empty(),
+                                        "Expected empty tuple for unit value"
+                                    );
                                 }
                                 // Parenthesized expression containing tuple (for `run(())` case)
-                                Operand::Expression(inner_expr) => {
-                                    match inner_expr.as_ref() {
-                                        Expression::UnaryExpr(UnaryExpr::PrimaryExpr(inner_primary)) => {
-                                            match &inner_primary.operand {
-                                                Operand::Tuple(tuple) => {
-                                                    assert!(tuple.elements.is_empty(), "Expected empty tuple for unit value");
-                                                }
-                                                _ => panic!("Expected Tuple inside parenthesized expression"),
-                                            }
+                                Operand::Expression(inner_expr) => match inner_expr.as_ref() {
+                                    Expression::UnaryExpr(UnaryExpr::PrimaryExpr(
+                                        inner_primary,
+                                    )) => match &inner_primary.operand {
+                                        Operand::Tuple(tuple) => {
+                                            assert!(
+                                                tuple.elements.is_empty(),
+                                                "Expected empty tuple for unit value"
+                                            );
                                         }
-                                        _ => panic!("Expected PrimaryExpr inside parenthesized expression"),
-                                    }
-                                }
-                                _ => panic!("Expected Tuple or Expression operand, got {:?}", arg_primary.operand),
+                                        _ => {
+                                            panic!("Expected Tuple inside parenthesized expression")
+                                        }
+                                    },
+                                    _ => panic!(
+                                        "Expected PrimaryExpr inside parenthesized expression"
+                                    ),
+                                },
+                                _ => panic!(
+                                    "Expected Tuple or Expression operand, got {:?}",
+                                    arg_primary.operand
+                                ),
                             }
                         }
                         _ => panic!("Expected UnaryExpr with PrimaryExpr for argument"),

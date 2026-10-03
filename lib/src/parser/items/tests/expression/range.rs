@@ -72,7 +72,7 @@ fn inline_callback_does_not_capture_preceding_call_arguments() {
             .unwrap()
             .into_iter()
             .find_map(|secondary| match secondary {
-                SecondaryExpr::Arguments(arguments) => Some(arguments),
+                SecondaryExpr::Arguments(arguments, _) => Some(arguments),
                 _ => None,
             })
             .unwrap();
@@ -99,7 +99,7 @@ fn parenthesized_callback_keeps_multiple_parameters() {
     let Expression::UnaryExpr(UnaryExpr::PrimaryExpr(call)) = parsed else {
         panic!("expected call");
     };
-    let SecondaryExpr::Arguments(arguments) = &call.secondaries.as_ref().unwrap()[0] else {
+    let SecondaryExpr::Arguments(arguments, _) = &call.secondaries.as_ref().unwrap()[0] else {
         panic!("expected arguments");
     };
     assert_eq!(arguments.len(), 1);

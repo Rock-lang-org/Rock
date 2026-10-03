@@ -184,7 +184,11 @@ impl<'ctx> CodeGen<'ctx> {
                 self.erased_descriptors
                     .get(&table.concrete)
                     .map(|descriptor| descriptor.as_pointer_value())
-                    .unwrap_or_else(|| ptr.const_null())
+                    .ok_or_else(|| {
+                        CodegenError::backend_contract(
+                            "object producer table requires its concrete witness descriptor",
+                        )
+                    })?
                     .into(),
                 ptr.const_array(
                     &table
@@ -301,12 +305,16 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| CodegenError::from(e.to_string()))
     }
 
-    fn virtual_function_type(&self, slot: &MirObjectSlot) -> FunctionType<'ctx> {
+    pub(super) fn virtual_function_type(&self, slot: &MirObjectSlot) -> FunctionType<'ctx> {
         let mut params: Vec<BasicMetadataTypeEnum<'ctx>> =
             vec![self.context.ptr_type(AddressSpace::default()).into()];
-        params.extend(slot.signature.params.iter().skip(1).map(|p| {
-            BasicMetadataTypeEnum::from(self.llvm_type(&self.structural_type_for(p.semantic_ty)))
-        }));
+        params.extend(
+            slot.signature
+                .params
+                .iter()
+                .skip(1)
+                .map(|parameter| self.llvm_param_type(parameter)),
+        );
         if matches!(
             slot.result,
             crate::mir::MirObjectResult::BorrowedSelf { .. }

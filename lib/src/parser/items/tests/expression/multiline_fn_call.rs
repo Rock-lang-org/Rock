@@ -32,76 +32,79 @@ fn multiline_fn_call() {
                     },
                 })],
             }),
-            secondaries: Some(vec![SecondaryExpr::Arguments(vec![
-                Argument {
-                    arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                        operand: Operand::Ident(IdentifierPath {
-                            path: vec![IdentOrType::Ident(Ident {
-                                name: "bar".to_string(),
-                                span: Span {
-                                    start: 4,
-                                    end: 7,
-                                    file_path: PathBuf::from("/test.rk"),
-                                },
-                            })],
-                        }),
-                        secondaries: None,
-                        type_annotation: None,
-                    })),
-                },
-                Argument {
-                    arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                        operand: Operand::Ident(IdentifierPath {
-                            path: vec![IdentOrType::Ident(Ident {
-                                name: "baz".to_string(),
-                                span: Span {
-                                    start: 8,
-                                    end: 11,
-                                    file_path: PathBuf::from("/test.rk"),
-                                },
-                            })],
-                        }),
-                        secondaries: None,
-                        type_annotation: None,
-                    })),
-                },
-                Argument {
-                    arg: Expression::BinopExpr(
-                        UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Literal(Literal {
-                                kind: crate::ast::LiteralKind::Number(2),
-                                span: Span {
-                                    start: 12,
-                                    end: 13,
-                                    file_path: PathBuf::from("/test.rk"),
-                                },
+            secondaries: Some(vec![SecondaryExpr::Arguments(
+                vec![
+                    Argument {
+                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                            operand: Operand::Ident(IdentifierPath {
+                                path: vec![IdentOrType::Ident(Ident {
+                                    name: "bar".to_string(),
+                                    span: Span {
+                                        start: 4,
+                                        end: 7,
+                                        file_path: PathBuf::from("/test.rk"),
+                                    },
+                                })],
                             }),
                             secondaries: None,
                             type_annotation: None,
-                        }),
-                        Operator {
-                            value: "+".to_string(),
-                            span: Span {
-                                start: 14,
-                                end: 15,
-                                file_path: PathBuf::from("/test.rk"),
+                        })),
+                    },
+                    Argument {
+                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                            operand: Operand::Ident(IdentifierPath {
+                                path: vec![IdentOrType::Ident(Ident {
+                                    name: "baz".to_string(),
+                                    span: Span {
+                                        start: 8,
+                                        end: 11,
+                                        file_path: PathBuf::from("/test.rk"),
+                                    },
+                                })],
+                            }),
+                            secondaries: None,
+                            type_annotation: None,
+                        })),
+                    },
+                    Argument {
+                        arg: Expression::BinopExpr(
+                            UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Literal(Literal {
+                                    kind: crate::ast::LiteralKind::Number(2),
+                                    span: Span {
+                                        start: 12,
+                                        end: 13,
+                                        file_path: PathBuf::from("/test.rk"),
+                                    },
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            }),
+                            Operator {
+                                value: "+".to_string(),
+                                span: Span {
+                                    start: 14,
+                                    end: 15,
+                                    file_path: PathBuf::from("/test.rk"),
+                                },
                             },
-                        },
-                        Box::new(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Literal(Literal {
-                                kind: crate::ast::LiteralKind::Number(2),
-                                span: Span {
-                                    start: 16,
-                                    end: 17,
-                                    file_path: PathBuf::from("/test.rk"),
-                                },
-                            }),
-                            secondaries: None,
-                            type_annotation: None,
-                        }))),
-                    ),
-                },
-            ])]),
+                            Box::new(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Literal(Literal {
+                                    kind: crate::ast::LiteralKind::Number(2),
+                                    span: Span {
+                                        start: 16,
+                                        end: 17,
+                                        file_path: PathBuf::from("/test.rk"),
+                                    },
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            }))),
+                        ),
+                    },
+                ],
+                Span::new("/test.rk".into(), 3, input.len()),
+            )]),
             type_annotation: None,
         })),
     );

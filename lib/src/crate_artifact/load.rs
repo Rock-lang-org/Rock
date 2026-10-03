@@ -2626,6 +2626,11 @@ fn remap_type_def_ids(
             mut ty: crate::types::Type,
         ) -> Result<crate::types::Type, Self::Error> {
             match &mut ty {
+                crate::types::Type::Exists(package) => {
+                    package
+                        .bounds
+                        .try_remap_trait_ids(&mut |id| self.remap.def_id(ProductDefId::from(id)))?;
+                }
                 crate::types::Type::Object(object) => {
                     object
                         .try_remap_trait_ids(&mut |id| self.remap.def_id(ProductDefId::from(id)))?;
@@ -2813,6 +2818,65 @@ fn remap_expr_child_locations_with_scope<P: crate::hir::HirPhase>(
     remap_type_def_ids(&mut expr.ty, remap, type_validator)?;
 
     match &mut expr.kind {
+        HirExprKindFor::PackagePack { payload, proof } => {
+            remap_type_def_ids(&mut proof.witness, remap, type_validator)?;
+            for view in &mut proof.views {
+                view.trait_ref.trait_id =
+                    remap.def_id(ProductDefId::from(view.trait_ref.trait_id))?;
+                for ty in &mut view.trait_ref.type_args {
+                    remap_type_def_ids(ty, remap, type_validator)?;
+                }
+                if let crate::hir::HirObjectWitnessOrigin::Impl {
+                    impl_id,
+                    substitution,
+                } = &mut view.origin
+                {
+                    *impl_id = remap.def_id(ProductDefId::from(*impl_id))?;
+                    for binding in substitution {
+                        binding.param.owner =
+                            remap.def_id(ProductDefId::from(binding.param.owner))?;
+                        remap_type_def_ids(&mut binding.ty, remap, type_validator)?;
+                    }
+                }
+            }
+            remap_expr_child_locations_with_scope(
+                payload,
+                remap,
+                validator,
+                type_validator,
+                local_scope,
+                depth + 1,
+            )
+        }
+        HirExprKindFor::PackageOpen {
+            source,
+            binding,
+            body,
+        } => {
+            remap_expr_child_locations_with_scope(
+                source,
+                remap,
+                validator,
+                type_validator,
+                local_scope,
+                depth + 1,
+            )?;
+            binding.witness.owner = remap.def_id(ProductDefId::from(binding.witness.owner))?;
+            remap_type_def_ids(&mut binding.value.ty, remap, type_validator)?;
+            remap_type_def_ids(&mut binding.source_ty, remap, type_validator)?;
+            let mut opened_scope = local_scope.clone();
+            if !opened_scope.insert(binding.value.local_id) {
+                return Err("package opening reuses an existing local identity".into());
+            }
+            remap_block_child_locations(
+                body,
+                remap,
+                validator,
+                type_validator,
+                &mut opened_scope,
+                depth + 1,
+            )
+        }
         HirExprKindFor::OwnedObjectCall { owner, args, call } => {
             remap_type_def_ids(&mut call.object, remap, type_validator)?;
             remap_type_def_ids(&mut call.state, remap, type_validator)?;
@@ -2841,25 +2905,51 @@ fn remap_expr_child_locations_with_scope<P: crate::hir::HirPhase>(
             }
             Ok(())
         }
-        HirExprKindFor::Open { source, binding, body } => {
-            remap_expr_child_locations_with_scope(source, remap, validator, type_validator, local_scope, depth + 1)?;
+        HirExprKindFor::Open {
+            source,
+            binding,
+            body,
+        } => {
+            remap_expr_child_locations_with_scope(
+                source,
+                remap,
+                validator,
+                type_validator,
+                local_scope,
+                depth + 1,
+            )?;
             binding.witness.owner = remap.def_id(ProductDefId::from(binding.witness.owner))?;
             remap_type_def_ids(&mut binding.value.ty, remap, type_validator)?;
             remap_type_def_ids(&mut binding.source_ty, remap, type_validator)?;
             let mut object = crate::types::Type::Object(Box::new(binding.object.clone()));
             remap_type_def_ids(&mut object, remap, type_validator)?;
-            let crate::types::Type::Object(object) = object else { return Err("opening schema changed category during remapping".into()); };
+            let crate::types::Type::Object(object) = object else {
+                return Err("opening schema changed category during remapping".into());
+            };
             binding.object = *object;
             if let Some(owner) = &mut binding.owner {
                 remap_type_def_ids(&mut owner.state_ty, remap, type_validator)?;
                 for operation in [&mut owner.into_parts, &mut owner.from_parts] {
                     remap_type_def_ids(&mut operation.owner_ty, remap, type_validator)?;
-                    remap_method_target_child_location(&mut operation.method, remap, type_validator)?;
+                    remap_method_target_child_location(
+                        &mut operation.method,
+                        remap,
+                        type_validator,
+                    )?;
                 }
             }
             let mut opened_scope = local_scope.clone();
-            if !opened_scope.insert(binding.value.local_id) { return Err("opening reuses an existing local identity".into()); }
-            remap_block_child_locations(body, remap, validator, type_validator, &mut opened_scope, depth + 1)
+            if !opened_scope.insert(binding.value.local_id) {
+                return Err("opening reuses an existing local identity".into());
+            }
+            remap_block_child_locations(
+                body,
+                remap,
+                validator,
+                type_validator,
+                &mut opened_scope,
+                depth + 1,
+            )
         }
         HirExprKindFor::IntLiteral(_)
         | HirExprKindFor::FloatLiteral(_)
@@ -4474,6 +4564,10 @@ fn product_id_has_canonical_binding(products: &CompilerProducts, id: ProductDefI
                 .any(|method| ProductDefId::from(method.id) == id)
         })
 }
+
+#[cfg(test)]
+#[path = "load_alias_tests.rs"]
+mod alias_tests;
 
 #[cfg(test)]
 mod product_tests {

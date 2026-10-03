@@ -376,6 +376,15 @@ fn solve_constraints_in_place_mode(
                         }
                     }
                     concrete_ty => {
+                        // A concrete receiver is not enough to select a trait impl:
+                        // its arguments can still depend on callers or literal defaults.
+                        if resolved_bound
+                            .type_args
+                            .iter()
+                            .any(contains_inference_pending_type)
+                        {
+                            continue;
+                        }
                         if context == "try operator"
                             && language_items
                                 .try_protocol
@@ -748,7 +757,9 @@ fn solve_structural_constraints_to_fixed_point(
                         builtin_traits,
                     )
                 } else {
-                    ObligationState::Solved
+                    // Resolved arguments end propagation, but do not prove the
+                    // bound. Canonical validation below owns its terminal state.
+                    ObligationState::Pending
                 }
             }
             Constraint::IntLiteral { var, .. } | Constraint::FloatLiteral { var, .. } => {
@@ -1425,6 +1436,8 @@ fn auto_trait_satisfied(
                 })
         }),
         Type::Generic(_)
+        | Type::Exists(_)
+        | Type::Witness(_)
         | Type::Projection { .. }
         | Type::TypeVar(_)
         | Type::Constructor { .. }
@@ -1664,6 +1677,182 @@ mod tests {
                 type_args: Vec::new(),
             }])
         );
+    }
+
+    fn trait_argument_fixture(
+        trait_id: DefId,
+        arguments: &[Type],
+    ) -> (Type, HashMap<DefId, HirImpl>, HashMap<DefId, HirStruct>) {
+        let owner_id = def_id(850);
+        let structs = HashMap::from([(
+            owner_id,
+            HirStruct {
+                id: owner_id,
+                name: "Owner".to_string(),
+                generic_params: Vec::new(),
+                fields: Vec::new(),
+            },
+        )]);
+        let impls = arguments
+            .iter()
+            .enumerate()
+            .map(|(index, argument)| {
+                let mut imp = test_impl("Owner", owner_id, trait_id);
+                imp.id = def_id(851 + index as u32);
+                imp.trait_arg_types = vec![argument.clone()];
+                (imp.id, imp)
+            })
+            .collect();
+        (
+            Type::Struct {
+                id: owner_id,
+                args: Vec::new(),
+            },
+            impls,
+            structs,
+        )
+    }
+
+    #[test]
+    fn concrete_trait_argument_waits_for_literal_default() {
+        let trait_id = def_id(849);
+        let (owner, impls, structs) = trait_argument_fixture(trait_id, &[Type::I32, Type::I64]);
+        let mut engine = InferenceEngine::new();
+        let argument = engine.fresh_type_var();
+        let Type::TypeVar(argument_id) = argument.clone() else {
+            unreachable!();
+        };
+        let mut store = ConstraintStore::new();
+        let obligation = store.add_trait(
+            owner,
+            TraitBound {
+                trait_id,
+                type_args: vec![argument.clone()],
+            },
+            Span::test(),
+            "generic conversion",
+        );
+        store.add_int_literal(argument_id, Span::test());
+        let owners = HashSet::from([ConstraintOwner::Global]);
+        let result = solve_constraints_in_place_for_owners(
+            &mut engine,
+            &mut store,
+            &impls,
+            &structs,
+            &HashMap::new(),
+            &HashMap::new(),
+            &LanguageItems::default(),
+            &owners,
+            false,
+            &crate::hir::HirGenericBounds::new(),
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(engine.resolve(&argument), argument);
+        assert_eq!(store.state(obligation), Some(ObligationState::Ambiguous));
+
+        engine.apply_numeric_defaults(&store);
+        let result = solve_constraints_in_place(
+            &mut engine,
+            &mut store,
+            &impls,
+            &structs,
+            &HashMap::new(),
+            &HashMap::new(),
+            &LanguageItems::default(),
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(engine.resolve(&argument), Type::I64);
+        assert_eq!(store.state(obligation), Some(ObligationState::Solved));
+    }
+
+    #[test]
+    fn deferred_concrete_trait_argument_is_rechecked_after_caller_resolution() {
+        let trait_id = def_id(849);
+        let (owner, impls, structs) = trait_argument_fixture(trait_id, &[Type::Str, Type::I64]);
+        for (caller_type, supported) in [(Type::Str, true), (Type::Bool, false)] {
+            let mut engine = InferenceEngine::new();
+            let argument = engine.fresh_type_var();
+            let mut store = ConstraintStore::new();
+            let span = Span::new("caller.rk".into(), 12, 24);
+            let obligation = store.add_trait(
+                owner.clone(),
+                TraitBound {
+                    trait_id,
+                    type_args: vec![argument.clone()],
+                },
+                span.clone(),
+                "static trait member",
+            );
+            let owners = HashSet::from([ConstraintOwner::Global]);
+            let result = solve_constraints_in_place_for_owners(
+                &mut engine,
+                &mut store,
+                &impls,
+                &structs,
+                &HashMap::new(),
+                &HashMap::new(),
+                &LanguageItems::default(),
+                &owners,
+                false,
+                &crate::hir::HirGenericBounds::new(),
+            );
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            assert_eq!(store.state(obligation), Some(ObligationState::Ambiguous));
+            assert_eq!(engine.resolve(&argument), argument);
+
+            engine.unify(&argument, &caller_type).unwrap();
+            let result = solve_constraints_in_place(
+                &mut engine,
+                &mut store,
+                &impls,
+                &structs,
+                &HashMap::new(),
+                &HashMap::new(),
+                &LanguageItems::default(),
+            );
+            if supported {
+                assert!(result.errors.is_empty(), "{:?}", result.errors);
+                assert_eq!(store.state(obligation), Some(ObligationState::Solved));
+            } else {
+                assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+                assert_eq!(result.errors[0].span, span);
+                assert!(matches!(
+                    result.errors[0].kind,
+                    SolveErrorKind::TraitNotImplemented { .. }
+                ));
+                assert_eq!(store.state(obligation), Some(ObligationState::Failed));
+            }
+        }
+    }
+
+    #[test]
+    fn concrete_trait_argument_cannot_remain_unresolved_at_quiescence() {
+        let trait_id = def_id(849);
+        let (owner, impls, structs) = trait_argument_fixture(trait_id, &[Type::Str, Type::I64]);
+        let mut engine = InferenceEngine::new();
+        let argument = engine.fresh_type_var();
+        let mut store = ConstraintStore::new();
+        let obligation = store.add_trait(
+            owner,
+            TraitBound {
+                trait_id,
+                type_args: vec![argument],
+            },
+            Span::test(),
+            "unresolved static member",
+        );
+        let result = solve_constraints_in_place(
+            &mut engine,
+            &mut store,
+            &impls,
+            &structs,
+            &HashMap::new(),
+            &HashMap::new(),
+            &LanguageItems::default(),
+        );
+        assert_eq!(store.state(obligation), Some(ObligationState::Ambiguous));
+        assert_eq!(result.errors.len(), 1, "{:?}", result.errors);
+        assert!(result.errors[0].contains("ambiguous constraint at quiescence"));
     }
 
     #[test]

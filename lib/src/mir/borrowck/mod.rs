@@ -8,6 +8,9 @@ pub mod location;
 pub mod paths;
 pub mod provenance;
 
+#[cfg(test)]
+mod borrowed_contents_tests;
+
 use std::collections::{HashMap, HashSet};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
@@ -200,6 +203,17 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
                 projection: Vec::new(),
             };
             if let Some(origins) = state.origins.get(&base) {
+                if self.local_type_is_reference(normalized.local) {
+                    // Loading a value through &Aggregate transports its
+                    // contents; taking its address uses the separate borrow path.
+                    return origins
+                        .iter()
+                        .map(|origin| match origin {
+                            ReferenceOrigin::Param(local) => ReferenceOrigin::ParamContents(*local),
+                            origin => *origin,
+                        })
+                        .collect();
+                }
                 return origins.clone();
             }
 
@@ -283,6 +297,19 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
 
     fn origins_for_borrowed_place(&self, state: &ReferenceOriginState, place: &Place) -> OriginSet {
         let normalized = Self::normalized_place(place.clone());
+        let mut prefix = Place {
+            local: normalized.local,
+            projection: Vec::new(),
+        };
+        let raw_memory_view = normalized.projection.iter().any(|projection| {
+            let raw_deref = *projection == Projection::Deref
+                && self
+                    .backend_contract
+                    .place_type_id(self.type_context, self.func, &prefix)
+                    .is_some_and(|ty| type_id_is_pointer(TypeView::new(self.type_context), ty));
+            prefix.projection.push(projection.clone());
+            raw_deref
+        });
         if !self.local_type_is_reference(normalized.local)
             && !self.local_type_is_pointer(normalized.local)
             && !normalized
@@ -301,7 +328,22 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
             ]);
         }
 
-        let origins = self.origins_for_place(state, place);
+        let origins = self
+            .origins_for_place(state, place)
+            .into_iter()
+            .map(|origin| match origin {
+                // Addressing contents borrows storage rather than transferring a
+                // contained value. Raw-pointer reconstruction remains unsafe.
+                ReferenceOrigin::ParamContents(local) if raw_memory_view => {
+                    ReferenceOrigin::ParamBorrowedContents(local)
+                }
+                ReferenceOrigin::Param(local) if raw_memory_view => {
+                    ReferenceOrigin::ParamBorrowedContents(local)
+                }
+                ReferenceOrigin::ParamContents(local) => ReferenceOrigin::Param(local),
+                origin => origin,
+            })
+            .collect::<OriginSet>();
         if !origins.is_empty() {
             return origins;
         }
@@ -326,6 +368,18 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
             }
         }
         origins
+    }
+
+    fn borrowed_contents_origins(origins: OriginSet) -> OriginSet {
+        origins
+            .into_iter()
+            .map(|origin| match origin {
+                ReferenceOrigin::Param(local) | ReferenceOrigin::ParamContents(local) => {
+                    ReferenceOrigin::ParamBorrowedContents(local)
+                }
+                origin => origin,
+            })
+            .collect()
     }
 
     fn origins_for_operand(&self, state: &ReferenceOriginState, operand: &Operand) -> OriginSet {
@@ -379,7 +433,10 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
                     &mut temporaries,
                 );
             }
-            Rvalue::Object(operand, _) | Rvalue::Use(operand) | Rvalue::Cast(operand, _) => {
+            Rvalue::Package(operand, _)
+            | Rvalue::Object(operand, _)
+            | Rvalue::Use(operand)
+            | Rvalue::Cast(operand, _) => {
                 Self::collect_temporary_origins(
                     self.origins_for_operand(state, operand),
                     &mut temporaries,
@@ -473,7 +530,9 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
             {
                 return args
                     .first()
-                    .map(|arg| self.origins_for_operand(state, arg))
+                    .map(|arg| {
+                        Self::borrowed_contents_origins(self.origins_for_operand(state, arg))
+                    })
                     .unwrap_or_else(|| HashSet::from([ReferenceOrigin::UnknownExternal]));
             }
             MirCallable::Resolved(
@@ -512,6 +571,58 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
                             origins.extend(self.origins_for_operand(state, arg));
                         } else {
                             origins.insert(ReferenceOrigin::Local(destination.local));
+                        }
+                    } else {
+                        origins.insert(ReferenceOrigin::Local(destination.local));
+                    }
+                }
+                ReferenceOrigin::ParamContents(local) => {
+                    if let Some(arg) = local.0.checked_sub(1).and_then(|index| args.get(index)) {
+                        for origin in self.origins_for_operand(state, arg) {
+                            match origin {
+                                ReferenceOrigin::Local(local)
+                                | ReferenceOrigin::Temporary(local) => {
+                                    origins.extend(self.origins_for_place(
+                                        state,
+                                        &Place {
+                                            local,
+                                            projection: Vec::new(),
+                                        },
+                                    ));
+                                }
+                                ReferenceOrigin::Param(local)
+                                | ReferenceOrigin::ParamContents(local) => {
+                                    origins.insert(ReferenceOrigin::ParamContents(local));
+                                }
+                                origin => {
+                                    origins.insert(origin);
+                                }
+                            }
+                        }
+                    } else {
+                        origins.insert(ReferenceOrigin::Local(destination.local));
+                    }
+                }
+                ReferenceOrigin::ParamBorrowedContents(local) => {
+                    if let Some(arg) = local.0.checked_sub(1).and_then(|index| args.get(index)) {
+                        // Unlike copied contents, a memory view still depends on
+                        // the actual owner storage. Empty pointer provenance stays
+                        // empty; the summary cannot manufacture an owner lease.
+                        for origin in
+                            Self::borrowed_contents_origins(self.origins_for_operand(state, arg))
+                        {
+                            origins.insert(origin);
+                            if let ReferenceOrigin::Local(local)
+                            | ReferenceOrigin::Temporary(local) = origin
+                            {
+                                origins.extend(self.origins_for_place(
+                                    state,
+                                    &Place {
+                                        local,
+                                        projection: Vec::new(),
+                                    },
+                                ));
+                            }
                         }
                     } else {
                         origins.insert(ReferenceOrigin::Local(destination.local));
@@ -591,7 +702,10 @@ impl Analysis for ReferenceEscapeAnalysis<'_> {
                 let origins = self.origins_for_borrowed_place(state, place);
                 self.assign_origins(state, dest, origins);
             }
-            Rvalue::Object(operand, _) | Rvalue::Use(operand) | Rvalue::Cast(operand, _) => {
+            Rvalue::Package(operand, _)
+            | Rvalue::Object(operand, _)
+            | Rvalue::Use(operand)
+            | Rvalue::Cast(operand, _) => {
                 let origins = self.origins_for_operand(state, operand);
                 self.assign_origins(state, dest, origins);
             }
@@ -914,6 +1028,7 @@ fn type_id_tracks_origin_inner(
     }
 
     match view.ty(ty) {
+        Ty::Exists(_) => true,
         Ty::Object(_) => true,
         Ty::ObjectSelf { .. } => true,
         Ty::Reference { .. } => true,
@@ -1096,6 +1211,7 @@ fn type_id_tracks_origin_for_structural_type(
     }
 
     match ty {
+        Type::Exists(_) => true,
         Type::Reference { .. } => true,
         Type::Object(_) => true,
         Type::ObjectSelf { .. } => true,
@@ -1518,7 +1634,17 @@ impl BorrowChecker {
             }
         }
 
-        origins
+        // A raw-pointer result is a view carrier. Keep its receiver provenance
+        // until a later dereference, without treating copies of reference fields
+        // or rebuilt owning aggregates as borrows of the receiver's storage.
+        if matches!(
+            TypeView::new(type_context).ty(func.ret_type),
+            Ty::Pointer(_)
+        ) {
+            ReferenceEscapeAnalysis::borrowed_contents_origins(origins)
+        } else {
+            origins
+        }
     }
 
     fn validate_moves_and_initialization(
@@ -1551,6 +1677,7 @@ impl BorrowChecker {
             &loan_table,
             &loans_by_location,
             &reference_liveness,
+            return_summaries,
         );
 
         for (block_idx, block) in func.basic_blocks.iter().enumerate() {
@@ -1703,6 +1830,8 @@ impl BorrowChecker {
                             ));
                         }
                         ReferenceOrigin::Param(_)
+                        | ReferenceOrigin::ParamContents(_)
+                        | ReferenceOrigin::ParamBorrowedContents(_)
                         | ReferenceOrigin::Static
                         | ReferenceOrigin::UnknownExternal => {}
                     }
@@ -1816,7 +1945,7 @@ impl BorrowChecker {
 
         match &stmt.kind {
             StatementKind::Assign(_dest, rvalue) => match rvalue {
-                Rvalue::Object(operand, _) | Rvalue::Use(operand) => {
+                Rvalue::Package(operand, _) | Rvalue::Object(operand, _) | Rvalue::Use(operand) => {
                     match operand {
                         Operand::Move(place) => move_validation.validate_move(
                             place,
@@ -2305,6 +2434,72 @@ mod tests {
 
     fn test_type_id(type_context: &mut TypeContext, ty: Type) -> crate::ids::TypeId {
         type_context.intern_type(&ty)
+    }
+
+    #[test]
+    fn borrowed_field_value_and_field_address_have_distinct_symbolic_origins() {
+        let mut tc = TypeContext::new();
+        let reference = Type::Reference {
+            inner: Box::new(Type::I64),
+            mutable: false,
+        };
+        let container = Type::Tuple(vec![reference.clone()]);
+        let borrowed_container = tc.intern_type(&Type::Reference {
+            inner: Box::new(container),
+            mutable: false,
+        });
+        let mut function = reference_return_function(&mut tc, MirOwnershipMetadata::default());
+        function.arg_count = 1;
+        function.local_decls[1].ty = borrowed_container;
+        function.local_decls[1].source = LocalSource::Argument;
+        let field = Place {
+            local: Local(1),
+            projection: vec![
+                Projection::Deref,
+                Projection::Field {
+                    index: 0,
+                    identity: None,
+                },
+            ],
+        };
+        let destination = Place {
+            local: Local(0),
+            projection: vec![],
+        };
+        function.basic_blocks[0].statements = vec![StatementData::assign(
+            destination.clone(),
+            Rvalue::Use(Operand::Copy(field.clone())),
+            None,
+        )];
+        assert_eq!(
+            BorrowChecker::reference_return_origins(
+                &function,
+                &tc,
+                &MirBackendContract::default(),
+                &HashMap::new(),
+            ),
+            HashSet::from([ReferenceOrigin::ParamContents(Local(1))]),
+        );
+        let address = tc.intern_type(&Type::Reference {
+            inner: Box::new(reference),
+            mutable: false,
+        });
+        function.ret_type = address;
+        function.local_decls[0].ty = address;
+        function.basic_blocks[0].statements = vec![StatementData::assign(
+            destination,
+            Rvalue::Ref(Mutability::Not, field),
+            None,
+        )];
+        assert_eq!(
+            BorrowChecker::reference_return_origins(
+                &function,
+                &tc,
+                &MirBackendContract::default(),
+                &HashMap::new(),
+            ),
+            HashSet::from([ReferenceOrigin::Param(Local(1))]),
+        );
     }
 
     #[test]

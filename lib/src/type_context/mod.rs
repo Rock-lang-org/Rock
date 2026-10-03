@@ -55,6 +55,7 @@ pub enum Ty {
     },
     Pointer(TypeId),
     Object(Box<crate::types::ObjectType<TypeId>>),
+    Exists(Box<crate::types::ExistentialType<TypeId>>),
     ObjectSelf {
         depth: u32,
     },
@@ -266,6 +267,9 @@ impl TypeContext {
                 Ty::Object(object) => object
                     .children()
                     .all(|child| visit(context, *child, visiting, valid)),
+                Ty::Exists(package) => package
+                    .children()
+                    .all(|child| visit(context, *child, visiting, valid)),
                 Ty::Slice(inner) | Ty::Reference { inner, .. } | Ty::Pointer(inner) => {
                     visit(context, *inner, visiting, valid)
                 }
@@ -303,6 +307,7 @@ impl TypeContext {
                 Ty::Lambda { body, .. } => visit(context, *body, visiting, valid),
                 Ty::I8
                 | Ty::ObjectSelf { .. }
+                | Ty::Witness(_)
                 | Ty::I16
                 | Ty::I32
                 | Ty::I64
@@ -356,6 +361,10 @@ impl TypeContext {
             Type::Object(object) => {
                 let object = object.map_types(|ty| self.intern_type(ty));
                 self.intern_ty(Ty::Object(Box::new(object)))
+            }
+            Type::Exists(package) => {
+                let package = package.map_types(|ty| self.intern_type(ty));
+                self.intern_ty(Ty::Exists(Box::new(package)))
             }
             Type::I16 => self.intern_ty(Ty::I16),
             Type::I32 => self.intern_ty(Ty::I32),
@@ -473,6 +482,9 @@ impl TypeContext {
             Ty::ObjectSelf { depth } => Type::ObjectSelf { depth: *depth },
             Ty::Witness(witness) => Type::Witness(*witness),
             Ty::Object(object) => Type::Object(Box::new(object.map_types(|id| self.type_for(*id)))),
+            Ty::Exists(package) => {
+                Type::Exists(Box::new(package.map_types(|id| self.type_for(*id))))
+            }
             Ty::I8 => Type::I8,
             Ty::I16 => Type::I16,
             Ty::I32 => Type::I32,
@@ -570,6 +582,11 @@ impl TypeContext {
             Type::Witness(witness) => Ty::Witness(*witness),
             Type::Object(object) => Ty::Object(Box::new(
                 object
+                    .try_map_types(|ty| self.id_for_type(ty).ok_or(()))
+                    .ok()?,
+            )),
+            Type::Exists(package) => Ty::Exists(Box::new(
+                package
                     .try_map_types(|ty| self.id_for_type(ty).ok_or(()))
                     .ok()?,
             )),

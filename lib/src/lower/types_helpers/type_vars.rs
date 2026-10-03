@@ -44,15 +44,17 @@ impl Lowerer {
         for stmt in &mut block.stmts {
             self.resolve_all_types_in_stmt(stmt);
         }
+        // An abrupt branch's return/break payload is not its fallthrough value.
+        if block.ty == crate::types::Type::Never {
+            return;
+        }
         if let Some(stmt) = block.stmts.last() {
             match stmt {
-                HirStmt::Expr(expr) | HirStmt::Return(Some(expr)) | HirStmt::Break(Some(expr)) => {
+                HirStmt::Expr(expr) | HirStmt::Return(Some(expr)) => {
                     block.ty = expr.ty.clone();
                 }
-                HirStmt::Let { .. }
-                | HirStmt::Return(None)
-                | HirStmt::Break(None)
-                | HirStmt::Continue => {}
+                HirStmt::Break(_) => block.ty = crate::types::Type::Never,
+                HirStmt::Let { .. } | HirStmt::Return(None) | HirStmt::Continue => {}
             }
         }
     }
@@ -79,7 +81,24 @@ impl Lowerer {
     pub(crate) fn resolve_all_types_in_expr(&mut self, expr: &mut HirExpr) {
         expr.ty = self.engine.resolve(&expr.ty);
         match &mut expr.kind {
-            HirExprKind::Open { source, binding, body } => {
+            HirExprKind::PackagePack { payload, proof } => {
+                self.resolve_all_types_in_expr(payload);
+                proof.visit_types_mut(&mut |ty| *ty = self.engine.resolve(ty));
+            }
+            HirExprKind::PackageOpen {
+                source,
+                binding,
+                body,
+            } => {
+                self.resolve_all_types_in_expr(source);
+                binding.visit_types_mut(&mut |ty| *ty = self.engine.resolve(ty));
+                self.resolve_all_types_in_block(body);
+            }
+            HirExprKind::Open {
+                source,
+                binding,
+                body,
+            } => {
                 self.resolve_all_types_in_expr(source);
                 binding.visit_types_mut(&mut |ty| *ty = self.engine.resolve(ty));
                 self.resolve_all_types_in_block(body);
@@ -258,6 +277,27 @@ mod tests {
     use crate::ids::{CrateId, DefId, LocalDefId};
     use crate::lower::Lowerer;
     use crate::types::{GenericParamId, Type};
+
+    #[test]
+    fn refreshing_break_value_types_preserves_the_blocks_never_type() {
+        let mut lowerer = Lowerer::new_for_test();
+        let value_ty = lowerer.engine.fresh_type_var();
+        lowerer.engine.unify(&value_ty, &Type::I64).unwrap();
+        let mut block = HirBlock {
+            ty: Type::Never,
+            stmts: vec![HirStmt::Break(Some(HirExpr {
+                ty: value_ty,
+                kind: HirExprKind::IntLiteral(42),
+                span: crate::lexer::Span::test(),
+            }))],
+        };
+        lowerer.resolve_all_types_in_block(&mut block);
+        assert_eq!(block.ty, Type::Never);
+        let HirStmt::Break(Some(value)) = &block.stmts[0] else {
+            panic!("expected break value")
+        };
+        assert_eq!(value.ty, Type::I64);
+    }
 
     #[test]
     fn resolve_all_types_in_expr_resolves_match_arm_guards() {

@@ -174,6 +174,41 @@ pub fn substitute_lambda_group(
     )
 }
 
+/// Remove the package's lexical group, preserving all nested binders.
+pub fn instantiate_existential(
+    package: &crate::types::ExistentialType,
+    witness: &Type,
+) -> Result<crate::types::ExistentialType, SubstitutionError> {
+    package.try_map_types(|ty| substitute_lambda_group(ty, std::slice::from_ref(witness), 1, true))
+}
+
+/// Standalone dispatch signature; the package itself is not an object handle.
+pub fn existential_object_schema(
+    package: &crate::types::ExistentialType,
+) -> Result<crate::types::ObjectType, SubstitutionError> {
+    package.bounds.try_map_types(|ty| {
+        let shifted = shift_free_binders(ty, 0, 1)?;
+        substitute_lambda_group(&shifted, &[Type::ObjectSelf { depth: 0 }], 1, true)
+    })
+}
+
+pub fn existential_bounds_from_object_schema(
+    object: &crate::types::ObjectType,
+    kind: &Kind,
+) -> Result<crate::types::ObjectType, SubstitutionError> {
+    object.try_map_types(|ty| {
+        let shifted = shift_free_binders(ty, 1, 0)?;
+        instantiate_object_self(
+            &shifted,
+            &Type::BoundVar {
+                depth: 0,
+                index: 0,
+                kind: kind.clone(),
+            },
+        )
+    })
+}
+
 /// Unlike substitution-chain resolution, an argument is not interpreted again
 /// as a parameter of the declaration into which it is being inserted.
 pub fn instantiate(
@@ -236,26 +271,55 @@ pub fn has_free_object_self(ty: &Type) -> bool {
 /// binders keep their own Self; references to the opened binder are replaced by
 /// the witness without capturing its free lambda/object variables.
 pub fn instantiate_object_self(ty: &Type, witness: &Type) -> Result<Type, SubstitutionError> {
-    struct Open<'a> { witness: &'a Type, lambdas: u32, objects: u32 }
+    struct Open<'a> {
+        witness: &'a Type,
+        lambdas: u32,
+        objects: u32,
+    }
     impl TryTypeFolder for Open<'_> {
         type Error = SubstitutionError;
         fn try_enter_binders(&mut self, _: &[Kind]) -> Result<(), Self::Error> {
-            self.lambdas = self.lambdas.checked_add(1).ok_or(SubstitutionError::BinderDepthOverflow)?; Ok(())
+            self.lambdas = self
+                .lambdas
+                .checked_add(1)
+                .ok_or(SubstitutionError::BinderDepthOverflow)?;
+            Ok(())
         }
-        fn try_exit_binders(&mut self) -> Result<(), Self::Error> { self.lambdas -= 1; Ok(()) }
+        fn try_exit_binders(&mut self) -> Result<(), Self::Error> {
+            self.lambdas -= 1;
+            Ok(())
+        }
         fn try_enter_object(&mut self) -> Result<(), Self::Error> {
-            self.objects = self.objects.checked_add(1).ok_or(SubstitutionError::BinderDepthOverflow)?; Ok(())
+            self.objects = self
+                .objects
+                .checked_add(1)
+                .ok_or(SubstitutionError::BinderDepthOverflow)?;
+            Ok(())
         }
-        fn try_exit_object(&mut self) -> Result<(), Self::Error> { self.objects -= 1; Ok(()) }
+        fn try_exit_object(&mut self) -> Result<(), Self::Error> {
+            self.objects -= 1;
+            Ok(())
+        }
         fn try_fold_type(&mut self, ty: Type) -> Result<Type, Self::Error> {
             match ty {
-                Type::ObjectSelf { depth } if depth == self.objects => shift_free_binders(self.witness, self.lambdas, self.objects),
-                Type::ObjectSelf { depth } if depth > self.objects => Ok(Type::ObjectSelf { depth: depth - 1 }),
+                Type::ObjectSelf { depth } if depth == self.objects => {
+                    shift_free_binders(self.witness, self.lambdas, self.objects)
+                }
+                Type::ObjectSelf { depth } if depth > self.objects => {
+                    Ok(Type::ObjectSelf { depth: depth - 1 })
+                }
                 other => try_fold_type_children(other, self),
             }
         }
     }
-    try_fold_type(ty.clone(), &mut Open { witness, lambdas: 0, objects: 0 })
+    try_fold_type(
+        ty.clone(),
+        &mut Open {
+            witness,
+            lambdas: 0,
+            objects: 0,
+        },
+    )
 }
 
 pub fn has_free_object_self_at_depth(ty: &Type, initial_depth: u32) -> bool {
@@ -360,9 +424,22 @@ mod tests {
 
     #[test]
     fn opening_an_object_preserves_inner_receivers_and_rebases_outer_receivers() {
-        let signature = Type::Tuple(vec![Type::ObjectSelf { depth: 0 }, object(Type::ObjectSelf { depth: 1 }), object(Type::ObjectSelf { depth: 0 }), Type::ObjectSelf { depth: 1 }]);
-        let expected = Type::Tuple(vec![Type::I64, object(Type::I64), object(Type::ObjectSelf { depth: 0 }), Type::ObjectSelf { depth: 0 }]);
-        assert_eq!(instantiate_object_self(&signature, &Type::I64).unwrap(), expected);
+        let signature = Type::Tuple(vec![
+            Type::ObjectSelf { depth: 0 },
+            object(Type::ObjectSelf { depth: 1 }),
+            object(Type::ObjectSelf { depth: 0 }),
+            Type::ObjectSelf { depth: 1 },
+        ]);
+        let expected = Type::Tuple(vec![
+            Type::I64,
+            object(Type::I64),
+            object(Type::ObjectSelf { depth: 0 }),
+            Type::ObjectSelf { depth: 0 },
+        ]);
+        assert_eq!(
+            instantiate_object_self(&signature, &Type::I64).unwrap(),
+            expected
+        );
     }
 
     #[test]

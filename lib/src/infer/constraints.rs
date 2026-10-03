@@ -542,6 +542,11 @@ fn collect_constraint_vars(constraint: &Constraint, output: &mut HashSet<TypeVar
 
 fn collect_type_vars(ty: &Type, output: &mut HashSet<TypeVarId>) {
     match ty {
+        Type::Exists(package) => {
+            for child in package.children() {
+                collect_type_vars(child, output);
+            }
+        }
         Type::Object(object) => {
             for child in object.children() {
                 collect_type_vars(child, output);

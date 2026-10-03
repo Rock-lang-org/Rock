@@ -26,7 +26,15 @@ impl Monomorphizer {
         let substitution = type_args.clone();
         let instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
         if let Some(instance_id) = self.instances.get(&instance_key) {
-            if let Some(body) = self.instances.pre_mir_body(instance_id) {
+            // A portable body may coexist with the canonical native link.
+            // Reuse that link's validated declaration; do not re-emit its body.
+            let callable = self.instances.pre_mir_body(instance_id).or_else(|| {
+                self.instances
+                    .record(instance_id)
+                    .filter(|record| record.provided_by_object)
+                    .and_then(|record| record.declared.as_ref())
+            });
+            if let Some(body) = callable {
                 let param_types: Vec<Type> = body.params.iter().map(|p| p.ty.clone()).collect();
                 let func_type = Type::function_with_safety(
                     param_types,
@@ -727,7 +735,13 @@ impl Monomorphizer {
         let substitution = type_args.to_vec();
         let instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
         if let Some(instance_id) = self.instances.get(&instance_key) {
-            if let Some(body) = self.instances.pre_mir_body(instance_id) {
+            let callable = self.instances.pre_mir_body(instance_id).or_else(|| {
+                self.instances
+                    .record(instance_id)
+                    .filter(|record| record.provided_by_object)
+                    .and_then(|record| record.declared.as_ref())
+            });
+            if let Some(body) = callable {
                 let param_types: Vec<Type> = body.params.iter().map(|p| p.ty.clone()).collect();
                 let func_type = Type::function_with_safety(
                     param_types,
@@ -844,6 +858,75 @@ mod tests {
             ty,
             span: crate::lexer::Span::test(),
         }
+    }
+
+    #[test]
+    fn imported_native_function_keeps_portable_body_out_of_specialization() {
+        let mut mono = Monomorphizer::new();
+        mono.identity_context = crate::mono::CompilationIdentityContext::new(
+            CrateId(0),
+            crate::products::ProductCrateIdentity::local("consumer".into()),
+            std::collections::BTreeMap::from([(
+                CrateId(1),
+                crate::products::ProductCrateIdentity::local("provider".into()),
+            )]),
+        );
+        let definition = DefId::new(CrateId(1), LocalDefId(10));
+        let mut portable = generic_function(definition, Type::I64, Type::I64);
+        portable.generic_params.clear();
+        portable.name = "provider::answer".into();
+        portable.body = HirBlock {
+            ty: Type::I64,
+            stmts: vec![crate::mono::hir_types::HirStmt::Expr(HirExpr {
+                kind: HirExprKind::IntLiteral(42),
+                ty: Type::I64,
+                span: crate::lexer::Span::test(),
+            })],
+        };
+        let mut declared = portable.clone();
+        declared.body.stmts.clear();
+        let origin = mono.function_instance_origin(&declared);
+        let instance = mono.instances.intern(
+            crate::mono::InstanceKey::new(origin.clone(), vec![]),
+            |id| crate::mono::InstanceRecord {
+                id,
+                origin,
+                substitution: vec![],
+                symbols: crate::mono::InstanceSymbols::new(
+                    "provider::answer",
+                    "canonical_native_answer",
+                ),
+                declared: Some(declared),
+                provided_by_object: true,
+                is_specialization: false,
+            },
+        );
+        for explicit in [false, true] {
+            let (selected, callable_ty, ret) = if explicit {
+                mono.monomorphize_with_type_args("provider::answer", &portable, &[])
+            } else {
+                mono.monomorphize_call("provider::answer", &portable, &[expr_with_type(Type::I64)])
+            }
+            .unwrap();
+            assert_eq!(selected, instance);
+            assert_eq!(callable_ty, Type::function(vec![Type::I64], Type::I64));
+            assert_eq!(ret, Type::I64);
+            assert!(mono.instances.pre_mir_body(instance).is_none());
+            assert_eq!(mono.instances.len(), 1);
+            assert_eq!(
+                mono.instances
+                    .record(instance)
+                    .unwrap()
+                    .symbols
+                    .backend_symbol,
+                "canonical_native_answer"
+            );
+        }
+        assert_eq!(
+            portable.body.stmts.len(),
+            1,
+            "portable source body remains retained"
+        );
     }
 
     #[test]

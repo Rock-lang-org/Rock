@@ -369,7 +369,7 @@ pub fn walk_primary_expr<'a, V: Visitor<'a>>(visitor: &mut V, primary: &'a Prima
 
 pub fn walk_secondary_expr<'a, V: Visitor<'a>>(visitor: &mut V, secondary: &'a SecondaryExpr) {
     match secondary {
-        SecondaryExpr::Arguments(args) => {
+        SecondaryExpr::Arguments(args, _) => {
             walk_list!(visitor, visit_argument, args);
         }
         SecondaryExpr::Indice(expr) => {
@@ -404,6 +404,10 @@ pub fn walk_operand<'a, V: Visitor<'a>>(visitor: &mut V, operand: &'a Operand) {
             visitor.visit_ident(&open.witness);
             visitor.visit_ident(&open.value);
             visitor.visit_block(&open.body);
+        }
+        Operand::Pack(pack) => {
+            visitor.visit_parse_type(&pack.target);
+            visitor.visit_expression(&pack.payload);
         }
     }
 }
@@ -505,6 +509,16 @@ pub fn walk_array<'a, V: Visitor<'a>>(visitor: &mut V, arr: &'a Array) {
 
 pub fn walk_parse_type<'a, V: Visitor<'a>>(visitor: &mut V, ty: &'a ParseType) {
     match ty {
+        ParseType::Exists(package) => {
+            visitor.visit_generic_param_decl(&package.parameter);
+            for clause in &package.where_clauses {
+                visitor.visit_parse_type(&clause.subject);
+                if let Some(bound) = &clause.trait_bound {
+                    visitor.visit_parse_type(bound);
+                }
+            }
+            visitor.visit_parse_type(&package.payload);
+        }
         ParseType::Object(object) => {
             for ty in object.types() {
                 visitor.visit_parse_type(ty);

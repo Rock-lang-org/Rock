@@ -7,7 +7,10 @@ use crate::types::Type;
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue};
 
 impl<'ctx> CodeGen<'ctx> {
-    fn adapter_target(&self, key: &MirCallableKey) -> Result<FunctionValue<'ctx>, CodegenError> {
+    pub(super) fn adapter_target(
+        &self,
+        key: &MirCallableKey,
+    ) -> Result<FunctionValue<'ctx>, CodegenError> {
         let symbol = self.resolve_mir_callable_symbol(&MirCallable::Resolved(key.clone()))?;
         self.functions
             .get(&symbol)
@@ -188,6 +191,7 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| CodegenError::from(e.to_string()))?;
         }
         match &plan.children {
+            MirPayloadDropChildren::Package => self.drop_package_value(address, plan.ty)?,
             MirPayloadDropChildren::None => {}
             MirPayloadDropChildren::Fields(fields) => {
                 for (index, field) in fields.iter().enumerate().rev() {

@@ -164,6 +164,15 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let (_, place_ty) = self.compile_mir_place_local_id(ctx, place)?;
+        if self.package_schemas.contains_key(&place_ty) {
+            let (address, _) = self.compile_mir_place_local_id(ctx, place)?;
+            self.drop_package_value(address, place_ty)?;
+            return self
+                .builder
+                .build_unconditional_branch(self.mir_target_block(ctx, target, "package drop")?)
+                .map(|_| ())
+                .map_err(|error| CodegenError::from(error.to_string()));
+        }
         if !Self::mir_place_is_projected_return_place(function, place)
             && self.mir_drop_without_glue_is_noop(place_ty)
         {

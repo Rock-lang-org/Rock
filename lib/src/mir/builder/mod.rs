@@ -37,6 +37,7 @@ type HirExpr = crate::hir::HirExprFor<AcceptedHir>;
 type HirExprKind = crate::hir::HirExprKindFor<AcceptedHir>;
 
 pub struct MirBuilder<'a> {
+    scoped_entries: std::collections::BTreeMap<DefId, super::MirErasedKey>,
     erased_invocations:
         std::collections::BTreeMap<super::MirErasedInvocationKey, super::MirErasedCall>,
     owned_object_calls:
@@ -216,6 +217,7 @@ impl<'a> MirBuilder<'a> {
 
     pub fn new(program: &'a HirProgram, type_context: &'a RefCell<TypeContext>) -> Self {
         Self {
+            scoped_entries: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
             object_schemas: Default::default(),
@@ -348,6 +350,7 @@ impl<'a> MirBuilder<'a> {
             builder.object_schemas = program.object_schemas.clone();
             builder.vtables = program.vtables.clone();
             builder.erased_invocations = program.erased_invocations.clone();
+            builder.scoped_entries = program.erased.scoped_entries.clone();
             builder.owned_object_calls = program.owned_object_calls.clone();
             builder.callable_instances_by_def_id = callable_instances_by_def_id.clone();
             builder
@@ -833,9 +836,9 @@ impl<'a> MirBuilder<'a> {
                         function
                             .params
                             .iter()
-                            .map(|param| type_context.intern_type(&param.ty))
+                            .map(|param| super::intern_backend_type(type_context, &param.ty))
                             .collect(),
-                        type_context.intern_type(&function.ret_type),
+                        super::intern_backend_type(type_context, &function.ret_type),
                         function.is_method,
                     )
                 } else {
@@ -916,6 +919,18 @@ impl<'a> MirBuilder<'a> {
             type_context,
         );
         Self::populate_backend_contract_drop_glue(&mut contract, &program.generated_drop_instances);
+        for index in 0..type_context.len() {
+            let id = TypeId(index as u32);
+            if matches!(
+                type_context.try_ty(id),
+                Some(crate::type_context::Ty::Exists(_))
+            ) && TypeFacts::is_codegen_concrete(&type_context.type_for(id))
+            {
+                let schema = super::package_schema(&contract, type_context, id)
+                    .expect("accepted package has a proven backend layout");
+                contract.packages.insert(id, schema);
+            }
+        }
         Self::populate_object_adapters(&mut contract, type_context);
         Self::populate_erased_contract(&mut contract, program, functions, type_context);
 
@@ -938,9 +953,9 @@ impl<'a> MirBuilder<'a> {
             let params = ext
                 .params
                 .iter()
-                .map(|ty| type_context.intern_type(ty))
+                .map(|ty| super::intern_backend_type(type_context, ty))
                 .collect::<Vec<_>>();
-            let ret = type_context.intern_type(&ext.ret);
+            let ret = super::intern_backend_type(type_context, &ext.ret);
             assert!(
                 contract
                     .callables
@@ -986,7 +1001,10 @@ impl<'a> MirBuilder<'a> {
                                 .fields
                                 .iter()
                                 .map(|field| {
-                                    (field.name.clone(), type_context.intern_type(&field.ty))
+                                    (
+                                        field.name.clone(),
+                                        super::intern_backend_type(type_context, &field.ty),
+                                    )
                                 })
                                 .collect(),
                             generic_params: Self::mir_generic_param_ids(&structure.generic_params),
@@ -1141,12 +1159,12 @@ impl<'a> MirBuilder<'a> {
 
                     if let Some(output) = output {
                         let output = ProjectionNormalizer::normalize(provider, &output);
-                        let base = type_context.intern_type(&resolved_base);
+                        let base = super::intern_backend_type(type_context, &resolved_base);
                         let trait_args = resolved_trait_args
                             .iter()
-                            .map(|arg| type_context.intern_type(arg))
+                            .map(|arg| super::intern_backend_type(type_context, arg))
                             .collect();
-                        let output = type_context.intern_type(&output);
+                        let output = super::intern_backend_type(type_context, &output);
                         let key = super::MirProjectionKey {
                             base,
                             trait_id: *trait_id,
@@ -1230,14 +1248,19 @@ impl<'a> MirBuilder<'a> {
                         super::MirVariantLayoutFields::Positional(
                             fields
                                 .iter()
-                                .map(|ty| type_context.intern_type(ty))
+                                .map(|ty| super::intern_backend_type(type_context, ty))
                                 .collect(),
                         )
                     }
                     HirVariantFields::Named(fields) => super::MirVariantLayoutFields::Named(
                         fields
                             .iter()
-                            .map(|field| (field.name.clone(), type_context.intern_type(&field.ty)))
+                            .map(|field| {
+                                (
+                                    field.name.clone(),
+                                    super::intern_backend_type(type_context, &field.ty),
+                                )
+                            })
                             .collect(),
                     ),
                 },
@@ -1290,7 +1313,7 @@ impl<'a> MirBuilder<'a> {
     }
 
     fn type_id_for(&self, ty: &Type) -> TypeId {
-        self.type_context.borrow_mut().intern_type(ty)
+        super::intern_backend_type(&mut self.type_context.borrow_mut(), ty)
     }
 
     fn new_local(&mut self, ty: TypeId, mutability: Mutability, name: Option<String>) -> Local {
@@ -1526,6 +1549,13 @@ impl<'a> MirBuilder<'a> {
         .with_source_map(&self.source_map);
         builder.callable_instances_by_def_id = self.callable_instances_by_def_id.clone();
         builder.method_def_ids = self.method_def_ids.clone();
+        // A closure is another body in the same compilation environment, not a
+        // fresh dispatch authority. Preserve the exact mono-produced contracts.
+        builder.object_schemas = self.object_schemas.clone();
+        builder.vtables = self.vtables.clone();
+        builder.owned_object_calls = self.owned_object_calls.clone();
+        builder.erased_invocations = self.erased_invocations.clone();
+        builder.scoped_entries = self.scoped_entries.clone();
         builder.pending_closure_body_captures = captures;
         let function_id = MirFunctionId::Closure(Box::new(closure_id));
         let mir_func = builder.build_function(
@@ -1941,7 +1971,8 @@ impl<'a> MirBuilder<'a> {
 
     fn record_rvalue_moves(&mut self, rvalue: &Rvalue) {
         match rvalue {
-            Rvalue::Object(operand, _)
+            Rvalue::Package(operand, _)
+            | Rvalue::Object(operand, _)
             | Rvalue::Use(operand)
             | Rvalue::Cast(operand, _)
             | Rvalue::UnaryOp(_, operand) => {
@@ -2448,6 +2479,7 @@ impl<'a> MirBuilder<'a> {
     fn needs_drop(ty: &Type) -> bool {
         match ty {
             Type::Array(_, _) => true,
+            Type::Exists(_) => true,
             Type::Struct { .. } => true,
             Type::Enum { .. } => true,
             Type::Tuple(elems) => elems.iter().any(Self::needs_drop),

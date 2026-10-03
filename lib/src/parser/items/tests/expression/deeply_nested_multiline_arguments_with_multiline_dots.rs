@@ -47,7 +47,7 @@ fn deeply_nested_multiline_arguments_with_multiline_dots() {
             let args = secondaries
                 .iter()
                 .find_map(|s| match s {
-                    SecondaryExpr::Arguments(args) => Some(args),
+                    SecondaryExpr::Arguments(args, _) => Some(args),
                     _ => None,
                 })
                 .expect("Should have arguments");
@@ -73,7 +73,7 @@ fn deeply_nested_multiline_arguments_with_multiline_dots() {
                     let nested_args = nested_secondaries
                         .iter()
                         .find_map(|s| match s {
-                            SecondaryExpr::Arguments(args) => Some(args),
+                            SecondaryExpr::Arguments(args, _) => Some(args),
                             _ => None,
                         })
                         .expect("argnested should have arguments");

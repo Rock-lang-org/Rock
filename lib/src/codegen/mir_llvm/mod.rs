@@ -1,10 +1,11 @@
 use inkwell::basic_block::BasicBlock as LlvmBasicBlock;
 
 mod assert;
+mod erased;
 mod object;
 mod object_adapters;
-mod erased;
 mod operand;
+mod package;
 mod place;
 mod rvalue;
 mod terminator;
@@ -113,7 +114,7 @@ impl<'ctx> CodeGen<'ctx> {
         rvalue: &Rvalue,
     ) -> Result<(), CodegenError> {
         match rvalue {
-            Rvalue::Object(operand, _) | Rvalue::Use(operand) => {
+            Rvalue::Package(operand, _) | Rvalue::Object(operand, _) | Rvalue::Use(operand) => {
                 self.validate_mir_operand_type_ids(program, operand)
             }
             Rvalue::Ref(_, _) => Ok(()),

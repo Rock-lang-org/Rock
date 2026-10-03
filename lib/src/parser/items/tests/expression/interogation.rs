@@ -49,32 +49,35 @@ fn interogation() {
             }),
             secondaries: Some(vec![
                 SecondaryExpr::Interogation,
-                SecondaryExpr::Arguments(vec![
-                    Argument {
-                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
-                                    name: "bar".to_string(),
-                                    span: Span::test(),
-                                })],
-                            }),
-                            secondaries: None,
-                            type_annotation: None,
-                        }))
-                    },
-                    Argument {
-                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                            operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
-                                    name: "baz".to_string(),
-                                    span: Span::test(),
-                                })],
-                            }),
-                            secondaries: None,
-                            type_annotation: None,
-                        }))
-                    }
-                ]),
+                SecondaryExpr::Arguments(
+                    vec![
+                        Argument {
+                            arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Ident(IdentifierPath {
+                                    path: vec![IdentOrType::Ident(Ident {
+                                        name: "bar".to_string(),
+                                        span: Span::test(),
+                                    })],
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            }))
+                        },
+                        Argument {
+                            arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                                operand: Operand::Ident(IdentifierPath {
+                                    path: vec![IdentOrType::Ident(Ident {
+                                        name: "baz".to_string(),
+                                        span: Span::test(),
+                                    })],
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            }))
+                        }
+                    ],
+                    Span::new("/test.rk".into(), 5, input.len() - 1)
+                ),
                 SecondaryExpr::Interogation,
             ]),
 
@@ -91,9 +94,12 @@ fn trailing_interogation_after_inline_call_applies_to_call() {
         ident_expr(
             "foo",
             Some(vec![
-                SecondaryExpr::Arguments(vec![Argument {
-                    arg: ident_expr("bar", None),
-                }]),
+                SecondaryExpr::Arguments(
+                    vec![Argument {
+                        arg: ident_expr("bar", None),
+                    }],
+                    Span::new("/test.rk".into(), 4, 7)
+                ),
                 SecondaryExpr::Interogation,
             ]),
         ),
@@ -111,7 +117,7 @@ fn trailing_interogation_after_borrowed_argument_applies_to_call() {
 
     assert!(matches!(
         secondaries.as_slice(),
-        [SecondaryExpr::Arguments(arguments), SecondaryExpr::Interogation]
+        [SecondaryExpr::Arguments(arguments, _), SecondaryExpr::Interogation]
             if matches!(
                 arguments.as_slice(),
                 [Argument {
@@ -128,7 +134,7 @@ fn trailing_interogation_after_bang_call_applies_to_call() {
         ident_expr(
             "foo",
             Some(vec![
-                SecondaryExpr::Arguments(vec![]),
+                SecondaryExpr::Arguments(vec![], Span::new("/test.rk".into(), 3, 4)),
                 SecondaryExpr::Interogation,
             ]),
         ),
@@ -147,16 +153,19 @@ fn receiver_chain_and_call_interogation_compose() {
                     name: "get".to_string(),
                     span: Span::test(),
                 })),
-                SecondaryExpr::Arguments(vec![Argument {
-                    arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                        operand: Operand::Literal(Literal {
-                            kind: LiteralKind::Number(0),
-                            span: Span::test(),
-                        }),
-                        secondaries: None,
-                        type_annotation: None,
-                    })),
-                }]),
+                SecondaryExpr::Arguments(
+                    vec![Argument {
+                        arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                            operand: Operand::Literal(Literal {
+                                kind: LiteralKind::Number(0),
+                                span: Span::test(),
+                            }),
+                            secondaries: None,
+                            type_annotation: None,
+                        })),
+                    }],
+                    Span::new("/test.rk".into(), 11, 12),
+                ),
                 SecondaryExpr::Interogation,
             ]),
         ),
@@ -169,16 +178,19 @@ fn parenthesized_argument_interogation_stays_inside_argument() {
         parse_expr("foo (bar?)"),
         ident_expr(
             "foo",
-            Some(vec![SecondaryExpr::Arguments(vec![Argument {
-                arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-                    operand: Operand::Expression(Box::new(ident_expr(
-                        "bar",
-                        Some(vec![SecondaryExpr::Interogation]),
-                    ))),
-                    secondaries: None,
-                    type_annotation: None,
-                })),
-            }])]),
+            Some(vec![SecondaryExpr::Arguments(
+                vec![Argument {
+                    arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                        operand: Operand::Expression(Box::new(ident_expr(
+                            "bar",
+                            Some(vec![SecondaryExpr::Interogation]),
+                        ))),
+                        secondaries: None,
+                        type_annotation: None,
+                    })),
+                }],
+                Span::new("/test.rk".into(), 4, "foo (bar?)".len())
+            )]),
         ),
     );
 }
@@ -192,9 +204,12 @@ fn parenthesized_callee_interogation_stays_inside_callee() {
                 "make_fn",
                 Some(vec![SecondaryExpr::Interogation]),
             ))),
-            secondaries: Some(vec![SecondaryExpr::Arguments(vec![Argument {
-                arg: ident_expr("arg", None),
-            }])]),
+            secondaries: Some(vec![SecondaryExpr::Arguments(
+                vec![Argument {
+                    arg: ident_expr("arg", None),
+                }],
+                Span::new("/test.rk".into(), 11, "(make_fn?) arg".len())
+            )]),
             type_annotation: None,
         })),
     );

@@ -12,9 +12,11 @@ pub mod erased;
 pub mod identity;
 pub mod object;
 pub mod object_adapters;
+pub mod package;
 pub use erased::*;
 pub use object::*;
 pub use object_adapters::*;
+pub use package::*;
 
 use crate::ids::{DefId, InstanceId, TypeId, VariantId};
 use crate::lexer::Span;
@@ -32,6 +34,18 @@ pub use identity::{
     MirAggregateIdentity, MirAssertKind, MirCallable, MirClosureId, MirFieldIdentity,
     MirFunctionId, MirIntrinsicId, MirRuntimeHelper,
 };
+
+/// Backend-derived structural types retain lexical binders inside closed
+/// packages; raw interning deliberately rejects such terms.
+pub(crate) fn intern_backend_type(
+    type_context: &mut TypeContext,
+    ty: &crate::types::Type,
+) -> TypeId {
+    let canonical = type_context
+        .normalize_type(ty)
+        .expect("backend type normalization must preserve accepted type invariants");
+    type_context.intern_canonical_type(&canonical)
+}
 
 #[derive(Debug, Clone)]
 pub struct MirProgram {
@@ -243,6 +257,12 @@ pub enum BorrowKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ReferenceOrigin {
     Param(Local),
+    /// Loans contained in the value addressed by a borrowed parameter, not
+    /// the loan protecting that parameter's referent storage itself.
+    ParamContents(Local),
+    /// A view into parameter-reachable memory, rather than an independent copy
+    /// of its stored loans. Retains the supplying storage and payload provenance.
+    ParamBorrowedContents(Local),
     Local(Local),
     Temporary(Local),
     Static,
@@ -449,6 +469,7 @@ pub enum Rvalue {
     Ref(Mutability, Place),
     Cast(Operand, TypeId),
     Object(Operand, MirObjectConversion),
+    Package(Operand, MirPackagePackPlan),
     Closure(MirClosure),
     BinaryOp(MirBinOp, Operand, Operand),
     UnaryOp(MirUnaryOp, Operand),
