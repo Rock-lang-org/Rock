@@ -87,6 +87,33 @@ impl<'ctx> CodeGen<'ctx> {
         let mut cmd = std::process::Command::new("cc");
         cmd.arg(&obj_path);
 
+        let runtime_files = if self.descriptor_runtime_required || self.descriptor_nominal_runtime_required || self.dictionary_runtime_required {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let directory = output_path.parent().unwrap_or_else(|| Path::new("."))
+                .join(format!(".rock-descriptor-runtime-{}-{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+            std::fs::create_dir(&directory).map_err(|error| CodegenError::output(error.to_string(), &directory))?;
+            let source = super::descriptor_runtime::write_sources(&directory)
+                .map_err(|error| CodegenError::output(error.to_string(), &directory))?;
+            let object = directory.join("runtime.o");
+            let compiled = std::process::Command::new("cc")
+                .args(["-std=c11", "-O2", "-fPIC", "-pthread", "-c"])
+                .arg(&source).arg("-o").arg(&object).output()
+                .map_err(|error| CodegenError::toolchain(format!("cannot compile descriptor runtime: {error}")))?;
+            if !compiled.status.success() {
+                return Err(CodegenError::toolchain(format!("descriptor runtime compilation failed: {}", String::from_utf8_lossy(&compiled.stderr))));
+            }
+            cmd.arg(&object);
+            for support in self.runtime_support()? {
+                let roots = match support {
+                    crate::products::ProductRuntimeSupport::TupleDescriptorsV1 { roots, .. }
+                    | crate::products::ProductRuntimeSupport::NominalDescriptorsV1 { roots, .. }
+                    | crate::products::ProductRuntimeSupport::SelectedDictionariesV1 { roots, .. } => roots,
+                };
+                for root in roots { cmd.arg(format!("-Wl,-u,{}", root.symbol())); }
+            }
+            Some((directory, source, object))
+        } else { None };
+
         for crate_obj in crate_objects {
             cmd.arg(crate_obj);
         }
@@ -108,6 +135,12 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let _ = std::fs::remove_file(&obj_path);
+        if let Some((directory, source, object)) = runtime_files {
+            let _ = std::fs::remove_file(source);
+            let _ = std::fs::remove_file(object);
+            let _ = std::fs::remove_file(directory.join("rock_descriptor_runtime.h"));
+            let _ = std::fs::remove_dir(directory);
+        }
 
         Ok(())
     }

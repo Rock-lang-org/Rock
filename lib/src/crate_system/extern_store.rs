@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use crate::ast::Module;
@@ -66,6 +66,8 @@ pub(crate) struct ExternCrateMetadata {
     prelude_export_ids: BTreeMap<String, ArtifactExport>,
     proc_macros: Vec<ProcMacroArtifact>,
     language_items: HirLanguageItems,
+    source_map: crate::source_map::SemanticSourceMap,
+    source_files: BTreeMap<PathBuf, String>,
 }
 
 impl ExternCrateMetadata {
@@ -80,6 +82,8 @@ impl ExternCrateMetadata {
             prelude_export_ids,
             proc_macros: Vec::new(),
             language_items: HirLanguageItems::default(),
+            source_map: Default::default(),
+            source_files: Default::default(),
         }
     }
 
@@ -92,6 +96,15 @@ impl ExternCrateMetadata {
         self.proc_macros = proc_macros;
         self
     }
+
+    pub(crate) fn with_diagnostic_sources(mut self, source_map: crate::source_map::SemanticSourceMap, source_files: BTreeMap<PathBuf, String>) -> Self {
+        self.source_map = source_map;
+        self.source_files = source_files;
+        self
+    }
+
+    pub(crate) fn source_map(&self) -> &crate::source_map::SemanticSourceMap { &self.source_map }
+    pub(crate) fn source_files(&self) -> &BTreeMap<PathBuf, String> { &self.source_files }
 
     #[cfg(test)]
     pub(crate) fn empty_for_test() -> Self {
@@ -217,23 +230,48 @@ pub(crate) enum ExternCrateLinkage {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExternCrateLink {
+    native_return_origins: BTreeMap<DefId, crate::hir::borrowing::NativeReturnOrigins<crate::types::Type>>,
+    runtime_support: BTreeSet<crate::products::ProductRuntimeSupport>,
     linkage: ExternCrateLinkage,
     backend_symbols: BTreeMap<DefId, String>,
+    polymorphic_members: BTreeMap<DefId, crate::products::ProductPolymorphicMemberLink>,
 }
 
 impl ExternCrateLink {
     pub(crate) fn object(object_path: PathBuf, backend_symbols: BTreeMap<DefId, String>) -> Self {
         Self {
+            native_return_origins: BTreeMap::new(),
             linkage: ExternCrateLinkage::Object { object_path },
+            runtime_support: BTreeSet::new(),
             backend_symbols,
+            polymorphic_members: BTreeMap::new(),
         }
     }
 
     pub(crate) fn metadata_only(backend_symbols: BTreeMap<DefId, String>) -> Self {
         Self {
+            native_return_origins: BTreeMap::new(),
             linkage: ExternCrateLinkage::MetadataOnly,
+            runtime_support: BTreeSet::new(),
             backend_symbols,
+            polymorphic_members: BTreeMap::new(),
         }
+    }
+
+    pub(crate) fn with_runtime_support(mut self, support: BTreeSet<crate::products::ProductRuntimeSupport>) -> Self {
+        self.runtime_support = support; self
+    }
+
+    pub(crate) fn with_native_return_origins(mut self, origins: BTreeMap<DefId, crate::hir::borrowing::NativeReturnOrigins<crate::types::Type>>) -> Self {
+        self.native_return_origins = origins; self
+    }
+
+    pub(crate) fn native_return_origins(&self) -> &BTreeMap<DefId, crate::hir::borrowing::NativeReturnOrigins<crate::types::Type>> {
+        &self.native_return_origins
+    }
+
+    pub(crate) fn with_polymorphic_members(mut self, members: BTreeMap<DefId, crate::products::ProductPolymorphicMemberLink>) -> Self {
+        self.polymorphic_members = members; self
     }
 
     pub(crate) fn is_object_backed(&self) -> bool {
@@ -450,10 +488,36 @@ impl<'a> ExternCrateRef<'a> {
             .backend_symbol(method.id)
             .map(str::to_string)
     }
+
+    /// A generic member symbol denotes the canonical erased entry, never the
+    /// ordinary native ABI accepted by imported_impl_method_symbol.
+    pub(crate) fn imported_polymorphic_member_symbol(&self, imp: &HirImpl, method: &HirFunction) -> Result<Option<(String, crate::products::ProductPolymorphicMemberLink)>, String> {
+        if !self.record.link.is_object_backed() || !imp.type_generics.is_empty() || imp.trait_id.is_none()
+            || !imp.associated_types.is_empty() || method.is_unsafe || method.params.len() < 2
+            || method.generic_params.is_empty() || method.generic_params.iter().any(|parameter| parameter.kind != crate::type_services::kind::Kind::Type)
+            || !method.generic_bounds.is_empty()
+            || !method.generic_bounds.predicates.is_empty() || method.self_receiver != Some(crate::types::ReceiverMode::Shared)
+            || !matches!(&method.ret_type, crate::types::Type::Generic(id) if method.generic_params.iter().any(|p| p.id == *id))
+            || method.params.iter().skip(1).any(|p| !matches!(&p.ty, crate::types::Type::Generic(id) if method.generic_params.iter().any(|p| p.id == *id)))
+            || !method.params.iter().skip(1).any(|p| p.ty == method.ret_type)
+            || !self.record.metadata.interface().impls.contains_key(&imp.id) {
+            return Ok(None);
+        }
+        let symbol = self.record.link.backend_symbol(method.id)
+            .ok_or_else(|| format!("object-provided polymorphic dictionary method {:?} lacks its exact erased link record", method.id))?;
+        let member = self.record.link.polymorphic_members.get(&method.id)
+            .ok_or_else(|| format!("object-provided polymorphic dictionary method {:?} lacks its erased link record ABI", method.id))?;
+        member.validate_shape(method.id)?;
+        if member.entry.implementation != imp.id || Some(member.entry.trait_id) != imp.trait_id {
+            return Err(format!("polymorphic dictionary method {:?} has wrong implementation/trait link record authority", method.id));
+        }
+        Ok(Some((symbol.to_owned(), member.clone())))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DependencyLinkInputs {
+    pub runtime_support: BTreeSet<crate::products::ProductRuntimeSupport>,
     pub object_crate_names: Vec<String>,
     pub object_paths: Vec<PathBuf>,
 }
@@ -513,15 +577,18 @@ impl ExternCrateStore {
     pub(crate) fn link_inputs(&self) -> DependencyLinkInputs {
         let mut object_crate_names = Vec::new();
         let mut object_paths = Vec::new();
+        let mut runtime_support = BTreeSet::new();
 
         for dep in self.iter() {
             if let Some(path) = dep.link().object_path() {
                 object_crate_names.push(dep.name().to_string());
                 object_paths.push(path.clone());
+                runtime_support.extend(dep.link().runtime_support.iter().cloned());
             }
         }
 
         DependencyLinkInputs {
+            runtime_support,
             object_crate_names,
             object_paths,
         }

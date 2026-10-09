@@ -19,12 +19,47 @@ impl Monomorphizer {
         func_name: &str,
         generic_func: &HirFunction,
         args: &[HirExpr],
+        inferred_signature: Option<&Type>,
     ) -> Option<(crate::mono::InstanceId, Type, Type)> {
-        let type_args = self.extract_type_args(generic_func, args);
+        // Preserve inference's return-only bindings, but take value parameters
+        // from this invocation's actual types, including their environments.
+        // This is specialization data, not callable borrowing/producer evidence.
+        let type_args = inferred_signature
+            .and_then(|signature| {
+                let mut signature = signature.clone();
+                let Type::Function { params, .. } = &mut signature else {
+                    return None;
+                };
+                if params.len() != args.len() {
+                    return None;
+                }
+                *params = args.iter().map(|arg| arg.ty.clone()).collect();
+                self.extract_type_args_from_expr_type(generic_func, &signature)
+            })
+            .unwrap_or_else(|| self.extract_type_args(generic_func, args));
 
         let origin = self.function_instance_origin(generic_func);
         let substitution = type_args.clone();
-        let instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
+        let mut signature = self.create_specialization_signature(generic_func, &type_args);
+        let original_params = signature
+            .params
+            .iter()
+            .map(|parameter| parameter.ty.clone())
+            .collect::<Vec<_>>();
+        self.refine_value_parameters(&mut signature.params, args);
+        let mut instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
+        if signature
+            .params
+            .iter()
+            .map(|parameter| &parameter.ty)
+            .ne(original_params.iter())
+        {
+            instance_key.parameter_representations = signature
+                .params
+                .iter()
+                .map(|parameter| self.intern_type(&parameter.ty))
+                .collect();
+        }
         if let Some(instance_id) = self.instances.get(&instance_key) {
             // A portable body may coexist with the canonical native link.
             // Reuse that link's validated declaration; do not re-emit its body.
@@ -43,7 +78,7 @@ impl Monomorphizer {
                 );
                 return Some((instance_id, func_type, body.ret_type.clone()));
             }
-            let pending = self.create_specialization_signature(generic_func, &type_args);
+            let pending = signature;
             let param_types = pending
                 .params
                 .iter()
@@ -60,7 +95,7 @@ impl Monomorphizer {
         let specialized_name = format!("{}_mono_{}", func_name, self.counter);
         self.counter += 1;
 
-        let backend_symbol = self.backend_symbol_for_origin(&origin, &substitution);
+        let backend_symbol = self.backend_symbol_for_instance_key(&instance_key);
         let instance_id = self
             .instances
             .intern(instance_key, |id| crate::mono::InstanceRecord {
@@ -72,8 +107,12 @@ impl Monomorphizer {
                 provided_by_object: false,
                 is_specialization: true,
             });
-        let specialized_func =
-            self.create_specialization(generic_func, &type_args, &specialized_name);
+        let specialized_func = self.create_specialization_from_signature(
+            generic_func,
+            &type_args,
+            &specialized_name,
+            signature,
+        );
         let specialized_ret_type = specialized_func.ret_type.clone();
         let param_types: Vec<Type> = specialized_func
             .params
@@ -589,6 +628,37 @@ impl Monomorphizer {
         specialized_name: &str,
     ) -> HirFunction {
         let signature = self.create_specialization_signature(generic_func, type_args);
+        self.create_specialization_from_signature(
+            generic_func,
+            type_args,
+            specialized_name,
+            signature,
+        )
+    }
+
+    pub(super) fn refine_value_parameters(&self, params: &mut [HirParam], args: &[HirExpr]) {
+        if params.len() != args.len() {
+            return;
+        }
+        for (parameter, argument) in params.iter_mut().zip(args) {
+            if !parameter.is_ref {
+                if let Some(actual) = crate::type_services::callable::value_representation(
+                    &parameter.ty,
+                    &argument.ty,
+                ) {
+                    parameter.ty = actual;
+                }
+            }
+        }
+    }
+
+    fn create_specialization_from_signature(
+        &mut self,
+        generic_func: &HirFunction,
+        type_args: &[TypeId],
+        specialized_name: &str,
+        mut signature: HirFunction,
+    ) -> HirFunction {
         let mut substitution = HashMap::new();
         for (i, generic_id) in Self::generic_ids_for_function(generic_func)
             .iter()
@@ -606,6 +676,13 @@ impl Monomorphizer {
         self.process_params(Some(generic_func.id), &mut params_for_body);
         self.process_block(&mut body);
         self.var_types = old_var_types;
+        if let Some(actual) =
+            crate::type_services::callable::value_representation(&signature.ret_type, &body.ty)
+        {
+            if super::process::block_returns_agree(&body, &actual) {
+                signature.ret_type = actual;
+            }
+        }
 
         HirFunction {
             id: DefId::new(CrateId(0), LocalDefId(0)),
@@ -861,6 +938,84 @@ mod tests {
     }
 
     #[test]
+    fn stored_arrow_value_environments_partition_direct_specialization_without_changing_demands() {
+        use super::super::hir_types::HirStmt;
+        use crate::hir::{HirVarRef, HirVarTarget};
+        use crate::types::{CallableKind, CaptureKind, FunctionCapture, FunctionSafety};
+        let mut mono = Monomorphizer::new();
+        let owner = def_id(910);
+        let generic = Type::Generic(GenericParamId { owner, index: 0 });
+        let declared = Type::Tuple(vec![Type::function(vec![], Type::Unit), generic]);
+        let mut definition = generic_function(owner, declared.clone(), declared.clone());
+        definition.body = HirBlock {
+            stmts: vec![HirStmt::Expr(HirExpr {
+                kind: HirExprKind::ResolvedVar(HirVarRef {
+                    name: "value".into(),
+                    target: HirVarTarget::Local(definition.params[0].local_id),
+                }),
+                ty: declared.clone(),
+                span: crate::lexer::Span::test(),
+            })],
+            ty: declared.clone(),
+        };
+        let mut instances = Vec::new();
+        for payload in [
+            Type::Array(Box::new(Type::I64), 1),
+            Type::Array(Box::new(Type::I64), 2),
+        ] {
+            let callable = Type::function_with_metadata(
+                vec![],
+                Type::Unit,
+                FunctionSafety::Safe,
+                CallableKind::FnOnce,
+                vec![FunctionCapture::new(CaptureKind::Move, payload)],
+            );
+            let actual = Type::Tuple(vec![callable.clone(), Type::I64]);
+            let args = vec![expr_with_type(actual.clone())];
+            let (instance, signature, result) = mono
+                .monomorphize_call("relay", &definition, &args, None)
+                .unwrap();
+            assert!(
+                matches!(signature, Type::Function { params, .. } if params == vec![actual.clone()]),
+                "the default stored slot must not erase its actual environment"
+            );
+            assert_eq!(result, actual);
+            let body = mono.instances.pre_mir_body(instance).unwrap();
+            assert_eq!(body.body.ty, actual);
+            assert!(!crate::type_services::facts::TypeFacts::is_copy(
+                &body.params[0].ty
+            ));
+            assert_eq!(
+                mono.monomorphize_call("relay", &definition, &args, None)
+                    .unwrap()
+                    .0,
+                instance
+            );
+            assert!(
+                matches!(&definition.params[0].ty, Type::Tuple(fields) if matches!(&fields[0], Type::Function { callable_kind: CallableKind::Fn, captures, result_borrowing: crate::types::CallableResultBorrowing::Unknown, .. } if captures.is_empty())),
+                "retained definition demands are not caller layouts"
+            );
+            instances.push(instance);
+        }
+        assert_ne!(
+            instances[0], instances[1],
+            "A/B/T substitutions alone do not identify a stored-arrow environment"
+        );
+        assert_ne!(
+            mono.instances
+                .record(instances[0])
+                .unwrap()
+                .symbols
+                .backend_symbol,
+            mono.instances
+                .record(instances[1])
+                .unwrap()
+                .symbols
+                .backend_symbol
+        );
+    }
+
+    #[test]
     fn imported_native_function_keeps_portable_body_out_of_specialization() {
         let mut mono = Monomorphizer::new();
         mono.identity_context = crate::mono::CompilationIdentityContext::new(
@@ -905,7 +1060,12 @@ mod tests {
             let (selected, callable_ty, ret) = if explicit {
                 mono.monomorphize_with_type_args("provider::answer", &portable, &[])
             } else {
-                mono.monomorphize_call("provider::answer", &portable, &[expr_with_type(Type::I64)])
+                mono.monomorphize_call(
+                    "provider::answer",
+                    &portable,
+                    &[expr_with_type(Type::I64)],
+                    None,
+                )
             }
             .unwrap();
             assert_eq!(selected, instance);
@@ -1093,7 +1253,7 @@ mod tests {
         }];
 
         let (instance_id, func_ty, ret_ty) = mono
-            .monomorphize_call("identity", &generic, &args)
+            .monomorphize_call("identity", &generic, &args, None)
             .expect("generic call should specialize");
 
         assert_eq!(ret_ty, Type::I64);
@@ -1285,7 +1445,7 @@ mod tests {
         mono.normalization_env = env;
 
         let (instance, _, ret) = mono
-            .monomorphize_call("lift", &generic, &[expr_with_type(concrete.clone())])
+            .monomorphize_call("lift", &generic, &[expr_with_type(concrete.clone())], None)
             .expect("constructor application should specialize");
         let record = mono.instances.record(instance).unwrap();
 

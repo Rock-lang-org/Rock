@@ -166,6 +166,14 @@ impl TypeFacts {
                 Type::Struct { args, .. } | Type::Enum { args, .. } => {
                     args.iter().all(TypeFacts::is_concrete_type_argument)
                 }
+                Type::StructRepresentation { args, fields, .. } => {
+                    args.iter().all(TypeFacts::is_concrete_type_argument)
+                        && fields.iter().all(runtime_type)
+                }
+                Type::EnumRepresentation { args, variants, .. } => {
+                    args.iter().all(TypeFacts::is_concrete_type_argument)
+                        && variants.iter().flatten().all(runtime_type)
+                }
                 Type::TypeVar(_)
                 | Type::Generic(_)
                 | Type::Witness(_)
@@ -219,7 +227,9 @@ impl TypeFacts {
             Type::Array(_, _) => false,
             Type::Projection { .. } => false,
             Type::Struct { .. } => false,
+            Type::StructRepresentation { .. } => false,
             Type::Enum { .. } => false,
+            Type::EnumRepresentation { .. } => false,
             Type::TypeVar(_)
             | Type::Generic(_)
             | Type::Witness(_)
@@ -267,7 +277,9 @@ impl TypeFacts {
             | Ty::Array { .. }
             | Ty::Projection { .. }
             | Ty::Struct { .. }
+            | Ty::StructRepresentation { .. }
             | Ty::Enum { .. }
+            | Ty::EnumRepresentation { .. }
             | Ty::TypeVar(_)
             | Ty::Generic(_)
             | Ty::Witness(_)
@@ -292,6 +304,13 @@ impl TypeFacts {
             Type::Tuple(elems)
             | Type::Struct { args: elems, .. }
             | Type::Enum { args: elems, .. } => elems.iter().any(Self::contains_reference),
+            Type::StructRepresentation { args, fields, .. } => {
+                args.iter().chain(fields).any(Self::contains_reference)
+            }
+            Type::EnumRepresentation { args, variants, .. } => args
+                .iter()
+                .chain(variants.iter().flatten())
+                .any(Self::contains_reference),
             Type::Function {
                 params,
                 ret,

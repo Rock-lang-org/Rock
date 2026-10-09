@@ -166,6 +166,21 @@ impl<'ctx> CodeGen<'ctx> {
             .struct_type(&[ptr_ty.into(), ptr_ty.into()], false)
     }
 
+    pub(crate) fn enum_payload_storage_type(&self, ty: &Type, index: usize) -> Option<Type> {
+        match ty {
+            Type::Enum { id, args } => self.enum_variant_payload_type_by_id(*id, args, index),
+            Type::EnumRepresentation { id, variants, .. } => {
+                let fields = variants.get(index)?;
+                if self.enum_variant_payload_is_unwrapped(*id, index).ok()? {
+                    fields.first().cloned()
+                } else {
+                    Some(Type::Tuple(fields.clone()))
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn callable_code_type(
         &self,
         param_types: &[Type],
@@ -261,6 +276,13 @@ impl<'ctx> CodeGen<'ctx> {
                     elems.iter().map(|t| self.llvm_type(t)).collect();
                 self.context.struct_type(&field_types, false).into()
             }
+            Type::StructRepresentation { fields, .. } => {
+                let field_types = fields
+                    .iter()
+                    .map(|field| self.llvm_type(field))
+                    .collect::<Vec<_>>();
+                self.context.struct_type(&field_types, false).into()
+            }
             Type::Struct {
                 id,
                 args: type_args,
@@ -292,6 +314,16 @@ impl<'ctx> CodeGen<'ctx> {
                     .enum_layout_types_by_id(*id, type_args)
                     .unwrap_or_else(|| panic!("unknown nominal enum DefId {:?}", id));
                 self.context.struct_type(&layout_types, false).into()
+            }
+            Type::EnumRepresentation { variants, .. } => {
+                let mut layout = vec![self.context.i32_type().into()];
+                for index in 0..variants.len() {
+                    let payload = self
+                        .enum_payload_storage_type(ty, index)
+                        .expect("validated represented enum payload");
+                    layout.push(self.llvm_type(&payload));
+                }
+                self.context.struct_type(&layout, false).into()
             }
             Type::Function { .. } => self.callable_type().into(),
             Type::Reference { inner, .. } | Type::Pointer(inner)
@@ -445,7 +477,9 @@ impl<'ctx> CodeGen<'ctx> {
             | Type::Exists(_)
             | Type::Array(_, _)
             | Type::Struct { .. }
+            | Type::StructRepresentation { .. }
             | Type::Enum { .. }
+            | Type::EnumRepresentation { .. }
             | Type::Tuple(_) => {
                 let llvm_ty = self.llvm_type(ty);
                 llvm_ty.const_zero().into()

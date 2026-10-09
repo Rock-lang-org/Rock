@@ -12,6 +12,578 @@ use crate::lower::Lowerer;
 use crate::type_services::facts::TypeFacts;
 use crate::types::{GenericParamId, TraitBound, Type};
 
+#[cfg(test)]
+#[path = "callable_borrow_inference_tests.rs"]
+mod callable_borrow_inference_tests;
+
+#[cfg(test)]
+pub(crate) mod caller_field_authority {
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::infer::constraints::Constraint;
+    use crate::infer::{ConstraintOwner, InferenceEngine};
+
+    #[derive(Default)]
+    pub(super) struct Trace {
+        pub label: String,
+        pub path: PathBuf,
+        pub sites: HashSet<(String, &'static str)>,
+        pub functions: HashSet<DefId>,
+        pub types: HashSet<Type>,
+        pub audit: Option<DefId>,
+        pub selected: Option<DefId>,
+        pub relation: Option<(Type, Type, Option<ConstraintOwner>)>,
+    }
+
+    thread_local! {
+        pub(super) static TRACE: RefCell<Option<Trace>> = const { RefCell::new(None) };
+    }
+
+    fn enabled(trace: &Trace, span: &Span) -> bool {
+        span.file_path == trace.path && span.start == 2556 && span.end == 2557
+    }
+
+    impl Trace {
+        fn site(&mut self, stage: &'static str) -> bool {
+            let fresh = self.sites.insert((self.label.clone(), stage));
+            assert!(
+                self.sites.len() <= 8,
+                "CALLER_FIELD_OVERFLOW cumulative sites cap=8"
+            );
+            fresh
+        }
+
+        fn ty(&mut self, raw: &Type, resolved: Type) {
+            for ty in [raw, &resolved] {
+                self.types.insert(ty.clone());
+                assert!(
+                    self.types.len() <= 16,
+                    "CALLER_FIELD_OVERFLOW distinct top-level types cap=16 label={}",
+                    self.label
+                );
+            }
+            eprintln!(
+                "CALLER_FIELD_TYPE label={} raw={raw:?} representative={resolved:?}",
+                self.label
+            );
+        }
+
+        fn header(&mut self, lowerer: &Lowerer, function: &HirFunction) {
+            self.functions.insert(function.id);
+            assert!(
+                self.functions.len() <= 4,
+                "CALLER_FIELD_OVERFLOW functions cap=4"
+            );
+            assert!(
+                function.params.len() <= 4
+                    && function.generic_params.len() <= 2
+                    && function.generic_bounds.len() <= 2
+                    && function.generic_bounds.predicates.len() <= 2
+                    && function.generic_bounds.relaxed_sized.len() <= 2,
+                "CALLER_FIELD_OVERFLOW header"
+            );
+            eprintln!("CALLER_FIELD_HEADER label={} id={:?} name={} receiver={:?} unsafe={} params={} generics={:?}",
+                self.label, function.id, function.name, function.self_receiver, function.is_unsafe, function.params.len(), function.generic_params);
+            for parameter in &function.params {
+                eprintln!("CALLER_FIELD_PARAMETER local={:?}", parameter.local_id);
+                self.ty(&parameter.ty, lowerer.engine.resolve(&parameter.ty));
+            }
+            self.ty(
+                &function.ret_type,
+                lowerer.engine.resolve(&function.ret_type),
+            );
+            for (parameter, bounds) in &function.generic_bounds {
+                assert!(bounds.len() <= 2, "CALLER_FIELD_OVERFLOW header bounds");
+                eprintln!("CALLER_FIELD_BOUND parameter={parameter:?} rows={bounds:?}");
+                for bound in bounds {
+                    assert!(bound.type_args.len() <= 2);
+                    for ty in &bound.type_args {
+                        self.ty(ty, lowerer.engine.resolve(ty));
+                    }
+                }
+            }
+        }
+
+        fn reserve_binding(&mut self, lowerer: &Lowerer, body: &HirBlock, depth: usize) {
+            assert!(
+                depth <= 3 && body.stmts.len() <= 2,
+                "CALLER_FIELD_OVERFLOW reserve relay depth cap=3 statements cap=2"
+            );
+            let Some(HirStmt::Expr(expression)) = body.stmts.last() else {
+                eprintln!(
+                    "CALLER_FIELD_RESERVE_BINDING label={} actualBodyTail=ABSENT",
+                    self.label
+                );
+                return;
+            };
+            match &expression.kind {
+                HirExprKind::UnsafeBlock(inner) | HirExprKind::Block(inner) => {
+                    self.reserve_binding(lowerer, inner, depth + 1)
+                }
+                HirExprKind::Call(callee, arguments, target) => {
+                    assert!(
+                        arguments.len() <= 4,
+                        "CALLER_FIELD_OVERFLOW reserve relay arguments cap=4"
+                    );
+                    eprintln!("CALLER_FIELD_RESERVE_BINDING label={} span={:?} argumentCount={} targetKind={:?} calleeKind={:?}",
+                        self.label, expression.span, arguments.len(), target.as_ref().map(std::mem::discriminant), std::mem::discriminant(&callee.kind));
+                    if let Some(HirCallTarget::Function(id)) = target {
+                        eprintln!("CALLER_FIELD_RESERVE_CANONICAL_FUNCTION id={id:?}");
+                    }
+                    if let HirExprKind::ResolvedVar(reference) = &callee.kind {
+                        eprintln!("CALLER_FIELD_RESERVE_CALLEE reference={reference:?}");
+                    }
+                    for argument in arguments {
+                        eprintln!(
+                            "CALLER_FIELD_RESERVE_ARGUMENT span={:?} kind={:?}",
+                            argument.span,
+                            std::mem::discriminant(&argument.kind)
+                        );
+                        self.ty(&argument.ty, lowerer.engine.resolve(&argument.ty));
+                    }
+                    self.ty(&expression.ty, lowerer.engine.resolve(&expression.ty));
+                }
+                _ => eprintln!(
+                    "CALLER_FIELD_RESERVE_BINDING label={} actualTailKind={:?}",
+                    self.label,
+                    std::mem::discriminant(&expression.kind)
+                ),
+            }
+        }
+    }
+
+    pub(super) fn field(
+        lowerer: &Lowerer,
+        stage: &'static str,
+        receiver: &HirExpr,
+        use_kind: ExprUse,
+        method_as_value: bool,
+        dot_span: &Span,
+        location: Option<&HirFieldLocation>,
+    ) {
+        TRACE.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(trace) = state.as_mut() else { return; };
+            if !enabled(trace, &receiver.span) || !trace.site(stage) { return; }
+            eprintln!("CALLER_FIELD_SITE label={} stage={stage} span={:?} dotSpan={dot_span:?} use={use_kind:?} methodAsValue={method_as_value} bodyOwner={:?} selectedLocation={location:?}",
+                trace.label, receiver.span, lowerer.current_body_owner());
+            trace.ty(&receiver.ty, lowerer.engine.resolve(&receiver.ty));
+            let HirExprKind::Deref(input) = &receiver.kind else { panic!("actual source dereference receiver"); };
+            eprintln!("CALLER_FIELD_INPUT kind={:?} span={:?}", std::mem::discriminant(&input.kind), input.span);
+            match &input.kind {
+                HirExprKind::ResolvedVar(reference) => eprintln!("CALLER_FIELD_INPUT_LOCAL reference={reference:?}"),
+                HirExprKind::Var(name) => eprintln!("CALLER_FIELD_INPUT_LOCAL binding={:?}", lowerer.scope.lookup(name)),
+                _ => panic!("actual audit local input"),
+            }
+            trace.ty(&input.ty, lowerer.engine.resolve(&input.ty));
+            let relations = lowerer.constraint_store.iter().filter_map(|(id, constraint)| match constraint {
+                Constraint::Dereference { input, output, unsafe_allowed, span } if enabled(trace, span) =>
+                    Some((id, input, output, unsafe_allowed)),
+                _ => None,
+            }).collect::<Vec<_>>();
+            assert_eq!(relations.len(), 1, "one original source dereference relation");
+            for (id, input, output, allowed) in relations {
+                let owner = lowerer.constraint_store.owner(id);
+                eprintln!("CALLER_FIELD_RELATION stage={stage} id={id:?} owner={:?} unsafeAllowed={allowed} state={:?}",
+                    owner, lowerer.constraint_store.state(id));
+                if stage == "before-guess" { trace.relation = Some((input.clone(), output.clone(), owner)); }
+                trace.ty(input, lowerer.engine.resolve(input));
+                trace.ty(output, lowerer.engine.resolve(output));
+            }
+            if stage == "before-guess" {
+                // Observe every registered base field before applying the production
+                // current-only filter; public visibility is evidence, not a bypass.
+                let mut candidates = lowerer.items.structures().filter_map(|(id, structure)| {
+                    structure.fields.iter().find(|field| field.name == "base")
+                        .map(|field| (id, structure, field))
+                }).collect::<Vec<_>>();
+                candidates.sort_by_key(|(id, _, _)| *id);
+                assert!(candidates.len() <= 5, "CALLER_FIELD_OVERFLOW registered base candidates={} cap=5", candidates.len());
+                eprintln!("CALLER_FIELD_CANDIDATE_COUNTS registered={} current={}", candidates.len(),
+                    candidates.iter().filter(|(id, _, _)| lowerer.current_def_ids.contains(id)).count());
+                for (id, structure, field) in candidates {
+                    assert_eq!(id, structure.id);
+                    assert!(structure.generic_params.len() <= 2);
+                    eprintln!("CALLER_FIELD_CANDIDATE label={} registryKey={id:?} canonicalOwner={:?} displayName={:?} fieldId={:?} public={} current={} generics={:?}",
+                        trace.label, structure.id, lowerer.canonical_name_for_def_id(id), field.id, field.public,
+                        lowerer.current_def_ids.contains(&id), structure.generic_params);
+                    trace.ty(&field.ty, lowerer.engine.resolve(&field.ty));
+                }
+                for alias in ["Audit", "State", "Memory"] {
+                    let id = lowerer.resolve_item_def_id(alias).expect("actual caller import alias");
+                    eprintln!("CALLER_FIELD_IMPORT alias={alias} canonicalId={id:?} displayName={:?} current={}",
+                        lowerer.canonical_name_for_def_id(id), lowerer.current_def_ids.contains(&id));
+                    if alias == "Audit" { trace.audit = Some(id); }
+                    if alias != "Memory" {
+                        let structure = lowerer.items.structure(id).expect("imported canonical structure registered");
+                        assert_eq!(structure.id, id);
+                        let field = structure.fields.iter().find(|field| field.name == "base").unwrap();
+                        eprintln!("CALLER_FIELD_IMPORTED_BASE owner={id:?} fieldId={:?} public={}", field.id, field.public);
+                        trace.ty(&field.ty, lowerer.engine.resolve(&field.ty));
+                    } else {
+                        let definition = lowerer.items.trait_def(id).unwrap();
+                        let signature = &definition.signatures["audit"];
+                        assert!(signature.params.len() <= 1 && signature.generic_params.len() <= 2);
+                        eprintln!("CALLER_FIELD_MEMORY_AUDIT traitId={id:?} memberId={:?} receiver={:?} unsafe={} params={:?} generics={:?}",
+                            signature.id, signature.self_receiver, signature.is_unsafe, signature.params, signature.generic_params);
+                        trace.ty(&signature.ret, lowerer.engine.resolve(&signature.ret));
+                        for ty in &signature.params { trace.ty(ty, lowerer.engine.resolve(ty)); }
+                    }
+                }
+            }
+            if stage == "field-installed" {
+                let reserve = lowerer.current_body_def_id().and_then(|id| lowerer.items.function(id)).unwrap();
+                trace.header(lowerer, reserve);
+                let resource = lowerer.resolve_item_def_id("Resource").unwrap();
+                let memory = lowerer.resolve_item_def_id("Memory").unwrap();
+                let mut headers = Vec::new();
+                for (id, implementation) in lowerer.items.impl_defs() {
+                    if matches!(&implementation.receiver_pattern, HirImplReceiverPattern::Exact(Type::Struct { id, .. }) if *id == resource)
+                        && implementation.trait_id.is_none() {
+                        if let Some(function) = implementation.methods.get("new") { headers.push((id, function)); }
+                    }
+                    if implementation.trait_id == Some(memory) {
+                        if let Some(function) = implementation.methods.get("reserve") { headers.push((id, function)); }
+                    }
+                }
+                headers.sort_by_key(|(_, function)| function.id);
+                assert!(headers.len() <= 3, "CALLER_FIELD_OVERFLOW related headers cap=3");
+                for (impl_id, function) in headers {
+                    eprintln!("CALLER_FIELD_IMPL_HEADER implId={impl_id:?}");
+                    trace.header(lowerer, function);
+                    if lowerer.items.impl_def(impl_id).unwrap().trait_id == Some(memory) {
+                        trace.reserve_binding(lowerer, &function.body, 0);
+                    }
+                }
+            }
+            if let Some(location) = location {
+                trace.selected = Some(location.owner);
+                let field = lowerer.items.structure(location.owner).unwrap().fields.iter()
+                    .find(|field| field.id == location.field_id).unwrap();
+                eprintln!("CALLER_FIELD_SELECTED_SCHEMA owner={:?} fieldId={:?} public={}", location.owner, field.id, field.public);
+                trace.ty(&field.ty, lowerer.engine.resolve(&field.ty));
+            }
+        });
+    }
+
+    pub(crate) fn failed_dereference(
+        engine: &InferenceEngine,
+        owner: Option<ConstraintOwner>,
+        input: &Type,
+        output: &Type,
+        span: &Span,
+    ) {
+        TRACE.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(trace) = state.as_mut() else {
+                return;
+            };
+            if !enabled(trace, span) || !trace.site("solver-failure") {
+                return;
+            }
+            eprintln!(
+                "CALLER_FIELD_SOLVER label={} span={span:?} owner={owner:?} execution=NONE",
+                trace.label
+            );
+            let input_resolved = engine.resolve(input);
+            let output_resolved = engine.resolve(output);
+            trace.ty(input, input_resolved.clone());
+            trace.ty(output, output_resolved.clone());
+            let (original_input, original_output, original_owner) =
+                trace.relation.as_ref().unwrap();
+            assert_eq!(input, original_input);
+            assert_eq!(output, original_output);
+            assert_eq!(&owner, original_owner);
+            let Type::Pointer(pointee) = input_resolved else {
+                panic!("observed raw dereference input");
+            };
+            assert_eq!(
+                *pointee,
+                Type::Struct {
+                    id: trace.audit.unwrap(),
+                    args: Vec::new()
+                },
+                "pointee must be the actual imported Audit ID"
+            );
+            assert_eq!(
+                output_resolved,
+                Type::Struct {
+                    id: trace.selected.unwrap(),
+                    args: Vec::new()
+                },
+                "output must retain the actually selected field owner"
+            );
+            assert_ne!(trace.audit, trace.selected);
+        });
+    }
+}
+
+#[cfg(test)]
+mod producer_audit_authority {
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::lower::body_context::BodyOwner;
+    use crate::selection::SelectedMethod;
+
+    #[derive(Default)]
+    pub(super) struct Trace {
+        pub label: String,
+        pub path: PathBuf,
+        pub functions: HashSet<(String, DefId)>,
+        pub stages: Vec<(String, &'static str)>,
+        pub types: HashSet<Type>,
+        representatives: HashSet<(String, crate::ids::TypeVarId, Type)>,
+    }
+
+    thread_local! {
+        pub(super) static TRACE: RefCell<Option<Trace>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn enabled(span: &Span) -> bool {
+        TRACE.with(|state| {
+            state.borrow().as_ref().is_some_and(|trace| {
+                span.file_path == trace.path && span.start >= 2567 && span.end <= 2583
+            })
+        })
+    }
+
+    impl Trace {
+        fn ty(&mut self, lowerer: &Lowerer, raw: &Type) -> Type {
+            let resolved = lowerer.engine.resolve(raw);
+            for value in [raw, &resolved] {
+                crate::type_services::visit::visit_type(value, &mut |nested: &Type| {
+                    self.types.insert(nested.clone());
+                    assert!(
+                        self.types.len() <= 64,
+                        "PRODUCER_AUDIT overflow types={} cap=64 label={}",
+                        self.types.len(),
+                        self.label
+                    );
+                    if let Type::TypeVar(id) = nested {
+                        let representative = lowerer.engine.resolve(nested);
+                        if self.representatives.insert((
+                            self.label.clone(),
+                            *id,
+                            representative.clone(),
+                        )) {
+                            eprintln!("PRODUCER_AUDIT_REP label={} raw={id:?} representative={representative:?} actualBounds={:?}",
+                                self.label, lowerer.engine.get_bounds(*id));
+                        }
+                    }
+                });
+            }
+            resolved
+        }
+
+        fn function(&mut self, id: DefId) {
+            self.functions.insert((self.label.clone(), id));
+            assert!(
+                self.functions.len() <= 8,
+                "PRODUCER_AUDIT overflow functions={} cap=8 label={}",
+                self.functions.len(),
+                self.label
+            );
+        }
+
+        fn bounds(&mut self, lowerer: &Lowerer, bounds: &HirGenericBounds) {
+            assert!(
+                bounds.len() <= 16
+                    && bounds.predicates.len() <= 16
+                    && bounds.relaxed_sized.len() <= 16,
+                "PRODUCER_AUDIT overflow declaration context rows"
+            );
+            for (parameter, rows) in bounds {
+                assert!(rows.len() <= 16, "PRODUCER_AUDIT overflow bound rows");
+                self.ty(lowerer, &Type::Generic(*parameter));
+                for bound in rows {
+                    for argument in &bound.type_args {
+                        self.ty(lowerer, argument);
+                    }
+                }
+            }
+            for predicate in &bounds.predicates {
+                let crate::types::Predicate::Trait { subject, args, .. } = predicate;
+                self.ty(lowerer, subject);
+                for argument in args {
+                    self.ty(lowerer, argument);
+                }
+            }
+        }
+
+        fn header(&mut self, lowerer: &Lowerer, function: &HirFunction) {
+            self.function(function.id);
+            assert!(
+                function.params.len() <= 16 && function.generic_params.len() <= 16,
+                "PRODUCER_AUDIT overflow function header"
+            );
+            let params = function
+                .params
+                .iter()
+                .map(|param| {
+                    (
+                        param.local_id,
+                        param.ty.clone(),
+                        self.ty(lowerer, &param.ty),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let result = self.ty(lowerer, &function.ret_type);
+            self.bounds(lowerer, &function.generic_bounds);
+            eprintln!("PRODUCER_AUDIT_HEADER label={} id={:?} name={} params={params:?} rawResult={:?} resolvedResult={result:?} receiver={:?} unsafe={} generics={:?} bounds={:?}",
+                self.label, function.id, function.name, function.ret_type, function.self_receiver,
+                function.is_unsafe, function.generic_params, function.generic_bounds);
+        }
+
+        fn expression(&mut self, lowerer: &Lowerer, expression: &HirExpr) {
+            let resolved = self.ty(lowerer, &expression.ty);
+            eprintln!(
+                "PRODUCER_AUDIT_EXPR label={} span={:?} kind={:?} raw={:?} resolved={resolved:?}",
+                self.label,
+                expression.span,
+                std::mem::discriminant(&expression.kind),
+                expression.ty
+            );
+            match &expression.kind {
+                HirExprKind::ResolvedVar(reference) => {
+                    eprintln!(
+                        "PRODUCER_AUDIT_RESOLVED_VAR label={} actualReference={reference:?}",
+                        self.label
+                    );
+                }
+                HirExprKind::Var(name) => {
+                    let binding = lowerer.scope.lookup(name);
+                    eprintln!(
+                        "PRODUCER_AUDIT_LOCAL label={} spelling={name} actualBinding={binding:?}",
+                        self.label
+                    );
+                    if let Some(binding) = binding {
+                        self.ty(lowerer, &binding.ty);
+                    }
+                }
+                HirExprKind::FieldAccess(receiver, name, location) => {
+                    let receiver_resolved = self.ty(lowerer, &receiver.ty);
+                    eprintln!("PRODUCER_AUDIT_FIELD label={} spelling={name} actualLocation={location:?} receiverSpan={:?} receiverRaw={:?} receiverResolved={:?}",
+                        self.label, receiver.span, receiver.ty, receiver_resolved);
+                    if let HirExprKind::Var(name) = &receiver.kind {
+                        eprintln!(
+                            "PRODUCER_AUDIT_LOCAL label={} spelling={name} actualBinding={:?}",
+                            self.label,
+                            lowerer.scope.lookup(name)
+                        );
+                    }
+                    if let HirExprKind::ResolvedVar(reference) = &receiver.kind {
+                        eprintln!("PRODUCER_AUDIT_RESOLVED_VAR label={} actualReceiverReference={reference:?}", self.label);
+                    }
+                    if let Some(location) = location {
+                        let definition =
+                            lowerer.items.structure(location.owner).and_then(|owner| {
+                                owner
+                                    .fields
+                                    .iter()
+                                    .find(|field| field.id == location.field_id)
+                            });
+                        if let Some(field) = definition {
+                            self.ty(lowerer, &field.ty);
+                            eprintln!("PRODUCER_AUDIT_FIELD_SCHEMA label={} owner={:?} field={:?} raw={:?}", self.label, location.owner, field.id, field.ty);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub(super) fn event(
+        lowerer: &Lowerer,
+        stage: &'static str,
+        expression: &HirExpr,
+        span: &Span,
+        member: &str,
+        selected: Option<&SelectedMethod>,
+        types: &[&Type],
+        detail: String,
+    ) {
+        if !enabled(span) {
+            return;
+        }
+        TRACE.with(|state| {
+            let mut state = state.borrow_mut();
+            let trace = state.as_mut().unwrap();
+            trace.stages.push((trace.label.clone(), stage));
+            assert!(trace.stages.len() <= 16,
+                "PRODUCER_AUDIT overflow sites={} cap=16 label={} stage={stage}", trace.stages.len(), trace.label);
+            eprintln!("PRODUCER_AUDIT_SITE label={} stage={stage} span={span:?} {detail} actualBodyOwner={:?} currentImplId={:?}",
+                trace.label, lowerer.current_body_owner(), lowerer.current_impl_id);
+            trace.expression(lowerer, expression);
+            for ty in types { trace.ty(lowerer, ty); }
+            let owner = lowerer.current_body_owner();
+            let function = match &owner {
+                Some(BodyOwner::Function(id)) => lowerer.items.function(*id),
+                Some(BodyOwner::ImplMethod { impl_id, method_id, .. }) => lowerer.items.impl_def(*impl_id)
+                    .and_then(|imp| imp.methods.values().find(|function| function.id == *method_id)),
+                Some(BodyOwner::TraitMethod { trait_id, method_id, .. }) => lowerer.items.trait_def(*trait_id)
+                    .and_then(|definition| definition.methods.values().find(|function| function.id == *method_id)),
+                None => None,
+            };
+            if let Some(function) = function { trace.header(lowerer, function); }
+            if let Some(context) = &lowerer.body_context {
+                let registered = context.generic_params().iter()
+                    .map(|name| (name, context.generic_param_id(name))).collect::<Vec<_>>();
+                assert!(registered.len() <= 16, "PRODUCER_AUDIT overflow registered generics");
+                trace.bounds(lowerer, context.impl_bounds());
+                eprintln!("PRODUCER_AUDIT_CONTEXT label={} genericOwner={:?} registered={registered:?} declaredBounds={:?}",
+                    trace.label, context.generic_owner(), context.impl_bounds());
+            }
+            // Look up only declarations from the actual body bounds. This is
+            // an observation of the source member, not an added selection probe.
+            let mut declarations = HashSet::new();
+            for bound in lowerer.current_impl_bounds().values().flatten() {
+                if !declarations.insert(bound.trait_id) { continue; }
+                if let Some(signature) = lowerer.items.trait_def(bound.trait_id)
+                    .and_then(|definition| definition.signatures.get(member)) {
+                    trace.function(signature.id);
+                    assert!(signature.params.len() <= 16, "PRODUCER_AUDIT overflow trait signature");
+                    let params = signature.params.iter().map(|ty| (ty.clone(), trace.ty(lowerer, ty))).collect::<Vec<_>>();
+                    let result = trace.ty(lowerer, &signature.ret);
+                    trace.bounds(lowerer, &signature.generic_bounds);
+                    eprintln!("PRODUCER_AUDIT_DECLARATION label={} traitId={:?} memberId={:?} params={params:?} rawResult={:?} resolvedResult={result:?} receiver={:?} unsafe={} generics={:?} bounds={:?}",
+                        trace.label, bound.trait_id, signature.id, signature.ret, signature.self_receiver,
+                        signature.is_unsafe, signature.generic_params, signature.generic_bounds);
+                }
+            }
+            let selection_status = if matches!(stage, "dot-selection" | "args-selection") {
+                if selected.is_some() { "Some" } else { "None" }
+            } else { "UNOBSERVED_AT_THIS_STAGE" };
+            eprintln!("PRODUCER_AUDIT_SELECTION label={} actualSelected={selection_status}", trace.label);
+            if let Some(selected) = selected {
+                assert!(selected.substituted_params.len() <= 16 && selected.pending_impl_bounds.len() <= 16
+                    && selected.target.owner_substitution.len() <= 16 && selected.target.method_substitution.len() <= 16,
+                    "PRODUCER_AUDIT overflow selected header/obligations/substitution");
+                if let Some(function) = &selected.function { trace.header(lowerer, function); }
+                trace.ty(lowerer, &selected.receiver.ty);
+                trace.ty(lowerer, &selected.return_type);
+                for param in &selected.substituted_params { trace.ty(lowerer, &param.ty); }
+                for binding in selected.target.owner_substitution.iter().chain(&selected.target.method_substitution) {
+                    trace.ty(lowerer, &binding.ty);
+                }
+                for (subject, bound) in &selected.pending_impl_bounds {
+                    trace.ty(lowerer, subject);
+                    for argument in &bound.type_args { trace.ty(lowerer, argument); }
+                }
+                eprintln!("PRODUCER_AUDIT_SELECTED label={} target={:?} adjustment={:?} params={:?} result={:?} pending={:?}",
+                    trace.label, selected.target, selected.receiver_adjustment, selected.substituted_params,
+                    selected.return_type, selected.pending_impl_bounds);
+            }
+        });
+    }
+}
+
 fn call_expression_span(callee: &HirExpr, suffix: &Span) -> Span {
     fn start(expression: &HirExpr) -> &Span {
         match &expression.kind {
@@ -29,6 +601,57 @@ fn call_expression_span(callee: &HirExpr, suffix: &Span) -> Span {
     } else {
         // Preserve the actual suffix owner for cross-file macro origins.
         suffix.clone()
+    }
+}
+
+fn contextualize_intrinsic_integer_literal(
+    mut source: &ast::Expression,
+    argument: &mut HirExpr,
+    expected: &Type,
+) -> Result<(), (u64, Span)> {
+    if !TypeFacts::is_integer(expected) {
+        return Ok(());
+    }
+    loop {
+        let ast::Expression::UnaryExpr(ast::UnaryExpr::PrimaryExpr(primary)) = source else {
+            return Ok(());
+        };
+        if primary.type_annotation.is_some() || primary.secondaries.is_some() {
+            return Ok(());
+        }
+        match &primary.operand {
+            ast::Operand::Expression(inner) => source = inner,
+            ast::Operand::Literal(literal) => {
+                let ast::LiteralKind::Number(value) = &literal.kind else {
+                    return Ok(());
+                };
+                // HIR stores integer bits in i64; the AST retains the original
+                // unsigned magnitude, including values above i64::MAX.
+                if argument.span != literal.span
+                    || !matches!(&argument.kind,
+                        HirExprKind::IntLiteral(bits) if *bits == *value as i64)
+                {
+                    return Ok(());
+                }
+                let fits = match expected {
+                    Type::I8 => i8::try_from(*value).is_ok(),
+                    Type::I16 => i16::try_from(*value).is_ok(),
+                    Type::I32 => i32::try_from(*value).is_ok(),
+                    Type::I64 => i64::try_from(*value).is_ok(),
+                    Type::U8 => u8::try_from(*value).is_ok(),
+                    Type::U16 => u16::try_from(*value).is_ok(),
+                    Type::U32 => u32::try_from(*value).is_ok(),
+                    Type::U64 => true,
+                    _ => return Ok(()),
+                };
+                if !fits {
+                    return Err((*value, literal.span.clone()));
+                }
+                argument.ty = expected.clone();
+                return Ok(());
+            }
+            _ => return Ok(()),
+        }
     }
 }
 
@@ -185,12 +808,36 @@ impl Lowerer {
     fn propagate_call_argument_bounds(&mut self, expected: &Type, actual: &Type) {
         // Infer bound arguments from the source without fixing an open handle
         // destination; contextual callbacks need these facts before coercion.
+        let actual = self.engine.resolve(actual);
+        if let (
+            Type::Reference {
+                inner: expected,
+                mutable: expected_mutable,
+            },
+            Type::Reference {
+                inner: actual,
+                mutable: actual_mutable,
+            },
+        ) = (expected, &actual)
+        {
+            if !expected_mutable || *actual_mutable {
+                self.propagate_call_argument_bounds(expected, actual);
+            }
+            return;
+        }
         let bounds = match expected {
             Type::TypeVar(id) => self.engine.get_bounds(*id),
             _ => Vec::new(),
         };
-        let actual = self.engine.resolve(actual);
         for bound in bounds {
+            if crate::infer::solve::propagate_native_callable_bound(
+                &mut self.engine,
+                &actual,
+                &bound,
+                &self.language_items,
+            ) {
+                continue;
+            }
             if !bound.type_args.iter().any(|arg| {
                 crate::type_services::visit::type_any(&self.engine.resolve(arg), |ty| {
                     matches!(ty, Type::TypeVar(_))
@@ -357,13 +1004,19 @@ impl Lowerer {
             }
         }
 
-        if let Err(err) = self.engine.unify(&arg.ty, &resolved_expected) {
-            self.diagnostics
-                .push_type_with_span(err.render(&self.engine), arg.span.clone());
-            // Retain the actual type so the enclosing return/assignment check
-            // can report its own source context instead of swallowing the error.
-            return arg;
-        }
+        let binding = match self
+            .engine
+            .constrain_argument_binding(&arg.ty, &resolved_expected)
+        {
+            Ok(binding) => binding,
+            Err(err) => {
+                self.diagnostics
+                    .push_type_with_span(err.render(&self.engine), arg.span.clone());
+                // Retain the actual type so the enclosing return/assignment check
+                // can report its own source context instead of swallowing the error.
+                return arg;
+            }
+        };
 
         self.resolve_all_types_in_expr(&mut arg);
         if let HirExprKind::Lambda {
@@ -382,6 +1035,19 @@ impl Lowerer {
                 safety,
                 captures,
             );
+        }
+
+        if let (
+            Type::Function {
+                result_borrowing: demand,
+                ..
+            },
+            Type::Function {
+                result_borrowing, ..
+            },
+        ) = (&binding, &mut arg.ty)
+        {
+            *result_borrowing = demand.clone();
         }
 
         arg
@@ -568,11 +1234,6 @@ impl Lowerer {
             &coerced_args,
             operation_span,
         );
-        let ret_ty = self
-            .engine
-            .resolve(&selected.return_type)
-            .substitute_generics(&method_subst);
-        let ret_ty = self.resolve_selected_projection_type(selected, &ret_ty);
         self.record_pending_impl_bounds(selected, &method_subst, "method call");
         self.record_function_generic_bounds(
             &method_func,
@@ -580,6 +1241,11 @@ impl Lowerer {
             selected.receiver.span.clone(),
             "method call",
         );
+        let ret_ty = self
+            .engine
+            .resolve(&selected.return_type)
+            .substitute_generics(&method_subst);
+        let ret_ty = self.resolve_selected_projection_type(selected, &self.engine.resolve(&ret_ty));
         let target = selected.target_with_substitution(&method_subst, |ty| self.engine.resolve(ty));
 
         Some((method_func, ret_ty, coerced_args, target))
@@ -608,6 +1274,12 @@ impl Lowerer {
                         .map(|arg| self.engine.resolve(&arg.substitute_generics(subst)))
                         .collect(),
                 };
+                crate::infer::solve::propagate_native_callable_bound(
+                    &mut self.engine,
+                    &ty,
+                    &bound,
+                    &self.language_items,
+                );
                 if let Type::TypeVar(id) = ty {
                     self.engine.add_bound(id, bound.clone());
                     self.constraint_store.add_trait(
@@ -724,6 +1396,7 @@ impl Lowerer {
                 safety,
                 callable_kind,
                 captures,
+                result_borrowing,
             } => Type::Function {
                 params: params
                     .iter()
@@ -732,6 +1405,7 @@ impl Lowerer {
                 ret: Box::new(self.resolve_selected_projection_type(selected, ret)),
                 safety: *safety,
                 callable_kind: *callable_kind,
+                result_borrowing: result_borrowing.clone(),
                 captures: captures
                     .iter()
                     .map(|capture| crate::types::FunctionCapture {
@@ -776,6 +1450,12 @@ impl Lowerer {
                     .map(|arg| self.engine.resolve(&arg.substitute_generics(method_subst)))
                     .collect(),
             };
+            crate::infer::solve::propagate_native_callable_bound(
+                &mut self.engine,
+                &ty,
+                &bound,
+                &self.language_items,
+            );
             if let Type::TypeVar(id) = ty {
                 self.engine.add_bound(id, bound.clone());
                 self.constraint_store.add_trait(
@@ -853,6 +1533,53 @@ impl Lowerer {
         self.display_type(ty)
     }
 
+    fn field_is_definitely_non_callable(
+        &self,
+        receiver: &HirExpr,
+        member: &str,
+        field: &Type,
+        span: &Span,
+    ) -> bool {
+        let ty = self.resolve_projection_type(&self.engine.resolve(field));
+        if !TypeFacts::is_concrete(&ty)
+            || matches!(
+                ty,
+                Type::Error | Type::Function { .. } | Type::Reference { .. } | Type::Exists(_)
+            )
+        {
+            return false;
+        }
+        // Capability-only query on the declaration's closed field type. No
+        // field location, target, adjustment or receiver equation is installed.
+        let candidates = [crate::selection::ReceiverCandidate {
+            expr: HirExpr {
+                ty: ty.clone(),
+                kind: HirExprKind::FieldAccess(Box::new(receiver.clone()), member.into(), None),
+                span: span.clone(),
+            },
+            adjustment: crate::selection::ReceiverAdjustment::None,
+            can_autoref_mut: false,
+        }];
+        let service = self.selection_service();
+        // Ambiguity, missing protocol authority and access mismatch are not
+        // evidence of non-callability. Include object capabilities, even those
+        // requiring an Open rather than an immediately admissible direct call.
+        matches!(
+            service.select_callable_method(
+                &candidates,
+                &self.language_items,
+                |subject| match subject {
+                    Type::Object(object) => std::iter::once(object.principal.clone())
+                        .chain(object.guarantees.iter().cloned())
+                        .collect(),
+                    _ => Vec::new(),
+                },
+                None,
+            ),
+            Ok(None)
+        )
+    }
+
     pub(crate) fn apply_secondary(
         &mut self,
         expr: HirExpr,
@@ -861,12 +1588,39 @@ impl Lowerer {
         method_as_value: bool,
     ) -> HirExpr {
         let span = expr.span.clone();
+        #[cfg(test)]
+        if let ast::SecondaryExpr::Dot(ast::IdentOrNumber::Ident(ident)) = secondary {
+            if producer_audit_authority::enabled(&ident.span) {
+                producer_audit_authority::event(
+                    self,
+                    "dot-before",
+                    &expr,
+                    &ident.span,
+                    &ident.name,
+                    None,
+                    &[],
+                    format!(
+                        "AST={secondary:?} methodAsValue={method_as_value} receiverSpan={:?}",
+                        expr.span
+                    ),
+                );
+            }
+        }
         match secondary {
             ast::SecondaryExpr::Arguments(args, suffix_span) => {
                 // Keep the callee/member token for semantic references; the
                 // value expression includes the receiver and consumed suffix.
                 let callee_span = expr.span.clone();
                 let span = call_expression_span(&expr, suffix_span);
+                #[cfg(test)]
+                if producer_audit_authority::enabled(&span) {
+                    let member = match &expr.kind {
+                        HirExprKind::FieldAccess(_, member, _) => member.as_str(),
+                        _ => "",
+                    };
+                    producer_audit_authority::event(self, "args-before", &expr, &span, member, None, &[],
+                        format!("AST=Arguments suffixSpan={suffix_span:?} providedCount={} implicitUnitArgument=NONE", args.len()));
+                }
                 let mut expr = expr;
                 let mut hir_args: Vec<HirExpr>;
 
@@ -965,6 +1719,19 @@ impl Lowerer {
                         None
                     });
 
+                    #[cfg(test)]
+                    if producer_audit_authority::enabled(&span) {
+                        producer_audit_authority::event(
+                            self,
+                            "args-selection",
+                            &expr,
+                            &span,
+                            method_name,
+                            found_method.as_ref(),
+                            &[],
+                            format!("providedCount={} receiverResolved={recv_ty:?}", args.len()),
+                        );
+                    }
                     if let Some(selected) = found_method {
                         hir_args = args
                             .iter()
@@ -1244,8 +2011,13 @@ impl Lowerer {
                         }
                         let expected_arg_types = infer_intrinsic_arg_types(name);
                         let is_atomic = name.starts_with("AtomicU64");
-                        if is_atomic && hir_args.len() != expected_arg_types.len() {
-                            self.diagnostics.push_with_span(
+                        // An empty list denotes generic, separately checked memory
+                        // intrinsics, not a declared zero-argument scalar signature.
+                        let mut intrinsic_ty_error = false;
+                        if !expected_arg_types.is_empty()
+                            && hir_args.len() != expected_arg_types.len()
+                        {
+                            self.diagnostics.push_type_with_span(
                                 format!(
                                     "Intrinsic '~{}' expects exactly {} arguments, found {}",
                                     name,
@@ -1254,26 +2026,54 @@ impl Lowerer {
                                 ),
                                 span.clone(),
                             );
+                            intrinsic_ty_error = true;
                         }
-                        for (arg, expected_ty) in hir_args.iter().zip(expected_arg_types.iter()) {
-                            let _ = self.engine.unify(&arg.ty, expected_ty);
-                            if is_atomic {
-                                let resolved = self.engine.resolve(&arg.ty);
-                                if resolved != *expected_ty {
-                                    let expected = self.display_type(expected_ty);
-                                    let found = self.display_type(&resolved);
-                                    self.diagnostics.push_with_span(
-                                        format!(
-                                            "Intrinsic '~{}' expected argument type {}, found {}",
-                                            name, expected, found
-                                        ),
-                                        arg.span.clone(),
-                                    );
-                                }
+                        for ((arg, source), expected_ty) in hir_args
+                            .iter_mut()
+                            .zip(args.iter())
+                            .zip(expected_arg_types.iter())
+                        {
+                            if let Err((value, literal_span)) =
+                                contextualize_intrinsic_integer_literal(
+                                    &source.arg,
+                                    arg,
+                                    expected_ty,
+                                )
+                            {
+                                let expected = self.display_type(expected_ty);
+                                self.diagnostics.push_type_with_span(
+                                    format!(
+                                        "Integer literal {} is out of range for {}",
+                                        value, expected
+                                    ),
+                                    literal_span,
+                                );
+                                arg.ty = Type::Error;
+                                intrinsic_ty_error = true;
+                                continue;
+                            }
+                            let failed = self.engine.unify(&arg.ty, expected_ty).is_err();
+                            let resolved = self.engine.resolve(&arg.ty);
+                            // Integer unification permits coercion, but a native
+                            // intrinsic has no implicit operand conversion.
+                            let fixed_scalar =
+                                TypeFacts::is_numeric(expected_ty) || *expected_ty == Type::Bool;
+                            let exact_required =
+                                is_atomic || (fixed_scalar && TypeFacts::is_concrete(&resolved));
+                            if failed || (exact_required && resolved != *expected_ty) {
+                                let expected = self.display_type(expected_ty);
+                                let found = self.display_type(&resolved);
+                                self.diagnostics.push_type_with_span(
+                                    format!(
+                                        "Intrinsic '~{}' expected argument type {}, found {}",
+                                        name, expected, found
+                                    ),
+                                    arg.span.clone(),
+                                );
+                                intrinsic_ty_error = true;
                             }
                         }
                         let mut arrptr_elem_ty: Option<Type> = None;
-                        let mut intrinsic_ty_error = false;
                         if (name == "ArrPtr" || name == "ArrayLen") && !hir_args.is_empty() {
                             let resolved_arg_ty =
                                 self.resolve_projection_type(&self.engine.resolve(&hir_args[0].ty));
@@ -1395,7 +2195,10 @@ impl Lowerer {
                 if let Some(selected) = callable_selection {
                     return self.lower_callable_call(selected, hir_args);
                 }
-                let defer_argument_coercions = matches!(resolved_expr_ty, Type::TypeVar(_));
+                // Unresolved members get argument coercions from their selected authority.
+                let defer_argument_coercions =
+                    !matches!(expr.kind, HirExprKind::FieldAccess(_, _, None))
+                        && matches!(resolved_expr_ty, Type::TypeVar(_));
                 if let Type::Function { params, .. } = &resolved_expr_ty {
                     if params.len() == 1 && hir_args.len() > 1 {
                         return self.fold_unary_calls(expr, hir_args, span);
@@ -1478,6 +2281,18 @@ impl Lowerer {
                 while let Type::Reference { inner, .. } = callable_ty {
                     callable_ty = *inner;
                 }
+                #[cfg(test)]
+                if producer_audit_authority::enabled(&span) {
+                    let member = match &expr.kind {
+                        HirExprKind::FieldAccess(_, member, _) => member.as_str(),
+                        _ => "",
+                    };
+                    let mut observed_types = vec![&expected_fn_ty, &ret_ty, &callable_ty];
+                    observed_types.extend(hir_args.iter().map(|argument| &argument.ty));
+                    producer_audit_authority::event(self, "args-signature", &expr, &span, member, None, &observed_types,
+                        format!("expectedFunction={expected_fn_ty:?} callable={callable_ty:?} providedTypes={:?} installedCallTarget=NONE(no_Call_node_yet)",
+                            hir_args.iter().map(|argument| &argument.ty).collect::<Vec<_>>()));
+                }
                 let numeric_callee = if let Type::TypeVar(id) = callable_ty {
                     self.constraint_store
                         .literal_default_type_for_representative(id, |var| {
@@ -1490,7 +2305,9 @@ impl Lowerer {
                 } else {
                     false
                 };
-                if !numeric_callee && !matches!(expr.kind, HirExprKind::FieldAccess(..)) {
+                // A canonical structural field is a callable value; an unresolved
+                // member still needs method/field authority before its type is chosen.
+                if !numeric_callee && !matches!(expr.kind, HirExprKind::FieldAccess(_, _, None)) {
                     if let Type::TypeVar(id) = callable_ty {
                         let protocol = if self.expr_is_mutable_lvalue(&expr) {
                             self.language_items
@@ -1534,9 +2351,18 @@ impl Lowerer {
                         }
                     }
                 }
-                if (numeric_callee || self.engine.unify(&callable_ty, &expected_fn_ty).is_err())
-                    && !matches!(expr.kind, HirExprKind::FieldAccess(..))
+                if !matches!(expr.kind, HirExprKind::FieldAccess(_, _, None))
+                    && (numeric_callee || self.engine.unify(&callable_ty, &expected_fn_ty).is_err())
                 {
+                    #[cfg(test)]
+                    if producer_audit_authority::enabled(&span) {
+                        let member = match &expr.kind {
+                            HirExprKind::FieldAccess(_, member, _) => member.as_str(),
+                            _ => "",
+                        };
+                        producer_audit_authority::event(self, "args-rejected", &expr, &span, member, None, &[&callable_ty, &expected_fn_ty],
+                            format!("actualCallabilityRejected=true numericCallee={numeric_callee} quiescence=UNREACHED(lower_error)"));
+                    }
                     let message = format!(
                         "value of type {} is not callable with these arguments",
                         self.display_type(&callable_ty)
@@ -1684,6 +2510,19 @@ impl Lowerer {
                         }
                     }
 
+                    #[cfg(test)]
+                    if producer_audit_authority::enabled(&span) {
+                        producer_audit_authority::event(
+                            self,
+                            "dot-selection",
+                            &expr,
+                            &span,
+                            &ident.name,
+                            found_method.as_ref(),
+                            &[&recv_ty],
+                            format!("methodAsValue={method_as_value}"),
+                        );
+                    }
                     if method_as_value {
                         if let Some(selected) = found_method.clone() {
                             let Some(method_func) = selected.function.clone() else {
@@ -1890,6 +2729,18 @@ impl Lowerer {
                     }
 
                     let mut field_location = None;
+                    #[cfg(test)]
+                    if field_name == "base" {
+                        caller_field_authority::field(
+                            self,
+                            "before-guess",
+                            &original_expr,
+                            use_kind,
+                            method_as_value,
+                            &ident.span,
+                            None,
+                        );
+                    }
                     if matches!(inner_ty, Type::TypeVar(_)) {
                         let mut matches = self
                             .items
@@ -1913,7 +2764,52 @@ impl Lowerer {
                             .collect::<Vec<_>>();
                         matches.sort_by_key(|(_, structure, _)| structure.id);
                         matches.dedup_by_key(|(_, structure, _)| structure.id);
+                        // Visible foreign fields defeat local uniqueness; they
+                        // do not authorize guessing a foreign receiver schema.
+                        if matches.len() == 1
+                            && crate::lower::resolution::LowerResolutionContext::new(self)
+                                .visible_imported_struct_ids()
+                                .iter()
+                                .any(|id| {
+                                    self.items.structure(*id).is_some_and(|structure| {
+                                        structure.fields.iter().any(|field| {
+                                            field.name == *field_name
+                                                && (field.public
+                                                    || self
+                                                        .current_struct_impl
+                                                        .as_ref()
+                                                        .is_some_and(|owner| {
+                                                            self.resolve_item_def_id(owner)
+                                                                == Some(*id)
+                                                        }))
+                                        })
+                                    })
+                                })
+                        {
+                            matches.clear();
+                        }
                         if let [(struct_name, structure, field)] = matches.as_slice() {
+                            if use_kind == ExprUse::Value
+                                && !method_as_value
+                                && self.field_is_definitely_non_callable(
+                                    &original_expr,
+                                    field_name,
+                                    &field.ty,
+                                    &span,
+                                )
+                            {
+                                // An unrelated non-callable field cannot choose
+                                // the owner of a still-unresolved member call.
+                                return HirExpr {
+                                    ty: field_ty,
+                                    kind: HirExprKind::FieldAccess(
+                                        Box::new(original_expr),
+                                        ident.name.clone(),
+                                        None,
+                                    ),
+                                    span,
+                                };
+                            }
                             let type_args = structure
                                 .generic_params
                                 .iter()
@@ -1922,6 +2818,22 @@ impl Lowerer {
                                         .fresh_type_var_at_kind(span.clone(), param.kind.clone())
                                 })
                                 .collect::<Vec<_>>();
+                            let receiver_schema = Type::Struct {
+                                id: structure.id,
+                                args: type_args.clone(),
+                            };
+                            #[cfg(test)]
+                            if producer_audit_authority::enabled(&span) {
+                                producer_audit_authority::event(self, "field-before-unify", &original_expr, &span, &ident.name, None,
+                                    &[&inner_ty, &receiver_schema, &field.ty],
+                                    format!("actualFieldCandidates={} canonicalOwner={:?} fieldId={:?} rawField={:?} schema={receiver_schema:?} schemaGenerics={:?}",
+                                        matches.len(), structure.id, field.id, field.ty, structure.generic_params));
+                            }
+                            if let Err(error) = self.engine.unify(&inner_ty, &receiver_schema) {
+                                self.diagnostics
+                                    .push_type_with_span(error.render(&self.engine), span.clone());
+                                return self.error_expression_at(span);
+                            }
                             field_ty = self
                                 .lower_struct_field_type(struct_name, &type_args, field_name, &span)
                                 .unwrap_or(Type::Error);
@@ -1930,6 +2842,18 @@ impl Lowerer {
                                 field_id: field.id,
                                 name: field_name.clone(),
                             });
+                            #[cfg(test)]
+                            if field_name == "base" {
+                                caller_field_authority::field(
+                                    self,
+                                    "after-guess",
+                                    &original_expr,
+                                    use_kind,
+                                    method_as_value,
+                                    &ident.span,
+                                    field_location.as_ref(),
+                                );
+                            }
                         }
                     } else if let Type::Struct {
                         id,
@@ -1972,6 +2896,32 @@ impl Lowerer {
                     } else {
                         original_expr
                     };
+                    #[cfg(test)]
+                    if field_name == "base" {
+                        caller_field_authority::field(
+                            self,
+                            "field-installed",
+                            &field_base,
+                            use_kind,
+                            method_as_value,
+                            &ident.span,
+                            field_location.as_ref(),
+                        );
+                    }
+                    #[cfg(test)]
+                    if producer_audit_authority::enabled(&span) {
+                        let observed = HirExpr {
+                            ty: field_ty.clone(),
+                            kind: HirExprKind::FieldAccess(
+                                Box::new(field_base.clone()),
+                                ident.name.clone(),
+                                field_location.clone(),
+                            ),
+                            span: span.clone(),
+                        };
+                        producer_audit_authority::event(self, "dot-after", &observed, &span, &ident.name, None, &[&inner_ty],
+                            format!("actualLoweredFieldSnapshot=true actualFieldLocation={field_location:?}"));
+                    }
                     HirExpr {
                         ty: field_ty,
                         kind: HirExprKind::FieldAccess(
@@ -2757,6 +3707,1252 @@ mod tests {
     use crate::lexer::Span;
     use crate::lower::expression::ExprUse;
     use crate::types::{GenericParamDecl, GenericParamId, TraitBound, Type};
+
+    #[test]
+    #[ignore = "opt-in exact source-free caller first-loss receipt; producer emission and caller frontend only"]
+    fn capture_source_free_allocator_caller_field_authority() {
+        use std::io::Write;
+        use std::path::{Path, PathBuf};
+        use std::process::{Command, Stdio};
+
+        use super::caller_field_authority::{Trace, TRACE};
+
+        fn digest(bytes: &[u8], label: &str, path: &Path, phase: &str) -> String {
+            let mut child = Command::new("sha256sum")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(bytes).unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert!(output.status.success());
+            let sha = String::from_utf8(output.stdout)
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .to_owned();
+            eprintln!(
+                "CALLER_FIELD_BYTES label={label} phase={phase} path={} bytes={} sha256={sha}",
+                path.display(),
+                bytes.len()
+            );
+            sha
+        }
+
+        fn debug_source(quoted: &str) -> String {
+            // Decode the actual DiagnosticSource Debug string, not a rewritten
+            // application template. Unsupported escapes fail visibly.
+            let mut text = String::new();
+            let mut chars = quoted.chars();
+            while let Some(character) = chars.next() {
+                match character {
+                    '"' => return text,
+                    '\\' => text.push(match chars.next().unwrap() {
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        '0' => '\0',
+                        '\\' => '\\',
+                        '"' => '"',
+                        '\'' => '\'',
+                        escape => panic!("unexpected archived source escape {escape:?}"),
+                    }),
+                    character => text.push(character),
+                }
+            }
+            panic!("unterminated archived DiagnosticSource");
+        }
+
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                TRACE.with(|state| {
+                    state.borrow_mut().take();
+                });
+            }
+        }
+
+        assert_eq!(
+            std::env::var("ROCK_CALLER_FIELD_AUTHORITY").expect("explicit observer opt-in"),
+            "1"
+        );
+        let work = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.agent-work");
+        let log_path = work.join("recovery/allocator-sourcefree-field-guard-production-1.log");
+        let log_bytes = std::fs::read(&log_path).unwrap();
+        let log = std::str::from_utf8(&log_bytes).unwrap();
+        let sources = log
+            .split("text: \"")
+            .skip(1)
+            .map(debug_source)
+            .collect::<Vec<_>>();
+        assert_eq!(sources.len(), 2, "two original caller DiagnosticSources");
+        assert_eq!(sources[0], sources[1]);
+        let caller_source = &sources[0];
+        assert_eq!(caller_source.len(), 9132);
+        const CALLER_SHA: &str = "bb3e2f6d9c061ea745eb045a32b009c1d426d829357dff2b753afb4a1c9b7ae3";
+        assert_eq!(
+            digest(caller_source.as_bytes(), "caller", &log_path, "recovered"),
+            CALLER_SHA
+        );
+        assert_eq!(caller_source.get(2556..2557), Some("*"));
+        assert!(caller_source
+            .get(2554..2581)
+            .unwrap()
+            .contains("(*audit).base = base"));
+
+        let fixture_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/allocator_owner_execution.rs");
+        let fixture_bytes = std::fs::read(&fixture_path).unwrap();
+        let fixture = std::str::from_utf8(&fixture_bytes).unwrap();
+        let imports = fixture
+            .split_once("const IMPORTS: &str = r#\"")
+            .unwrap()
+            .1
+            .split_once("\"#;")
+            .unwrap()
+            .0;
+        let declarations = fixture
+            .split_once("fn provider(position: PayloadPosition)")
+            .unwrap()
+            .1
+            .split_once("let declarations = r#\"")
+            .unwrap()
+            .1
+            .split_once("\"#;")
+            .unwrap()
+            .0;
+        let stdlib = work.join("artifacts/stdlib/stdlib.rkca");
+        let stdlib_bytes = std::fs::read(&stdlib).unwrap();
+        assert_eq!(stdlib_bytes.len(), 803478);
+        const STDLIB_SHA: &str = "348cdd6baac0f384e885ac665e0820cd206a1e6cde3df52a7a7b5b2755c45b27";
+        assert_eq!(
+            digest(&stdlib_bytes, "stdlib", &stdlib, "before"),
+            STDLIB_SHA
+        );
+        let stdlib_object = stdlib.with_extension("o");
+        let stdlib_object_bytes = std::fs::read(&stdlib_object).unwrap();
+        let stdlib_object_sha = digest(
+            &stdlib_object_bytes,
+            "stdlib-object",
+            &stdlib_object,
+            "before",
+        );
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let scratch = work.join("fixtures").join(format!(
+            "rock_allocator_caller_authority_{}_{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&scratch).unwrap();
+        eprintln!(
+            "CALLER_FIELD_SCRATCH path={} cleanup=NONE retainedOnFailure=true",
+            scratch.display()
+        );
+        TRACE.with(|state| {
+            assert!(state.borrow_mut().replace(Trace::default()).is_none());
+        });
+        let _reset = Reset;
+
+        for (label, params, args, section, rich, read, producer_sha) in [
+            (
+                "first",
+                "(T: ?Sized), A",
+                "T, A",
+                "_, A",
+                "Rich, A",
+                "Read, A",
+                "cb4d4320aa3f164abd79c29b8deeb97bca5d47628c4e7c14f9fb00531752af32",
+            ),
+            (
+                "last",
+                "A, (T: ?Sized)",
+                "A, T",
+                "A, _",
+                "A, Rich",
+                "A, Read",
+                "5816129d931bf6248c5c716e612f4ceb1b3a8f780d692e0f80fefc9f901eebd5",
+            ),
+        ] {
+            let directory = scratch.join(label);
+            std::fs::create_dir(&directory).unwrap();
+            let producer = format!("{imports}{declarations}")
+                .replace("$PARAMS", params)
+                .replace("$ARGS", args)
+                .replace("$SECTION", &format!("Shell {section}"))
+                .replace("$RICH", rich)
+                .replace("$READ", read);
+            assert_eq!(producer.len(), 5593);
+            let entry = directory.join("owners.rk");
+            std::fs::write(&entry, &producer).unwrap();
+            assert_eq!(
+                digest(producer.as_bytes(), label, &entry, "producer-before"),
+                producer_sha
+            );
+            let producer_config = crate::Config {
+                entry_file: entry.clone(),
+                output_dir: directory.clone(),
+                current_crate_name: Some("owners".into()),
+                no_std: true,
+                no_prelude: true,
+                no_link: true,
+                emit_object: Some(directory.join("owners.o")),
+                extern_artifacts: vec![("stdlib".into(), stdlib.clone())],
+                ..crate::Config::default()
+            };
+            let mut products = crate::compile_with_products(&producer_config)
+                .expect("emit unchanged producer without any later types")
+                .products
+                .unwrap();
+            products.link.object_path = Some(PathBuf::from("owners.o"));
+            let artifact = directory.join("owners.rkca");
+            products.write_artifact_to_path(&artifact).unwrap();
+            let object = directory.join("owners.o");
+            let artifacts = [&artifact, &object]
+                .into_iter()
+                .map(|path| {
+                    let bytes = std::fs::read(path).unwrap();
+                    let sha = digest(&bytes, label, path, "artifact-before-caller");
+                    (path.clone(), bytes, sha)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(std::fs::read(&entry).unwrap(), producer.as_bytes());
+            // The artifact's original source path must not be available to the
+            // caller. Preserve exact bytes under a receipt-only, non-Rock path.
+            let producer_receipt = directory.join("owners.source.receipt");
+            std::fs::rename(&entry, &producer_receipt).unwrap();
+            assert!(!entry.exists());
+            let caller = directory.join("main.rk");
+            std::fs::write(&caller, caller_source).unwrap();
+            assert_eq!(
+                digest(
+                    &std::fs::read(&caller).unwrap(),
+                    label,
+                    &caller,
+                    "caller-before"
+                ),
+                CALLER_SHA
+            );
+            TRACE.with(|state| {
+                let mut state = state.borrow_mut();
+                let trace = state.as_mut().unwrap();
+                trace.label = label.into();
+                trace.path = caller.clone();
+                trace.functions.clear();
+                trace.types.clear();
+                trace.audit = None;
+                trace.selected = None;
+                trace.relation = None;
+            });
+            let caller_config = crate::Config {
+                entry_file: caller.clone(),
+                output_dir: directory.clone(),
+                current_crate_name: Some("allocator_state_caller".into()),
+                no_std: true,
+                no_prelude: true,
+                no_link: true,
+                opt_level: 0,
+                extern_artifacts: vec![
+                    ("stdlib".into(), stdlib.clone()),
+                    ("owners".into(), artifact.clone()),
+                ],
+                ..crate::Config::default()
+            };
+            let result = crate::analyze(&caller_config);
+            if let Err(errors) = &result {
+                eprintln!(
+                    "CALLER_FIELD_DIAGNOSTICS label={label} count={}",
+                    errors.0.len()
+                );
+                for error in &errors.0 {
+                    eprintln!(
+                        "CALLER_FIELD_DIAGNOSTIC code={:?} severity={:?} primary={:?} message={}",
+                        error.code, error.severity, error.primary, error.message
+                    );
+                }
+            } else {
+                eprintln!("CALLER_FIELD_UNEXPECTED_FRONTEND_SUCCESS label={label} execution=NONE");
+            }
+            assert_eq!(
+                std::fs::read(&producer_receipt).unwrap(),
+                producer.as_bytes()
+            );
+            assert_eq!(
+                digest(
+                    &std::fs::read(&producer_receipt).unwrap(),
+                    label,
+                    &producer_receipt,
+                    "producer-after"
+                ),
+                producer_sha
+            );
+            assert_eq!(std::fs::read(&caller).unwrap(), caller_source.as_bytes());
+            assert_eq!(
+                digest(
+                    &std::fs::read(&caller).unwrap(),
+                    label,
+                    &caller,
+                    "caller-after"
+                ),
+                CALLER_SHA
+            );
+            assert!(!entry.exists());
+            for (path, bytes, sha) in artifacts {
+                let after = std::fs::read(&path).unwrap();
+                assert_eq!(
+                    after, bytes,
+                    "emitted product changed through caller analysis"
+                );
+                assert_eq!(digest(&after, label, &path, "artifact-after-caller"), sha);
+            }
+            assert_eq!(std::fs::read(&stdlib).unwrap(), stdlib_bytes);
+            assert_eq!(
+                digest(&stdlib_bytes, "stdlib", &stdlib, "after"),
+                STDLIB_SHA
+            );
+            assert_eq!(std::fs::read(&stdlib_object).unwrap(), stdlib_object_bytes);
+            assert_eq!(
+                digest(
+                    &stdlib_object_bytes,
+                    "stdlib-object",
+                    &stdlib_object,
+                    "after"
+                ),
+                stdlib_object_sha
+            );
+            assert_eq!(std::fs::read(&fixture_path).unwrap(), fixture_bytes);
+            assert_eq!(std::fs::read(&log_path).unwrap(), log_bytes);
+            let errors = result
+                .expect_err("reproduce exact caller frontend rejection, not runtime acceptance");
+            assert_eq!(errors.0.len(), 1, "original exact diagnostic multiset");
+            let error = &errors.0[0];
+            assert_eq!(error.code, Some(crate::diagnostic::DiagnosticCode::Type));
+            assert_eq!(error.severity, crate::diagnostic::DiagnosticSeverity::Error);
+            assert_eq!(
+                error.message,
+                "dereference result: Type mismatch: Resource vs owners::Audit"
+            );
+            assert!(error.secondary.is_empty() && error.notes.is_empty() && error.help.is_empty());
+            assert_eq!(error.primary.as_ref().unwrap().message, error.message);
+            let primary = &error.primary.as_ref().unwrap().span;
+            assert_eq!(primary.file_path, caller);
+            assert_eq!((primary.start, primary.end), (2556, 2557));
+            let source = error.source.as_ref().unwrap();
+            assert_eq!(source.display_path, caller);
+            assert_eq!(&source.text, caller_source);
+            TRACE.with(|state| {
+                let state = state.borrow();
+                let trace = state.as_ref().unwrap();
+                for stage in ["before-guess", "after-guess", "field-installed", "solver-failure"] {
+                    assert!(trace.sites.contains(&(label.into(), stage)), "missing actual {label}/{stage}");
+                }
+                eprintln!("CALLER_FIELD_TOTAL label={label} functions={} cap=4 cumulativeSites={} cap=8 distinctTopLevelTypes={} cap=16 producerArtifactEmission=COMPLETE callerAcceptedHIR=NONE callerMIR=UNREACHED RuntimeAgreement=UNREACHED execution=NONE",
+                    trace.functions.len(), trace.sites.len(), trace.types.len());
+            });
+        }
+        TRACE.with(|state| {
+            assert_eq!(state.borrow().as_ref().unwrap().sites.len(), 8);
+        });
+    }
+
+    #[test]
+    #[ignore = "opt-in original generic producer lowering rejection/authority receipt; no execution"]
+    fn capture_source_free_allocator_producer_method_authority() {
+        use std::io::Write;
+        use std::path::PathBuf;
+        use std::process::{Command, Stdio};
+
+        use super::producer_audit_authority::{Trace, TRACE};
+
+        fn digest(bytes: &[u8], expected: &str, label: &str, path: &std::path::Path, phase: &str) {
+            let mut child = Command::new("sha256sum")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("read-only digest utility");
+            child.stdin.take().unwrap().write_all(bytes).unwrap();
+            let output = child.wait_with_output().unwrap();
+            assert!(output.status.success(), "digest failed: {output:?}");
+            let actual = String::from_utf8(output.stdout).unwrap();
+            assert_eq!(
+                actual.split_whitespace().next(),
+                Some(expected),
+                "{label} {phase}"
+            );
+            eprintln!("PRODUCER_AUDIT_BYTES phase={phase} label={label} path={} bytes={} sha256={expected}", path.display(), bytes.len());
+        }
+
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                TRACE.with(|state| {
+                    state.borrow_mut().take();
+                });
+            }
+        }
+
+        assert_eq!(
+            std::env::var("ROCK_PRODUCER_AUDIT_AUTHORITY")
+                .expect("explicit observer opt-in required"),
+            "1"
+        );
+        let work = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.agent-work");
+        let artifact = work.join("artifacts/stdlib/stdlib.rkca");
+        let artifact_bytes = std::fs::read(&artifact).unwrap();
+        assert_eq!(artifact_bytes.len(), 803478);
+        const ARTIFACT_SHA: &str =
+            "348cdd6baac0f384e885ac665e0820cd206a1e6cde3df52a7a7b5b2755c45b27";
+        digest(&artifact_bytes, ARTIFACT_SHA, "stdlib", &artifact, "before");
+
+        // Recover only provider()'s two literal blocks and its exact existing
+        // substitutions. No application/footer, future declarations or files.
+        let fixture_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/allocator_owner_execution.rs");
+        let fixture_bytes = std::fs::read(&fixture_path).unwrap();
+        let fixture = std::str::from_utf8(&fixture_bytes).unwrap();
+        let imports = fixture
+            .split_once("const IMPORTS: &str = r#\"")
+            .unwrap()
+            .1
+            .split_once("\"#;")
+            .unwrap()
+            .0;
+        let declarations = fixture
+            .split_once("fn provider(position: PayloadPosition)")
+            .unwrap()
+            .1
+            .split_once("let declarations = r#\"")
+            .unwrap()
+            .1
+            .split_once("\"#;")
+            .unwrap()
+            .0;
+        TRACE.with(|state| {
+            assert!(state.borrow_mut().replace(Trace::default()).is_none());
+        });
+        let _reset = Reset;
+
+        for (label, directory, params, args, section, rich, read, sha) in [
+            (
+                "first",
+                "rock_allocator_state_932836_14",
+                "(T: ?Sized), A",
+                "T, A",
+                "_, A",
+                "Rich, A",
+                "Read, A",
+                "cb4d4320aa3f164abd79c29b8deeb97bca5d47628c4e7c14f9fb00531752af32",
+            ),
+            (
+                "last",
+                "rock_allocator_state_932836_15",
+                "A, (T: ?Sized)",
+                "A, T",
+                "A, _",
+                "A, Rich",
+                "A, Read",
+                "5816129d931bf6248c5c716e612f4ceb1b3a8f780d692e0f80fefc9f901eebd5",
+            ),
+        ] {
+            let source = format!("{imports}{declarations}")
+                .replace("$PARAMS", params)
+                .replace("$ARGS", args)
+                .replace("$SECTION", &format!("Shell {section}"))
+                .replace("$RICH", rich)
+                .replace("$READ", read);
+            let source_bytes = source.as_bytes().to_vec();
+            assert_eq!(source_bytes.len(), 5593);
+            let path = work.join("fixtures").join(directory).join("owners.rk");
+            digest(&source_bytes, sha, label, &path, "before(virtual)");
+            assert_eq!(source.get(2567..2583), Some("allocator.audit!"));
+            TRACE.with(|state| {
+                let mut state = state.borrow_mut();
+                let trace = state.as_mut().unwrap();
+                trace.label = label.into();
+                trace.path = path.clone();
+            });
+            // Match source_free_matrix's effective config. analyze is frontend
+            // only; emit_object is merely retained config, never an action.
+            let config = crate::Config {
+                entry_file: path.clone(),
+                output_dir: path.parent().unwrap().into(),
+                current_crate_name: Some("owners".into()),
+                no_std: true,
+                no_prelude: true,
+                no_link: true,
+                emit_object: Some(path.with_file_name("owners.o")),
+                extern_artifacts: vec![("stdlib".into(), artifact.clone())],
+                source_providers: vec![crate::SourceProvider::Virtual {
+                    path: path.clone(),
+                    text: source.clone(),
+                }],
+                ..crate::Config::default()
+            };
+            let result = crate::analyze(&config);
+            // Print every diagnostic before checking the historical oracle.
+            if let Err(errors) = &result {
+                eprintln!(
+                    "PRODUCER_AUDIT_DIAGNOSTICS label={label} count={}",
+                    errors.0.len()
+                );
+                for error in &errors.0 {
+                    eprintln!("PRODUCER_AUDIT_DIAGNOSTIC label={label} code={:?} severity={:?} primary={:?} message={}",
+                        error.code, error.severity, error.primary, error.message);
+                }
+            } else {
+                eprintln!("PRODUCER_AUDIT_DIAGNOSTICS label={label} unexpectedFrontendSuccess execution=NONE");
+            }
+            assert_eq!(source_bytes.as_slice(), source.as_bytes());
+            assert_eq!(
+                fixture_bytes,
+                std::fs::read(&fixture_path).unwrap(),
+                "original provider fixture changed"
+            );
+            assert_eq!(
+                artifact_bytes,
+                std::fs::read(&artifact).unwrap(),
+                "approved artifact changed"
+            );
+            digest(source.as_bytes(), sha, label, &path, "after(virtual)");
+            digest(&artifact_bytes, ARTIFACT_SHA, "stdlib", &artifact, "after");
+            let errors =
+                result.expect_err("reproduce producer rejection, not consuming/runtime acceptance");
+            assert_eq!(errors.0.len(), 3, "producer diagnostic multiset changed");
+            for (start, end, message) in [
+                (
+                    2567,
+                    2583,
+                    "value of type *Audit is not callable with these arguments",
+                ),
+                (2977, 2978, "Cannot dereference non-pointer type: _"),
+                (3040, 3041, "Cannot dereference non-pointer type: _"),
+            ] {
+                assert_eq!(
+                    errors
+                        .0
+                        .iter()
+                        .filter(|error| {
+                            error.code == Some(crate::diagnostic::DiagnosticCode::Type)
+                                && error.severity == crate::diagnostic::DiagnosticSeverity::Error
+                                && error.message == message
+                                && error.source.as_ref().is_some_and(|saved| {
+                                    saved.display_path == path && saved.text == source
+                                })
+                                && error.primary.as_ref().is_some_and(|primary| {
+                                    primary.span.file_path == path
+                                        && (primary.span.start, primary.span.end) == (start, end)
+                                })
+                        })
+                        .count(),
+                    1,
+                    "producer exact diagnostic missing: {start}..{end} {message}"
+                );
+            }
+            let first = errors.0.first().unwrap();
+            assert_eq!(
+                first.message,
+                "value of type *Audit is not callable with these arguments"
+            );
+            eprintln!("PRODUCER_AUDIT_TERMINAL label={label} acceptedHir=NONE quiescence=UNREACHED(lower_error) MIR=UNMEASURED artifactEmission=NONE RuntimeAgreement=UNMEASURED execution=NONE");
+            TRACE.with(|state| {
+                let state = state.borrow();
+                let trace = state.as_ref().unwrap();
+                for stage in [
+                    "dot-before",
+                    "dot-after",
+                    "args-before",
+                    "args-signature",
+                    "args-rejected",
+                ] {
+                    assert!(
+                        trace
+                            .stages
+                            .iter()
+                            .any(|(owner, receipt)| owner == label && *receipt == stage),
+                        "producer observer missing actual stage {label}/{stage}"
+                    );
+                }
+            });
+        }
+        TRACE.with(|state| {
+            let state = state.borrow();
+            let trace = state.as_ref().unwrap();
+            eprintln!("PRODUCER_AUDIT_TOTAL functions={} cap=8 sites={} cap=16 types={} cap=64 stages={:?} authority=REPRODUCTION_ONLY execution=NONE",
+                trace.functions.len(), trace.stages.len(), trace.types.len(), trace.stages);
+        });
+    }
+
+    fn analyze_intrinsic_source(
+        source: &str,
+    ) -> Result<crate::analysis::Analysis, crate::diagnostic::Diagnostics> {
+        let path = std::path::PathBuf::from("/virtual/scalar_intrinsic_authority.rk");
+        crate::analyze(&crate::Config {
+            entry_file: path.clone(),
+            no_std: true,
+            no_prelude: true,
+            source_providers: vec![crate::SourceProvider::Virtual {
+                path,
+                text: source.into(),
+            }],
+            ..crate::Config::default()
+        })
+    }
+
+    #[test]
+    fn scalar_intrinsic_wrong_arity_rejects_at_actual_call_span() {
+        for (call, count) in [
+            ("~I64Sub!", 2),
+            ("~I64Sub 1", 2),
+            ("~I64Sub 1, 2, 3", 2),
+            ("~I64Neg 1, 2", 1),
+            ("~F64Sub (1 as F64)", 2),
+            ("~BoolNot true, false", 1),
+        ] {
+            let source = format!("main = !->\n    {call}\n");
+            let errors =
+                analyze_intrinsic_source(&source).expect_err("wrong arity must not reach MIR");
+            assert!(
+                errors
+                    .0
+                    .iter()
+                    .all(|error| error.code != Some(crate::diagnostic::DiagnosticCode::Internal)),
+                "{errors:?}"
+            );
+            let error = errors
+                .0
+                .iter()
+                .find(|error| {
+                    error.code == Some(crate::diagnostic::DiagnosticCode::Type)
+                        && error
+                            .message
+                            .contains(&format!("expects exactly {count} arguments"))
+                })
+                .unwrap_or_else(|| panic!("{call}: {errors:?}"));
+            let span = &error.primary.as_ref().unwrap().span;
+            assert_eq!(
+                span.file_path,
+                std::path::PathBuf::from("/virtual/scalar_intrinsic_authority.rk")
+            );
+            assert_eq!(&source[span.start..span.end], call);
+        }
+    }
+
+    #[test]
+    fn scalar_intrinsic_raw_pointer_and_reference_reject_at_actual_argument_span() {
+        for (binding, value) in [("pointer", "(&value) as *I64"), ("reference", "&value")] {
+            let source = format!("main = !->\n    value = 42\n    {binding} = {value}\n    unsafe (~I64Sub {binding}, 1)\n");
+            let errors = analyze_intrinsic_source(&source)
+                .expect_err("unsafe cannot supply an integer operand");
+            assert!(
+                errors
+                    .0
+                    .iter()
+                    .all(|error| error.code != Some(crate::diagnostic::DiagnosticCode::Internal)),
+                "{errors:?}"
+            );
+            let error = errors
+                .0
+                .iter()
+                .find(|error| {
+                    error.code == Some(crate::diagnostic::DiagnosticCode::Type)
+                        && error
+                            .message
+                            .contains("Intrinsic '~I64Sub' expected argument type I64")
+                })
+                .unwrap_or_else(|| panic!("{binding}: {errors:?}"));
+            let span = &error.primary.as_ref().unwrap().span;
+            assert_eq!(
+                span.file_path,
+                std::path::PathBuf::from("/virtual/scalar_intrinsic_authority.rk")
+            );
+            assert_eq!(&source[span.start..span.end], binding);
+            assert_eq!(span.start, source.rfind(binding).unwrap());
+        }
+    }
+
+    #[test]
+    fn scalar_intrinsic_concrete_mismatch_is_not_ignored() {
+        for argument in ["true", "(1 as U8)", "(1 as F64)"] {
+            let source = format!("main = !->\n    ~I64Sub 2, {argument}\n");
+            let errors =
+                analyze_intrinsic_source(&source).expect_err("explicit scalar family must agree");
+            let error = errors
+                .0
+                .iter()
+                .find(|error| {
+                    error.code == Some(crate::diagnostic::DiagnosticCode::Type)
+                        && error
+                            .message
+                            .contains("Intrinsic '~I64Sub' expected argument type I64")
+                })
+                .unwrap_or_else(|| panic!("{argument}: {errors:?}"));
+            let span = &error.primary.as_ref().unwrap().span;
+            assert_eq!(
+                span.file_path,
+                std::path::PathBuf::from("/virtual/scalar_intrinsic_authority.rk")
+            );
+            assert!(
+                span.start >= source.find(argument).unwrap()
+                    && span.start < span.end
+                    && span.end <= source.len()
+            );
+            let expected_label = if argument == "true" {
+                "true"
+            } else if argument.contains("U8") {
+                "U8"
+            } else {
+                "F64"
+            };
+            assert_eq!(&source[span.start..span.end], expected_label);
+        }
+    }
+
+    #[test]
+    fn scalar_intrinsic_fields_nested_calls_and_inferred_parameters_are_accepted() {
+        let source = r#"
+struct Audit
+    < base: I64
+    < alignment: I64
+subtract = value -> ~I64Sub value, 1
+finish: &Audit -> Bool
+finish = audit -> (~I64Ne (~I64And (audit.base as I64), (~I64Sub audit.alignment, 1)), 0)
+main = ->
+    audit = Audit
+        base: 64
+        alignment: 8
+    finish &audit
+    ~I64Sub (subtract 44), 1
+"#;
+        let analysis =
+            analyze_intrinsic_source(source).unwrap_or_else(|errors| panic!("{errors:?}"));
+        let subtract = analysis
+            .hir
+            .program
+            .functions
+            .values()
+            .find(|function| function.name == "subtract")
+            .unwrap();
+        assert_eq!(subtract.params[0].ty, Type::I64);
+        assert_eq!(subtract.ret_type, Type::I64);
+        let finish = analysis
+            .hir
+            .program
+            .functions
+            .values()
+            .find(|function| function.name == "finish")
+            .unwrap();
+        assert_eq!(finish.ret_type, Type::Bool);
+    }
+
+    #[test]
+    fn scalar_intrinsic_integer_float_boolean_families_and_generic_memory_stay_valid() {
+        for ty in [
+            "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64", "F32", "F64",
+        ] {
+            let source = format!("main = !->\n    ~{ty}Sub (2 as {ty}), (1 as {ty})\n");
+            analyze_intrinsic_source(&source).unwrap_or_else(|errors| panic!("{ty}: {errors:?}"));
+        }
+        analyze_intrinsic_source(
+            r#"
+main = !->
+    ~BoolAnd true, false
+    ~BoolNot false
+    value = 42
+    ~SizeOf value
+    ~AlignOf value
+    ~Forget value
+    mut atomic = (0 as U64)
+    pointer = (&mut atomic) as *U64
+    unsafe
+        ~AtomicU64Exchange pointer, (1 as U64)
+        ~AtomicU64Store pointer, (0 as U64)
+"#,
+        )
+        .unwrap_or_else(|errors| panic!("{errors:?}"));
+    }
+
+    #[test]
+    fn scalar_intrinsic_contract_preserves_dynamic_operator_and_delayed_call_checks() {
+        analyze_intrinsic_source(
+            r#"
+infix 9 %%
+%% = left, right -> ~I64Sub left, right
+main = -> 43 %% 1
+"#,
+        )
+        .unwrap_or_else(|errors| panic!("{errors:?}"));
+        let source = "subtract = value -> ~I64Sub value, 1\nmain = !->\n    subtract false\n";
+        let errors = analyze_intrinsic_source(source)
+            .expect_err("later caller must agree with inferred scalar parameter");
+        assert!(
+            errors
+                .0
+                .iter()
+                .all(|error| error.code != Some(crate::diagnostic::DiagnosticCode::Internal)),
+            "{errors:?}"
+        );
+        let error = errors
+            .0
+            .iter()
+            .find(|error| error.code == Some(crate::diagnostic::DiagnosticCode::Type))
+            .unwrap_or_else(|| panic!("{errors:?}"));
+        let span = &error.primary.as_ref().unwrap().span;
+        assert_eq!(
+            span.file_path,
+            std::path::PathBuf::from("/virtual/scalar_intrinsic_authority.rk")
+        );
+        assert!(span.start < span.end && span.end <= source.len());
+    }
+
+    #[test]
+    fn scalar_intrinsic_unsuffixed_integer_literals_use_fixed_operand_context() {
+        for (ty, maximum) in [
+            ("I8", "127"),
+            ("I16", "32767"),
+            ("I32", "2147483647"),
+            ("I64", "9223372036854775807"),
+            ("U8", "255"),
+            ("U16", "65535"),
+            ("U32", "4294967295"),
+            ("U64", "18446744073709551615"),
+        ] {
+            for literal in ["0", "(0)", maximum] {
+                // Actual stdlib/thread.rk shape: status is an extern I32
+                // result, while zero is an unsuffixed source literal.
+                let source = format!("extern thread_status: () -> {ty}\ncheck = ->\n    status = thread_status!\n    ~{ty}Eq status, {literal}\nmain = !->\n    check!\n");
+                let analysis = analyze_intrinsic_source(&source)
+                    .unwrap_or_else(|errors| panic!("{ty}/{literal}: {errors:?}"));
+                let check = analysis
+                    .hir
+                    .program
+                    .functions
+                    .values()
+                    .find(|function| function.name == "check")
+                    .unwrap();
+                assert_eq!(check.ret_type, Type::Bool);
+                let crate::hir::HirStmtFor::Expr(expression) = check.body.stmts.last().unwrap()
+                else {
+                    panic!("expected intrinsic tail");
+                };
+                let crate::hir::HirExprKindFor::Intrinsic { args, .. } = &expression.kind else {
+                    panic!("expected intrinsic: {expression:?}");
+                };
+                assert_eq!(args.len(), 2);
+                let text = literal.trim_matches(|character| character == '(' || character == ')');
+                let value = text.parse::<u64>().unwrap() as i64;
+                assert!(
+                    matches!(&args[1].kind, crate::hir::HirExprKindFor::IntLiteral(found) if *found == value)
+                );
+                assert_eq!(
+                    args[1].ty, args[0].ty,
+                    "literal must have the actual fixed operand type"
+                );
+                assert_eq!(&source[args[1].span.start..args[1].span.end], text);
+            }
+        }
+        analyze_intrinsic_source("extern thread_status: () -> I32\ncompare = status -> ~I32Eq status, 0\nmain = !->\n    compare (thread_status!)\n")
+            .unwrap_or_else(|errors| panic!("inferred parameter and literal must share fixed I32 context: {errors:?}"));
+    }
+
+    #[test]
+    fn scalar_intrinsic_literal_context_preserves_range_and_explicit_value_rejection() {
+        let source_literal = number_expression(1);
+        let mut mismatched = HirExpr {
+            kind: HirExprKind::IntLiteral(2),
+            ty: Type::I64,
+            span: Span::test(),
+        };
+        super::contextualize_intrinsic_integer_literal(
+            &source_literal,
+            &mut mismatched,
+            &Type::I32,
+        )
+        .expect("uncorroborated HIR must stay on the strict validation path");
+        assert_eq!(mismatched.ty, Type::I64);
+        for (ty, literal) in [
+            ("I8", "128"),
+            ("U8", "256"),
+            ("I16", "32768"),
+            ("U16", "65536"),
+            ("I32", "2147483648"),
+            ("U32", "4294967296"),
+            ("I64", "9223372036854775808"),
+        ] {
+            let source = format!("main = !->\n    ~{ty}Eq (0 as {ty}), {literal}\n");
+            let errors = analyze_intrinsic_source(&source)
+                .expect_err("literal must fit before native integer codegen");
+            assert!(
+                errors
+                    .0
+                    .iter()
+                    .all(|error| error.code == Some(crate::diagnostic::DiagnosticCode::Type)),
+                "{errors:?}"
+            );
+            assert!(
+                errors.0.iter().any(|error| {
+                    let Some(primary) = &error.primary else {
+                        return false;
+                    };
+                    error.message.contains("out of range")
+                        && primary.span.file_path
+                            == std::path::PathBuf::from("/virtual/scalar_intrinsic_authority.rk")
+                        && &source[primary.span.start..primary.span.end] == literal
+                }),
+                "expected actual overflowing literal primary: {errors:?}"
+            );
+        }
+        for argument in ["(0 as I64)", "(0 as U8)"] {
+            let source = format!("main = !->\n    ~I32Eq (0 as I32), {argument}\n");
+            let errors = analyze_intrinsic_source(&source)
+                .expect_err("explicit concrete integer family is not a contextual literal");
+            let error = errors
+                .0
+                .iter()
+                .find(|error| {
+                    error.code == Some(crate::diagnostic::DiagnosticCode::Type)
+                        && error
+                            .message
+                            .contains("Intrinsic '~I32Eq' expected argument type I32")
+                })
+                .unwrap_or_else(|| panic!("{errors:?}"));
+            let span = &error.primary.as_ref().unwrap().span;
+            assert_eq!(
+                span.file_path,
+                std::path::PathBuf::from("/virtual/scalar_intrinsic_authority.rk")
+            );
+            assert_eq!(
+                &source[span.start..span.end],
+                if argument.contains("I64") {
+                    "I64"
+                } else {
+                    "U8"
+                }
+            );
+        }
+        let errors =
+            analyze_intrinsic_source("main = !->\n    value = 0\n    ~I32Eq (0 as I32), value\n")
+                .expect_err("a resolved I64 variable is not an unsuffixed literal operand");
+        assert!(
+            errors
+                .0
+                .iter()
+                .any(|error| error.code == Some(crate::diagnostic::DiagnosticCode::Type)),
+            "{errors:?}"
+        );
+        for call in [
+            "~BoolEq true, 0",
+            "~F64Eq (0 as F64), 0",
+            "~U8Eq (0 as U8), (~I64Neg 1)",
+        ] {
+            let errors = analyze_intrinsic_source(&format!("main = !->\n    {call}\n"))
+                .expect_err("integer literal context must not silently become Bool or float");
+            assert!(
+                errors
+                    .0
+                    .iter()
+                    .any(|error| error.code == Some(crate::diagnostic::DiagnosticCode::Type)),
+                "{errors:?}"
+            );
+        }
+    }
+
+    fn lower_field_schema_source(source: &str) -> crate::infer::PartialHir {
+        let config = crate::Config {
+            no_std: true,
+            no_prelude: true,
+            ..crate::Config::default()
+        };
+        let module = crate::parser::parse_source(
+            std::path::PathBuf::from("/virtual/field_schema.rk"),
+            source,
+            &config,
+        )
+        .expect("parse field schema control");
+        Lowerer::with_options(false)
+            .lower_program(&crate::ast::Program { module })
+            .expect("lower field schema control")
+    }
+
+    #[test]
+    fn field_schema_generic_read_binds_receiver_and_field_to_one_argument() {
+        let partial = lower_field_schema_source(
+            "struct Record T\n    < value: T\nread = owner -> owner.value\nmain = -> 0\n",
+        );
+        let function = partial
+            .functions
+            .values()
+            .find(|function| function.name == "read")
+            .unwrap();
+        let Type::Struct { id, args } = partial.engine.resolve(&function.params[0].ty) else {
+            panic!("field authority must establish receiver schema: {function:?}");
+        };
+        let structure = &partial.structs[&id];
+        assert_eq!(structure.name, "Record");
+        assert_eq!(args.len(), 1);
+        assert!(matches!(&args[0], Type::TypeVar(_)));
+        assert_eq!(partial.engine.resolve(&function.ret_type), args[0]);
+        let crate::hir::HirStmt::Expr(expression) = function.body.stmts.last().unwrap() else {
+            panic!("expected field tail");
+        };
+        let HirExprKind::FieldAccess(receiver, _, Some(location)) = &expression.kind else {
+            panic!("expected canonical field: {expression:?}");
+        };
+        assert_eq!(location.owner, id);
+        assert_eq!(location.field_id, structure.fields[0].id);
+        assert_eq!(
+            partial.engine.resolve(&receiver.ty),
+            Type::Struct {
+                id,
+                args: args.clone()
+            }
+        );
+        assert_eq!(partial.engine.resolve(&expression.ty), args[0]);
+    }
+
+    #[test]
+    fn field_schema_two_generic_fields_reuse_receiver_argument() {
+        let partial = lower_field_schema_source("struct Pair T\n    < first: T\n    < second: T\nsplit = owner -> (owner.first, owner.second)\nmain = -> 0\n");
+        let function = partial
+            .functions
+            .values()
+            .find(|function| function.name == "split")
+            .unwrap();
+        let Type::Struct { id, args } = partial.engine.resolve(&function.params[0].ty) else {
+            panic!("expected Pair schema");
+        };
+        assert_eq!(args.len(), 1);
+        assert_eq!(
+            partial.engine.resolve(&function.ret_type),
+            Type::Tuple(vec![args[0].clone(), args[0].clone()])
+        );
+        let crate::hir::HirStmt::Expr(expression) = function.body.stmts.last().unwrap() else {
+            panic!("expected tuple tail");
+        };
+        let HirExprKind::TupleLiteral(fields) = &expression.kind else {
+            panic!("expected tuple");
+        };
+        assert_eq!(fields.len(), 2);
+        for (index, field) in fields.iter().enumerate() {
+            let HirExprKind::FieldAccess(receiver, _, Some(location)) = &field.kind else {
+                panic!("expected canonical field");
+            };
+            assert_eq!(location.owner, id);
+            assert_eq!(location.field_id, partial.structs[&id].fields[index].id);
+            assert_eq!(
+                partial.engine.resolve(&receiver.ty),
+                Type::Struct {
+                    id,
+                    args: args.clone()
+                }
+            );
+            assert_eq!(partial.engine.resolve(&field.ty), args[0]);
+        }
+    }
+
+    #[test]
+    fn field_schema_concrete_caller_binds_shared_generic_argument() {
+        let analysis = analyze_intrinsic_source(
+            r#"
+struct Pair T
+    < first: T
+    < second: T
+split = owner -> (owner.first, owner.second)
+main = ->
+    owner = Pair
+        first: (40 as I64)
+        second: (2 as I64)
+    parts = split owner
+    ~I64Add parts.0, parts.1
+"#,
+        )
+        .unwrap_or_else(|errors| panic!("{errors:?}"));
+        let main = analysis
+            .hir
+            .program
+            .functions
+            .values()
+            .find(|function| function.name == "main")
+            .unwrap();
+        assert_eq!(main.ret_type, Type::I64);
+        let split = analysis
+            .hir
+            .program
+            .functions
+            .values()
+            .find(|function| function.name == "split")
+            .unwrap();
+        let Type::Struct { args, .. } = &split.params[0].ty else {
+            panic!("expected canonical receiver schema: {split:?}");
+        };
+        assert_eq!(args.len(), 1);
+        assert_eq!(
+            split.ret_type,
+            Type::Tuple(vec![args[0].clone(), args[0].clone()])
+        );
+    }
+
+    #[test]
+    fn field_schema_same_name_candidates_wait_for_nominal_evidence() {
+        let declarations = "struct Left\n    < value: I64\nstruct Right\n    < value: Bool\nread = owner -> owner.value\n";
+        let partial = lower_field_schema_source(&format!("{declarations}main = -> 0\n"));
+        let read = partial
+            .functions
+            .values()
+            .find(|function| function.name == "read")
+            .unwrap();
+        assert!(matches!(
+            partial.engine.resolve(&read.params[0].ty),
+            Type::TypeVar(_)
+        ));
+        let crate::hir::HirStmt::Expr(expression) = read.body.stmts.last().unwrap() else {
+            panic!("expected field tail");
+        };
+        assert!(matches!(
+            &expression.kind,
+            HirExprKind::FieldAccess(_, _, None)
+        ));
+        let ambiguous_source = format!("{declarations}main = -> 0\n");
+        let errors = analyze_intrinsic_source(&ambiguous_source)
+            .expect_err("field name alone cannot choose between nominal owners");
+        let error = errors.0.iter().find(|error| {
+            error.code == Some(crate::diagnostic::DiagnosticCode::Selection)
+                && error.message == "cannot resolve member 'value' because receiver type _ remains unresolved (field access 'value')"
+        }).unwrap_or_else(|| panic!("expected unresolved-field Selection diagnostic: {errors:?}"));
+        let span = &error.primary.as_ref().expect("actual field primary").span;
+        assert_eq!(
+            span.file_path,
+            std::path::PathBuf::from("/virtual/scalar_intrinsic_authority.rk")
+        );
+        assert_eq!((span.start, span.end), (82, 87));
+        assert_eq!(&ambiguous_source[span.start..span.end], "value");
+        let analysis = analyze_intrinsic_source(&format!(
+            "{declarations}main = ->\n    owner = Left\n        value: 42\n    read owner\n"
+        ))
+        .unwrap_or_else(|errors| panic!("caller must supply nominal field authority: {errors:?}"));
+        let read = analysis
+            .hir
+            .program
+            .functions
+            .values()
+            .find(|function| function.name == "read")
+            .unwrap();
+        let Type::Struct { id, .. } = &read.params[0].ty else {
+            panic!("caller must resolve the receiver's nominal identity");
+        };
+        assert_eq!(analysis.hir.program.structs[id].name, "Left");
+        assert_eq!(read.ret_type, Type::I64);
+        // Each explicit receiver must use its own canonical field, not the
+        // first structure with the same display name.
+        let partial = lower_field_schema_source("struct Left\n    < value: I64\nstruct Right\n    < value: Bool\nleft: Left -> I64\nleft = owner -> owner.value\nright: Right -> Bool\nright = owner -> owner.value\nmain = -> 0\n");
+        for (name, ty) in [("left", Type::I64), ("right", Type::Bool)] {
+            let function = partial
+                .functions
+                .values()
+                .find(|function| function.name == name)
+                .unwrap();
+            let Type::Struct { id, .. } = partial.engine.resolve(&function.params[0].ty) else {
+                panic!("expected explicit nominal receiver");
+            };
+            let crate::hir::HirStmt::Expr(expression) = function.body.stmts.last().unwrap() else {
+                panic!("expected field tail");
+            };
+            let HirExprKind::FieldAccess(_, _, Some(location)) = &expression.kind else {
+                panic!("expected canonical field");
+            };
+            assert_eq!(location.owner, id);
+            assert_eq!(location.field_id, partial.structs[&id].fields[0].id);
+            assert_eq!(partial.engine.resolve(&expression.ty), ty);
+        }
+        let errors = analyze_intrinsic_source("struct Left\n    < value: I64\nstruct Right\n    < value: Bool\nread: Left -> I64\nread = owner -> owner.value\nmain = ->\n    owner = Right\n        value: true\n    read owner\n")
+            .expect_err("same field name must not authorize a different nominal owner");
+        assert!(errors
+            .0
+            .iter()
+            .any(|error| error.code == Some(crate::diagnostic::DiagnosticCode::Type)));
+    }
+
+    #[test]
+    fn field_schema_does_not_choose_unknown_dereference_input_kind() {
+        let errors = analyze_intrinsic_source(
+            "struct Record T\n    < value: T\nread = pointer -> (*pointer).value\nmain = -> 0\n",
+        )
+        .expect_err("nominal pointee evidence does not choose raw or shared input");
+        assert!(errors
+            .0
+            .iter()
+            .any(|error| error.code == Some(crate::diagnostic::DiagnosticCode::Type)));
+        assert!(errors
+            .0
+            .iter()
+            .all(|error| error.code != Some(crate::diagnostic::DiagnosticCode::Internal)));
+    }
+
+    #[test]
+    fn field_schema_raw_reinterpretation_does_not_equate_independent_result_generic() {
+        let source = r#"
+struct State A
+    < allocator: A
+struct Holder A
+    < pointer: *I64
+    < state: State A
+impl Holder A
+    unsafe extract = owner ->
+        pointer = owner.pointer
+        state_pointer = (&owner.state) as *(State A)
+        state = unsafe *state_pointer
+        ~Forget owner
+        (pointer, state)
+consume: State A -> ()
+consume = state !-> ()
+main = !->
+    value = 42
+    owner = Holder
+        pointer: (&value) as *I64
+        state: State
+            allocator: true
+    parts = unsafe Holder::extract owner
+    consume parts.1
+"#;
+        let partial = lower_field_schema_source(source);
+        let implementation = partial
+            .impls
+            .values()
+            .find(|implementation| implementation.methods.contains_key("extract"))
+            .unwrap();
+        let extract = &implementation.methods["extract"];
+        let Type::Struct { args, .. } = partial.engine.resolve(&extract.params[0].ty) else {
+            panic!("field lookup must recover Holder schema");
+        };
+        let Type::Tuple(result) = partial.engine.resolve(&extract.ret_type) else {
+            panic!("expected split tuple");
+        };
+        let Type::Struct {
+            args: state_args, ..
+        } = &result[1]
+        else {
+            panic!("expected State result");
+        };
+        assert_eq!(
+            state_args,
+            &vec![Type::Generic(implementation.type_generics[0].id)]
+        );
+        assert_ne!(
+            &args, state_args,
+            "raw cast cannot bind impl A from input Holder B"
+        );
+        let errors = analyze_intrinsic_source(source)
+            .expect_err("independent result A must remain ambiguous");
+        assert!(errors
+            .0
+            .iter()
+            .any(|error| error.code == Some(crate::diagnostic::DiagnosticCode::Type)));
+        assert!(errors
+            .0
+            .iter()
+            .all(|error| error.code != Some(crate::diagnostic::DiagnosticCode::Internal)));
+    }
 
     fn test_function(id: DefId, name: &str, ret_type: Type) -> HirFunction {
         HirFunction {
@@ -3762,7 +5958,7 @@ mod tests {
                 span: Span::test(),
             })),
             ExprUse::Value,
-            false,
+            true,
         );
 
         assert_eq!(lowered.ty, Type::I64);

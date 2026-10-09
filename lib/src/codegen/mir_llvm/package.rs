@@ -187,8 +187,7 @@ impl<'ctx> CodeGen<'ctx> {
         let descriptor = self
             .module
             .add_global(self.erased_descriptor_type(), None, name);
-        descriptor.set_initializer(
-            &self.erased_descriptor_type().const_named_struct(&[
+        let mut values: Vec<BasicValueEnum<'ctx>> = vec![
                 ty.size_of()
                     .ok_or_else(|| CodegenError::backend_contract("uniform layout is not sized"))?
                     .into(),
@@ -199,8 +198,9 @@ impl<'ctx> CodeGen<'ctx> {
                 drop.as_global_value().as_pointer_value().into(),
                 word.const_int(fields as u64, false).into(),
                 offsets_global.as_pointer_value().into(),
-            ]),
-        );
+            ];
+        values.extend(self.descriptor_opaque_suffix());
+        descriptor.set_initializer(&self.erased_descriptor_type().const_named_struct(&values));
         descriptor.set_constant(true);
         descriptor.set_linkage(Linkage::Private);
         Ok(descriptor.as_pointer_value())

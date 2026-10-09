@@ -1,0 +1,47 @@
+
+lang drop
+< trait Dispose
+    lang method
+    ~@dispose: ()
+
+struct Allocator
+    < drops: *I64
+impl Dispose for Allocator
+    ~@dispose = !-> unsafe *self.drops = (~I64Add (*self.drops), 1)
+struct State A
+    < allocator: A
+    < drops: *I64
+impl Dispose for State A
+    ~@dispose = !-> unsafe *self.drops = (~I64Add (*self.drops), 1)
+struct Holder A
+    < pointer: *I64
+    < state: State A
+impl Dispose for Holder A
+    ~@dispose = !-> ()
+consume: State A -> ()
+consume = state !-> ()
+
+impl Holder A
+    unsafe extract = owner ->
+        pointer = owner.pointer
+        state_pointer = (&owner.state) as *(State A)
+        state = unsafe *state_pointer
+        ~Forget owner
+        (pointer, state)
+main = ->
+    mut allocator_drops = 0
+    mut state_drops = 0
+    value = 42
+    allocator = Allocator
+        drops: (&mut allocator_drops) as *I64
+    owner = Holder
+        pointer: (&value) as *I64
+        state: State
+            allocator: allocator
+            drops: (&mut state_drops) as *I64
+    parts = unsafe Holder::extract owner
+    pointer = parts.0
+    consume parts.1
+    if (~I64Ne allocator_drops, 1) then return 1
+    if (~I64Ne state_drops, 1) then return 2
+    unsafe *pointer

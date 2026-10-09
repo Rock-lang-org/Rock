@@ -105,7 +105,294 @@ pub fn compute_reference_liveness_with_contract(
     backend_contract: &MirBackendContract,
 ) -> ReferenceLiveness {
     let reference_locals = reference_locals(func, type_context, backend_contract);
-    compute_reference_liveness_for(func, &reference_locals)
+    compute_reference_liveness_for(func, &reference_locals, &[], type_context, backend_contract)
+}
+
+pub(super) fn compute_reference_liveness_with_mutations(
+    func: &MirFunction,
+    tc: &TypeContext,
+    contract: &MirBackendContract,
+    table: &LoanTable,
+    candidates: &[Vec<crate::hir::borrowing::BorrowRetention>],
+) -> ReferenceLiveness {
+    compute_reference_liveness_with_return_sources(func, tc, contract, table, candidates, None)
+}
+
+pub(super) fn compute_reference_liveness_with_return_sources(
+    func: &MirFunction,
+    tc: &TypeContext,
+    contract: &MirBackendContract,
+    table: &LoanTable,
+    candidates: &[Vec<crate::hir::borrowing::BorrowRetention>],
+    sources: Option<&super::return_sources::NativeReturnSources>,
+) -> ReferenceLiveness {
+    let mut locals = reference_locals(func, tc, contract);
+    let mut qualified = HashSet::new();
+    let mut forwarding = Vec::new();
+    let mut reference_forwarding = Vec::new();
+    for (block_index, block) in func.basic_blocks.iter().enumerate() {
+        for (statement_index, statement) in block.statements.iter().enumerate() {
+            if let StatementKind::Assign(dest, Rvalue::Closure(closure)) = &statement.kind {
+                if closure.id.owner == func.id
+                    && matches!(
+                        super::checked_place_storage_type(tc, contract, func, dest),
+                        Some(Type::Function { .. })
+                    )
+                {
+                    for capture in &closure.captures {
+                        let kind = match capture.kind {
+                            crate::mir::MirClosureCaptureKind::ByRef => {
+                                crate::mir::dataflow::analyses::LoanKind::Shared
+                            }
+                            crate::mir::MirClosureCaptureKind::ByMutRef => {
+                                crate::mir::dataflow::analyses::LoanKind::Mut
+                            }
+                            crate::mir::MirClosureCaptureKind::ByValue => continue,
+                        };
+                        let place = capture.place();
+                        if super::checked_place_storage_type(tc, contract, func, &place).is_none() {
+                            continue;
+                        }
+                        for loan in table.iter().filter(|loan| {
+                            loan.initial_owner == dest.local
+                                && loan.kind == kind
+                                && loan.created_at.block.0 == block_index
+                                && loan.created_at.statement.0 == statement_index
+                                && loan.diagnostic_place == place
+                        }) {
+                            qualified.insert(loan.initial_owner);
+                        }
+                    }
+                }
+            }
+            if let StatementKind::Assign(dest, Rvalue::Aggregate(kind, operands)) = &statement.kind
+            {
+                for (index, operand) in operands.iter().enumerate() {
+                    if super::aggregate_operand_forwarding(
+                        func, tc, contract, dest, kind, index, operand,
+                    ) {
+                        let (Operand::Copy(source) | Operand::Move(source)) = operand else {
+                            continue;
+                        };
+                        forwarding.push((source.local, dest.local));
+                    }
+                }
+            }
+            if let StatementKind::Assign(dest, Rvalue::Ref(_, source)) = &statement.kind {
+                let root = Place {
+                    local: source.local,
+                    projection: Vec::new(),
+                };
+                if dest.projection.is_empty()
+                    && matches!(source.projection.first(), Some(Projection::Deref))
+                    && matches!(
+                        super::checked_place_storage_type(tc, contract, func, &root),
+                        Some(Type::Reference { .. })
+                    )
+                    && super::checked_place_storage_type(tc, contract, func, dest)
+                        == super::checked_place_storage_type(tc, contract, func, &root)
+                {
+                    forwarding.push((source.local, dest.local));
+                    reference_forwarding.push((source.local, dest.local));
+                }
+            }
+            if let StatementKind::Assign(
+                dest,
+                value @ (Rvalue::Use(operand) | Rvalue::Cast(operand, _)),
+            ) = &statement.kind
+            {
+                let (Operand::Copy(source) | Operand::Move(source)) = operand else {
+                    continue;
+                };
+                let valid = matches!(value, Rvalue::Use(_))
+                    || matches!(value, Rvalue::Cast(_, target)
+                    if tc.type_id_tree_is_valid(*target) && super::checked_place_storage_type(tc, contract, func, dest)
+                                == Some(contract.normalize_storage_type(tc, &tc.type_for(*target))));
+                let whole = dest.projection.is_empty() && source.projection.is_empty();
+                if valid
+                    && (whole
+                        || matches!(value, Rvalue::Use(_))
+                        || super::callable_forwarding_rvalue(func, tc, contract, dest, value))
+                    && super::checked_place_storage_type(tc, contract, func, dest).is_some()
+                    && (super::checked_place_storage_type(tc, contract, func, dest)
+                        == super::checked_place_storage_type(tc, contract, func, source)
+                        || super::callable_forwarding_rvalue(func, tc, contract, dest, value))
+                {
+                    forwarding.push((source.local, dest.local));
+                    if whole
+                        && matches!(value, Rvalue::Use(_))
+                        && matches!(
+                            super::checked_place_storage_type(tc, contract, func, dest),
+                            Some(Type::Reference { .. })
+                        )
+                        && super::checked_place_storage_type(tc, contract, func, dest)
+                            == super::checked_place_storage_type(tc, contract, func, source)
+                    {
+                        reference_forwarding.push((source.local, dest.local));
+                    }
+                }
+            }
+        }
+    }
+    // A compile-local may-alias snapshot selects liveness roots only. It uses
+    // real loan IDs and checked reference forwarding, never contents as addresses;
+    // the call transfer still binds storage from its statement-precise state.
+    let mut aliases = LoanState::new(table.len());
+    for loan in table.iter() {
+        aliases.activate(loan.id, table);
+    }
+    loop {
+        let mut changed = false;
+        for (source, dest) in &reference_forwarding {
+            changed |= aliases.copy_owner(*source, *dest);
+        }
+        if !changed {
+            break;
+        }
+    }
+    let aliases = aliases.storage_alias_state();
+    let mut source_roots = HashSet::new();
+    for (index, rows) in candidates.iter().enumerate() {
+        let Some(Terminator::Call { args, .. }) = &func.basic_blocks[index].terminator else {
+            continue;
+        };
+        for row in rows {
+            let Some(Operand::Copy(receiver) | Operand::Move(receiver)) =
+                args.get(row.destination.argument as usize)
+            else {
+                continue;
+            };
+            let Some(Type::Reference {
+                mutable: true,
+                inner,
+            }) = super::checked_place_storage_type(tc, contract, func, receiver)
+            else {
+                continue;
+            };
+            let mut carriers = HashSet::from([receiver.local]);
+            loop {
+                let before = carriers.len();
+                for (source, dest) in &forwarding {
+                    if carriers.contains(dest) {
+                        carriers.insert(*source);
+                    }
+                }
+                if carriers.len() == before {
+                    break;
+                }
+            }
+            for loan in table.iter().filter(|loan| {
+                carriers.contains(&loan.initial_owner)
+                    && loan.kind == crate::mir::dataflow::analyses::LoanKind::Mut
+            }) {
+                for owner in super::provenance::resolve_loan_places(loan.id, table, &aliases) {
+                    if !owner
+                        .projection
+                        .iter()
+                        .any(|projection| matches!(projection, Projection::Deref))
+                        && super::checked_place_storage_type(tc, contract, func, &owner).as_ref()
+                            == Some(inner.as_ref())
+                    {
+                        qualified.insert(owner.local);
+                    }
+                }
+            }
+            for source in &row.sources {
+                if let Some(Operand::Copy(place) | Operand::Move(place)) =
+                    args.get(source.argument as usize)
+                {
+                    source_roots.insert(place.local);
+                    if source.kind == crate::hir::borrowing::BorrowSourceKind::Contents {
+                        let Some(Type::Reference { inner, .. }) =
+                            super::checked_place_storage_type(tc, contract, func, place)
+                        else {
+                            continue;
+                        };
+                        let mut contents = place.clone();
+                        contents.projection.push(Projection::Deref);
+                        for owner in super::provenance::resolve_places(&contents, table, &aliases) {
+                            if !owner
+                                .projection
+                                .iter()
+                                .any(|projection| matches!(projection, Projection::Deref))
+                                && super::checked_place_storage_type(tc, contract, func, &owner)
+                                    .as_ref()
+                                    == Some(inner.as_ref())
+                            {
+                                source_roots.insert(owner.local);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Effect-source staging must stay live before the call as well as after it.
+    loop {
+        let before = source_roots.len();
+        for (source, dest) in &forwarding {
+            if source_roots.contains(dest) {
+                source_roots.insert(*source);
+            }
+        }
+        if source_roots.len() == before {
+            break;
+        }
+    }
+    qualified.extend(source_roots);
+    // Only actual capture loans, typed effect carriers and their checked
+    // transport descendants enter liveness. No alias/write permission is added.
+    loop {
+        let before = qualified.len();
+        for (source, dest) in &forwarding {
+            if qualified.contains(source) {
+                qualified.insert(*dest);
+            }
+        }
+        if qualified.len() == before {
+            break;
+        }
+    }
+    for local in qualified {
+        locals.insert(local);
+    }
+    let call_uses = func
+        .basic_blocks
+        .iter()
+        .map(|block| {
+            let mut uses = LocalSet::new();
+            if let Some(Terminator::Call {
+                func: callee,
+                args,
+                destination,
+                ..
+            }) = &block.terminator
+            {
+                if let Some((inputs, summary)) = sources.and_then(|table| {
+                    table.callable_result_loan_call(func, tc, contract, callee, args, destination)
+                }) {
+                    for origin in summary {
+                        let parameter = match origin {
+                            ReferenceOrigin::Param(local)
+                            | ReferenceOrigin::ParamContents(local)
+                            | ReferenceOrigin::ParamBorrowedContents(local) => local,
+                            _ => continue,
+                        };
+                        if let Some(Operand::Copy(place) | Operand::Move(place)) = parameter
+                            .0
+                            .checked_sub(1)
+                            .and_then(|index| inputs.get(index))
+                        {
+                            locals.insert(place.local);
+                            uses.insert(place.local);
+                        }
+                    }
+                }
+            }
+            uses
+        })
+        .collect::<Vec<_>>();
+    compute_reference_liveness_for(func, &locals, &call_uses, tc, contract)
 }
 
 pub fn compute_active_loan_entries(
@@ -144,6 +431,38 @@ pub fn compute_active_loan_entries_with_contract(
         reference_liveness,
         return_summaries,
     );
+    compute_active_loan_entries_fixpoint(&analysis, func)
+}
+
+pub(super) fn compute_active_loan_entries_with_mutations(
+    func: &MirFunction,
+    tc: &TypeContext,
+    contract: &MirBackendContract,
+    table: &LoanTable,
+    locations: &LoanLocationIndex,
+    liveness: &ReferenceLiveness,
+    summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
+    candidates: &[Vec<crate::hir::borrowing::BorrowRetention>],
+) -> Vec<LoanState> {
+    compute_active_loan_entries_with_return_sources(
+        func, tc, contract, table, locations, liveness, summaries, candidates, None,
+    )
+}
+
+pub(super) fn compute_active_loan_entries_with_return_sources(
+    func: &MirFunction,
+    tc: &TypeContext,
+    contract: &MirBackendContract,
+    table: &LoanTable,
+    locations: &LoanLocationIndex,
+    liveness: &ReferenceLiveness,
+    summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
+    candidates: &[Vec<crate::hir::borrowing::BorrowRetention>],
+    sources: Option<&super::return_sources::NativeReturnSources>,
+) -> Vec<LoanState> {
+    let analysis = ActiveLoanAnalysis::new(tc, contract, table, locations, liveness, summaries)
+        .with_mutations(candidates)
+        .with_return_sources(sources);
     compute_active_loan_entries_fixpoint(&analysis, func)
 }
 
@@ -193,6 +512,8 @@ pub(super) struct ActiveLoanAnalysis<'a> {
     loan_at_location: &'a LoanLocationIndex,
     reference_liveness: &'a ReferenceLiveness,
     return_summaries: &'a HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
+    mutations: Option<&'a [Vec<crate::hir::borrowing::BorrowRetention>]>,
+    return_sources: Option<&'a super::return_sources::NativeReturnSources>,
 }
 
 impl<'a> ActiveLoanAnalysis<'a> {
@@ -211,6 +532,60 @@ impl<'a> ActiveLoanAnalysis<'a> {
             loan_at_location,
             reference_liveness,
             return_summaries,
+            mutations: None,
+            return_sources: None,
+        }
+    }
+
+    pub(super) fn with_mutations(
+        mut self,
+        candidates: &'a [Vec<crate::hir::borrowing::BorrowRetention>],
+    ) -> Self {
+        self.mutations = Some(candidates);
+        self
+    }
+
+    pub(super) fn with_return_sources(
+        mut self,
+        sources: Option<&'a super::return_sources::NativeReturnSources>,
+    ) -> Self {
+        self.return_sources = sources;
+        self
+    }
+
+    pub(super) fn apply_statements(
+        &self,
+        state: &mut LoanState,
+        func: &MirFunction,
+        block_id: BasicBlockId,
+    ) {
+        let block = &func.basic_blocks[block_id.0];
+        for (stmt_idx, stmt) in block.statements.iter().enumerate() {
+            apply_active_loan_statement_transfer(
+                state,
+                func,
+                self.type_context,
+                self.backend_contract,
+                stmt,
+            );
+            let location = crate::mir::borrowck::location::Location::new(
+                block_id,
+                crate::mir::borrowck::location::StatementIndex(stmt_idx),
+            );
+            for loan_id in self.loan_at_location.loan_ids_at(location) {
+                state.activate(loan_id, self.table);
+            }
+            if let Some(live) = self
+                .reference_liveness
+                .after_statement_sets
+                .get(block_id.0)
+                .and_then(|sets| sets.get(stmt_idx))
+            {
+                state.retain_owners(|owner| live.contains(owner));
+            }
+            if let StatementKind::StorageDead(local) = &stmt.kind {
+                state.release_owner(*local);
+            }
         }
     }
 }
@@ -232,50 +607,24 @@ impl Analysis for ActiveLoanAnalysis<'_> {
 
     fn apply_block(&self, state: &mut Self::Domain, func: &MirFunction, block_id: BasicBlockId) {
         let block = &func.basic_blocks[block_id.0];
-
-        for (stmt_idx, stmt) in block.statements.iter().enumerate() {
-            apply_active_loan_statement_transfer(
-                state,
-                func,
-                self.type_context,
-                self.backend_contract,
-                stmt,
-            );
-
-            let location = crate::mir::borrowck::location::Location::new(
-                block_id,
-                crate::mir::borrowck::location::StatementIndex(stmt_idx),
-            );
-            for loan_id in self.loan_at_location.loan_ids_at(location) {
-                state.activate(loan_id, self.table);
-            }
-
-            if let Some(live_locals) = self
-                .reference_liveness
-                .after_statement_sets
-                .get(block_id.0)
-                .and_then(|stmt_sets| stmt_sets.get(stmt_idx))
-            {
-                state.retain_owners(|owner| live_locals.contains(owner));
-            }
-
-            if let StatementKind::StorageDead(local) = &stmt.kind {
-                state.release_owner(*local);
-            }
-        }
+        self.apply_statements(state, func, block_id);
 
         let terminator_location = crate::mir::borrowck::location::Location::new(
             block_id,
             crate::mir::borrowck::location::StatementIndex(block.statements.len()),
         );
         if let Some(term) = &block.terminator {
-            apply_active_loan_terminator_transfer(
+            apply_active_loan_terminator_transfer_with_return_sources(
                 state,
                 func,
                 self.type_context,
                 self.backend_contract,
                 term,
                 self.return_summaries,
+                self.mutations
+                    .and_then(|rows| rows.get(block_id.0))
+                    .map(|rows| (self.table, rows.as_slice())),
+                self.return_sources,
             );
         }
         for loan_id in self.loan_at_location.loan_ids_at(terminator_location) {
@@ -296,25 +645,50 @@ pub(super) fn apply_active_loan_statement_transfer(
     stmt: &StatementData,
 ) {
     match &stmt.kind {
+        StatementKind::Assign(dest, Rvalue::Closure(closure)) => {
+            for capture in &closure.captures {
+                // Environment-carried references remain real loans after their
+                // source binding dies; capture storage loans activate separately.
+                state.copy_owner_as_contents(capture.local, dest.local);
+                if capture.kind == crate::mir::MirClosureCaptureKind::ByValue
+                    && func
+                        .local_decls
+                        .get(capture.local.0)
+                        .is_some_and(|local| !type_context.type_for(local.ty).is_copy())
+                    && capture.local != dest.local
+                {
+                    state.release_owner(capture.local);
+                }
+            }
+        }
         StatementKind::Assign(dest, Rvalue::Use(Operand::Move(src) | Operand::Copy(src)))
             if backend_contract
                 .place_type_id(type_context, func, dest)
                 .is_some_and(|ty| target_is_pointer(type_context, ty)) =>
         {
-            state.copy_owner_as_raw(src.local, dest.local);
+            if matches!(src.projection.first(), Some(Projection::Deref))
+                && (local_is_reference(func, type_context, src.local)
+                    || local_is_pointer(func, type_context, src.local))
+            {
+                state.copy_contents_owner_as_raw(src.local, dest.local);
+            } else {
+                state.copy_owner_as_raw(src.local, dest.local);
+            }
             if matches!(
                 &stmt.kind,
                 StatementKind::Assign(_, Rvalue::Use(Operand::Move(_)))
-            ) && src.local != dest.local
+            ) && src.projection.is_empty()
+                && src.local != dest.local
             {
                 state.release_owner(src.local);
             }
         }
         StatementKind::Assign(dest, Rvalue::Use(Operand::Move(src) | Operand::Copy(src)))
             if matches!(src.projection.first(), Some(Projection::Deref))
-                && local_is_reference(func, type_context, src.local) =>
+                && (local_is_reference(func, type_context, src.local)
+                    || local_is_pointer(func, type_context, src.local)) =>
         {
-            // Reading a stored value is not borrowing the receiver's storage.
+            // Reading a stored value is not transporting its address lease.
             state.copy_contents_owner(src.local, dest.local);
         }
         StatementKind::Assign(
@@ -323,7 +697,13 @@ pub(super) fn apply_active_loan_statement_transfer(
             | Rvalue::Object(Operand::Move(src), _)
             | Rvalue::Package(Operand::Move(src), _),
         ) => {
-            state.transfer_owner(src.local, dest.local);
+            if src.projection.is_empty() {
+                state.transfer_owner(src.local, dest.local);
+            } else {
+                // Local-granularity projected transport must not release
+                // unrelated contents on another field/alias-join alternative.
+                state.copy_owner(src.local, dest.local);
+            }
         }
         StatementKind::Assign(
             dest,
@@ -331,9 +711,8 @@ pub(super) fn apply_active_loan_statement_transfer(
             | Rvalue::Object(Operand::Copy(src), _)
             | Rvalue::Package(Operand::Copy(src), _),
         ) => {
-            if tracks_local_reference_liveness(func, type_context, backend_contract, src.local) {
-                state.copy_owner(src.local, dest.local);
-            }
+            // Copies preserve existing loans, never synthesize type authority.
+            state.copy_owner(src.local, dest.local);
         }
         StatementKind::Assign(dest, Rvalue::Ref(_, place))
             if matches!(
@@ -352,8 +731,8 @@ pub(super) fn apply_active_loan_statement_transfer(
             // contained in the borrowed value even when its original binding dies.
             state.copy_owner_as_contents(place.local, dest.local);
         }
-        StatementKind::Assign(dest, Rvalue::Aggregate(_, operands)) => {
-            for operand in operands {
+        StatementKind::Assign(dest, Rvalue::Aggregate(kind, operands)) => {
+            for (index, operand) in operands.iter().enumerate() {
                 let (Operand::Copy(place) | Operand::Move(place)) = operand else {
                     continue;
                 };
@@ -362,7 +741,19 @@ pub(super) fn apply_active_loan_statement_transfer(
                     type_context,
                     backend_contract,
                     place.local,
-                ) {
+                ) && !(state
+                    .active_ids()
+                    .any(|id| state.owner_contains(id, place.local))
+                    && super::aggregate_operand_forwarding(
+                        func,
+                        type_context,
+                        backend_contract,
+                        dest,
+                        kind,
+                        index,
+                        operand,
+                    ))
+                {
                     continue;
                 }
                 match operand {
@@ -371,7 +762,7 @@ pub(super) fn apply_active_loan_statement_transfer(
                     }
                     Operand::Move(_) => {
                         state.copy_owner_as_contents(place.local, dest.local);
-                        if place.local != dest.local {
+                        if place.projection.is_empty() && place.local != dest.local {
                             state.release_owner(place.local);
                         }
                     }
@@ -379,9 +770,21 @@ pub(super) fn apply_active_loan_statement_transfer(
                 }
             }
         }
-        StatementKind::Assign(dest, Rvalue::Cast(op, target)) => {
+        StatementKind::Assign(dest, value @ Rvalue::Cast(op, target)) => {
             if let Operand::Copy(place) | Operand::Move(place) = op {
-                if local_is_mutable_reference(func, type_context, place.local)
+                if super::callable_forwarding_rvalue(
+                    func,
+                    type_context,
+                    backend_contract,
+                    dest,
+                    value,
+                ) {
+                    if matches!(op, Operand::Move(_)) && place.projection.is_empty() {
+                        state.transfer_owner(place.local, dest.local);
+                    } else {
+                        state.copy_owner(place.local, dest.local);
+                    }
+                } else if local_is_mutable_reference(func, type_context, place.local)
                     && target_is_pointer(type_context, *target)
                 {
                     state.copy_owner_as_raw(place.local, dest.local);
@@ -403,13 +806,77 @@ pub(super) fn apply_active_loan_statement_transfer(
     }
 }
 
-fn apply_active_loan_terminator_transfer(
+pub(super) fn apply_active_loan_terminator_transfer(
     state: &mut LoanState,
     func: &MirFunction,
     type_context: &TypeContext,
     backend_contract: &MirBackendContract,
     term: &Terminator,
     return_summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
+    mutation: Option<(&LoanTable, &[crate::hir::borrowing::BorrowRetention])>,
+) {
+    apply_active_loan_terminator_transfer_with_return_sources(
+        state,
+        func,
+        type_context,
+        backend_contract,
+        term,
+        return_summaries,
+        mutation,
+        None,
+    );
+}
+
+pub(super) fn apply_active_loan_terminator_transfer_with_return_sources(
+    state: &mut LoanState,
+    func: &MirFunction,
+    type_context: &TypeContext,
+    backend_contract: &MirBackendContract,
+    term: &Terminator,
+    return_summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
+    mutation: Option<(&LoanTable, &[crate::hir::borrowing::BorrowRetention])>,
+    return_sources: Option<&super::return_sources::NativeReturnSources>,
+) {
+    transport_call_loans(
+        state,
+        func,
+        type_context,
+        backend_contract,
+        term,
+        return_summaries,
+        mutation,
+        return_sources,
+    );
+    let Terminator::Call {
+        func: callee,
+        args,
+        destination,
+        ..
+    } = term
+    else {
+        return;
+    };
+    // Bind measured results and retained views before consuming input carriers.
+    // A move cannot keep its old local alive merely because a guarded cleanup
+    // edge remains in the CFG; transferred result owners remain independent.
+    for operand in std::iter::once(callee).chain(args) {
+        if let Operand::Move(place) = operand {
+            if place.projection.is_empty() && place.local != destination.local {
+                state.release_owner(place.local);
+            }
+        }
+    }
+}
+
+fn transport_call_loans(
+    state: &mut LoanState,
+    func: &MirFunction,
+    type_context: &TypeContext,
+    backend_contract: &MirBackendContract,
+    term: &Terminator,
+    return_summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
+    mutation: Option<(&LoanTable, &[crate::hir::borrowing::BorrowRetention])>,
+    return_sources: Option<&super::return_sources::NativeReturnSources>,
 ) {
     let Terminator::Call {
         func: callee,
@@ -420,6 +887,40 @@ fn apply_active_loan_terminator_transfer(
     else {
         return;
     };
+
+    if let Some((table, rows)) = mutation {
+        let before = state.clone();
+        for binding in super::native_mutation_bindings(
+            func,
+            type_context,
+            backend_contract,
+            table,
+            &before,
+            term,
+            rows,
+        ) {
+            let Some(Operand::Copy(source) | Operand::Move(source)) =
+                args.get(binding.source.argument as usize)
+            else {
+                continue;
+            };
+            let selected = before
+                .active_ids()
+                .filter(|id| {
+                    before.owner_contains(*id, source.local) && !binding.excluded.contains(id)
+                })
+                .collect::<HashSet<_>>();
+            state.copy_selected_as_contents(
+                source.local,
+                binding.owner.local,
+                &selected,
+                binding.source.kind == crate::hir::borrowing::BorrowSourceKind::Contents
+                    || (matches!(source.projection.first(), Some(Projection::Deref))
+                        && (local_is_reference(func, type_context, source.local)
+                            || local_is_pointer(func, type_context, source.local))),
+            );
+        }
+    }
 
     if matches!(
         callee,
@@ -451,25 +952,117 @@ fn apply_active_loan_terminator_transfer(
         return;
     }
 
-    if let Operand::Constant(crate::mir::Constant::Callable(callable)) = callee {
-        if let Some(summary) = callable
+    if let Some(sources) = return_sources.and_then(|table| {
+        table.borrowed_view_call(
+            func,
+            type_context,
+            backend_contract,
+            callee,
+            args,
+            destination,
+        )
+    }) {
+        let mut qualified = HashSet::new();
+        for source in sources {
+            let super::return_sources::Source::Slice {
+                parameter,
+                load,
+                reference,
+            } = source
+            else {
+                continue;
+            };
+            let Some(index) = parameter.0.checked_sub(1) else {
+                continue;
+            };
+            let Some(Operand::Copy(value) | Operand::Move(value)) = args.get(index) else {
+                continue;
+            };
+            let mut supplying_slots = HashSet::new();
+            if !load.is_empty() {
+                if let Some((table, _)) = mutation {
+                    let storage = state.storage_alias_state();
+                    let mut loaded = value.clone();
+                    loaded.projection.extend(load.iter().cloned());
+                    let supplying = super::provenance::resolve_places(&loaded, table, &storage);
+                    for id in state
+                        .active_ids()
+                        .filter(|id| state.storage_owner_contains(*id, value.local))
+                    {
+                        let paths = super::provenance::resolve_loan_places(id, table, &storage);
+                        if !paths.is_empty()
+                            && paths.iter().all(|place| {
+                                supplying.contains(place)
+                                    && backend_contract.place_type_id(type_context, func, place)
+                                        == Some(*reference)
+                            })
+                        {
+                            supplying_slots.insert(id);
+                        }
+                    }
+                }
+            }
+            state.copy_borrowed_slice_data(value.local, destination.local, &supplying_slots);
+            qualified.insert(index);
+        }
+        // Keep conservative independent input leases, never promote Unknown
+        // mutation knowledge or deactivate any receiver-slot loan globally.
+        for (index, argument) in args.iter().enumerate() {
+            if qualified.contains(&index) {
+                continue;
+            }
+            if let Operand::Copy(value) | Operand::Move(value) = argument {
+                state.copy_owner_for_borrow(value.local, destination.local);
+            }
+        }
+        return;
+    }
+
+    let certified_callable = return_sources.and_then(|table| {
+        table.callable_result_loan_call(
+            func,
+            type_context,
+            backend_contract,
+            callee,
+            args,
+            destination,
+        )
+    });
+    let portable_summary = match callee {
+        Operand::Constant(crate::mir::Constant::ErasedCall(call)) => {
+            super::erased_return_summary(backend_contract, type_context, call)
+        }
+        _ => None,
+    };
+    let (args, callable_summary) = certified_callable
+        .as_ref()
+        .map(|(inputs, summary)| (inputs.as_slice(), Some(summary)))
+        .unwrap_or((args.as_slice(), None));
+    let checked_result = portable_summary.is_some() || callable_summary.is_some();
+    let summary = callable_summary.or(portable_summary.as_ref()).or_else(|| {
+        let Operand::Constant(crate::mir::Constant::Callable(callable)) = callee else {
+            return None;
+        };
+        callable
             .function_id()
             .and_then(|id| return_summaries.get(&id))
-            .filter(|summary| {
-                summary.iter().all(|origin| match origin {
-                    ReferenceOrigin::Param(local)
-                    | ReferenceOrigin::ParamContents(local)
-                    | ReferenceOrigin::ParamBorrowedContents(local) => local
-                        .0
-                        .checked_sub(1)
-                        .is_some_and(|index| index < args.len()),
-                    ReferenceOrigin::Static => true,
-                    ReferenceOrigin::UnknownExternal
-                    | ReferenceOrigin::Local(_)
-                    | ReferenceOrigin::Temporary(_) => false,
-                })
+    });
+    {
+        if let Some(summary) = summary.filter(|summary| {
+            summary.iter().all(|origin| match origin {
+                ReferenceOrigin::Param(local)
+                | ReferenceOrigin::ParamContents(local)
+                | ReferenceOrigin::ParamBorrowedContents(local) => local
+                    .0
+                    .checked_sub(1)
+                    .is_some_and(|index| index < args.len()),
+                ReferenceOrigin::Static => true,
+                // A measured external leaf is not a loan on invocation
+                // storage; the same certificate retains every input source.
+                ReferenceOrigin::UnknownExternal => callable_summary.is_some(),
+                ReferenceOrigin::Local(_) | ReferenceOrigin::Temporary(_) => false,
             })
-        {
+        }) {
             // The body summary is authority: borrowed storage and transferred
             // contents are distinct, regardless of nominal/source names.
             for origin in summary {
@@ -484,13 +1077,33 @@ fn apply_active_loan_terminator_transfer(
                 else {
                     continue;
                 };
-                if backend_contract
+                let environment_contents = callable_summary.is_some()
+                    && parameter == Local(1)
+                    && matches!(origin, ReferenceOrigin::ParamContents(_));
+                if checked_result && local_is_reference(func, type_context, destination.local) {
+                    let contents_only = matches!(origin, ReferenceOrigin::ParamContents(_))
+                        && (local_is_reference(func, type_context, source.local)
+                            || environment_contents);
+                    state.copy_owner_as_returned(source.local, destination.local, contents_only);
+                } else if backend_contract
                     .place_type_id(type_context, func, destination)
                     .is_some_and(|ty| target_is_pointer(type_context, ty))
                 {
-                    state.copy_owner_as_raw(source.local, destination.local);
+                    if matches!(origin, ReferenceOrigin::ParamContents(_))
+                        && (environment_contents
+                            || local_is_reference(func, type_context, source.local)
+                            || (portable_summary.is_none()
+                                && local_is_pointer(func, type_context, source.local)))
+                    {
+                        state.copy_contents_owner_as_raw(source.local, destination.local);
+                    } else {
+                        state.copy_owner_as_raw(source.local, destination.local);
+                    }
                 } else if matches!(origin, ReferenceOrigin::ParamContents(_))
-                    && local_is_reference(func, type_context, source.local)
+                    && (environment_contents
+                        || local_is_reference(func, type_context, source.local)
+                        || (portable_summary.is_none()
+                            && local_is_pointer(func, type_context, source.local)))
                 {
                     state.copy_contents_owner(source.local, destination.local);
                 } else if matches!(origin, ReferenceOrigin::ParamBorrowedContents(_)) {
@@ -505,6 +1118,18 @@ fn apply_active_loan_terminator_transfer(
 
     // Aggregate/raw handles can carry payload loans through ordinary protocol
     // split/rebuild calls; their physical pointer fields do not end those loans.
+    if let Operand::Copy(source) | Operand::Move(source) = callee {
+        // An unqualified indirect call may return carried environment loans or
+        // borrow a receiver environment. Preserve both roles, not an empty effect.
+        if backend_contract
+            .place_type_id(type_context, func, destination)
+            .is_some_and(|ty| target_is_pointer(type_context, ty))
+        {
+            state.copy_owner_as_raw(source.local, destination.local);
+        } else {
+            state.copy_owner_for_borrow(source.local, destination.local);
+        }
+    }
     for arg in args {
         let (Operand::Copy(source) | Operand::Move(source)) = arg else {
             continue;
@@ -542,6 +1167,12 @@ fn local_is_reference(func: &MirFunction, type_context: &TypeContext, local: Loc
             .map(|decl| type_view.ty(decl.ty)),
         Some(Ty::Reference { .. })
     )
+}
+
+fn local_is_pointer(func: &MirFunction, type_context: &TypeContext, local: Local) -> bool {
+    func.local_decls
+        .get(local.0)
+        .is_some_and(|decl| target_is_pointer(type_context, decl.ty))
 }
 
 fn local_is_mutable_reference(
@@ -663,8 +1294,12 @@ fn type_id_contains_reference_inner(
         Ty::Object(_) => true,
         Ty::ObjectSelf { .. } | Ty::Witness(_) => true,
         Ty::Reference { .. } => true,
-        Ty::Tuple(elems) => elems
+        Ty::Tuple(elems) | Ty::StructRepresentation { fields: elems, .. } => elems
             .iter()
+            .any(|elem| type_id_contains_reference_inner(view, backend_contract, *elem, seen)),
+        Ty::EnumRepresentation { variants, .. } => variants
+            .iter()
+            .flatten()
             .any(|elem| type_id_contains_reference_inner(view, backend_contract, *elem, seen)),
         Ty::Array { inner, .. } | Ty::Slice(inner) | Ty::Pointer(inner) => {
             type_id_contains_reference_inner(view, backend_contract, *inner, seen)
@@ -827,7 +1462,12 @@ fn type_contains_reference_for_structural_type(
         Type::Reference { .. } => true,
         Type::Object(_) => true,
         Type::ObjectSelf { .. } | Type::Witness(_) => true,
-        Type::Tuple(elems) => elems.iter().any(|elem| {
+        Type::Tuple(elems) | Type::StructRepresentation { fields: elems, .. } => {
+            elems.iter().any(|elem| {
+                type_contains_reference_for_structural_type(view, backend_contract, elem, seen)
+            })
+        }
+        Type::EnumRepresentation { variants, .. } => variants.iter().flatten().any(|elem| {
             type_contains_reference_for_structural_type(view, backend_contract, elem, seen)
         }),
         Type::Array(inner, _) | Type::Slice(inner) => {
@@ -1039,7 +1679,29 @@ fn tracks_local_reference_liveness(
 fn compute_reference_liveness_for(
     func: &MirFunction,
     reference_locals: &LocalSet,
+    call_uses: &[LocalSet],
+    type_context: &TypeContext,
+    backend_contract: &MirBackendContract,
 ) -> ReferenceLiveness {
+    let drop_uses = func
+        .basic_blocks
+        .iter()
+        .map(|block| {
+            let Some(Terminator::Drop { place, .. } | Terminator::DropWithOrigin { place, .. }) =
+                &block.terminator
+            else {
+                return true;
+            };
+            let Some(ty) = backend_contract.place_type_id(type_context, func, place) else {
+                return true;
+            };
+            if !matches!(type_context.type_for(ty), Type::Function { captures, .. } if !captures.is_empty()) {
+                return true;
+            }
+            crate::mir::payload_drop_plan(backend_contract, &mut type_context.clone(), ty)
+                .map_or(true, |plan| plan.may_use_borrowed_values())
+        })
+        .collect::<Vec<_>>();
     let successors = compute_successors(func);
     let mut entry_sets = vec![LocalSet::new(); func.basic_blocks.len()];
     let mut exit_sets = vec![LocalSet::new(); func.basic_blocks.len()];
@@ -1058,6 +1720,8 @@ fn compute_reference_liveness_for(
                 &func.basic_blocks[block_idx],
                 live_out.clone(),
                 reference_locals,
+                call_uses.get(block_idx),
+                drop_uses[block_idx],
             );
 
             if live_in != entry_sets[block_idx] {
@@ -1084,7 +1748,15 @@ fn compute_reference_liveness_for(
         let mut block_after = vec![LocalSet::new(); block.statements.len()];
 
         if let Some(term) = &block.terminator {
-            apply_terminator_liveness(term, &mut live_after, reference_locals);
+            apply_terminator_liveness(
+                term,
+                &mut live_after,
+                reference_locals,
+                drop_uses[block_idx],
+            );
+        }
+        if let Some(uses) = call_uses.get(block_idx) {
+            live_after.join(uses);
         }
 
         for stmt_idx in (0..block.statements.len()).rev() {
@@ -1123,9 +1795,14 @@ fn transfer_block(
     block: &BasicBlock,
     mut live: LocalSet,
     reference_locals: &LocalSet,
+    call_uses: Option<&LocalSet>,
+    drop_uses: bool,
 ) -> LocalSet {
     if let Some(term) = &block.terminator {
-        apply_terminator_liveness(term, &mut live, reference_locals);
+        apply_terminator_liveness(term, &mut live, reference_locals, drop_uses);
+    }
+    if let Some(uses) = call_uses {
+        live.join(uses);
     }
 
     for stmt in block.statements.iter().rev() {
@@ -1194,7 +1871,12 @@ fn apply_statement_liveness(
     }
 }
 
-fn apply_terminator_liveness(term: &Terminator, live: &mut LocalSet, reference_locals: &LocalSet) {
+fn apply_terminator_liveness(
+    term: &Terminator,
+    live: &mut LocalSet,
+    reference_locals: &LocalSet,
+    drop_uses: bool,
+) {
     match term {
         Terminator::SwitchInt { discr, .. } | Terminator::SwitchIntWithOrigin { discr, .. } => {
             let mut locals = Vec::new();
@@ -1219,15 +1901,21 @@ fn apply_terminator_liveness(term: &Terminator, live: &mut LocalSet, reference_l
             insert_locals(live, locals);
         }
         Terminator::Drop { place, .. } | Terminator::DropWithOrigin { place, .. } => {
-            let mut locals = Vec::new();
-            place_reference_uses_vec(place, reference_locals, &mut locals);
-            insert_locals(live, locals);
+            if drop_uses {
+                let mut locals = Vec::new();
+                place_reference_uses_vec(place, reference_locals, &mut locals);
+                insert_locals(live, locals);
+            }
+        }
+        Terminator::Return | Terminator::ReturnWithOrigin { .. } => {
+            // Returning consumes the initialized result, including contained loans.
+            if reference_locals.contains(Local(0)) {
+                live.insert(Local(0));
+            }
         }
         Terminator::Goto(_)
         | Terminator::Unreachable { .. }
-        | Terminator::GotoWithOrigin { .. }
-        | Terminator::Return
-        | Terminator::ReturnWithOrigin { .. } => {}
+        | Terminator::GotoWithOrigin { .. } => {}
     }
 }
 
@@ -1327,6 +2015,69 @@ mod tests {
         AssociatedTypeKey {
             owner,
             assoc_type_id: AssocTypeId(0),
+        }
+    }
+
+    #[test]
+    fn call_moves_release_old_carriers_after_transporting_measured_result_loans() {
+        let mut tc = TypeContext::new();
+        let mut function = test_function(&mut tc);
+        function.ret_type = function.local_decls[2].ty;
+        function.local_decls[0].ty = function.ret_type;
+        let identity = DefId::new(CrateId(0), LocalDefId(91));
+        let table = LoanTable::from_borrows(&[BorrowData {
+            owner: Local(2),
+            place: Place {
+                local: Local(1),
+                projection: vec![],
+            },
+            kind: AccessKind::BorrowShared,
+            created_at: Location::new(BasicBlockId(0), StatementIndex(1)),
+            origin_span: None,
+        }]);
+        let summaries = HashMap::from([(
+            MirFunctionId::Function(identity),
+            std::collections::HashSet::from([crate::mir::ReferenceOrigin::Param(Local(1))]),
+        )]);
+        for moved in [false, true] {
+            let mut state = LoanState::new(table.len());
+            state.activate(LoanId(0), &table);
+            let source = Place {
+                local: Local(2),
+                projection: vec![],
+            };
+            let call = Terminator::Call {
+                func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
+                    MirCallableKey::Function(identity),
+                ))),
+                args: vec![if moved {
+                    Operand::Move(source)
+                } else {
+                    Operand::Copy(source)
+                }],
+                destination: Place {
+                    local: Local(0),
+                    projection: vec![],
+                },
+                target: BasicBlockId(0),
+                span: None,
+            };
+            super::apply_active_loan_terminator_transfer_with_return_sources(
+                &mut state,
+                &function,
+                &tc,
+                &MirBackendContract::default(),
+                &call,
+                &summaries,
+                None,
+                None,
+            );
+            assert_eq!(state.owner_contains(LoanId(0), Local(2)), !moved);
+            assert!(
+                state.owner_contains(LoanId(0), Local(0)),
+                "result borrowing is not erased by consuming its input carrier"
+            );
+            assert!(state.is_active(LoanId(0)));
         }
     }
 

@@ -671,3 +671,68 @@ pub fn walk_macro_invoc<'a, V: Visitor<'a>>(_visitor: &mut V, _m: &'a MacroInvoc
 pub fn walk_program<'a, V: Visitor<'a>>(visitor: &mut V, program: &'a Program) {
     visitor.visit_module(&program.module);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Packages {
+        binders: Vec<String>,
+        type_names: Vec<String>,
+        openings: usize,
+        constructions: usize,
+    }
+
+    impl<'ast> Visitor<'ast> for Packages {
+        fn visit_parse_type(&mut self, ty: &'ast ParseType) {
+            if let ParseType::Exists(package) = ty {
+                self.binders.push(package.parameter.name.name.clone());
+            }
+            walk_parse_type(self, ty);
+        }
+
+        fn visit_parse_type_inner(&mut self, ty: &'ast ParseTypeInner) {
+            self.type_names.push(ty.name.clone());
+            walk_parse_type_inner(self, ty);
+        }
+
+        fn visit_operand(&mut self, operand: &'ast Operand) {
+            match operand {
+                Operand::Open(_) => self.openings += 1,
+                Operand::Pack(_) => self.constructions += 1,
+                _ => {}
+            }
+            walk_operand(self, operand);
+        }
+    }
+
+    #[test]
+    fn package_traversal_visits_nested_binders_bounds_payloads_and_open_bodies() {
+        let source = r#"
+trait Read
+    @read: I64
+type Nested = exists Outer where Outer: Read in (exists Inner where Inner: Read in (&Outer, &Inner))
+inspect: Nested -> I64
+inspect = package ->
+    open package as Hidden, inner
+        open inner as Other, pair
+            reference: &Other = pair.1
+            reference.read!
+main = ->
+    left = 20
+    right = 22
+    package = pack (exists T where T: Read in (&T, &T)) (&left, &right)
+    0
+"#;
+        let program = crate::parser::parse_string(source, &crate::Config::default()).unwrap();
+        let mut visited = Packages::default();
+        program.visit(&mut visited);
+        assert_eq!(visited.binders, ["Outer", "Inner", "T"]);
+        assert_eq!(visited.openings, 2);
+        assert_eq!(visited.constructions, 1);
+        for name in ["Read", "Outer", "Inner", "Other", "T"] {
+            assert!(visited.type_names.iter().any(|ty| ty == name), "{name}");
+        }
+    }
+}

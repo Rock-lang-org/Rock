@@ -173,6 +173,23 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
         Ok(graph) => graph,
         Err(errors) => return Err(source_load_errors_to_diagnostics(errors)),
     };
+    for dependency in ctx.extern_crates() {
+        let artifact = config
+            .extern_artifacts
+            .iter()
+            .find(|(name, _)| name == dependency.name())
+            .map(|(_, path)| path.clone())
+            .ok_or_else(|| {
+                Diagnostics(vec![diagnostic::Diagnostic::for_internal(
+                    "dependency artifact source registration has no explicit input",
+                )])
+            })?;
+        for (path, text) in dependency.metadata().source_files() {
+            source_db
+                .add_artifact_diagnostic_source(path.clone(), artifact.clone(), text.clone())
+                .map_err(|error| Diagnostics(vec![diagnostic::Diagnostic::for_internal(error)]))?;
+        }
+    }
     let mut diagnostic_sources = diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
     let ast = Program {
         module: source_graph.root_module().clone(),
@@ -293,6 +310,9 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
             );
         }
         products.infix_precedence = infix_precedence.into_iter().collect();
+        products
+            .attach_callable_sources(&hir.source_map, &source_db, &product_id_remap)
+            .map_err(|error| Diagnostics(vec![diagnostic::Diagnostic::for_internal(error)]))?;
         (Some(products), Some(product_id_remap))
     } else {
         (None, None)
@@ -349,6 +369,11 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
         let diagnostics = diagnostics.with_sources(&diagnostic_sources);
         return Err(diagnostics);
     }
+    if let Some(products) = &mut products {
+        products.link.runtime_support = codegen
+            .runtime_support()
+            .map_err(|error| Diagnostics(vec![error.into_diagnostic()]))?;
+    }
     attach_product_link_records(
         &mut products,
         &mir_program.backend_contract.artifact_exports,
@@ -360,6 +385,55 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
         diagnostics.push(diagnostic::Diagnostic::for_internal(error));
         diagnostics
     })?;
+    if let Some(products) = &mut products {
+        let remap = product_id_remap.as_ref().ok_or_else(|| {
+            Diagnostics(vec![diagnostic::Diagnostic::for_internal(
+                "missing polymorphic export identity remap",
+            )])
+        })?;
+        products
+            .attach_native_return_origins(&mir_program, remap)
+            .map_err(|error| Diagnostics(vec![diagnostic::Diagnostic::for_internal(error)]))?;
+        for (key, authority) in &mir_program.backend_contract.erased.member_entries {
+            let entry = &mir_program.backend_contract.erased.functions[key];
+            if entry.linkage != crate::mir::MirLinkage::External
+                || entry.body.is_none()
+                || !authority.captures.is_empty()
+            {
+                continue;
+            }
+            let product_id = product_link_id_for_candidate(products, remap, key.definition)
+                .map_err(|error| Diagnostics(vec![diagnostic::Diagnostic::for_internal(error)]))?;
+            let mut portable = authority
+                .map_types(&mut |id| Ok::<_, String>(mir_program.type_context.type_for(*id)))
+                .map_err(|error| Diagnostics(vec![diagnostic::Diagnostic::for_internal(error)]))?;
+            portable
+                .try_remap_def_ids(&mut |id| {
+                    crate::products::strict_object_product_id(id, &products.identity_table, remap)
+                })
+                .map_err(|error| Diagnostics(vec![diagnostic::Diagnostic::for_internal(error)]))?;
+            let link = crate::products::ProductPolymorphicMemberLink {
+                abi: 1,
+                entry: portable,
+            };
+            if products
+                .link
+                .records
+                .insert(
+                    product_id,
+                    ProductLinkRecord {
+                        backend_symbol: entry.symbol.clone(),
+                        polymorphic_member: Some(link),
+                    },
+                )
+                .is_some()
+            {
+                return Err(Diagnostics(vec![diagnostic::Diagnostic::for_internal(
+                    "polymorphic member conflicts with a native export ABI",
+                )]));
+            }
+        }
+    }
 
     if config.has_debug_print(DebugPrint::Llvm) {
         println!("{}", codegen.get_ir());
@@ -836,10 +910,13 @@ fn attach_product_link_records(
             .get(&def_id)
             .cloned()
             .unwrap_or_else(|| candidate.backend_symbol.clone());
-        products
-            .link
-            .records
-            .insert(product_id, ProductLinkRecord { backend_symbol });
+        products.link.records.insert(
+            product_id,
+            ProductLinkRecord {
+                backend_symbol,
+                polymorphic_member: None,
+            },
+        );
     }
 
     Ok(())
@@ -1185,6 +1262,8 @@ mod tests {
         pre_mir_instance_bodies.insert(InstanceId(0), main.clone());
         pre_mir_instance_bodies.insert(InstanceId(1), unused.clone());
         let mut monomorphized = MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),

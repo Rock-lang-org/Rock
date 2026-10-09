@@ -12,8 +12,8 @@ use crate::products::{
     ProductCrateIdentity, ProductDefId, ProductDependencyIdentity, ProductEnumInterface,
     ProductEnumVariantInterface, ProductExternInterface, ProductFreshnessMetadata,
     ProductFunctionInterface, ProductIdentityTable, ProductImplInterface, ProductInterface,
-    ProductLanguageItems, ProductLinkData, ProductLocalDefId, ProductSourceFingerprint,
-    ProductStructInterface, ProductTraitInterface, ProductTypeAliasInterface,
+    ProductLanguageItems, ProductLocalDefId, ProductSourceFingerprint, ProductStructInterface,
+    ProductTraitInterface, ProductTypeAliasInterface,
 };
 use crate::type_services::kind::Kind;
 use crate::types::{
@@ -35,7 +35,7 @@ pub(super) struct SerializedCompilerProducts {
     pub freshness: ProductFreshnessMetadata,
     pub interface: SerializedProductInterface,
     pub bodies: SerializedProductBodies,
-    pub link: ProductLinkData,
+    pub link: object_abi::SerializedProductLinkData,
     pub dependencies: Vec<ProductDependencyIdentity>,
     pub source_fingerprint: ProductSourceFingerprint,
     pub infix_precedence: BTreeMap<String, u8>,
@@ -98,6 +98,7 @@ impl SerializedHirImplReceiverPattern {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(super) struct SerializedProductBodies {
+    pub callable_sources: super::callable_sources::ProductCallableSources,
     pub functions: BTreeMap<ProductDefId, SerializedHirFunction>,
     pub generic_impls: BTreeMap<ProductDefId, SerializedHirImpl>,
     pub trait_default_methods: BTreeMap<ProductDefId, SerializedHirFunction>,
@@ -940,6 +941,19 @@ pub(super) fn validate_portable_artifact_limits_with_initial_string_bytes(
         ));
     }
     let mut components = Vec::new();
+    let native = &artifact.products.link.native_return_origins;
+    if native.len() > crate::products::MAX_PRODUCT_ARTIFACT_DECLARATIONS {
+        return Err("native return authority declaration limit exceeded".into());
+    }
+    for origins in native.values() {
+        if origins.params.len() > crate::products::MAX_PRODUCT_ARTIFACT_GENERIC_PARAMS
+            || origins.sources.len() > origins.params.len().saturating_mul(3).saturating_add(1)
+        {
+            return Err("native return authority parameter/source limit exceeded".into());
+        }
+        components.extend(origins.params.iter().copied());
+        components.push(origins.ret);
+    }
     let mut abi_nodes = artifact
         .products
         .interface
@@ -1424,6 +1438,14 @@ fn validate_type_table_graph_with_object_components(
                 .chain(captures.iter().map(|capture| capture.ty))
                 .collect(),
             ProductTypeRow::Struct { args, .. } | ProductTypeRow::Enum { args, .. } => args.clone(),
+            ProductTypeRow::StructRepresentation { args, fields, .. } => {
+                args.iter().chain(fields).copied().collect()
+            }
+            ProductTypeRow::EnumRepresentation { args, variants, .. } => args
+                .iter()
+                .chain(variants.iter().flatten())
+                .copied()
+                .collect(),
             ProductTypeRow::Projection { ty, trait_args, .. } => std::iter::once(*ty)
                 .chain(trait_args.iter().copied())
                 .collect(),
@@ -1533,6 +1555,25 @@ fn validate_type_table_graph_with_object_components(
 
     let mut referenced = vec![false; table.rows.len()];
     for row in &table.rows {
+        if let ProductTypeRow::Function {
+            params,
+            result_borrowing,
+            ..
+        } = row
+        {
+            if params.len() > crate::products::MAX_PRODUCT_ARTIFACT_GENERIC_PARAMS
+                || !result_borrowing.sources_are_valid(params.len(), |index| {
+                    params.get(index as usize).is_some_and(|param| {
+                        matches!(
+                            table.rows.get(param.0 as usize),
+                            Some(ProductTypeRow::Reference { .. } | ProductTypeRow::Pointer(_))
+                        )
+                    })
+                })
+            {
+                return Err("invalid callable result borrowing contract".into());
+            }
+        }
         if let ProductTypeRow::Object(object) | ProductTypeRow::Exists { bounds: object, .. } = row
         {
             if object
@@ -1631,7 +1672,7 @@ impl SerializedCompilerProducts {
             freshness: products.freshness_metadata(),
             interface: SerializedProductInterface::encode(&products.interface, encoder)?,
             bodies: SerializedProductBodies::encode(&products.bodies, encoder)?,
-            link: products.link.clone(),
+            link: object_abi::SerializedProductLinkData::encode(&products.link, encoder)?,
             dependencies: products.dependencies.clone(),
             source_fingerprint: products.source_fingerprint.clone(),
             infix_precedence: products.infix_precedence.clone(),
@@ -1646,13 +1687,21 @@ impl SerializedCompilerProducts {
             identity_table: self.identity_table,
             interface: self.interface.decode(decoder)?,
             bodies: self.bodies.decode(decoder)?,
-            link: self.link,
+            link: self.link.decode(decoder)?,
             dependencies: self.dependencies,
             source_fingerprint: self.source_fingerprint,
             infix_precedence: self.infix_precedence,
             proc_macros: self.proc_macros,
         };
         products.validate_freshness_metadata(&freshness)?;
+        for (id, record) in &products.link.records {
+            if let Some(member) = &record.polymorphic_member {
+                member.validate_shape(DefId::new(
+                    crate::ids::CrateId(id.crate_id.0),
+                    crate::ids::LocalDefId(id.local_id.0),
+                ))?;
+            }
+        }
         Ok(products)
     }
 }
@@ -1743,6 +1792,7 @@ impl SerializedProductInterface {
 impl SerializedProductBodies {
     fn encode(bodies: &ProductBodies, encoder: &mut ProductTypeEncoder) -> Result<Self, String> {
         Ok(Self {
+            callable_sources: bodies.callable_sources.clone(),
             functions: encode_map(&bodies.functions, encoder, SerializedHirFunction::encode)?,
             generic_impls: encode_map(&bodies.generic_impls, encoder, SerializedHirImpl::encode)?,
             trait_default_methods: encode_map(
@@ -1755,6 +1805,7 @@ impl SerializedProductBodies {
 
     fn decode(self, decoder: &mut ProductTypeDecoder<'_>) -> Result<ProductBodies, String> {
         Ok(ProductBodies {
+            callable_sources: self.callable_sources,
             functions: decode_map(self.functions, decoder, SerializedHirFunction::decode)?,
             generic_impls: decode_map(self.generic_impls, decoder, SerializedHirImpl::decode)?,
             trait_default_methods: decode_map(
@@ -3870,6 +3921,7 @@ pub(super) enum ProductTypeRow {
         safety: ProductFunctionSafety,
         callable_kind: ProductCallableKind,
         captures: Vec<ProductFunctionCapture>,
+        result_borrowing: crate::types::CallableResultBorrowing,
     },
     Struct {
         id: ProductDefId,
@@ -3911,6 +3963,19 @@ pub(super) enum ProductTypeRow {
         depth: u32,
         index: u32,
         kind: Kind,
+    },
+    // Append-only tag: existing schema-59 rows and frozen artifacts retain
+    // their encodings. Checked native result signatures publish this row,
+    // independently of borrowing/effect certificates.
+    StructRepresentation {
+        id: ProductDefId,
+        args: Vec<ProductTypeId>,
+        fields: Vec<ProductTypeId>,
+    },
+    EnumRepresentation {
+        id: ProductDefId,
+        args: Vec<ProductTypeId>,
+        variants: Vec<Vec<ProductTypeId>>,
     },
 }
 
@@ -4048,11 +4113,13 @@ impl ProductTypeEncoder {
                 safety,
                 callable_kind,
                 captures,
+                result_borrowing,
             } => ProductTypeRow::Function {
                 params: self.encode_types(params)?,
                 ret: self.encode_type(ret)?,
                 safety: (*safety).into(),
                 callable_kind: (*callable_kind).into(),
+                result_borrowing: result_borrowing.clone(),
                 captures: captures
                     .iter()
                     .map(|capture| {
@@ -4067,9 +4134,24 @@ impl ProductTypeEncoder {
                 id: product_def_id(*id),
                 args: self.encode_types(args)?,
             },
+            Type::StructRepresentation { id, args, fields } => {
+                ProductTypeRow::StructRepresentation {
+                    id: product_def_id(*id),
+                    args: self.encode_types(args)?,
+                    fields: self.encode_types(fields)?,
+                }
+            }
             Type::Enum { id, args } => ProductTypeRow::Enum {
                 id: product_def_id(*id),
                 args: self.encode_types(args)?,
+            },
+            Type::EnumRepresentation { id, args, variants } => ProductTypeRow::EnumRepresentation {
+                id: product_def_id(*id),
+                args: self.encode_types(args)?,
+                variants: variants
+                    .iter()
+                    .map(|fields| self.encode_types(fields))
+                    .collect::<Result<_, _>>()?,
             },
             Type::Reference { mutable, inner } => ProductTypeRow::Reference {
                 mutable: *mutable,
@@ -4264,28 +4346,56 @@ impl<'a> ProductTypeDecoder<'a> {
                 safety,
                 callable_kind,
                 captures,
-            } => Type::Function {
-                params: self.decode_types(params)?,
-                ret: Box::new(self.decode_type(*ret)?),
-                safety: (*safety).into(),
-                callable_kind: (*callable_kind).into(),
-                captures: captures
-                    .iter()
-                    .map(|capture| {
-                        Ok(FunctionCapture {
-                            kind: capture.kind.into(),
-                            ty: self.decode_type(capture.ty)?,
+                result_borrowing,
+            } => {
+                let params = self.decode_types(params)?;
+                if !result_borrowing.sources_are_valid(params.len(), |index| {
+                    matches!(
+                        params.get(index as usize),
+                        Some(Type::Reference { .. } | Type::Pointer(_))
+                    )
+                }) {
+                    return Err("invalid callable result borrowing contract".into());
+                }
+                Type::Function {
+                    params,
+                    ret: Box::new(self.decode_type(*ret)?),
+                    safety: (*safety).into(),
+                    callable_kind: (*callable_kind).into(),
+                    result_borrowing: result_borrowing.clone(),
+                    captures: captures
+                        .iter()
+                        .map(|capture| {
+                            Ok(FunctionCapture {
+                                kind: capture.kind.into(),
+                                ty: self.decode_type(capture.ty)?,
+                            })
                         })
-                    })
-                    .collect::<Result<_, String>>()?,
-            },
+                        .collect::<Result<_, String>>()?,
+                }
+            }
             ProductTypeRow::Struct { id, args } => Type::Struct {
                 id: def_id(*id),
                 args: self.decode_types(args)?,
             },
+            ProductTypeRow::StructRepresentation { id, args, fields } => {
+                Type::StructRepresentation {
+                    id: def_id(*id),
+                    args: self.decode_types(args)?,
+                    fields: self.decode_types(fields)?,
+                }
+            }
             ProductTypeRow::Enum { id, args } => Type::Enum {
                 id: def_id(*id),
                 args: self.decode_types(args)?,
+            },
+            ProductTypeRow::EnumRepresentation { id, args, variants } => Type::EnumRepresentation {
+                id: def_id(*id),
+                args: self.decode_types(args)?,
+                variants: variants
+                    .iter()
+                    .map(|fields| self.decode_types(fields))
+                    .collect::<Result<_, _>>()?,
             },
             ProductTypeRow::Reference { mutable, inner } => Type::Reference {
                 mutable: *mutable,
@@ -4398,6 +4508,68 @@ mod tests {
 
     fn def(local: u32) -> DefId {
         DefId::new(CrateId(0), LocalDefId(local))
+    }
+
+    #[test]
+    fn callable_result_portable_rows_roundtrip_and_reject_malformed_sources() {
+        use crate::types::{CallableResultBorrowing as B, CallableResultSource as S};
+        let mut ty = Type::function(
+            vec![Type::Reference {
+                mutable: false,
+                inner: Box::new(Type::I64),
+            }],
+            Type::I64,
+        );
+        let Type::Function {
+            result_borrowing, ..
+        } = &mut ty
+        else {
+            unreachable!()
+        };
+        *result_borrowing = B::Sources(Box::new(vec![
+            S::ArgumentContents(0),
+            S::EnvironmentValue,
+            S::EnvironmentStorage,
+        ]));
+        let (table, ids) =
+            encode_types_for_test(&[ty.clone(), Type::function(vec![], Type::I64)]).unwrap();
+        super::validate_type_table_graph(&table).unwrap();
+        assert_eq!(decode_type_for_test(&table, ids[0]).unwrap(), ty);
+        let Type::Function {
+            result_borrowing, ..
+        } = decode_type_for_test(&table, ids[1]).unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(result_borrowing, B::Unknown);
+        for sources in [
+            vec![S::ArgumentValue(1)],
+            vec![S::EnvironmentValue, S::EnvironmentValue],
+            vec![S::EnvironmentStorage, S::EnvironmentValue],
+        ] {
+            let mut malformed = table.clone();
+            let ProductTypeRow::Function {
+                result_borrowing, ..
+            } = &mut malformed.rows[ids[0].0 as usize]
+            else {
+                unreachable!()
+            };
+            *result_borrowing = B::Sources(Box::new(sources));
+            assert!(super::validate_type_table_graph(&malformed).is_err());
+            assert!(decode_type_for_test(&malformed, ids[0]).is_err());
+        }
+        let mut malformed = table.clone();
+        let scalar = malformed
+            .rows
+            .iter()
+            .position(|row| matches!(row, ProductTypeRow::I64))
+            .unwrap();
+        let ProductTypeRow::Function { params, .. } = &mut malformed.rows[ids[0].0 as usize] else {
+            unreachable!()
+        };
+        params[0] = ProductTypeId(scalar as u32);
+        assert!(super::validate_type_table_graph(&malformed).is_err());
+        assert!(decode_type_for_test(&malformed, ids[0]).is_err());
     }
 
     #[test]

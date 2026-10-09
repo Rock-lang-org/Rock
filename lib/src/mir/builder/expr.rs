@@ -253,13 +253,7 @@ impl<'a> MirBuilder<'a> {
                             self.emit_assign(dest, Rvalue::Use(operand), span);
                             return;
                         }
-                        let view = self.object_schemas[&source]
-                            .views
-                            .iter()
-                            .position(|id| *id == target)
-                            .expect("validated producer view link")
-                            as u32;
-                        super::super::MirObjectConversion::Upcast { source, view }
+                        super::super::MirObjectConversion::Upcast { source, target }
                     }
                 };
                 self.emit_assign(dest, Rvalue::Object(operand, conversion), span);
@@ -533,7 +527,7 @@ impl<'a> MirBuilder<'a> {
                 self.loop_stack.push(LoopTargets {
                     break_target: merge_block,
                     continue_target: cond_block,
-                    cleanup_depth: self.scope_locals.len(),
+                    cleanup_depth: self.scope_locals.depth(),
                 });
                 let body_dest = Place {
                     local: self.new_local(self.type_id_for(&Type::Unit), Mutability::Not, None),
@@ -756,7 +750,7 @@ impl<'a> MirBuilder<'a> {
                 self.loop_stack.push(LoopTargets {
                     break_target: merge_block,
                     continue_target: inc_block,
-                    cleanup_depth: self.scope_locals.len(),
+                    cleanup_depth: self.scope_locals.depth(),
                 });
                 let body_dest = Place {
                     local: self.new_local(self.type_id_for(&Type::Unit), Mutability::Not, None),
@@ -844,7 +838,7 @@ impl<'a> MirBuilder<'a> {
                     if self.type_needs_cleanup(&lhs.ty)
                         && self.assignment_lhs_is_initialized_owned(lhs, &lhs_place)
                     {
-                        self.emit_drop_for_place(&lhs.ty, lhs_place.clone(), None);
+                        self.emit_drop_for_place(&lhs.ty, lhs_place.clone(), None, span.clone());
                     }
 
                     let operand = if Self::needs_move(&rhs.ty) {
@@ -1059,7 +1053,7 @@ impl<'a> MirBuilder<'a> {
                                 arg_place
                             };
                             pointee_place.projection.push(Projection::Deref);
-                            self.emit_drop_for_place(pointee_ty, pointee_place, None);
+                            self.emit_drop_for_place(pointee_ty, pointee_place, None, span.clone());
                             self.emit_assign(
                                 dest,
                                 Rvalue::Use(Operand::Constant(Constant::Unit)),
@@ -1358,7 +1352,13 @@ impl<'a> MirBuilder<'a> {
                         projection: vec![],
                     };
                     self.lower_expr(elem, elem_place.clone());
-                    elem_operands.push(Operand::Copy(elem_place));
+                    // This expression temporary is transferred into the
+                    // aggregate, not copied into a second owning carrier.
+                    elem_operands.push(if self.type_needs_cleanup(&elem.ty) {
+                        Operand::Move(elem_place)
+                    } else {
+                        self.operand_for_place(&elem.ty, elem_place, false)
+                    });
                 }
 
                 let kind = if matches!(&expr.kind, HirExprKind::ArrayLiteral(_)) {
@@ -1398,11 +1398,16 @@ impl<'a> MirBuilder<'a> {
                         projection: vec![],
                     };
                     self.lower_expr(field_expr, field_place.clone());
-                    lowered_fields.push((field, Operand::Copy(field_place)));
+                    let operand = if self.type_needs_cleanup(&field_expr.ty) {
+                        Operand::Move(field_place)
+                    } else {
+                        self.operand_for_place(&field_expr.ty, field_place, false)
+                    };
+                    lowered_fields.push((field, operand));
                 }
 
                 let struct_id = explicit_id.or_else(|| match &expr.ty {
-                    Type::Struct { id, .. } => Some(*id),
+                    Type::Struct { id, .. } | Type::StructRepresentation { id, .. } => Some(*id),
                     _ => None,
                 });
                 let Some(struct_id) = struct_id else {
@@ -1476,7 +1481,9 @@ impl<'a> MirBuilder<'a> {
                     self.lower_expr_with_context(base, base_place.clone(), true);
 
                     if let HirExprKind::FieldAccess(_, field_name, location) = &expr.kind {
-                        if let Type::Struct { id, .. } = &base.ty {
+                        if let Type::Struct { id, .. } | Type::StructRepresentation { id, .. } =
+                            &base.ty
+                        {
                             if let Some((_, fields)) = self.program.struct_by_id(*id) {
                                 let field_idx = location
                                     .as_ref()
@@ -1543,15 +1550,29 @@ impl<'a> MirBuilder<'a> {
                 captures,
             } => {
                 let (closure_id, lambda_name) = self.new_closure_id_and_name();
+                let cloned_body = body.clone();
+                #[cfg(test)]
+                crate::mir::borrowck::hkt_return_origin_tests::closure_body_clone(
+                    expr,
+                    &cloned_body,
+                    &closure_id,
+                );
                 self.push_closure_body_function(
                     closure_id.clone(),
                     &lambda_name,
                     params.clone(),
-                    body.clone(),
+                    cloned_body,
                     captures.clone(),
                     expr.span.clone(),
                 );
                 let closure_captures = self.lower_closure_captures(captures);
+                #[cfg(test)]
+                crate::mir::borrowck::hkt_return_origin_tests::closure_allocation(
+                    expr,
+                    &closure_id,
+                    &dest,
+                    &closure_captures,
+                );
                 self.emit_assign(
                     dest,
                     Rvalue::Closure(MirClosure {
@@ -1626,21 +1647,20 @@ impl<'a> MirBuilder<'a> {
                 let check_blocks: Vec<_> = arms.iter().map(|_| self.new_block()).collect();
                 let merge_block = self.new_block();
                 let enum_patterns_exhaustive = match &scrutinee.ty {
-                    Type::Enum { id, .. } => {
-                        self.program
-                            .enum_by_id(*id)
-                            .is_some_and(|(_, enumeration)| {
-                                let matched_variants: HashSet<_> = arms
-                                    .iter()
-                                    .filter(|arm| {
-                                        arm.guard.is_none()
-                                            && Self::enum_payload_patterns_irrefutable(&arm.pattern)
-                                    })
-                                    .filter_map(|arm| self.match_arm_variant_id(&arm.pattern))
-                                    .collect();
-                                matched_variants.len() == enumeration.variants.len()
-                            })
-                    }
+                    Type::Enum { id, .. } | Type::EnumRepresentation { id, .. } => self
+                        .program
+                        .enum_by_id(*id)
+                        .is_some_and(|(_, enumeration)| {
+                            let matched_variants: HashSet<_> = arms
+                                .iter()
+                                .filter(|arm| {
+                                    arm.guard.is_none()
+                                        && Self::enum_payload_patterns_irrefutable(&arm.pattern)
+                                })
+                                .filter_map(|arm| self.match_arm_variant_id(&arm.pattern))
+                                .collect();
+                            matched_variants.len() == enumeration.variants.len()
+                        }),
                     _ => false,
                 };
                 if let Some(current) = self.current_block {
@@ -1720,7 +1740,7 @@ impl<'a> MirBuilder<'a> {
                     }
 
                     self.current_block = Some(matched_block);
-                    self.scope_locals.push(Vec::new());
+                    self.scope_locals.enter(Vec::new());
                     let mut restored_bindings = Vec::new();
                     let mut moved_enum_scrutinee = None;
                     self.bind_match_pattern_places(
@@ -1736,9 +1756,7 @@ impl<'a> MirBuilder<'a> {
 
                     if let Some(guard) = &arm.guard {
                         let guard_temp = self.new_local_from_expr(Type::Bool, guard);
-                        if let Some(scope_locals) = self.scope_locals.last_mut() {
-                            scope_locals.push(guard_temp);
-                        }
+                        self.scope_locals.register(guard_temp);
                         self.emit_storage_live(guard_temp, Some(guard.span.clone()));
                         let guard_place = Place {
                             local: guard_temp,
@@ -1751,12 +1769,16 @@ impl<'a> MirBuilder<'a> {
                         if let Some(scrutinee_cleanup_local) = scrutinee_cleanup_local {
                             guard_abrupt_cleanup_locals.push(scrutinee_cleanup_local);
                         }
-                        self.scope_locals.push(guard_abrupt_cleanup_locals);
+                        self.scope_locals.enter(guard_abrupt_cleanup_locals);
                         self.lower_expr(guard, guard_place.clone());
-                        self.scope_locals.pop();
-                        let cleanup_locals = self.scope_locals.last().cloned().unwrap_or_default();
-                        let guard_false_cleanup =
-                            self.scope_cleanup_block(cleanup_locals, next_block);
+                        self.scope_locals.leave();
+                        let cleanup_locals =
+                            self.scope_locals.current().cloned().unwrap_or_default();
+                        let guard_false_cleanup = self.scope_cleanup_block(
+                            cleanup_locals,
+                            next_block,
+                            Some(guard.span.clone()),
+                        );
                         if let Some(current) = self.current_block {
                             self.blocks[current.0].terminator = Some(Terminator::switch_int(
                                 Operand::Copy(guard_place),
@@ -1783,12 +1805,12 @@ impl<'a> MirBuilder<'a> {
                     if let Some(scrutinee_cleanup_local) = scrutinee_cleanup_local {
                         match_temp_locals.push(scrutinee_cleanup_local);
                     }
-                    self.scope_locals.push(match_temp_locals);
+                    self.scope_locals.enter(match_temp_locals);
                     self.lower_block(&arm.body, dest.clone());
-                    let match_temp_locals = self.scope_locals.pop().unwrap_or_default();
-                    self.finish_scope_locals(match_temp_locals);
-                    let binding_locals = self.scope_locals.pop().unwrap_or_default();
-                    self.finish_scope_locals(binding_locals);
+                    let match_temp_locals = self.scope_locals.leave();
+                    self.finish_scope_locals(match_temp_locals, Self::block_exit_span(&arm.body));
+                    let binding_locals = self.scope_locals.leave();
+                    self.finish_scope_locals(binding_locals, Self::block_exit_span(&arm.body));
                     self.restore_match_bindings(restored_bindings);
                     if let Some(current) = self.current_block {
                         self.blocks[current.0].terminator = Some(Terminator::goto(
@@ -1808,6 +1830,12 @@ impl<'a> MirBuilder<'a> {
                 let field_types = location
                     .as_ref()
                     .map(|location| {
+                        if let Type::EnumRepresentation { variants, .. } = &expr.ty {
+                            return variants
+                                .get(location.variant_id.0 as usize)
+                                .cloned()
+                                .unwrap_or_default();
+                        }
                         let field_types =
                             self.enum_variant_field_types(location.owner, location.variant_id);
                         let generic_subst = match &expr.ty {
@@ -1839,13 +1867,17 @@ impl<'a> MirBuilder<'a> {
                         .get(index)
                         .cloned()
                         .unwrap_or_else(|| arg.ty.clone());
-                    let arg_temp = self.new_local_from_expr(arg_ty, arg);
+                    let arg_temp = self.new_local_from_expr(arg_ty.clone(), arg);
                     let arg_place = Place {
                         local: arg_temp,
                         projection: vec![],
                     };
                     self.lower_expr(arg, arg_place.clone());
-                    arg_operands.push(Operand::Copy(arg_place));
+                    arg_operands.push(if self.type_needs_cleanup(&arg_ty) {
+                        Operand::Move(arg_place)
+                    } else {
+                        self.operand_for_place(&arg_ty, arg_place, false)
+                    });
                 }
 
                 if let Some(location) = location {
@@ -1872,14 +1904,19 @@ impl<'a> MirBuilder<'a> {
                     projection: vec![],
                 };
                 self.lower_expr(inner, inner_place.clone());
+                let operand = if self.type_needs_cleanup(&inner.ty) {
+                    Operand::Move(inner_place)
+                } else {
+                    self.operand_for_place(&inner.ty, inner_place, false)
+                };
                 if inner.ty != *target_ty {
                     self.emit_assign(
                         dest,
-                        Rvalue::Cast(Operand::Copy(inner_place), self.type_id_for(target_ty)),
+                        Rvalue::Cast(operand, self.type_id_for(target_ty)),
                         span,
                     );
                 } else {
-                    self.emit_assign(dest, Rvalue::Use(Operand::Copy(inner_place)), span);
+                    self.emit_assign(dest, Rvalue::Use(operand), span);
                 }
             }
         }

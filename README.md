@@ -828,5 +828,6 @@ A few of the remaining important features which are planned but still missing:
 - If-Let deconstruction
 - Derive
 - Proc macro
+- Tail recursion
 
 - Self-host the compiler

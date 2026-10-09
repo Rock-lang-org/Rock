@@ -93,6 +93,11 @@ impl Analysis {
                     contents,
                     kind: HoverKind::Generic,
                 }),
+                SourceSymbol::Witness(witness) => Some(HoverInfo {
+                    span,
+                    contents: self.hover_type(&Type::Witness(witness)),
+                    kind: HoverKind::Generic,
+                }),
             };
             if hover.is_some() {
                 return hover;
@@ -321,6 +326,9 @@ impl Analysis {
         let mut contents = self.hir.display_type(ty);
         if crate::type_services::visit::type_any(ty, |nested| matches!(nested, Type::Object(_))) {
             contents.push_str("\n// trait object; reference or owner determines storage");
+        }
+        if crate::type_services::visit::type_any(ty, |nested| matches!(nested, Type::Exists(_))) {
+            contents.push_str("\n// existential package; one hidden witness shared by its payload");
         }
         let mut witnesses = std::collections::BTreeSet::new();
         crate::type_services::visit::visit_type(ty, &mut |nested: &Type| {
@@ -1269,6 +1277,107 @@ main = ->
     }
 
     #[test]
+    fn analysis_links_scoped_type_annotations_to_their_actual_witness_binder() {
+        let source = r#"
+trait Read
+    @read: I64
+inspect: &Read -> I64
+inspect = object ->
+    open object as Hidden, value
+        copied: &Hidden = value
+        copied.read!
+main = -> 0
+"#;
+        let analysis = analyze(source);
+        let path = PathBuf::from("/virtual/main.rk");
+        let binder_offset = source.find("Hidden,").unwrap();
+        let reference_offset = source.find("Hidden =").unwrap();
+        let (binder, declaration) = analysis
+            .hir
+            .source_map
+            .symbol_at(&path, binder_offset)
+            .unwrap();
+        let crate::source_map::SourceSymbol::Witness(witness) = binder else {
+            panic!("opening must define a rigid witness symbol, not a generic parameter");
+        };
+        let (reference, reference_span) = analysis
+            .hir
+            .source_map
+            .symbol_at(&path, reference_offset)
+            .unwrap();
+        assert_eq!(reference, crate::source_map::SourceSymbol::Witness(witness));
+        assert_eq!(declaration.start, binder_offset);
+        assert_eq!(declaration.end, binder_offset + "Hidden".len());
+        assert_eq!(reference_span.start, reference_offset);
+        assert_eq!(reference_span.end, reference_offset + "Hidden".len());
+        let info = analysis.hir.source_map.symbol(&reference).unwrap();
+        assert_eq!(info.name_span, declaration);
+        assert_eq!(info.lexical_owner, Some(witness.owner));
+        assert!(info.scope_id.is_some());
+        for offset in [binder_offset, reference_offset] {
+            let hover = analysis.hover(&path, offset).unwrap();
+            assert_eq!(hover.kind, super::HoverKind::Generic);
+            assert!(hover.contents.contains("scoped witness of Read"), "{hover:?}");
+            assert!(!hover.contents.contains("type parameter"), "{hover:?}");
+        }
+    }
+
+    #[test]
+    fn analysis_distinguishes_an_existential_package_from_its_opened_payload() {
+        let source = r#"
+trait Accept
+    @accept: &Self -> I64
+struct Number
+    < value: I64
+impl Accept for Number
+    @accept = other -> ~I64Add self.value, other.value
+type Pair = exists T where T: Accept in (&T, &T)
+sum_pair: Pair -> I64
+sum_pair = package ->
+    open package as Hidden, pair
+        pair.0.accept pair.1
+main = ->
+    left = Number
+        value: 20
+    right = Number
+        value: 22
+    package = pack (Pair) ((&left, &right))
+    sum_pair package
+"#;
+        let analysis = analyze(source);
+        let path = PathBuf::from("/virtual/main.rk");
+        let binder_offset = source.find("Hidden,").unwrap();
+        let (binder, _) = analysis.hir.source_map.symbol_at(&path, binder_offset).unwrap();
+        assert!(matches!(binder, crate::source_map::SourceSymbol::Witness(_)));
+        let binder_hover = analysis.hover(&path, binder_offset).unwrap();
+        assert!(binder_hover.contents.contains("scoped witness of Accept"), "{binder_hover:?}");
+        let package = analysis
+            .hover(&path, source.rfind("package").unwrap())
+            .unwrap();
+        assert!(package.contents.contains("exists"), "{package:?}");
+        assert!(package.contents.contains("Accept"), "{package:?}");
+        assert!(package.contents.contains("existential package"), "{package:?}");
+        assert!(!package.contents.contains("Number"), "{package:?}");
+        assert!(!package.contents.contains("scoped witness"), "{package:?}");
+
+        for offset in [source.find("pair\n").unwrap(), source.find("pair.0").unwrap()] {
+            let opened = analysis.hover(&path, offset).unwrap();
+            assert!(opened.contents.contains("scoped witness of Accept"), "{opened:?}");
+            assert!(opened.contents.contains("descriptor-backed layout"), "{opened:?}");
+            assert!(!opened.contents.contains("Number"), "{opened:?}");
+            assert!(!opened.contents.contains("existential package"), "{opened:?}");
+        }
+        let member_offset = source.find("accept pair.1").unwrap();
+        let member = analysis.hover(&path, member_offset).unwrap();
+        assert_eq!(member.kind, super::HoverKind::Function);
+        assert!(member.contents.contains("I64"), "{member:?}");
+        assert!(matches!(
+            analysis.hir.source_map.symbol_at(&path, member_offset),
+            Some((crate::source_map::SourceSymbol::Definition(_), _)),
+        ));
+    }
+
+    #[test]
     fn analysis_keeps_shadowed_opening_bounds_distinct() {
         let source = r#"
 trait First
@@ -1300,6 +1409,53 @@ main = -> 0
             );
             assert!(!hover.contents.contains(other_bound), "{hover:?}");
         }
+    }
+
+    #[test]
+    fn analysis_keeps_shadowed_witness_type_references_and_scopes_distinct() {
+        let source = r#"
+trait First
+    @first: I64
+trait Second
+    @second: I64
+inspect: &First -> &Second -> I64
+inspect = first, second ->
+    open first as Hidden, left
+        outer: &Hidden = left
+        result = outer.first!
+        open second as Hidden, right
+            inner: &Hidden = right
+            ~I64Add result, (inner.second!)
+main = -> 0
+"#;
+        let analysis = analyze(source);
+        let path = PathBuf::from("/virtual/main.rk");
+        let mut binders = Vec::new();
+        for (declaration_text, reference_text, bound, other_bound) in [
+            ("Hidden, left", "Hidden = left", "First", "Second"),
+            ("Hidden, right", "Hidden = right", "Second", "First"),
+        ] {
+            let (binder, span) = analysis
+                .hir
+                .source_map
+                .symbol_at(&path, source.find(declaration_text).unwrap())
+                .unwrap();
+            assert!(matches!(binder, crate::source_map::SourceSymbol::Witness(_)));
+            let offset = source.find(reference_text).unwrap();
+            let (reference, _) = analysis.hir.source_map.symbol_at(&path, offset).unwrap();
+            assert_eq!(reference, binder);
+            let info = analysis.hir.source_map.symbol(&reference).unwrap();
+            assert_eq!(info.name_span, span);
+            assert!(info.scope_id.is_some());
+            let hover = analysis.hover(&path, offset).unwrap();
+            assert!(hover.contents.contains(&format!("scoped witness of {bound}")), "{hover:?}");
+            assert!(!hover.contents.contains(other_bound), "{hover:?}");
+            binders.push((binder, info.scope_id.unwrap()));
+        }
+        assert_ne!(binders[0].0, binders[1].0);
+        assert_ne!(binders[0].1, binders[1].1);
+        let inner = &analysis.hir.source_map.scopes()[binders[1].1 as usize];
+        assert_eq!(inner.parent, Some(binders[0].1));
     }
 
     #[test]

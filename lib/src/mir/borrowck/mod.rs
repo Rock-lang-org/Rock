@@ -1,5 +1,7 @@
 pub mod accesses;
 pub mod borrows;
+mod call_targets;
+mod callable_results;
 pub mod closures;
 pub mod conflicts;
 pub mod diagnostics;
@@ -7,9 +9,25 @@ pub mod liveness;
 pub mod location;
 pub mod paths;
 pub mod provenance;
+mod return_sources;
 
 #[cfg(test)]
 mod borrowed_contents_tests;
+
+#[cfg(test)]
+mod allocator_trace_tests;
+
+#[cfg(test)]
+pub(crate) mod hkt_return_origin_tests;
+
+#[cfg(test)]
+mod slice_source_authority_tests;
+
+#[cfg(test)]
+mod utf8_return_origin_tests;
+
+#[cfg(test)]
+mod native_return_contract_tests;
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,14 +38,16 @@ use crate::mir::borrowck::accesses::AccessKind;
 use crate::mir::borrowck::borrows::collect_function_borrows_with_contract;
 use crate::mir::borrowck::closures::CaptureKind;
 use crate::mir::borrowck::diagnostics::borrow_error;
+use crate::mir::borrowck::liveness::{apply_active_loan_statement_transfer, LoanLocationIndex};
+#[cfg(test)]
 use crate::mir::borrowck::liveness::{
-    apply_active_loan_statement_transfer, compute_active_loan_entries_with_contract,
-    compute_reference_liveness_with_contract, LoanLocationIndex,
+    compute_active_loan_entries_with_contract, compute_reference_liveness_with_contract,
 };
 use crate::mir::dataflow::analyses::{
     InitError, InitMap, InitializationAnalysis, LoanAnalysis, LoanKind, LoanState, LoanTable,
 };
 use crate::mir::dataflow::{run_fixpoint, Analysis, Lattice};
+use crate::mir::origins::{OriginSet, ReferenceOriginState};
 use crate::mir::{
     Constant, DropObligationKind, Local, LocalSource, MirBackendContract, MirCallable,
     MirCallableKey, MirFunction, MirFunctionId, MirIntrinsicId, MirNominalLayout, MirProgram,
@@ -53,26 +73,530 @@ struct MoveValidationContext<'a> {
     cleanup_cache: HashMap<Type, bool>,
 }
 
-type OriginSet = HashSet<ReferenceOrigin>;
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct ReferenceOriginState {
-    origins: HashMap<Place, OriginSet>,
+/// Compile-local mutation knowledge, deliberately separate from return proofs.
+/// Raw stores, indirect calls and recursion remain Unknown; no backing seal is
+/// inferred from ParamBorrowedContents or a pointer producer's return envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeMutationKnowledge {
+    Unknown,
+    CompletedNoEffects,
 }
 
-impl Lattice for ReferenceOriginState {
-    fn join(&mut self, other: &Self) -> bool {
-        let mut changed = false;
-        for (place, origins) in &other.origins {
-            let entry = self.origins.entry(place.clone()).or_default();
-            for origin in origins {
-                if entry.insert(*origin) {
-                    changed = true;
+#[derive(Default)]
+struct NativeMutationTable(HashMap<MirCallableKey, NativeMutationKnowledge>);
+
+impl NativeMutationTable {
+    fn for_program(program: &MirProgram) -> Self {
+        let mut table = Self::default();
+        let contract = &program.backend_contract;
+        let tc = &program.type_context;
+        let headers_valid = crate::mir::backend_contract::validate_backend_contract_against_mir(
+            contract,
+            program.functions().map(|(_, body)| body),
+        )
+        .is_empty();
+        for (key, header) in &contract.callables {
+            table
+                .0
+                .insert(key.clone(), NativeMutationKnowledge::Unknown);
+            if !header.signature.params.iter().any(|param| {
+                tc.type_id_tree_is_valid(param.semantic_ty)
+                    && matches!(
+                        contract.normalize_storage_type(tc, &tc.type_for(param.semantic_ty)),
+                        Type::Reference { mutable: true, .. }
+                    )
+            }) {
+                continue;
+            } // Only candidate mutable-storage bodies need completion.
+            let crate::mir::MirCallableKind::LocalBody { function_id } = &header.kind else {
+                continue;
+            };
+            let Some((_, body)) = program.functions().find(|(id, _)| *id == function_id) else {
+                continue;
+            };
+            if !headers_valid
+                || &header.key != key
+                || contract.function_bodies.get(function_id) != Some(key)
+                || MirCallable::Resolved(key.clone()).function_id().as_ref() != Some(function_id)
+                || &body.id != function_id
+                || body.basic_blocks.is_empty()
+                || header.signature.params.len() != body.arg_count
+                || !header
+                    .signature
+                    .params
+                    .iter()
+                    .enumerate()
+                    .all(|(i, param)| {
+                        body.local_decls
+                            .get(i + 1)
+                            .is_some_and(|local| local.ty == param.semantic_ty)
+                    })
+                || header.signature.ret.semantic_ty != body.ret_type
+                || header.signature.ret.abi_ty != body.ret_type
+                || !body
+                    .local_decls
+                    .first()
+                    .is_some_and(|local| local.ty == body.ret_type)
+                || !body
+                    .local_decls
+                    .iter()
+                    .all(|local| tc.type_id_tree_is_valid(local.ty))
+            {
+                continue;
+            }
+            // lean-ctx: no-call/local-write ceiling; upgrade only with checked
+            // direct storage effects. All blocks are checked, not just one path.
+            let no_effects = body.basic_blocks.iter().all(|block| {
+                block
+                    .statements
+                    .iter()
+                    .all(|statement| match &statement.kind {
+                        StatementKind::Assign(place, _) => {
+                            place.projection.is_empty()
+                                && contract.place_type_id(tc, body, place).is_some()
+                                && body.local_decls.get(place.local.0).is_some_and(|local| {
+                                    matches!(
+                                        local.source,
+                                        LocalSource::ReturnPlace
+                                            | LocalSource::UserBinding
+                                            | LocalSource::Temporary
+                                    )
+                                })
+                        }
+                        StatementKind::StorageLive(local) | StatementKind::StorageDead(local) => {
+                            body.local_decls.get(local.0).is_some()
+                        }
+                        StatementKind::Assert(_) => true,
+                    })
+                    && block.statements.iter().all(|statement| {
+                        accesses::classify_statement(statement, tc)
+                            .iter()
+                            .all(|event| {
+                                checked_place_storage_type(tc, contract, body, &event.place)
+                                    .is_some()
+                            })
+                    })
+                    && matches!(
+                        block.terminator,
+                        Some(
+                            Terminator::Return
+                                | Terminator::ReturnWithOrigin { .. }
+                                | Terminator::Goto(_)
+                                | Terminator::GotoWithOrigin { .. }
+                                | Terminator::SwitchInt { .. }
+                                | Terminator::SwitchIntWithOrigin { .. }
+                                | Terminator::Unreachable { .. }
+                        )
+                    )
+            });
+            if no_effects {
+                table
+                    .0
+                    .insert(key.clone(), NativeMutationKnowledge::CompletedNoEffects);
+            }
+        }
+        table
+    }
+
+    fn knowledge(&self, key: &MirCallableKey) -> NativeMutationKnowledge {
+        self.0
+            .get(key)
+            .copied()
+            .unwrap_or(NativeMutationKnowledge::Unknown)
+    }
+}
+
+#[cfg(test)]
+fn checked_place_type(
+    tc: &crate::type_context::TypeContext,
+    contract: &MirBackendContract,
+    function: &MirFunction,
+    place: &Place,
+) -> Option<Type> {
+    checked_place_storage_type(tc, contract, function, place)
+        .map(|ty| contract.normalize_type(tc, &ty))
+}
+
+fn checked_place_storage_type(
+    tc: &crate::type_context::TypeContext,
+    contract: &MirBackendContract,
+    function: &MirFunction,
+    place: &Place,
+) -> Option<Type> {
+    let root = function.local_decls.get(place.local.0)?.ty;
+    if !tc.type_id_tree_is_valid(root) {
+        return None;
+    }
+    let ty = contract.place_type_id(tc, function, place)?;
+    if !tc.type_id_tree_is_valid(ty) {
+        return None;
+    }
+    Some(contract.normalize_storage_type(tc, &tc.type_for(ty)))
+}
+
+/// Type containment is only a conservative destination screen, not memory
+/// identity, write permission, or a positive no-borrow proof.
+fn mutation_storage_may_carry(
+    tc: &crate::type_context::TypeContext,
+    contract: &MirBackendContract,
+    storage: &Type,
+    payload: &Type,
+    seen: &mut HashSet<Type>,
+) -> bool {
+    let storage = contract.normalize_storage_type(tc, storage);
+    // A measured layout cannot disprove semantic containment. This is only
+    // conservative retention screening, never storage or effect authority.
+    if crate::type_services::callable::value_representation(&storage, payload).is_some() {
+        return true;
+    }
+    if let Type::Struct { id, .. }
+    | Type::StructRepresentation { id, .. }
+    | Type::Enum { id, .. }
+    | Type::EnumRepresentation { id, .. } = &storage
+    {
+        if seen.iter().any(|ty| matches!(ty, Type::Struct { id: other, .. } | Type::StructRepresentation { id: other, .. } | Type::Enum { id: other, .. } | Type::EnumRepresentation { id: other, .. } if other == id)) {
+            return true; // Recursive/expanding nominal layouts cannot disprove containment.
+        }
+    }
+    if !seen.insert(storage.clone()) {
+        return false;
+    }
+    match &storage {
+        Type::StructRepresentation { args, fields, .. } => args.iter().chain(fields).any(|field| {
+            mutation_storage_may_carry(tc, contract, field, payload, &mut seen.clone())
+        }),
+        Type::EnumRepresentation { args, variants, .. } => {
+            args.iter().chain(variants.iter().flatten()).any(|field| {
+                mutation_storage_may_carry(tc, contract, field, payload, &mut seen.clone())
+            })
+        }
+        Type::Struct { id, args } | Type::Enum { id, args } => {
+            let (parameters, fields) = match contract.nominal_layouts.get(id) {
+                Some(MirNominalLayout::Struct {
+                    id: owner,
+                    generic_params,
+                    fields,
+                }) if owner == id => (
+                    generic_params,
+                    fields.iter().map(|(_, ty)| *ty).collect::<Vec<_>>(),
+                ),
+                Some(MirNominalLayout::Enum {
+                    id: owner,
+                    generic_params,
+                    variants,
+                }) if owner == id => (
+                    generic_params,
+                    variants
+                        .iter()
+                        .flat_map(|variant| match &variant.fields {
+                            crate::mir::MirVariantLayoutFields::Unit => Vec::new(),
+                            crate::mir::MirVariantLayoutFields::Positional(fields) => {
+                                fields.clone()
+                            }
+                            crate::mir::MirVariantLayoutFields::Named(fields) => {
+                                fields.iter().map(|(_, ty)| *ty).collect()
+                            }
+                        })
+                        .collect(),
+                ),
+                _ => return true, // Missing layout cannot establish non-containment.
+            };
+            if parameters.len() != args.len() {
+                return true;
+            }
+            // Only ancestors are recursive; an argument and a physical field
+            // can be the same ordinary type without containing each other.
+            if args.iter().any(|arg| {
+                mutation_storage_may_carry(tc, contract, arg, payload, &mut seen.clone())
+            }) {
+                return true; // Logical/phantom slots may conservatively over-retain.
+            }
+            let substitution = parameters
+                .iter()
+                .copied()
+                .zip(args.iter().cloned())
+                .collect::<HashMap<_, _>>();
+            fields.into_iter().any(|field| {
+                !tc.type_id_tree_is_valid(field)
+                    || mutation_storage_may_carry(
+                        tc,
+                        contract,
+                        &tc.type_for(field).substitute_generics(&substitution),
+                        payload,
+                        &mut seen.clone(),
+                    )
+            })
+        }
+        Type::Tuple(elements) => elements.iter().any(|element| {
+            mutation_storage_may_carry(tc, contract, element, payload, &mut seen.clone())
+        }),
+        Type::Array(inner, _) | Type::Slice(inner) => {
+            mutation_storage_may_carry(tc, contract, inner, payload, seen)
+        }
+        Type::Exists(_)
+        | Type::Object(_)
+        | Type::ObjectSelf { .. }
+        | Type::Witness(_)
+        | Type::Generic(_)
+        | Type::TypeVar(_)
+        | Type::Projection { .. }
+        | Type::Constructor { .. }
+        | Type::Apply { .. }
+        | Type::Lambda { .. }
+        | Type::BoundVar { .. }
+        | Type::Error => true,
+        // A raw pointee does not establish checked backing-owner storage.
+        _ => false,
+    }
+}
+
+fn native_mutation_candidates(
+    function: &MirFunction,
+    tc: &crate::type_context::TypeContext,
+    contract: &MirBackendContract,
+    mutations: &NativeMutationTable,
+    term: &Terminator,
+) -> Vec<crate::hir::borrowing::BorrowRetention> {
+    use crate::hir::borrowing::{BorrowRetention, BorrowSource, BorrowSourceKind};
+    let Terminator::Call {
+        func: Operand::Constant(Constant::Callable(MirCallable::Resolved(key))),
+        args,
+        destination,
+        ..
+    } = term
+    else {
+        return Vec::new();
+    };
+    let Some(header) = contract.callable(key) else {
+        return Vec::new();
+    };
+    if &header.key != key
+        || header.signature.params.len() != args.len()
+        || !tc.type_id_tree_is_valid(header.signature.ret.semantic_ty)
+        || !tc.type_id_tree_is_valid(header.signature.ret.abi_ty)
+        || checked_place_storage_type(tc, contract, function, destination).as_ref()
+            != Some(
+                &contract.normalize_storage_type(
+                    tc,
+                    &tc.type_for(contract.callable_result_storage(header)),
+                ),
+            )
+    {
+        return Vec::new();
+    }
+    let actual = args
+        .iter()
+        .map(|operand| match operand {
+            Operand::Copy(place) | Operand::Move(place) => {
+                checked_place_storage_type(tc, contract, function, place)
+            }
+            Operand::Constant(_) => None,
+        })
+        .collect::<Vec<_>>();
+    if !header
+        .signature
+        .params
+        .iter()
+        .zip(&actual)
+        .zip(args)
+        .all(|((param, actual), operand)| {
+            tc.type_id_tree_is_valid(param.semantic_ty)
+                && match operand {
+                    Operand::Copy(_) | Operand::Move(_) => actual.as_ref().is_some_and(|actual| {
+                        *actual
+                            == contract.normalize_storage_type(tc, &tc.type_for(param.semantic_ty))
+                    }),
+                    Operand::Constant(_) => true, // Constants supply no source rows or destination aliases.
+                }
+        })
+    {
+        return Vec::new();
+    }
+    if mutations.knowledge(key) == NativeMutationKnowledge::CompletedNoEffects {
+        return Vec::new();
+    }
+    let mut rows = Vec::new();
+    for (target, ty) in actual.iter().enumerate() {
+        let Some(Type::Reference {
+            mutable: true,
+            inner: storage,
+        }) = ty
+        else {
+            continue;
+        };
+        for (source, ty) in actual.iter().enumerate() {
+            if source == target {
+                continue;
+            }
+            let Some(ty) = ty else {
+                continue;
+            };
+            for (kind, payload) in std::iter::once((BorrowSourceKind::Value, ty)).chain(match ty {
+                Type::Reference { inner, .. } => Some((BorrowSourceKind::Contents, inner.as_ref())),
+                _ => None,
+            }) {
+                let may_borrow = tc.id_for_type(payload).is_none_or(|id| {
+                    type_id_tracks_origin(TypeView::new(tc), contract, id)
+                        || return_type_needs_escape_check(tc, contract, id)
+                });
+                if may_borrow
+                    && mutation_storage_may_carry(
+                        tc,
+                        contract,
+                        storage,
+                        payload,
+                        &mut HashSet::new(),
+                    )
+                {
+                    rows.push(BorrowRetention {
+                        destination: BorrowSource {
+                            argument: target as u32,
+                            path: Vec::new(),
+                            kind: BorrowSourceKind::Contents,
+                        },
+                        sources: vec![BorrowSource {
+                            argument: source as u32,
+                            path: Vec::new(),
+                            kind,
+                        }],
+                    });
                 }
             }
         }
-        changed
     }
+    rows
+}
+
+#[derive(Clone)]
+struct NativeMutationBinding {
+    owner: Place,
+    source: crate::hir::borrowing::BorrowSource,
+    value: Place,
+    excluded: HashSet<crate::ids::LoanId>,
+}
+
+fn native_mutation_bindings(
+    function: &MirFunction,
+    tc: &crate::type_context::TypeContext,
+    contract: &MirBackendContract,
+    table: &LoanTable,
+    state: &LoanState,
+    term: &Terminator,
+    rows: &[crate::hir::borrowing::BorrowRetention],
+) -> Vec<NativeMutationBinding> {
+    let Terminator::Call { args, .. } = term else {
+        return Vec::new();
+    };
+    let mut bindings = Vec::new();
+    let aliases = state.storage_alias_state();
+    for row in rows {
+        let Some(Operand::Copy(receiver) | Operand::Move(receiver)) =
+            args.get(row.destination.argument as usize)
+        else {
+            continue;
+        };
+        let Some(Type::Reference {
+            mutable: true,
+            inner,
+        }) = checked_place_storage_type(tc, contract, function, receiver)
+        else {
+            continue;
+        };
+        if !receiver.projection.is_empty() {
+            continue;
+        } // No invented projected-carrier loan.
+        let reborrows = state
+            .active_ids()
+            .filter(|id| {
+                state.storage_owner_contains(*id, receiver.local)
+                    && table
+                        .get(*id)
+                        .is_some_and(|loan| loan.kind == LoanKind::Mut)
+            })
+            .collect::<HashSet<_>>();
+        for id in &reborrows {
+            // Inspect every alternative; raw/contents leases never bind destinations.
+            for owner in provenance::resolve_loan_places(*id, table, &aliases) {
+                if checked_place_storage_type(tc, contract, function, &owner).as_ref()
+                    != Some(inner.as_ref())
+                {
+                    continue;
+                }
+                if owner
+                    .projection
+                    .iter()
+                    .any(|projection| matches!(projection, Projection::Deref))
+                {
+                    continue;
+                }
+                for source in &row.sources {
+                    let Some(Operand::Copy(value) | Operand::Move(value)) =
+                        args.get(source.argument as usize)
+                    else {
+                        continue;
+                    };
+                    let values = if source.kind == crate::hir::borrowing::BorrowSourceKind::Contents
+                    {
+                        let Some(Type::Reference { inner, .. }) =
+                            checked_place_storage_type(tc, contract, function, value)
+                        else {
+                            continue;
+                        };
+                        let mut contents = value.clone();
+                        contents.projection.push(Projection::Deref);
+                        provenance::resolve_places(&contents, table, &aliases)
+                            .into_iter()
+                            .filter(|place| {
+                                checked_place_storage_type(tc, contract, function, place).as_ref()
+                                    == Some(inner.as_ref())
+                                    && (!place
+                                        .projection
+                                        .iter()
+                                        .any(|p| matches!(p, Projection::Deref))
+                                        || function.local_decls.get(place.local.0).is_some_and(
+                                            |decl| decl.source == LocalSource::Argument,
+                                        ))
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        vec![value.clone()]
+                    };
+                    for value in values {
+                        bindings.push(NativeMutationBinding {
+                            owner: owner.clone(),
+                            source: source.clone(),
+                            value,
+                            excluded: reborrows.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    bindings
+}
+
+type NativeMutationOrigins = HashMap<usize, Vec<NativeMutationBinding>>;
+
+/// Instantiate portable interface ordinals, never a runtime-selected native body.
+pub(crate) fn erased_return_summary(
+    contract: &MirBackendContract,
+    tc: &crate::type_context::TypeContext,
+    call: &crate::mir::MirErasedCall,
+) -> Option<OriginSet> {
+    use crate::hir::borrowing::BorrowSourceKind;
+    let signature = call.target.signature(contract).ok()?;
+    let borrowing =
+        crate::mir::erased_borrow_contract(&signature.params, &signature.ret, None, tc).ok()?;
+    let mut summary = HashSet::from([ReferenceOrigin::Static]);
+    for source in borrowing.returns.iter().flat_map(|result| &result.sources) {
+        let local = Local(source.argument as usize + 1);
+        summary.insert(match source.kind {
+            BorrowSourceKind::Value => ReferenceOrigin::Param(local),
+            BorrowSourceKind::Contents => ReferenceOrigin::ParamContents(local),
+        });
+    }
+    Some(summary)
 }
 
 struct ReferenceEscapeAnalysis<'a> {
@@ -81,6 +605,26 @@ struct ReferenceEscapeAnalysis<'a> {
     backend_contract: &'a MirBackendContract,
     return_summaries: &'a HashMap<MirFunctionId, OriginSet>,
     missing_summary_mode: MissingSummaryMode,
+    mutation_origins: Option<&'a NativeMutationOrigins>,
+    return_sources: Option<&'a return_sources::NativeReturnSources>,
+    purpose: OriginPurpose,
+    // Producer measurement can retain dependencies even through scalar values;
+    // ordinary lifetime/loan consumers remain restricted to origin carriers.
+    track_value_dependencies: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OriginPurpose {
+    Lifetime,
+    ValueLoans,
+}
+
+/// Local native-body value-flow authority, not a portable/erased call contract.
+struct NativeReturnLoanProof {
+    summaries: HashMap<MirFunctionId, OriginSet>,
+    measured: HashMap<MirFunctionId, OriginSet>,
+    lifetime: HashMap<MirFunctionId, OriginSet>,
+    sources: return_sources::NativeReturnSources,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +647,19 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
             backend_contract,
             return_summaries,
             missing_summary_mode,
+            mutation_origins: None,
+            return_sources: None,
+            purpose: OriginPurpose::Lifetime,
+            track_value_dependencies: false,
         }
+    }
+
+    fn with_return_sources(
+        mut self,
+        sources: Option<&'a return_sources::NativeReturnSources>,
+    ) -> Self {
+        self.return_sources = sources;
+        self
     }
 
     fn normalized_place(mut place: Place) -> Place {
@@ -150,11 +706,12 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
 
     fn local_type_tracks_origin(&self, local: Local) -> bool {
         self.local_decl(local).is_some_and(|decl| {
-            type_id_tracks_origin(
-                TypeView::new(self.type_context),
-                self.backend_contract,
-                decl.ty,
-            )
+            self.track_value_dependencies
+                || type_id_tracks_origin(
+                    TypeView::new(self.type_context),
+                    self.backend_contract,
+                    decl.ty,
+                )
         })
     }
 
@@ -188,11 +745,13 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
 
     fn origins_for_place(&self, state: &ReferenceOriginState, place: &Place) -> OriginSet {
         let normalized = Self::normalized_place(place.clone());
+        let mut child_origins = self.child_origins_for_place(state, &normalized);
         if let Some(origins) = state.origins.get(&normalized) {
-            return origins.clone();
+            // Projected writes can add dependencies after a root was forwarded.
+            child_origins.extend(origins.iter().copied());
+            return child_origins;
         }
 
-        let child_origins = self.child_origins_for_place(state, &normalized);
         if !child_origins.is_empty() {
             return child_origins;
         }
@@ -208,10 +767,7 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
                     // contents; taking its address uses the separate borrow path.
                     return origins
                         .iter()
-                        .map(|origin| match origin {
-                            ReferenceOrigin::Param(local) => ReferenceOrigin::ParamContents(*local),
-                            origin => *origin,
-                        })
+                        .map(|origin| origin.loaded_contents())
                         .collect();
                 }
                 return origins.clone();
@@ -301,28 +857,36 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
             local: normalized.local,
             projection: Vec::new(),
         };
-        let raw_memory_view = normalized.projection.iter().any(|projection| {
-            let raw_deref = *projection == Projection::Deref
-                && self
-                    .backend_contract
-                    .place_type_id(self.type_context, self.func, &prefix)
-                    .is_some_and(|ty| type_id_is_pointer(TypeView::new(self.type_context), ty));
+        let mut raw_memory_view = false;
+        let mut indexed_storage_view = false;
+        let mut raw_indexed_view = false;
+        for projection in &normalized.projection {
+            let prefix_type =
+                self.backend_contract
+                    .place_type_id(self.type_context, self.func, &prefix);
+            let pointer = prefix_type
+                .is_some_and(|ty| type_id_is_pointer(TypeView::new(self.type_context), ty));
+            raw_memory_view |= *projection == Projection::Deref && pointer;
+            if matches!(projection, Projection::Index(_)) {
+                raw_indexed_view |= pointer;
+                indexed_storage_view |= pointer
+                    || prefix_type.is_some_and(|ty| {
+                        matches!(self.type_context.try_ty(ty), Some(Ty::Reference { .. }))
+                    });
+            }
             prefix.projection.push(projection.clone());
-            raw_deref
-        });
-        if !self.local_type_is_reference(normalized.local)
-            && !self.local_type_is_pointer(normalized.local)
+        }
+        if !indexed_storage_view
             && !normalized
                 .projection
                 .iter()
                 .any(|projection| matches!(projection, Projection::Deref))
         {
-            // Borrowing storage is different from moving out a contained
-            // reference: even an argument containing loans owns local storage.
+            // Pointer/reference indexing addresses incoming storage without an
+            // explicit Deref. Without either view, this is the local slot itself.
             return HashSet::from([
                 match self.local_decl(normalized.local).map(|decl| &decl.source) {
                     Some(LocalSource::Temporary) => ReferenceOrigin::Temporary(normalized.local),
-                    Some(LocalSource::ClosureCapture) => ReferenceOrigin::Param(normalized.local),
                     _ => ReferenceOrigin::Local(normalized.local),
                 },
             ]);
@@ -331,18 +895,7 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
         let origins = self
             .origins_for_place(state, place)
             .into_iter()
-            .map(|origin| match origin {
-                // Addressing contents borrows storage rather than transferring a
-                // contained value. Raw-pointer reconstruction remains unsafe.
-                ReferenceOrigin::ParamContents(local) if raw_memory_view => {
-                    ReferenceOrigin::ParamBorrowedContents(local)
-                }
-                ReferenceOrigin::Param(local) if raw_memory_view => {
-                    ReferenceOrigin::ParamBorrowedContents(local)
-                }
-                ReferenceOrigin::ParamContents(local) => ReferenceOrigin::Param(local),
-                origin => origin,
-            })
+            .map(|origin| origin.borrowed_contents(raw_memory_view, raw_indexed_view))
             .collect::<OriginSet>();
         if !origins.is_empty() {
             return origins;
@@ -384,6 +937,34 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
 
     fn origins_for_operand(&self, state: &ReferenceOriginState, operand: &Operand) -> OriginSet {
         match operand {
+            Operand::Copy(place) | Operand::Move(place)
+                if matches!(place.projection.first(), Some(Projection::Deref))
+                    && self.local_type_is_pointer(place.local) =>
+            {
+                // A value read through a raw address transports the pointee's
+                // contents. Address-taking keeps the separate storage envelope.
+                let mut contents = OriginSet::new();
+                for origin in self.origins_for_place(state, place) {
+                    match origin {
+                        ReferenceOrigin::Local(local) | ReferenceOrigin::Temporary(local) => {
+                            contents.extend(self.origins_for_place(
+                                state,
+                                &Place {
+                                    local,
+                                    projection: Vec::new(),
+                                },
+                            ));
+                        }
+                        ReferenceOrigin::Param(local) => {
+                            contents.insert(ReferenceOrigin::ParamContents(local));
+                        }
+                        origin => {
+                            contents.insert(origin);
+                        }
+                    }
+                }
+                contents
+            }
             Operand::Copy(place) | Operand::Move(place) => self.origins_for_place(state, place),
             Operand::Constant(Constant::String(_)) => HashSet::from([ReferenceOrigin::Static]),
             Operand::Constant(_) => OriginSet::new(),
@@ -400,6 +981,118 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
         }
         if !origins.is_empty() {
             state.origins.insert(dest, origins);
+        }
+    }
+
+    fn forward_structured_origins(
+        &self,
+        state: &mut ReferenceOriginState,
+        dest: &Place,
+        operand: &Operand,
+    ) -> bool {
+        let (Operand::Copy(source) | Operand::Move(source)) = operand else {
+            return false;
+        };
+        let Some(ty) =
+            checked_place_storage_type(self.type_context, self.backend_contract, self.func, source)
+        else {
+            return false;
+        };
+        if !matches!(
+            ty,
+            Type::Struct { .. }
+                | Type::StructRepresentation { .. }
+                | Type::Enum { .. }
+                | Type::EnumRepresentation { .. }
+                | Type::Tuple(_)
+                | Type::Array(_, _)
+                | Type::Slice(_)
+        ) || checked_place_storage_type(
+            self.type_context,
+            self.backend_contract,
+            self.func,
+            dest,
+        ) != Some(ty)
+        {
+            return false;
+        }
+        let envelope = self.origins_for_operand(state, operand);
+        let source = Self::normalized_place(source.clone());
+        let dest = Self::normalized_place(dest.clone());
+        // Snapshot before clearing, including self/overlapping forwarding.
+        // Rebase actual child paths, not their union onto an untyped root.
+        let rows = state
+            .origins
+            .iter()
+            .filter(|(place, origins)| !origins.is_empty() && Self::place_is_prefix(&source, place))
+            .map(|(place, origins)| {
+                let mut target = dest.clone();
+                target.projection.extend(
+                    place
+                        .projection
+                        .iter()
+                        .skip(source.projection.len())
+                        .cloned(),
+                );
+                let ty = checked_place_storage_type(
+                    self.type_context,
+                    self.backend_contract,
+                    self.func,
+                    place,
+                )?;
+                (checked_place_storage_type(
+                    self.type_context,
+                    self.backend_contract,
+                    self.func,
+                    &target,
+                ) == Some(ty))
+                .then(|| (target, origins.clone()))
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(rows) = rows.filter(|rows| !rows.is_empty()) else {
+            return false;
+        };
+        self.assign_origins(state, &dest, OriginSet::new());
+        state.origins.extend(rows);
+        // Keep the whole-value envelope as well as its checked child paths.
+        state.origins.entry(dest).or_default().extend(envelope);
+        true
+    }
+
+    fn apply_mutation_origins(
+        &self,
+        state: &mut ReferenceOriginState,
+        bindings: &[NativeMutationBinding],
+    ) {
+        let inputs = bindings
+            .iter()
+            .map(|binding| {
+                let origins = self.origins_for_place(state, &binding.value);
+                (Self::normalized_place(binding.owner.clone()), origins)
+            })
+            .collect::<Vec<_>>();
+        for (owner, origins) in inputs {
+            if origins.is_empty() {
+                continue;
+            }
+            // A local-granularity may write must preserve all existing contents
+            // and remain visible to a later whole-owner move, including fields.
+            let root = Place {
+                local: owner.local,
+                projection: Vec::new(),
+            };
+            let previous = state
+                .origins
+                .iter()
+                .filter(|(place, _)| place.local == owner.local)
+                .flat_map(|(_, origins)| origins.iter().copied())
+                .collect::<OriginSet>();
+            state
+                .origins
+                .entry(root)
+                .or_default()
+                .extend(previous.into_iter().chain(origins.iter().copied()));
+            state.origins.entry(owner).or_default().extend(origins);
         }
     }
 
@@ -422,6 +1115,20 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
         rvalue: &Rvalue,
     ) -> HashSet<Local> {
         if !self.destination_can_outlive_statement(dest) {
+            return HashSet::new();
+        }
+
+        // lean-ctx: numeric diagnostic-only ceiling; widen after typed-storage controls.
+        // Keep raw leases, callable environments and unknown storage conservative.
+        if self
+            .backend_contract
+            .place_type_id(self.type_context, self.func, dest)
+            .is_some_and(|ty| {
+                self.type_context.type_id_tree_is_valid(ty)
+                    && self.type_context.type_for(ty).is_numeric()
+                    && !return_type_needs_escape_check(self.type_context, self.backend_contract, ty)
+            })
+        {
             return HashSet::new();
         }
 
@@ -517,11 +1224,74 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
             return OriginSet::new();
         }
 
+        if let Operand::Constant(Constant::ErasedCall(call)) = func {
+            return erased_return_summary(self.backend_contract, self.type_context, call)
+                .map(|summary| self.instantiate_return_origins(state, args, destination, &summary))
+                .unwrap_or_else(|| self.opaque_call_return_origins(state, args));
+        }
+
         let Operand::Constant(Constant::Callable(callable)) = func else {
-            return self.opaque_call_return_origins(state, args);
+            if let Some(callable) = self
+                .return_sources
+                .and_then(|table| table.witnessed_callable(self.func, func, destination))
+            {
+                // The exact checked allocation/body supplies the target, not a
+                // result/effect certificate. Keep its ordinary origin summary
+                // (including local/unknown dependencies) and executable MIR.
+                let target = Operand::Constant(Constant::Callable(callable.clone()));
+                if return_sources::checked_call(
+                    self.func,
+                    self.type_context,
+                    self.backend_contract,
+                    &target,
+                    args,
+                    destination,
+                )
+                .is_some()
+                {
+                    return self.call_return_origins(state, &target, args, destination);
+                }
+            }
+            if let Some((inputs, summary)) = self.return_sources.and_then(|table| {
+                table.callable_result_for_purpose(
+                    self.func,
+                    self.type_context,
+                    self.backend_contract,
+                    func,
+                    args,
+                    destination,
+                    self.purpose,
+                )
+            }) {
+                return self.instantiate_return_origins(state, &inputs, destination, &summary);
+            }
+            let mut origins = self.opaque_call_return_origins(state, args);
+            // Unknown callable implementations may transport their environment,
+            // including a borrowed receiver's storage. Absence is not emptiness.
+            origins.extend(self.origins_for_operand(state, func));
+            return origins;
         };
 
         match callable {
+            MirCallable::Resolved(key @ MirCallableKey::Intrinsic(intrinsic))
+                if self.track_value_dependencies && intrinsic.is_scalar_operation() =>
+            {
+                // Measure the operands of an explicit instruction, not an
+                // ordinary/foreign function with a similarly shaped result.
+                let valid = self.backend_contract.callable(key).is_some_and(|header| {
+                    matches!(&header.kind, crate::mir::MirCallableKind::Intrinsic(id) if id == intrinsic)
+                        && header.signature.params.len() == args.len()
+                        && self.backend_contract.place_type_id(self.type_context, self.func, destination)
+                            == Some(header.signature.ret.semantic_ty)
+                });
+                return if valid {
+                    args.iter()
+                        .flat_map(|argument| self.origins_for_operand(state, argument))
+                        .collect()
+                } else {
+                    self.opaque_call_return_origins(state, args)
+                };
+            }
             MirCallable::Resolved(MirCallableKey::Intrinsic(intrinsic))
                 if matches!(
                     intrinsic,
@@ -548,9 +1318,19 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
         let Some(function_id) = Self::callable_function_id(callable) else {
             return HashSet::from([ReferenceOrigin::Local(destination.local)]);
         };
-        let Some(summary) = self.return_summaries.get(&function_id) else {
+        let summary = self.return_summaries.get(&function_id).or_else(|| {
+            self.track_value_dependencies
+                .then(|| {
+                    self.return_sources
+                        .and_then(|table| table.scalar_dependencies(self.purpose, &function_id))
+                })
+                .flatten()
+        });
+        let Some(summary) = summary else {
             return match self.missing_summary_mode {
-                MissingSummaryMode::Defer => OriginSet::new(),
+                // Local bodies are seeded in the fixpoint map. A missing entry
+                // is an opaque/bodyless callable, not a recursive pending body.
+                MissingSummaryMode::Defer => self.opaque_call_return_origins(state, args),
                 MissingSummaryMode::Conservative
                     if self.local_type_tracks_origin(destination.local) =>
                 {
@@ -562,6 +1342,96 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
             };
         };
 
+        if let Some(sources) = self.return_sources.and_then(|table| {
+            table.borrowed_view_call(
+                self.func,
+                self.type_context,
+                self.backend_contract,
+                func,
+                args,
+                destination,
+            )
+        }) {
+            let remainder = summary
+                .iter()
+                .copied()
+                .filter(|origin| match origin {
+                    ReferenceOrigin::Param(local)
+                    | ReferenceOrigin::ParamContents(local)
+                    | ReferenceOrigin::ParamBorrowedContents(local) => {
+                        !sources.iter().any(|source| source.parameter() == *local)
+                    }
+                    _ => true, // Preserve unknown, local, temporary and root-history envelopes.
+                })
+                .collect();
+            let mut origins = self.instantiate_return_origins(state, args, destination, &remainder);
+            for source in sources {
+                let return_sources::Source::Slice {
+                    parameter,
+                    load,
+                    reference,
+                } = source
+                else {
+                    continue;
+                };
+                let Some(arg) = parameter.0.checked_sub(1).and_then(|index| args.get(index)) else {
+                    return self.instantiate_return_origins(state, args, destination, summary);
+                };
+                for origin in self.origins_for_operand(state, arg) {
+                    if load.is_empty() {
+                        origins.insert(origin);
+                        continue;
+                    }
+                    match origin {
+                        ReferenceOrigin::Local(local) | ReferenceOrigin::Temporary(local)
+                            if self
+                                .local_decl(local)
+                                .is_some_and(|decl| decl.ty == *reference) =>
+                        {
+                            // Exactly one witnessed safe slice-reference load:
+                            // retain its whole value/history, not the slot address.
+                            let contents = self.origins_for_place(
+                                state,
+                                &Place {
+                                    local,
+                                    projection: Vec::new(),
+                                },
+                            );
+                            if contents.is_empty() {
+                                origins.insert(origin);
+                            } else {
+                                origins.extend(contents);
+                            }
+                        }
+                        ReferenceOrigin::Param(local)
+                            if self.local_decl(local).is_some_and(|decl| {
+                                self.type_context.try_ty(decl.ty)
+                                    == Some(&Ty::Reference {
+                                        mutable: false,
+                                        inner: *reference,
+                                    })
+                            }) =>
+                        {
+                            origins.insert(ReferenceOrigin::ParamContents(local));
+                        }
+                        origin => {
+                            origins.insert(origin);
+                        }
+                    }
+                }
+            }
+            return origins;
+        }
+        self.instantiate_return_origins(state, args, destination, summary)
+    }
+
+    fn instantiate_return_origins(
+        &self,
+        state: &ReferenceOriginState,
+        args: &[Operand],
+        destination: &Place,
+        summary: &OriginSet,
+    ) -> OriginSet {
         let mut origins = OriginSet::new();
         for origin in summary {
             match origin {
@@ -589,6 +1459,15 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
                                             projection: Vec::new(),
                                         },
                                     ));
+                                }
+                                ReferenceOrigin::Param(local)
+                                    if !self.local_type_is_reference(local)
+                                        && !self.local_type_is_pointer(local) =>
+                                {
+                                    // Owned aggregates already carry the origins
+                                    // of their fields. A callable projected from
+                                    // one is not an address to argument storage.
+                                    origins.insert(ReferenceOrigin::Param(local));
                                 }
                                 ReferenceOrigin::Param(local)
                                 | ReferenceOrigin::ParamContents(local) => {
@@ -656,6 +1535,33 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
         }
         origins
     }
+
+    fn measured_return_origins(&self) -> Option<OriginSet> {
+        let results = run_fixpoint(self, self.func);
+        let return_place = Place {
+            local: Local(0),
+            projection: Vec::new(),
+        };
+        let mut origins = OriginSet::new();
+        let mut returns = false;
+        for (index, block) in self.func.basic_blocks.iter().enumerate() {
+            if !results.reachable[index]
+                || !matches!(
+                    block.terminator,
+                    Some(Terminator::Return | Terminator::ReturnWithOrigin { .. })
+                )
+            {
+                continue;
+            }
+            returns = true;
+            for (place, dependencies) in &results.exit_sets[index].origins {
+                if Self::place_is_prefix(&return_place, place) {
+                    origins.extend(dependencies.iter().copied());
+                }
+            }
+        }
+        returns.then_some(origins)
+    }
 }
 
 impl Analysis for ReferenceEscapeAnalysis<'_> {
@@ -675,7 +1581,11 @@ impl Analysis for ReferenceEscapeAnalysis<'_> {
         }
         for (index, decl) in self.func.local_decls.iter().enumerate() {
             let local = Local(index);
-            if decl.source == LocalSource::Argument && self.local_type_is_reference(local) {
+            if matches!(
+                decl.source,
+                LocalSource::Argument | LocalSource::ClosureCapture
+            ) && (self.local_type_is_reference(local) || self.track_value_dependencies)
+            {
                 state.origins.insert(
                     Place {
                         local,
@@ -696,6 +1606,8 @@ impl Analysis for ReferenceEscapeAnalysis<'_> {
         let StatementKind::Assign(dest, rvalue) = &stmt.kind else {
             return;
         };
+        #[cfg(test)]
+        let fresh_transfer = allocator_trace_tests::fresh_transfer_before(self, state, stmt);
 
         match rvalue {
             Rvalue::Ref(_, place) => {
@@ -707,25 +1619,93 @@ impl Analysis for ReferenceEscapeAnalysis<'_> {
             | Rvalue::Use(operand)
             | Rvalue::Cast(operand, _) => {
                 let origins = self.origins_for_operand(state, operand);
-                self.assign_origins(state, dest, origins);
+                let forwarding = callable_forwarding_rvalue(
+                    self.func,
+                    self.type_context,
+                    self.backend_contract,
+                    dest,
+                    rvalue,
+                );
+                if matches!(rvalue, Rvalue::Use(_))
+                    && self.forward_structured_origins(state, dest, operand)
+                {
+                    // Existing canonical storage paths were transported intact.
+                } else if forwarding && !origins.is_empty() {
+                    let dest = Self::normalized_place(dest.clone());
+                    state
+                        .origins
+                        .retain(|place, _| !Self::place_is_prefix(&dest, place));
+                    state.origins.insert(dest, origins);
+                } else {
+                    self.assign_origins(state, dest, origins);
+                }
             }
-            Rvalue::Aggregate(_, operands) => {
+            Rvalue::Aggregate(kind, operands) => {
                 self.assign_origins(state, dest, OriginSet::new());
+                let mut payload = dest.clone();
+                if let crate::mir::AggregateKind::EnumVariant { variant_id, .. } = kind {
+                    // Match payload reads and checked typing retain this variant.
+                    payload.projection.push(Projection::Downcast(*variant_id));
+                }
                 for (index, operand) in operands.iter().enumerate() {
+                    if let Some(field) = checked_aggregate_field(
+                        self.func,
+                        self.type_context,
+                        self.backend_contract,
+                        dest,
+                        kind,
+                        index,
+                    ) {
+                        if self.forward_structured_origins(state, &field, operand) {
+                            continue;
+                        }
+                    }
                     let origins = self.origins_for_operand(state, operand);
                     if !origins.is_empty() {
-                        let field_place = Self::field_place(dest, index);
+                        let field_place = Self::field_place(&payload, index);
                         state.origins.insert(field_place, origins);
                     }
                 }
             }
-            Rvalue::Closure(_)
-            | Rvalue::BinaryOp(_, _, _)
-            | Rvalue::UnaryOp(_, _)
-            | Rvalue::Discriminant(_) => {
+            Rvalue::Closure(closure) => {
+                let origins = closure
+                    .captures
+                    .iter()
+                    .flat_map(|capture| {
+                        let place = Place {
+                            local: capture.local,
+                            projection: Vec::new(),
+                        };
+                        match capture.kind {
+                            crate::mir::MirClosureCaptureKind::ByValue => {
+                                self.origins_for_place(state, &place)
+                            }
+                            crate::mir::MirClosureCaptureKind::ByRef
+                            | crate::mir::MirClosureCaptureKind::ByMutRef => {
+                                self.origins_for_borrowed_place(state, &place)
+                            }
+                        }
+                    })
+                    .collect();
+                self.assign_origins(state, dest, origins);
+            }
+            Rvalue::BinaryOp(_, left, right) if self.track_value_dependencies => {
+                let mut origins = self.origins_for_operand(state, left);
+                origins.extend(self.origins_for_operand(state, right));
+                self.assign_origins(state, dest, origins);
+            }
+            Rvalue::UnaryOp(_, operand) if self.track_value_dependencies => {
+                self.assign_origins(state, dest, self.origins_for_operand(state, operand));
+            }
+            Rvalue::Discriminant(place) if self.track_value_dependencies => {
+                self.assign_origins(state, dest, self.origins_for_place(state, place));
+            }
+            Rvalue::BinaryOp(_, _, _) | Rvalue::UnaryOp(_, _) | Rvalue::Discriminant(_) => {
                 self.assign_origins(state, dest, OriginSet::new());
             }
         }
+        #[cfg(test)]
+        allocator_trace_tests::fresh_transfer_after(self, state, fresh_transfer);
     }
 
     fn apply_terminator(&self, state: &mut Self::Domain, term: &Terminator) {
@@ -737,9 +1717,142 @@ impl Analysis for ReferenceEscapeAnalysis<'_> {
         } = term
         {
             let origins = self.call_return_origins(state, func, args, destination);
+            #[cfg(test)]
+            allocator_trace_tests::call_origins(self, state, term, &origins);
             self.assign_origins(state, destination, origins);
         }
     }
+
+    fn apply_block(
+        &self,
+        state: &mut Self::Domain,
+        func: &MirFunction,
+        block: crate::mir::BasicBlockId,
+    ) {
+        let data = &func.basic_blocks[block.0];
+        for statement in &data.statements {
+            self.apply_statement(state, statement);
+        }
+        if let Some(term) = &data.terminator {
+            if let (Some(bindings), Terminator::Call { .. }) = (
+                self.mutation_origins
+                    .and_then(|origins| origins.get(&block.0)),
+                term,
+            ) {
+                self.apply_mutation_origins(state, bindings);
+            }
+            self.apply_terminator(state, term);
+        }
+    }
+}
+
+fn callable_forwarding_types(
+    function: &MirFunction,
+    tc: &crate::type_context::TypeContext,
+    contract: &MirBackendContract,
+    destination: &Place,
+    source: &Operand,
+) -> bool {
+    let (Operand::Copy(source) | Operand::Move(source)) = source else {
+        return false;
+    };
+    match (
+        checked_place_storage_type(tc, contract, function, destination),
+        checked_place_storage_type(tc, contract, function, source),
+    ) {
+        (
+            Some(Type::Function {
+                params: a,
+                ret: b,
+                safety: c,
+                callable_kind: d,
+                ..
+            }),
+            Some(Type::Function {
+                params: e,
+                ret: f,
+                safety: g,
+                callable_kind: h,
+                ..
+            }),
+        ) => a == e && b == f && c == g && h <= d,
+        _ => false,
+    }
+}
+
+fn checked_aggregate_field(
+    function: &MirFunction,
+    tc: &crate::type_context::TypeContext,
+    contract: &MirBackendContract,
+    destination: &Place,
+    kind: &crate::mir::AggregateKind,
+    index: usize,
+) -> Option<Place> {
+    let mut payload = destination.clone();
+    match (
+        kind,
+        checked_place_storage_type(tc, contract, function, destination)?,
+    ) {
+        (
+            crate::mir::AggregateKind::Struct { id, .. },
+            Type::Struct { id: owner, .. } | Type::StructRepresentation { id: owner, .. },
+        ) if *id == owner => {}
+        (
+            crate::mir::AggregateKind::EnumVariant {
+                enum_id,
+                variant_id,
+                ..
+            },
+            Type::Enum { id, .. } | Type::EnumRepresentation { id, .. },
+        ) if *enum_id == id => payload.projection.push(Projection::Downcast(*variant_id)),
+        (crate::mir::AggregateKind::Tuple, Type::Tuple(_)) => {}
+        _ => return None,
+    }
+    let field = ReferenceEscapeAnalysis::field_place(&payload, index);
+    checked_place_storage_type(tc, contract, function, &field)?;
+    Some(field)
+}
+
+fn aggregate_operand_forwarding(
+    function: &MirFunction,
+    tc: &crate::type_context::TypeContext,
+    contract: &MirBackendContract,
+    destination: &Place,
+    kind: &crate::mir::AggregateKind,
+    index: usize,
+    operand: &Operand,
+) -> bool {
+    let (Operand::Copy(source) | Operand::Move(source)) = operand else {
+        return false;
+    };
+    let Some(field) = checked_aggregate_field(function, tc, contract, destination, kind, index)
+    else {
+        return false;
+    };
+    checked_place_storage_type(tc, contract, function, &field)
+        == checked_place_storage_type(tc, contract, function, source)
+        || callable_forwarding_types(function, tc, contract, &field, operand)
+}
+
+fn callable_forwarding_rvalue(
+    function: &MirFunction,
+    tc: &crate::type_context::TypeContext,
+    contract: &MirBackendContract,
+    destination: &Place,
+    rvalue: &Rvalue,
+) -> bool {
+    let operand = match rvalue {
+        Rvalue::Use(operand) => operand,
+        Rvalue::Cast(operand, target)
+            if tc.type_id_tree_is_valid(*target)
+                && checked_place_storage_type(tc, contract, function, destination)
+                    == Some(contract.normalize_storage_type(tc, &tc.type_for(*target))) =>
+        {
+            operand
+        }
+        _ => return false,
+    };
+    callable_forwarding_types(function, tc, contract, destination, operand)
 }
 
 impl<'a> MoveValidationContext<'a> {
@@ -788,13 +1901,13 @@ impl<'a> MoveValidationContext<'a> {
         };
         let mut current_ty = self
             .backend_contract
-            .normalize_type(self.type_context, &self.type_context.type_for(local.ty));
+            .normalize_storage_type(self.type_context, &self.type_context.type_for(local.ty));
         let mut reference_owned_path = false;
 
         for projection in &place.projection {
             current_ty = self
                 .backend_contract
-                .normalize_type(self.type_context, &current_ty);
+                .normalize_storage_type(self.type_context, &current_ty);
             match projection {
                 Projection::Deref => match &current_ty {
                     Type::Reference { .. } => reference_owned_path = true,
@@ -804,6 +1917,16 @@ impl<'a> MoveValidationContext<'a> {
                 Projection::Field { .. }
                     if validate_move_only_rules && self.has_direct_drop(&current_ty) =>
                 {
+                    #[cfg(test)]
+                    if allocator_trace_tests::enabled_at(span.as_ref()) {
+                        eprintln!(
+                            "OWNER_LOAN_TRACE actual-drop-field-rejection function={:?} span={:?} move_place={:?} projection={:?} normalized_owner_type={:?} type_id={:?} direct_drop={:?}",
+                            func.id, span, place, projection, current_ty,
+                            self.type_context.id_for_type(&current_ty),
+                            self.type_context.id_for_type(&current_ty)
+                                .and_then(|id| self.backend_contract.drop_glue.get(&id)),
+                        );
+                    }
                     diagnostics.push(mir_diagnostic(
                         format!(
                             "Cannot move field out of type '{}' because it implements Drop",
@@ -833,7 +1956,7 @@ impl<'a> MoveValidationContext<'a> {
             };
             current_ty = self
                 .backend_contract
-                .normalize_type(self.type_context, &next_ty);
+                .normalize_storage_type(self.type_context, &next_ty);
         }
 
         if reference_owned_path && !current_ty.is_copy() {
@@ -848,14 +1971,18 @@ impl<'a> MoveValidationContext<'a> {
     }
 
     fn has_direct_drop(&self, ty: &Type) -> bool {
-        let ty = self.backend_contract.normalize_type(self.type_context, ty);
+        let ty = self
+            .backend_contract
+            .normalize_storage_type(self.type_context, ty);
         self.type_context
             .id_for_type(&ty)
             .is_some_and(|id| self.direct_drop_types.contains(&id))
     }
 
     fn type_needs_cleanup(&mut self, ty: &Type) -> bool {
-        let ty = self.backend_contract.normalize_type(self.type_context, ty);
+        let ty = self
+            .backend_contract
+            .normalize_storage_type(self.type_context, ty);
         if let Some(needs_cleanup) = self.cleanup_cache.get(&ty) {
             return *needs_cleanup;
         }
@@ -911,7 +2038,13 @@ impl<'a> MoveValidationContext<'a> {
                             .any(|field_ty| self.type_needs_cleanup(&field_ty))
                     }),
                 Type::Array(elem, _) => self.type_needs_cleanup(elem),
-                Type::Tuple(elems) => elems.iter().any(|elem| self.type_needs_cleanup(elem)),
+                Type::Tuple(elems) | Type::StructRepresentation { fields: elems, .. } => {
+                    elems.iter().any(|elem| self.type_needs_cleanup(elem))
+                }
+                Type::EnumRepresentation { variants, .. } => variants
+                    .iter()
+                    .flatten()
+                    .any(|field| self.type_needs_cleanup(field)),
                 Type::Function { .. } => true,
                 _ => false,
             }
@@ -922,7 +2055,9 @@ impl<'a> MoveValidationContext<'a> {
     }
 
     fn project_type(&self, ty: &Type, projection: &Projection) -> Option<Type> {
-        let ty = self.backend_contract.normalize_type(self.type_context, ty);
+        let ty = self
+            .backend_contract
+            .normalize_storage_type(self.type_context, ty);
         let projected = match projection {
             Projection::Deref => match &ty {
                 Type::Reference { inner, .. } | Type::Pointer(inner) => {
@@ -931,7 +2066,9 @@ impl<'a> MoveValidationContext<'a> {
                 _ => None,
             },
             Projection::Field { index, .. } => match &ty {
-                Type::Tuple(elems) => elems.get(*index).cloned(),
+                Type::Tuple(elems) | Type::StructRepresentation { fields: elems, .. } => {
+                    elems.get(*index).cloned()
+                }
                 Type::Struct { id, args } => {
                     let layout_fields = contract_struct_fields(self.backend_contract, *id)?;
                     let field_ty = layout_fields.get(*index).map(|(_, ty)| *ty)?;
@@ -963,12 +2100,14 @@ impl<'a> MoveValidationContext<'a> {
         }?;
         Some(
             self.backend_contract
-                .normalize_type(self.type_context, &projected),
+                .normalize_storage_type(self.type_context, &projected),
         )
     }
 
     fn type_display_name(&self, ty: &Type) -> String {
-        let ty = self.backend_contract.normalize_type(self.type_context, ty);
+        let ty = self
+            .backend_contract
+            .normalize_storage_type(self.type_context, ty);
         let context = crate::type_services::display::TypeDisplayContext::default();
         crate::type_services::display::display_type_with_context(&ty, &context).to_string()
     }
@@ -1007,7 +2146,143 @@ fn type_id_contains_reference(
     type_id_tracks_origin_inner(view, backend_contract, ty, false, &mut seen)
 }
 
-fn type_id_tracks_origin(
+// Escape eligibility only: raw Lifetime dependencies are not safe-reference
+// payloads, while an abstract Fn can still store an actually borrowed environment.
+pub(crate) fn return_type_needs_escape_check(
+    type_context: &crate::type_context::TypeContext,
+    backend_contract: &MirBackendContract,
+    ty: TypeId,
+) -> bool {
+    use crate::type_services::visit::{visit_type_children, TypeVisitor};
+
+    if !type_context.type_id_tree_is_valid(ty) {
+        return true;
+    }
+
+    // Canonical nominal arguments may describe logical contents hidden behind
+    // raw storage; eligibility is not ownership or no-borrow authority.
+    match TypeView::new(type_context).ty(ty) {
+        Ty::Struct { .. }
+        | Ty::StructRepresentation { .. }
+        | Ty::Enum { .. }
+        | Ty::EnumRepresentation { .. }
+        | Ty::Tuple(_)
+        | Ty::Array { .. }
+        | Ty::Slice(_) => {}
+        _ if type_id_contains_reference(TypeView::new(type_context), backend_contract, ty) => {
+            return true;
+        }
+        _ => {}
+    }
+
+    struct StoredCallables<'a> {
+        context: &'a crate::type_context::TypeContext,
+        contract: &'a MirBackendContract,
+        seen: HashSet<Type>,
+        found: bool,
+    }
+
+    impl TypeVisitor for StoredCallables<'_> {
+        fn visit_type(&mut self, ty: &Type) {
+            let context = self.context;
+            let contract = self.contract;
+            let ty = contract.normalize_storage_type(context, ty);
+            if self.found || !self.seen.insert(ty.clone()) {
+                return;
+            }
+            match &ty {
+                Type::Pointer(_) => {}
+                Type::Function { .. } | Type::Reference { .. } => self.found = true,
+                Type::Struct { id, args } | Type::Enum { id, args } => {
+                    let (fields, parameters) = match (&ty, contract.nominal_layouts.get(id)) {
+                        (
+                            Type::Struct { .. },
+                            Some(MirNominalLayout::Struct {
+                                id: owner,
+                                fields,
+                                generic_params,
+                            }),
+                        ) if owner == id => (
+                            fields.iter().map(|(_, ty)| *ty).collect::<Vec<_>>(),
+                            generic_params,
+                        ),
+                        (
+                            Type::Enum { .. },
+                            Some(MirNominalLayout::Enum {
+                                id: owner,
+                                variants,
+                                generic_params,
+                            }),
+                        ) if owner == id => {
+                            let fields = variants
+                                .iter()
+                                .flat_map(|variant| match &variant.fields {
+                                    crate::mir::MirVariantLayoutFields::Unit => Vec::new(),
+                                    crate::mir::MirVariantLayoutFields::Positional(fields) => {
+                                        fields.clone()
+                                    }
+                                    crate::mir::MirVariantLayoutFields::Named(fields) => {
+                                        fields.iter().map(|(_, ty)| *ty).collect()
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            (fields, generic_params)
+                        }
+                        _ => {
+                            self.found = true; // Missing layout is not borrow-free authority.
+                            return;
+                        }
+                    };
+                    if parameters.len() != args.len() {
+                        self.found = true;
+                        return;
+                    }
+                    for argument in args {
+                        self.visit_type(argument);
+                    }
+                    let substitution = parameters
+                        .iter()
+                        .copied()
+                        .zip(args.iter().cloned())
+                        .collect::<HashMap<_, _>>();
+                    for field in fields {
+                        if !context.type_id_tree_is_valid(field) {
+                            self.found = true;
+                            return;
+                        }
+                        self.visit_type(
+                            &context.type_for(field).substitute_generics(&substitution),
+                        );
+                    }
+                }
+                Type::Exists(_)
+                | Type::Object(_)
+                | Type::ObjectSelf { .. }
+                | Type::Witness(_)
+                | Type::Generic(_)
+                | Type::TypeVar(_)
+                | Type::Projection { .. }
+                | Type::Constructor { .. }
+                | Type::Apply { .. }
+                | Type::Lambda { .. }
+                | Type::BoundVar { .. }
+                | Type::Error => self.found = true,
+                _ => visit_type_children(&ty, self),
+            }
+        }
+    }
+
+    let mut storage = StoredCallables {
+        context: type_context,
+        contract: backend_contract,
+        seen: HashSet::new(),
+        found: false,
+    };
+    storage.visit_type(&type_context.type_for(ty));
+    storage.found
+}
+
+pub(crate) fn type_id_tracks_origin(
     view: TypeView<'_>,
     backend_contract: &MirBackendContract,
     ty: crate::ids::TypeId,
@@ -1033,29 +2308,40 @@ fn type_id_tracks_origin_inner(
         Ty::ObjectSelf { .. } => true,
         Ty::Reference { .. } => true,
         Ty::Pointer(_) if include_pointers => true,
-        Ty::Tuple(elems) => elems.iter().any(|elem| {
+        Ty::Tuple(elems) | Ty::StructRepresentation { fields: elems, .. } => {
+            elems.iter().any(|elem| {
+                type_id_tracks_origin_inner(view, backend_contract, *elem, include_pointers, seen)
+            })
+        }
+        Ty::EnumRepresentation { variants, .. } => variants.iter().flatten().any(|elem| {
             type_id_tracks_origin_inner(view, backend_contract, *elem, include_pointers, seen)
         }),
         Ty::Array { inner, .. } | Ty::Slice(inner) => {
             type_id_tracks_origin_inner(view, backend_contract, *inner, include_pointers, seen)
         }
+        // Abstract callable signatures do not describe the carried environment.
+        // Track its possible loans even when Args/Ret/capture headers are scalar.
+        // This grants no invocation, source-independence or effect authority.
         Ty::Function {
             params,
             ret,
             captures,
             ..
         } => {
-            params.iter().any(|param| {
-                type_id_tracks_origin_inner(view, backend_contract, *param, include_pointers, seen)
-            }) || type_id_tracks_origin_inner(view, backend_contract, *ret, include_pointers, seen)
+            include_pointers
+                || params
+                    .iter()
+                    .chain(std::iter::once(ret))
+                    .any(|ty| type_id_tracks_origin_inner(view, backend_contract, *ty, false, seen))
                 || captures.iter().any(|capture| {
-                    type_id_tracks_origin_inner(
-                        view,
-                        backend_contract,
-                        capture.ty,
-                        include_pointers,
-                        seen,
-                    )
+                    capture.kind != crate::types::CaptureKind::Move
+                        || type_id_tracks_origin_inner(
+                            view,
+                            backend_contract,
+                            capture.ty,
+                            false,
+                            seen,
+                        )
                 })
         }
         Ty::Struct { id, args } => {
@@ -1216,7 +2502,18 @@ fn type_id_tracks_origin_for_structural_type(
         Type::Object(_) => true,
         Type::ObjectSelf { .. } => true,
         Type::Pointer(_) if include_pointers => true,
-        Type::Tuple(elems) => elems.iter().any(|elem| {
+        Type::Tuple(elems) | Type::StructRepresentation { fields: elems, .. } => {
+            elems.iter().any(|elem| {
+                type_id_tracks_origin_for_structural_type(
+                    view,
+                    backend_contract,
+                    elem,
+                    include_pointers,
+                    seen,
+                )
+            })
+        }
+        Type::EnumRepresentation { variants, .. } => variants.iter().flatten().any(|elem| {
             type_id_tracks_origin_for_structural_type(
                 view,
                 backend_contract,
@@ -1238,29 +2535,29 @@ fn type_id_tracks_origin_for_structural_type(
             captures,
             ..
         } => {
-            params.iter().any(|param| {
-                type_id_tracks_origin_for_structural_type(
-                    view,
-                    backend_contract,
-                    param,
-                    include_pointers,
-                    seen,
-                )
-            }) || type_id_tracks_origin_for_structural_type(
-                view,
-                backend_contract,
-                ret,
-                include_pointers,
-                seen,
-            ) || captures.iter().any(|capture| {
-                type_id_tracks_origin_for_structural_type(
-                    view,
-                    backend_contract,
-                    &capture.ty,
-                    include_pointers,
-                    seen,
-                )
-            })
+            include_pointers
+                || params
+                    .iter()
+                    .chain(std::iter::once(ret.as_ref()))
+                    .any(|ty| {
+                        type_id_tracks_origin_for_structural_type(
+                            view,
+                            backend_contract,
+                            ty,
+                            false,
+                            seen,
+                        )
+                    })
+                || captures.iter().any(|capture| {
+                    capture.kind != crate::types::CaptureKind::Move
+                        || type_id_tracks_origin_for_structural_type(
+                            view,
+                            backend_contract,
+                            &capture.ty,
+                            false,
+                            seen,
+                        )
+                })
         }
         Type::Struct { id, args } => {
             args.iter().any(|arg| {
@@ -1492,21 +2789,63 @@ fn type_id_is_mut_reference(view: TypeView<'_>, ty: crate::ids::TypeId) -> bool 
 
 impl BorrowChecker {
     pub fn run(program: &MirProgram) -> Result<(), Diagnostics> {
-        let mut diagnostics = Diagnostics::default();
-        let return_summaries = Self::reference_return_summaries(program);
+        let mut diagnostics = crate::mir::erased::native_retention_diagnostics(program);
+        let value_loan_proof = Self::native_return_loan_proof(program);
+        let return_summaries = &value_loan_proof.lifetime;
+        callable_results::validate_declarations(
+            program,
+            return_summaries,
+            &value_loan_proof.measured,
+            Some(&value_loan_proof.sources),
+            &mut diagnostics,
+        );
+        #[cfg(test)]
+        hkt_return_origin_tests::pre_callable_result_origins(
+            program,
+            return_summaries,
+            &value_loan_proof.summaries,
+        );
+        let mutations = NativeMutationTable::for_program(program);
+        #[cfg(test)]
+        allocator_trace_tests::program(program, return_summaries, &value_loan_proof.summaries);
+        #[cfg(test)]
+        allocator_trace_tests::return_program(
+            program,
+            return_summaries,
+            &value_loan_proof.summaries,
+        );
+        #[cfg(test)]
+        allocator_trace_tests::integration_begin(program);
 
         for (_, func) in program.functions() {
-            if let Err(func_diagnostics) = Self::check_function_with_contract(
+            if let Err(func_diagnostics) = Self::validate_with_mutation_authority(
                 func,
                 &program.type_context,
                 &program.backend_contract,
-                &return_summaries,
+                return_summaries,
+                &value_loan_proof.summaries,
+                &mutations,
+                Some(&value_loan_proof.sources),
             ) {
                 for diag in func_diagnostics.0 {
                     diagnostics.push(diag);
                 }
             }
         }
+
+        #[cfg(test)]
+        allocator_trace_tests::fresh_missing_program(
+            program,
+            &return_summaries,
+            &value_loan_proof.summaries,
+        );
+        #[cfg(test)]
+        allocator_trace_tests::integration_program(
+            program,
+            &return_summaries,
+            &value_loan_proof.summaries,
+            &diagnostics,
+        );
 
         if diagnostics.0.is_empty() {
             Ok(())
@@ -1528,6 +2867,7 @@ impl BorrowChecker {
         )
     }
 
+    #[cfg(test)]
     fn check_function_with_contract(
         func: &MirFunction,
         type_context: &crate::type_context::TypeContext,
@@ -1545,18 +2885,58 @@ impl BorrowChecker {
         backend_contract: &MirBackendContract,
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
     ) -> Result<(), Diagnostics> {
-        let mut diagnostics = Self::validate_moves_and_initialization(
+        Self::validate_with_origin_authority(
             func,
             type_context,
             backend_contract,
             return_summaries,
+            return_summaries,
+        )
+    }
+
+    fn validate_with_origin_authority(
+        func: &MirFunction,
+        type_context: &crate::type_context::TypeContext,
+        backend_contract: &MirBackendContract,
+        return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        value_loan_summaries: &HashMap<MirFunctionId, OriginSet>,
+    ) -> Result<(), Diagnostics> {
+        Self::validate_with_mutation_authority(
+            func,
+            type_context,
+            backend_contract,
+            return_summaries,
+            value_loan_summaries,
+            &NativeMutationTable::default(),
+            None,
+        )
+    }
+
+    fn validate_with_mutation_authority(
+        func: &MirFunction,
+        type_context: &crate::type_context::TypeContext,
+        backend_contract: &MirBackendContract,
+        return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        value_loan_summaries: &HashMap<MirFunctionId, OriginSet>,
+        mutations: &NativeMutationTable,
+        sources: Option<&return_sources::NativeReturnSources>,
+    ) -> Result<(), Diagnostics> {
+        let (mut diagnostics, mutation_origins) = Self::validate_moves_with_return_sources(
+            func,
+            type_context,
+            backend_contract,
+            value_loan_summaries,
+            mutations,
+            sources,
         );
-        Self::validate_reference_escapes(
+        Self::validate_reference_escapes_with_return_sources(
             func,
             type_context,
             backend_contract,
             return_summaries,
             &mut diagnostics,
+            &mutation_origins,
+            sources,
         );
         Self::validate_drop_obligations(func, backend_contract, &mut diagnostics);
 
@@ -1568,29 +2948,316 @@ impl BorrowChecker {
     }
 
     fn reference_return_summaries(program: &MirProgram) -> HashMap<MirFunctionId, OriginSet> {
-        let mut summaries = HashMap::new();
+        Self::return_summaries_for_purpose(program, OriginPurpose::Lifetime)
+    }
+
+    fn native_return_loan_proof(program: &MirProgram) -> NativeReturnLoanProof {
+        let mut sources = return_sources::NativeReturnSources::for_program(program);
+        // Never flatten qualified loads into globally precise ParamContents.
+        // Unqualified calls still instantiate the original conservative summary.
+        let mut measured = Self::return_summaries_for_purpose(program, OriginPurpose::ValueLoans);
+        let mut lifetime = Self::reference_return_summaries(program);
+        // Removing UnknownExternal for loan transport is not certification of
+        // an empty dependency envelope. Both raw measurements discharge proof.
+        loop {
+            // Only already measured, signature-checked producers enter this
+            // layer. Recursive unknown callbacks cannot seed their own proof.
+            let scalar_lifetime = Self::measured_return_summaries(
+                program,
+                OriginPurpose::Lifetime,
+                Some(&sources),
+                true,
+            );
+            let scalar_values = Self::measured_return_summaries(
+                program,
+                OriginPurpose::ValueLoans,
+                Some(&sources),
+                true,
+            );
+            let scalar_changed = scalar_lifetime != sources.scalar_lifetime_dependencies
+                || scalar_values != sources.scalar_value_dependencies;
+            sources.scalar_lifetime_dependencies = scalar_lifetime;
+            sources.scalar_value_dependencies = scalar_values;
+            let changed = sources.certify_callable_results(program, &lifetime, &measured);
+            let next_lifetime = Self::return_summaries_with_sources(
+                program,
+                OriginPurpose::Lifetime,
+                Some(&sources),
+            );
+            let next_values = Self::return_summaries_with_sources(
+                program,
+                OriginPurpose::ValueLoans,
+                Some(&sources),
+            );
+            if !changed && !scalar_changed && next_lifetime == lifetime && next_values == measured {
+                break;
+            }
+            lifetime = next_lifetime;
+            measured = next_values;
+        }
+        let mut summaries = measured.clone();
+        for origins in summaries.values_mut() {
+            // An opaque leaf's own external storage is not an input loan. Its
+            // actual input origins were unioned separately and remain intact.
+            origins.remove(&ReferenceOrigin::UnknownExternal);
+        }
+        NativeReturnLoanProof {
+            summaries,
+            measured,
+            lifetime,
+            sources,
+        }
+    }
+
+    pub(crate) fn checked_native_return_origins(
+        program: &MirProgram,
+    ) -> HashMap<MirFunctionId, crate::hir::borrowing::NativeReturnOrigins<TypeId>> {
+        use crate::hir::borrowing::{NativeReturnOrigins, NativeReturnSource};
+        let summaries = Self::return_summaries_for_purpose(program, OriginPurpose::ValueLoans);
+        let proof = Self::native_return_loan_proof(program);
+        let resolved = call_targets::resolved_bodies(program);
+        let tc = &program.type_context;
+        let contract = &program.backend_contract;
+        if !crate::mir::backend_contract::validate_backend_contract_against_mir(
+            contract,
+            program.functions.values(),
+        )
+        .is_empty()
+        {
+            return HashMap::new();
+        }
+        let mut storage_report = crate::mir::agreement::MirAgreementReport::default();
+        crate::mir::agreement::validate_native_result_storage(program, &mut storage_report);
+        if !storage_report.is_clean() {
+            return HashMap::new();
+        }
+        let mut exported = HashMap::new();
+        for (id, body) in program.functions() {
+            let body = resolved.get(id).unwrap_or(body);
+            if !Self::body_available_for_purpose(program, id, body, OriginPurpose::ValueLoans)
+                || !body.closure_captures.is_empty()
+            {
+                continue;
+            }
+            let measured;
+            let storage = contract.function_result_storage(body);
+            let tracked = type_id_tracks_origin(TypeView::new(tc), contract, storage);
+            let summary = if tracked {
+                let Some(summary) = summaries.get(id) else {
+                    continue;
+                };
+                summary
+            } else {
+                // Value dependencies of an untracked owning/aggregate result
+                // are not portable storage loans. This extension publishes
+                // only actual scalar producer measurements, not owner layouts.
+                if !tc.type_for(body.ret_type).is_numeric()
+                    && !matches!(tc.try_ty(body.ret_type), Some(Ty::Bool | Ty::Char))
+                {
+                    continue;
+                }
+                // A scalar result header is not producer authority. Retain a
+                // separately measured dependency envelope from this checked
+                // body, and export only role-agreeing portable sources.
+                let lifetime = callable_results::body_sources_with_calls(
+                    program,
+                    body,
+                    &proof.lifetime,
+                    &proof.measured,
+                    Some(&proof.sources),
+                );
+                let values = callable_results::body_sources_with_calls(
+                    program,
+                    body,
+                    &proof.measured,
+                    &proof.measured,
+                    Some(&proof.sources),
+                );
+                if lifetime != values {
+                    continue;
+                }
+                let Some(crate::types::CallableResultBorrowing::Sources(sources)) = lifetime else {
+                    continue;
+                };
+                let Some(origins) = sources
+                    .iter()
+                    .map(|source| {
+                        use crate::types::CallableResultSource as S;
+                        Some(match *source {
+                            S::ArgumentValue(index) => {
+                                ReferenceOrigin::Param(Local(index as usize + 1))
+                            }
+                            S::ArgumentContents(index) => {
+                                ReferenceOrigin::ParamContents(Local(index as usize + 1))
+                            }
+                            S::ArgumentBorrowedContents(index) => {
+                                ReferenceOrigin::ParamBorrowedContents(Local(index as usize + 1))
+                            }
+                            S::Static => ReferenceOrigin::Static,
+                            S::Unknown => ReferenceOrigin::UnknownExternal,
+                            _ => return None,
+                        })
+                    })
+                    .collect::<Option<OriginSet>>()
+                else {
+                    continue;
+                };
+                measured = origins;
+                &measured
+            };
+            let analysis = ReferenceEscapeAnalysis::new(
+                body,
+                tc,
+                contract,
+                &summaries,
+                MissingSummaryMode::Defer,
+            );
+            let results = run_fixpoint(&analysis, body);
+            if !body.basic_blocks.iter().enumerate().any(|(block, data)| {
+                results.reachable[block]
+                    && matches!(
+                        data.terminator,
+                        Some(Terminator::Return | Terminator::ReturnWithOrigin { .. })
+                    )
+            }) {
+                continue;
+            }
+            let sources = summary
+                .iter()
+                .map(|origin| {
+                    let argument = |local: Local| {
+                        let index = local.0.checked_sub(1)?;
+                        (index < body.arg_count
+                            && body.local_decls.get(local.0)?.source == LocalSource::Argument)
+                            .then(|| u32::try_from(index).ok())
+                            .flatten()
+                    };
+                    Some(match origin {
+                        ReferenceOrigin::Param(local) => {
+                            NativeReturnSource::ArgumentValue(argument(*local)?)
+                        }
+                        ReferenceOrigin::ParamContents(local) => {
+                            NativeReturnSource::ArgumentContents(argument(*local)?)
+                        }
+                        ReferenceOrigin::ParamBorrowedContents(local) => {
+                            NativeReturnSource::ArgumentBorrowedContents(argument(*local)?)
+                        }
+                        ReferenceOrigin::Static => NativeReturnSource::Static,
+                        ReferenceOrigin::UnknownExternal if !tracked => {
+                            NativeReturnSource::UnknownExternal
+                        }
+                        ReferenceOrigin::Local(_)
+                        | ReferenceOrigin::Temporary(_)
+                        | ReferenceOrigin::UnknownExternal => return None,
+                    })
+                })
+                .collect::<Option<std::collections::BTreeSet<_>>>();
+            let Some(sources) = sources else {
+                continue;
+            };
+            let entry = NativeReturnOrigins {
+                params: body
+                    .local_decls
+                    .iter()
+                    .skip(1)
+                    .take(body.arg_count)
+                    .map(|decl| decl.ty)
+                    .collect(),
+                ret: storage,
+                sources: sources.into_iter().collect(),
+            };
+            if entry.sources_are_valid(|ty| {
+                matches!(tc.try_ty(*ty), Some(Ty::Reference { .. } | Ty::Pointer(_)))
+            }) {
+                exported.insert(id.clone(), entry);
+            }
+        }
+        exported
+    }
+
+    pub(crate) fn checked_returned_callable_borrowing(
+        program: &MirProgram,
+    ) -> HashMap<MirFunctionId, crate::types::CallableResultBorrowing> {
+        let proof = Self::native_return_loan_proof(program);
+        program
+            .functions()
+            .filter_map(|(id, _)| {
+                Some((
+                    id.clone(),
+                    proof.sources.callable_results.portable_return(id)?,
+                ))
+            })
+            .collect()
+    }
+
+    fn return_summaries_for_purpose(
+        program: &MirProgram,
+        purpose: OriginPurpose,
+    ) -> HashMap<MirFunctionId, OriginSet> {
+        Self::return_summaries_with_sources(program, purpose, None)
+    }
+
+    fn return_summaries_with_sources(
+        program: &MirProgram,
+        purpose: OriginPurpose,
+        sources: Option<&return_sources::NativeReturnSources>,
+    ) -> HashMap<MirFunctionId, OriginSet> {
+        Self::measured_return_summaries(program, purpose, sources, false)
+    }
+
+    fn measured_return_summaries(
+        program: &MirProgram,
+        purpose: OriginPurpose,
+        sources: Option<&return_sources::NativeReturnSources>,
+        measure_scalars: bool,
+    ) -> HashMap<MirFunctionId, OriginSet> {
+        // Presence includes proven empty bodies; absence means opaque authority.
+        let resolved = call_targets::resolved_bodies(program);
+        let measured_result = |function: &MirFunction| {
+            let tc = &program.type_context;
+            type_id_tracks_origin(
+                TypeView::new(tc),
+                &program.backend_contract,
+                program.backend_contract.function_result_storage(function),
+            ) || measure_scalars
+                && (tc.type_for(function.ret_type).is_numeric()
+                    || matches!(tc.try_ty(function.ret_type), Some(Ty::Bool | Ty::Char)))
+        };
+        let mut summaries = program
+            .functions()
+            .filter_map(|(id, func)| {
+                let func = resolved.get(id).unwrap_or(func);
+                (Self::body_available_for_purpose(program, id, func, purpose)
+                    && measured_result(func))
+                .then(|| (id.clone(), OriginSet::new()))
+            })
+            .collect::<HashMap<_, _>>();
+
+        // Bodyless return authority is signature-bound producer evidence, never
+        // effect knowledge or an inferred empty summary.
+        let imported = Self::imported_native_return_summaries(program, purpose, measure_scalars);
+        summaries.extend(imported.clone());
 
         loop {
             let previous = summaries.clone();
-            let mut next = HashMap::new();
+            let mut next = imported.clone();
             for (id, func) in program.functions() {
-                if !type_id_tracks_origin(
-                    TypeView::new(&program.type_context),
-                    &program.backend_contract,
-                    func.ret_type,
-                ) {
+                let func = resolved.get(id).unwrap_or(func);
+                if !Self::body_available_for_purpose(program, id, func, purpose)
+                    || !measured_result(func)
+                {
                     continue;
                 }
 
-                let origins = Self::reference_return_origins(
+                let origins = Self::return_origins_with_sources(
                     func,
                     &program.type_context,
                     &program.backend_contract,
                     &previous,
+                    purpose,
+                    sources,
                 );
-                if !origins.is_empty() {
-                    next.insert(id.clone(), origins);
-                }
+                next.insert(id.clone(), origins);
             }
 
             if next == previous {
@@ -1600,47 +3267,185 @@ impl BorrowChecker {
         }
     }
 
+    fn imported_native_return_summaries(
+        program: &MirProgram,
+        purpose: OriginPurpose,
+        measure_scalars: bool,
+    ) -> HashMap<MirFunctionId, OriginSet> {
+        use crate::hir::borrowing::NativeReturnSource;
+        let tc = &program.type_context;
+        let contract = &program.backend_contract;
+        if !crate::mir::backend_contract::validate_backend_contract(contract).is_empty() {
+            return HashMap::new();
+        }
+        contract
+            .native_return_origins
+            .iter()
+            .filter_map(|(key, origins)| {
+                if !origins
+                    .params
+                    .iter()
+                    .chain(std::iter::once(&origins.ret))
+                    .all(|ty| tc.type_id_tree_is_valid(*ty))
+                    || !origins.sources_are_valid(|ty| {
+                        matches!(tc.try_ty(*ty), Some(Ty::Reference { .. } | Ty::Pointer(_)))
+                    })
+                    || origins
+                        .sources
+                        .contains(&NativeReturnSource::UnknownExternal)
+                        && !tc.type_for(origins.ret).is_numeric()
+                        && !matches!(tc.try_ty(origins.ret), Some(Ty::Bool | Ty::Char))
+                    || !measure_scalars
+                        && !type_id_tracks_origin(TypeView::new(tc), contract, origins.ret)
+                {
+                    return None;
+                }
+                let id = MirCallable::Resolved(key.clone()).function_id()?;
+                if program.functions().any(|(body_id, _)| body_id == &id) {
+                    return None;
+                }
+                let summary = origins
+                    .sources
+                    .iter()
+                    .map(|source| match *source {
+                        NativeReturnSource::ArgumentValue(index) => {
+                            ReferenceOrigin::Param(Local(index as usize + 1))
+                        }
+                        NativeReturnSource::ArgumentContents(index) => {
+                            ReferenceOrigin::ParamContents(Local(index as usize + 1))
+                        }
+                        NativeReturnSource::ArgumentBorrowedContents(index) => {
+                            ReferenceOrigin::ParamBorrowedContents(Local(index as usize + 1))
+                        }
+                        NativeReturnSource::Static => ReferenceOrigin::Static,
+                        NativeReturnSource::UnknownExternal => ReferenceOrigin::UnknownExternal,
+                    })
+                    .collect();
+                let summary = if purpose == OriginPurpose::Lifetime
+                    && matches!(tc.try_ty(origins.ret), Some(Ty::Pointer(_)))
+                {
+                    ReferenceEscapeAnalysis::borrowed_contents_origins(summary)
+                } else {
+                    summary
+                };
+                Some((id, summary))
+            })
+            .collect()
+    }
+
+    fn body_available_for_purpose(
+        program: &MirProgram,
+        id: &MirFunctionId,
+        func: &MirFunction,
+        purpose: OriginPurpose,
+    ) -> bool {
+        if purpose == OriginPurpose::Lifetime {
+            return !func.basic_blocks.is_empty();
+        }
+        if func.basic_blocks.is_empty() || &func.id != id {
+            return false;
+        }
+        let Some(key) = program.backend_contract.function_bodies.get(id) else {
+            return false;
+        };
+        let Some(decl) = program.backend_contract.callable(key) else {
+            return false;
+        };
+        // Opaque calls contribute UnknownExternal AND every argument/callable
+        // dependency. Measuring that conservative body is not certification of
+        // its incoming callback, independence, or effects. Refusing the whole
+        // body instead loses the adapter's checked contents-versus-storage roles.
+        &decl.key == key
+            && matches!(&decl.kind, crate::mir::MirCallableKind::LocalBody { function_id } if function_id == id)
+            && decl.signature.params.len() == func.arg_count
+            && decl
+                .signature
+                .params
+                .iter()
+                .enumerate()
+                .all(|(index, param)| {
+                    func.local_decls
+                        .get(index + 1)
+                        .is_some_and(|local| local.ty == param.semantic_ty)
+                })
+            && decl.signature.ret.semantic_ty == func.ret_type
+            && decl.signature.ret.abi_ty == func.ret_type
+            && func
+                .local_decls
+                .first()
+                .is_some_and(|local| local.ty == func.ret_type)
+    }
+
+    #[cfg(test)]
     fn reference_return_origins(
         func: &MirFunction,
         type_context: &crate::type_context::TypeContext,
         backend_contract: &MirBackendContract,
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
     ) -> OriginSet {
-        let analysis = ReferenceEscapeAnalysis::new(
+        Self::return_origins_for_purpose(
+            func,
+            type_context,
+            backend_contract,
+            return_summaries,
+            OriginPurpose::Lifetime,
+        )
+    }
+
+    fn return_origins_for_purpose(
+        func: &MirFunction,
+        type_context: &crate::type_context::TypeContext,
+        backend_contract: &MirBackendContract,
+        return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        purpose: OriginPurpose,
+    ) -> OriginSet {
+        Self::return_origins_with_sources(
+            func,
+            type_context,
+            backend_contract,
+            return_summaries,
+            purpose,
+            None,
+        )
+    }
+
+    fn return_origins_with_sources(
+        func: &MirFunction,
+        type_context: &crate::type_context::TypeContext,
+        backend_contract: &MirBackendContract,
+        return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        purpose: OriginPurpose,
+        sources: Option<&return_sources::NativeReturnSources>,
+    ) -> OriginSet {
+        let mut analysis = ReferenceEscapeAnalysis::new(
             func,
             type_context,
             backend_contract,
             return_summaries,
             MissingSummaryMode::Defer,
-        );
-        let results = run_fixpoint(&analysis, func);
-        let return_place = Place {
-            local: Local(0),
-            projection: Vec::new(),
-        };
-        let mut origins = OriginSet::new();
-
-        for (block_idx, block) in func.basic_blocks.iter().enumerate() {
-            if !matches!(
-                block.terminator,
-                Some(Terminator::Return | Terminator::ReturnWithOrigin { .. })
-            ) {
-                continue;
-            }
-            for (place, block_origins) in &results.exit_sets[block_idx].origins {
-                if ReferenceEscapeAnalysis::place_is_prefix(&return_place, place) {
-                    origins.extend(block_origins.iter().copied());
-                }
-            }
-        }
+        )
+        .with_return_sources(sources);
+        analysis.purpose = purpose;
+        // Checked scalar bodies participate in dependency composition; normal
+        // loan/lifetime consumers still track only their actual carrier types.
+        analysis.track_value_dependencies =
+            !type_id_tracks_origin(TypeView::new(type_context), backend_contract, func.ret_type)
+                && (type_context.type_for(func.ret_type).is_numeric()
+                    || matches!(
+                        type_context.try_ty(func.ret_type),
+                        Some(Ty::Bool | Ty::Char)
+                    ));
+        let origins = analysis.measured_return_origins().unwrap_or_default();
 
         // A raw-pointer result is a view carrier. Keep its receiver provenance
         // until a later dereference, without treating copies of reference fields
         // or rebuilt owning aggregates as borrows of the receiver's storage.
-        if matches!(
-            TypeView::new(type_context).ty(func.ret_type),
-            Ty::Pointer(_)
-        ) {
+        if purpose == OriginPurpose::Lifetime
+            && matches!(
+                TypeView::new(type_context).ty(func.ret_type),
+                Ty::Pointer(_)
+            )
+        {
             ReferenceEscapeAnalysis::borrowed_contents_origins(origins)
         } else {
             origins
@@ -1652,25 +3457,71 @@ impl BorrowChecker {
         type_context: &crate::type_context::TypeContext,
         backend_contract: &MirBackendContract,
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
-    ) -> Diagnostics {
+        mutations: &NativeMutationTable,
+    ) -> (Diagnostics, NativeMutationOrigins) {
+        Self::validate_moves_with_return_sources(
+            func,
+            type_context,
+            backend_contract,
+            return_summaries,
+            mutations,
+            None,
+        )
+    }
+
+    fn validate_moves_with_return_sources(
+        func: &MirFunction,
+        type_context: &crate::type_context::TypeContext,
+        backend_contract: &MirBackendContract,
+        return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        mutations: &NativeMutationTable,
+        sources: Option<&return_sources::NativeReturnSources>,
+    ) -> (Diagnostics, NativeMutationOrigins) {
         let mut diagnostics = Diagnostics::default();
+        let mut mutation_origins = NativeMutationOrigins::new();
         let mut move_validation = MoveValidationContext::new(type_context, backend_contract);
 
         let init_analysis = InitializationAnalysis::new(func, type_context);
         let init_results = run_fixpoint(&init_analysis, func);
 
-        let borrows = collect_function_borrows_with_contract(
+        let borrows = borrows::collect_function_borrows_with_return_sources(
             func,
             type_context,
             backend_contract,
             return_summaries,
+            sources,
         );
         let place_paths = crate::mir::borrowck::paths::PlacePathTable::for_function(func);
         let loan_table = LoanTable::from_borrows_with_paths(&borrows, place_paths);
         let loans_by_location = LoanLocationIndex::for_function(&loan_table, func);
-        let reference_liveness =
-            compute_reference_liveness_with_contract(func, type_context, backend_contract);
-        let active_loan_entries = compute_active_loan_entries_with_contract(
+        let candidates = func
+            .basic_blocks
+            .iter()
+            .map(|block| {
+                block
+                    .terminator
+                    .as_ref()
+                    .map(|term| {
+                        native_mutation_candidates(
+                            func,
+                            type_context,
+                            backend_contract,
+                            mutations,
+                            term,
+                        )
+                    })
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        let reference_liveness = liveness::compute_reference_liveness_with_return_sources(
+            func,
+            type_context,
+            backend_contract,
+            &loan_table,
+            &candidates,
+            sources,
+        );
+        let active_loan_entries = liveness::compute_active_loan_entries_with_return_sources(
             func,
             type_context,
             backend_contract,
@@ -1678,6 +3529,20 @@ impl BorrowChecker {
             &loans_by_location,
             &reference_liveness,
             return_summaries,
+            &candidates,
+            sources,
+        );
+
+        #[cfg(test)]
+        allocator_trace_tests::function(
+            func,
+            type_context,
+            backend_contract,
+            &init_results,
+            &loan_table,
+            &loans_by_location,
+            &reference_liveness,
+            &active_loan_entries,
         );
 
         for (block_idx, block) in func.basic_blocks.iter().enumerate() {
@@ -1688,6 +3553,14 @@ impl BorrowChecker {
             let mut active_loans = active_loan_entries[block_idx].clone();
 
             for (stmt_idx, stmt) in block.statements.iter().enumerate() {
+                #[cfg(test)]
+                allocator_trace_tests::state(
+                    "before-retain",
+                    func,
+                    stmt.span.as_ref(),
+                    &state,
+                    &active_loans,
+                );
                 let mut live_loans = active_loans.clone();
                 if let Some(live_locals) = reference_liveness
                     .before_statement_sets
@@ -1696,6 +3569,19 @@ impl BorrowChecker {
                 {
                     live_loans.retain_owners(|owner| live_locals.contains(owner));
                 }
+
+                #[cfg(test)]
+                allocator_trace_tests::statement(
+                    func,
+                    type_context,
+                    backend_contract,
+                    &loan_table,
+                    block_idx,
+                    stmt_idx,
+                    stmt,
+                    &state,
+                    &live_loans,
+                );
 
                 Self::check_statement_loans(
                     stmt,
@@ -1750,6 +3636,18 @@ impl BorrowChecker {
             }
 
             if let Some(term) = &block.terminator {
+                #[cfg(test)]
+                allocator_trace_tests::terminator(
+                    func,
+                    type_context,
+                    backend_contract,
+                    &loan_table,
+                    block_idx,
+                    block.statements.len(),
+                    term,
+                    &state,
+                    &active_loans,
+                );
                 Self::check_terminator(
                     term,
                     type_context,
@@ -1761,12 +3659,35 @@ impl BorrowChecker {
                     func,
                     &mut diagnostics,
                 );
+                mutation_origins.insert(
+                    block_idx,
+                    native_mutation_bindings(
+                        func,
+                        type_context,
+                        backend_contract,
+                        &loan_table,
+                        &active_loans,
+                        term,
+                        &candidates[block_idx],
+                    ),
+                );
+                liveness::apply_active_loan_terminator_transfer_with_return_sources(
+                    &mut active_loans,
+                    func,
+                    type_context,
+                    backend_contract,
+                    term,
+                    return_summaries,
+                    Some((&loan_table, &candidates[block_idx])),
+                    sources,
+                );
             }
         }
 
-        diagnostics
+        (diagnostics, mutation_origins)
     }
 
+    #[cfg(test)]
     fn validate_reference_escapes(
         func: &MirFunction,
         type_context: &crate::type_context::TypeContext,
@@ -1774,30 +3695,76 @@ impl BorrowChecker {
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
         diagnostics: &mut Diagnostics,
     ) {
-        if !type_id_contains_reference(TypeView::new(type_context), backend_contract, func.ret_type)
-            && !func.local_decls.iter().any(|decl| {
-                type_id_tracks_origin(TypeView::new(type_context), backend_contract, decl.ty)
-            })
-        {
+        Self::validate_reference_escapes_with_mutations(
+            func,
+            type_context,
+            backend_contract,
+            return_summaries,
+            diagnostics,
+            &NativeMutationOrigins::new(),
+        );
+    }
+
+    fn validate_reference_escapes_with_mutations(
+        func: &MirFunction,
+        type_context: &crate::type_context::TypeContext,
+        backend_contract: &MirBackendContract,
+        return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        diagnostics: &mut Diagnostics,
+        mutation_origins: &NativeMutationOrigins,
+    ) {
+        Self::validate_reference_escapes_with_return_sources(
+            func,
+            type_context,
+            backend_contract,
+            return_summaries,
+            diagnostics,
+            mutation_origins,
+            None,
+        );
+    }
+
+    fn validate_reference_escapes_with_return_sources(
+        func: &MirFunction,
+        type_context: &crate::type_context::TypeContext,
+        backend_contract: &MirBackendContract,
+        return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        diagnostics: &mut Diagnostics,
+        mutation_origins: &NativeMutationOrigins,
+        sources: Option<&return_sources::NativeReturnSources>,
+    ) {
+        #[cfg(test)]
+        allocator_trace_tests::integration_return_gate(func, type_context, backend_contract);
+        if !type_id_contains_reference(
+            TypeView::new(type_context),
+            backend_contract,
+            backend_contract.function_result_storage(func),
+        ) && !func.local_decls.iter().any(|decl| {
+            type_id_tracks_origin(TypeView::new(type_context), backend_contract, decl.ty)
+        }) {
             return;
         }
 
-        let analysis = ReferenceEscapeAnalysis::new(
+        let mut analysis = ReferenceEscapeAnalysis::new(
             func,
             type_context,
             backend_contract,
             return_summaries,
             MissingSummaryMode::Conservative,
         );
+        analysis.return_sources = sources;
+        analysis.mutation_origins = Some(mutation_origins);
         let results = run_fixpoint(&analysis, func);
+
+        #[cfg(test)]
+        allocator_trace_tests::return_exits(&analysis, &results);
+        #[cfg(test)]
+        allocator_trace_tests::integration_return_exits(&analysis, &results);
 
         Self::validate_temporary_reference_storage(func, &analysis, &results, diagnostics);
 
-        if !type_id_contains_reference(TypeView::new(type_context), backend_contract, func.ret_type)
-        {
-            return;
-        }
-
+        // An abstract Fn field can omit captures from its declared type while
+        // the actual returned value still borrows local closure storage.
         let return_place = Place {
             local: Local(0),
             projection: Vec::new(),
@@ -1813,16 +3780,50 @@ impl BorrowChecker {
                 if !ReferenceEscapeAnalysis::place_is_prefix(&return_place, place) {
                     continue;
                 }
+                #[cfg(test)]
+                allocator_trace_tests::integration_return_entry(
+                    &analysis, &results, block_idx, place, origins,
+                );
+
+                let Some(ty) = backend_contract.place_type_id(type_context, func, place) else {
+                    #[cfg(test)]
+                    allocator_trace_tests::fresh_missing_return(
+                        &analysis, &results, block_idx, place, origins,
+                    );
+                    diagnostics.push(
+                        Diagnostic::for_internal(format!(
+                            "Missing checked return-place type for {:?} in {:?}",
+                            place, func.id,
+                        ))
+                        .with_code(DiagnosticCode::Borrow),
+                    );
+                    continue;
+                };
+                if !return_type_needs_escape_check(type_context, backend_contract, ty) {
+                    continue;
+                }
 
                 for origin in origins {
                     match origin {
                         ReferenceOrigin::Temporary(local) => {
+                            #[cfg(test)]
+                            allocator_trace_tests::integration_return_reject(
+                                &analysis, block_idx, place, *origin,
+                            );
                             diagnostics.push(mir_diagnostic(
                                 "Cannot return reference to temporary value".to_string(),
                                 Self::origin_span(func, *local),
                             ));
                         }
                         ReferenceOrigin::Local(local) => {
+                            #[cfg(test)]
+                            allocator_trace_tests::integration_return_reject(
+                                &analysis, block_idx, place, *origin,
+                            );
+                            #[cfg(test)]
+                            hkt_return_origin_tests::local_return_reject(
+                                &analysis, block_idx, place, origins, *local, ty,
+                            );
                             diagnostics.push(mir_diagnostic(
                                 "Cannot return reference to local value because it does not live long enough"
                                     .to_string(),
@@ -1852,6 +3853,48 @@ impl BorrowChecker {
             }
             let mut state = results.entry_sets[block_idx].clone();
             for stmt in &block.statements {
+                #[cfg(test)]
+                let integration_before = allocator_trace_tests::integration_statement_before(
+                    &analysis,
+                    &state,
+                    stmt,
+                    block_idx,
+                    diagnostics.0.len(),
+                );
+                let external_destination = if let StatementKind::Assign(dest, _) = &stmt.kind {
+                    let mut prefix = Place {
+                        local: dest.local,
+                        projection: Vec::new(),
+                    };
+                    let through_reference = dest.projection.iter().any(|projection| {
+                        let reference = *projection == Projection::Deref
+                            && analysis
+                                .backend_contract
+                                .place_type_id(analysis.type_context, func, &prefix)
+                                .is_some_and(|ty| {
+                                    matches!(
+                                        analysis.type_context.try_ty(ty),
+                                        Some(Ty::Reference { .. })
+                                    )
+                                });
+                        prefix.projection.push(projection.clone());
+                        reference
+                    });
+                    through_reference
+                        && analysis
+                            .origins_for_borrowed_place(&state, dest)
+                            .iter()
+                            .any(|origin| {
+                                matches!(
+                                    origin,
+                                    ReferenceOrigin::Param(_)
+                                        | ReferenceOrigin::ParamContents(_)
+                                        | ReferenceOrigin::ParamBorrowedContents(_)
+                                )
+                            })
+                } else {
+                    false
+                };
                 if let StatementKind::Assign(dest, rvalue) = &stmt.kind {
                     Self::report_temporary_reference_origins(
                         func,
@@ -1860,6 +3903,42 @@ impl BorrowChecker {
                     );
                 }
                 analysis.apply_statement(&mut state, stmt);
+                #[cfg(test)]
+                allocator_trace_tests::integration_statement_after(
+                    &analysis,
+                    &state,
+                    integration_before,
+                    diagnostics,
+                );
+                if external_destination {
+                    if let StatementKind::Assign(dest, _) = &stmt.kind {
+                        if analysis
+                            .backend_contract
+                            .place_type_id(analysis.type_context, func, dest)
+                            .is_some_and(|ty| {
+                                type_id_contains_reference(
+                                    TypeView::new(analysis.type_context),
+                                    analysis.backend_contract,
+                                    ty,
+                                )
+                            })
+                            && analysis
+                                .origins_for_place(&state, dest)
+                                .iter()
+                                .any(|origin| {
+                                    matches!(
+                                        origin,
+                                        ReferenceOrigin::Local(_) | ReferenceOrigin::Temporary(_)
+                                    )
+                                })
+                        {
+                            diagnostics.push(mir_diagnostic(
+                                "Cannot retain a reference to local storage in borrowed external storage".into(),
+                                stmt.span.clone(),
+                            ));
+                        }
+                    }
+                }
             }
 
             if let Some(Terminator::Call {
@@ -1869,10 +3948,19 @@ impl BorrowChecker {
                 ..
             }) = &block.terminator
             {
+                #[cfg(test)]
+                let integration_diagnostic_start = diagnostics.0.len();
                 Self::report_temporary_reference_origins(
                     func,
                     diagnostics,
                     analysis.temporary_origins_for_call(&state, callable, args, destination),
+                );
+                #[cfg(test)]
+                allocator_trace_tests::integration_call_reject(
+                    &analysis,
+                    &state,
+                    block_idx,
+                    &diagnostics.0[integration_diagnostic_start..],
                 );
             }
         }
@@ -2073,7 +4161,7 @@ impl BorrowChecker {
 
         for event in accesses::classify_statement(stmt, type_context) {
             match event.kind {
-                AccessKind::BorrowShared => {
+                AccessKind::BorrowShared | AccessKind::ReturnedShared => {
                     Self::check_place_loan_access(
                         &event.place,
                         LoanKind::Shared,
@@ -2084,7 +4172,7 @@ impl BorrowChecker {
                         stmt.span.clone(),
                     );
                 }
-                AccessKind::BorrowMut => {
+                AccessKind::BorrowMut | AccessKind::ReturnedMut => {
                     if !event
                         .place
                         .projection
@@ -2205,6 +4293,16 @@ impl BorrowChecker {
         diagnostics: &mut Diagnostics,
     ) {
         let term_span = term.origin().source_span().cloned();
+        // Cleanup links the actual exiting operation, not an owner declaration.
+        // Other synthetic origins still cannot authorize a diagnostic use span.
+        let loan_use_span = match term.origin() {
+            crate::mir::MirOrigin::Source(span) => Some(span),
+            crate::mir::MirOrigin::Synthetic {
+                kind: crate::mir::MirSyntheticOrigin::Cleanup,
+                origin,
+            } => origin,
+            _ => None,
+        };
         for event in accesses::classify_terminator(term) {
             match event.kind {
                 AccessKind::Read => {
@@ -2215,7 +4313,7 @@ impl BorrowChecker {
                         active_loans,
                         func,
                         diagnostics,
-                        term_span.clone(),
+                        loan_use_span.clone(),
                     );
                 }
                 AccessKind::Move | AccessKind::Drop => {
@@ -2235,12 +4333,14 @@ impl BorrowChecker {
                         active_loans,
                         func,
                         diagnostics,
-                        term_span.clone(),
+                        loan_use_span.clone(),
                     );
                 }
                 AccessKind::Write
                 | AccessKind::BorrowShared
                 | AccessKind::BorrowMut
+                | AccessKind::ReturnedShared
+                | AccessKind::ReturnedMut
                 | AccessKind::CaptureShared
                 | AccessKind::CaptureMut
                 | AccessKind::CaptureMove
@@ -2320,9 +4420,19 @@ impl BorrowChecker {
         diagnostics: &mut Diagnostics,
         stmt_span: Option<Span>,
     ) {
+        #[cfg(test)]
+        allocator_trace_tests::access(_func, place, kind, table, active_loans, stmt_span.as_ref());
         if let Err(conflicting_loan_id) =
             LoanAnalysis::check_aliasing(place, kind, table, active_loans)
         {
+            #[cfg(test)]
+            if allocator_trace_tests::enabled_at(stmt_span.as_ref()) {
+                eprintln!(
+                    "OWNER_LOAN_TRACE actual-conflict function={:?} span={:?} place={:?} kind={:?} loan={:?} loan_data={:?}",
+                    _func.id, stmt_span, place, kind, conflicting_loan_id,
+                    table.get(conflicting_loan_id),
+                );
+            }
             let use_span = stmt_span;
             let borrow_span = table
                 .get(conflicting_loan_id)
@@ -2415,12 +4525,15 @@ mod tests {
     use std::collections::{BTreeMap, HashMap, HashSet};
 
     use super::{
-        type_id_contains_reference, type_id_is_mut_reference, type_id_is_pointer,
-        type_id_tracks_origin, MissingSummaryMode, ReferenceEscapeAnalysis, ReferenceOriginState,
+        contract_struct_fields, return_type_needs_escape_check, type_id_contains_reference,
+        type_id_is_mut_reference, type_id_is_pointer, type_id_tracks_origin, MissingSummaryMode,
+        ReferenceEscapeAnalysis, ReferenceOriginState,
     };
     use crate::diagnostic::{DiagnosticCode, Diagnostics};
     use crate::ids::{AssocTypeId, CrateId, DefId, InstanceId, LocalDefId};
+    use crate::lexer::Span;
     use crate::mir::borrowck::BorrowChecker;
+    use crate::mir::dataflow::run_fixpoint;
     use crate::mir::{
         BasicBlock, Constant, DropObligationKind, Local, LocalDecl, LocalSource, MirAssert,
         MirAssertKind, MirBackendContract, MirCallable, MirCallableKey, MirClosure,
@@ -2434,6 +4547,395 @@ mod tests {
 
     fn test_type_id(type_context: &mut TypeContext, ty: Type) -> crate::ids::TypeId {
         type_context.intern_type(&ty)
+    }
+
+    #[test]
+    fn nominal_result_storage_is_separate_from_identity_and_checked_against_its_producer() {
+        let mut program = enum_origin_source_program(
+            r#"
+struct Holder
+    < value: () -> I64
+< trait CopyValue
+    ~@into_value: I64
+impl CopyValue for I64
+    ~@into_value = -> self
+make: I64 -> Holder
+make = seed ->
+    Holder
+        value: -> seed.into_value!
+main = !->
+    held = make 42
+"#,
+        );
+        BorrowChecker::run(&program).unwrap();
+        let (key, storage) = program
+            .backend_contract
+            .native_result_storage
+            .iter()
+            .find(|(_, storage)| {
+                matches!(
+                    program.type_context.type_for(**storage),
+                    Type::StructRepresentation { .. }
+                )
+            })
+            .map(|(key, storage)| (key.clone(), *storage))
+            .unwrap();
+        let declaration = &program.backend_contract.callables[&key];
+        let crate::mir::MirCallableKind::LocalBody { function_id } = &declaration.kind else {
+            panic!("storage requires its actual local body");
+        };
+        let function = &program.functions[function_id];
+        assert_eq!(declaration.signature.ret.semantic_ty, function.ret_type);
+        assert_eq!(function.local_decls[0].ty, function.ret_type);
+        assert!(matches!(
+            program.type_context.type_for(function.ret_type),
+            Type::Struct { .. }
+        ));
+        assert_eq!(
+            program.backend_contract.place_type_id(
+                &program.type_context,
+                function,
+                &Place {
+                    local: Local(0),
+                    projection: vec![]
+                }
+            ),
+            Some(storage)
+        );
+        let mut forged = program.type_context.type_for(storage);
+        let Type::StructRepresentation { fields, .. } = &mut forged else {
+            unreachable!()
+        };
+        let Type::Function { captures, .. } = &mut fields[0] else {
+            unreachable!()
+        };
+        assert!(!captures.is_empty());
+        captures[0].ty = Type::Tuple(vec![Type::I64, Type::I64]);
+        let forged = program.type_context.intern_type(&forged);
+        program
+            .backend_contract
+            .native_result_storage
+            .insert(key.clone(), forged);
+        let report = crate::mir::agreement::check_mir_runtime_agreement(&program);
+        assert!(report.invalid_backend_contract > 0, "{report:?}");
+        program.backend_contract.native_result_storage.remove(&key);
+        let report = crate::mir::agreement::check_mir_runtime_agreement(&program);
+        assert!(
+            !report.is_clean(),
+            "forgetting measured storage must not erase the obligation: {report:?}"
+        );
+        program
+            .backend_contract
+            .native_result_storage
+            .insert(key, crate::ids::TypeId(999_999));
+        let report = crate::mir::agreement::check_mir_runtime_agreement(&program);
+        assert!(report.invalid_type_ids > 0, "{report:?}");
+    }
+
+    #[test]
+    fn enum_result_storage_requires_exact_producer_and_variant_schema() {
+        let original = enum_origin_source_program(
+            r#"
+struct Holder
+    < value: () -> I64
+trait CopyValue
+    ~@into_value: I64
+impl CopyValue for I64
+    ~@into_value = -> self
+enum Envelope
+    Held Holder
+make: I64 -> Envelope
+make = seed ->
+    held = Holder
+        value: -> seed.into_value!
+    Envelope::Held held
+main = !->
+    wrapped = make 42
+"#,
+        );
+        BorrowChecker::run(&original).unwrap();
+        let (key, storage) = original
+            .backend_contract
+            .native_result_storage
+            .iter()
+            .find(|(_, storage)| {
+                matches!(
+                    original.type_context.type_for(**storage),
+                    Type::EnumRepresentation { .. }
+                )
+            })
+            .map(|(key, storage)| (key.clone(), *storage))
+            .unwrap();
+        let declaration = &original.backend_contract.callables[&key];
+        let crate::mir::MirCallableKind::LocalBody { function_id } = &declaration.kind else {
+            panic!("measured local producer");
+        };
+        let function = &original.functions[function_id];
+        assert!(matches!(
+            original.type_context.type_for(function.ret_type),
+            Type::Enum { .. }
+        ));
+        assert_eq!(declaration.signature.ret.semantic_ty, function.ret_type);
+        assert_eq!(function.local_decls[0].ty, function.ret_type);
+        for corruption in 0..5 {
+            let mut program = original.clone();
+            let mut forged = program.type_context.type_for(storage);
+            let Type::EnumRepresentation { variants, .. } = &mut forged else {
+                unreachable!()
+            };
+            match corruption {
+                0 => {
+                    let Type::StructRepresentation { fields, .. } = &mut variants[0][0] else {
+                        panic!("measured Holder");
+                    };
+                    let Type::Function { captures, .. } = &mut fields[0] else {
+                        panic!("measured callable");
+                    };
+                    assert!(!captures.is_empty());
+                    captures[0].ty = Type::Tuple(vec![Type::I64, Type::I64]);
+                }
+                1 => variants.push(vec![]),
+                2 => variants[0].clear(),
+                _ => {}
+            }
+            if corruption < 3 {
+                let forged = program.type_context.intern_type(&forged);
+                program
+                    .backend_contract
+                    .native_result_storage
+                    .insert(key.clone(), forged);
+            } else if corruption == 3 {
+                program.backend_contract.native_result_storage.remove(&key);
+            } else {
+                program
+                    .backend_contract
+                    .native_result_storage
+                    .insert(key.clone(), crate::ids::TypeId(999_999));
+            }
+            let report = crate::mir::agreement::check_mir_runtime_agreement(&program);
+            assert!(!report.is_clean(), "corruption {corruption}: {report:?}");
+        }
+    }
+
+    #[test]
+    fn measured_enum_payload_does_not_grant_borrowed_capture_escape() {
+        let program = enum_origin_source_program(
+            r#"
+struct Holder
+    < value: () -> I64
+enum Envelope
+    Held Holder
+make = ->
+    local = 42
+    held = Holder
+        value: -> local
+    Envelope::Held held
+main = !->
+    wrapped = make!
+"#,
+        );
+        assert!(program
+            .backend_contract
+            .native_result_storage
+            .values()
+            .any(|storage| matches!(
+                program.type_context.type_for(*storage),
+                Type::EnumRepresentation { .. }
+            )));
+        let diagnostics = BorrowChecker::run(&program)
+            .expect_err("measured payload is not a borrowing certificate");
+        assert!(
+            diagnostics.0.iter().any(
+                |diagnostic| diagnostic.code == Some(crate::diagnostic::DiagnosticCode::Borrow)
+            ),
+            "{diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .0
+                .iter()
+                .all(|diagnostic| diagnostic.code
+                    != Some(crate::diagnostic::DiagnosticCode::Internal)),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn measured_borrowed_enum_pattern_does_not_authorize_moving_its_nominal_payload() {
+        let program = enum_origin_source_program(
+            r#"
+trait CopyValue
+    ~@into_value: I64
+impl CopyValue for I64
+    ~@into_value = -> self
+struct Holder
+    < value: () -> I64
+enum Envelope
+    Held Holder
+make = seed ->
+    held = Holder
+        value: -> seed.into_value!
+    Envelope::Held held
+take: &Envelope -> Holder
+take = wrapped ->
+    match *wrapped
+        Envelope::Held value => value
+main = !->
+    wrapped = make 42
+    stolen = take &wrapped
+"#,
+        );
+        let diagnostics = BorrowChecker::run(&program)
+            .expect_err("borrowed measured payload is not an owned Holder");
+        assert!(
+            diagnostics.0.iter().any(|diagnostic| diagnostic.code
+                == Some(crate::diagnostic::DiagnosticCode::Borrow)
+                && diagnostic.message.contains("out of a reference")),
+            "{diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .0
+                .iter()
+                .all(|diagnostic| diagnostic.code
+                    != Some(crate::diagnostic::DiagnosticCode::Internal)),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn static_nominal_factory_requires_exact_measured_result_storage_with_canonical_dictionary() {
+        let source = format!(
+            "{}{}",
+            crate::mir::static_dictionary::tests::PRODUCER,
+            r#"
+< trait CopyValue
+    ~@into_value: I64
+impl CopyValue for I64
+    ~@into_value = -> self
+struct Holder
+    < value: () -> I64
+impl Factory for Holder
+    make = seed ->
+        Holder
+            value: -> seed.into_value!
+main = !->
+    service = Service
+        marker: 0
+    object = as_dispatch &service
+    held: Holder = object.build 42
+"#
+        );
+        let mut program = crate::mir::static_dictionary::tests::accepted_program(&source);
+        let (owner, block, call, destination) = program
+            .functions
+            .iter()
+            .find_map(|(owner, body)| {
+                body.basic_blocks
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, block)| {
+                        let Some(Terminator::Call {
+                            func: Operand::Constant(Constant::ErasedCall(call)),
+                            destination,
+                            ..
+                        }) = &block.terminator
+                        else {
+                            return None;
+                        };
+                        if !matches!(call.target, crate::mir::MirErasedCallTarget::Virtual(_)) {
+                            return None;
+                        }
+                        Some((owner.clone(), index, call.clone(), destination.clone()))
+                    })
+            })
+            .unwrap();
+        let dictionary = &program.backend_contract.erased.dictionaries[&call.dictionaries[0]];
+        let canonical = dictionary.subject;
+        let represented = call.type_args[0];
+        assert!(matches!(
+            program.type_context.type_for(canonical),
+            Type::Struct { .. }
+        ));
+        assert!(matches!(
+            program.type_context.type_for(represented),
+            Type::StructRepresentation { .. }
+        ));
+        assert_eq!(
+            program.backend_contract.normalize_type(
+                &program.type_context,
+                &program.type_context.type_for(represented)
+            ),
+            program.type_context.type_for(canonical)
+        );
+        assert!(crate::mir::native_dictionary_keys(
+            &program.backend_contract,
+            &program.type_context,
+            call.dictionaries[0]
+        )
+        .is_ok());
+        let body = program.functions.get_mut(&owner).unwrap();
+        let Some(Terminator::Call {
+            func: Operand::Constant(Constant::ErasedCall(actual)),
+            ..
+        }) = &mut body.basic_blocks[block].terminator
+        else {
+            unreachable!()
+        };
+        actual.type_args[0] = canonical;
+        body.local_decls[destination.local.0].ty = canonical;
+        let report = crate::mir::agreement::check_mir_runtime_agreement(&program);
+        assert!(
+            report
+                .erased_contract_errors
+                .iter()
+                .any(|(_, error)| *error == crate::mir::MirErasedError::InvalidDictionary),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn nominal_mutation_retains_borrowed_callable_fields_after_layout_specialization() {
+        for borrowed in [false, true] {
+            let signature = if borrowed { "&Holder" } else { "Holder" };
+            let argument = if borrowed { "&holder" } else { "holder" };
+            let source = format!(
+                r#"
+struct Holder
+    < callback: () -> I64
+struct Cell T
+    < payload: T
+store: &mut (Cell Holder) -> {signature} -> ()
+store = dest, source ->
+    dest.payload = Holder
+        callback: source.callback
+    ()
+escape: () -> Cell Holder
+escape = ->
+    local = 42
+    view = &local
+    callback = -> *view
+    holder = Holder
+        callback: callback
+    mut cell = Cell
+        payload: Holder
+            callback: -> 0
+    store &mut cell, {argument}
+    cell
+main = !->
+    result = escape!
+"#
+            );
+            let program = enum_origin_source_program(&source);
+            let diagnostics = BorrowChecker::run(&program)
+                .expect_err("a physical field layout cannot erase its retained local loan");
+            assert!(diagnostics.0.iter().any(|diagnostic| {
+                diagnostic.code == Some(DiagnosticCode::Borrow)
+                    && diagnostic.message
+                        == "Cannot return reference to local value because it does not live long enough"
+                    && diagnostic.primary.is_some()
+            }), "{diagnostics:?}");
+        }
     }
 
     #[test]
@@ -3194,6 +5696,1064 @@ mod tests {
         assert!(diagnostics.0.is_empty());
     }
 
+    fn enum_origin_source_program(source: &str) -> MirProgram {
+        let path = std::path::PathBuf::from("/virtual/enum_return_origins/main.rk");
+        let config = crate::Config {
+            entry_file: path.clone(),
+            current_crate_name: Some("enum_return_origins".into()),
+            no_std: true,
+            no_prelude: true,
+            no_link: true,
+            source_providers: vec![crate::SourceProvider::Virtual {
+                path,
+                text: source.into(),
+            }],
+            ..Default::default()
+        };
+        let frontend =
+            crate::compile_frontend(&config).expect("actual enum source must reach accepted HIR");
+        let fingerprint = crate::product_source_fingerprint(
+            &config,
+            &frontend.source_db,
+            &frontend.fingerprint_source_files,
+        );
+        let identity = crate::mono::CompilationIdentityContext::new(
+            frontend.analysis.hir.root_crate_id,
+            crate::products::ProductCrateIdentity::local(
+                frontend.effective_current_crate_name.clone(),
+            )
+            .with_source_fingerprint(fingerprint),
+            frontend
+                .crate_ctx
+                .product_crate_ids
+                .iter()
+                .map(|(identity, id)| (*id, identity.clone()))
+                .collect(),
+        );
+        let mut mono = crate::mono::monomorphize_with_crates(
+            frontend.analysis.hir,
+            &frontend.crate_ctx,
+            identity,
+        )
+        .expect("actual enum source must monomorphize");
+        let mut bodies = crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut mono);
+        crate::dce::prune_unreachable_instances(&mut mono, &mut bodies);
+        let program = crate::mir::builder::MirBuilder::build_monomorphized_with_instance_bodies(
+            &mono, &bodies,
+        );
+        let agreement = crate::mir::agreement::check_mir_runtime_agreement(&program);
+        assert!(agreement.is_clean(), "{agreement:?}");
+        program
+    }
+
+    fn enum_origin_native<'a>(
+        program: &'a MirProgram,
+        source: &str,
+        marker: &str,
+        argument: &str,
+    ) -> &'a MirFunction {
+        let start = source.find(marker).unwrap() + marker.find(argument).unwrap();
+        let span = Span::new(
+            "/virtual/enum_return_origins/main.rk".into(),
+            start,
+            start + argument.len(),
+        );
+        let found = program
+            .functions()
+            .filter_map(|(_, function)| {
+                (function.arg_count == 1
+                    && function.local_decls.get(1).is_some_and(|decl| {
+                        decl.source == LocalSource::Argument && decl.span.as_ref() == Some(&span)
+                    }))
+                .then_some(function)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            found.len(),
+            1,
+            "one actual native body at the real source argument declaration",
+        );
+        let function = found[0];
+        let key = &program.backend_contract.function_bodies[&function.id];
+        let declaration = &program.backend_contract.callables[key];
+        assert_eq!(&declaration.key, key);
+        assert!(
+            matches!(&declaration.kind, crate::mir::MirCallableKind::LocalBody { function_id } if function_id == &function.id)
+        );
+        assert!(declaration.source_def_id.is_some());
+        assert_eq!(declaration.signature.params.len(), function.arg_count);
+        assert_eq!(
+            declaration.signature.params[0].semantic_ty,
+            function.local_decls[1].ty,
+        );
+        assert_eq!(
+            declaration.signature.params[0].pass_mode,
+            crate::mir::MirPassMode::Direct,
+        );
+        assert_eq!(declaration.signature.ret.semantic_ty, function.ret_type);
+        assert_eq!(declaration.signature.ret.abi_ty, function.ret_type);
+        assert_eq!(function.local_decls[0].ty, function.ret_type);
+        assert_eq!(function.local_decls[0].source, LocalSource::ReturnPlace);
+        assert_eq!(
+            program.backend_contract.place_type_id(
+                &program.type_context,
+                function,
+                &Place {
+                    local: Local(0),
+                    projection: Vec::new(),
+                },
+            ),
+            Some(function.ret_type),
+        );
+        function
+    }
+
+    fn enum_origin_binding(
+        function: &MirFunction,
+        source: &str,
+        marker: &str,
+        binding: &str,
+    ) -> (Local, Span) {
+        let body = source.find(marker).unwrap();
+        let start = body + source[body..].find(&format!("    {binding} =")).unwrap() + 4;
+        let span = Span::new(
+            "/virtual/enum_return_origins/main.rk".into(),
+            start,
+            start + binding.len(),
+        );
+        let local = function
+            .local_decls
+            .iter()
+            .enumerate()
+            .find(|(_, decl)| {
+                decl.source == LocalSource::UserBinding && decl.span.as_ref() == Some(&span)
+            })
+            .map(|(index, _)| Local(index))
+            .expect("actual local binding source span");
+        (local, span)
+    }
+
+    fn enum_origin_payload(
+        program: &MirProgram,
+        function: &MirFunction,
+        statement: &StatementData,
+    ) -> (String, Place, crate::ids::TypeId) {
+        let crate::mir::StatementKind::Assign(
+            destination,
+            Rvalue::Aggregate(
+                crate::mir::AggregateKind::EnumVariant {
+                    enum_id,
+                    variant_id,
+                    variant_name,
+                    ..
+                },
+                operands,
+            ),
+        ) = &statement.kind
+        else {
+            panic!("actual source enum aggregate required");
+        };
+        assert_eq!(operands.len(), 1);
+        let root = program
+            .backend_contract
+            .place_type_id(&program.type_context, function, destination)
+            .unwrap();
+        let Type::Enum { id: owner, args } = program.type_context.type_for(root) else {
+            panic!("actual aggregate destination must be the canonical enum");
+        };
+        assert_eq!(owner, *enum_id);
+        let MirNominalLayout::Enum {
+            id,
+            generic_params,
+            variants,
+        } = &program.backend_contract.nominal_layouts[&owner]
+        else {
+            panic!("actual canonical enum layout required");
+        };
+        assert_eq!(*id, owner);
+        assert_eq!(generic_params.len(), args.len());
+        assert_eq!(args.len(), 1);
+        assert_eq!(generic_params[0].owner, owner);
+        let layout = &variants[variant_id.0 as usize];
+        assert_eq!(&layout.name, variant_name);
+        let MirVariantLayoutFields::Positional(fields) = &layout.fields else {
+            panic!("actual positional payload layout required");
+        };
+        assert_eq!(fields.len(), 1);
+        let substitution = generic_params
+            .iter()
+            .copied()
+            .zip(args)
+            .collect::<HashMap<_, _>>();
+        let actual = program.backend_contract.normalize_type(
+            &program.type_context,
+            &program
+                .type_context
+                .type_for(fields[0])
+                .substitute_generics(&substitution),
+        );
+        let payload_ty = program
+            .type_context
+            .id_for_type(&actual)
+            .expect("actual instantiated payload TypeId");
+        let mut payload = destination.clone();
+        payload.projection.push(Projection::Downcast(*variant_id));
+        payload = ReferenceEscapeAnalysis::field_place(&payload, 0);
+        assert_eq!(
+            program
+                .backend_contract
+                .place_type_id(&program.type_context, function, &payload),
+            Some(payload_ty),
+        );
+        (variant_name.clone(), payload, payload_ty)
+    }
+
+    #[test]
+    fn enum_origin_return_preserves_raw_handle_payload_and_input_envelope() {
+        let source = r#"
+extern acquire: &I64 -> *I64
+struct Handle
+    < pointer: *I64
+enum Choice A
+    Present A
+    Alternate A
+raw_make: &I64 -> Choice Handle
+raw_make = pointer ->
+    raw = acquire pointer
+    handle = Handle
+        pointer: raw
+    Choice::Present handle
+main = !->
+    value = 7
+    raw_make &value
+"#;
+        let program = enum_origin_source_program(source);
+        let function = enum_origin_native(&program, source, "raw_make = pointer ->", "pointer");
+        assert_eq!(
+            program.type_context.type_for(function.local_decls[1].ty),
+            Type::Reference {
+                inner: Box::new(Type::I64),
+                mutable: false,
+            },
+        );
+        let aggregates = function
+            .basic_blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .filter(|statement| {
+                matches!(&statement.kind, crate::mir::StatementKind::Assign(destination,
+                    Rvalue::Aggregate(crate::mir::AggregateKind::EnumVariant { .. }, _))
+                    if destination.local == Local(0) && destination.projection.is_empty())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(aggregates.len(), 1);
+        let (variant, payload, payload_ty) = enum_origin_payload(&program, function, aggregates[0]);
+        assert_eq!(variant, "Present");
+        assert!(
+            matches!(program.type_context.type_for(payload_ty), Type::Struct { args, .. } if args.is_empty())
+        );
+        assert!(!return_type_needs_escape_check(
+            &program.type_context,
+            &program.backend_contract,
+            payload_ty,
+        ));
+        let expected = HashSet::from([
+            ReferenceOrigin::Param(Local(1)),
+            ReferenceOrigin::UnknownExternal,
+        ]);
+        let lifetime = BorrowChecker::reference_return_summaries(&program);
+        assert_eq!(
+            lifetime.get(&function.id),
+            Some(&expected),
+            "the raw Lifetime envelope must not be replaced by a value-loan/empty proof",
+        );
+        let analysis = ReferenceEscapeAnalysis::new(
+            function,
+            &program.type_context,
+            &program.backend_contract,
+            &lifetime,
+            MissingSummaryMode::Conservative,
+        );
+        let results = run_fixpoint(&analysis, function);
+        let mut transfers = 0;
+        for (block, data) in function.basic_blocks.iter().enumerate() {
+            if !results.reachable[block] {
+                continue;
+            }
+            let mut state = results.entry_sets[block].clone();
+            for statement in &data.statements {
+                if std::ptr::eq(statement, aggregates[0]) {
+                    let crate::mir::StatementKind::Assign(_, Rvalue::Aggregate(_, operands)) =
+                        &statement.kind
+                    else {
+                        unreachable!();
+                    };
+                    assert_eq!(analysis.origins_for_operand(&state, &operands[0]), expected);
+                    crate::mir::dataflow::Analysis::apply_statement(
+                        &analysis, &mut state, statement,
+                    );
+                    assert_eq!(state.origins.get(&payload), Some(&expected));
+                    transfers += 1;
+                } else {
+                    crate::mir::dataflow::Analysis::apply_statement(
+                        &analysis, &mut state, statement,
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            transfers, 1,
+            "the actual enum transfer preserves the operand's full envelope",
+        );
+        let returns = function
+            .basic_blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(block, data)| {
+                (results.reachable[block]
+                    && matches!(
+                        data.terminator,
+                        Some(Terminator::Return | Terminator::ReturnWithOrigin { .. })
+                    ))
+                .then_some(&results.exit_sets[block])
+            })
+            .collect::<Vec<_>>();
+        assert!(!returns.is_empty());
+        for state in returns {
+            assert_eq!(state.origins.get(&payload), Some(&expected));
+            let root = Place {
+                local: Local(0),
+                projection: Vec::new(),
+            };
+            assert_eq!(analysis.origins_for_place(state, &root), expected);
+            assert!(
+                !state
+                    .origins
+                    .contains_key(&ReferenceEscapeAnalysis::field_place(&root, 0)),
+                "no variant-agnostic payload key",
+            );
+        }
+        BorrowChecker::run(&program)
+            .expect("checked generic enum payload is raw-only owning storage");
+    }
+
+    #[test]
+    fn enum_origin_return_and_match_reject_both_local_reference_variants() {
+        for (declarations, arms) in [
+            ("    First A\n    Second A", "        Choice::First payload => payload\n        Choice::Second payload => payload"),
+            ("    Second A\n    First A", "        Choice::Second payload => payload\n        Choice::First payload => payload"),
+        ] {
+            let source = format!(
+                r#"
+enum Choice A
+{declarations}
+bad: Bool -> Choice (&I64)
+bad = flag ->
+    left = 1
+    right = 2
+    if flag then Choice::First &left else Choice::Second &right
+extract: Bool -> &I64
+extract = flag ->
+    left = 3
+    right = 4
+    match (if flag then Choice::First &left else Choice::Second &right)
+{arms}
+main = !->
+    bad true
+    bad false
+    extract true
+    extract false
+"#
+            );
+            let program = enum_origin_source_program(&source);
+            let lifetime = BorrowChecker::reference_return_summaries(&program);
+            let mut expected_spans = Vec::new();
+            for marker in ["bad = flag ->", "extract = flag ->"] {
+                let function = enum_origin_native(&program, &source, marker, "flag");
+                assert_eq!(
+                    program.type_context.type_for(function.local_decls[1].ty),
+                    Type::Bool,
+                );
+                let (left, left_span) = enum_origin_binding(function, &source, marker, "left");
+                let (right, right_span) = enum_origin_binding(function, &source, marker, "right");
+                expected_spans.extend([left_span, right_span]);
+                let analysis = ReferenceEscapeAnalysis::new(
+                    function,
+                    &program.type_context,
+                    &program.backend_contract,
+                    &lifetime,
+                    MissingSummaryMode::Conservative,
+                );
+                let results = run_fixpoint(&analysis, function);
+                let aggregates = function
+                    .basic_blocks
+                    .iter()
+                    .flat_map(|block| &block.statements)
+                    .filter(|statement| {
+                        matches!(
+                            &statement.kind,
+                            crate::mir::StatementKind::Assign(
+                                _,
+                                Rvalue::Aggregate(crate::mir::AggregateKind::EnumVariant { .. }, _)
+                            )
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(aggregates.len(), 2);
+                let mut payloads = HashMap::new();
+                for statement in aggregates {
+                    let (variant, place, ty) = enum_origin_payload(&program, function, statement);
+                    assert_eq!(
+                        program.type_context.type_for(ty),
+                        Type::Reference {
+                            inner: Box::new(Type::I64),
+                            mutable: false,
+                        },
+                    );
+                    assert!(return_type_needs_escape_check(
+                        &program.type_context,
+                        &program.backend_contract,
+                        ty,
+                    ));
+                    let origin = match variant.as_str() {
+                        "First" => ReferenceOrigin::Local(left),
+                        "Second" => ReferenceOrigin::Local(right),
+                        _ => panic!("unexpected source fixture variant"),
+                    };
+                    assert!(payloads.insert(place, HashSet::from([origin])).is_none());
+                }
+                assert_eq!(
+                    payloads.len(),
+                    2,
+                    "different actual VariantIds remain different origin keys",
+                );
+                let whole = HashSet::from([
+                    ReferenceOrigin::Local(left),
+                    ReferenceOrigin::Local(right),
+                ]);
+                let root = Place {
+                    local: payloads.keys().next().unwrap().local,
+                    projection: Vec::new(),
+                };
+                assert!(payloads.keys().all(|place| place.local == root.local));
+                assert!(
+                    results.exit_sets.iter().any(|state| {
+                        if !payloads
+                            .iter()
+                            .all(|(place, origins)| state.origins.get(place) == Some(origins))
+                        {
+                            return false;
+                        }
+                        for (place, origins) in &payloads {
+                            assert_eq!(
+                                &analysis.origins_for_place(state, place),
+                                origins,
+                                "no cross-variant field0 contamination",
+                            );
+                        }
+                        assert_eq!(
+                            analysis.origins_for_place(state, &root),
+                            whole,
+                            "whole enum retains both origins across joins",
+                        );
+                        true
+                    }),
+                    "actual source CFG must join both canonical variant payload paths",
+                );
+                if marker == "extract = flag ->" {
+                    let mut reads = HashSet::new();
+                    for (block, data) in function.basic_blocks.iter().enumerate() {
+                        if !results.reachable[block] {
+                            continue;
+                        }
+                        let mut state = results.entry_sets[block].clone();
+                        for statement in &data.statements {
+                            if let crate::mir::StatementKind::Assign(
+                                destination,
+                                Rvalue::Use(operand),
+                            ) = &statement.kind
+                            {
+                                if let Operand::Copy(place) | Operand::Move(place) = operand {
+                                    if let Some(expected) = payloads.get(place) {
+                                        assert_eq!(
+                                            program.backend_contract.place_type_id(
+                                                &program.type_context,
+                                                function,
+                                                place,
+                                            ),
+                                            Some(function.ret_type),
+                                        );
+                                        assert_eq!(
+                                            &analysis.origins_for_operand(&state, operand),
+                                            expected,
+                                        );
+                                        reads.insert(place.clone());
+                                        crate::mir::dataflow::Analysis::apply_statement(
+                                            &analysis, &mut state, statement,
+                                        );
+                                        assert_eq!(
+                                            state.origins.get(
+                                                &ReferenceEscapeAnalysis::normalized_place(
+                                                    destination.clone(),
+                                                ),
+                                            ),
+                                            Some(expected),
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+                            crate::mir::dataflow::Analysis::apply_statement(
+                                &analysis, &mut state, statement,
+                            );
+                        }
+                    }
+                    assert_eq!(
+                        reads.len(),
+                        2,
+                        "both actual match payload reads must use the canonical variant paths and retain their own borrow",
+                    );
+                }
+            }
+            let diagnostics = BorrowChecker::run(&program)
+                .expect_err("both variant orders and match reads must reject escaping local references");
+            assert!(
+                diagnostics.0.iter().all(|diagnostic| {
+                    diagnostic.code == Some(DiagnosticCode::Borrow)
+                        && !diagnostic.message.contains("Missing checked return-place type")
+                }),
+                "a typing/authority gap is not a successful safety rejection: {diagnostics:?}",
+            );
+            for span in expected_spans {
+                assert!(
+                    diagnostics.0.iter().any(|diagnostic| {
+                        diagnostic.message == "Cannot return reference to local value because it does not live long enough"
+                            && diagnostic.primary.as_ref().map(|label| &label.span) == Some(&span)
+                    }),
+                    "each actual source-local borrow in both enum variants must be diagnosed: {span:?} {diagnostics:?}",
+                );
+            }
+        }
+    }
+
+    const RAW_RETURN_ELIGIBILITY: &str = r#"
+extern malloc: I64 -> *U8
+struct Storage
+    < pointer: *I64
+impl Storage
+    @raw: *I64
+    @raw = -> self.pointer
+struct State A
+    < owner: A
+    < audit: *I64
+struct LaterRaw
+    < pointer: *I64
+    < state: State Storage
+impl Factory for LaterRaw
+    make = seed ->
+        pointer = (malloc 8) as *I64
+        storage = Storage
+            pointer: pointer
+        audit = storage.raw!
+        state = State
+            owner: storage
+            audit: audit
+        LaterRaw
+            pointer: pointer
+            state: state
+read: LaterRaw -> I64
+read = product -> 0
+main = !->
+    service = Service
+        marker: 0
+    object = as_dispatch &service
+    read (object.build 42)
+"#;
+
+    fn return_eligibility_program(source: &str) -> (MirProgram, MirFunctionId) {
+        let program = crate::mir::static_dictionary::tests::accepted_program(source);
+        let report = crate::mir::agreement::check_mir_runtime_agreement(&program);
+        assert!(report.is_clean(), "{report:?}");
+        let errors = crate::mir::validate_erased_contract(&program);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(program.backend_contract.erased.dictionaries.len(), 1);
+        let dictionary = program
+            .backend_contract
+            .erased
+            .dictionaries
+            .values()
+            .next()
+            .unwrap();
+        assert_eq!(dictionary.members.len(), 1);
+        let member = &dictionary.members[0];
+        assert_eq!(member.receiver, None);
+        let key = member
+            .target
+            .native()
+            .expect("actual canonical Factory target");
+        let declaration = &program.backend_contract.callables[key];
+        let crate::mir::MirCallableKind::LocalBody { function_id } = &declaration.kind else {
+            panic!("actual native Factory body required");
+        };
+        let id = function_id.clone();
+        let function = &program.functions[&id];
+        assert_eq!(&function.id, function_id);
+        assert_eq!(&program.backend_contract.function_bodies[function_id], key);
+        assert_eq!(&declaration.key, key);
+        assert!(declaration.source_def_id.is_some());
+        let scalar = program.type_context.id_for_type(&Type::I64).unwrap();
+        assert_eq!(function.arg_count, 1);
+        assert_eq!(function.local_decls[1].ty, scalar);
+        assert_eq!(function.local_decls[0].ty, function.ret_type);
+        assert_eq!(dictionary.subject, function.ret_type);
+        assert_eq!(
+            declaration.signature,
+            crate::mir::MirCallableSignature::from_type_ids(
+                &[scalar],
+                function.ret_type,
+                crate::mir::MirPassMode::Direct,
+            )
+        );
+        let Type::Struct { id: owner, args } = program.type_context.type_for(function.ret_type)
+        else {
+            panic!("actual nominal product result required");
+        };
+        assert!(args.is_empty());
+        let fields = contract_struct_fields(&program.backend_contract, owner).unwrap();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[1].0, "state");
+        assert_eq!(
+            program.backend_contract.nominal_field_ids[&owner].len(),
+            fields.len()
+        );
+        (program, id)
+    }
+
+    #[test]
+    fn return_origin_eligibility_allows_raw_handle_only_owning_state() {
+        let source = format!(
+            "{}{RAW_RETURN_ELIGIBILITY}",
+            crate::mir::static_dictionary::tests::PRODUCER
+        );
+        let (program, id) = return_eligibility_program(&source);
+        let function = &program.functions[&id];
+        let state_place = ReferenceEscapeAnalysis::field_place(
+            &Place {
+                local: Local(0),
+                projection: Vec::new(),
+            },
+            1,
+        );
+        let state_ty = program
+            .backend_contract
+            .place_type_id(&program.type_context, function, &state_place)
+            .unwrap();
+        let Type::Struct { args, .. } = program.type_context.type_for(state_ty) else {
+            panic!("actual generic State field type required");
+        };
+        assert_eq!(args.len(), 1);
+        assert!(matches!(&args[0], Type::Struct { args, .. } if args.is_empty()));
+        assert!(!return_type_needs_escape_check(
+            &program.type_context,
+            &program.backend_contract,
+            state_ty
+        ));
+        let start = source.find("        storage =").unwrap() + 8;
+        let expected = Span::new(
+            "/virtual/static_dictionary/producer.rk".into(),
+            start,
+            start + "storage".len(),
+        );
+        let storage = function
+            .local_decls
+            .iter()
+            .enumerate()
+            .find(|(_, decl)| {
+                decl.source == LocalSource::UserBinding && decl.span.as_ref() == Some(&expected)
+            })
+            .map(|(index, decl)| (Local(index), decl))
+            .expect("actual source storage binding");
+        assert_eq!(program.type_context.type_for(storage.1.ty), args[0]);
+        let lifetime = BorrowChecker::reference_return_summaries(&program);
+        let values = BorrowChecker::native_return_loan_proof(&program);
+        assert!(
+            lifetime[&id].contains(&ReferenceOrigin::Local(storage.0)),
+            "the raw Lifetime storage envelope must remain intact"
+        );
+        assert!(
+            values.summaries.get(&id).is_some_and(HashSet::is_empty),
+            "actual checked native value flow is independently known empty"
+        );
+        let analysis = ReferenceEscapeAnalysis::new(
+            function,
+            &program.type_context,
+            &program.backend_contract,
+            &lifetime,
+            MissingSummaryMode::Conservative,
+        );
+        let results = run_fixpoint(&analysis, function);
+        assert!(
+            results.exit_sets.iter().enumerate().any(|(block, state)| {
+                results.reachable[block]
+                    && matches!(
+                        function.basic_blocks[block].terminator,
+                        Some(Terminator::Return | Terminator::ReturnWithOrigin { .. })
+                    )
+                    && state
+                        .origins
+                        .get(&state_place)
+                        .is_some_and(|origins| origins.contains(&ReferenceOrigin::Local(storage.0)))
+            }),
+            "the actual raw-only returned State must retain the real Local origin",
+        );
+        BorrowChecker::run(&program).unwrap();
+    }
+
+    #[test]
+    fn return_origin_eligibility_rejects_safe_reference_in_generic_state() {
+        let source = format!(
+            "{}{}",
+            crate::mir::static_dictionary::tests::PRODUCER,
+            RAW_RETURN_ELIGIBILITY
+                .replace("< state: State Storage", "< state: State (&I64)")
+                .replace("owner: storage", "owner: &seed")
+        );
+        let (program, id) = return_eligibility_program(&source);
+        let function = &program.functions[&id];
+        let state_place = ReferenceEscapeAnalysis::field_place(
+            &Place {
+                local: Local(0),
+                projection: Vec::new(),
+            },
+            1,
+        );
+        let state_ty = program
+            .backend_contract
+            .place_type_id(&program.type_context, function, &state_place)
+            .unwrap();
+        let Type::Struct { args, .. } = program.type_context.type_for(state_ty) else {
+            panic!("actual generic State field type required");
+        };
+        assert_eq!(
+            args,
+            vec![Type::Reference {
+                inner: Box::new(Type::I64),
+                mutable: false
+            }]
+        );
+        assert!(return_type_needs_escape_check(
+            &program.type_context,
+            &program.backend_contract,
+            state_ty
+        ));
+        let start = source.rfind("    make = seed ->").unwrap() + "    make = ".len();
+        let expected = Span::new(
+            "/virtual/static_dictionary/producer.rk".into(),
+            start,
+            start + "seed".len(),
+        );
+        assert_eq!(function.local_decls[1].source, LocalSource::Argument);
+        assert_eq!(function.local_decls[1].span.as_ref(), Some(&expected));
+        let lifetime = BorrowChecker::reference_return_summaries(&program);
+        let analysis = ReferenceEscapeAnalysis::new(
+            function,
+            &program.type_context,
+            &program.backend_contract,
+            &lifetime,
+            MissingSummaryMode::Conservative,
+        );
+        let results = run_fixpoint(&analysis, function);
+        assert!(
+            results.exit_sets.iter().enumerate().any(|(block, state)| {
+                results.reachable[block]
+                    && matches!(
+                        function.basic_blocks[block].terminator,
+                        Some(Terminator::Return | Terminator::ReturnWithOrigin { .. })
+                    )
+                    && state
+                        .origins
+                        .get(&state_place)
+                        .is_some_and(|origins| origins.contains(&ReferenceOrigin::Local(Local(1))))
+            }),
+            "the generic reference field must retain the real callee-local seed storage",
+        );
+        let diagnostics = BorrowChecker::run(&program)
+            .expect_err("generic State<&I64> cannot return a reference to its seed slot");
+        assert!(diagnostics.0.iter().any(|diagnostic| {
+            diagnostic.code == Some(DiagnosticCode::Borrow)
+                && diagnostic.message == "Cannot return reference to local value because it does not live long enough"
+                && diagnostic.primary.as_ref().map(|label| &label.span) == Some(&expected)
+        }), "actual safe-reference field must reject at the real seed declaration: {diagnostics:?}");
+    }
+
+    const ABSTRACT_FUNCTION_FIELD: &str = r#"
+struct LaterReference
+    < value: () -> I64
+impl Factory for LaterReference
+    make = seed ->
+        local = seed
+        borrowed = &local
+        LaterReference
+            value: -> *borrowed
+read: LaterReference -> I64
+read = product -> product.value!
+main = ->
+    service = Service
+        marker: 0
+    object = as_dispatch &service
+    read (object.build 42)
+"#;
+
+    fn abstract_function_field_native(program: &MirProgram) -> (&MirFunction, &Place, &MirClosure) {
+        let report = crate::mir::agreement::check_mir_runtime_agreement(program);
+        assert!(report.is_clean(), "{report:?}");
+        let errors = crate::mir::validate_erased_contract(program);
+        assert!(errors.is_empty(), "{errors:?}");
+
+        let dictionaries = &program.backend_contract.erased.dictionaries;
+        assert_eq!(dictionaries.len(), 1);
+        let dictionary = dictionaries.values().next().unwrap();
+        assert_eq!(dictionary.members.len(), 1);
+        let member = &dictionary.members[0];
+        assert_eq!(member.receiver, None);
+        let key = member.target.native().expect("actual static native target");
+        let declaration = &program.backend_contract.callables[key];
+        let crate::mir::MirCallableKind::LocalBody { function_id } = &declaration.kind else {
+            panic!("static native target must have its actual local body");
+        };
+        let function = &program.functions[function_id];
+        assert_eq!(&function.id, function_id);
+        assert_eq!(&program.backend_contract.function_bodies[function_id], key);
+        assert_eq!(&declaration.key, key);
+        assert!(declaration.source_def_id.is_some());
+        assert_eq!(function.arg_count, 1);
+        let scalar = program.type_context.id_for_type(&Type::I64).unwrap();
+        assert_eq!(function.local_decls[1].ty, scalar);
+        assert_eq!(function.local_decls[0].ty, function.ret_type);
+        assert_eq!(dictionary.subject, function.ret_type);
+        assert_eq!(
+            declaration.signature,
+            crate::mir::MirCallableSignature::from_type_ids(
+                &[scalar],
+                function.ret_type,
+                crate::mir::MirPassMode::Direct,
+            ),
+        );
+
+        let Type::Struct { id, args } = program.type_context.type_for(function.ret_type) else {
+            panic!("actual native result must be the nominal field owner");
+        };
+        assert!(args.is_empty());
+        let fields = super::contract_struct_fields(&program.backend_contract, id).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(program.backend_contract.nominal_field_ids[&id].len(), 1);
+        assert_eq!(
+            program.type_context.type_for(fields[0].1),
+            Type::function(Vec::new(), Type::I64),
+            "declared field is abstract, not proof of a capture-free environment",
+        );
+        assert!(!type_id_contains_reference(
+            TypeView::new(&program.type_context),
+            &program.backend_contract,
+            function.ret_type,
+        ));
+
+        let closures = function
+            .basic_blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .filter_map(|statement| match &statement.kind {
+                crate::mir::StatementKind::Assign(dest, Rvalue::Closure(closure)) => {
+                    Some((dest, closure))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(closures.len(), 1);
+        let (destination, closure) = closures[0];
+        assert_eq!(closure.id.owner, function.id);
+        assert!(destination.projection.is_empty());
+        assert_eq!(
+            function.local_decls[destination.local.0].source,
+            LocalSource::Temporary
+        );
+        assert_eq!(closure.captures.len(), 1);
+        assert!(function.basic_blocks.iter().flat_map(|block| &block.statements).any(|statement| {
+            matches!(&statement.kind,
+                crate::mir::StatementKind::Assign(dest, Rvalue::Aggregate(kind, operands))
+                    if dest.local == Local(0) && dest.projection.is_empty()
+                        && matches!(kind, crate::mir::AggregateKind::Struct { id: owner, .. } if *owner == id)
+                        && matches!(operands.as_slice(), [Operand::Move(place)] if place == destination))
+        }), "actual captured temporary must be packed directly into the returned field");
+        (function, destination, closure)
+    }
+
+    #[test]
+    fn abstract_function_field_return_rejects_borrowed_local_capture() {
+        let source = format!(
+            "{}{ABSTRACT_FUNCTION_FIELD}",
+            crate::mir::static_dictionary::tests::PRODUCER,
+        );
+        let program = crate::mir::static_dictionary::tests::accepted_program(&source);
+        let (function, destination, closure) = abstract_function_field_native(&program);
+        let capture = &closure.captures[0];
+        assert_eq!(capture.kind, MirClosureCaptureKind::ByRef);
+        let borrowed = &function.local_decls[capture.local.0];
+        let reference = Type::Reference {
+            inner: Box::new(Type::I64),
+            mutable: false,
+        };
+        assert_eq!(program.type_context.type_for(borrowed.ty), reference);
+        assert_eq!(borrowed.source, LocalSource::UserBinding);
+        let start = source.find("        borrowed =").unwrap() + 8;
+        let expected_span = crate::lexer::Span::new(
+            "/virtual/static_dictionary/producer.rk".into(),
+            start,
+            start + "borrowed".len(),
+        );
+        assert_eq!(borrowed.span.as_ref(), Some(&expected_span));
+        assert_eq!(capture.span.as_ref(), Some(&expected_span));
+        let Type::Function { captures, .. } = program
+            .type_context
+            .type_for(function.local_decls[destination.local.0].ty)
+        else {
+            panic!("actual closure temporary type");
+        };
+        assert_eq!(
+            captures.as_ref(),
+            &[crate::types::FunctionCapture::new(
+                crate::types::CaptureKind::SharedBorrow,
+                reference.clone(),
+            )]
+        );
+        let body = &program.functions[&MirFunctionId::Closure(Box::new(closure.id.clone()))];
+        assert_eq!(body.closure_captures.len(), 1);
+        let slot = &body.closure_captures[0];
+        assert_eq!(slot.kind, MirClosureCaptureKind::ByRef);
+        assert_eq!(
+            body.local_decls[slot.local.0].source,
+            LocalSource::ClosureCapture
+        );
+        assert_eq!(
+            program
+                .type_context
+                .type_for(body.local_decls[slot.local.0].ty),
+            Type::Reference {
+                inner: Box::new(reference),
+                mutable: false
+            },
+        );
+
+        let summaries = BorrowChecker::reference_return_summaries(&program);
+        let analysis = ReferenceEscapeAnalysis::new(
+            function,
+            &program.type_context,
+            &program.backend_contract,
+            &summaries,
+            MissingSummaryMode::Conservative,
+        );
+        let results = crate::mir::dataflow::run_fixpoint(&analysis, function);
+        let field = ReferenceEscapeAnalysis::field_place(
+            &Place {
+                local: Local(0),
+                projection: Vec::new(),
+            },
+            0,
+        );
+        assert!(results
+            .exit_sets
+            .iter()
+            .any(|state| state.origins.get(&field)
+                == Some(&HashSet::from([ReferenceOrigin::Local(capture.local)]))));
+        let diagnostics = BorrowChecker::run(&program)
+            .expect_err("actual borrowed local environment must not escape");
+        assert!(
+            diagnostics.0.iter().any(|diagnostic| {
+                diagnostic.code == Some(DiagnosticCode::Borrow)
+                    && diagnostic
+                        .message
+                        .contains("Cannot return reference to local value")
+                    && diagnostic.primary.as_ref().map(|label| &label.span) == Some(&expected_span)
+            }),
+            "actual capture storage origin and source Borrow diagnostic: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn abstract_function_field_return_allows_by_value_copy_scalar_capture() {
+        // The explicit move receiver requests value capture; Copy I64 alone
+        // would not prove that the default closure capture is by value.
+        let copying = r#"
+< trait CopyValue
+    ~@into_value: I64
+impl CopyValue for I64
+    ~@into_value = -> self
+"#;
+        let source = format!(
+            "{}{copying}{}",
+            crate::mir::static_dictionary::tests::PRODUCER,
+            ABSTRACT_FUNCTION_FIELD
+                .replace("        borrowed = &local\n", "")
+                .replace("value: -> *borrowed", "value: -> local.into_value!"),
+        );
+        let program = crate::mir::static_dictionary::tests::accepted_program(&source);
+        let (function, destination, closure) = abstract_function_field_native(&program);
+        let capture = &closure.captures[0];
+        assert_eq!(
+            capture.kind,
+            MirClosureCaptureKind::ByValue,
+            "no stack-slot capture permitted in this positive"
+        );
+        let captured = &function.local_decls[capture.local.0];
+        assert_eq!(captured.source, LocalSource::UserBinding);
+        assert_eq!(program.type_context.type_for(captured.ty), Type::I64);
+        assert!(crate::type_services::facts::TypeFacts::is_copy(&Type::I64));
+        let Type::Function {
+            callable_kind,
+            captures,
+            ..
+        } = program
+            .type_context
+            .type_for(function.local_decls[destination.local.0].ty)
+        else {
+            panic!("actual closure temporary type");
+        };
+        assert_eq!(callable_kind, crate::types::CallableKind::Fn);
+        assert_eq!(
+            captures.as_ref(),
+            &[crate::types::FunctionCapture::new(
+                crate::types::CaptureKind::Move,
+                Type::I64,
+            )]
+        );
+        let body = &program.functions[&MirFunctionId::Closure(Box::new(closure.id.clone()))];
+        assert_eq!(body.closure_captures.len(), 1);
+        let slot = &body.closure_captures[0];
+        assert_eq!(slot.kind, MirClosureCaptureKind::ByValue);
+        assert_eq!(
+            body.local_decls[slot.local.0].source,
+            LocalSource::ClosureCapture
+        );
+        assert_eq!(
+            program
+                .type_context
+                .type_for(body.local_decls[slot.local.0].ty),
+            Type::I64
+        );
+        let summaries = BorrowChecker::reference_return_summaries(&program);
+        assert!(
+            BorrowChecker::reference_return_origins(
+                function,
+                &program.type_context,
+                &program.backend_contract,
+                &summaries,
+            )
+            .is_empty(),
+            "actual value-captured scalar has no borrowed storage origin"
+        );
+        BorrowChecker::run(&program).unwrap();
+    }
+
     #[test]
     fn closure_assignment_rejects_captured_reference_to_temporary() {
         let mut type_context = TypeContext::new();
@@ -3280,6 +6840,193 @@ mod tests {
             diag.message
                 .contains("Cannot store reference to temporary value")
         }));
+    }
+
+    #[test]
+    fn temporary_assignment_screen_preserves_non_numeric_storage_guards() {
+        let mut tc = TypeContext::new();
+        let mut function = reference_return_function(&mut tc, MirOwnershipMetadata::default());
+        let reference = Type::Reference {
+            mutable: false,
+            inner: Box::new(Type::I64),
+        };
+        let pointer = Type::Pointer(Box::new(Type::I64));
+        let callback = Type::function(Vec::new(), Type::I64);
+        assert!(matches!(&callback, Type::Function { captures, .. } if captures.is_empty()));
+        let owner_id = DefId::new(CrateId(0), LocalDefId(501));
+        let parameter = GenericParamId {
+            owner: owner_id,
+            index: 0,
+        };
+        let logical_owner = Type::Struct {
+            id: owner_id,
+            args: vec![reference.clone()],
+        };
+        let mut contract = MirBackendContract::default();
+        contract.nominal_layouts.insert(
+            owner_id,
+            MirNominalLayout::Struct {
+                id: owner_id,
+                generic_params: vec![parameter],
+                fields: vec![("raw".into(), tc.intern_type(&pointer))],
+            },
+        );
+        let input = Place {
+            local: Local(1),
+            projection: Vec::new(),
+        };
+        let dest = Place {
+            local: Local(0),
+            projection: Vec::new(),
+        };
+        let rvalue = Rvalue::Use(Operand::Copy(input.clone()));
+        let mut state = ReferenceOriginState::default();
+        state.origins.insert(
+            input.clone(),
+            HashSet::from([
+                ReferenceOrigin::Temporary(Local(2)),
+                ReferenceOrigin::Param(Local(1)),
+                ReferenceOrigin::ParamContents(Local(1)),
+                ReferenceOrigin::ParamBorrowedContents(Local(1)),
+                ReferenceOrigin::UnknownExternal,
+            ]),
+        );
+        let original = state.origins.clone();
+        let summaries = HashMap::new();
+        // Classification-only guards, not accepted-source or LoanId evidence.
+        for (ty, numeric) in [
+            (Type::I64, true),
+            (Type::F64, true),
+            (Type::Bool, false),
+            (Type::Unit, false),
+            (pointer, false),
+            (reference, false),
+            (callback, false),
+            (logical_owner, false),
+            (Type::Generic(parameter), false),
+            (Type::Error, false),
+        ] {
+            let ty_id = tc.intern_type(&ty);
+            function.local_decls[0].ty = ty_id;
+            function.local_decls[1].ty = ty_id;
+            function.ret_type = ty_id;
+            if matches!(
+                ty,
+                Type::Function { .. } | Type::Reference { .. } | Type::Struct { .. }
+            ) {
+                assert!(
+                    return_type_needs_escape_check(&tc, &contract, ty_id),
+                    "{ty:?}"
+                );
+            }
+            let analysis = ReferenceEscapeAnalysis::new(
+                &function,
+                &tc,
+                &contract,
+                &summaries,
+                MissingSummaryMode::Conservative,
+            );
+            assert_eq!(
+                analysis.temporary_origins_for_assignment(&state, &dest, &rvalue),
+                if numeric {
+                    HashSet::new()
+                } else {
+                    HashSet::from([Local(2)])
+                },
+                "{ty:?}"
+            );
+            assert_eq!(
+                analysis.origins_for_operand(&state, &Operand::Copy(input.clone())),
+                original[&input]
+            );
+            assert_eq!(
+                state.origins, original,
+                "diagnostic screening must not mutate any origin envelope"
+            );
+        }
+    }
+
+    #[test]
+    fn temporary_assignment_screen_checks_projected_type_and_keeps_missing_types_conservative() {
+        let mut tc = TypeContext::new();
+        let mut function = reference_return_function(&mut tc, MirOwnershipMetadata::default());
+        let tuple = tc.intern_type(&Type::Tuple(vec![
+            Type::I64,
+            Type::Reference {
+                mutable: false,
+                inner: Box::new(Type::I64),
+            },
+        ]));
+        let scalar = tc.intern_type(&Type::I64);
+        let contract = MirBackendContract::default();
+        let summaries = HashMap::new();
+        let input = Place {
+            local: Local(1),
+            projection: Vec::new(),
+        };
+        let rvalue = Rvalue::Use(Operand::Copy(input.clone()));
+        let mut state = ReferenceOriginState::default();
+        state
+            .origins
+            .insert(input, HashSet::from([ReferenceOrigin::Temporary(Local(2))]));
+        let original = state.origins.clone();
+        // Malformed projection/type cases exercise conservative fallback only;
+        // they are never admitted as valid MIR or executed.
+        for (root_type, projection, screened) in [
+            (
+                tuple,
+                vec![Projection::Field {
+                    index: 0,
+                    identity: None,
+                }],
+                true,
+            ),
+            (
+                tuple,
+                vec![Projection::Field {
+                    index: 1,
+                    identity: None,
+                }],
+                false,
+            ),
+            (
+                tuple,
+                vec![Projection::Field {
+                    index: 2,
+                    identity: None,
+                }],
+                false,
+            ),
+            (scalar, vec![Projection::Deref], false),
+            (crate::ids::TypeId(999_999), Vec::new(), false),
+        ] {
+            function.local_decls[0].ty = root_type;
+            let dest = Place {
+                local: Local(0),
+                projection,
+            };
+            let analysis = ReferenceEscapeAnalysis::new(
+                &function,
+                &tc,
+                &contract,
+                &summaries,
+                MissingSummaryMode::Conservative,
+            );
+            let checked = contract.place_type_id(&tc, &function, &dest);
+            if screened {
+                assert_eq!(checked, Some(scalar));
+            }
+            assert_eq!(
+                analysis.temporary_origins_for_assignment(&state, &dest, &rvalue),
+                if screened {
+                    HashSet::new()
+                } else {
+                    HashSet::from([Local(2)])
+                },
+                "{dest:?} checked={checked:?}"
+            );
+            assert_eq!(state.origins, original);
+        }
     }
 
     #[test]
@@ -3813,7 +7560,10 @@ mod tests {
                         func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
                             MirCallableKey::Function(callee_id),
                         ))),
-                        args: Vec::new(),
+                        args: vec![Operand::Copy(Place {
+                            local: Local(1),
+                            projection: Vec::new(),
+                        })],
                         destination: Place {
                             local: Local(0),
                             projection: Vec::new(),
@@ -3827,26 +7577,85 @@ mod tests {
                     terminator: Some(Terminator::Return),
                 },
             ],
-            local_decls: vec![LocalDecl {
-                ty: ref_i64,
-                mutability: Mutability::Mut,
-                name: Some("return_place".to_string()),
-                span: None,
-                source: crate::mir::LocalSource::ReturnPlace,
-            }],
+            local_decls: vec![
+                LocalDecl {
+                    ty: ref_i64,
+                    mutability: Mutability::Mut,
+                    name: Some("return_place".to_string()),
+                    span: None,
+                    source: crate::mir::LocalSource::ReturnPlace,
+                },
+                LocalDecl {
+                    ty: ref_i64,
+                    mutability: Mutability::Not,
+                    name: Some("input".to_string()),
+                    span: None,
+                    source: LocalSource::Argument,
+                },
+            ],
             closure_captures: Vec::new(),
-            arg_count: 0,
+            arg_count: 1,
             ret_type: ref_i64,
             ownership: MirOwnershipMetadata::default(),
         };
-        let origins = BorrowChecker::reference_return_origins(
-            &function,
-            &type_context,
-            &MirBackendContract::default(),
-            &HashMap::new(),
+        let key = MirCallableKey::Function(callee_id);
+        let callee_function = MirFunctionId::Function(callee_id);
+        let mut contract = MirBackendContract::default();
+        contract
+            .function_bodies
+            .insert(callee_function.clone(), key.clone());
+        contract.callables.insert(
+            key.clone(),
+            crate::mir::MirCallableDecl {
+                key: key.clone(),
+                source_def_id: Some(callee_id),
+                kind: crate::mir::MirCallableKind::LocalBody {
+                    function_id: callee_function.clone(),
+                },
+                llvm_symbol: "pending_reference_producer".to_string(),
+                linkage: crate::mir::MirLinkage::External,
+                signature: crate::mir::MirCallableSignature::from_type_ids(
+                    &[ref_i64],
+                    ref_i64,
+                    crate::mir::MirPassMode::Direct,
+                ),
+            },
         );
+        // The production fixpoint seeds declared local bodies, including pending
+        // empty entries; an absent entry is not that pending-body authority.
+        let pending = HashMap::from([(callee_function.clone(), HashSet::new())]);
+        let origins =
+            BorrowChecker::reference_return_origins(&function, &type_context, &contract, &pending);
 
         assert!(origins.is_empty());
+        let completed = HashMap::from([(
+            callee_function.clone(),
+            HashSet::from([ReferenceOrigin::Param(Local(1))]),
+        )]);
+        assert_eq!(
+            BorrowChecker::reference_return_origins(
+                &function,
+                &type_context,
+                &contract,
+                &completed,
+            ),
+            HashSet::from([ReferenceOrigin::Param(Local(1))])
+        );
+        contract.function_bodies.remove(&callee_function);
+        contract.callables.get_mut(&key).unwrap().kind =
+            crate::mir::MirCallableKind::ObjectProvided;
+        assert_eq!(
+            BorrowChecker::reference_return_origins(
+                &function,
+                &type_context,
+                &contract,
+                &HashMap::new(),
+            ),
+            HashSet::from([
+                ReferenceOrigin::UnknownExternal,
+                ReferenceOrigin::Param(Local(1))
+            ])
+        );
     }
 
     #[test]

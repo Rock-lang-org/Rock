@@ -87,6 +87,35 @@ fn borrowed_self_result_reuses_metadata_but_not_receiver_address() {
         .get_mut(&MirVtableId(1))
         .unwrap()
         .methods
+        .push(key.clone());
+    // The producer's complete evidence must include every member promised by
+    // its independent trait view; upcasting no longer swaps in a subset table.
+    let root = program.backend_contract.vtables[&MirVtableId(0)].object;
+    let root_ref = program.type_context.intern_type(&Type::Reference {
+        inner: Box::new(program.type_context.type_for(root)),
+        mutable: false,
+    });
+    let mut root_slot = program.backend_contract.object_schemas[&target]
+        .slots
+        .last()
+        .unwrap()
+        .clone();
+    root_slot.signature.params[0].semantic_ty = root_ref;
+    root_slot.signature.ret.semantic_ty = root_ref;
+    root_slot.signature.ret.abi_ty = root_ref;
+    program
+        .backend_contract
+        .object_schemas
+        .get_mut(&root)
+        .unwrap()
+        .slots
+        .push(root_slot);
+    program
+        .backend_contract
+        .vtables
+        .get_mut(&MirVtableId(0))
+        .unwrap()
+        .methods
         .push(key);
     let caller = program
         .functions
@@ -726,6 +755,7 @@ fn payload_drop_distinguishes_owned_and_borrowed_closure_captures() {
             }
         };
         let payload = Type::Function {
+            result_borrowing: Default::default(),
             params: vec![],
             ret: Box::new(Type::Unit),
             safety: crate::types::FunctionSafety::Safe,
@@ -741,7 +771,8 @@ fn payload_drop_distinguishes_owned_and_borrowed_closure_captures() {
                     crate::types::CaptureKind::Move
                 },
                 resource,
-            )],
+            )]
+            .into_boxed_slice(),
         };
         let (mut program, _) = payload_program(payload);
         assert!(program
@@ -800,6 +831,411 @@ fn payload_drop_distinguishes_owned_and_borrowed_closure_captures() {
         let mut rejected = super::CodeGen::new(&context, "missing-free-contract");
         assert!(rejected.compile_program_from_mir(&program).is_err());
     }
+}
+
+#[test]
+fn native_callable_cleanup_requires_the_complete_payload_plan_without_an_object_view() {
+    let payload_ty = Type::function_with_metadata(
+        vec![],
+        Type::Unit,
+        crate::types::FunctionSafety::Safe,
+        CallableKind::FnOnce,
+        vec![crate::types::FunctionCapture::new(
+            crate::types::CaptureKind::Move,
+            Type::Struct {
+                id: definition(50),
+                args: vec![],
+            },
+        )],
+    );
+    let (mut program, key) = payload_program(payload_ty.clone());
+    program.backend_contract.vtables.clear();
+    program.backend_contract.object_schemas.clear();
+    program.backend_contract.erased.descriptors.clear();
+    let unit = program.type_context.intern_type(&Type::Unit);
+    let payload = program.type_context.intern_type(&payload_ty);
+    assert!(
+        !program.backend_contract.drop_glue.contains_key(&payload),
+        "structural cleanup is not a user destructor"
+    );
+    insert_body(
+        &mut program,
+        MirFunction {
+            id: MirFunctionId::Instance(InstanceId(91)),
+            name: "cleanup.native.callable".into(),
+            local_decls: vec![
+                local(unit, LocalSource::ReturnPlace),
+                local(payload, LocalSource::Argument),
+            ],
+            closure_captures: vec![],
+            arg_count: 1,
+            ret_type: unit,
+            ownership: Default::default(),
+            basic_blocks: vec![
+                BasicBlock {
+                    statements: vec![],
+                    terminator: Some(Terminator::Drop {
+                        place: place(1),
+                        target: BasicBlockId(1),
+                    }),
+                },
+                BasicBlock {
+                    statements: vec![],
+                    terminator: Some(Terminator::Return),
+                },
+            ],
+        },
+        "cleanup.native.callable",
+        &[payload],
+        false,
+    );
+    let context = Context::create();
+    let mut codegen = super::CodeGen::new(&context, "native-environment-cleanup");
+    codegen.compile_program_from_mir(&program).unwrap();
+    codegen.module.verify().unwrap();
+    assert!(codegen
+        .get_ir()
+        .contains("call void @drop.complete.payload(ptr"));
+
+    let mut with_destructor = program.clone();
+    let user_drop = MirCallableKey::Function(definition(51));
+    with_destructor.backend_contract.callables.insert(
+        user_drop.clone(),
+        MirCallableDecl {
+            key: user_drop.clone(),
+            source_def_id: Some(definition(51)),
+            kind: MirCallableKind::ObjectProvided,
+            llvm_symbol: "callable.user.drop".into(),
+            linkage: MirLinkage::External,
+            signature: MirCallableSignature::from_type_ids(&[payload], unit, MirPassMode::Direct),
+        },
+    );
+    with_destructor
+        .backend_contract
+        .drop_glue
+        .insert(payload, user_drop);
+    let complete = payload_drop_plan(
+        &with_destructor.backend_contract,
+        &mut with_destructor.type_context,
+        payload,
+    )
+    .unwrap();
+    with_destructor
+        .backend_contract
+        .callables
+        .get_mut(&key)
+        .unwrap()
+        .kind = MirCallableKind::ObjectAdapter(MirObjectAdapter::PayloadDrop(complete));
+    let context = Context::create();
+    let mut codegen = super::CodeGen::new(&context, "complete-native-user-and-environment-cleanup");
+    codegen.compile_program_from_mir(&with_destructor).unwrap();
+    codegen.module.verify().unwrap();
+    let ir = codegen.get_ir();
+    assert!(
+        ir.contains("call void @drop.complete.payload(ptr"),
+        "the user destructor cannot replace complete environment cleanup"
+    );
+    assert_eq!(ir.matches("call void @callable.user.drop").count(), 1);
+    with_destructor.backend_contract.callables.remove(&key);
+    let context = Context::create();
+    let mut rejected = super::CodeGen::new(&context, "user-destructor-is-not-an-environment-plan");
+    let errors = rejected
+        .compile_program_from_mir(&with_destructor)
+        .unwrap_err();
+    assert!(errors
+        .message
+        .contains("complete environment drop contract"));
+
+    for corruption in 0..3 {
+        let mut invalid = program.clone();
+        match corruption {
+            0 => {
+                invalid.backend_contract.callables.remove(&key);
+            }
+            1 => {
+                let MirCallableKind::ObjectAdapter(MirObjectAdapter::PayloadDrop(plan)) =
+                    &mut invalid
+                        .backend_contract
+                        .callables
+                        .get_mut(&key)
+                        .unwrap()
+                        .kind
+                else {
+                    unreachable!()
+                };
+                plan.children = MirPayloadDropChildren::None;
+            }
+            _ => {
+                invalid
+                    .backend_contract
+                    .runtime_requirements
+                    .remove(&MirRuntimeHelper::HeapFree);
+            }
+        }
+        let context = Context::create();
+        let mut rejected = super::CodeGen::new(&context, "incomplete-native-environment-cleanup");
+        assert!(
+            rejected.compile_program_from_mir(&invalid).is_err(),
+            "missing adapter, partial plan, and missing free authority each reject"
+        );
+    }
+}
+
+#[test]
+fn native_consuming_callable_transports_result_before_releasing_its_unique_environment() {
+    static RELEASED: AtomicU64 = AtomicU64::new(0);
+    unsafe extern "C" {
+        fn malloc(size: usize) -> *mut std::ffi::c_void;
+        fn free(pointer: *mut std::ffi::c_void);
+    }
+    unsafe extern "C" fn release(pointer: *mut u8) {
+        RELEASED.fetch_add(1, Ordering::SeqCst);
+        free(pointer.cast());
+    }
+    unsafe extern "C" fn body(environment: *const i64) -> i64 {
+        *environment
+    }
+    unsafe extern "C" fn drop_capture(_: i64) {}
+    #[repr(C)]
+    struct ClosureStorage {
+        code: *const (),
+        environment: *mut u8,
+    }
+    let payload_ty = Type::function_with_metadata(
+        vec![],
+        Type::I64,
+        crate::types::FunctionSafety::Safe,
+        CallableKind::FnOnce,
+        vec![crate::types::FunctionCapture::new(
+            crate::types::CaptureKind::Move,
+            Type::Struct {
+                id: definition(50),
+                args: vec![],
+            },
+        )],
+    );
+    let (mut program, _) = payload_program(payload_ty.clone());
+    program.backend_contract.vtables.clear();
+    program.backend_contract.object_schemas.clear();
+    program.backend_contract.erased.descriptors.clear();
+    let scalar = program.type_context.intern_type(&Type::I64);
+    let reference = program.type_context.intern_type(&Type::Reference {
+        inner: Box::new(payload_ty),
+        mutable: true,
+    });
+    insert_body(
+        &mut program,
+        MirFunction {
+            id: MirFunctionId::Instance(InstanceId(92)),
+            name: "consume.native.callable".into(),
+            local_decls: vec![
+                local(scalar, LocalSource::ReturnPlace),
+                local(reference, LocalSource::Argument),
+            ],
+            closure_captures: vec![],
+            arg_count: 1,
+            ret_type: scalar,
+            ownership: Default::default(),
+            basic_blocks: vec![
+                BasicBlock {
+                    statements: vec![],
+                    terminator: Some(Terminator::Call {
+                        func: Operand::Move(Place {
+                            local: Local(1),
+                            projection: vec![Projection::Deref],
+                        }),
+                        args: vec![],
+                        destination: place(0),
+                        target: BasicBlockId(1),
+                        span: None,
+                    }),
+                },
+                BasicBlock {
+                    statements: vec![],
+                    terminator: Some(Terminator::Return),
+                },
+            ],
+        },
+        "consume.native.callable",
+        &[reference],
+        false,
+    );
+    for level in [OptimizationLevel::None, OptimizationLevel::Aggressive] {
+        let context = Context::create();
+        let mut codegen = super::CodeGen::new(&context, "consuming-environment-release");
+        codegen.compile_program_from_mir(&program).unwrap();
+        codegen.module.verify().unwrap();
+        let ir = codegen.get_ir();
+        let consuming_body = ir
+            .split("define i64 @consume.native.callable")
+            .nth(1)
+            .unwrap();
+        assert!(
+            consuming_body
+                .find("store i64")
+                .zip(consuming_body.find("call void @free"))
+                .is_some_and(|(store, release)| store < release),
+            "a consuming native call must store its result before releasing the environment"
+        );
+        let destructor = codegen
+            .module
+            .get_function("payload_user_drop_link")
+            .unwrap();
+        let deallocator = codegen.module.get_function("free").unwrap();
+        let engine = codegen.module.create_jit_execution_engine(level).unwrap();
+        engine.add_global_mapping(&destructor, drop_capture as *const () as usize);
+        engine.add_global_mapping(&deallocator, release as *const () as usize);
+        RELEASED.store(0, Ordering::SeqCst);
+        unsafe {
+            let environment = malloc(std::mem::size_of::<i64>()).cast::<u8>();
+            assert!(!environment.is_null());
+            environment.cast::<i64>().write(42);
+            let mut closure = ClosureStorage {
+                code: body as *const (),
+                environment,
+            };
+            assert_eq!(
+                engine
+                    .get_function::<unsafe extern "C" fn(*mut ClosureStorage) -> i64>(
+                        "consume.native.callable"
+                    )
+                    .unwrap()
+                    .call(&mut closure),
+                42
+            );
+        }
+        assert_eq!(RELEASED.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[test]
+fn erased_owning_copies_duplicate_and_reclaim_environment_storage() {
+    static ALLOCATED: AtomicU64 = AtomicU64::new(0);
+    static RELEASED: AtomicU64 = AtomicU64::new(0);
+    unsafe extern "C" {
+        fn malloc(size: usize) -> *mut std::ffi::c_void;
+        fn free(pointer: *mut std::ffi::c_void);
+    }
+    unsafe extern "C" fn allocate(size: usize) -> *mut u8 {
+        ALLOCATED.fetch_add(1, Ordering::SeqCst);
+        malloc(size).cast()
+    }
+    unsafe extern "C" fn release(pointer: *mut u8) {
+        RELEASED.fetch_add(1, Ordering::SeqCst);
+        free(pointer.cast());
+    }
+    unsafe extern "C" fn body(environment: *const i64) -> i64 {
+        *environment
+    }
+    #[repr(C)]
+    struct ClosureStorage {
+        code: *const (),
+        environment: *mut u8,
+    }
+    let mut tc = TypeContext::new();
+    let callable = tc.intern_type(&Type::function_with_metadata(
+        vec![],
+        Type::I64,
+        crate::types::FunctionSafety::Safe,
+        CallableKind::Fn,
+        vec![crate::types::FunctionCapture::new(
+            crate::types::CaptureKind::Move,
+            Type::I64,
+        )],
+    ));
+    let mut program = MirProgram {
+        functions: BTreeMap::new(),
+        type_context: tc,
+        backend_contract: Default::default(),
+    };
+    insert_descriptor(&mut program, callable);
+    let concrete = MirErasedType::Concrete(callable);
+    let key = MirErasedKey {
+        definition: definition(97),
+        static_args: vec![],
+    };
+    let copy = |local| MirErasedOperand::Copy(MirErasedPlace::local(MirErasedLocal(local)));
+    program.backend_contract.erased.functions.insert(
+        key.clone(),
+        MirErasedFunction {
+            key,
+            symbol: "copy.erased.environment".into(),
+            linkage: MirLinkage::External,
+            signature: MirErasedSignature {
+                parameters: vec![],
+                params: vec![concrete.clone()],
+                ret: concrete.clone(),
+                dictionaries: vec![],
+                layouts: vec![],
+                require_borrow_free: Default::default(),
+            },
+            body: Some(MirErasedBody {
+                locals: vec![concrete.clone(), concrete],
+                mutable_locals: Default::default(),
+                scopes: vec![],
+                blocks: vec![MirErasedBasicBlock {
+                    statements: vec![MirErasedAssignment {
+                        destination: MirErasedLocal(1),
+                        value: MirErasedRvalue::Use(copy(0)),
+                    }],
+                    terminator: MirErasedTerminator::Return(copy(1)),
+                }],
+            }),
+        },
+    );
+    program.backend_contract.runtime_requirements =
+        crate::mir::backend_contract::runtime_requirements_for_backend(
+            &program.backend_contract,
+            program.functions.values(),
+        );
+    for level in [OptimizationLevel::None, OptimizationLevel::Aggressive] {
+        let context = Context::create();
+        let mut codegen = super::CodeGen::new(&context, "erased-copy-reclamation");
+        codegen.compile_program_from_mir(&program).unwrap();
+        codegen.module.verify().unwrap();
+        let allocator = codegen.module.get_function("malloc").unwrap();
+        let deallocator = codegen.module.get_function("free").unwrap();
+        let engine = codegen.module.create_jit_execution_engine(level).unwrap();
+        engine.add_global_mapping(&allocator, allocate as *const () as usize);
+        engine.add_global_mapping(&deallocator, release as *const () as usize);
+        ALLOCATED.store(0, Ordering::SeqCst);
+        RELEASED.store(0, Ordering::SeqCst);
+        unsafe {
+            let environment = allocate(std::mem::size_of::<i64>());
+            assert!(!environment.is_null());
+            environment.cast::<i64>().write(42);
+            let mut input = ClosureStorage {
+                code: body as *const (),
+                environment,
+            };
+            let mut output = ClosureStorage {
+                code: std::ptr::null(),
+                environment: std::ptr::null_mut(),
+            };
+            engine
+                .get_function::<unsafe extern "C" fn(*mut ClosureStorage, *mut ClosureStorage)>(
+                    "copy.erased.environment",
+                )
+                .unwrap()
+                .call(&mut output, &mut input);
+            assert_eq!(body(output.environment.cast()), 42);
+            assert_ne!(output.environment, input.environment);
+            assert_eq!(ALLOCATED.load(Ordering::SeqCst), 3);
+            assert_eq!(RELEASED.load(Ordering::SeqCst), 2);
+            release(output.environment);
+        }
+        assert_eq!(
+            ALLOCATED.load(Ordering::SeqCst),
+            RELEASED.load(Ordering::SeqCst)
+        );
+    }
+    program
+        .backend_contract
+        .runtime_requirements
+        .remove(&MirRuntimeHelper::HeapAlloc);
+    let context = Context::create();
+    let mut rejected = super::CodeGen::new(&context, "missing-copy-allocation");
+    assert!(rejected.compile_program_from_mir(&program).is_err());
 }
 
 #[test]
@@ -1195,16 +1631,7 @@ fn owned_erased_call_transfers_payload_and_initializes_result_before_release() {
         .erased
         .functions
         .insert(key.clone(), entry);
-    let drop =
-        payload_drop_plan(&program.backend_contract, &mut program.type_context, scalar).unwrap();
-    program.backend_contract.erased.descriptors.insert(
-        scalar,
-        MirTypeDescriptor {
-            ty: scalar,
-            drop,
-            fields: vec![],
-        },
-    );
+    insert_descriptor(&mut program, scalar);
     program.backend_contract.vtables.insert(
         MirVtableId(0),
         MirVtable {

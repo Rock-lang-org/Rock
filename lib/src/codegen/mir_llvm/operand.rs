@@ -9,12 +9,25 @@ use super::MirFunctionContext;
 impl<'ctx> CodeGen<'ctx> {
     pub(crate) fn compile_mir_operand(
         &mut self,
-        _function: &MirFunction,
+        function: &MirFunction,
         ctx: &MirFunctionContext<'ctx>,
         operand: &Operand,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         match operand {
-            Operand::Copy(place) | Operand::Move(place) => self.compile_mir_place_value(ctx, place),
+            Operand::Copy(place) => {
+                let (address, ty) = self.compile_mir_place_local(ctx, place)?;
+                let value = self
+                    .builder
+                    .build_load(self.llvm_type(&ty), address, "mir_place")
+                    .map_err(|e| CodegenError::from(format!("Failed to load MIR place: {}", e)))?;
+                self.copy_mir_value(value, &ty).map_err(|error| {
+                    error.with_note(format!(
+                        "owning operand {place:?} in MIR function '{}': {ty:?}",
+                        function.name
+                    ))
+                })
+            }
+            Operand::Move(place) => self.compile_mir_place_value(ctx, place),
             Operand::Constant(constant) => self.compile_mir_constant(constant),
         }
     }

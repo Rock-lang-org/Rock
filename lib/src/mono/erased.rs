@@ -139,19 +139,31 @@ impl Monomorphizer {
         slot: u32,
         target: &HirMethodCallTarget,
         span: &Span,
-    ) -> Result<(), String> {
+    ) -> Result<Option<Type>, String> {
         let signature = self.object_schemas[&object].erased_slots[slot as usize]
             .signature
             .clone();
+        if target.method_substitution.len() != signature.parameters.len() - 1 {
+            return Err("generic virtual canonical method substitution arity disagrees".into());
+        }
         let mut bindings = vec![None];
         let mut type_args = Vec::new();
         for parameter in signature.parameters.iter().skip(1) {
-            let binding = target
+            let matches = target
                 .method_substitution
                 .iter()
-                .chain(&target.owner_substitution)
-                .find(|binding| binding.param == parameter.source)
-                .ok_or("generic virtual argument was not finalized by inference")?;
+                .filter(|binding| binding.param == parameter.source)
+                .collect::<Vec<_>>();
+            let [binding] = matches.as_slice() else {
+                return Err("generic virtual canonical method binding absent/duplicated".into());
+            };
+            if target
+                .owner_substitution
+                .iter()
+                .any(|binding| binding.param == parameter.source)
+            {
+                return Err("generic virtual local binder conflicts with owner evidence".into());
+            }
             if self.contains_generic(&binding.ty) {
                 return Err("generic virtual call from an erased body requires explicit nested dispatch evidence".into());
             }
@@ -166,13 +178,99 @@ impl Monomorphizer {
         {
             return Err("by-value/nested Self results require an opened or owner-provided result destination".into());
         }
+        let key = MirErasedInvocationKey {
+            object,
+            slot,
+            type_args: type_args.clone(),
+        };
+        let mut dictionaries = Vec::new();
+        for required in &signature.dictionaries {
+            dictionaries.push(self.materialize_erased_dictionary(required, &bindings, span)?);
+        }
+        // Only exact selected static producers may refine a nominal result
+        // binder. Dictionary schemas and implementation selection stay nominal;
+        // measured storage travels separately in this invocation's descriptors.
+        let mut measured = BTreeMap::new();
+        for (required, dictionary) in signature.dictionaries.iter().zip(&dictionaries) {
+            let selected = self.erased.dictionaries[dictionary].clone();
+            for (member, actual) in required.members.iter().zip(&selected.members) {
+                let MirErasedType::Parameter(index) = member.ret else {
+                    continue;
+                };
+                if member.receiver.is_some()
+                    || !member.binder.parameters.is_empty()
+                    || member.ret != required.subject
+                    || index == 0
+                    || signature
+                        .params
+                        .iter()
+                        .any(|ty| ty.contains_parameter(index))
+                {
+                    continue;
+                }
+                let Some(MirCallableKey::Instance(instance)) = actual.target.native() else {
+                    continue;
+                };
+                let Some(body) = self.instances.pre_mir_body(*instance).or_else(|| {
+                    self.instances
+                        .record(*instance)
+                        .and_then(|record| record.declared.as_ref())
+                }) else {
+                    continue;
+                };
+                let storage = body.ret_type.clone();
+                if !matches!(
+                    storage,
+                    Type::StructRepresentation { .. } | Type::EnumRepresentation { .. }
+                ) {
+                    continue;
+                }
+                let semantic = bindings
+                    .get(index as usize)
+                    .and_then(Option::as_ref)
+                    .ok_or("static result binder is unbound")?;
+                if crate::mir::backend_contract::semantic_nominal_type(storage.clone()) != *semantic
+                {
+                    return Err(
+                        "static producer storage disagrees with the nominal result binder".into(),
+                    );
+                }
+                if measured
+                    .insert(index, storage.clone())
+                    .is_some_and(|previous| previous != storage)
+                {
+                    return Err(
+                        "selected static producers require incompatible result storage".into(),
+                    );
+                }
+            }
+        }
+        for (index, storage) in measured {
+            let storage_id = self.intern_type(&storage);
+            *type_args
+                .get_mut(index as usize - 1)
+                .ok_or("static result binder has no invocation argument")? = storage_id;
+            *bindings
+                .get_mut(index as usize)
+                .ok_or("static result binder has no storage binding")? = Some(storage);
+        }
+        let result = signature
+            .ret
+            .instantiate_optional(&bindings, &self.type_context)
+            .ok()
+            .filter(|ty| {
+                matches!(
+                    ty,
+                    Type::StructRepresentation { .. } | Type::EnumRepresentation { .. }
+                )
+            });
         for layout in &signature.layouts {
             if *layout == MirErasedType::Parameter(0) {
                 continue;
             }
             let ty = layout
                 .instantiate_optional(&bindings, &self.type_context)
-                .map_err(|e| format!("erased layout evidence: {e:?}"))?;
+                .map_err(|e| format!("erased layout evidence: {e:?}; layout {layout:?}, canonical parameters {:?}, finalized method substitution {:?}", signature.parameters, target.method_substitution))?;
             if crate::type_services::layout::TypeLayout::sizedness(&ty, &|_| {
                 crate::type_services::layout::Sizedness::Unknown
             }) != crate::type_services::layout::Sizedness::Sized
@@ -183,17 +281,8 @@ impl Monomorphizer {
             self.intern_type(&ty);
             self.monomorphize_drop_for_type(&ty, Some(span.clone()));
         }
-        let key = MirErasedInvocationKey {
-            object,
-            slot,
-            type_args: type_args.clone(),
-        };
         if self.erased_invocations.contains_key(&key) {
-            return Ok(());
-        }
-        let mut dictionaries = Vec::new();
-        for required in &signature.dictionaries {
-            dictionaries.push(self.materialize_erased_dictionary(required, &bindings, span)?);
+            return Ok(result);
         }
         self.erased_invocations.insert(
             key,
@@ -203,7 +292,7 @@ impl Monomorphizer {
                 dictionaries,
             },
         );
-        Ok(())
+        Ok(result)
     }
 
     fn materialize_erased_dictionary(
@@ -238,6 +327,67 @@ impl Monomorphizer {
         }
         let mut members = Vec::new();
         for member in &required.members {
+            if !member.binder.parameters.is_empty() {
+                let parent_arguments = bindings
+                    .iter()
+                    .map(|binding| {
+                        binding
+                            .as_ref()
+                            .map(|ty| self.intern_type(ty))
+                            .map(MirErasedType::Concrete)
+                    })
+                    .collect::<Vec<_>>();
+                // Only parents actually referenced by this member must be bound
+                // (the hidden virtual Self evidence has no concrete substitution).
+                let parent_arguments = parent_arguments
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, ty)| ty.unwrap_or(MirErasedType::Parameter(index as u32)))
+                    .collect::<Vec<_>>();
+                let mut schema = MirErasedDictionarySchema {
+                    subject: required.subject.clone(),
+                    trait_id: required.trait_id,
+                    trait_args: required.trait_args.clone(),
+                    members: vec![member.clone()],
+                }
+                .substitute(&parent_arguments, &self.type_context)
+                .map_err(|error| format!("polymorphic parent binding: {error:?}"))?;
+                for ty in &mut schema.members[0].params {
+                    *ty = self.simplify_erased_type(ty)?;
+                }
+                schema.members[0].ret = self.simplify_erased_type(&schema.members[0].ret)?;
+                schema.members[0].params[0] = MirErasedType::Concrete(subject);
+                let implementation_map = self
+                    .trait_impls
+                    .values()
+                    .flatten()
+                    .map(|imp| (imp.id, imp.clone()))
+                    .collect::<HashMap<_, _>>();
+                let (implementation, substitution) =
+                    crate::selection::SelectionService::select_declared_dictionary_impl(
+                        &self.object_traits,
+                        &implementation_map,
+                        &crate::hir::HirGenericBounds::new(),
+                        &source,
+                        required.trait_id,
+                        &arguments,
+                    )
+                    .map_err(|error| format!("polymorphic dictionary selection: {error:?}"))?;
+                let implementation = implementation.clone();
+                let key = self.materialize_polymorphic_member(
+                    &implementation,
+                    &schema.members[0],
+                    &[],
+                    &[],
+                    &substitution,
+                )?;
+                members.push(MirConcreteDictionaryMember {
+                    member_id: member.member_id,
+                    receiver: member.receiver,
+                    target: MirDictionaryMemberTarget::Polymorphic(key),
+                });
+                continue;
+            }
             let target = if let Some((kind, _, _)) =
                 self.language_items
                     .callable_protocols()
@@ -280,7 +430,7 @@ impl Monomorphizer {
                         .ret
                         .instantiate_optional(bindings, &self.type_context)
                         .map_err(|e| format!("callable dictionary result: {e:?}"))?;
-                    if member.receiver != receiver
+                    if member.receiver != Some(receiver)
                         || arguments != vec![packed.clone(), *ret.clone()]
                         || member_params != vec![source.clone(), packed]
                         || member_ret != **ret
@@ -317,7 +467,7 @@ impl Monomorphizer {
             members.push(MirConcreteDictionaryMember {
                 member_id: member.member_id,
                 receiver: member.receiver,
-                target,
+                target: MirDictionaryMemberTarget::Native(target),
             });
         }
         if members.is_empty() {
@@ -362,6 +512,77 @@ impl Monomorphizer {
         }
         self.monomorphize_drop_for_type(&source, Some(span.clone()));
         let id = MirDictionaryId(self.erased.dictionaries.len() as u32);
+        let impls = self
+            .trait_impls
+            .values()
+            .flatten()
+            .map(|imp| (imp.id, imp.clone()))
+            .collect::<HashMap<_, _>>();
+        let assumed = crate::hir::HirGenericBounds::new();
+        if let Ok((implementation, _)) =
+            crate::selection::SelectionService::select_declared_dictionary_impl(
+                &self.object_traits,
+                &impls,
+                &assumed,
+                &source,
+                required.trait_id,
+                &arguments,
+            )
+        {
+            let methods = required
+                .members
+                .iter()
+                .map(|m| {
+                    self.effective_trait_methods
+                        .get(&(implementation.id, m.member_id))
+                        .copied()
+                })
+                .collect::<Option<Vec<_>>>();
+            if let Some(methods) = methods {
+                let mut schema = required.clone();
+                let mut convert = |ty: &MirErasedType| -> Result<MirErasedType, String> {
+                    if let MirErasedType::MemberParameter(_) = ty {
+                        return Ok(ty.clone());
+                    }
+                    let concrete = ty
+                        .instantiate_optional(bindings, &self.type_context)
+                        .map_err(|e| format!("{e:?}"))?;
+                    Ok(MirErasedType::Concrete(self.intern_type(&concrete)))
+                };
+                schema.subject = convert(&schema.subject)?;
+                schema.trait_args = schema
+                    .trait_args
+                    .iter()
+                    .map(&mut convert)
+                    .collect::<Result<_, _>>()?;
+                for member in &mut schema.members {
+                    member.params = member
+                        .params
+                        .iter()
+                        .map(&mut convert)
+                        .collect::<Result<_, _>>()?;
+                    member.ret = convert(&member.ret)?;
+                }
+                for member in &mut schema.members {
+                    member.borrowing = dictionary_member_borrow_contract(
+                        &member.binder,
+                        &member.params,
+                        &member.ret,
+                        member.receiver,
+                        &self.type_context,
+                    )
+                    .map_err(|e| format!("{e:?}"))?;
+                }
+                self.erased.dictionary_witnesses.insert(
+                    id,
+                    MirDictionaryWitness {
+                        implementation: implementation.id,
+                        schema,
+                        methods,
+                    },
+                );
+            }
+        }
         self.erased.dictionaries.insert(
             id,
             MirConcreteDictionary {
@@ -374,6 +595,293 @@ impl Monomorphizer {
         Ok(id)
     }
 
+    fn materialize_polymorphic_member(
+        &mut self,
+        implementation: &super::hir_types::HirImpl,
+        member: &MirErasedDictionaryMember,
+        captures: &[MirErasedParameter],
+        bounds: &[MirErasedDictionarySchema],
+        substitution: &HashMap<GenericParamId, Type>,
+    ) -> Result<MirErasedKey, String> {
+        let trait_id = implementation
+            .trait_id
+            .ok_or("polymorphic entry is not a trait impl")?;
+        let method_id = *self
+            .effective_trait_methods
+            .get(&(implementation.id, member.member_id))
+            .ok_or("polymorphic effective member authority absent")?;
+        let method = implementation
+            .methods
+            .values()
+            .find(|method| method.id == method_id)
+            .cloned()
+            .ok_or("polymorphic accepted method absent")?;
+        if method.is_unsafe
+            || method.self_receiver != member.receiver
+            || !polymorphic_impl_member_bounds_are_captured(implementation, &method)
+        {
+            return Err(
+                "polymorphic impl member bounds/receiver require additional authority".into(),
+            );
+        }
+        let locals = method
+            .generic_params
+            .iter()
+            .filter(|p| {
+                !implementation
+                    .type_generics
+                    .iter()
+                    .any(|parent| parent.id == p.id)
+            })
+            .collect::<Vec<_>>();
+        if locals.len() != member.binder.parameters.len()
+            || locals
+                .iter()
+                .zip(&member.binder.parameters)
+                .any(|(actual, canonical)| actual.kind != canonical.kind)
+        {
+            return Err("polymorphic impl/member binder arity or kinds disagree".into());
+        }
+        let static_args = if !captures.is_empty() {
+            vec![]
+        } else {
+            implementation
+                .type_generics
+                .iter()
+                .map(|p| {
+                    substitution
+                        .get(&p.id)
+                        .cloned()
+                        .ok_or("polymorphic owner substitution incomplete")
+                })
+                .collect::<Result<Vec<_>, _>>()?
+                .iter()
+                .map(|ty| self.intern_type(ty))
+                .collect::<Vec<_>>()
+        };
+        let key = MirErasedKey {
+            definition: method_id,
+            static_args,
+        };
+        let mut signature = member
+            .entry_signature(captures)
+            .map_err(|error| format!("{error:?}"))?;
+        signature.dictionaries = bounds.to_vec();
+        let mut variables = captures
+            .iter()
+            .enumerate()
+            .map(|(index, p)| (p.source, index as u32))
+            .collect::<BTreeMap<_, _>>();
+        if signature.params.len() != method.params.len() {
+            return Err("polymorphic impl/member value arity disagrees".into());
+        }
+        for (expected, actual) in signature.params.iter().zip(&method.params) {
+            let actual = crate::type_services::substitution::instantiate(&actual.ty, substitution)
+                .map_err(|error| error.to_string())?;
+            bind_erased_parameters(expected, &actual, &mut variables, &self.type_context)?;
+        }
+        let ret = crate::type_services::substitution::instantiate(&method.ret_type, substitution)
+            .map_err(|error| error.to_string())?;
+        bind_erased_parameters(&signature.ret, &ret, &mut variables, &self.type_context)?;
+        for (index, (actual, canonical)) in locals.iter().zip(&member.binder.parameters).enumerate()
+        {
+            let ordinal = (captures.len() + index) as u32;
+            if variables.get(&actual.id) != Some(&ordinal) {
+                return Err(
+                    "polymorphic method binder order disagrees with canonical signature".into(),
+                );
+            }
+            if variables
+                .insert(canonical.source, ordinal)
+                .is_some_and(|old| old != ordinal)
+            {
+                return Err(
+                    "polymorphic canonical local conflicts with an accepted capture or binder"
+                        .into(),
+                );
+            }
+        }
+        let authority = MirErasedMemberEntry {
+            implementation: implementation.id,
+            trait_id,
+            method_id,
+            captures: captures.to_vec(),
+            member: member.clone(),
+        };
+        if let Some(existing) = self.erased.member_entries.get(&key) {
+            if existing != &authority
+                || self
+                    .erased
+                    .functions
+                    .get(&key)
+                    .is_none_or(|entry| entry.signature != signature)
+            {
+                return Err("polymorphic entry key conflicts with selected authority".into());
+            }
+            return Ok(key);
+        }
+        let imported = self.imported_member_symbols.get(&method_id).cloned();
+        if let Some((symbol, link)) = &imported {
+            let imported_authority = link
+                .entry
+                .map_types(&mut |ty| Ok::<_, String>(self.intern_type(ty)))?;
+            if imported_authority != authority {
+                return Err(
+                    "polymorphic dictionary link record disagrees with accepted member ABI".into(),
+                );
+            }
+            self.erased
+                .imported_member_links
+                .insert(key.clone(), (symbol.clone(), imported_authority));
+        }
+        let symbol = imported
+            .as_ref()
+            .map(|(symbol, _)| symbol.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "rock.erased.member.{}",
+                    self.backend_symbol_for_origin(
+                        &super::InstanceOrigin::ImplMethod {
+                            owner: self.impl_owner_identity(implementation),
+                            method: method_id
+                        },
+                        &key.static_args
+                    )
+                )
+            });
+        self.erased.member_entries.insert(key.clone(), authority);
+        self.erased.functions.insert(
+            key.clone(),
+            MirErasedFunction {
+                key: key.clone(),
+                symbol,
+                linkage: if imported.is_some()
+                    || (captures.is_empty() && implementation.type_generics.is_empty())
+                {
+                    MirLinkage::External
+                } else {
+                    MirLinkage::Internal
+                },
+                signature: signature.clone(),
+                body: None,
+            },
+        );
+        if imported.is_some() {
+            return Ok(key);
+        }
+        if method.body.stmts.is_empty() {
+            return Err(
+                "polymorphic member lacks an accepted body or exact producer link record".into(),
+            );
+        }
+        let static_types = substitution
+            .iter()
+            .map(|(id, ty)| (*id, self.intern_type(ty)))
+            .collect();
+        let body = self.substitute_block(&method.body, &static_types);
+        let body = ErasedBodyBuilder::new(self, signature, variables, &method)?
+            .for_entry(key.clone())
+            .block(&body)?;
+        self.erased
+            .functions
+            .get_mut(&key)
+            .ok_or("polymorphic entry declaration disappeared")?
+            .body = Some(body);
+        Ok(key)
+    }
+
+    pub(super) fn prepare_polymorphic_members(
+        &mut self,
+        program: &super::hir_types::HirProgram,
+    ) -> Result<(), String> {
+        let implementations = program
+            .impls_in_order()
+            .map(|(_, implementation)| implementation.clone())
+            .collect::<Vec<_>>();
+        for implementation in implementations {
+            if implementation.id.crate_id != self.identity_context.current_crate_id
+                || !implementation.type_generics.is_empty()
+                || !implementation.bounds.is_empty()
+                || !implementation.bounds.predicates.is_empty()
+                || !implementation.associated_types.is_empty()
+            {
+                continue;
+            }
+            let Some(trait_id) = implementation.trait_id else {
+                continue;
+            };
+            let crate::hir::HirImplReceiverPattern::Exact(source) =
+                &implementation.receiver_pattern
+            else {
+                continue;
+            };
+            if !crate::type_services::facts::TypeFacts::is_codegen_concrete(source) {
+                continue;
+            }
+            let declaration = self
+                .object_traits
+                .get(&trait_id)
+                .ok_or("polymorphic trait authority absent")?;
+            if !declaration.associated_types.is_empty() || !declaration.predicates.is_empty() {
+                continue;
+            }
+            let subject = GenericParamId {
+                owner: implementation.id,
+                index: 0,
+            };
+            let parameters = vec![MirErasedParameter {
+                source: subject,
+                kind: crate::type_services::kind::Kind::Type,
+            }];
+            let bounds = crate::hir::HirGenericBounds::from_iter([(
+                subject,
+                vec![crate::types::TraitBound {
+                    trait_id,
+                    type_args: implementation.trait_arg_types.clone(),
+                }],
+            )]);
+            // Unsupported exported generic shapes are not promoted to an ABI.
+            // A requested dictionary reports the specific schema diagnostic.
+            let Ok(mut schemas) = super::object_schema::erased_bound_schemas(
+                &parameters,
+                &bounds,
+                &HashMap::new(),
+                &self.object_traits,
+                &self.erased_member_orders(),
+                &self.normalization_env,
+                &mut self.type_context,
+                false,
+            ) else {
+                continue;
+            };
+            let source_id = self.intern_type(source);
+            let Some(schema) = schemas.pop() else {
+                continue;
+            };
+            let schema = schema
+                .substitute(&[MirErasedType::Concrete(source_id)], &self.type_context)
+                .map_err(|error| {
+                    format!(
+                        "polymorphic producer schema {:?}: {error:?}",
+                        implementation.id
+                    )
+                })?;
+            for member in &schema.members {
+                if member.binder.parameters.is_empty() {
+                    continue;
+                }
+                self.materialize_polymorphic_member(
+                    &implementation,
+                    member,
+                    &[],
+                    &[],
+                    &HashMap::new(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     fn materialize_dictionary_method(
         &mut self,
         source: &Type,
@@ -383,6 +891,99 @@ impl Monomorphizer {
         bindings: &[Option<Type>],
         span: &Span,
     ) -> Result<MirCallableKey, String> {
+        if member.receiver.is_none() {
+            let implementations = self
+                .trait_impls
+                .values()
+                .flatten()
+                .map(|implementation| (implementation.id, implementation.clone()))
+                .collect::<HashMap<_, _>>();
+            let (implementation, substitution) =
+                crate::selection::SelectionService::select_declared_dictionary_impl(
+                    &self.object_traits,
+                    &implementations,
+                    &crate::hir::HirGenericBounds::new(),
+                    source,
+                    trait_id,
+                    trait_args,
+                )
+                .map_err(|error| format!("static dictionary selection: {error:?}"))?;
+            let method_id = *self
+                .effective_trait_methods
+                .get(&(implementation.id, member.member_id))
+                .ok_or("static dictionary effective member missing")?;
+            let method = implementation
+                .methods
+                .values()
+                .find(|method| method.id == method_id)
+                .ok_or("static dictionary accepted method missing")?;
+            if method.self_receiver.is_some()
+                || method.is_unsafe
+                || !member.binder.parameters.is_empty()
+                || method.generic_params.iter().any(|p| {
+                    !implementation
+                        .type_generics
+                        .iter()
+                        .any(|owner| owner.id == p.id)
+                })
+            {
+                return Err(
+                    "static dictionary leaf requires the exact safe nongeneric static header"
+                        .into(),
+                );
+            }
+            let target = HirMethodCallTarget {
+                target: HirSelectedMethodTarget::ImplMethod {
+                    impl_id: implementation.id,
+                    method_id,
+                    selected_trait: Some(crate::hir::HirSelectedTraitMember {
+                        trait_id,
+                        member_id: member.member_id,
+                        trait_args: trait_args.to_vec(),
+                    }),
+                },
+                owner_substitution: implementation
+                    .type_generics
+                    .iter()
+                    .map(|p| {
+                        substitution
+                            .get(&p.id)
+                            .cloned()
+                            .map(|ty| crate::hir::HirTypeBinding { param: p.id, ty })
+                            .ok_or("static dictionary owner binding missing")
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+                method_substitution: vec![],
+            };
+            let args = member
+                .params
+                .iter()
+                .map(|ty| {
+                    ty.instantiate_optional(bindings, &self.type_context)
+                        .map(|ty| HirExpr {
+                            kind: HirExprKind::Unit,
+                            ty,
+                            span: span.clone(),
+                        })
+                        .map_err(|e| format!("static dictionary argument: {e:?}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let (_, target, ret) = self
+                .monomorphize_static_method_call(source, &target, &args, span.clone())
+                .map_err(|error| format!("static dictionary leaf: {:?}", error.kind))?;
+            if crate::mir::backend_contract::semantic_nominal_type(ret)
+                != member
+                    .ret
+                    .instantiate_optional(bindings, &self.type_context)
+                    .map_err(|e| format!("static result: {e:?}"))?
+            {
+                return Err("static dictionary native result disagrees with Self authority".into());
+            }
+            let crate::hir::HirCallTarget::Instance(instance) = target else {
+                return Err("static dictionary native instance absent".into());
+            };
+            return Ok(MirCallableKey::Instance(instance));
+        }
         let receiver = HirExpr {
             kind: HirExprKind::Unit,
             ty: source.clone(),
@@ -421,7 +1022,7 @@ impl Monomorphizer {
                 Box::new(receiver.clone()),
                 String::new(),
                 args.clone(),
-                Some(member.receiver),
+                member.receiver,
                 target,
             ),
             ty: ret,
@@ -595,7 +1196,9 @@ impl Monomorphizer {
             }
         }
         for dictionary in &mut signature.dictionaries {
-            *dictionary = dictionary.substitute(&map).map_err(|e| format!("{e:?}"))?;
+            *dictionary = dictionary
+                .substitute(&map, &self.type_context)
+                .map_err(|e| format!("{e:?}"))?;
         }
         if signature.params.len() != method.params.len() {
             return Err("impl parameter count disagrees with virtual schema".into());
@@ -621,6 +1224,23 @@ impl Monomorphizer {
             &mut variables,
             &self.type_context,
         )?;
+        let runtime_parameters = method
+            .generic_params
+            .iter()
+            .filter(|parameter| !substitution.contains_key(&parameter.id))
+            .collect::<Vec<_>>();
+        if runtime_parameters.len() != signature.parameters.len() - 1
+            || runtime_parameters
+                .iter()
+                .zip(signature.parameters.iter().skip(1))
+                .enumerate()
+                .any(|(index, (actual, canonical))| {
+                    actual.kind != canonical.kind
+                        || variables.get(&actual.id) != Some(&((index + 1) as u32))
+                })
+        {
+            return Err("accepted impl runtime binder order/kind disagrees with its declared virtual member".into());
+        }
         for (index, parameter) in signature.parameters.iter().enumerate().skip(1) {
             if variables
                 .insert(parameter.source, index as u32)
@@ -781,7 +1401,9 @@ impl Monomorphizer {
             .map(|(id, ty)| (*id, self.intern_type(ty)))
             .collect();
         let body = self.substitute_block(&method.body, &static_types);
-        let code = ErasedBodyBuilder::new(self, signature, variables, &method)?.block(&body)?;
+        let code = ErasedBodyBuilder::new(self, signature, variables, &method)?
+            .for_entry(key.clone())
+            .block(&body)?;
         self.erased
             .functions
             .get_mut(&key)
@@ -796,6 +1418,254 @@ impl Monomorphizer {
             return Ok(MirErasedType::Concrete(self.intern_type(&ty)));
         }
         Ok(ty.clone())
+    }
+
+    fn materialize_dictionary_template(
+        &mut self,
+        implementation: &super::hir_types::HirImpl,
+        _span: &Span,
+    ) -> Result<MirDictionaryFactoryTemplate, String> {
+        if let Some(template) = self.erased.dictionary_templates.get(&implementation.id) {
+            return Ok(template.clone());
+        }
+        let crate::hir::HirImplReceiverPattern::Exact(Type::Generic(subject)) =
+            &implementation.receiver_pattern
+        else {
+            return Err(
+                "selected dictionary factories currently require a first-order generic subject"
+                    .into(),
+            );
+        };
+        let trait_id = implementation
+            .trait_id
+            .ok_or("dictionary factory is not a trait impl")?;
+        let declaration = self
+            .object_traits
+            .get(&trait_id)
+            .ok_or("dictionary trait unavailable")?;
+        if !declaration.associated_types.is_empty()
+            || !implementation.associated_types.is_empty()
+            || !declaration.predicates.is_empty()
+        {
+            return Err(
+                "associated dictionary factory members require additional authority".into(),
+            );
+        }
+        let parameters = implementation
+            .type_generics
+            .iter()
+            .map(|p| MirErasedParameter {
+                source: p.id,
+                kind: p.kind.clone(),
+            })
+            .collect::<Vec<_>>();
+        if parameters.is_empty()
+            || parameters
+                .iter()
+                .any(|p| p.kind != crate::type_services::kind::Kind::Type)
+        {
+            return Err("dictionary factory captures require Type-kind parameters".into());
+        }
+        let bounds = super::object_schema::erased_bound_schemas(
+            &parameters,
+            &implementation.bounds,
+            &HashMap::new(),
+            &self.object_traits,
+            &self.erased_member_orders(),
+            &self.normalization_env,
+            &mut self.type_context,
+            false,
+        )?;
+        for bound in &bounds {
+            let declaration = self
+                .object_traits
+                .get(&bound.trait_id)
+                .ok_or("dictionary child trait unavailable")?;
+            if !declaration.associated_types.is_empty() || !declaration.predicates.is_empty() {
+                return Err(
+                    "associated/related child dictionaries require additional evidence".into(),
+                );
+            }
+        }
+        for predicate in &implementation.bounds.predicates {
+            let crate::types::Predicate::Trait {
+                subject: Type::Generic(param),
+                trait_id,
+                args,
+            } = predicate
+            else {
+                return Err(
+                    "compound selected impl bounds require explicit dictionary capture authority"
+                        .into(),
+                );
+            };
+            if !implementation.bounds.get(param).is_some_and(|roots| {
+                roots.contains(&crate::types::TraitBound {
+                    trait_id: *trait_id,
+                    type_args: args.clone(),
+                })
+            }) {
+                return Err(
+                    "selected impl predicate is absent from canonical bound captures".into(),
+                );
+            }
+        }
+        let result_bounds = crate::hir::HirGenericBounds::from_iter([(
+            *subject,
+            vec![crate::types::TraitBound {
+                trait_id,
+                type_args: implementation.trait_arg_types.clone(),
+            }],
+        )]);
+        let result = super::object_schema::erased_bound_schemas(
+            &parameters,
+            &result_bounds,
+            &HashMap::new(),
+            &self.object_traits,
+            &self.erased_member_orders(),
+            &self.normalization_env,
+            &mut self.type_context,
+            false,
+        )?
+        .into_iter()
+        .find(|d| d.trait_id == trait_id)
+        .ok_or("selected dictionary result schema missing")?;
+        let mut template = MirDictionaryFactoryTemplate {
+            implementation: implementation.id,
+            parameters,
+            result,
+            bounds,
+            members: vec![],
+        };
+        for member in &template.result.members {
+            let method_id = *self
+                .effective_trait_methods
+                .get(&(implementation.id, member.member_id))
+                .ok_or("selected impl member authority missing")?;
+            if !implementation.methods.values().any(|m| m.id == method_id) {
+                return Err("selected impl member body unavailable".into());
+            }
+            template.members.push(MirDictionaryFactoryMember {
+                member_id: member.member_id,
+                method_id,
+                entry: MirErasedKey {
+                    definition: method_id,
+                    static_args: vec![],
+                },
+            });
+        }
+        // Publish the selected declaration before compiling its method bodies;
+        // recursive *calls* reuse entries, whereas cyclic evidence still rejects.
+        self.erased
+            .dictionary_templates
+            .insert(implementation.id, template.clone());
+        for (binding, member) in template.members.iter().zip(&template.result.members) {
+            if !member.binder.parameters.is_empty() {
+                let substitution = implementation
+                    .type_generics
+                    .iter()
+                    .map(|p| (p.id, Type::Generic(p.id)))
+                    .collect();
+                let entry = self.materialize_polymorphic_member(
+                    implementation,
+                    member,
+                    &template.parameters,
+                    &template.bounds,
+                    &substitution,
+                )?;
+                if entry != binding.entry {
+                    return Err("selected polymorphic factory entry key disagrees".into());
+                }
+                continue;
+            }
+            if self.erased.functions.contains_key(&binding.entry) {
+                continue;
+            }
+            let method = implementation
+                .methods
+                .values()
+                .find(|m| m.id == binding.method_id)
+                .ok_or("selected method missing")?
+                .clone();
+            let mut variables = template
+                .parameters
+                .iter()
+                .enumerate()
+                .map(|(i, p)| (p.source, i as u32))
+                .collect::<BTreeMap<_, _>>();
+            let mut params = member.params.clone();
+            if let Some(mode) = member.receiver.filter(|mode| *mode != ReceiverMode::Move) {
+                params[0] = MirErasedType::Reference {
+                    inner: Box::new(params[0].clone()),
+                    mutable: mode == ReceiverMode::Mut,
+                };
+            }
+            if params.len() != method.params.len() || method.self_receiver != member.receiver {
+                return Err("selected member parameter arity/receiver differs".into());
+            }
+            for (expected, actual) in params.iter().zip(&method.params) {
+                bind_erased_parameters(expected, &actual.ty, &mut variables, &self.type_context)?;
+            }
+            bind_erased_parameters(
+                &member.ret,
+                &method.ret_type,
+                &mut variables,
+                &self.type_context,
+            )?;
+            if method
+                .generic_params
+                .iter()
+                .any(|p| !variables.contains_key(&p.id))
+            {
+                return Err("member-generic dictionary entries require nested evidence".into());
+            }
+            let mut layouts = (0..template.parameters.len())
+                .map(|i| MirErasedType::Parameter(i as u32))
+                .collect::<Vec<_>>();
+            for ty in params.iter().chain(std::iter::once(&member.ret)) {
+                ty.collect_layouts(&mut layouts, false);
+            }
+            let signature = MirErasedSignature {
+                require_borrow_free: crate::mir::erased_callback_storage_requirements(
+                    &params,
+                    &template.bounds,
+                ),
+                parameters: template.parameters.clone(),
+                params,
+                ret: member.ret.clone(),
+                dictionaries: template.bounds.clone(),
+                layouts,
+            };
+            let symbol = format!(
+                "rock.erased.selected.{}",
+                self.backend_symbol_for_origin(
+                    &super::InstanceOrigin::ImplMethod {
+                        owner: self.impl_owner_identity(implementation),
+                        method: method.id,
+                    },
+                    &[]
+                )
+            );
+            self.erased.functions.insert(
+                binding.entry.clone(),
+                MirErasedFunction {
+                    key: binding.entry.clone(),
+                    symbol,
+                    linkage: MirLinkage::Internal,
+                    signature: signature.clone(),
+                    body: None,
+                },
+            );
+            let body = ErasedBodyBuilder::new(self, signature, variables, &method)?
+                .for_entry(binding.entry.clone())
+                .block(&method.body)?;
+            self.erased
+                .functions
+                .get_mut(&binding.entry)
+                .ok_or("selected entry disappeared")?
+                .body = Some(body);
+        }
+        Ok(template)
     }
 
     fn materialize_erased_function(&mut self, id: DefId) -> Result<MirErasedKey, String> {
@@ -865,27 +1735,11 @@ impl Monomorphizer {
         }
         for dictionary in &dictionaries {
             for member in &dictionary.members {
-                for ty in member
-                    .params
-                    .iter()
-                    .skip(1)
-                    .chain(std::iter::once(&member.ret))
-                {
-                    ty.collect_layouts(&mut layouts, false);
-                }
+                member.collect_parent_layouts(&mut layouts, false);
             }
         }
-        let require_borrow_free = dictionaries
-            .iter()
-            .flat_map(|d| &d.members)
-            .flat_map(|m| {
-                m.params
-                    .iter()
-                    .skip(1)
-                    .chain(std::iter::once(&m.ret))
-                    .cloned()
-            })
-            .collect();
+        let require_borrow_free =
+            crate::mir::erased_callback_storage_requirements(&params, &dictionaries);
         let signature = MirErasedSignature {
             parameters,
             params,
@@ -982,11 +1836,15 @@ fn scoped_expr_span(expression: &HirExpr) -> Option<Span> {
 }
 
 struct ErasedBodyBuilder<'a> {
+    entry: MirErasedKey,
+    dictionary_factories: Vec<MirDictionaryFactoryRequirement>,
+    dictionary_active: Vec<MirErasedDictionarySchema>,
     mono: &'a mut Monomorphizer,
     signature: MirErasedSignature,
     variables: BTreeMap<GenericParamId, u32>,
     bindings: HashMap<HirLocalId, MirErasedLocal>,
     locals: Vec<MirErasedType>,
+    cleanup: crate::mir::cleanup::CleanupScopes<MirErasedLocal>,
     mutable_locals: std::collections::BTreeSet<MirErasedLocal>,
     blocks: Vec<MirErasedBasicBlock>,
     current: MirErasedBlock,
@@ -1012,6 +1870,12 @@ impl<'a> ErasedBodyBuilder<'a> {
             .map(|(index, param)| (param.local_id, MirErasedLocal(index as u32)))
             .collect();
         let locals = signature.params.clone();
+        let mut cleanup = crate::mir::cleanup::CleanupScopes::default();
+        cleanup.enter(
+            (0..locals.len())
+                .map(|index| MirErasedLocal(index as u32))
+                .collect(),
+        );
         let mutable_locals = function
             .params
             .iter()
@@ -1020,11 +1884,18 @@ impl<'a> ErasedBodyBuilder<'a> {
             .map(|(index, _)| MirErasedLocal(index as u32))
             .collect();
         Ok(Self {
+            entry: MirErasedKey {
+                definition: function.id,
+                static_args: vec![],
+            },
+            dictionary_factories: vec![],
+            dictionary_active: vec![],
             mono,
             signature,
             variables,
             bindings,
             locals,
+            cleanup,
             mutable_locals,
             blocks: vec![MirErasedBasicBlock {
                 statements: Vec::new(),
@@ -1045,16 +1916,191 @@ impl<'a> ErasedBodyBuilder<'a> {
             &mut self.mono.type_context,
             &self.mono.normalization_env,
         )
-        .map_err(|e| format!("erased type: {e:?}"))
+        .map_err(|e| format!("erased type: {e:?}; actual typed input: {ty:?}"))
     }
-    fn temp(&mut self, ty: MirErasedType, value: MirErasedRvalue) -> MirErasedPlace {
+    fn for_entry(mut self, entry: MirErasedKey) -> Self {
+        self.entry = entry;
+        self
+    }
+
+    fn dictionary(
+        &mut self,
+        required: &MirErasedDictionarySchema,
+        span: &Span,
+    ) -> Result<u32, String> {
+        if let Some(index) = self
+            .signature
+            .dictionaries
+            .iter()
+            .position(|d| d == required)
+        {
+            return Ok(index as u32);
+        }
+        if let Some(index) = self
+            .dictionary_factories
+            .iter()
+            .position(|r| &r.result == required)
+        {
+            return Ok((self.signature.dictionaries.len() + index) as u32);
+        }
+        if self.dictionary_active.len() >= 128 || self.dictionary_active.contains(required) {
+            return Err("recursive selected dictionary construction".into());
+        }
+        self.dictionary_active.push(required.clone());
+        let bindings = self
+            .signature
+            .parameters
+            .iter()
+            .map(|p| Some(Type::Generic(p.source)))
+            .collect::<Vec<_>>();
+        let source = required
+            .subject
+            .instantiate_optional(&bindings, &self.mono.type_context)
+            .map_err(|e| format!("{e:?}"))?;
+        let arguments = required
+            .trait_args
+            .iter()
+            .map(|ty| {
+                ty.instantiate_optional(&bindings, &self.mono.type_context)
+                    .map_err(|e| format!("{e:?}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut assumed = crate::hir::HirGenericBounds::new();
+        for schema in &self.signature.dictionaries {
+            let MirErasedType::Parameter(index) = schema.subject else {
+                continue;
+            };
+            let parameter = self
+                .signature
+                .parameters
+                .get(index as usize)
+                .ok_or("dictionary bound ordinal missing")?;
+            let type_args = schema
+                .trait_args
+                .iter()
+                .map(|ty| {
+                    ty.instantiate_optional(&bindings, &self.mono.type_context)
+                        .map_err(|e| format!("{e:?}"))
+                })
+                .collect::<Result<_, _>>()?;
+            assumed
+                .entry(parameter.source)
+                .or_default()
+                .push(crate::types::TraitBound {
+                    trait_id: schema.trait_id,
+                    type_args,
+                });
+        }
+        let impls = self
+            .mono
+            .trait_impls
+            .values()
+            .flatten()
+            .map(|imp| (imp.id, imp.clone()))
+            .collect::<HashMap<_, _>>();
+        let (implementation, substitution) =
+            crate::selection::SelectionService::select_declared_dictionary_impl(
+                &self.mono.object_traits,
+                &impls,
+                &assumed,
+                &source,
+                required.trait_id,
+                &arguments,
+            )
+            .map_err(|e| format!("selected dictionary proof: {e:?}"))?;
+        let implementation = implementation.clone();
+        let template = self
+            .mono
+            .materialize_dictionary_template(&implementation, span)?;
+        let indices = self
+            .signature
+            .parameters
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.source, i as u32))
+            .collect();
+        let type_arguments = template
+            .parameters
+            .iter()
+            .map(|p| {
+                let ty = substitution
+                    .get(&p.source)
+                    .ok_or("selected dictionary capture missing")?;
+                MirErasedType::from_type(
+                    ty,
+                    &indices,
+                    None,
+                    &mut self.mono.type_context,
+                    &self.mono.normalization_env,
+                )
+                .map_err(|e| format!("{e:?}"))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if template
+            .result
+            .substitute(&type_arguments, &self.mono.type_context)
+            .map_err(|e| format!("{e:?}"))?
+            != *required
+        {
+            return Err("selected dictionary schema disagrees with the callee declaration".into());
+        }
+        let mut children = Vec::new();
+        for bound in &template.bounds {
+            let bound = bound
+                .substitute(&type_arguments, &self.mono.type_context)
+                .map_err(|e| format!("{e:?}"))?;
+            children.push(self.dictionary(&bound, span)?);
+        }
+        self.dictionary_active.pop();
+        let index = (self.signature.dictionaries.len() + self.dictionary_factories.len()) as u32;
+        self.dictionary_factories
+            .push(MirDictionaryFactoryRequirement {
+                implementation: implementation.id,
+                arguments: type_arguments,
+                children,
+                result: required.clone(),
+            });
+        Ok(index)
+    }
+
+    fn allocate_local(&mut self, ty: MirErasedType) -> MirErasedLocal {
         let destination = MirErasedLocal(self.locals.len() as u32);
         self.locals.push(ty);
         self.mutable_locals.insert(destination);
+        destination
+    }
+    fn local(&mut self, ty: MirErasedType) -> MirErasedLocal {
+        let destination = self.allocate_local(ty);
+        self.cleanup.register(destination);
+        destination
+    }
+    fn assign(&mut self, destination: MirErasedLocal, value: MirErasedRvalue) {
         self.blocks[self.current.0 as usize]
             .statements
             .push(MirErasedAssignment { destination, value });
+    }
+    fn temp(&mut self, ty: MirErasedType, value: MirErasedRvalue) -> MirErasedPlace {
+        let destination = self.local(ty);
+        self.assign(destination, value);
         MirErasedPlace::local(destination)
+    }
+    fn finish_scope_locals(&mut self, locals: Vec<MirErasedLocal>) {
+        if self.terminated || locals.is_empty() {
+            return;
+        }
+        let target = self.new_block();
+        self.terminate(MirErasedTerminator::Cleanup { locals, target });
+        self.enter(target);
+    }
+    fn return_value(&mut self, value: MirErasedOperand) {
+        // Transport the result before destroying any storage in its source scope.
+        let ty = self.signature.ret.clone();
+        let returned = self.allocate_local(ty.clone());
+        self.assign(returned, MirErasedRvalue::Use(value));
+        self.finish_scope_locals(self.cleanup.active_from(0));
+        self.terminate(MirErasedTerminator::Return(
+            self.operand(MirErasedPlace::local(returned), &ty),
+        ));
     }
     fn new_block(&mut self) -> MirErasedBlock {
         let block = MirErasedBlock(self.blocks.len() as u32);
@@ -1073,11 +2119,7 @@ impl<'a> ErasedBodyBuilder<'a> {
         self.terminated = false;
     }
     fn operand(&self, place: MirErasedPlace, ty: &MirErasedType) -> MirErasedOperand {
-        let copy = matches!(ty, MirErasedType::Concrete(id) if self.mono.type_for(*id).is_copy())
-            || matches!(
-                ty,
-                MirErasedType::Reference { mutable: false, .. } | MirErasedType::Pointer(_)
-            );
+        let copy = crate::mir::copy_proven(ty, &self.mono.type_context);
         if copy {
             MirErasedOperand::Copy(place)
         } else {
@@ -1324,9 +2366,7 @@ impl<'a> ErasedBodyBuilder<'a> {
                 self.enter(then_block);
                 let result = self.lower_block(then_branch)?;
                 if let Some(result) = result {
-                    let local = MirErasedLocal(self.locals.len() as u32);
-                    self.locals.push(ty.clone());
-                    self.mutable_locals.insert(local);
+                    let local = self.local(ty.clone());
                     destination = Some(local);
                     self.blocks[self.current.0 as usize]
                         .statements
@@ -1348,12 +2388,7 @@ impl<'a> ErasedBodyBuilder<'a> {
                     Some(self.operand(place, &unit))
                 };
                 if let Some(result) = result {
-                    let local = *destination.get_or_insert_with(|| {
-                        let local = MirErasedLocal(self.locals.len() as u32);
-                        self.locals.push(ty.clone());
-                        self.mutable_locals.insert(local);
-                        local
-                    });
+                    let local = *destination.get_or_insert_with(|| self.local(ty.clone()));
                     self.blocks[self.current.0 as usize]
                         .statements
                         .push(MirErasedAssignment {
@@ -1378,17 +2413,20 @@ impl<'a> ErasedBodyBuilder<'a> {
                     .get(&id)
                     .ok_or("erased local binding missing")?;
                 let mut place = MirErasedPlace::local(local);
-                if self.locals[local.0 as usize] != ty {
+                if !erased_types_agree(&self.locals[local.0 as usize], &ty, &self.mono.type_context)
+                {
                     match &self.locals[local.0 as usize] {
                         MirErasedType::Concrete(id)
-                            if matches!(self.mono.type_for(*id), Type::Reference { .. }) =>
+                            if matches!(self.mono.type_for(*id), Type::Reference { inner, .. }
+                                if ty.instantiate(&[], &self.mono.type_context).is_ok_and(|actual| *inner == actual)) =>
                         {
                             place.projection.push(MirErasedProjection::Deref)
                         }
-                        MirErasedType::Reference { inner, .. } if **inner == ty => {
+                        MirErasedType::Reference { inner, .. }
+                            if erased_types_agree(inner, &ty, &self.mono.type_context) => {
                             place.projection.push(MirErasedProjection::Deref)
                         }
-                        _ => return Err("erased local type authority mismatch".into()),
+                        _ => return Err(format!("erased local type authority mismatch at {:?}: local {id:?}, storage {:?}, accepted view {ty:?}", expr.span, self.locals[local.0 as usize])),
                     }
                 }
                 place
@@ -1412,14 +2450,21 @@ impl<'a> ErasedBodyBuilder<'a> {
                 self.temp(ty, MirErasedRvalue::Aggregate(operands))
             }
             HirExprKind::StructLiteral(_, definition, fields) => {
-                let MirErasedType::Concrete(id) = ty else {
-                    return Err(
-                        "scoped owner aggregate reconstruction requires projected drop authority"
-                            .into(),
-                    );
-                };
-                let Type::Struct { id: owner, .. } = self.mono.type_for(id) else {
-                    return Err("erased native aggregate is not a struct".into());
+                let owner = match &ty {
+                    MirErasedType::Concrete(id) => match self.mono.type_for(*id) {
+                        Type::Struct { id, .. } => id,
+                        _ => return Err("erased native aggregate is not a struct".into()),
+                    },
+                    MirErasedType::Nominal {
+                        id,
+                        flavor: crate::types::NominalTypeKind::Struct,
+                        ..
+                    } => *id,
+                    _ => {
+                        return Err(
+                            "struct reconstruction requires a selected nominal template".into()
+                        )
+                    }
                 };
                 if *definition != Some(owner) {
                     return Err("struct literal lacks exact definition authority".into());
@@ -1455,18 +2500,72 @@ impl<'a> ErasedBodyBuilder<'a> {
                         return Err("duplicate erased struct field".into());
                     }
                 }
-                self.mono
-                    .monomorphize_drop_for_type(&expr.ty, Some(expr.span.clone()));
-                self.temp(
-                    MirErasedType::Concrete(id),
-                    MirErasedRvalue::NativeAggregate {
-                        ty: id,
-                        fields: operands
-                            .into_iter()
-                            .map(|field| field.ok_or("missing erased struct field".to_string()))
-                            .collect::<Result<_, _>>()?,
+                let fields = operands
+                    .into_iter()
+                    .map(|field| field.ok_or("missing erased struct field".to_string()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let value = if let MirErasedType::Concrete(id) = &ty {
+                    self.mono
+                        .monomorphize_drop_for_type(&expr.ty, Some(expr.span.clone()));
+                    MirErasedRvalue::NativeAggregate { ty: *id, fields }
+                } else {
+                    MirErasedRvalue::NominalAggregate {
+                        ty: ty.clone(),
+                        fields: field_ids.into_iter().zip(fields).collect(),
+                    }
+                };
+                self.temp(ty, value)
+            }
+            HirExprKind::FieldAccess(base, _, Some(location)) => {
+                let Some(mut place) = self.expression(base)? else {
+                    return Ok(None);
+                };
+                let mut base_ty = self.ty(&base.ty)?;
+                loop {
+                    let inner = match &base_ty {
+                        MirErasedType::Reference { inner, .. } => Some(*inner.clone()),
+                        MirErasedType::Concrete(id) => match self.mono.type_for(*id) {
+                            Type::Reference { inner, .. } => {
+                                Some(MirErasedType::Concrete(self.mono.intern_type(&inner)))
+                            }
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    let Some(inner) = inner else {
+                        break;
+                    };
+                    place.projection.push(MirErasedProjection::Deref);
+                    base_ty = inner;
+                }
+                let owner = match base_ty {
+                    MirErasedType::Nominal {
+                        id,
+                        flavor: crate::types::NominalTypeKind::Struct,
+                        ..
+                    } => id,
+                    MirErasedType::Concrete(id) => match self.mono.type_for(id) {
+                        Type::Struct { id, .. } => id,
+                        _ => return Err("field base is not a struct".into()),
                     },
-                )
+                    _ => return Err("field access lacks a selected nominal owner".into()),
+                };
+                if owner != location.owner
+                    || !self
+                        .mono
+                        .nominal_field_ids
+                        .get(&owner)
+                        .is_some_and(|ids| ids.contains(&location.field_id))
+                {
+                    return Err(
+                        "erased field access disagrees with canonical owner/field authority".into(),
+                    );
+                }
+                place.projection.push(MirErasedProjection::NominalField {
+                    owner,
+                    field: location.field_id,
+                });
+                place
             }
             HirExprKind::TupleIndex(base, index) => {
                 let Some(mut place) = self.expression(base)? else {
@@ -1495,12 +2594,85 @@ impl<'a> ErasedBodyBuilder<'a> {
                 )
             }
             HirExprKind::MethodCall(receiver, _, args, _, target) => {
-                let trait_id = target
-                    .trait_id()
-                    .ok_or("erased method lacks trait authority")?;
-                let member_id = target
-                    .method_id()
-                    .ok_or("erased method lacks member authority")?;
+                let (trait_id, member_id) = match &target.target {
+                    HirSelectedMethodTarget::TraitMethod {
+                        trait_id,
+                        member_id,
+                        ..
+                    } => (*trait_id, *member_id),
+                    HirSelectedMethodTarget::ImplMethod {
+                        impl_id,
+                        method_id,
+                        selected_trait: Some(selected),
+                    } => {
+                        let implementation = self.mono.trait_impls.get(&selected.trait_id)
+                            .and_then(|implementations| implementations.iter().find(|implementation| implementation.id == *impl_id))
+                            .ok_or_else(|| format!("erased selected impl {impl_id:?} is absent for trait {:?} at {:?}", selected.trait_id, expr.span))?;
+                        if implementation.trait_id != Some(selected.trait_id)
+                            || self
+                                .mono
+                                .effective_trait_methods
+                                .get(&(*impl_id, selected.member_id))
+                                != Some(method_id)
+                        {
+                            return Err(format!("erased selected impl/member authority disagrees: {impl_id:?}/{method_id:?}/{:?} at {:?}", selected.member_id, expr.span));
+                        }
+                        // Method receivers can already carry the selected autoref.
+                        // Bind the impl subject, not that call-only reference, just
+                        // as the dictionary consumer below addresses the payload.
+                        let mut subject = &receiver.ty;
+                        if !matches!(
+                            &implementation.receiver_pattern,
+                            crate::hir::HirImplReceiverPattern::Exact(Type::Reference { .. })
+                        ) {
+                            while let Type::Reference { inner, .. } = subject {
+                                subject = inner;
+                            }
+                        }
+                        let mut substitution = crate::selection::impl_receiver_pattern_substitution(
+                            implementation, subject, self.mono.trait_impls.values().flatten())
+                            .ok_or_else(|| format!("erased selected impl {impl_id:?} receiver substitution is invalid at {:?}", expr.span))?;
+                        let mut bound_parameters = std::collections::BTreeSet::new();
+                        for binding in &target.owner_substitution {
+                            if !implementation
+                                .type_generics
+                                .iter()
+                                .any(|parameter| parameter.id == binding.param)
+                                || !bound_parameters.insert(binding.param)
+                                || !crate::selection::type_pattern_matches(
+                                    &Type::Generic(binding.param),
+                                    &binding.ty,
+                                    &mut substitution,
+                                )
+                            {
+                                return Err(format!("erased selected impl {impl_id:?} owner substitution disagrees at {:?}", expr.span));
+                            }
+                        }
+                        let trait_args = implementation
+                            .trait_arg_types
+                            .iter()
+                            .map(|ty| {
+                                crate::type_services::substitution::instantiate(ty, &substitution)
+                                    .map_err(|e| e.to_string())
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        if trait_args != selected.trait_args
+                            || implementation
+                                .type_generics
+                                .iter()
+                                .any(|parameter| !substitution.contains_key(&parameter.id))
+                        {
+                            return Err(format!("erased selected impl {impl_id:?} trait instantiation is incomplete/stale at {:?}", expr.span));
+                        }
+                        (selected.trait_id, selected.member_id)
+                    }
+                    _ => {
+                        return Err(format!(
+                            "erased method lacks selected trait/member authority at {:?}",
+                            expr.span
+                        ))
+                    }
+                };
                 if let HirSelectedMethodTarget::TraitMethod {
                     dispatch: HirTraitDispatchKind::Opened(witness),
                     ..
@@ -1605,7 +2777,7 @@ impl<'a> ErasedBodyBuilder<'a> {
                         .iter()
                         .map(|required| {
                             let required = required
-                                .substitute(&type_args)
+                                .substitute(&type_args, &self.mono.type_context)
                                 .map_err(|error| format!("{error:?}"))?;
                             self.signature
                                 .dictionaries
@@ -1630,32 +2802,193 @@ impl<'a> ErasedBodyBuilder<'a> {
                         },
                     )));
                 }
-                let receiver_ty = self.ty(&receiver.ty)?;
-                let trait_args = match &target.target {
-                    HirSelectedMethodTarget::TraitMethod { trait_args, .. } => trait_args
-                        .iter()
-                        .map(|ty| self.ty(ty))
-                        .collect::<Result<Vec<_>, _>>()?,
-                    _ => return Err("erased method lacks a selected trait instantiation".into()),
-                };
-                let dictionary = self
+                let mut receiver_ty = self.ty(&receiver.ty)?;
+                let mut dereferences = 0;
+                while let MirErasedType::Reference { inner, .. } = receiver_ty {
+                    receiver_ty = *inner;
+                    dereferences += 1;
+                }
+                let trait_args = target
+                    .trait_args()
+                    .iter()
+                    .map(|ty| self.ty(ty))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let schema = self
                     .signature
                     .dictionaries
                     .iter()
+                    .chain(self.dictionary_factories.iter().map(|r| &r.result))
                     .position(|d| {
                         d.trait_id == trait_id
                             && d.subject == receiver_ty
                             && d.trait_args == trait_args
                     })
-                    .ok_or("erased call lacks its declared dictionary")?;
-                let member = self.signature.dictionaries[dictionary]
+                    .map(|index| {
+                        if index < self.signature.dictionaries.len() {
+                            self.signature.dictionaries[index].clone()
+                        } else {
+                            self.dictionary_factories[index - self.signature.dictionaries.len()]
+                                .result
+                                .clone()
+                        }
+                    });
+                let required = if let Some(schema) = schema {
+                    schema
+                } else {
+                    let MirErasedType::Parameter(index) = receiver_ty else {
+                        return Err(
+                            "selected dictionary method requires a simple Type-kind subject".into(),
+                        );
+                    };
+                    let parameter = self
+                        .signature
+                        .parameters
+                        .get(index as usize)
+                        .ok_or("dictionary receiver ordinal missing")?;
+                    let bindings = self
+                        .signature
+                        .parameters
+                        .iter()
+                        .map(|p| Some(Type::Generic(p.source)))
+                        .collect::<Vec<_>>();
+                    let arguments = trait_args
+                        .iter()
+                        .map(|ty| {
+                            ty.instantiate_optional(&bindings, &self.mono.type_context)
+                                .map_err(|e| format!("{e:?}"))
+                        })
+                        .collect::<Result<_, _>>()?;
+                    let bounds = crate::hir::HirGenericBounds::from_iter([(
+                        parameter.source,
+                        vec![crate::types::TraitBound {
+                            trait_id,
+                            type_args: arguments,
+                        }],
+                    )]);
+                    super::object_schema::erased_bound_schemas(
+                        &self.signature.parameters,
+                        &bounds,
+                        &HashMap::new(),
+                        &self.mono.object_traits,
+                        &self.mono.erased_member_orders(),
+                        &self.mono.normalization_env,
+                        &mut self.mono.type_context,
+                        false,
+                    )?
+                    .into_iter()
+                    .find(|d| {
+                        d.trait_id == trait_id
+                            && d.subject == receiver_ty
+                            && d.trait_args == trait_args
+                    })
+                    .ok_or("canonical dictionary schema missing")?
+                };
+                let dictionary = self.dictionary(&required, &expr.span)?;
+                let member = required
                     .members
                     .iter()
                     .position(|m| m.member_id == member_id)
                     .ok_or("erased dictionary member missing")?;
-                let Some(receiver) = self.expression(receiver)? else {
+                let member_schema = &required.members[member];
+                let authority = match &target.target {
+                    HirSelectedMethodTarget::ImplMethod {
+                        impl_id, method_id, ..
+                    } => {
+                        let implementation = self
+                            .mono
+                            .trait_impls
+                            .get(&trait_id)
+                            .and_then(|impls| impls.iter().find(|imp| imp.id == *impl_id))
+                            .ok_or("member-generic selected impl authority missing")?;
+                        let method = implementation
+                            .methods
+                            .values()
+                            .find(|method| method.id == *method_id)
+                            .ok_or("member-generic selected method authority missing")?;
+                        method
+                            .generic_params
+                            .iter()
+                            .filter(|p| {
+                                !implementation
+                                    .type_generics
+                                    .iter()
+                                    .any(|parent| parent.id == p.id)
+                            })
+                            .map(|p| (p.id, p.kind.clone()))
+                            .collect::<Vec<_>>()
+                    }
+                    HirSelectedMethodTarget::TraitMethod {
+                        trait_id,
+                        member_id,
+                        ..
+                    } => {
+                        let declaration = self
+                            .mono
+                            .object_traits
+                            .get(trait_id)
+                            .ok_or("member-generic declared trait authority missing")?;
+                        let callee = declaration
+                            .signatures
+                            .values()
+                            .find(|signature| signature.id == *member_id)
+                            .ok_or("member-generic declared callee authority missing")?;
+                        let locals = callee
+                            .generic_params
+                            .iter()
+                            .filter(|p| {
+                                !declaration
+                                    .generic_params
+                                    .iter()
+                                    .any(|parent| parent.id == p.id)
+                                    && declaration
+                                        .target
+                                        .as_ref()
+                                        .is_none_or(|parent| parent.id != p.id)
+                            })
+                            .map(|p| (p.id, p.kind.clone()))
+                            .collect::<Vec<_>>();
+                        if locals
+                            .iter()
+                            .map(|(source, kind)| MirErasedParameter {
+                                source: *source,
+                                kind: kind.clone(),
+                            })
+                            .ne(member_schema.binder.parameters.iter().cloned())
+                        {
+                            return Err("member-generic dictionary binder disagrees with its exact declared callee".into());
+                        }
+                        locals
+                    }
+                };
+                if authority.len() != member_schema.binder.parameters.len()
+                    || target.method_substitution.len() != authority.len()
+                    || authority
+                        .iter()
+                        .zip(&member_schema.binder.parameters)
+                        .any(|((_, kind), p)| kind != &p.kind)
+                {
+                    return Err(
+                        "member-generic canonical method substitution arity/kind disagrees".into(),
+                    );
+                }
+                let mut member_arguments = Vec::new();
+                for (id, _) in authority {
+                    let bindings = target
+                        .method_substitution
+                        .iter()
+                        .filter(|binding| binding.param == id)
+                        .collect::<Vec<_>>();
+                    let [binding] = bindings.as_slice() else {
+                        return Err("member-generic canonical binding absent/duplicated".into());
+                    };
+                    member_arguments.push(self.ty(&binding.ty)?);
+                }
+                let Some(mut receiver) = self.expression(receiver)? else {
                     return Ok(None);
                 };
+                receiver
+                    .projection
+                    .extend(std::iter::repeat(MirErasedProjection::Deref).take(dereferences));
                 let mut operands = Vec::new();
                 for arg in args {
                     let Some(place) = self.expression(arg)? else {
@@ -1669,12 +3002,233 @@ impl<'a> ErasedBodyBuilder<'a> {
                     MirErasedRvalue::DictionaryCall {
                         dictionary: dictionary as u32,
                         member: member as u32,
-                        receiver,
+                        type_args: member_arguments,
+                        dictionaries: vec![],
+                        receiver: Some(receiver),
                         args: operands,
                     },
                 )
             }
             HirExprKind::Call(callee, args, target) => {
+                if target.is_none() {
+                    if let Some(inner) =
+                        super::object_schema::applied_static_forwarder(callee, args, &expr.ty)?
+                    {
+                        let HirExprKind::Call(source, _, authority) = &inner.kind else {
+                            return Err("checked static forwarder lost its call authority".into());
+                        };
+                        let applied = HirExpr {
+                            ty: expr.ty.clone(),
+                            span: expr.span.clone(),
+                            kind: HirExprKind::Call(
+                                source.clone(),
+                                args.clone(),
+                                authority.clone(),
+                            ),
+                        };
+                        return self.expression(&applied);
+                    }
+                }
+                if let Some(crate::hir::HirCallTarget::StaticMethod(selected)) = target {
+                    let trait_id = selected
+                        .method
+                        .trait_id()
+                        .ok_or("static dictionary call lacks trait authority")?;
+                    let member_id = match &selected.method.target {
+                        HirSelectedMethodTarget::TraitMethod { member_id, .. } => *member_id,
+                        HirSelectedMethodTarget::ImplMethod {
+                            impl_id,
+                            method_id,
+                            selected_trait: Some(member),
+                        } => {
+                            if self
+                                .mono
+                                .effective_trait_methods
+                                .get(&(*impl_id, member.member_id))
+                                != Some(method_id)
+                            {
+                                return Err(
+                                    "static dictionary selected impl/member disagrees".into()
+                                );
+                            }
+                            member.member_id
+                        }
+                        _ => {
+                            return Err(
+                                "static erased call requires declared trait member authority"
+                                    .into(),
+                            )
+                        }
+                    };
+                    let declaration = self
+                        .mono
+                        .object_traits
+                        .get(&trait_id)
+                        .ok_or("static trait declaration missing")?;
+                    let callee = declaration
+                        .signatures
+                        .values()
+                        .find(|signature| signature.id == member_id)
+                        .ok_or("static member declaration missing")?;
+                    let declared_self =
+                        super::object_schema::static_member_self(declaration, callee)?;
+                    let declared_arguments = selected.method.trait_args();
+                    if callee.self_receiver.is_some()
+                        || callee.is_unsafe
+                        || !selected.method.method_substitution.is_empty()
+                        || !callee.generic_bounds.is_empty()
+                        || !callee.generic_bounds.predicates.is_empty()
+                        || !declaration.associated_types.is_empty()
+                        || !declaration.predicates.is_empty()
+                        || declaration.generic_params.len() != declared_arguments.len()
+                        || callee.generic_params.iter().any(|parameter| {
+                            parameter.id != declared_self
+                                && !declaration
+                                    .generic_params
+                                    .iter()
+                                    .any(|parent| parent.id == parameter.id)
+                        })
+                    {
+                        return Err("static dictionary call has receiver/local/effect evidence outside this scope".into());
+                    }
+                    let mut declared_bindings = declaration
+                        .generic_params
+                        .iter()
+                        .zip(declared_arguments)
+                        .map(|(parameter, argument)| (parameter.id, argument.clone()))
+                        .collect::<HashMap<_, _>>();
+                    declared_bindings.insert(declared_self, selected.owner_ty.clone());
+                    let ret = crate::type_services::substitution::instantiate(
+                        &callee.ret,
+                        &declared_bindings,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let params = callee
+                        .params
+                        .iter()
+                        .map(|ty| {
+                            crate::type_services::substitution::instantiate(ty, &declared_bindings)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| e.to_string())?;
+                    if ret != selected.owner_ty
+                        || ret != expr.ty
+                        || params.len() != args.len()
+                        || !params.iter().zip(args).all(|(declared, argument)| {
+                            *declared == argument.ty
+                                && crate::mir::static_dictionary_scalar_type(declared)
+                        })
+                    {
+                        return Err("static call parameters/result disagree with the exact declared Self instantiation".into());
+                    }
+                    if let HirSelectedMethodTarget::TraitMethod { .. } = &selected.method.target {
+                        let mut seen = std::collections::HashSet::new();
+                        if selected.method.owner_substitution.iter().any(|binding| {
+                            !seen.insert(binding.param)
+                                || declared_bindings.get(&binding.param) != Some(&binding.ty)
+                        }) {
+                            return Err("static call owner substitution disagrees with canonical declared binders".into());
+                        }
+                    }
+                    let subject = self.ty(&selected.owner_ty)?;
+                    let trait_args = selected
+                        .method
+                        .trait_args()
+                        .iter()
+                        .map(|ty| self.ty(ty))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let available = self
+                        .signature
+                        .dictionaries
+                        .iter()
+                        .chain(self.dictionary_factories.iter().map(|r| &r.result))
+                        .find(|schema| {
+                            schema.subject == subject
+                                && schema.trait_id == trait_id
+                                && schema.trait_args == trait_args
+                        })
+                        .cloned();
+                    let required = if let Some(schema) = available {
+                        schema
+                    } else {
+                        let MirErasedType::Parameter(index) = subject else {
+                            return Err(
+                                "static dictionary subject requires exact Type parameter evidence"
+                                    .into(),
+                            );
+                        };
+                        let parameter = self
+                            .signature
+                            .parameters
+                            .get(index as usize)
+                            .ok_or("static subject ordinal missing")?;
+                        let bindings = self
+                            .signature
+                            .parameters
+                            .iter()
+                            .map(|p| Some(Type::Generic(p.source)))
+                            .collect::<Vec<_>>();
+                        let arguments = trait_args
+                            .iter()
+                            .map(|ty| {
+                                ty.instantiate_optional(&bindings, &self.mono.type_context)
+                                    .map_err(|e| format!("{e:?}"))
+                            })
+                            .collect::<Result<_, _>>()?;
+                        let bounds = crate::hir::HirGenericBounds::from_iter([(
+                            parameter.source,
+                            vec![crate::types::TraitBound {
+                                trait_id,
+                                type_args: arguments,
+                            }],
+                        )]);
+                        super::object_schema::erased_bound_schemas(
+                            &self.signature.parameters,
+                            &bounds,
+                            &HashMap::new(),
+                            &self.mono.object_traits,
+                            &self.mono.erased_member_orders(),
+                            &self.mono.normalization_env,
+                            &mut self.mono.type_context,
+                            false,
+                        )?
+                        .into_iter()
+                        .find(|schema| {
+                            schema.subject == subject
+                                && schema.trait_id == trait_id
+                                && schema.trait_args == trait_args
+                        })
+                        .ok_or("static dictionary canonical schema missing")?
+                    };
+                    let dictionary = self.dictionary(&required, &expr.span)?;
+                    let member = required
+                        .members
+                        .iter()
+                        .position(|member| member.member_id == member_id)
+                        .ok_or("static dictionary member absent")?;
+                    if required.members[member].receiver.is_some() {
+                        return Err("static dictionary receiver forged".into());
+                    }
+                    let mut operands = Vec::new();
+                    for argument in args {
+                        let Some(place) = self.expression(argument)? else {
+                            return Ok(None);
+                        };
+                        let argument_type = self.ty(&argument.ty)?;
+                        operands.push(self.operand(place, &argument_type));
+                    }
+                    return Ok(Some(self.temp(
+                        ty,
+                        MirErasedRvalue::DictionaryCall {
+                            dictionary,
+                            member: member as u32,
+                            type_args: vec![],
+                            dictionaries: vec![],
+                            receiver: None,
+                            args: operands,
+                        },
+                    )));
+                }
                 if let Some(crate::hir::HirCallTarget::Function(id)) = target {
                     let native = self
                         .mono
@@ -1736,16 +3290,9 @@ impl<'a> ErasedBodyBuilder<'a> {
                     let mut dictionaries = Vec::new();
                     for required in &signature.dictionaries {
                         let required = required
-                            .substitute(&type_args)
+                            .substitute(&type_args, &self.mono.type_context)
                             .map_err(|e| format!("{e:?}"))?;
-                        dictionaries.push(
-                            self.signature
-                                .dictionaries
-                                .iter()
-                                .position(|d| *d == required)
-                                .ok_or("erased callee dictionary unavailable")?
-                                as u32,
-                        );
+                        dictionaries.push(self.dictionary(&required, &expr.span)?);
                     }
                     self.temp(
                         ty,
@@ -1833,7 +3380,9 @@ impl<'a> ErasedBodyBuilder<'a> {
                         MirErasedRvalue::DictionaryCall {
                             dictionary: protocol.0 as u32,
                             member: member as u32,
-                            receiver,
+                            type_args: vec![],
+                            dictionaries: vec![],
+                            receiver: Some(receiver),
                             args: vec![operand],
                         },
                     )
@@ -1849,8 +3398,9 @@ impl<'a> ErasedBodyBuilder<'a> {
     }
     fn lower_block(&mut self, block: &HirBlock) -> Result<Option<MirErasedOperand>, String> {
         let outer_bindings = self.bindings.clone();
+        self.cleanup.enter(Vec::new());
         let mut result = None;
-        for statement in &block.stmts {
+        for (index, statement) in block.stmts.iter().enumerate() {
             if self.terminated {
                 break;
             }
@@ -1861,37 +3411,50 @@ impl<'a> ErasedBodyBuilder<'a> {
                     mutable,
                     ..
                 } => {
-                    let Some(place) = self.expression(value)? else {
-                        self.bindings = outer_bindings;
-                        return Ok(None);
+                    self.cleanup.enter(Vec::new());
+                    let binding = if let Some(place) = self.expression(value)? {
+                        let ty = self.ty(&value.ty)?;
+                        let binding = self.allocate_local(ty.clone());
+                        self.assign(binding, MirErasedRvalue::Use(self.operand(place, &ty)));
+                        if !*mutable {
+                            self.mutable_locals.remove(&binding);
+                        }
+                        Some(binding)
+                    } else {
+                        None
                     };
-                    let ty = self.ty(&value.ty)?;
-                    let binding =
-                        self.temp(ty.clone(), MirErasedRvalue::Use(self.operand(place, &ty)));
-                    self.bindings.insert(*local_id, binding.local);
-                    if !*mutable {
-                        self.mutable_locals.remove(&binding.local);
+                    let temporaries = self.cleanup.leave();
+                    self.finish_scope_locals(temporaries);
+                    if let Some(binding) = binding {
+                        self.cleanup.register(binding);
+                        self.bindings.insert(*local_id, binding);
                     }
-                    result = None;
                 }
                 HirStmt::Expr(value) => {
-                    let Some(place) = self.expression(value)? else {
-                        self.bindings = outer_bindings;
-                        return Ok(None);
-                    };
-                    let ty = self.ty(&value.ty)?;
-                    result = Some(self.operand(place, &ty));
+                    self.cleanup.enter(Vec::new());
+                    if let Some(place) = self.expression(value)? {
+                        let ty = self.ty(&value.ty)?;
+                        let operand = self.operand(place, &ty);
+                        if index + 1 == block.stmts.len() {
+                            // A caller-owned result outlives this scope; never
+                            // allocate a destination for an expression that exits.
+                            let destination = self.allocate_local(ty.clone());
+                            self.assign(destination, MirErasedRvalue::Use(operand));
+                            result = Some((destination, ty));
+                        } else {
+                            self.temp(ty, MirErasedRvalue::Use(operand));
+                        }
+                    }
+                    let temporaries = self.cleanup.leave();
+                    self.finish_scope_locals(temporaries);
                 }
                 HirStmt::Return(Some(value)) => {
-                    let Some(place) = self.expression(value)? else {
-                        self.bindings = outer_bindings;
-                        return Ok(None);
-                    };
-                    let ty = self.ty(&value.ty)?;
-                    let returned = self.operand(place, &ty);
-                    self.terminate(MirErasedTerminator::Return(returned));
-                    self.bindings = outer_bindings;
-                    return Ok(None);
+                    self.cleanup.enter(Vec::new());
+                    if let Some(place) = self.expression(value)? {
+                        let ty = self.ty(&value.ty)?;
+                        self.return_value(self.operand(place, &ty));
+                    }
+                    self.cleanup.leave();
                 }
                 HirStmt::Return(None) => {
                     let unit = MirErasedType::Concrete(self.mono.intern_type(&Type::Unit));
@@ -1899,10 +3462,7 @@ impl<'a> ErasedBodyBuilder<'a> {
                         unit.clone(),
                         MirErasedRvalue::Literal(MirErasedLiteral::Unit),
                     );
-                    let returned = self.operand(place, &unit);
-                    self.terminate(MirErasedTerminator::Return(returned));
-                    self.bindings = outer_bindings;
-                    return Ok(None);
+                    self.return_value(self.operand(place, &unit));
                 }
                 _ => {
                     return Err(
@@ -1913,21 +3473,32 @@ impl<'a> ErasedBodyBuilder<'a> {
             }
         }
         self.bindings = outer_bindings;
-        if let Some(result) = result {
-            Ok(Some(result))
-        } else {
+        if !self.terminated && result.is_none() {
             let unit = MirErasedType::Concrete(self.mono.intern_type(&Type::Unit));
-            let place = self.temp(
-                unit.clone(),
+            let destination = self.allocate_local(unit.clone());
+            self.assign(
+                destination,
                 MirErasedRvalue::Literal(MirErasedLiteral::Unit),
             );
-            Ok(Some(self.operand(place, &unit)))
+            result = Some((destination, unit));
         }
+        let locals = self.cleanup.leave();
+        self.finish_scope_locals(locals);
+        Ok(result.map(|(destination, ty)| {
+            self.cleanup.register(destination);
+            self.operand(MirErasedPlace::local(destination), &ty)
+        }))
     }
     fn block(mut self, block: &HirBlock) -> Result<MirErasedBody, String> {
         let result = self.lower_block(block)?;
         if let Some(result) = result {
-            self.terminate(MirErasedTerminator::Return(result));
+            self.return_value(result);
+        }
+        if !self.dictionary_factories.is_empty() {
+            self.mono
+                .erased
+                .dictionary_factories
+                .insert(self.entry, self.dictionary_factories);
         }
         Ok(MirErasedBody {
             locals: self.locals,
@@ -1975,7 +3546,7 @@ fn infer_erased_arguments(
     Ok(())
 }
 
-fn bind_erased_parameters(
+pub(crate) fn bind_erased_parameters(
     expected: &MirErasedType,
     actual: &Type,
     bindings: &mut BTreeMap<GenericParamId, u32>,
@@ -2600,7 +4171,14 @@ main = ->
                 })
             })
             .unwrap();
-        let statements = &function.body.as_ref().unwrap().blocks[0].statements;
+        let statements = function
+            .body
+            .as_ref()
+            .unwrap()
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .collect::<Vec<_>>();
         let calls = statements
             .iter()
             .filter_map(|statement| match &statement.value {
@@ -2653,14 +4231,23 @@ main = ->
             .unwrap() as u32;
         let function = mir.backend_contract.erased.functions.get_mut(&key).unwrap();
         let body = function.body.as_mut().unwrap();
-        let first_call = body.blocks[0]
-            .statements
+        let (block, first_call) = body
+            .blocks
             .iter()
-            .position(|statement| matches!(statement.value, MirErasedRvalue::OpenedCall { .. }))
+            .enumerate()
+            .find_map(|(index, block)| {
+                block
+                    .statements
+                    .iter()
+                    .position(|statement| {
+                        matches!(statement.value, MirErasedRvalue::OpenedCall { .. })
+                    })
+                    .map(|statement| (index, statement))
+            })
             .unwrap();
         let MirErasedRvalue::OpenedCall {
             scope, receiver, ..
-        } = body.blocks[0].statements[first_call].value.clone()
+        } = body.blocks[block].statements[first_call].value.clone()
         else {
             panic!("mutable source fixture")
         };
@@ -2671,7 +4258,7 @@ main = ->
             mutable: false,
         };
         body.locals.extend([reference.clone(), reference]);
-        body.blocks[0].statements.splice(
+        body.blocks[block].statements.splice(
             first_call..first_call,
             [
                 MirErasedAssignment {
@@ -2723,16 +4310,24 @@ main = ->
                 .clone();
             let function = mir.backend_contract.erased.functions.get_mut(&key).unwrap();
             let body = function.body.as_mut().unwrap();
-            let read = body.blocks[0]
-                .statements
+            let (block, read) = body
+                .blocks
                 .iter()
-                .rposition(|statement| {
-                    matches!(statement.value, MirErasedRvalue::OpenedCall { .. })
+                .enumerate()
+                .rev()
+                .find_map(|(index, block)| {
+                    block
+                        .statements
+                        .iter()
+                        .rposition(|statement| {
+                            matches!(statement.value, MirErasedRvalue::OpenedCall { .. })
+                        })
+                        .map(|statement| (index, statement))
                 })
                 .unwrap();
             let MirErasedRvalue::OpenedCall {
                 scope, receiver, ..
-            } = body.blocks[0].statements[read].value.clone()
+            } = body.blocks[block].statements[read].value.clone()
             else {
                 panic!("shared source fixture")
             };
@@ -2741,7 +4336,7 @@ main = ->
                 inner: Box::new(MirErasedType::Scoped(scope)),
                 mutable,
             });
-            body.blocks[0].statements.insert(
+            body.blocks[block].statements.insert(
                 read,
                 MirErasedAssignment {
                     destination: reference,
@@ -2751,6 +4346,13 @@ main = ->
                     },
                 },
             );
+            // Keep the injected loan live across the call, but end its storage
+            // with that statement before the enclosing package is destroyed.
+            let MirErasedTerminator::Cleanup { locals, .. } = &mut body.blocks[block].terminator
+            else {
+                panic!("read statement must have explicit cleanup")
+            };
+            locals.push(reference);
             let function = function.clone();
             if mutable {
                 assert_eq!(
@@ -2947,17 +4549,17 @@ main = -> 0
                     .unwrap()
                     .block(&function.body)
                     .unwrap();
-            assert_eq!(body.locals, vec![MirErasedType::Concrete(scalar)]);
-            assert_eq!(body.blocks.len(), 1);
+            assert_eq!(body.locals, vec![MirErasedType::Concrete(scalar); 2]);
+            assert_eq!(body.blocks.len(), 2);
             assert_eq!(
                 body.blocks[0].statements.len(),
-                1,
-                "no statement can follow the nested return"
+                2,
+                "only the literal and return transport precede cleanup"
             );
             assert_eq!(
-                body.blocks[0].terminator,
+                body.blocks[1].terminator,
                 MirErasedTerminator::Return(MirErasedOperand::Copy(MirErasedPlace::local(
-                    MirErasedLocal(0)
+                    MirErasedLocal(1)
                 )))
             );
             let mut contract = MirBackendContract::default();
@@ -3045,6 +4647,8 @@ main = -> 0
             body.locals,
             vec![
                 MirErasedType::Concrete(boolean),
+                MirErasedType::Concrete(scalar),
+                MirErasedType::Concrete(scalar),
                 MirErasedType::Concrete(scalar),
                 MirErasedType::Concrete(scalar)
             ]
@@ -3145,5 +4749,30 @@ main = -> 0
             &tc
         )
         .is_err());
+    }
+
+    #[test]
+    fn nested_scoped_tuple_copy_requires_every_leaf_to_have_copy_authority() {
+        let context = crate::type_context::TypeContext::new();
+        let reference = MirErasedType::Reference {
+            inner: Box::new(MirErasedType::Scoped(0)),
+            mutable: false,
+        };
+        let pair = MirErasedType::Tuple(vec![reference.clone(), reference]);
+        let nested = MirErasedType::Tuple(vec![pair.clone(), pair]);
+        assert!(crate::mir::copy_proven(&nested, &context));
+        for non_copy in [
+            MirErasedType::Scoped(0),
+            MirErasedType::Parameter(0),
+            MirErasedType::Reference {
+                inner: Box::new(MirErasedType::Scoped(0)),
+                mutable: true,
+            },
+        ] {
+            assert!(!crate::mir::copy_proven(
+                &MirErasedType::Tuple(vec![nested.clone(), non_copy]),
+                &context,
+            ));
+        }
     }
 }

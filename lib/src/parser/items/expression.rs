@@ -215,7 +215,10 @@ pub fn unary_expr(stream: Input) -> IResult<UnaryExpr> {
         .map_err(|e| e.with_context("unary expression"))
 }
 
-pub fn primary_expr(stream: Input) -> IResult<PrimaryExpr> {
+pub fn primary_expr(mut stream: Input) -> IResult<PrimaryExpr> {
+    // A closing-parenthesis suffix belongs to the operand that produced it,
+    // not a subsequent comma argument or an operand inside a new delimiter.
+    stream.after_closing_paren = false;
     let (stream, (operand, secondaries_vec, type_annotation)) = (
         operand,
         many(secondary),

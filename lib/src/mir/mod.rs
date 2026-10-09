@@ -7,16 +7,30 @@ pub mod agreement;
 pub mod backend_contract;
 pub mod borrowck;
 pub mod builder;
+pub(crate) mod cleanup;
 pub mod dataflow;
+pub mod descriptor_identity;
+pub mod dictionary_factory;
 pub mod erased;
 pub mod identity;
+pub mod nominal_factory;
 pub mod object;
 pub mod object_adapters;
+pub(crate) mod object_identity;
+pub(crate) mod origins;
 pub mod package;
+pub mod polymorphic_dictionary;
+pub mod static_dictionary;
+pub mod tuple_factory;
+pub use dictionary_factory::*;
 pub use erased::*;
+pub use nominal_factory::*;
 pub use object::*;
 pub use object_adapters::*;
 pub use package::*;
+pub use polymorphic_dictionary::*;
+pub(crate) use static_dictionary::*;
+pub use tuple_factory::*;
 
 use crate::ids::{DefId, InstanceId, TypeId, VariantId};
 use crate::lexer::Span;
@@ -69,6 +83,8 @@ pub struct MirInstanceBodies {
     bodies: BTreeMap<InstanceId, MirInstanceBody>,
     nested_functions: Vec<MirFunction>,
     runtime_instance_roots: BTreeSet<InstanceId>,
+    pub(crate) closure_input_obligations:
+        BTreeMap<MirFunctionId, BTreeMap<usize, backend_contract::MirGenericCallableInput>>,
 }
 
 impl MirInstanceBodies {

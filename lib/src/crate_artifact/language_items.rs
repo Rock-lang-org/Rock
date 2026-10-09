@@ -709,6 +709,7 @@ fn alpha_equivalent_type(left: &Type, left_impl: DefId, right: &Type, right_impl
                 safety: left_safety,
                 callable_kind: left_kind,
                 captures: left_captures,
+                result_borrowing: left_borrowing,
             },
             Type::Function {
                 params: right_params,
@@ -716,10 +717,12 @@ fn alpha_equivalent_type(left: &Type, left_impl: DefId, right: &Type, right_impl
                 safety: right_safety,
                 callable_kind: right_kind,
                 captures: right_captures,
+                result_borrowing: right_borrowing,
             },
         ) => {
             left_safety == right_safety
                 && left_kind == right_kind
+                && left_borrowing == right_borrowing
                 && left_captures.len() == right_captures.len()
                 && left_captures
                     .iter()
@@ -1659,6 +1662,7 @@ mod tests {
             impl_method_id,
             ProductLinkRecord {
                 backend_symbol: format!("__rock_fn_index_fixture_{id}"),
+                polymorphic_member: None,
             },
         );
     }
@@ -1871,6 +1875,7 @@ mod tests {
             index_mut_impl_method,
             ProductLinkRecord {
                 backend_symbol: "__rock_fn_index_mut_fixture".to_string(),
+                polymorphic_member: None,
             },
         );
 

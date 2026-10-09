@@ -175,6 +175,7 @@ impl ProjectionNormalizer {
                 safety,
                 callable_kind,
                 captures,
+                result_borrowing,
             } => Type::Function {
                 params: params
                     .iter()
@@ -183,6 +184,7 @@ impl ProjectionNormalizer {
                 ret: Box::new(Self::normalize(provider, ret)),
                 safety: *safety,
                 callable_kind: *callable_kind,
+                result_borrowing: result_borrowing.clone(),
                 captures: captures
                     .iter()
                     .map(|capture| crate::types::FunctionCapture {
@@ -198,11 +200,38 @@ impl ProjectionNormalizer {
                     .map(|arg| Self::normalize(provider, arg))
                     .collect(),
             },
+            Type::StructRepresentation { id, args, fields } => Type::StructRepresentation {
+                id: *id,
+                args: args
+                    .iter()
+                    .map(|ty| Self::normalize(provider, ty))
+                    .collect(),
+                fields: fields
+                    .iter()
+                    .map(|ty| Self::normalize(provider, ty))
+                    .collect(),
+            },
             Type::Enum { id, args } => Type::Enum {
                 id: *id,
                 args: args
                     .iter()
                     .map(|arg| Self::normalize(provider, arg))
+                    .collect(),
+            },
+            Type::EnumRepresentation { id, args, variants } => Type::EnumRepresentation {
+                id: *id,
+                args: args
+                    .iter()
+                    .map(|ty| Self::normalize(provider, ty))
+                    .collect(),
+                variants: variants
+                    .iter()
+                    .map(|fields| {
+                        fields
+                            .iter()
+                            .map(|ty| Self::normalize(provider, ty))
+                            .collect()
+                    })
                     .collect(),
             },
             _ => ty.clone(),

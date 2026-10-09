@@ -31,6 +31,27 @@ pub enum InitState {
     Moved(MoveInfo),
 }
 
+impl InitState {
+    pub(crate) fn is_initialized(&self) -> bool {
+        matches!(self, Self::Init)
+    }
+}
+
+impl Lattice for InitState {
+    fn join(&mut self, other: &Self) -> bool {
+        // A move on any incoming path prohibits use; otherwise every path
+        // must initialize the value. Preserve an available move diagnostic.
+        let merged = match (&*self, other) {
+            (Self::Moved(info), _) | (_, Self::Moved(info)) => Self::Moved(info.clone()),
+            (Self::Init, Self::Init) => Self::Init,
+            (Self::Uninit, _) | (_, Self::Uninit) => Self::Uninit,
+        };
+        let changed = *self != merged;
+        *self = merged;
+        changed
+    }
+}
+
 /// Map of locals to their initialization state.
 /// Newtype wrapper to provide custom lattice join semantics.
 #[derive(Debug, Clone)]
@@ -214,25 +235,8 @@ impl Lattice for InitMap {
 
         let mut changed = false;
         for (index, v) in other.states.iter().enumerate() {
-            if let Some(existing) = self.states.get(index) {
-                // At control flow merge, keep moved conservative and require
-                // initialization on every incoming path.
-                // - Init + Init = Init (definitely initialized)
-                // - Init + Moved = Moved (may have been moved on one path)
-                // - Init + Uninit = Uninit (not initialized on every path)
-                // - Uninit + Uninit = Uninit (definitely uninitialized)
-                // - Uninit + Moved = Moved (may have been moved)
-                // - Moved + Moved = Moved (definitely moved, keep one of the move infos)
-                let merged = match (existing, v) {
-                    (InitState::Moved(info), _) => InitState::Moved(info.clone()),
-                    (_, InitState::Moved(info)) => InitState::Moved(info.clone()),
-                    (InitState::Init, InitState::Init) => InitState::Init,
-                    (InitState::Uninit, _) | (_, InitState::Uninit) => InitState::Uninit,
-                };
-                if existing != &merged {
-                    self.states[index] = merged;
-                    changed = true;
-                }
+            if let Some(existing) = self.states.get_mut(index) {
+                changed |= existing.join(v);
             } else {
                 self.states.push(v.clone());
                 changed = true;
@@ -247,7 +251,7 @@ impl Lattice for InitMap {
 
 /// Analysis that tracks initialization state of all locals.
 pub struct InitializationAnalysis {
-    /// Locals that are always initialized (function params, constants)
+    /// Initialized entry inputs (parameters and closure environment captures).
     always_init: HashSet<Local>,
     raw_pointer_locals: HashSet<Local>,
     place_paths: PlacePathTable,
@@ -272,9 +276,6 @@ impl InitializationAnalysis {
         }
 
         for (i, decl) in func.local_decls.iter().enumerate() {
-            if matches!(type_view.ty(decl.ty), Ty::Function { .. }) {
-                always_init.insert(Local(i));
-            }
             if matches!(type_view.ty(decl.ty), Ty::Pointer(_)) {
                 raw_pointer_locals.insert(Local(i));
             }
@@ -567,6 +568,43 @@ impl InitializationAnalysis {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shared_initialization_join_requires_all_paths_and_preserves_any_move() {
+        use super::{InitState, Lattice, MoveInfo};
+        let states = [
+            InitState::Uninit,
+            InitState::Init,
+            InitState::Moved(MoveInfo { span: None }),
+        ];
+        for left in &states {
+            for right in &states {
+                let mut joined = left.clone();
+                let changed = joined.join(right);
+                assert_eq!(changed, &joined != left);
+                assert_eq!(
+                    joined.is_initialized(),
+                    left.is_initialized() && right.is_initialized()
+                );
+                assert_eq!(
+                    matches!(joined, InitState::Moved(_)),
+                    matches!(left, InitState::Moved(_)) || matches!(right, InitState::Moved(_))
+                );
+                let mut reverse = right.clone();
+                reverse.join(left);
+                assert_eq!(joined, reverse);
+                assert!(!joined.join(&joined.clone()));
+                for third in &states {
+                    let mut left_associated = joined.clone();
+                    left_associated.join(third);
+                    let mut right_associated = right.clone();
+                    right_associated.join(third);
+                    let mut result = left.clone();
+                    result.join(&right_associated);
+                    assert_eq!(left_associated, result);
+                }
+            }
+        }
+    }
     use super::*;
 
     use crate::ids::{CrateId, DefId, LocalDefId};
@@ -632,6 +670,69 @@ mod tests {
             ret_type: i64_ty,
             ownership: Default::default(),
         }
+    }
+
+    #[test]
+    fn callable_layout_does_not_initialize_or_resurrect_local_storage() {
+        let mut tc = TypeContext::new();
+        let mut function = test_function_with_block(
+            &mut tc,
+            BasicBlock {
+                statements: vec![],
+                terminator: Some(Terminator::Return),
+            },
+        );
+        function.local_decls[2].ty = tc.intern_type(&Type::function(vec![], Type::I64));
+        let callable = Place {
+            local: Local(2),
+            projection: vec![],
+        };
+        let analysis = InitializationAnalysis::new(&function, &tc);
+        let mut state = analysis.initial_state(&function);
+        assert!(
+            analysis
+                .check_operand_at_path(&Operand::Copy(callable.clone()), &state)
+                .is_err(),
+            "a callable layout is not an initialized producer"
+        );
+        analysis.apply_statement(
+            &mut state,
+            &StatementData::assign(
+                callable.clone(),
+                Rvalue::Use(Operand::Constant(Constant::Callable(
+                    crate::mir::MirCallable::Resolved(crate::mir::MirCallableKey::Instance(
+                        crate::ids::InstanceId(0),
+                    )),
+                ))),
+                None,
+            ),
+        );
+        assert!(analysis
+            .check_operand_at_path(&Operand::Copy(callable.clone()), &state)
+            .is_ok());
+        analysis.apply_statement(
+            &mut state,
+            &StatementData::assign(
+                Place {
+                    local: Local(0),
+                    projection: vec![],
+                },
+                Rvalue::Use(Operand::Move(callable.clone())),
+                None,
+            ),
+        );
+        assert!(analysis
+            .check_operand_at_path(&Operand::Copy(callable.clone()), &state)
+            .is_err());
+        analysis.apply_statement(
+            &mut state,
+            &StatementData {
+                kind: StatementKind::StorageLive(Local(2)),
+                span: None,
+                cleanup: false,
+            },
+        );
+        assert_eq!(state.get_local(Local(2)), Some(&InitState::Uninit));
     }
 
     #[test]

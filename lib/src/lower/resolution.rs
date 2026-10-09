@@ -113,6 +113,55 @@ impl<'a> LowerResolutionContext<'a> {
         self.resolve_module_alias_or_item_id(candidate)
     }
 
+    /// Visible foreign nominal owners, not permission to select a field or
+    /// instantiate a foreign receiver schema from its spelling.
+    pub(crate) fn visible_imported_struct_ids(&self) -> std::collections::BTreeSet<DefId> {
+        let mut owners = std::collections::BTreeSet::new();
+        let mut include = |name: &str, id: DefId| {
+            if !self.lowerer.current_def_ids.contains(&id)
+                && self.lowerer.items.structure(id).is_some_and(|structure| structure.id == id)
+                && self.canonical_name(id).is_some()
+                && self.resolve_owner_id(name) == Some(id)
+            {
+                owners.insert(id);
+            }
+        };
+
+        // Qualified imported names from other modules/dependencies are not
+        // active short aliases in this body. Public qualified exports below
+        // provide their own independent visibility evidence.
+        for (name, &id) in self.lowerer.resolver.import_aliases.iter()
+            .chain(&self.lowerer.resolver.module_aliases)
+            .filter(|(name, _)| !name.contains("::"))
+        {
+            include(name, id);
+        }
+        if let Some(prefix) = self.current_module_prefix() {
+            if let Some(aliases) = self.lowerer.resolver.scoped_module_aliases.get(&prefix) {
+                for (name, &id) in aliases { include(name, id); }
+            }
+        }
+        // Export rows are owner-visibility authority; the metadata's complete
+        // item_paths/name/structure registries are not an export list.
+        for (path, &id) in &self.lowerer.resolver.export_aliases {
+            include(path, id);
+        }
+        // Artifact export aliases are often short; merge_global_inputs does
+        // not import those rows into the consumer's unqualified namespace.
+        for (crate_name, resolver) in self.lowerer.dependency_resolvers.iter() {
+            let prefix = format!("{crate_name}::");
+            for (alias, &id) in &resolver.export_aliases {
+                let path = if alias.starts_with(&prefix) {
+                    alias.clone()
+                } else {
+                    format!("{prefix}{alias}")
+                };
+                include(&path, id);
+            }
+        }
+        owners
+    }
+
     pub(crate) fn current_module_prefix(&self) -> Option<String> {
         self.lowerer.modules.current_module_prefix()
     }

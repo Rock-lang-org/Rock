@@ -905,6 +905,12 @@ impl TypeLowerer {
                     .map(|prefix| format!("{}::{}", prefix, name));
 
                 if let Some(generic) = context.existing_generic_type(name) {
+                    if let Type::Witness(witness) = generic {
+                        context.record_type_reference(
+                            inner.span.clone(),
+                            crate::source_map::SourceSymbol::Witness(witness),
+                        );
+                    }
                     if generics.is_empty() {
                         return generic;
                     }
@@ -991,11 +997,16 @@ impl TypeLowerer {
                     }
                 } else {
                     let ty = context.generic_type_for_name(name, inner.span.clone());
-                    if let Type::Generic(generic) = ty {
-                        context.record_type_reference(
+                    match ty {
+                        Type::Generic(generic) => context.record_type_reference(
                             inner.span.clone(),
                             crate::source_map::SourceSymbol::Generic(generic),
-                        );
+                        ),
+                        Type::Witness(witness) => context.record_type_reference(
+                            inner.span.clone(),
+                            crate::source_map::SourceSymbol::Witness(witness),
+                        ),
+                        _ => {}
                     }
                     ty
                 }

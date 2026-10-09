@@ -14,7 +14,7 @@ use crate::type_context::TypeContext;
 use crate::type_services::normalize::TypeNormalizationEnv;
 use crate::types::{ReceiverMode, Type};
 
-pub const OBJECT_ABI_VERSION: u32 = 1;
+pub const OBJECT_ABI_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductObjectAbi {
@@ -42,6 +42,7 @@ pub struct ProductObjectSchema {
     pub object: Type,
     pub slots: Vec<ProductObjectSlot>,
     pub erased_slots: Vec<ProductErasedObjectSlot>,
+    /// Independent admitted trait evidence, not all guarantee combinations.
     pub views: Vec<Type>,
 }
 
@@ -74,7 +75,7 @@ pub struct ProductObjectParam {
     pub pass_mode: MirPassMode,
 }
 
-fn remap_erased_signature_ids<T: Ord>(
+pub(crate) fn remap_erased_signature_ids<T: Ord>(
     signature: &mut crate::mir::MirErasedSignature<T>,
     remap: &mut impl FnMut(DefId) -> Result<DefId, String>,
 ) -> Result<(), String> {
@@ -103,6 +104,14 @@ fn remap_erased_signature_ids<T: Ord>(
         }
         for member in &mut dictionary.members {
             member.member_id = remap(member.member_id)?;
+            for parameter in &mut member.binder.parameters {
+                parameter.source.owner = remap(parameter.source.owner)?;
+            }
+            if !member.binder.dictionaries.is_empty() {
+                return Err(
+                    "nested dictionary member bounds require additional ABI authority".into(),
+                );
+            }
             for ty in member
                 .params
                 .iter_mut()
@@ -324,7 +333,8 @@ impl ProductObjectAbi {
     }
 
     pub fn validate_shape(&self) -> Result<(), String> {
-        if self.version != OBJECT_ABI_VERSION {
+        // An artifact without runtime object schemas has no object-table ABI.
+        if !self.schemas.is_empty() && self.version != OBJECT_ABI_VERSION {
             return Err("unsupported producer object ABI version".into());
         }
         if !self.schemas.is_empty() && self.target.as_deref() != Some(host_object_target().as_str())
@@ -370,6 +380,21 @@ impl ProductObjectAbi {
                 }
             }
             for slot in &schema.erased_slots {
+                for ty in slot
+                    .signature
+                    .params
+                    .iter()
+                    .chain(std::iter::once(&slot.signature.ret))
+                    .chain(&slot.signature.layouts)
+                    .chain(&slot.signature.require_borrow_free)
+                {
+                    crate::mir::validate_dictionary_binder_scope(
+                        ty,
+                        slot.signature.parameters.len(),
+                        0,
+                    )
+                    .map_err(|error| format!("invalid producer binder scope: {error:?}"))?;
+                }
                 for argument in &slot.trait_args {
                     if crate::type_services::substitution::has_free_object_self_at_depth(
                         argument, 1,
@@ -398,6 +423,82 @@ impl ProductObjectAbi {
                     }
                     Ok(ty.clone())
                 })?;
+                for dictionary in &slot.signature.dictionaries {
+                    for ty in std::iter::once(&dictionary.subject).chain(&dictionary.trait_args) {
+                        crate::mir::validate_dictionary_binder_scope(
+                            ty,
+                            slot.signature.parameters.len(),
+                            0,
+                        )
+                        .map_err(|error| {
+                            format!("invalid producer dictionary parent scope: {error:?}")
+                        })?;
+                    }
+                    for member in &dictionary.members {
+                        if member.receiver.is_some()
+                            && member.params.first() != Some(&dictionary.subject)
+                        {
+                            return Err("producer dictionary receiver subject mismatch".into());
+                        }
+                        if member.receiver.is_none()
+                            && matches!(&dictionary.subject, crate::mir::MirErasedType::Parameter(index)
+                            if slot.signature.parameters.get(*index as usize).is_none_or(|parameter|
+                                parameter.kind != crate::type_services::kind::Kind::Type))
+                        {
+                            return Err(
+                                "static producer dictionary subject requires Type kind".into()
+                            );
+                        }
+                        if member.receiver.is_none() && (!member.binder.parameters.is_empty()
+                            || member.ret != dictionary.subject
+                            || !matches!(&dictionary.subject, crate::mir::MirErasedType::Parameter(_)
+                                | crate::mir::MirErasedType::Concrete(crate::types::Type::Struct { .. } | crate::types::Type::Enum { .. }))
+                                && !matches!(&dictionary.subject, crate::mir::MirErasedType::Concrete(ty) if crate::mir::static_dictionary_scalar_type(ty))
+                            || member.params.iter().any(|ty|
+                                !matches!(ty, crate::mir::MirErasedType::Concrete(ty) if crate::mir::static_dictionary_scalar_type(ty)))) {
+                            return Err("unsupported static producer dictionary shape".into());
+                        }
+                        for ty in member.params.iter().chain(std::iter::once(&member.ret)) {
+                            crate::mir::validate_dictionary_binder_scope(
+                                ty,
+                                slot.signature.parameters.len(),
+                                member.binder.parameters.len(),
+                            )
+                            .map_err(|error| {
+                                format!("invalid producer dictionary member scope: {error:?}")
+                            })?;
+                        }
+                        let borrowing = if member.binder.parameters.is_empty() {
+                            if !member.binder.dictionaries.is_empty() {
+                                return Err("unsupported nested member bounds".into());
+                            }
+                            crate::mir::erased_borrow_contract_types(
+                                &member.params,
+                                &member.ret,
+                                member.receiver,
+                            )
+                        } else {
+                            crate::mir::parametric_member_borrow_contract(
+                                &member.binder,
+                                &member.params,
+                                &member.ret,
+                                member.receiver,
+                            )
+                            .map_err(|error| {
+                                format!("invalid polymorphic producer member: {error:?}")
+                            })?
+                        };
+                        if member.binder.parameters.iter().any(|local| {
+                            slot.signature
+                                .parameters
+                                .iter()
+                                .any(|parent| local.source == parent.source)
+                        }) || member.borrowing != borrowing
+                        {
+                            return Err("noncanonical producer dictionary borrow contract".into());
+                        }
+                    }
+                }
             }
         }
         for schema in &self.schemas {

@@ -735,13 +735,39 @@ fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), Vec<Resolve
             .apply_numeric_defaults_for_owners(&hir.constraint_store, Some(owners));
     }
 
-    let mut component_queue = (0..component_work.len()).collect::<VecDeque<_>>();
-    while let Some(index) = component_queue.pop_front() {
-        let generation = hir.engine.substitution_generation();
-        let (_, owners, authority_obligations) = &mut component_work[index];
-        solve_component_worklist(hir, owners, authority_obligations, false)?;
-        if generation != hir.engine.substitution_generation() {
-            component_queue.extend(0..index);
+    loop {
+        let mut component_queue = (0..component_work.len()).collect::<VecDeque<_>>();
+        while let Some(index) = component_queue.pop_front() {
+            let generation = hir.engine.substitution_generation();
+            let (_, owners, authority_obligations) = &mut component_work[index];
+            solve_component_worklist(hir, owners, authority_obligations, false)?;
+            if generation != hir.engine.substitution_generation() {
+                component_queue.extend(0..index);
+            }
+        }
+
+        // Only now may an otherwise-unresolved directional source handle use
+        // its existing strict identity policy. Complete actual dereference
+        // prerequisites across components before rejecting a dependent body.
+        let mut completed = false;
+        for (_, _, obligations) in &mut component_work {
+            for obligation in obligations.iter_mut() {
+                if authority::is_dereference_input_coercion(hir, obligation) {
+                    obligation.wake();
+                    let result = authority::run_authority_obligation(hir, obligation, true, false)?;
+                    completed |= result.progress;
+                }
+            }
+        }
+        if !completed {
+            break;
+        }
+        // Reuse ordinary equations, owner-scoped solver checks and dependency
+        // convergence; coercion completion does not discharge the dereference.
+        for (_, _, obligations) in &mut component_work {
+            for obligation in obligations {
+                obligation.wake();
+            }
         }
     }
 

@@ -10,6 +10,9 @@ use crate::mir::{
 };
 use crate::types::Type;
 
+#[path = "object_lookup.rs"]
+mod lookup;
+
 impl<'ctx> CodeGen<'ctx> {
     pub(crate) fn compile_object_metadata_intrinsic(
         &mut self,
@@ -94,17 +97,18 @@ impl<'ctx> CodeGen<'ctx> {
         self.context.struct_type(&[ptr.into(), ptr.into()], false)
     }
 
-    pub(super) fn object_table_type(&self, schema: &MirObjectSchema) -> StructType<'ctx> {
+    pub(super) fn object_table_type(&self, _schema: &MirObjectSchema) -> StructType<'ctx> {
         let ptr = self.context.ptr_type(AddressSpace::default());
         self.context.struct_type(
             &[
                 self.context.i64_type().into(), // target size constant expression
                 self.context.i64_type().into(), // target alignment constant expression
                 ptr.into(),                     // payload destructor, never deallocator
-                ptr.array_type(schema.slots.len() as u32).into(),
-                ptr.array_type(schema.views.len() as u32).into(),
-                ptr.into(), // concrete witness descriptor for erased entries
-                ptr.array_type(schema.erased_slots.len() as u32).into(),
+                ptr.into(),                     // independent native member evidence
+                self.context.i64_type().into(), // native member count
+                ptr.into(),                     // concrete witness descriptor for erased entries
+                ptr.into(),                     // independent erased member evidence
+                self.context.i64_type().into(), // erased member count
             ],
             false,
         )
@@ -116,7 +120,35 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Result<(), CodegenError> {
         self.object_schemas = contract.object_schemas.clone();
         self.owned_object_calls = contract.owned_object_calls.clone();
-        // Declare first: view links can be cyclic.
+        if !contract.object_schemas.is_empty() {
+            self.emit_object_lookup()?;
+        }
+        for (id, schema) in &contract.object_schemas {
+            for (field, count) in [(3, schema.slots.len()), (6, schema.erased_slots.len())] {
+                for index in 0..count {
+                    let key = crate::mir::object_identity::member_key(
+                        contract,
+                        self.type_context(),
+                        schema,
+                        field,
+                        index,
+                    )
+                    .map_err(CodegenError::backend_contract)?;
+                    let value = self.context.const_string(&key, false);
+                    let global = self.module.add_global(
+                        value.get_type(),
+                        None,
+                        &format!("rock.object.key.{}.{}.{}", id.0, field, index),
+                    );
+                    global.set_linkage(Linkage::Private);
+                    global.set_constant(true);
+                    global.set_initializer(&value);
+                    self.object_entry_keys
+                        .insert((*id, field, index as u32), (global, key.len() as u64));
+                }
+            }
+        }
+        // The runtime table has a fixed prefix, independent of schema width.
         for (id, table) in &contract.vtables {
             let schema = contract
                 .object_schemas
@@ -165,22 +197,29 @@ impl<'ctx> CodeGen<'ctx> {
                 .map(resolve)
                 .transpose()?
                 .unwrap_or_else(|| ptr.const_null());
-            let views = table
-                .views
+            let native = self.emit_object_entries(table.object, 3, &methods, id.0)?;
+            let erased_methods = table
+                .erased_methods
                 .iter()
-                .map(|id| {
-                    self.object_vtables
-                        .get(id)
-                        .map(|v| v.as_pointer_value())
-                        .ok_or_else(|| CodegenError::backend_contract("vtable view missing"))
+                .map(|key| {
+                    self.erased_functions
+                        .get(key)
+                        .map(|function| function.as_global_value().as_pointer_value())
+                        .ok_or_else(|| {
+                            CodegenError::backend_contract("erased vtable entry missing")
+                        })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let erased = self.emit_object_entries(table.object, 6, &erased_methods, id.0)?;
             let value = self.object_table_type(schema).const_named_struct(&[
                 size.into(),
                 align.into(),
                 drop.into(),
-                ptr.const_array(&methods).into(),
-                ptr.const_array(&views).into(),
+                native.into(),
+                self.context
+                    .i64_type()
+                    .const_int(methods.len() as u64, false)
+                    .into(),
                 self.erased_descriptors
                     .get(&table.concrete)
                     .map(|descriptor| descriptor.as_pointer_value())
@@ -190,21 +229,11 @@ impl<'ctx> CodeGen<'ctx> {
                         )
                     })?
                     .into(),
-                ptr.const_array(
-                    &table
-                        .erased_methods
-                        .iter()
-                        .map(|key| {
-                            self.erased_functions
-                                .get(key)
-                                .map(|function| function.as_global_value().as_pointer_value())
-                                .ok_or_else(|| {
-                                    CodegenError::backend_contract("erased vtable entry missing")
-                                })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                )
-                .into(),
+                erased.into(),
+                self.context
+                    .i64_type()
+                    .const_int(erased_methods.len() as u64, false)
+                    .into(),
             ]);
             self.object_vtables[id].set_initializer(&value);
         }
@@ -238,28 +267,66 @@ impl<'ctx> CodeGen<'ctx> {
         field: u32,
         index: u32,
     ) -> Result<PointerValue<'ctx>, CodegenError> {
-        let i32 = self.context.i32_type();
-        let address = unsafe {
-            self.builder.build_gep(
+        let ptr = self.context.ptr_type(AddressSpace::default());
+        let count_field = match field {
+            3 => 4,
+            6 => 7,
+            _ => {
+                return Err(CodegenError::backend_contract(
+                    "invalid object evidence lookup",
+                ))
+            }
+        };
+        let array = self
+            .builder
+            .build_struct_gep(
                 self.object_table_type(schema),
                 metadata,
-                &[
-                    i32.const_zero(),
-                    i32.const_int(field.into(), false),
-                    i32.const_int(index.into(), false),
-                ],
-                "object.entry",
+                field,
+                "object.entries.address",
             )
-        }
-        .map_err(|e| CodegenError::from(e.to_string()))?;
+            .map_err(|e| CodegenError::from(e.to_string()))?;
+        let array = self
+            .builder
+            .build_load(ptr, array, "object.entries")
+            .map_err(|e| CodegenError::from(e.to_string()))?;
+        let count = self
+            .builder
+            .build_struct_gep(
+                self.object_table_type(schema),
+                metadata,
+                count_field,
+                "object.entries.count.address",
+            )
+            .map_err(|e| CodegenError::from(e.to_string()))?;
+        let count = self
+            .builder
+            .build_load(self.context.i64_type(), count, "object.entries.count")
+            .map_err(|e| CodegenError::from(e.to_string()))?;
+        let (key, length) = self
+            .object_entry_keys
+            .get(&(schema.object, field, index))
+            .ok_or_else(|| CodegenError::backend_contract("object member identity missing"))?;
+        let lookup = self
+            .module
+            .get_function("__rock_object_lookup")
+            .ok_or_else(|| CodegenError::backend_contract("object lookup function missing"))?;
         self.builder
-            .build_load(
-                self.context.ptr_type(AddressSpace::default()),
-                address,
+            .build_call(
+                lookup,
+                &[
+                    array.into(),
+                    count.into(),
+                    key.as_pointer_value().into(),
+                    self.context.i64_type().const_int(*length, false).into(),
+                ],
                 "object.entry.load",
             )
+            .map_err(|e| CodegenError::from(e.to_string()))?
+            .try_as_basic_value()
+            .left()
             .map(|value| value.into_pointer_value())
-            .map_err(|e| CodegenError::from(e.to_string()))
+            .ok_or_else(|| CodegenError::backend_contract("object lookup returned no entry"))
     }
 
     pub(super) fn compile_object_conversion(
@@ -282,13 +349,9 @@ impl<'ctx> CodeGen<'ctx> {
                 })?;
                 (data, table.as_pointer_value())
             }
-            MirObjectConversion::Upcast { source, view } => {
-                let (data, metadata) = self.object_parts(value)?;
-                let schema = self.object_schemas.get(source).ok_or_else(|| {
-                    CodegenError::backend_contract("upcast source schema missing")
-                })?;
-                (data, self.load_object_entry(metadata, schema, 4, *view)?)
-            }
+            // A view narrows static authority, not the producer's evidence.
+            // Subsequent members are selected by exact portable identity.
+            MirObjectConversion::Upcast { .. } => self.object_parts(value)?,
         };
         let value = self
             .builder

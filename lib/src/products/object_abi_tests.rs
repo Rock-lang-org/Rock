@@ -368,6 +368,25 @@ fn erased_producer_schema_rejects_witnesses_in_every_concrete_leaf() {
         let error = malformed.validate_shape().unwrap_err();
         assert!(error.contains("unbound"), "mutation {mutation}: {error}");
     }
+    // Persisted origin authority must be checked independently of its type rows.
+    // Keep the valid declaration/shape control above, then corrupt only effects.
+    for mutation in 0..4 {
+        let mut malformed = original.clone();
+        let borrowing = &mut malformed.schemas[0].erased_slots[0]
+            .signature.dictionaries[0].members[0].borrowing;
+        match mutation {
+            0 => borrowing.returns[0].sources[0].argument = u32::MAX,
+            1 => borrowing.returns[0].path.push(crate::hir::borrowing::BorrowProjection::Deref),
+            2 => borrowing.returns.clear(),
+            3 => borrowing.retentions.push(crate::hir::borrowing::BorrowRetention {
+                destination: borrowing.returns[0].sources[0].clone(),
+                sources: borrowing.returns[0].sources.clone(),
+            }),
+            _ => unreachable!(),
+        }
+        let error = malformed.validate_shape().unwrap_err();
+        assert!(error.contains("borrow"), "mutation {mutation}: {error}");
+    }
 }
 
 #[test]

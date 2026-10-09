@@ -51,7 +51,7 @@ pub struct MirBuilder<'a> {
     current_block: Option<BasicBlockId>,
     var_map: HashMap<String, Local>,
     loop_stack: Vec<LoopTargets>,
-    scope_locals: Vec<Vec<Local>>,
+    scope_locals: super::cleanup::CleanupScopes<Local>,
     moved_places: HashSet<Place>,
     statically_moved_cleanup_places: HashSet<Place>,
     drop_flags: HashMap<Local, Local>,
@@ -61,6 +61,14 @@ pub struct MirBuilder<'a> {
     current_function_id: Option<MirFunctionId>,
     current_function_name: Option<String>,
     nested_functions: Vec<MirFunction>,
+    retained_closure_inputs: std::collections::BTreeMap<
+        crate::mono::DefinitionClosureId,
+        std::collections::BTreeMap<usize, super::backend_contract::MirGenericCallableInput>,
+    >,
+    closure_input_obligations: std::collections::BTreeMap<
+        MirFunctionId,
+        std::collections::BTreeMap<usize, super::backend_contract::MirGenericCallableInput>,
+    >,
     pending_closure_body_captures: Vec<HirClosureCapture>,
     callable_instances_by_def_id: HashMap<DefId, InstanceId>,
     method_def_ids: HashSet<DefId>,
@@ -198,7 +206,10 @@ impl<'a> MirBuilder<'a> {
         source_ty: &Type,
     ) -> HashMap<crate::types::GenericParamId, Type> {
         let args = match source_ty {
-            Type::Enum { args, .. } | Type::Struct { args, .. } => args,
+            Type::Enum { args, .. }
+            | Type::EnumRepresentation { args, .. }
+            | Type::Struct { args, .. }
+            | Type::StructRepresentation { args, .. } => args,
             _ => return HashMap::new(),
         };
         let mut generic_params = HashSet::new();
@@ -229,7 +240,7 @@ impl<'a> MirBuilder<'a> {
             current_block: None,
             var_map: HashMap::new(),
             loop_stack: Vec::new(),
-            scope_locals: Vec::new(),
+            scope_locals: Default::default(),
             moved_places: HashSet::new(),
             statically_moved_cleanup_places: HashSet::new(),
             drop_flags: HashMap::new(),
@@ -239,6 +250,8 @@ impl<'a> MirBuilder<'a> {
             current_function_id: None,
             current_function_name: None,
             nested_functions: Vec::new(),
+            retained_closure_inputs: Default::default(),
+            closure_input_obligations: Default::default(),
             pending_closure_body_captures: Vec::new(),
             callable_instances_by_def_id: HashMap::new(),
             method_def_ids: program.indexes.methods_by_id.keys().copied().collect(),
@@ -286,7 +299,7 @@ impl<'a> MirBuilder<'a> {
             }
         }
 
-        let type_context = type_context.into_inner();
+        let mut type_context = type_context.into_inner();
         let mut backend_contract = crate::mir::MirBackendContract::default();
         Self::populate_backend_contract_function_bodies(
             &mut backend_contract,
@@ -294,6 +307,12 @@ impl<'a> MirBuilder<'a> {
             &type_context,
         );
         Self::populate_backend_contract_runtime_requirements(&mut backend_contract, &functions);
+
+        Self::separate_nominal_result_storage(
+            &mut backend_contract,
+            &mut functions,
+            &mut type_context,
+        );
 
         MirProgram {
             functions,
@@ -353,6 +372,56 @@ impl<'a> MirBuilder<'a> {
             builder.scoped_entries = program.erased.scoped_entries.clone();
             builder.owned_object_calls = program.owned_object_calls.clone();
             builder.callable_instances_by_def_id = callable_instances_by_def_id.clone();
+            if let Some(definition) = program
+                .callable_input_obligations
+                .get(&Self::instance_origin_callable_def_id(&record.origin))
+                .filter(|definition| definition.generic_params.len() == record.substitution.len())
+            {
+                let substitution = definition
+                    .generic_params
+                    .iter()
+                    .copied()
+                    .zip(
+                        record
+                            .substitution
+                            .iter()
+                            .map(|ty| program.type_context.type_for(*ty)),
+                    )
+                    .collect::<HashMap<_, _>>();
+                builder.retained_closure_inputs = definition
+                    .closure_inputs
+                    .iter()
+                    .map(|(parameters, inputs)| {
+                        let inputs = inputs
+                            .iter()
+                            .filter_map(|(index, input)| {
+                                let subject = crate::type_services::substitution::instantiate(
+                                    &input.subject,
+                                    &substitution,
+                                )
+                                .ok()?;
+                                let invocation = crate::type_services::substitution::instantiate(
+                                    &input.invocation,
+                                    &substitution,
+                                )
+                                .ok()?;
+                                let mut tc = type_context.borrow_mut();
+                                Some((
+                                    *index,
+                                    super::backend_contract::MirGenericCallableInput {
+                                        subject: super::intern_backend_type(&mut tc, &subject),
+                                        invocation: super::intern_backend_type(
+                                            &mut tc,
+                                            &invocation,
+                                        ),
+                                    },
+                                ))
+                            })
+                            .collect();
+                        (parameters.clone(), inputs)
+                    })
+                    .collect();
+            }
             builder
                 .method_def_ids
                 .extend(method_def_ids.iter().copied());
@@ -376,6 +445,9 @@ impl<'a> MirBuilder<'a> {
             for nested in builder.take_nested_functions() {
                 bodies.push_nested(nested);
             }
+            bodies
+                .closure_input_obligations
+                .extend(builder.closure_input_obligations);
         }
 
         program.type_context = type_context.into_inner();
@@ -443,10 +515,50 @@ impl<'a> MirBuilder<'a> {
         );
         Self::populate_backend_contract_runtime_requirements(&mut backend_contract, &functions);
 
+        Self::separate_nominal_result_storage(
+            &mut backend_contract,
+            &mut functions,
+            &mut type_context.borrow_mut(),
+        );
+
         MirProgram {
             functions,
             type_context: type_context.into_inner(),
             backend_contract,
+        }
+    }
+
+    fn separate_nominal_result_storage(
+        contract: &mut super::MirBackendContract,
+        functions: &mut std::collections::BTreeMap<MirFunctionId, MirFunction>,
+        type_context: &mut TypeContext,
+    ) {
+        for (key, callable) in &mut contract.callables {
+            let storage = callable.signature.ret.semantic_ty;
+            let actual = type_context.type_for(storage);
+            if !matches!(
+                actual,
+                Type::StructRepresentation { .. } | Type::EnumRepresentation { .. }
+            ) || callable.signature.ret.abi_ty != storage
+                || !matches!(callable.kind, super::MirCallableKind::LocalBody { .. })
+            {
+                continue;
+            }
+            let semantic = super::intern_backend_type(
+                type_context,
+                &super::backend_contract::semantic_nominal_type(actual),
+            );
+            contract.native_result_storage.insert(key.clone(), storage);
+            callable.signature.ret.semantic_ty = semantic;
+            callable.signature.ret.abi_ty = semantic;
+            if let super::MirCallableKind::LocalBody { function_id } = &callable.kind {
+                if let Some(function) = functions.get_mut(function_id) {
+                    function.ret_type = semantic;
+                    if let Some(result) = function.local_decls.first_mut() {
+                        result.ty = semantic;
+                    }
+                }
+            }
         }
     }
 
@@ -494,6 +606,21 @@ impl<'a> MirBuilder<'a> {
                     key: key.clone(),
                     source_def_id: match function_id {
                         MirFunctionId::Function(id) | MirFunctionId::Extern(id) => Some(*id),
+                        MirFunctionId::Closure(closure)
+                            if contract
+                                .generic_callable_input_obligations
+                                .contains_key(&key) =>
+                        {
+                            let mut owner = &closure.owner;
+                            while let MirFunctionId::Closure(closure) = owner {
+                                owner = &closure.owner;
+                            }
+                            contract
+                                .function_bodies
+                                .get(owner)
+                                .and_then(|key| contract.callables.get(key))
+                                .and_then(|decl| decl.source_def_id)
+                        }
                         MirFunctionId::Instance(_) | MirFunctionId::Closure(_) => None,
                     },
                     kind: super::MirCallableKind::LocalBody {
@@ -664,7 +791,7 @@ impl<'a> MirBuilder<'a> {
     ) -> Option<TypeId> {
         let local = function.local_decls.get(place.local.0)?;
         let raw_local_ty = type_context.type_for(local.ty);
-        let mut current_ty = contract.normalize_type(type_context, &raw_local_ty);
+        let mut current_ty = contract.normalize_storage_type(type_context, &raw_local_ty);
         if place.projection.is_empty() {
             return if current_ty == raw_local_ty {
                 Some(local.ty)
@@ -675,7 +802,7 @@ impl<'a> MirBuilder<'a> {
 
         let mut downcast_variant = None;
         for projection in &place.projection {
-            current_ty = contract.normalize_type(type_context, &current_ty);
+            current_ty = contract.normalize_storage_type(type_context, &current_ty);
             current_ty = match projection {
                 Projection::Deref => match &current_ty {
                     Type::Pointer(inner) | Type::Reference { inner, .. } => inner.as_ref().clone(),
@@ -700,7 +827,7 @@ impl<'a> MirBuilder<'a> {
                     current_ty.clone()
                 }
             };
-            current_ty = contract.normalize_type(type_context, &current_ty);
+            current_ty = contract.normalize_storage_type(type_context, &current_ty);
         }
 
         type_context.id_for_type(&current_ty)
@@ -713,9 +840,14 @@ impl<'a> MirBuilder<'a> {
         index: usize,
         downcast_variant: Option<VariantId>,
     ) -> Option<Type> {
-        let ty = contract.normalize_type(type_context, ty);
+        let ty = contract.normalize_storage_type(type_context, ty);
         let projected = match &ty {
             Type::Tuple(fields) => fields.get(index).cloned(),
+            Type::StructRepresentation { fields, .. } => fields.get(index).cloned(),
+            Type::EnumRepresentation { variants, .. } => variants
+                .get(downcast_variant?.0 as usize)?
+                .get(index)
+                .cloned(),
             Type::Struct { id, args } => {
                 let super::MirNominalLayout::Struct { fields, .. } =
                     contract.nominal_layouts.get(id)?
@@ -771,7 +903,7 @@ impl<'a> MirBuilder<'a> {
             }
             _ => None,
         }?;
-        Some(contract.normalize_type(type_context, &projected))
+        Some(contract.normalize_storage_type(type_context, &projected))
     }
 
     fn backend_contract_for_program(
@@ -782,6 +914,7 @@ impl<'a> MirBuilder<'a> {
     ) -> super::MirBackendContract {
         let mut contract = crate::mir::MirBackendContract::default();
         contract.object_schemas = program.object_schemas.clone();
+        contract.descriptor_origins = program.erased.descriptor_origins.clone();
         contract.vtables = program.vtables.clone();
         contract.erased = program.erased.clone();
         contract.owned_object_calls = program.owned_object_calls.clone();
@@ -872,6 +1005,127 @@ impl<'a> MirBuilder<'a> {
             if record.symbols.backend_symbol == "main" {
                 signature.ret.abi_ty = type_context.intern_type(&Type::I32);
             }
+            // Instantiate definition-owned conditional requirements, never a
+            // concrete callback observed at a caller. Structural callable
+            // parameters may quantify their result; Fn-bound subjects still
+            // need their own canonical bound authority first.
+            if !record.provided_by_object {
+                if let Some(definition) = program
+                    .callable_input_obligations
+                    .get(&Self::instance_origin_callable_def_id(&record.origin))
+                    .filter(|definition| {
+                        definition.generic_params.len() == record.substitution.len()
+                            && record
+                                .substitution
+                                .iter()
+                                .all(|ty| program.type_context.type_id_tree_is_valid(*ty))
+                    })
+                {
+                    let substitution = definition
+                        .generic_params
+                        .iter()
+                        .copied()
+                        .zip(
+                            record
+                                .substitution
+                                .iter()
+                                .map(|ty| program.type_context.type_for(*ty)),
+                        )
+                        .collect::<std::collections::HashMap<_, _>>();
+                    let inputs = definition
+                        .inputs
+                        .iter()
+                        .filter_map(|(index, parameter)| {
+                            let Type::Function {
+                                result_borrowing, ..
+                            } = parameter
+                            else {
+                                return None;
+                            };
+                            if *result_borrowing == crate::types::CallableResultBorrowing::Unknown {
+                                return None;
+                            }
+                            let instantiated = crate::type_services::substitution::instantiate(
+                                parameter,
+                                &substitution,
+                            )
+                            .ok()?;
+                            let declared = super::intern_backend_type(type_context, &instantiated);
+                            if params.get(*index)? != &declared {
+                                return None;
+                            }
+                            (signature.params.get(*index)?.semantic_ty == declared)
+                                .then_some((*index, declared))
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>();
+                    if !inputs.is_empty() {
+                        contract
+                            .callable_input_obligations
+                            .insert(key.clone(), inputs);
+                    }
+                    let generic_inputs = definition
+                        .generic_inputs
+                        .iter()
+                        .filter_map(|(index, input)| {
+                            let subject = crate::type_services::substitution::instantiate(
+                                &input.subject,
+                                &substitution,
+                            )
+                            .ok()?;
+                            let subject = contract.normalize_storage_type(type_context, &subject);
+                            let actual = *params.get(*index)?;
+                            let represented = type_context.type_for(actual);
+                            if crate::type_services::callable::value_representation(&subject, &represented).as_ref() != Some(&represented)
+                                || signature.params.get(*index)?.semantic_ty != actual
+                            {
+                                return None;
+                            }
+                            let mut required = crate::type_services::substitution::instantiate(
+                                &input.invocation,
+                                &substitution,
+                            )
+                            .ok()?;
+                            if matches!(&input.subject, Type::Generic(_)) {
+                                // The retained Fn protocol owns the pack and Ret;
+                                // the physical signature supplies arity only.
+                            let subject = contract.normalize_storage_type(type_context, &represented);
+                            required = contract.normalize_storage_type(type_context, &required);
+                                required = crate::type_services::callable::physical_owned_input_requirement(
+                                    &required, &subject,
+                                )?;
+                            }
+                            let input = crate::mir::backend_contract::MirGenericCallableInput {
+                                subject: actual,
+                                invocation: super::intern_backend_type(type_context, &required),
+                            };
+                            (!crate::mir::backend_contract::callable_payload_requirements(
+                                type_context,
+                                &contract,
+                                &input,
+                            )
+                            .is_empty())
+                            .then_some((*index, input))
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>();
+                    if !generic_inputs.is_empty() {
+                        contract
+                            .generic_callable_input_obligations
+                            .insert(key.clone(), generic_inputs);
+                    }
+                }
+            }
+            if record.provided_by_object {
+                if let Some(origins) = program
+                    .native_return_origins
+                    .get(&Self::instance_origin_callable_def_id(&record.origin))
+                {
+                    if let Ok(origins) = origins.map_types(&mut |ty| {
+                        Ok::<_, String>(super::intern_backend_type(type_context, ty))
+                    }) {
+                        contract.native_return_origins.insert(key.clone(), origins);
+                    }
+                }
+            }
             let linkage = if record.is_specialization
                 && !record.provided_by_object
                 && !exportable_drop_glue_symbols.contains(record.symbols.backend_symbol.as_str())
@@ -931,9 +1185,45 @@ impl<'a> MirBuilder<'a> {
                 contract.packages.insert(id, schema);
             }
         }
-        Self::populate_object_adapters(&mut contract, type_context);
+        Self::populate_object_adapters(&mut contract, type_context, functions);
         Self::populate_erased_contract(&mut contract, program, functions, type_context);
 
+        contract.descriptor_identities = contract
+            .erased
+            .descriptors
+            .iter()
+            .filter_map(|(ty, descriptor)| {
+                super::descriptor_identity::descriptor_identity(
+                    &contract,
+                    type_context,
+                    &descriptor.drop,
+                )
+                .map(|identity| (*ty, identity))
+            })
+            .collect();
+
+        for (id, inputs) in &bodies.closure_input_obligations {
+            if !bodies.nested_functions().iter().any(|body| &body.id == id) {
+                continue;
+            }
+            let inputs = inputs
+                .iter()
+                .filter(|(_, input)| {
+                    !super::backend_contract::callable_payload_requirements(
+                        type_context,
+                        &contract,
+                        input,
+                    )
+                    .is_empty()
+                })
+                .map(|(index, input)| (*index, input.clone()))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            if !inputs.is_empty() {
+                contract
+                    .generic_callable_input_obligations
+                    .insert(super::MirCallableKey::Closure(id.clone()), inputs);
+            }
+        }
         contract
     }
 
@@ -990,6 +1280,33 @@ impl<'a> MirBuilder<'a> {
         type_context: &mut TypeContext,
     ) {
         for (id, _, structure) in program.structs_by_id() {
+            contract
+                .nominal_field_ids
+                .insert(id, structure.fields.iter().map(|field| field.id).collect());
+            let user_drop = program.language_items.drop.as_ref().is_some_and(|drop| {
+                program.impls_in_order().any(|(_, implementation)| {
+                    if implementation.trait_id != Some(drop.trait_id) {
+                        return false;
+                    }
+                    match &implementation.receiver_pattern {
+                        crate::hir::HirImplReceiverPattern::Exact(Type::Struct {
+                            id: owner,
+                            ..
+                        }) => *owner == id,
+                        crate::hir::HirImplReceiverPattern::Exact(Type::Generic(_))
+                        | crate::hir::HirImplReceiverPattern::Constructor(_) => true,
+                        _ => false,
+                    }
+                })
+            });
+            contract.nominal_drop_authority.insert(
+                id,
+                if user_drop {
+                    super::MirNominalDropAuthority::UnsupportedUserDrop
+                } else {
+                    super::MirNominalDropAuthority::FieldsOnly
+                },
+            );
             assert!(
                 contract
                     .nominal_layouts
@@ -1344,6 +1661,10 @@ impl<'a> MirBuilder<'a> {
 
     fn new_local_from_expr(&mut self, ty: Type, expr: &HirExpr) -> Local {
         let id = Local(self.locals.len());
+        // Copy callable storage now owns an independent environment even in
+        // expression temporaries; existing non-Copy transfers keep their scope
+        // scheduling at their construction/use sites.
+        let needs_cleanup = ty.is_copy() && self.type_needs_cleanup(&ty);
         let ty = self.type_id_for(&ty);
         self.locals.push(LocalDecl {
             ty,
@@ -1353,6 +1674,18 @@ impl<'a> MirBuilder<'a> {
             source: LocalSource::Temporary,
         });
         self.record_temporary_local(id);
+        if needs_cleanup && self.current_block.is_some() {
+            self.register_scoped_temp(id);
+            self.ensure_drop_flag(id);
+            self.set_drop_flags_for_place_tree(
+                &Place {
+                    local: id,
+                    projection: vec![],
+                },
+                false,
+                Some(expr.span.clone()),
+            );
+        }
         id
     }
 
@@ -1490,24 +1823,15 @@ impl<'a> MirBuilder<'a> {
         })
     }
 
-    fn cleanup_origin(&self, place: &Place) -> super::MirOrigin {
-        super::MirOrigin::synthetic(
-            super::MirSyntheticOrigin::Cleanup,
-            self.locals
-                .get(place.local.0)
-                .and_then(|local| local.span.clone()),
-        )
+    fn cleanup_origin(&self, operation_span: Option<Span>) -> super::MirOrigin {
+        super::MirOrigin::synthetic(super::MirSyntheticOrigin::Cleanup, operation_span)
     }
 
-    fn drop_origin(&self, place: &Place) -> super::MirOrigin {
-        let span = self
-            .locals
-            .get(place.local.0)
-            .and_then(|local| local.span.clone());
+    fn drop_origin(&self, operation_span: Option<Span>) -> super::MirOrigin {
         if self.cleanup_mode {
-            super::MirOrigin::synthetic(super::MirSyntheticOrigin::Cleanup, span)
+            self.cleanup_origin(operation_span)
         } else {
-            self.source_origin(span)
+            self.source_origin(operation_span)
         }
     }
 
@@ -1520,6 +1844,15 @@ impl<'a> MirBuilder<'a> {
         captures: Vec<HirClosureCapture>,
         operation_span: Span,
     ) {
+        let identity = crate::mono::DefinitionClosureId::new(
+            params.iter().map(|parameter| parameter.local_id).collect(),
+            &operation_span,
+        );
+        let inputs = self
+            .retained_closure_inputs
+            .get(&identity)
+            .cloned()
+            .unwrap_or_default();
         let hir_id = match &closure_id.owner {
             MirFunctionId::Function(id) | MirFunctionId::Extern(id) => *id,
             MirFunctionId::Instance(_) | MirFunctionId::Closure(_) => {
@@ -1549,6 +1882,7 @@ impl<'a> MirBuilder<'a> {
         .with_source_map(&self.source_map);
         builder.callable_instances_by_def_id = self.callable_instances_by_def_id.clone();
         builder.method_def_ids = self.method_def_ids.clone();
+        builder.retained_closure_inputs = self.retained_closure_inputs.clone();
         // A closure is another body in the same compilation environment, not a
         // fresh dispatch authority. Preserve the exact mono-produced contracts.
         builder.object_schemas = self.object_schemas.clone();
@@ -1559,13 +1893,26 @@ impl<'a> MirBuilder<'a> {
         builder.pending_closure_body_captures = captures;
         let function_id = MirFunctionId::Closure(Box::new(closure_id));
         let mir_func = builder.build_function(
-            function_id,
+            function_id.clone(),
             lambda_name,
             &function,
             false,
             self.current_source_owner,
             Some(operation_span),
         );
+        let inputs = inputs
+            .into_iter()
+            .filter(|(index, input)| {
+                mir_func.local_decls.get(index + 1).is_some_and(|local| {
+                    local.ty == input.subject && local.source == LocalSource::Argument
+                })
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        if !inputs.is_empty() {
+            self.closure_input_obligations.insert(function_id, inputs);
+        }
+        self.closure_input_obligations
+            .extend(builder.closure_input_obligations.clone());
         self.nested_functions.push(mir_func);
         self.nested_functions
             .extend(builder.take_nested_functions());
@@ -1653,7 +2000,7 @@ impl<'a> MirBuilder<'a> {
         field_name: &str,
         location: Option<&crate::hir::HirFieldLocation>,
     ) -> bool {
-        let Type::Struct { id, .. } = base_ty else {
+        let (Type::Struct { id, .. } | Type::StructRepresentation { id, .. }) = base_ty else {
             return false;
         };
         let Some((_, fields)) = self.program.struct_by_id(*id) else {
@@ -1673,7 +2020,7 @@ impl<'a> MirBuilder<'a> {
 
     fn unknown_field_message(&self, base_ty: &Type, field_name: &str) -> String {
         let type_name = match base_ty {
-            Type::Struct { id, .. } => self
+            Type::Struct { id, .. } | Type::StructRepresentation { id, .. } => self
                 .program
                 .indexes
                 .structs_by_id
@@ -1838,15 +2185,49 @@ impl<'a> MirBuilder<'a> {
 
     fn record_operand_move(&mut self, operand: &Operand) {
         if let Operand::Move(place) = operand {
+            let place = self
+                .immediate_cleanup_owner(place)
+                .unwrap_or_else(|| place.clone());
             if place.projection.is_empty() {
                 self.set_drop_flag(place.local, false, None);
                 self.set_projection_drop_flags_for_local(place.local, false, None);
                 self.moved_places.retain(|moved| moved.local != place.local);
             } else {
-                self.set_drop_flags_for_place_tree(place, false, None);
+                self.set_drop_flags_for_place_tree(&place, false, None);
                 self.moved_places.insert(place.clone());
             }
         }
+    }
+
+    fn immediate_cleanup_owner(&self, place: &Place) -> Option<Place> {
+        if place.projection.first() != Some(&Projection::Deref)
+            || self.locals.get(place.local.0)?.source != LocalSource::Temporary
+        {
+            return None;
+        }
+        // Only a dominating, block-local reference construction proves this
+        // cleanup identity. Parameter origins and cross-CFG aliases do not.
+        let statements = &self.blocks[self.current_block?.0].statements;
+        let assignment = statements
+            .iter()
+            .rev()
+            .find_map(|statement| match &statement.kind {
+                super::StatementKind::Assign(destination, value)
+                    if destination.local == place.local =>
+                {
+                    Some((destination, value))
+                }
+                _ => None,
+            })?;
+        let (destination, Rvalue::Ref(Mutability::Mut, owner)) = assignment else {
+            return None;
+        };
+        if !destination.projection.is_empty() || owner.projection.contains(&Projection::Deref) {
+            return None;
+        }
+        let mut owner = owner.clone();
+        owner.projection.extend_from_slice(&place.projection[1..]);
+        Some(owner)
     }
 
     fn clear_moved_place(&mut self, place: &Place) {
@@ -1943,7 +2324,8 @@ impl<'a> MirBuilder<'a> {
             HirExprKind::FieldAccess(base, _, location) => {
                 let mut place = self.move_source_place_for_expr(base)?;
                 let location = location.as_ref()?;
-                let Type::Struct { id, .. } = &base.ty else {
+                let (Type::Struct { id, .. } | Type::StructRepresentation { id, .. }) = &base.ty
+                else {
                     return None;
                 };
                 let (_, structure) = self.program.struct_by_id(*id)?;
@@ -1991,6 +2373,9 @@ impl<'a> MirBuilder<'a> {
                 for capture in &closure.captures {
                     if capture.kind == MirClosureCaptureKind::ByValue
                         && capture.place().projection.is_empty()
+                        && self
+                            .get_local_type(capture.local)
+                            .is_some_and(|ty| !ty.is_copy())
                     {
                         self.set_drop_flag(capture.local, false, capture.span.clone());
                     }
@@ -2084,7 +2469,7 @@ impl<'a> MirBuilder<'a> {
                     self.collect_projection_drop_flag_entries(&field_ty, projection, entries);
                 }
             }
-            Type::Tuple(elems) => {
+            Type::Tuple(elems) | Type::StructRepresentation { fields: elems, .. } => {
                 for (index, field_ty) in elems.iter().enumerate() {
                     if !self.type_needs_cleanup(field_ty) {
                         continue;
@@ -2096,6 +2481,23 @@ impl<'a> MirBuilder<'a> {
                     });
                     entries.push((projection.clone(), field_ty.clone()));
                     self.collect_projection_drop_flag_entries(field_ty, projection, entries);
+                }
+            }
+            Type::EnumRepresentation { variants, .. } => {
+                for (variant, fields) in variants.iter().enumerate() {
+                    for (index, field) in fields.iter().enumerate() {
+                        if !self.type_needs_cleanup(field) {
+                            continue;
+                        }
+                        let mut projection = prefix.clone();
+                        projection.push(Projection::Downcast(VariantId(variant as u32)));
+                        projection.push(Projection::Field {
+                            index,
+                            identity: None,
+                        });
+                        entries.push((projection.clone(), field.clone()));
+                        self.collect_projection_drop_flag_entries(field, projection, entries);
+                    }
                 }
             }
             Type::Enum { id, args: _ } => {
@@ -2327,9 +2729,7 @@ impl<'a> MirBuilder<'a> {
     }
 
     fn register_scoped_temp(&mut self, local: Local) {
-        if let Some(scope_locals) = self.scope_locals.last_mut() {
-            scope_locals.push(local);
-        }
+        self.scope_locals.register(local);
     }
 
     fn build_function(
@@ -2433,6 +2833,19 @@ impl<'a> MirBuilder<'a> {
                 capture_span.clone(),
             );
             self.var_map.insert(capture.name.clone(), local);
+            if capture.kind == crate::hir::HirClosureCaptureKind::Move {
+                // Consuming bodies own moved captures. Reusable bodies receive
+                // independent owning copies of their Copy captures in codegen.
+                function_scope_locals.push(local);
+                self.ensure_drop_flag(local);
+                self.mark_place_initialized(
+                    &Place {
+                        local,
+                        projection: vec![],
+                    },
+                    capture_span.clone(),
+                );
+            }
             self.closure_captures.push(MirClosureCapture {
                 name: capture.name,
                 local,
@@ -2446,15 +2859,15 @@ impl<'a> MirBuilder<'a> {
             projection: vec![],
         };
 
-        self.scope_locals.push(function_scope_locals);
+        self.scope_locals.enter(function_scope_locals);
         self.lower_block(&func.body, ret_place);
-        let function_scope_locals = self.scope_locals.pop().unwrap_or_default();
-        self.finish_scope_locals(function_scope_locals);
+        let function_scope_locals = self.scope_locals.leave();
+        let exit_span = Self::block_exit_span(&func.body);
+        self.finish_scope_locals(function_scope_locals, exit_span.clone());
 
         if let Some(current) = self.current_block {
-            let implicit_return_origin = self.source_origin(
-                self.source_operation_span(self.current_source_owner, operation_span.clone()),
-            );
+            let implicit_return_origin =
+                super::MirOrigin::synthetic(super::MirSyntheticOrigin::ControlFlow, exit_span);
             let block = &mut self.blocks[current.0];
             if block.terminator.is_none() {
                 block.terminator = Some(super::Terminator::return_with_origin(
@@ -2481,7 +2894,7 @@ impl<'a> MirBuilder<'a> {
             Type::Array(_, _) => true,
             Type::Exists(_) => true,
             Type::Struct { .. } => true,
-            Type::Enum { .. } => true,
+            Type::Enum { .. } | Type::EnumRepresentation { .. } => true,
             Type::Tuple(elems) => elems.iter().any(Self::needs_drop),
             Type::Function { .. } => true,
             _ => false,
@@ -2556,7 +2969,9 @@ impl<'a> MirBuilder<'a> {
                     .as_ref()
                     .map(|location| location.owner)
                     .or_else(|| match &base.ty {
-                        Type::Struct { id, .. } => Some(*id),
+                        Type::Struct { id, .. } | Type::StructRepresentation { id, .. } => {
+                            Some(*id)
+                        }
                         _ => None,
                     })?;
                 let (_, fields) = self.program.struct_by_id(struct_id)?;
@@ -2660,7 +3075,11 @@ impl<'a> MirBuilder<'a> {
         restored_bindings: &mut Vec<(String, Option<Local>)>,
     ) {
         match pattern {
-            HirPattern::Binding { name, mutable, .. } => {
+            HirPattern::Binding {
+                name,
+                local_id,
+                mutable,
+            } => {
                 let borrowed_payload =
                     enum_payload && scrutinee_mode == MatchScrutineeMode::Borrowed;
                 if enum_payload && !borrowed_payload && !TypeFacts::is_copy(source_ty) {
@@ -2682,17 +3101,16 @@ impl<'a> MirBuilder<'a> {
                 } else {
                     source_ty.clone()
                 };
+                let span = self.source_local_span(self.current_source_owner, *local_id);
                 let local = self.new_local_with_source(
                     self.type_id_for(&binding_ty),
                     mutability,
                     Some(name.clone()),
                     LocalSource::UserBinding,
-                    None,
+                    span.clone(),
                 );
-                self.emit_storage_live(local, None);
-                if let Some(scope_locals) = self.scope_locals.last_mut() {
-                    scope_locals.push(local);
-                }
+                self.emit_storage_live(local, span.clone());
+                self.scope_locals.register(local);
                 restored_bindings.push((name.clone(), self.var_map.insert(name.clone(), local)));
                 let dest = Place {
                     local,
@@ -2703,13 +3121,13 @@ impl<'a> MirBuilder<'a> {
                 } else {
                     Rvalue::Use(self.operand_for_place(source_ty, source_place, guarded))
                 };
-                self.emit_assign(dest, rvalue, None);
+                self.emit_assign(dest, rvalue, span);
             }
             HirPattern::Enum(_, _, Some(location), subpatterns) => {
                 let field_types =
                     self.enum_variant_field_types(location.owner, location.variant_id);
                 let generic_subst = match source_ty {
-                    Type::Enum { args, .. } => {
+                    Type::Enum { args, .. } | Type::EnumRepresentation { args, .. } => {
                         let mut generic_params = std::collections::HashSet::new();
                         for field_ty in &field_types {
                             field_ty.collect_generic_params(&mut generic_params);
@@ -2738,6 +3156,14 @@ impl<'a> MirBuilder<'a> {
                         .get(index)
                         .map(|ty| ty.substitute_generics(&generic_subst))
                         .unwrap_or(Type::Unit);
+                    let field_ty = match source_ty {
+                        Type::EnumRepresentation { variants, .. } => variants
+                            .get(location.variant_id.0 as usize)
+                            .and_then(|fields| fields.get(index))
+                            .cloned()
+                            .unwrap_or(field_ty),
+                        _ => field_ty,
+                    };
                     self.bind_match_pattern_places(
                         subpattern,
                         field_place,
@@ -2779,7 +3205,7 @@ impl<'a> MirBuilder<'a> {
                     return;
                 };
                 let generic_subst = match source_ty {
-                    Type::Struct { args, .. } => {
+                    Type::Struct { args, .. } | Type::StructRepresentation { args, .. } => {
                         let mut generic_params = std::collections::HashSet::new();
                         for field in &structure.fields {
                             field.ty.collect_generic_params(&mut generic_params);
@@ -2818,10 +3244,15 @@ impl<'a> MirBuilder<'a> {
                         identity.map(|location| location.owner),
                         identity.map(|location| location.field_id),
                     ));
+                    let measured = match source_ty {
+                        Type::StructRepresentation { fields, .. } => fields.get(index).cloned(),
+                        _ => None,
+                    };
                     self.bind_match_pattern_places(
                         &field.pattern,
                         field_place,
-                        &hir_field.ty.substitute_generics(&generic_subst),
+                        &measured
+                            .unwrap_or_else(|| hir_field.ty.substitute_generics(&generic_subst)),
                         guarded,
                         enum_payload,
                         scrutinee_mode,
@@ -3355,6 +3786,8 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(instance_id, function);
         let mono = crate::mono::MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -3463,6 +3896,8 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(caller_instance, caller);
         let mono = crate::mono::MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -3573,6 +4008,8 @@ mod tests {
         let mut type_context = crate::type_context::TypeContext::new();
         let _ = crate::hir::collect_hir_type_ids(&program, &mut type_context);
         let mono = crate::mono::MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -3613,6 +4050,8 @@ mod tests {
         let instance_id = InstanceId(90);
         let function_id = DefId::new(CrateId(0), LocalDefId(90));
         let mono = crate::mono::MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -3719,6 +4158,8 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(instance_id, function);
         let mono = crate::mono::MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -3910,6 +4351,8 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(InstanceId(0), function);
         let mono = crate::mono::MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -4079,6 +4522,8 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(InstanceId(0), function);
         let mono = crate::mono::MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -4232,6 +4677,8 @@ mod tests {
         let mut type_context = TypeContext::new();
         let ret_type = type_context.intern_type(&outer_projection);
         let mono = crate::mono::MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -4329,6 +4776,8 @@ mod tests {
         let ret_type = type_context.intern_type(&projection);
         let function_id = DefId::new(CrateId(0), LocalDefId(41));
         let mono = crate::mono::MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -5254,6 +5703,8 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(instance_id, function);
         let mut monomorphized = MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -5328,6 +5779,105 @@ mod tests {
     }
 
     #[test]
+    fn callable_input_demands_require_exact_canonical_instantiation_not_only_source_flags() {
+        use crate::mono::{
+            DefinitionCallableInputs, InstanceOrigin, InstanceRecord, InstanceSymbols,
+            MonomorphizedProgram,
+        };
+        use crate::types::{CallableResultBorrowing as B, GenericParamId};
+
+        let definition_id = DefId::new(CrateId(0), LocalDefId(90));
+        let generic = GenericParamId {
+            owner: definition_id,
+            index: 0,
+        };
+        let instance = InstanceId(90);
+        let key = crate::mir::MirCallableKey::Instance(instance);
+        let callable = |result| {
+            let mut ty = Type::function(vec![], result);
+            let Type::Function {
+                result_borrowing, ..
+            } = &mut ty
+            else {
+                unreachable!()
+            };
+            *result_borrowing = B::Sources(Box::default());
+            ty
+        };
+        let mut body = empty_function(definition_id, "invoke");
+        body.params = vec![HirParam {
+            name: "callback".into(),
+            local_id: crate::ids::HirLocalId(0),
+            ty: callable(Type::I64),
+            mutable: false,
+            is_ref: false,
+        }];
+        let mut tc = TypeContext::new();
+        let i64 = tc.intern_type(&Type::I64);
+        let mut mono = MonomorphizedProgram::new(empty_program(), tc, Default::default());
+        mono.callable_input_obligations.insert(
+            definition_id,
+            DefinitionCallableInputs {
+                generic_params: vec![generic],
+                inputs: std::collections::BTreeMap::from([(0, callable(Type::Generic(generic)))]),
+                generic_inputs: Default::default(),
+                closure_inputs: Default::default(),
+            },
+        );
+        mono.instances.insert(
+            instance,
+            InstanceRecord {
+                id: instance,
+                origin: InstanceOrigin::Function(definition_id),
+                substitution: vec![i64],
+                symbols: InstanceSymbols::new("invoke", "invoke_i64"),
+                declared: Some(body.clone()),
+                provided_by_object: false,
+                is_specialization: true,
+            },
+        );
+        mono.pre_mir_instance_bodies.insert(instance, body);
+        let mut mismatched = mono.clone();
+        mismatched
+            .callable_input_obligations
+            .get_mut(&definition_id)
+            .unwrap()
+            .inputs
+            .insert(0, callable(Type::Bool));
+        let mut absent = mono.clone();
+        absent.callable_input_obligations.clear();
+        let mut object = mono.clone();
+        object
+            .instances
+            .get_mut(&instance)
+            .unwrap()
+            .provided_by_object = true;
+        let mut wrong_binder_count = mono.clone();
+        wrong_binder_count
+            .callable_input_obligations
+            .get_mut(&definition_id)
+            .unwrap()
+            .generic_params
+            .clear();
+        let valid = MirBuilder::build_monomorphized(&mono);
+        assert!(valid
+            .backend_contract
+            .callable_input_obligations
+            .contains_key(&key));
+        for invalid in [mismatched, absent, object, wrong_binder_count] {
+            let mir = MirBuilder::build_monomorphized(&invalid);
+            assert!(
+                mir.backend_contract.callable(&key).is_some(),
+                "failed optional hypotheses must not discard the callable declaration"
+            );
+            assert!(!mir
+                .backend_contract
+                .callable_input_obligations
+                .contains_key(&key));
+        }
+    }
+
+    #[test]
     fn take_mir_instance_bodies_converts_and_drains_hir_instance_bodies() {
         use crate::mono::{InstanceOrigin, InstanceRecord, MonomorphizedProgram};
 
@@ -5353,6 +5903,8 @@ mod tests {
         let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
         pre_mir_instance_bodies.insert(instance_id, function.clone());
         let mut monomorphized = MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -5455,6 +6007,8 @@ mod tests {
             },
         );
         let monomorphized = MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -5558,6 +6112,8 @@ mod tests {
             },
         );
         let monomorphized = MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
@@ -7453,6 +8009,174 @@ mod tests {
     }
 
     #[test]
+    fn consuming_call_through_immediate_reference_clears_owned_cleanup_flag() {
+        let program = empty_program();
+        let type_context = test_type_context(&program);
+        let mut builder = MirBuilder::new(&program, &type_context);
+        let block = builder.new_block();
+        builder.current_block = Some(block);
+        let callable = Type::function_with_metadata(
+            vec![],
+            Type::Unit,
+            crate::types::FunctionSafety::Safe,
+            crate::types::CallableKind::FnOnce,
+            vec![crate::types::FunctionCapture::new(
+                crate::types::CaptureKind::Move,
+                Type::Array(Box::new(Type::I64), 1),
+            )],
+        );
+        let owner = builder.new_local(builder.type_id_for(&callable), Mutability::Mut, None);
+        let owner_place = Place {
+            local: owner,
+            projection: vec![],
+        };
+        builder.ensure_drop_flag(owner);
+        builder.mark_place_initialized(&owner_place, None);
+        let flag = builder.drop_flags[&owner];
+        let reference = builder.new_local(
+            builder.type_id_for(&Type::Reference {
+                mutable: true,
+                inner: Box::new(callable),
+            }),
+            Mutability::Not,
+            None,
+        );
+        builder.emit_assign(
+            Place {
+                local: reference,
+                projection: vec![],
+            },
+            Rvalue::Ref(Mutability::Mut, owner_place),
+            None,
+        );
+        builder.record_operand_move(&Operand::Move(Place {
+            local: reference,
+            projection: vec![Projection::Deref],
+        }));
+        assert!(
+            matches!(&builder.blocks[block.0].statements.last().unwrap().kind,
+            StatementKind::Assign(place, Rvalue::Use(Operand::Constant(Constant::Bool(false)))) if place.local == flag),
+            "consuming the environment must disable cleanup of its original owned slot"
+        );
+    }
+
+    #[test]
+    fn immediate_cleanup_owner_preserves_projections_and_rejects_unproved_aliases() {
+        let program = empty_program();
+        let type_context = test_type_context(&program);
+        let mut builder = MirBuilder::new(&program, &type_context);
+        let block = builder.new_block();
+        builder.current_block = Some(block);
+        let owner = builder.new_local(
+            builder.type_id_for(&Type::Tuple(vec![Type::I64, Type::I64])),
+            Mutability::Mut,
+            None,
+        );
+        let field = Place {
+            local: owner,
+            projection: vec![Projection::Field {
+                index: 1,
+                identity: None,
+            }],
+        };
+        let reference = builder.new_local(
+            builder.type_id_for(&Type::Reference {
+                mutable: true,
+                inner: Box::new(Type::I64),
+            }),
+            Mutability::Not,
+            None,
+        );
+        let slot = Place {
+            local: reference,
+            projection: vec![],
+        };
+        let deref = Place {
+            local: reference,
+            projection: vec![Projection::Deref],
+        };
+        assert_eq!(builder.immediate_cleanup_owner(&deref), None);
+        builder.emit_assign(
+            slot.clone(),
+            Rvalue::Ref(Mutability::Mut, field.clone()),
+            None,
+        );
+        assert_eq!(builder.immediate_cleanup_owner(&deref), Some(field.clone()));
+        builder.locals[reference.0].source = LocalSource::Argument;
+        assert_eq!(builder.immediate_cleanup_owner(&deref), None);
+        builder.locals[reference.0].source = LocalSource::Temporary;
+        builder.emit_assign(
+            slot.clone(),
+            Rvalue::Ref(Mutability::Not, field.clone()),
+            None,
+        );
+        assert_eq!(builder.immediate_cleanup_owner(&deref), None);
+        builder.emit_assign(
+            slot.clone(),
+            Rvalue::Ref(
+                Mutability::Mut,
+                Place {
+                    local: owner,
+                    projection: vec![Projection::Deref],
+                },
+            ),
+            None,
+        );
+        assert_eq!(builder.immediate_cleanup_owner(&deref), None);
+        builder.emit_assign(slot, Rvalue::Ref(Mutability::Mut, field), None);
+        let next = builder.new_block();
+        builder.current_block = Some(next);
+        assert_eq!(
+            builder.immediate_cleanup_owner(&deref),
+            None,
+            "reference origin alone is not dominating construction evidence"
+        );
+    }
+
+    #[test]
+    fn callable_user_destructor_and_environment_use_one_complete_cleanup_edge() {
+        let program = empty_program();
+        let type_context = test_type_context(&program);
+        let mut builder = MirBuilder::new(&program, &type_context);
+        let ty = Type::function_with_metadata(
+            vec![],
+            Type::Unit,
+            crate::types::FunctionSafety::Safe,
+            crate::types::CallableKind::FnOnce,
+            vec![crate::types::FunctionCapture::new(
+                crate::types::CaptureKind::Move,
+                struct_ty(0),
+            )],
+        );
+        builder.direct_drop_types.insert(ty.clone());
+        builder.blocks.push(BasicBlock {
+            statements: vec![],
+            terminator: None,
+        });
+        builder.current_block = Some(BasicBlockId(0));
+        builder.locals.push(LocalDecl {
+            ty: builder.type_id_for(&ty),
+            mutability: Mutability::Not,
+            name: Some("callback".into()),
+            span: None,
+            source: crate::mir::LocalSource::UserBinding,
+        });
+        builder.finish_scope_locals(vec![Local(0)], None);
+        assert_eq!(builder.blocks.iter().filter(|block|
+            matches!(&block.terminator, Some(Terminator::Drop { place, .. } | Terminator::DropWithOrigin { place, .. }) if place.local == Local(0))).count(), 1,
+            "the opaque plan already includes its user destructor, unlike ordinary projected field cleanup");
+        assert_eq!(
+            builder
+                .blocks
+                .iter()
+                .flat_map(|block| &block.statements)
+                .filter(|statement| matches!(statement.kind, StatementKind::StorageDead(Local(0))))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn cleanup_drops_before_storage_dead_for_drop_needed_local() {
         let program = empty_program();
         let type_context = test_type_context(&program);
@@ -7471,7 +8195,7 @@ mod tests {
             source: crate::mir::LocalSource::UserBinding,
         });
 
-        builder.finish_scope_locals(vec![Local(0)]);
+        builder.finish_scope_locals(vec![Local(0)], None);
 
         let drop_target = match &builder.blocks[0].terminator {
             Some(
@@ -7662,7 +8386,7 @@ mod tests {
             source: crate::mir::LocalSource::UserBinding,
         });
 
-        builder.finish_scope_locals(vec![Local(0)]);
+        builder.finish_scope_locals(vec![Local(0)], None);
 
         let drops: Vec<_> = builder
             .blocks
@@ -8880,7 +9604,7 @@ mod tests {
             terminator: None,
         });
         builder.current_block = Some(BasicBlockId(0));
-        builder.scope_locals.push(Vec::new());
+        builder.scope_locals.enter(Vec::new());
         builder.locals.push(LocalDecl {
             ty: builder.type_id_for(&Type::I64),
             mutability: Mutability::Not,
@@ -9368,7 +10092,7 @@ mod tests {
             terminator: None,
         });
         builder.current_block = Some(BasicBlockId(0));
-        builder.scope_locals.push(Vec::new());
+        builder.scope_locals.enter(Vec::new());
         builder.locals.push(LocalDecl {
             ty: builder.type_id_for(&Type::I64),
             mutability: Mutability::Not,
@@ -9440,7 +10164,7 @@ mod tests {
             )
         )));
         assert_eq!(
-            builder.scope_locals.last().map(|locals| locals.len()),
+            builder.scope_locals.current().map(|locals| locals.len()),
             Some(1)
         );
     }
@@ -9455,7 +10179,7 @@ mod tests {
             terminator: None,
         });
         builder.current_block = Some(BasicBlockId(0));
-        builder.scope_locals.push(Vec::new());
+        builder.scope_locals.enter(Vec::new());
         builder.locals.push(LocalDecl {
             ty: builder.type_id_for(&Type::Bool),
             mutability: Mutability::Not,
@@ -9498,7 +10222,7 @@ mod tests {
             )
         )));
         assert_eq!(
-            builder.scope_locals.last().map(|locals| locals.len()),
+            builder.scope_locals.current().map(|locals| locals.len()),
             Some(1)
         );
     }
@@ -9513,7 +10237,7 @@ mod tests {
             terminator: None,
         });
         builder.current_block = Some(BasicBlockId(0));
-        builder.scope_locals.push(Vec::new());
+        builder.scope_locals.enter(Vec::new());
         builder.locals.push(LocalDecl {
             ty: builder.type_id_for(&Type::Reference {
                 mutable: false,
@@ -9537,7 +10261,7 @@ mod tests {
         );
 
         builder.lower_expr(&expr, dest);
-        assert_eq!(builder.scope_locals.last().map(|s| s.len()), Some(1));
+        assert_eq!(builder.scope_locals.current().map(|s| s.len()), Some(1));
     }
 
     #[test]
@@ -9674,6 +10398,56 @@ mod tests {
             mir_func.local_decls[1].origin(),
             crate::mir::MirOrigin::Source(parameter_span)
         );
+    }
+
+    #[test]
+    fn match_binding_preserves_exact_local_source_without_fallback() {
+        let program = empty_program();
+        let type_context = test_type_context(&program);
+        let owner = DefId::new(CrateId(1), LocalDefId(300));
+        let other_owner = DefId::new(CrateId(1), LocalDefId(301));
+        let local_id = crate::ids::HirLocalId(7);
+        let binding_span = Span::new("/virtual/provider.rk".into(), 46, 54);
+        let wrong_span = Span::new("/virtual/other.rk".into(), 20, 28);
+        let mut source_map = crate::source_map::SemanticSourceMap::default();
+        source_map.insert_local(owner, local_id, binding_span.clone());
+        source_map.insert_local(other_owner, local_id, wrong_span);
+
+        for source_owner in [Some(owner), Some(other_owner), None] {
+            let mut builder = MirBuilder::new(&program, &type_context).with_source_map(&source_map);
+            builder.current_source_owner = source_owner;
+            builder.current_block = Some(builder.new_block());
+            let source = builder
+                .new_local_from_expr(Type::I64, &expr(HirExprKind::IntLiteral(1), Type::I64));
+            let pattern = HirPattern::Tuple(vec![HirPattern::Binding {
+                name: "function".into(),
+                local_id,
+                mutable: false,
+            }]);
+            builder.bind_match_pattern_places(
+                &pattern,
+                Place {
+                    local: source,
+                    projection: vec![],
+                },
+                &Type::Tuple(vec![Type::I64]),
+                false,
+                false,
+                MatchScrutineeMode::ByValue,
+                &mut None,
+                &mut Vec::new(),
+            );
+            let expected =
+                source_owner.and_then(|owner| source_map.local_span(owner, local_id).cloned());
+            let binding = builder.var_map["function"];
+            assert_eq!(builder.locals[binding.0].span, expected);
+            let statements = &builder.blocks[0].statements;
+            assert_eq!(statements[0].span, expected);
+            assert_eq!(statements.last().unwrap().span, expected);
+            if source_owner == Some(owner) {
+                assert_eq!(expected, Some(binding_span.clone()));
+            }
+        }
     }
 
     #[test]

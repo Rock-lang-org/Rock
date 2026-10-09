@@ -365,6 +365,24 @@ impl Lowerer {
     }
 
     pub(crate) fn lower_impl_bodies(&mut self, imp: &ast::Impl, impl_id: DefId) {
+        self.lower_impl_bodies_selected(imp, impl_id, None);
+    }
+
+    pub(crate) fn lower_impl_method_body(
+        &mut self,
+        imp: &ast::Impl,
+        impl_id: DefId,
+        method_id: DefId,
+    ) {
+        self.lower_impl_bodies_selected(imp, impl_id, Some(method_id));
+    }
+
+    fn lower_impl_bodies_selected(
+        &mut self,
+        imp: &ast::Impl,
+        impl_id: DefId,
+        selected_method: Option<DefId>,
+    ) {
         let mut impl_generic_params = Vec::new();
         if let Some(for_type) = imp.for_.as_ref() {
             for generic in for_type.generics() {
@@ -409,7 +427,7 @@ impl Lowerer {
         // Lower the self type properly (handles &Str, etc.)
         let (type_name, _type_generics, _receiver_pattern) = self.impl_type_info(imp);
 
-        // Process only methods with exact owner-local payloads, in stable DefId order.
+        // Resolve dependencies first while retaining each method's exact impl context.
         let mut methods = Vec::with_capacity(imp.methods.len());
         for (method_ident, fd) in &imp.methods {
             let method_name = method_ident.name.clone();
@@ -425,9 +443,13 @@ impl Lowerer {
                 ));
                 continue;
             };
-            methods.push((method_id, method_ident, fd));
+            if selected_method.is_none_or(|selected| selected == method_id) {
+                methods.push((method_id, method_ident, fd));
+            }
         }
-        methods.sort_unstable_by_key(|(method_id, _, _)| *method_id);
+        methods.sort_unstable_by_key(|(method_id, _, _)| {
+            (crate::lower::body_lowerer::body_dependency_rank(self, *method_id), *method_id)
+        });
 
         for (_, method_ident, fd) in methods {
             let method_name = method_ident.name.clone();

@@ -1,18 +1,73 @@
 //! Canonical unique-owner evidence for consuming virtual dispatch.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::*;
 use crate::selection::{ReceiverAdjustment, ReceiverCandidate, SelectedMethod, SelectionService};
 use crate::types::{FunctionSafety, NominalTypeKind, ObjectType};
 
 pub(crate) fn object(ty: &Type) -> Option<&ObjectType> {
-    match ty {
-        Type::Struct { args, .. } => match args.as_slice() {
-            [Type::Object(object)] => Some(object),
-            _ => None,
-        },
+    let Type::Struct { args, .. } = ty else { return None; };
+    // Discovery only: the canonical transport application must bind this
+    // exact object before the signature probe can become an owned call.
+    let mut objects = args.iter().filter_map(|arg| match arg {
+        Type::Object(object) => Some(object.as_ref()),
         _ => None,
+    });
+    let object = objects.next()?;
+    objects.next().is_none().then_some(object)
+}
+
+fn closed_owner_application(
+    owner: &Type,
+    object: &ObjectType,
+    items: &HirLanguageItems,
+    service: &SelectionService<'_>,
+) -> Result<(Type, Vec<Type>), String> {
+    let transport = items.object_owner.as_ref().ok_or("consuming object dispatch requires object_owner")?;
+    let (constructor, payload, state_args) = service
+        .infer_unary_constructor_application(owner, transport.trait_id)
+        .map_err(|error| error.message())?
+        .ok_or("owner transport State is not uniquely determined")?;
+    if payload != Type::Object(Box::new(object.clone())) || self::object(owner) != Some(object) {
+        return Err("owner transport application has a different object payload".into());
     }
+    // Phase inputs are canonical. Beta-apply the recovered section using the
+    // normalizer's checked binder substitution, without solving any equation.
+    let applied = match &constructor {
+        Type::Lambda { .. } => crate::type_services::normalize::apply_type_lambda(&constructor, std::slice::from_ref(&payload)),
+        Type::Constructor { id, flavor: NominalTypeKind::Struct } => Some(Type::Struct { id: *id, args: vec![payload.clone()] }),
+        _ => None,
+    };
+    if applied.as_ref() != Some(owner) {
+        return Err("owner transport section does not reconstruct the exact canonical owner".into());
+    }
+    let [state] = state_args.as_slice() else { return Err("invalid owner transport State arity".into()); };
+    struct IndependentState<'a> {
+        payload: &'a Type,
+        constructor: &'a Type,
+        depth: u32,
+        valid: bool,
+    }
+    impl crate::type_services::visit::TypeVisitor for IndependentState<'_> {
+        fn enter_binders(&mut self, _: &[crate::type_services::kind::Kind]) { self.depth += 1; }
+        fn exit_binders(&mut self) { self.depth -= 1; }
+        fn visit_type(&mut self, ty: &Type) {
+            self.valid &= ty != self.payload && match ty {
+                Type::Generic(parameter) => crate::type_services::visit::type_any(self.constructor, |fixed| fixed == &Type::Generic(*parameter)),
+                Type::BoundVar { depth, .. } => *depth < self.depth,
+                Type::TypeVar(_) | Type::Error | Type::ObjectSelf { .. } | Type::Witness(_) => false,
+                _ => true,
+            };
+            crate::type_services::visit::visit_type_children(ty, self);
+        }
+    }
+    let mut independent = IndependentState { payload: &payload, constructor: &constructor, depth: 0, valid: true };
+    crate::type_services::visit::visit_type(state, &mut independent);
+    let sized = items.sized.as_ref().ok_or("unique owner State requires a canonical Sized capability")?;
+    if !independent.valid || !service.trait_bound_satisfied(state, &TraitBound { trait_id: sized.trait_id, type_args: Vec::new() }) {
+        return Err("unique owner State must be sized and independent of the payload".into());
+    }
+    Ok((constructor, state_args))
 }
 
 pub(crate) fn select(
@@ -235,24 +290,26 @@ fn prove_with_witness(
     } else {
         super::object_methods::consuming_signature(traits, &method, object)?;
     }
-    let constructor = Type::Constructor {
-        id: *id,
-        flavor: NominalTypeKind::Struct,
+    let (constructor, state_args) = if witness.is_some() {
+        // The existing unary opened-owner frontier is not widened here.
+        let constructor = Type::Constructor { id: *id, flavor: NominalTypeKind::Struct };
+        let state_args = service.infer_trait_arguments(&constructor, transport.trait_id)
+            .ok_or("owner transport State is not uniquely determined")?;
+        (constructor, state_args)
+    } else {
+        closed_owner_application(owner, object, items, service)?
     };
-    let state_args = service
-        .infer_trait_arguments(&constructor, transport.trait_id)
-        .ok_or("owner transport State is not uniquely determined")?;
     let [state] = state_args.as_slice() else {
         return Err("invalid owner transport State arity".into());
     };
-    if crate::type_services::visit::type_any(state, |ty| {
+    if witness.is_some() && (crate::type_services::visit::type_any(state, |ty| {
         matches!(
             ty,
             Type::Generic(_) | Type::TypeVar(_) | Type::ObjectSelf { .. } | Type::Witness(_)
         )
     }) || crate::type_services::layout::TypeLayout::sizedness(state, &|_| {
         crate::type_services::layout::Sizedness::Unknown
-    }) != crate::type_services::layout::Sizedness::Sized
+    }) != crate::type_services::layout::Sizedness::Sized)
     {
         return Err("unique owner State must be sized and independent of the payload".into());
     }
@@ -326,8 +383,12 @@ pub(crate) fn validate<P: HirPhase>(
     call: &HirOwnedObjectCall,
 ) -> Result<(), String> {
     let mut assumptions = HirGenericBounds::new();
+    let mut context_owners = HashSet::new();
     crate::type_services::visit::visit_type(&owner.ty, &mut |ty: &Type| {
         if let Type::Generic(parameter) = ty {
+            if !context_owners.insert(parameter.owner) {
+                return;
+            }
             let declared = program
                 .functions
                 .get(&parameter.owner)
@@ -338,8 +399,20 @@ pub(crate) fn validate<P: HirPhase>(
                         .get(&parameter.owner)
                         .map(|implementation| &implementation.bounds)
                 });
-            if let Some(bounds) = declared.and_then(|bounds| bounds.get(parameter)) {
-                assumptions.insert(*parameter, bounds.clone());
+            if let Some(bounds) = declared {
+                // Reuse the actual declaration context, including relaxation;
+                // no default Sized evidence is reconstructed from the owner.
+                assumptions.extend(
+                    bounds.iter().map(|(parameter, bounds)| (*parameter, bounds.clone())),
+                );
+                assumptions
+                    .relaxed_sized
+                    .extend(bounds.relaxed_sized.iter().copied());
+                for predicate in &bounds.predicates {
+                    if !assumptions.predicates.contains(predicate) {
+                        assumptions.predicates.push(predicate.clone());
+                    }
+                }
             }
         }
     });
@@ -459,9 +532,9 @@ main = !-> ()
         program_from_source(source)
     }
 
-    fn program_from_source(source: &str) -> HirProgramFor<AcceptedHir> {
+    fn source_config(source: &str) -> crate::Config {
         let path = std::env::temp_dir().join("rock_owned_hir/main.rk");
-        crate::analyze(&crate::Config {
+        crate::Config {
             entry_file: path.clone(),
             no_std: true,
             no_prelude: true,
@@ -470,11 +543,245 @@ main = !-> ()
                 text: source.into(),
             }],
             ..Default::default()
-        })
-        .unwrap()
-        .hir
-        .program
-        .into_program()
+        }
+    }
+
+    fn program_from_source(source: &str) -> HirProgramFor<AcceptedHir> {
+        crate::analyze(&source_config(source))
+            .unwrap()
+            .hir
+            .program
+            .into_program()
+    }
+
+    fn closed_owner_source(payload_first: bool, unique_state: Option<&str>) -> String {
+        let args = |allocator: &str, payload: &str| {
+            if payload_first { format!("{payload}, {allocator}") }
+            else { format!("{allocator}, {payload}") }
+        };
+        let unique = unique_state.map(|state| format!(r#"
+impl Unique ({state}) for Shell {section} where A: Memory
+    unsafe release = _, state !-> ()
+"#, section = args("A", "_"))).unwrap_or_default();
+        format!(r#"
+lang sized
+< trait Layout
+lang object_owner
+< trait Transport State for F _
+    lang owner_into_parts
+    unsafe split: F T -> (*T, State) where T: ?Layout
+    lang owner_from_parts
+    unsafe build: *T -> State -> F T where T: ?Layout
+lang object_owner_unique
+< trait Unique State for F _
+    lang owner_release
+    unsafe release: *U8 -> State -> ()
+trait Memory
+    @key: I64
+struct Small
+    < tag: I64
+impl Memory for Small
+    @key = -> self.tag
+struct Large
+    < padding: (I64, I64)
+    < tag: I64
+impl Memory for Large
+    @key = -> self.tag
+struct State A
+    < allocator: A
+struct OtherState A
+    < allocator: A
+struct Shell {header}
+    < raw: *T
+    < state: State A
+impl Transport (State A) for Shell {section} where A: Memory
+    unsafe split = owner -> (owner.raw, owner.state)
+    unsafe build = pointer, state -> Shell
+        raw: pointer
+        state: state
+{unique}
+trait Take
+    ~@take: I64
+consume_small: Shell {small} -> I64
+consume_small = owner -> owner.take!
+consume_large: Shell {large} -> I64
+consume_large = owner -> owner.take!
+consume_generic: Shell {generic} -> I64 where A: Memory, A: Layout
+consume_generic = owner -> owner.take!
+main = !-> ()
+"#,
+            header = args("A", "(T: ?Layout)"), section = args("A", "_"),
+            small = args("Small", "Take"), large = args("Large", "Take"), generic = args("A", "Take"))
+    }
+
+    #[test]
+    fn closed_owner_fixed_sections_preserve_allocator_state_and_operations() {
+        use crate::type_services::kind::Kind;
+        for payload_first in [false, true] {
+            let program = program_from_source(&closed_owner_source(payload_first, Some("State A")));
+            AcceptedHirProgram::revalidate_for_test(program.clone()).unwrap();
+            let shell = program.structs.values().find(|definition| definition.name == "Shell").unwrap().id;
+            let state = program.structs.values().find(|definition| definition.name == "State").unwrap().id;
+            let take = program.traits.values().find(|definition| definition.name == "Take").unwrap().id;
+            let transport = program.language_items.object_owner.as_ref().unwrap();
+            let unique = program.language_items.object_owner_unique.as_ref().unwrap();
+            for (name, allocator) in [("consume_small", "Small"), ("consume_large", "Large")] {
+                let function = program.functions.values().find(|function| function.name == name).unwrap();
+                assert!(hir_function_is_codegen_concrete(function));
+                let allocator = Type::Struct { id: program.structs.values().find(|definition| definition.name == allocator).unwrap().id, args: Vec::new() };
+                let HirStmtFor::Expr(expression) = &function.body.stmts[0] else { panic!("consuming tail"); };
+                let HirExprKindFor::OwnedObjectCall { owner, args, call } = &expression.kind else { panic!("actual accepted owned call"); };
+                assert!(args.is_empty());
+                assert_eq!(expression.ty, Type::I64);
+                let Type::Object(object) = &call.object else { panic!("object signature"); };
+                assert_eq!(object.principal.trait_id, take);
+                assert!(matches!(call.method.target, HirSelectedMethodTarget::TraitMethod { dispatch: HirTraitDispatchKind::Object, .. }));
+                let payload_position = usize::from(!payload_first);
+                let fixed_position = usize::from(payload_first);
+                let mut owner_args = vec![allocator.clone(); 2];
+                owner_args[payload_position] = call.object.clone();
+                assert_eq!(owner.ty, Type::Struct { id: shell, args: owner_args });
+                assert_eq!(call.state, Type::Struct { id: state, args: vec![allocator.clone()] });
+                for (operation, trait_id, member_id, expected_params, expected_ret) in [
+                    (&call.into_parts, transport.trait_id, transport.into_parts_id, vec![owner.ty.clone()],
+                        Type::Tuple(vec![Type::Pointer(Box::new(call.object.clone())), call.state.clone()])),
+                    (&call.release, unique.trait_id, unique.method_id, vec![Type::Pointer(Box::new(Type::U8)), call.state.clone()], Type::Unit),
+                ] {
+                    let Type::Lambda { params, body } = &operation.owner_ty else { panic!("fixed constructor section"); };
+                    assert_eq!(params, &vec![Kind::Type]);
+                    let Type::Struct { id, args } = body.as_ref() else { panic!("nominal section body"); };
+                    assert_eq!(*id, shell);
+                    assert_eq!(args.len(), 2);
+                    assert_eq!(args[fixed_position], allocator);
+                    assert_eq!(args[payload_position], Type::BoundVar { depth: 0, index: 0, kind: Kind::Type });
+                    assert_eq!(crate::type_services::normalize::apply_type_lambda(&operation.owner_ty, std::slice::from_ref(&call.object)), Some(owner.ty.clone()));
+                    let HirSelectedMethodTarget::ImplMethod { impl_id, method_id, selected_trait: Some(selected) } = &operation.method.target else { panic!("canonical selected operation"); };
+                    assert_eq!(selected.trait_id, trait_id);
+                    assert_eq!(selected.member_id, member_id);
+                    assert_eq!(selected.trait_args, vec![call.state.clone()]);
+                    let implementation = &program.impls[impl_id];
+                    let method = implementation.methods.values().find(|method| method.id == *method_id).unwrap();
+                    assert!(method.is_unsafe && method.self_receiver.is_none());
+                    assert_eq!(operation.method.owner_substitution, vec![HirTypeBinding { param: implementation.type_generics[0].id, ty: allocator.clone() }]);
+                    if member_id == transport.into_parts_id {
+                        let payload = method.generic_params.iter().find(|param| param.id.owner == method.id).unwrap();
+                        assert!(payload.maybe_unsized);
+                        assert_eq!(operation.method.method_substitution, vec![HirTypeBinding { param: payload.id, ty: call.object.clone() }]);
+                    } else {
+                        assert!(operation.method.method_substitution.is_empty());
+                    }
+                    let substitution = operation.method.owner_substitution.iter().chain(&operation.method.method_substitution)
+                        .map(|binding| (binding.param, binding.ty.clone())).collect::<HashMap<_, _>>();
+                    assert_eq!(method.params.iter().map(|param| param.ty.substitute_generics(&substitution)).collect::<Vec<_>>(), expected_params);
+                    assert_eq!(method.ret_type.substitute_generics(&substitution), expected_ret);
+                    eprintln!("CLOSED_OWNER fixture={name} payloadFirst={payload_first} actualAcceptedTarget={operation:?} State={:?} execution=NONE", call.state);
+                }
+            }
+        }
+    }
+
+    fn closed_owner_unique_source_rejection(state: Option<&str>) {
+        for payload_first in [false, true] {
+            let source = closed_owner_source(payload_first, state);
+            let errors = crate::analyze(&source_config(&source)).unwrap_err();
+            assert!(errors.0.iter().any(|error| error.message.starts_with(
+                "consuming object call requires unique release for the same owner constructor and State:"
+            ) && error.primary.as_ref().is_some_and(|label| {
+                source.get(label.span.start..label.span.end) == Some("owner")
+                    && source.get(label.span.end..).is_some_and(|text| text.starts_with(".take!"))
+            })), "{errors:?}");
+        }
+    }
+
+    #[test]
+    fn closed_owner_missing_unique_rejects_at_consuming_source() {
+        closed_owner_unique_source_rejection(None);
+    }
+
+    #[test]
+    fn closed_owner_cross_state_release_rejects_at_consuming_source() {
+        closed_owner_unique_source_rejection(Some("OtherState A"));
+    }
+
+    #[test]
+    fn closed_owner_missing_canonical_state_sized_rejects_revalidation() {
+        let mut program = program_from_source(&closed_owner_source(false, Some("State A")));
+        program.language_items.sized = None;
+        let errors = AcceptedHirProgram::revalidate_for_test(program).unwrap_err();
+        assert!(errors.iter().any(|error| error.contains("unique owner State requires a canonical Sized capability")), "{errors:?}");
+    }
+
+    #[test]
+    fn closed_owner_declared_generic_state_sized_is_reproved() {
+        let mut program = program_from_source(&closed_owner_source(false, Some("State A")));
+        AcceptedHirProgram::revalidate_for_test(program.clone()).unwrap();
+        let sized = program.language_items.sized.as_ref().unwrap().trait_id;
+        let function = program.functions.values_mut().find(|function| function.name == "consume_generic").unwrap();
+        let parameter = function.generic_params[0].id;
+        assert!(function.generic_bounds[&parameter].iter().any(|bound| bound.trait_id == sized));
+        let HirStmtFor::Expr(expression) = &function.body.stmts[0] else { panic!("generic consuming tail"); };
+        let HirExprKindFor::OwnedObjectCall { call, .. } = &expression.kind else { panic!("generic accepted owned call"); };
+        assert!(crate::type_services::visit::type_any(&call.state, |ty| ty == &Type::Generic(parameter)));
+        for operation in [&call.into_parts, &call.release] {
+            assert!(operation.method.owner_substitution.iter().any(|binding| binding.ty == Type::Generic(parameter)));
+        }
+        // Remove the actual context evidence, including its source predicate;
+        // do not make a State equation stand in for the missing Sized bound.
+        function.generic_bounds.get_mut(&parameter).unwrap().retain(|bound| bound.trait_id != sized);
+        function.generic_bounds.predicates.retain(|predicate| {
+            let crate::types::Predicate::Trait { trait_id, .. } = predicate;
+            *trait_id != sized
+        });
+        function.generic_params[0].maybe_unsized = true;
+        function.generic_bounds.relaxed_sized.insert(parameter);
+        let errors = AcceptedHirProgram::revalidate_for_test(program).unwrap_err();
+        assert!(errors.iter().any(|error| error.contains("owner transport State is not uniquely determined")), "{errors:?}");
+    }
+
+    #[test]
+    fn closed_owner_payload_dependent_state_rejects_revalidation() {
+        let mut program = program_from_source(&closed_owner_source(false, Some("State A")));
+        let function = program.functions.values().find(|function| function.name == "consume_small").unwrap();
+        let HirStmtFor::Expr(expression) = &function.body.stmts[0] else { panic!("consuming tail"); };
+        let HirExprKindFor::OwnedObjectCall { call, .. } = &expression.kind else { panic!("accepted owned call"); };
+        let object = call.object.clone();
+        let transport = program.language_items.object_owner.as_ref().unwrap().trait_id;
+        let unique = program.language_items.object_owner_unique.as_ref().unwrap().trait_id;
+        for implementation in program.impls.values_mut().filter(|implementation| matches!(implementation.trait_id, Some(id) if id == transport || id == unique)) {
+            implementation.trait_arg_types = vec![object.clone()];
+        }
+        let errors = AcceptedHirProgram::revalidate_for_test(program).unwrap_err();
+        assert!(errors.iter().any(|error| error.contains("unique owner State must be sized and independent of the payload")), "{errors:?}");
+    }
+
+    #[test]
+    fn closed_owner_same_layout_state_and_fixed_bindings_cannot_be_forged() {
+        let valid = program_from_source(&closed_owner_source(false, Some("State A")));
+        let other_state = valid.structs.values().find(|definition| definition.name == "OtherState").unwrap().id;
+        let other_allocator = Type::Struct { id: valid.structs.values().find(|definition| definition.name == "Large").unwrap().id, args: Vec::new() };
+        for mutation in 0..4 {
+            let mut program = valid.clone();
+            let function = program.functions.values_mut().find(|function| function.name == "consume_small").unwrap();
+            let HirStmtFor::Expr(expression) = &mut function.body.stmts[0] else { panic!("consuming tail"); };
+            let HirExprKindFor::OwnedObjectCall { owner, call, .. } = &mut expression.kind else { panic!("accepted owned call"); };
+            match mutation {
+                0 => {
+                    let Type::Struct { args, .. } = &call.state else { panic!("State allocator"); };
+                    call.state = Type::Struct { id: other_state, args: args.clone() };
+                }
+                1 => call.release.method.owner_substitution[0].ty = other_allocator.clone(),
+                2 => call.into_parts.method.method_substitution[0].ty = Type::I64,
+                _ => {
+                    let Type::Struct { args, .. } = &mut owner.ty else { panic!("nominal owner"); };
+                    args[0] = call.object.clone();
+                    assert!(object(&owner.ty).is_none(), "two object arguments are ambiguous discovery");
+                }
+            }
+            let errors = AcceptedHirProgram::revalidate_for_test(program).unwrap_err();
+            let expected = if mutation == 3 { "consuming object dispatch requires an owning value, not a reference or raw pointer" }
+                else { "owned object call has invalid transport or unique-release evidence" };
+            assert!(errors.iter().any(|error| error.contains(expected)), "mutation={mutation}: {errors:?}");
+        }
     }
 
     #[test]

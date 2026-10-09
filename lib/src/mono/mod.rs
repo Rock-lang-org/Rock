@@ -23,7 +23,9 @@ mod hir_types {
 }
 
 mod callable;
+mod callable_inputs;
 mod erased;
+pub(crate) use erased::bind_erased_parameters;
 mod external;
 mod methods;
 mod object;
@@ -51,9 +53,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub use crate::ids::InstanceId;
 pub use registry::{
-    GeneratedMethodInstance, InstanceImplOwner, InstanceKey, InstanceOrigin, InstanceRecord,
-    InstanceRegistry, InstanceSymbols, MonomorphizedProgram, PreMirInstanceBodies,
-    PreMirInstanceBody,
+    DefinitionCallableInputs, DefinitionClosureId, GeneratedMethodInstance, InstanceImplOwner,
+    InstanceKey, InstanceOrigin, InstanceRecord, InstanceRegistry, InstanceSymbols,
+    MonomorphizedProgram, PreMirInstanceBodies, PreMirInstanceBody,
 };
 
 #[derive(Debug, Clone)]
@@ -64,6 +66,11 @@ pub(crate) struct CompilationIdentityContext {
 }
 
 impl CompilationIdentityContext {
+    fn descriptor_origins(&self) -> BTreeMap<crate::ids::CrateId, ProductCrateIdentity> {
+        let mut origins = self.dependencies.clone();
+        origins.insert(self.current_crate_id, self.current_crate.clone());
+        origins
+    }
     pub(crate) fn new(
         current_crate_id: crate::ids::CrateId,
         current_crate: ProductCrateIdentity,
@@ -268,9 +275,14 @@ pub fn monomorphize(
     let mut mono = Monomorphizer::new().with_source_map(source_map);
     let program = mono.process(program.into_program());
     mono.diagnostics.return_if_err()?;
+    // This standalone API has no defining product/source identity authority.
+    // Do not promote local_default's backend-symbol namespace into a runtime key.
+    let callable_input_obligations = mono.definition_callable_inputs();
     let (instances, pre_mir_instance_bodies) = mono.instances.into_parts();
     Ok(MonomorphizedProgram {
+        callable_input_obligations,
         program,
+        native_return_origins: BTreeMap::new(),
         erased: mono.erased,
         erased_invocations: mono.erased_invocations,
         owned_object_calls: mono.owned_object_calls,
@@ -319,11 +331,17 @@ pub(crate) fn monomorphize_with_crates(
     mono.source_map = source_map;
     mono.normalization_env = normalization_env;
     mono.identity_context = identity_context;
+    mono.erased.imported_runtime_support = crate_ctx.dependency_link_inputs().runtime_support;
     mono.resolver = resolver;
     let program = mono.process_with_crates(program.into_program(), crate_ctx);
     mono.diagnostics.return_if_err()?;
+    mono.erased.descriptor_origins = mono.identity_context.descriptor_origins();
+    let callable_input_obligations = mono.definition_callable_inputs();
     let (instances, pre_mir_instance_bodies) = mono.instances.into_parts();
+    let native_return_origins = crate_ctx.dependency_native_return_origins();
     Ok(MonomorphizedProgram {
+        callable_input_obligations,
+        native_return_origins,
         program,
         erased: mono.erased,
         erased_invocations: mono.erased_invocations,
@@ -349,6 +367,9 @@ struct Monomorphizer {
     language_items: crate::hir::HirLanguageItems,
     /// Concrete function payloads, selected exclusively by canonical identity.
     concrete_functions: HashMap<DefId, HirFunction>,
+    processed_concrete_functions: HashSet<DefId>,
+    active_concrete_methods: HashSet<DefId>,
+    retained_callable_inputs: BTreeMap<DefId, registry::DefinitionCallableInputs>,
     /// Generic function payloads, including external providers, keyed by canonical identity.
     generic_functions: HashMap<DefId, HirFunction>,
     /// Source/display names for function symbols after their DefId has been selected.
@@ -365,6 +386,8 @@ struct Monomorphizer {
     resolver: ResolverTables,
     /// Resolver tables loaded from dependency crates.
     dependency_resolvers: Vec<ResolverTables>,
+    imported_member_symbols:
+        BTreeMap<DefId, (String, crate::products::ProductPolymorphicMemberLink)>,
     /// Counter for generating unique names
     counter: u32,
     /// Current impl being processed (for method calls)
@@ -385,11 +408,12 @@ struct Monomorphizer {
     /// Nominal field types keyed by canonical struct/enum identity for recursive drop glue.
     nominal_field_types: HashMap<DefId, Vec<Type>>,
     nominal_field_ids: HashMap<DefId, Vec<crate::ids::FieldId>>,
+    nominal_variant_fields: HashMap<(DefId, crate::ids::VariantId), Vec<Type>>,
     nominal_generic_params: HashMap<DefId, Vec<GenericParamId>>,
     /// Source spans for nominal fields used while materializing recursive drop glue.
     nominal_field_spans: HashMap<DefId, Vec<Option<crate::lexer::Span>>>,
     /// Drop impl instance keys currently being specialized for automatic drop glue.
-    drop_monomorphization_in_progress: HashSet<(DefId, Vec<TypeId>)>,
+    drop_monomorphization_in_progress: HashSet<InstanceKey>,
     /// Nominal types currently being expanded for field drop specialization.
     drop_field_monomorphization_in_progress: HashSet<TypeId>,
     /// Canonical Drop trait identity from the effective language item registry.
@@ -483,9 +507,10 @@ impl Monomorphizer {
     }
 
     fn normalize_type(&self, ty: &Type) -> Type {
-        TypeNormalizer::new(&self.normalization_env)
+        let normalized = TypeNormalizer::new(&self.normalization_env)
             .normalize(ty)
-            .expect("mono type normalization must preserve accepted HIR invariants")
+            .expect("mono type normalization must preserve accepted HIR invariants");
+        crate::type_services::callable::resolve_environment_kinds(normalized)
     }
 
     #[allow(dead_code)]
@@ -697,10 +722,12 @@ impl Monomorphizer {
                 safety,
                 callable_kind,
                 captures,
+                result_borrowing,
             } => {
                 output.push('f');
                 Self::push_text(output, &format!("{safety:?}"));
                 Self::push_text(output, &format!("{callable_kind:?}"));
+                Self::push_text(output, &format!("{result_borrowing:?}"));
                 Self::push_text(output, &params.len().to_string());
                 for param in params {
                     self.write_type_id(output, *param);
@@ -720,12 +747,39 @@ impl Monomorphizer {
                     self.write_type_id(output, *arg);
                 }
             }
+            Ty::StructRepresentation { id, args, fields } => {
+                output.push('s');
+                self.write_def_id(output, *id);
+                Self::push_text(output, &args.len().to_string());
+                for arg in args {
+                    self.write_type_id(output, *arg);
+                }
+                Self::push_text(output, &fields.len().to_string());
+                for field in fields {
+                    self.write_type_id(output, *field);
+                }
+            }
             Ty::Enum { id, args } => {
                 output.push('E');
                 self.write_def_id(output, *id);
                 Self::push_text(output, &args.len().to_string());
                 for arg in args {
                     self.write_type_id(output, *arg);
+                }
+            }
+            Ty::EnumRepresentation { id, args, variants } => {
+                output.push('e');
+                self.write_def_id(output, *id);
+                Self::push_text(output, &args.len().to_string());
+                for arg in args {
+                    self.write_type_id(output, *arg);
+                }
+                Self::push_text(output, &variants.len().to_string());
+                for fields in variants {
+                    Self::push_text(output, &fields.len().to_string());
+                    for field in fields {
+                        self.write_type_id(output, *field);
+                    }
                 }
             }
             Ty::Reference { mutable, inner } => {
@@ -846,6 +900,19 @@ impl Monomorphizer {
         }
     }
 
+    fn backend_symbol_for_instance_key(&self, key: &InstanceKey) -> String {
+        let symbol = self.backend_symbol_for_origin(&key.origin, &key.substitution);
+        if key.parameter_representations.is_empty() {
+            symbol
+        } else {
+            format!(
+                "{}_values_{}",
+                symbol,
+                self.substitution_symbol_suffix(&key.parameter_representations)
+            )
+        }
+    }
+
     fn backend_symbol_for_function(
         &self,
         name: &str,
@@ -866,6 +933,106 @@ impl Monomorphizer {
     fn register_concrete_function(&mut self, name: String, func: HirFunction) {
         self.function_names_by_id.entry(func.id).or_insert(name);
         self.concrete_functions.insert(func.id, func);
+    }
+
+    fn definition_callable_inputs(&self) -> BTreeMap<DefId, registry::DefinitionCallableInputs> {
+        self.generic_functions
+            .values()
+            .chain(self.concrete_functions.values())
+            .map(|function| {
+                (
+                    function,
+                    function
+                        .generic_params
+                        .iter()
+                        .map(|parameter| parameter.id)
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .chain(self.generic_impls.values().flat_map(|implementation| {
+                implementation.methods.values().map(move |function| {
+                    let generics = implementation
+                        .type_generics
+                        .iter()
+                        .map(|parameter| parameter.id)
+                        .chain(
+                            function
+                                .generic_params
+                                .iter()
+                                .map(|parameter| parameter.id)
+                                .filter(|id| {
+                                    !implementation
+                                        .type_generics
+                                        .iter()
+                                        .any(|parameter| parameter.id == *id)
+                                }),
+                        )
+                        .collect::<Vec<_>>();
+                    (function, generics)
+                })
+            }))
+            .chain(
+                self.trait_impls
+                    .values()
+                    .flatten()
+                    .flat_map(|implementation| {
+                        implementation.methods.values().map(move |function| {
+                            let generics = implementation
+                                .type_generics
+                                .iter()
+                                .map(|parameter| parameter.id)
+                                .chain(
+                                    function
+                                        .generic_params
+                                        .iter()
+                                        .map(|parameter| parameter.id)
+                                        .filter(|id| {
+                                            !implementation
+                                                .type_generics
+                                                .iter()
+                                                .any(|parameter| parameter.id == *id)
+                                        }),
+                                )
+                                .collect::<Vec<_>>();
+                            (function, generics)
+                        })
+                    }),
+            )
+            .filter_map(|(function, generic_params)| {
+                let inputs = function
+                    .params
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, parameter)| {
+                        let Type::Function {
+                            result_borrowing, ..
+                        } = &parameter.ty
+                        else {
+                            return None;
+                        };
+                        (!parameter.is_ref
+                            && !parameter.mutable
+                            && *result_borrowing != crate::types::CallableResultBorrowing::Unknown)
+                            .then_some((index, parameter.ty.clone()))
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                let generic_inputs =
+                    callable_inputs::generic_inputs(function, &self.language_items);
+                let closure_inputs =
+                    callable_inputs::closure_inputs(function, &self.language_items);
+                (!inputs.is_empty() || !generic_inputs.is_empty() || !closure_inputs.is_empty())
+                    .then_some((
+                        function.id,
+                        registry::DefinitionCallableInputs {
+                            generic_params,
+                            inputs,
+                            generic_inputs,
+                            closure_inputs,
+                        },
+                    ))
+            })
+            .chain(self.retained_callable_inputs.clone())
+            .collect()
     }
 
     fn concrete_function_by_id(&self, id: DefId) -> Option<HirFunction> {
@@ -1374,11 +1541,15 @@ impl Monomorphizer {
             vtables: BTreeMap::new(),
             language_items: crate::hir::HirLanguageItems::default(),
             concrete_functions: HashMap::new(),
+            processed_concrete_functions: HashSet::new(),
+            active_concrete_methods: HashSet::new(),
+            retained_callable_inputs: BTreeMap::new(),
             generic_functions: HashMap::new(),
             function_names_by_id: HashMap::new(),
             var_types: HashMap::new(),
             nominal_field_types: HashMap::new(),
             nominal_field_ids: HashMap::new(),
+            nominal_variant_fields: HashMap::new(),
             nominal_generic_params: HashMap::new(),
             nominal_field_spans: HashMap::new(),
             instances: InstanceRegistry::new(),
@@ -1387,6 +1558,7 @@ impl Monomorphizer {
             identity_context: CompilationIdentityContext::local_default(),
             resolver: ResolverTables::default(),
             dependency_resolvers: Vec::new(),
+            imported_member_symbols: BTreeMap::new(),
             counter: 0,
             current_type_args: Vec::new(),
             trait_impls: HashMap::new(),
@@ -1411,6 +1583,7 @@ impl Monomorphizer {
     fn register_nominal_field_types(&mut self, program: &HirProgram) {
         self.nominal_field_types.clear();
         self.nominal_field_ids.clear();
+        self.nominal_variant_fields.clear();
         self.nominal_generic_params.clear();
         self.nominal_field_spans.clear();
         for strukt in program.structs.values() {
@@ -1447,9 +1620,26 @@ impl Monomorphizer {
             );
         }
         for enm in program.enums.values() {
+            self.nominal_generic_params.insert(
+                enm.id,
+                enm.generic_params
+                    .iter()
+                    .map(|parameter| parameter.id)
+                    .collect(),
+            );
             let mut fields = Vec::new();
             let mut spans = Vec::new();
             for variant in &enm.variants {
+                self.nominal_variant_fields.insert(
+                    (enm.id, variant.id),
+                    match &variant.fields {
+                        HirVariantFields::Named(fields) => {
+                            fields.iter().map(|field| field.ty.clone()).collect()
+                        }
+                        HirVariantFields::Positional(fields) => fields.clone(),
+                        HirVariantFields::Unit => Vec::new(),
+                    },
+                );
                 match &variant.fields {
                     HirVariantFields::Named(named) => {
                         fields.extend(named.iter().map(|field| field.ty.clone()));
@@ -1476,8 +1666,14 @@ impl Monomorphizer {
 
     fn monomorphize_drop_fields_for_type(&mut self, ty: &Type) {
         match ty {
-            Type::Tuple(fields) => {
+            Type::Tuple(fields) | Type::StructRepresentation { fields, .. } => {
                 for field in fields {
+                    self.monomorphize_drop_for_type(field, None);
+                }
+                return;
+            }
+            Type::EnumRepresentation { variants, .. } => {
+                for field in variants.iter().flatten() {
                     self.monomorphize_drop_for_type(field, None);
                 }
                 return;

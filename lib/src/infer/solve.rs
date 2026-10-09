@@ -322,6 +322,51 @@ fn solve_constraints_in_place_mode(
             continue;
         }
         match constraint {
+            Constraint::Dereference {
+                input,
+                output,
+                unsafe_allowed,
+                span,
+            } => {
+                if store.state(id) == Some(ObligationState::Solved) {
+                    continue;
+                }
+                let input = engine.resolve(&input);
+                if matches!(input, Type::Pointer(_)) && !unsafe_allowed {
+                    errors.push(SolveError {
+                        kind: SolveErrorKind::Message(
+                            "Dereference of raw pointer requires an unsafe block".into(),
+                        ),
+                        span,
+                    });
+                    store.set_state(id, ObligationState::Failed);
+                } else if let Type::Pointer(inner) | Type::Reference { inner, .. } = input {
+                    let mut probe = engine.clone_for_probe();
+                    if let Err(error) = probe.unify(&output, &inner) {
+                        #[cfg(test)]
+                        if let Some(Constraint::Dereference {
+                            input: raw_input, ..
+                        }) = store.constraint(id)
+                        {
+                            crate::lower::control_flow::observe_caller_failed_dereference(
+                                engine,
+                                store.owner(id),
+                                raw_input,
+                                &output,
+                                &span,
+                            );
+                        }
+                        errors.push(SolveError {
+                            kind: SolveErrorKind::Unify {
+                                context: "dereference result".into(),
+                                error,
+                            },
+                            span,
+                        });
+                        store.set_state(id, ObligationState::Failed);
+                    }
+                }
+            }
             Constraint::Trait {
                 ty,
                 bound,
@@ -523,6 +568,9 @@ fn solve_constraints_in_place_mode(
                     engine.resolve(expected)
                 ),
                 Constraint::Try { .. } => "try operator".to_string(),
+                Constraint::Dereference { .. } => {
+                    "cannot determine dereference input kind".to_string()
+                }
                 Constraint::IntLiteral { .. } | Constraint::FloatLiteral { .. } => continue,
             };
             let span = match constraint {
@@ -531,7 +579,8 @@ fn solve_constraints_in_place_mode(
                 | Constraint::FloatLiteral { span, .. }
                 | Constraint::Equality { span, .. }
                 | Constraint::Coercion { span, .. }
-                | Constraint::Try { span, .. } => span.clone(),
+                | Constraint::Try { span, .. }
+                | Constraint::Dereference { span, .. } => span.clone(),
             };
             errors.push(SolveError {
                 kind: SolveErrorKind::Message(format!(
@@ -593,6 +642,35 @@ fn solve_structural_constraints_to_fixed_point(
             continue;
         };
         let state = match constraint {
+            Constraint::Dereference {
+                input,
+                output,
+                unsafe_allowed,
+                ..
+            } => match engine.resolve(&input) {
+                Type::Pointer(_) if !unsafe_allowed => ObligationState::Failed,
+                Type::Pointer(inner) | Type::Reference { inner, .. } => {
+                    let mut probe = engine.clone_for_probe();
+                    match probe.unify(&output, &inner) {
+                        Ok(()) => {
+                            *engine = probe;
+                            if contains_unresolved_type(&engine.resolve(&output)) {
+                                ObligationState::Pending
+                            } else {
+                                ObligationState::Solved
+                            }
+                        }
+                        Err(_) => ObligationState::Failed,
+                    }
+                }
+                _ => {
+                    if finalize_pending {
+                        ObligationState::Ambiguous
+                    } else {
+                        ObligationState::Pending
+                    }
+                }
+            },
             Constraint::Equality { left, right, .. } => {
                 let mut probe = engine.clone_for_probe();
                 match probe.unify(&left, &right) {
@@ -701,15 +779,8 @@ fn solve_structural_constraints_to_fixed_point(
                         continue;
                     }
                 };
-                let args = match params.as_slice() {
-                    [] => Type::Unit,
-                    [param] => param.clone(),
-                    params => Type::Tuple(params.to_vec()),
-                };
                 let mut probe = engine.clone_for_probe();
-                if probe.unify(&bound.type_args[0], &args).is_err()
-                    || probe.unify(&bound.type_args[1], &ret).is_err()
-                {
+                if unify_callable_signature(&mut probe, &params, &ret, &bound).is_err() {
                     if contains_unresolved_type(&engine.resolve(&bound.type_args[0]))
                         || contains_unresolved_type(&engine.resolve(&bound.type_args[1]))
                     {
@@ -847,7 +918,9 @@ fn unify_argument_coercion(
         }
     }
 
-    engine.unify(actual, expected)
+    engine
+        .constrain_argument_binding(actual, expected)
+        .map(|_| ())
 }
 
 fn try_head_is_pending(ty: &Type) -> bool {
@@ -1224,6 +1297,62 @@ fn impl_bounds_satisfied(
     })
 }
 
+fn unify_callable_signature(
+    engine: &mut InferenceEngine,
+    params: &[Type],
+    ret: &Type,
+    bound: &TraitBound,
+) -> Result<(), UnifyError> {
+    let args = match params {
+        [] => Type::Unit,
+        [param] => param.clone(),
+        params => Type::Tuple(params.to_vec()),
+    };
+    engine.unify(&bound.type_args[0], &args)?;
+    // Args are contravariant; the produced result must satisfy the bound's
+    // requirement, never the reverse (notably for returned callables).
+    engine.unify(ret, &bound.type_args[1])
+}
+
+/// Propagate native callable Args/Ret before a caller lowers uses of the result.
+/// This does not discharge the persisted obligation; canonical validation still
+/// checks it, and a failed signature probe must not specialize the caller.
+pub(crate) fn propagate_native_callable_bound(
+    engine: &mut InferenceEngine,
+    ty: &Type,
+    bound: &TraitBound,
+    items: &crate::hir::HirLanguageItems,
+) -> bool {
+    let Some((required, _, _)) = items
+        .callable_protocols()
+        .find(|(_, trait_id, _)| *trait_id == bound.trait_id)
+    else {
+        return false;
+    };
+    let Type::Function {
+        params,
+        ret,
+        callable_kind,
+        safety,
+        ..
+    } = engine.resolve(ty)
+    else {
+        return false;
+    };
+    if bound.type_args.len() != 2
+        || callable_kind > required
+        || safety != crate::types::FunctionSafety::Safe
+    {
+        return false;
+    }
+    let mut probe = engine.clone_for_probe();
+    if unify_callable_signature(&mut probe, &params, &ret, bound).is_err() {
+        return false;
+    }
+    engine.commit_probe(probe);
+    true
+}
+
 fn callable_trait_satisfied(
     ty: &Type,
     trait_id: DefId,
@@ -1262,7 +1391,23 @@ fn callable_trait_satisfied(
     };
     let args_match = trait_args[0] == args
         || matches!((&trait_args[0], &args), (Type::Tuple(elements), Type::Unit) if elements.is_empty());
-    Some(args_match && trait_args[1] == **ret)
+    if args_match && trait_args[1] == **ret {
+        // Already canonical generic/HKT signatures require no inference or a
+        // second normalization environment; preserve that exact authority.
+        return Some(true);
+    }
+    // Use the same directional relation as propagation, but do not discharge
+    // unrelated unresolved variables by inventing a new substitution here.
+    // Result obligations remain obligations, not borrowing certificates.
+    let mut probe = InferenceEngine::new();
+    let bound = TraitBound {
+        trait_id,
+        type_args: trait_args.to_vec(),
+    };
+    Some(
+        unify_callable_signature(&mut probe, params, ret, &bound).is_ok()
+            && probe.substitution_generation() == 0,
+    )
 }
 
 fn callable_impl_substitution(
@@ -1335,6 +1480,13 @@ fn auto_trait_satisfied(
         | Type::Str => true,
         Type::Array(inner, _) | Type::Slice(inner) => nested(inner, visiting),
         Type::Tuple(elements) => elements.iter().all(|element| nested(element, visiting)),
+        Type::StructRepresentation { fields, .. } => {
+            fields.iter().all(|field| nested(field, visiting))
+        }
+        Type::EnumRepresentation { variants, .. } => variants
+            .iter()
+            .flatten()
+            .all(|field| nested(field, visiting)),
         Type::Reference { .. } if is_send => false,
         Type::Reference { inner, .. } => {
             let required = builtin_traits.sync;
@@ -1559,6 +1711,94 @@ mod tests {
     use crate::types::TraitBound;
 
     #[test]
+    fn dereference_result_evidence_does_not_choose_input_kind() {
+        for shape in [
+            Type::Pointer(Box::new(Type::I64)),
+            Type::Reference {
+                mutable: false,
+                inner: Box::new(Type::I64),
+            },
+            Type::Reference {
+                mutable: true,
+                inner: Box::new(Type::I64),
+            },
+        ] {
+            let mut engine = InferenceEngine::new();
+            let mut store = ConstraintStore::new();
+            let input = engine.fresh_type_var();
+            let output = engine.fresh_type_var();
+            let span = Span::new("/virtual/deref_relation.rk".into(), 7, 8);
+            let relation = store.add_dereference(input.clone(), output.clone(), true, span.clone());
+            let Type::TypeVar(input_id) = input else {
+                unreachable!()
+            };
+            let Type::TypeVar(output_id) = output else {
+                unreachable!()
+            };
+            assert!(store.dependencies_for(input_id).contains(&relation));
+            assert!(store.dependencies_for(output_id).contains(&relation));
+            engine.unify(&output, &Type::I64).unwrap();
+            let solve = |engine: &mut InferenceEngine, store: &mut ConstraintStore, finish| {
+                solve_constraints_in_place_mode(
+                    engine,
+                    store,
+                    &HashMap::new(),
+                    &HashMap::new(),
+                    &HashMap::new(),
+                    &HashMap::new(),
+                    &LanguageItems::default(),
+                    finish,
+                    None,
+                    &crate::hir::HirGenericBounds::new(),
+                )
+            };
+            assert!(solve(&mut engine, &mut store, false).errors.is_empty());
+            assert_eq!(engine.resolve(&input), input);
+            assert_eq!(store.state(relation), Some(ObligationState::Pending));
+            engine.unify(&input, &shape).unwrap();
+            let solved = solve(&mut engine, &mut store, true);
+            assert!(solved.errors.is_empty(), "{:?}", solved.errors);
+            assert_eq!(store.state(relation), Some(ObligationState::Solved));
+            assert_eq!(engine.resolve(&input), shape);
+            assert_eq!(engine.resolve(&output), Type::I64);
+        }
+    }
+
+    #[test]
+    fn deferred_dereference_checks_original_safety_and_rejects_unknown_kind() {
+        for (shape, unsafe_allowed, message) in [
+            (Some(Type::Pointer(Box::new(Type::I64))), false, "unsafe"),
+            (None, true, "cannot determine dereference input kind"),
+        ] {
+            let mut engine = InferenceEngine::new();
+            let mut store = ConstraintStore::new();
+            let input = engine.fresh_type_var();
+            let output = engine.fresh_type_var();
+            let span = Span::new("/virtual/deref_safety.rk".into(), 19, 20);
+            store.add_dereference(input.clone(), output, unsafe_allowed, span.clone());
+            if let Some(shape) = shape {
+                engine.unify(&input, &shape).unwrap();
+            }
+            let solved = solve_constraints_in_place(
+                &mut engine,
+                &mut store,
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+                &LanguageItems::default(),
+            );
+            assert_eq!(solved.errors.len(), 1);
+            assert!(
+                solved.errors[0].message().contains(message),
+                "{:?}",
+                solved.errors
+            );
+            assert_eq!(solved.errors[0].span, span);
+        }
+    }
+
+    #[test]
     fn solve_errors_keep_unification_payload_until_rendering() {
         let error = SolveError {
             kind: SolveErrorKind::Unify {
@@ -1580,6 +1820,53 @@ mod tests {
 
     fn def_id(index: u32) -> DefId {
         DefId::new(CrateId(0), LocalDefId(index))
+    }
+
+    #[test]
+    fn callable_bound_preserves_directional_result_obligations() {
+        use crate::types::{CallableResultBorrowing as B, CallableResultSource as S};
+        let unknown = Type::function(vec![Type::I64], Type::I64);
+        let with_sources = |sources| {
+            let mut ty = unknown.clone();
+            let Type::Function {
+                result_borrowing, ..
+            } = &mut ty
+            else {
+                unreachable!()
+            };
+            *result_borrowing = B::Sources(Box::new(sources));
+            ty
+        };
+        let independent = with_sources(vec![]);
+        let carried = with_sources(vec![S::EnvironmentValue]);
+        let storage = with_sources(vec![S::EnvironmentStorage]);
+        let fn_id = def_id(860);
+        let builtin = BuiltinTraitIds {
+            fn_trait: Some(fn_id),
+            ..BuiltinTraitIds::default()
+        };
+        for (actual, required, accepted) in [
+            (independent.clone(), carried.clone(), true),
+            (carried.clone(), unknown.clone(), true),
+            (unknown.clone(), carried.clone(), false),
+            (carried.clone(), independent, false),
+            (storage, carried, false),
+        ] {
+            let bound = TraitBound {
+                trait_id: fn_id,
+                type_args: vec![Type::Unit, required],
+            };
+            let mut engine = InferenceEngine::new();
+            assert_eq!(
+                unify_callable_signature(&mut engine, &[], &actual, &bound).is_ok(),
+                accepted
+            );
+            let callable = Type::function(Vec::new(), actual);
+            assert_eq!(
+                callable_trait_satisfied(&callable, fn_id, &bound.type_args, builtin),
+                Some(accepted)
+            );
+        }
     }
 
     #[test]

@@ -53,6 +53,10 @@ pub enum UnifyError {
         expected: Type,
         found: Type,
     },
+    CallableResultMismatch {
+        expected: Type,
+        found: Type,
+    },
     ArityMismatch {
         kind: &'static str,
         expected: usize,
@@ -124,6 +128,10 @@ impl UnifyError {
                 display(expected),
                 display(found)
             ),
+            Self::CallableResultMismatch { expected, found } => format!(
+                "Callable result borrowing contract is not satisfied: {} vs {}",
+                display(expected), display(found)
+            ),
             Self::ArityMismatch {
                 kind,
                 expected,
@@ -167,6 +175,9 @@ impl UnifyError {
 
 fn display_normalize_error(error: &NormalizeError, display: &impl Fn(&Type) -> String) -> String {
     match error {
+        NormalizeError::InvalidCallableResultBorrowing => {
+            "invalid callable result borrowing contract".to_string()
+        }
         NormalizeError::Substitution(error) => format!("type substitution failed: {error}"),
         NormalizeError::ConflictingObjectBinding(_) => {
             "conflicting associated-type bindings in trait object".to_string()
@@ -237,22 +248,7 @@ impl TypeFolder for ResolveFolder<'_> {
                 .unwrap_or(Type::TypeVar(id)),
             other => {
                 let resolved = fold_type_children(other, self);
-                match resolved {
-                    Type::Function {
-                        params,
-                        ret,
-                        safety,
-                        captures,
-                        ..
-                    } => Type::Function {
-                        params,
-                        ret,
-                        safety,
-                        callable_kind: crate::types::CallableKind::from_captures(&captures),
-                        captures,
-                    },
-                    other => other,
-                }
+                crate::type_services::callable::resolve_environment_kind(resolved)
             }
         }
     }
@@ -963,6 +959,177 @@ mod tests {
     }
 
     #[test]
+    fn callable_result_unification_cannot_upgrade_absent_or_storage_authority() {
+        use crate::types::{CallableResultBorrowing as B, CallableResultSource as S};
+        let absent = Type::function(vec![Type::I64], Type::I64);
+        let with_sources = |sources| {
+            let mut ty = absent.clone();
+            let Type::Function {
+                result_borrowing, ..
+            } = &mut ty
+            else {
+                unreachable!()
+            };
+            *result_borrowing = B::Sources(Box::new(sources));
+            ty
+        };
+        let independent = with_sources(vec![]);
+        let values = with_sources(vec![S::EnvironmentValue]);
+        let storage = with_sources(vec![S::EnvironmentStorage]);
+        assert!(InferenceEngine::new().unify(&independent, &values).is_ok());
+        assert!(InferenceEngine::new().unify(&values, &absent).is_ok());
+        assert!(InferenceEngine::new().unify(&absent, &values).is_err());
+        assert!(InferenceEngine::new().unify(&values, &independent).is_err());
+        assert!(InferenceEngine::new().unify(&storage, &values).is_err());
+        assert!(InferenceEngine::new()
+            .unify_invariant(&independent, &values)
+            .is_err());
+        let mut engine = InferenceEngine::new();
+        let variable = engine.fresh_type_var();
+        engine.unify(&variable, &absent).unwrap();
+        assert!(engine.unify(&variable, &values).is_err());
+        assert_eq!(engine.resolve(&variable), absent);
+    }
+
+    #[test]
+    fn inferred_callable_binding_preserves_actual_result_obligations_without_certifying_them() {
+        use crate::types::{CallableResultBorrowing as B, CallableResultSource as S};
+        for capturing in [false, true] {
+            let captures = if capturing {
+                vec![crate::types::FunctionCapture::new(
+                    crate::types::CaptureKind::Move,
+                    Type::Reference {
+                        mutable: false,
+                        inner: Box::new(Type::I64),
+                    },
+                )]
+            } else {
+                Vec::new()
+            };
+            let mut actual = Type::function_with_metadata(
+                Vec::new(),
+                Type::Reference {
+                    mutable: false,
+                    inner: Box::new(Type::I64),
+                },
+                crate::types::FunctionSafety::Safe,
+                crate::types::CallableKind::Fn,
+                captures,
+            );
+            let mut inferred = actual.clone();
+            let Type::Function {
+                result_borrowing, ..
+            } = &mut actual
+            else {
+                unreachable!()
+            };
+            *result_borrowing = B::Sources(Box::new(vec![S::EnvironmentValue]));
+            let mut engine = InferenceEngine::new();
+            let binding = engine.fresh_type_var();
+            engine.unify(&binding, &inferred).unwrap();
+            engine.unify(&actual, &binding).unwrap();
+            assert_eq!(engine.resolve(&binding), actual);
+            // A declared header is not rewritten by inference and supplies no
+            // producer certificate to either borrowing consumer.
+            let Type::Function {
+                result_borrowing, ..
+            } = &mut inferred
+            else {
+                unreachable!()
+            };
+            assert_eq!(*result_borrowing, B::Unknown);
+        }
+    }
+
+    #[test]
+    fn callable_argument_binding_retains_a_requirement_without_upgrading_the_input_variable() {
+        use crate::types::{CallableKind, CallableResultBorrowing as B, CallableResultSource as S};
+        let actual = Type::function(vec![Type::I64], Type::I64);
+        let mut required = actual.clone();
+        let Type::Function {
+            result_borrowing,
+            callable_kind,
+            ..
+        } = &mut required
+        else {
+            unreachable!()
+        };
+        *result_borrowing = B::Sources(Box::new(vec![S::ArgumentValue(0), S::Unknown]));
+        *callable_kind = CallableKind::FnOnce;
+        let mut engine = InferenceEngine::new();
+        let input = engine.fresh_type_var();
+        engine.unify(&input, &actual).unwrap();
+        let binding = engine
+            .constrain_argument_binding(&input, &required)
+            .unwrap();
+        assert!(matches!(
+            binding,
+            Type::Function {
+                result_borrowing: B::Sources(_),
+                callable_kind: CallableKind::Fn,
+                ..
+            }
+        ));
+        assert_eq!(engine.resolve(&input), actual);
+        assert_eq!(
+            engine.resolve(&required),
+            required,
+            "abstract FnOnce survives resolution, not capture-derived Fn"
+        );
+        assert!(
+            engine.unify(&input, &required).is_err(),
+            "ordinary Unknown unification still rejects"
+        );
+    }
+
+    #[test]
+    fn deferred_callable_binding_does_not_manufacture_shapes_kinds_safety_or_nested_results() {
+        use crate::types::{CallableKind, CallableResultBorrowing as B, FunctionSafety};
+        let mut required = Type::function(vec![Type::I64], Type::I64);
+        let Type::Function {
+            result_borrowing, ..
+        } = &mut required
+        else {
+            unreachable!()
+        };
+        *result_borrowing = B::Sources(Box::default());
+        for actual in [
+            Type::function(vec![Type::I32], Type::I64),
+            Type::unsafe_function(vec![Type::I64], Type::I64),
+            Type::function_with_metadata(
+                vec![Type::I64],
+                Type::I64,
+                FunctionSafety::Safe,
+                CallableKind::FnOnce,
+                vec![],
+            ),
+        ] {
+            assert!(InferenceEngine::new()
+                .constrain_argument_binding(&actual, &required)
+                .is_err());
+        }
+        let mut engine = InferenceEngine::new();
+        let result = engine.fresh_type_var();
+        let actual = Type::function(vec![Type::I32], result.clone());
+        assert!(engine
+            .constrain_argument_binding(&actual, &required)
+            .is_err());
+        assert_eq!(
+            engine.resolve(&result),
+            result,
+            "failed probe must not specialize the input"
+        );
+        let actual = Type::function(vec![], Type::function(vec![Type::I64], Type::I64));
+        let required = Type::function(vec![], required);
+        assert!(
+            engine
+                .constrain_argument_binding(&actual, &required)
+                .is_err(),
+            "an outer binding cannot certify an Unknown produced callable"
+        );
+    }
+
+    #[test]
     fn function_signature_unification_treats_default_metadata_as_wildcard() {
         let default_signature = Type::function(Vec::new(), Type::I64);
         let closure = Type::function_with_metadata(
@@ -1194,7 +1361,8 @@ impl InferenceEngine {
                 Constraint::Trait { .. }
                 | Constraint::Equality { .. }
                 | Constraint::Coercion { .. }
-                | Constraint::Try { .. } => None,
+                | Constraint::Try { .. }
+                | Constraint::Dereference { .. } => None,
             })
             .collect::<HashSet<_>>();
         for representative in representatives {
@@ -1309,7 +1477,73 @@ impl InferenceEngine {
         )
     }
 
-    /// Unify two types, producing substitutions
+    /// Type one actual argument binding while retaining a callable requirement
+    /// for MIR's measured allocation/input validator. Unlike ordinary
+    /// unification this does not claim that an Unknown producer satisfies it.
+    pub(crate) fn constrain_argument_binding(
+        &mut self,
+        actual: &Type,
+        required: &Type,
+    ) -> Result<Type, UnifyError> {
+        use crate::types::CallableResultBorrowing as B;
+        let resolved_actual = self.resolve(actual);
+        let resolved_required = self.resolve(required);
+        let deferred = matches!(
+            (&resolved_actual, &resolved_required),
+            (
+                Type::Function {
+                    result_borrowing: B::Unknown,
+                    ..
+                },
+                Type::Function {
+                    result_borrowing: B::Sources(_),
+                    ..
+                }
+            )
+        );
+        if !deferred {
+            self.unify(actual, required)?;
+            return Ok(self.resolve(actual));
+        }
+        let (actual, required) = (resolved_actual, resolved_required);
+        let mut shape = required.clone();
+        let Type::Function {
+            result_borrowing, ..
+        } = &mut shape
+        else {
+            unreachable!()
+        };
+        *result_borrowing = B::Unknown;
+        let mut probe = self.clone_for_probe();
+        probe.unify(&actual, &shape)?;
+        let mut binding = probe.resolve(&actual);
+        let required = probe.resolve(&required);
+        if !crate::type_services::callable::input_shape_matches(&required, &binding) {
+            return Err(UnifyError::Mismatch {
+                expected: required,
+                found: binding,
+            });
+        }
+        let (
+            Type::Function {
+                result_borrowing: demand,
+                ..
+            },
+            Type::Function {
+                result_borrowing, ..
+            },
+        ) = (&required, &mut binding)
+        else {
+            unreachable!()
+        };
+        // This is a binding obligation, not a producer measurement. No
+        // input variable, declaration, certificate or effect is upgraded.
+        *result_borrowing = demand.clone();
+        self.commit_probe(probe);
+        Ok(binding)
+    }
+
+    /// Unify two types, producing substitutions.
     pub fn unify(&mut self, a: &Type, b: &Type) -> Result<(), UnifyError> {
         let original_a = a.clone();
         let original_b = b.clone();
@@ -1420,15 +1654,23 @@ impl InferenceEngine {
                     params: a_args,
                     ret: a_ret,
                     safety: a_safety,
+                    result_borrowing: a_borrowing,
                     ..
                 },
                 Type::Function {
                     params: b_args,
                     ret: b_ret,
                     safety: b_safety,
+                    result_borrowing: b_borrowing,
                     ..
                 },
             ) => {
+                if !b_borrowing.accepts(a_borrowing) {
+                    return Err(UnifyError::CallableResultMismatch {
+                        expected: b.clone(),
+                        found: a.clone(),
+                    });
+                }
                 if matches!(a_safety, crate::types::FunctionSafety::Unsafe)
                     && matches!(b_safety, crate::types::FunctionSafety::Safe)
                 {
@@ -1457,20 +1699,40 @@ impl InferenceEngine {
                 Type::Struct {
                     id: a_id,
                     args: a_gen,
+                }
+                | Type::StructRepresentation {
+                    id: a_id,
+                    args: a_gen,
+                    ..
                 },
                 Type::Struct {
                     id: b_id,
                     args: b_gen,
+                }
+                | Type::StructRepresentation {
+                    id: b_id,
+                    args: b_gen,
+                    ..
                 },
             )
             | (
                 Type::Enum {
                     id: a_id,
                     args: a_gen,
+                }
+                | Type::EnumRepresentation {
+                    id: a_id,
+                    args: a_gen,
+                    ..
                 },
                 Type::Enum {
                     id: b_id,
                     args: b_gen,
+                }
+                | Type::EnumRepresentation {
+                    id: b_id,
+                    args: b_gen,
+                    ..
                 },
             ) => {
                 if a_id != b_id {
@@ -2006,6 +2268,7 @@ impl InferenceEngine {
         let Type::Function {
             callable_kind: a_kind,
             captures: a_captures,
+            result_borrowing: a_borrowing,
             ..
         } = a
         else {
@@ -2022,27 +2285,40 @@ impl InferenceEngine {
 
         let a_is_default = a_kind.is_default(a_captures);
         let b_is_default = b_kind.is_default(b_captures);
-        if !a_is_default && !b_is_default {
-            return;
-        }
-
         let metadata = if a_is_default {
-            (*b_kind, b_captures.clone())
+            Some((*b_kind, b_captures.clone()))
+        } else if b_is_default {
+            Some((*a_kind, a_captures.clone()))
         } else {
-            (*a_kind, a_captures.clone())
+            None
         };
         let replacement = |ty: &Type| match ty {
             Type::Function {
                 params,
                 ret,
                 safety,
+                callable_kind,
+                captures,
+                result_borrowing,
                 ..
             } => Type::Function {
                 params: params.clone(),
                 ret: ret.clone(),
                 safety: *safety,
-                callable_kind: metadata.0,
-                captures: metadata.1.clone(),
+                callable_kind: metadata.as_ref().map_or(*callable_kind, |value| value.0),
+                captures: metadata
+                    .as_ref()
+                    .map_or_else(|| captures.clone(), |value| value.1.clone()),
+                // Unification already checked the actual -> required direction.
+                // Preserve that actual obligation in inferred slots, never
+                // promote Unknown to satisfy a required non-Unknown envelope.
+                result_borrowing: if *result_borrowing
+                    == crate::types::CallableResultBorrowing::Unknown
+                {
+                    a_borrowing.clone()
+                } else {
+                    result_borrowing.clone()
+                },
             },
             _ => ty.clone(),
         };
@@ -2077,16 +2353,19 @@ impl InferenceEngine {
                     params: a_params,
                     ret: a_ret,
                     safety: a_safety,
+                    result_borrowing: a_borrowing,
                     ..
                 },
                 Type::Function {
                     params: b_params,
                     ret: b_ret,
                     safety: b_safety,
+                    result_borrowing: b_borrowing,
                     ..
                 },
             ) => {
                 a_safety == b_safety
+                    && a_borrowing == b_borrowing
                     && a_params.len() == b_params.len()
                     && a_params
                         .iter()
@@ -2196,6 +2475,13 @@ impl InferenceEngine {
             Type::Struct { args, .. } | Type::Enum { args, .. } => {
                 args.iter().any(|t| self.occurs_in(var, t))
             }
+            Type::StructRepresentation { args, fields, .. } => {
+                args.iter().chain(fields).any(|t| self.occurs_in(var, t))
+            }
+            Type::EnumRepresentation { args, variants, .. } => args
+                .iter()
+                .chain(variants.iter().flatten())
+                .any(|t| self.occurs_in(var, t)),
             Type::Projection { ty, trait_args, .. } => {
                 self.occurs_in(var, ty) || trait_args.iter().any(|arg| self.occurs_in(var, arg))
             }

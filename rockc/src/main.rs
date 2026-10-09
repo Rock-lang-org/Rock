@@ -1131,6 +1131,8 @@ mod tests {
             interface: rock_lib::products::ProductInterface::default(),
             bodies: Default::default(),
             link: ProductLinkData {
+                native_return_origins: Default::default(),
+                runtime_support: Default::default(),
                 object_path: Some(PathBuf::from(format!("{}.o", name))),
                 records: Default::default(),
             },
@@ -1750,6 +1752,8 @@ mod tests {
             interface: rock_lib::products::ProductInterface::default(),
             bodies: Default::default(),
             link: rock_lib::products::ProductLinkData {
+                native_return_origins: Default::default(),
+                runtime_support: Default::default(),
                 object_path: Some(PathBuf::from(object_path.file_name().unwrap())),
                 records: Default::default(),
             },
@@ -1801,6 +1805,8 @@ mod tests {
             interface: rock_lib::products::ProductInterface::default(),
             bodies: Default::default(),
             link: rock_lib::products::ProductLinkData {
+                native_return_origins: Default::default(),
+                runtime_support: Default::default(),
                 object_path: Some(PathBuf::from("objects/dep.o")),
                 records: Default::default(),
             },

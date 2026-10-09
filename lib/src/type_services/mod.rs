@@ -1,3 +1,4 @@
+pub(crate) mod callable;
 pub mod display;
 pub mod existential;
 pub mod facts;

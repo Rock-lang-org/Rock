@@ -25,6 +25,33 @@ mod callable;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn test_native_return_cursor_artifact_authority_receipt() {
+    let artifact = stdlib_artifact_path();
+    let products = rock_lib::products::CompilerProducts::read_artifact_from_path(&artifact).unwrap();
+    // Independent builds need not be byte-identical; frozen-artifact tests
+    // separately guard retained bytes. This receipt only validates its input.
+    let frozen = fs::read(&artifact).unwrap();
+    eprintln!("NATIVE_CURSOR artifact={artifact:?} totalNativeOrigins={}", products.link.native_return_origins.len());
+    let mut selected = 0;
+    let mut checked = 0;
+    for implementation in products.interface.impls.values() {
+        for method in implementation.methods.values() {
+            if method.name != "chars" && method.name != "char_indices" { continue; }
+            selected += 1;
+            assert!(selected <= 8, "bounded display-only native cursor observation");
+            let id = rock_lib::products::ProductDefId::from(method.id);
+            eprintln!("NATIVE_CURSOR id={id:?} signature={method:?} link={:?} origins={:?}", products.link.records.get(&id), products.link.native_return_origins.get(&id));
+            if let Some(origins) = products.link.native_return_origins.get(&id) {
+                assert_eq!(origins.sources, vec![rock_lib::hir::borrowing::NativeReturnSource::ArgumentContents(0)]);
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!((selected, checked), (4, 2));
+    assert!(frozen == fs::read(&artifact).unwrap(), "receipt must not mutate its input");
+}
+
+#[test]
 fn test_fold_loop_utf8_traversal() {
     let output = compile_and_run(
         r#"

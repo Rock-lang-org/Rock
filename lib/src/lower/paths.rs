@@ -101,6 +101,15 @@ impl Lowerer {
     }
 
     fn current_generic_param_id_for_name(&self, name: &str) -> Option<GenericParamId> {
+        // Method declarations can belong to a different generic context than
+        // the receiver's name list; retain their registered lexical authority.
+        if let Some(param) = self
+            .body_context
+            .as_ref()
+            .and_then(|context| context.generic_param_id(name))
+        {
+            return Some(param);
+        }
         let owner = self.current_generic_owner()?;
         let index = self
             .current_generic_params()
@@ -4288,6 +4297,136 @@ main = ->
             .errors()
             .iter()
             .any(|error| { error.message.contains("Widget::missing") && error.span().is_some() }));
+    }
+
+    fn registered_static_factory_fixture(
+        bound_declared: bool,
+    ) -> (Lowerer, BodyLoweringContext, GenericParamId, DefId, DefId) {
+        let mut lowerer = Lowerer::new_for_test();
+        let declared = GenericParamId {
+            owner: def_id(90),
+            index: 7,
+        };
+        let trait_id = def_id(91);
+        let member_id = def_id(92);
+        lowerer.items.insert_trait_def(HirTrait {
+            id: trait_id,
+            name: "Factory".to_string(),
+            target: None,
+            predicates: Vec::new(),
+            generic_params: Vec::new(),
+            associated_types: Vec::new(),
+            methods: HashMap::new(),
+            signatures: HashMap::from([(
+                "make".to_string(),
+                HirFunctionSig {
+                    id: member_id,
+                    name: "make".to_string(),
+                    generic_params: Vec::new(),
+                    params: vec![Type::I64],
+                    ret: Type::Generic(GenericParamId { owner: trait_id, index: 0 }),
+                    generic_bounds: HirGenericBounds::new(),
+                    self_receiver: None,
+                    is_unsafe: false,
+                },
+            )]),
+        });
+        let context_owner = def_id(93);
+        let bound = TraitBound { trait_id, type_args: Vec::new() };
+        // The old owner/list lookup would find a valid bound for the WRONG T.
+        let mut bounds = HirGenericBounds::from(HashMap::from([(
+            GenericParamId { owner: context_owner, index: 0 },
+            vec![bound.clone()],
+        )]));
+        if bound_declared {
+            bounds.insert(declared, vec![bound]);
+        }
+        let mut context = BodyLoweringContext::new(
+            "build".to_string(),
+            BodyOwner::ImplMethod {
+                impl_id: declared.owner,
+                method_id: def_id(94),
+                method_name: "build".to_string(),
+            },
+            Some(context_owner),
+            vec!["T".to_string(), "U".to_string()],
+            bounds,
+            false,
+        );
+        context.register_generic_param("T", declared);
+        (lowerer, context, declared, trait_id, member_id)
+    }
+
+    #[test]
+    fn registered_static_bound_method_uses_declared_id_and_preserves_context_fallbacks() {
+        let (mut lowerer, context, declared, trait_id, member_id) =
+            registered_static_factory_fixture(true);
+        let context_owner = context.generic_owner().unwrap();
+        let expr = lowerer.with_body_context(context, |lowerer| {
+            assert_eq!(lowerer.current_generic_param_id_for_name("T"), Some(declared));
+            assert_eq!(
+                lowerer.current_generic_param_id_for_name("U"),
+                Some(GenericParamId { owner: context_owner, index: 1 }),
+            );
+            assert_eq!(lowerer.current_generic_param_id_for_name("Undeclared"), None);
+            // A nongeneric receiver such as Service has no generic name list.
+            lowerer.with_generic_context(context_owner, Vec::new(), |lowerer| {
+                assert_eq!(lowerer.current_generic_param_id_for_name("T"), Some(declared));
+                lowerer.lower_identifier_path(&identifier_path(&["T", "make"]))
+            }).0
+        });
+        assert_eq!(expr.ty, Type::function(vec![Type::I64], Type::Generic(declared)));
+        let (callee, target) = static_method_value_parts(&expr);
+        assert_eq!(callee.target, HirVarTarget::Function(member_id));
+        assert_eq!(target.owner_ty, Type::Generic(declared));
+        assert_eq!(target.method.trait_id(), Some(trait_id));
+        assert_eq!(target.method.method_id(), Some(member_id));
+        assert_eq!(target.method.impl_id(), None);
+        assert_eq!(target.method, HirMethodCallTarget::trait_method(
+            trait_id, member_id, Vec::new(), HirTraitDispatchKind::TraitBound,
+        ));
+        assert!(target.method.owner_substitution.is_empty());
+        assert!(target.method.method_substitution.is_empty());
+        assert!(lowerer.trait_by_id(trait_id).unwrap().signatures["make"].self_receiver.is_none());
+        let HirExprKind::Lambda { params, captures, body, .. } = &expr.kind else {
+            panic!("canonical static forwarding lambda missing");
+        };
+        assert!(captures.is_empty());
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].ty, Type::I64);
+        assert_eq!(body.ty, Type::Generic(declared));
+        let HirStmt::Expr(HirExpr { kind: HirExprKind::Call(_, args, _), .. }) = &body.stmts[0] else {
+            panic!("canonical static call missing");
+        };
+        assert_eq!(args.len(), 1);
+        assert!(matches!(&args[0].kind, HirExprKind::ResolvedVar(reference)
+            if reference.target == HirVarTarget::Local(params[0].local_id)));
+
+        // Registered body declarations must not replace outer/non-body scopes.
+        lowerer.with_generic_context(context_owner, vec!["T".to_string()], |lowerer| {
+            assert_eq!(
+                lowerer.current_generic_param_id_for_name("T"),
+                Some(GenericParamId { owner: context_owner, index: 0 }),
+            );
+        });
+        assert_eq!(lowerer.current_generic_param_id_for_name("T"), None);
+        assert!(!lowerer.has_errors());
+    }
+
+    #[test]
+    fn registered_static_bound_method_rejects_missing_authority() {
+        for (bounded, owner, member) in [
+            (false, "T", "make"),
+            (true, "T", "missing"),
+            (true, "Undeclared", "make"),
+        ] {
+            let (mut lowerer, context, declared, _, _) = registered_static_factory_fixture(bounded);
+            lowerer.with_body_context(context, |lowerer| {
+                assert_eq!(lowerer.current_generic_param_id_for_name("T"), Some(declared));
+                assert!(lowerer.resolve_static_bound_method_path(owner, member, Span::test())
+                    .unwrap().is_none(), "no authority for {owner}::{member}, bounded={bounded}");
+            });
+        }
     }
 
     #[test]

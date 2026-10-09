@@ -72,6 +72,11 @@ pub(super) fn insert_body(
 }
 
 pub(super) fn insert_descriptor(program: &mut MirProgram, ty: TypeId) {
+    program
+        .backend_contract
+        .descriptor_origins
+        .entry(CrateId(0))
+        .or_insert_with(|| crate::products::ProductCrateIdentity::local("object-fixture".into()));
     let drop = payload_drop_plan(&program.backend_contract, &mut program.type_context, ty).unwrap();
     let fields = match &drop.children {
         MirPayloadDropChildren::Fields(fields) => fields.iter().map(|field| field.ty).collect(),
@@ -299,7 +304,7 @@ pub(super) fn object_program(mutable: bool) -> MirProgram {
                                 Operand::Move(place(3)),
                                 MirObjectConversion::Upcast {
                                     source: root,
-                                    view: 0,
+                                    target,
                                 },
                             ),
                             None,
@@ -420,6 +425,35 @@ fn object_preflight_rejects_bad_slot_receiver_payload_and_view_contracts() {
             "mutation {mutation}"
         );
     }
+}
+
+#[test]
+fn object_preflight_rejects_missing_member_in_root_trait_evidence() {
+    let mut program = object_program(false);
+    let root = program.backend_contract.vtables[&MirVtableId(0)].object;
+    program
+        .backend_contract
+        .object_schemas
+        .get_mut(&root)
+        .unwrap()
+        .slots
+        .pop();
+    program
+        .backend_contract
+        .vtables
+        .get_mut(&MirVtableId(0))
+        .unwrap()
+        .methods
+        .pop();
+    assert!(validate_object_contract(&program).contains(&MirObjectError::InvalidSchema(root)),
+        "a separately valid atomic table cannot replace missing evidence in the handle's actual metadata");
+    let context = Context::create();
+    let mut codegen = super::CodeGen::new(&context, "incomplete-root-evidence");
+    assert!(codegen.compile_program_from_mir(&program).is_err());
+    assert!(
+        !codegen.get_ir().contains("__rock_object_lookup"),
+        "malformed producer evidence must be rejected before runtime lookup emission"
+    );
 }
 
 #[test]

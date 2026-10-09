@@ -960,8 +960,9 @@ mod package_validation_tests {
             Type::Tuple(vec![package.clone(), Type::I64]),
             Type::Function {
                 params: vec![package.clone()],
+                result_borrowing: Default::default(),
                 ret: Box::new(package),
-                captures: vec![],
+                captures: Box::default(),
                 callable_kind: crate::types::CallableKind::Fn,
                 safety: crate::types::FunctionSafety::Safe,
             },
@@ -1471,10 +1472,14 @@ fn dictionary_callback_producer(receiver: crate::types::ReceiverMode) -> MirProg
         trait_id: DefId::new(CrateId(1), LocalDefId(8)),
         trait_args: vec![argument.clone(), argument.clone()],
         members: vec![MirErasedDictionaryMember {
+            binder: Default::default(),
             member_id: DefId::new(CrateId(1), LocalDefId(9)),
-            receiver,
+            receiver: Some(receiver),
             params: vec![callback.clone(), argument.clone()],
             ret: argument.clone(),
+            borrowing: crate::mir::erased_borrow_contract(
+                &[callback.clone(), argument.clone()], &argument, Some(receiver), &program.type_context,
+            ).unwrap(),
         }],
     }];
     function.body = Some(MirErasedBody {
@@ -1485,9 +1490,10 @@ fn dictionary_callback_producer(receiver: crate::types::ReceiverMode) -> MirProg
             statements: vec![MirErasedAssignment {
                 destination: MirErasedLocal(2),
                 value: MirErasedRvalue::DictionaryCall {
+                    type_args: vec![], dictionaries: vec![],
                     dictionary: 0,
                     member: 0,
-                    receiver: MirErasedPlace::local(MirErasedLocal(0)),
+                    receiver: Some(MirErasedPlace::local(MirErasedLocal(0))),
                     args: vec![MirErasedOperand::Copy(MirErasedPlace::local(
                         MirErasedLocal(1),
                     ))],
@@ -3040,4 +3046,71 @@ fn native_erased_bridge_cfg_transfers_and_drops_each_noncopy_payload_once() {
             .iter()
             .any(|(_, error)| *error == MirErasedError::UninitializedOrMoved));
     }
+}
+
+fn static_arity(body: &str) -> usize {
+    body.lines().next().unwrap().split_once('(').unwrap().1.split_once(')').unwrap().0.split(',').count()
+}
+
+#[test]
+fn static_dictionary_llvm_uses_receiver_free_native_and_public_call_abis() {
+    let source = format!("{}{}", crate::mir::static_dictionary::tests::PRODUCER, r#"
+struct LaterProduct
+    < value: I64
+impl Factory for LaterProduct
+    make = seed ->
+        LaterProduct
+            value: seed
+take: LaterProduct -> I64
+take = value -> value.value
+main = ->
+    service = Service
+        marker: 0
+    object = as_dispatch &service
+    take (object.build 42)
+"#);
+    let program = crate::mir::static_dictionary::tests::accepted_program(&source);
+    let context = Context::create();
+    let mut codegen = super::CodeGen::new(&context, "static-native-dictionary");
+    codegen.compile_program_from_mir(&program).unwrap();
+    codegen.module.verify().unwrap();
+    let ir = codegen.module.print_to_string().to_string();
+    let bodies = ir.split("define ").skip(1).map(|body| body.split_once("\n}").unwrap().0).collect::<Vec<_>>();
+    let producer = bodies.iter().find(|body| body.starts_with("internal void @rock.erased.") && body.contains("%dictionary.entry = load ptr")).unwrap();
+    assert_eq!(static_arity(producer), 6, "out, Self/T descriptors, Factory, actual Dispatch receiver, seed");
+    let call = producer.lines().find(|line| line.trim_start().starts_with("call void %dictionary.entry(")).unwrap();
+    assert_eq!(static_arity(call), 3, "out, dictionary environment, seed: no Self receiver");
+    assert!(producer.lines().filter(|line| line.contains("call ")).all(|line| {
+        let callee = line.split_once('(').unwrap().0.split_whitespace().last().unwrap();
+        callee.starts_with('%') || callee.starts_with("@llvm.")
+    }));
+    let adapter = bodies.iter().find(|body| body.starts_with("internal void @rock.dictionary.")).unwrap();
+    assert_eq!(static_arity(adapter), 3);
+    let native = adapter.lines().find(|line| line.contains("call ") && line.contains("@__rock_")).unwrap();
+    assert_eq!(static_arity(native), 1, "native leaf has only the declared seed argument");
+    assert_eq!(program.backend_contract.erased.dictionaries.len(), 1);
+    let member = &program.backend_contract.erased.dictionaries.values().next().unwrap().members[0];
+    assert!(member.receiver.is_none() && member.target.native().is_some());
+}
+
+#[test]
+fn static_dictionary_llvm_selected_adapter_opens_only_frozen_parent_evidence() {
+    let program = crate::mir::static_dictionary::tests::fixture(true);
+    let context = Context::create(); let mut codegen = super::CodeGen::new(&context, "static-selected-dictionary");
+    codegen.compile_program_from_mir(&program).unwrap(); codegen.module.verify().unwrap();
+    let ir = codegen.module.print_to_string().to_string();
+    let bodies = ir.split("define ").skip(1).map(|body| body.split_once("\n}").unwrap().0).collect::<Vec<_>>();
+    let adapter = bodies.iter().find(|body| body.starts_with("internal void @rock.dictionary.selected.")).unwrap();
+    assert_eq!(static_arity(adapter), 3);
+    assert!(adapter.contains("dictionary.environment") && adapter.contains("call void @rock.erased.selected."));
+    let entry = bodies.iter().find(|body| body.starts_with("internal void @rock.erased.selected.")).unwrap();
+    assert_eq!(static_arity(entry), 4, "out, parent descriptor, captured child dictionary, seed");
+    let call = entry.lines().find(|line| line.trim_start().starts_with("call void %dictionary.entry(")).unwrap();
+    assert_eq!(static_arity(call), 3);
+    assert!(entry.lines().filter(|line| line.contains("call ")).all(|line| {
+        let callee = line.split_once('(').unwrap().0.split_whitespace().last().unwrap();
+        callee.starts_with('%') || callee.starts_with("@llvm.")
+    }));
+    assert!(ir.contains("@rock_dictionary_selected"));
+    assert!(!ir.contains("LaterProduct"));
 }

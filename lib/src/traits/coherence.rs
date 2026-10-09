@@ -581,6 +581,7 @@ fn render_normalize_error(
     display_type: &impl Fn(&Type) -> String,
 ) -> String {
     match error {
+        NormalizeError::InvalidCallableResultBorrowing => "invalid callable result borrowing contract".to_string(),
         NormalizeError::Substitution(error) => format!("type substitution failed: {error}"),
         NormalizeError::ConflictingObjectBinding(_) => {
             "conflicting associated-type bindings in trait object".to_string()
@@ -897,6 +898,7 @@ impl<'a> FirstOrderUnifier<'a> {
                     safety: left_safety,
                     callable_kind: left_kind,
                     captures: left_captures,
+                    result_borrowing: left_borrowing,
                 },
                 Type::Function {
                     params: right_params,
@@ -904,10 +906,12 @@ impl<'a> FirstOrderUnifier<'a> {
                     safety: right_safety,
                     callable_kind: right_kind,
                     captures: right_captures,
+                    result_borrowing: right_borrowing,
                 },
             ) => {
                 left_safety == right_safety
                     && left_kind == right_kind
+                    && left_borrowing == right_borrowing
                     && self.unify_lists(left_params, right_params)
                     && self.unify(left_ret, right_ret)
                     && left_captures.len() == right_captures.len()

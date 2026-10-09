@@ -279,11 +279,11 @@ fn instance_roots(program: &MonomorphizedProgram, bodies: &MirInstanceBodies) ->
                 .dictionaries
                 .values()
                 .flat_map(|dictionary| dictionary.members.iter())
-                .filter_map(|member| match &member.target {
-                    MirCallableKey::Instance(id) => Some(*id),
-                    MirCallableKey::ObjectAdapter(
+                .filter_map(|member| match member.target.native() {
+                    Some(MirCallableKey::Instance(id)) => Some(*id),
+                    Some(MirCallableKey::ObjectAdapter(
                         crate::mir::MirObjectAdapterKey::ConsumingMethod { target, .. },
-                    ) => Some(*target),
+                    )) => Some(*target),
                     _ => None,
                 }),
         );
@@ -495,6 +495,8 @@ mod tests {
             }
         }
         MonomorphizedProgram {
+            callable_input_obligations: Default::default(),
+            native_return_origins: Default::default(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),

@@ -71,6 +71,13 @@ where
             Type::Struct { args, .. } | Type::Enum { args, .. } => {
                 args.iter().any(|ty| recurse(ty, predicate))
             }
+            Type::StructRepresentation { args, fields, .. } => {
+                args.iter().chain(fields).any(|ty| recurse(ty, predicate))
+            }
+            Type::EnumRepresentation { args, variants, .. } => args
+                .iter()
+                .chain(variants.iter().flatten())
+                .any(|ty| recurse(ty, predicate)),
             Type::Projection { ty, trait_args, .. } => {
                 recurse(ty, predicate) || trait_args.iter().any(|ty| recurse(ty, predicate))
             }
@@ -152,6 +159,16 @@ where
         Type::Struct { args, .. } | Type::Enum { args, .. } => {
             for arg in args {
                 visitor.visit_type(arg);
+            }
+        }
+        Type::StructRepresentation { args, fields, .. } => {
+            for child in args.iter().chain(fields) {
+                visitor.visit_type(child);
+            }
+        }
+        Type::EnumRepresentation { args, variants, .. } => {
+            for child in args.iter().chain(variants.iter().flatten()) {
+                visitor.visit_type(child);
             }
         }
         Type::Projection { ty, trait_args, .. } => {
@@ -283,6 +300,7 @@ where
             safety,
             callable_kind,
             captures,
+            result_borrowing,
         } => Type::Function {
             params: params
                 .into_iter()
@@ -291,7 +309,9 @@ where
             ret: Box::new(folder.fold_type(*ret)),
             safety,
             callable_kind,
+            result_borrowing,
             captures: captures
+                .into_vec()
                 .into_iter()
                 .map(|capture| FunctionCapture {
                     kind: capture.kind,
@@ -303,9 +323,30 @@ where
             id,
             args: args.into_iter().map(|arg| folder.fold_type(arg)).collect(),
         },
+        Type::StructRepresentation { id, args, fields } => Type::StructRepresentation {
+            id,
+            args: args.into_iter().map(|arg| folder.fold_type(arg)).collect(),
+            fields: fields
+                .into_iter()
+                .map(|field| folder.fold_type(field))
+                .collect(),
+        },
         Type::Enum { id, args } => Type::Enum {
             id,
             args: args.into_iter().map(|arg| folder.fold_type(arg)).collect(),
+        },
+        Type::EnumRepresentation { id, args, variants } => Type::EnumRepresentation {
+            id,
+            args: args.into_iter().map(|arg| folder.fold_type(arg)).collect(),
+            variants: variants
+                .into_iter()
+                .map(|fields| {
+                    fields
+                        .into_iter()
+                        .map(|field| folder.fold_type(field))
+                        .collect()
+                })
+                .collect(),
         },
         Type::Reference { mutable, inner } => Type::Reference {
             mutable,
@@ -407,6 +448,7 @@ where
             safety,
             callable_kind,
             captures,
+            result_borrowing,
         } => Type::Function {
             params: params
                 .into_iter()
@@ -415,7 +457,9 @@ where
             ret: Box::new(folder.try_fold_type(*ret)?),
             safety,
             callable_kind,
+            result_borrowing,
             captures: captures
+                .into_vec()
                 .into_iter()
                 .map(|capture| {
                     Ok(FunctionCapture {
@@ -423,7 +467,8 @@ where
                         ty: folder.try_fold_type(capture.ty)?,
                     })
                 })
-                .collect::<Result<Vec<_>, _>>()?,
+                .collect::<Result<Vec<_>, _>>()?
+                .into_boxed_slice(),
         },
         Type::Struct { id, args } => Type::Struct {
             id,
@@ -432,12 +477,39 @@ where
                 .map(|arg| folder.try_fold_type(arg))
                 .collect::<Result<Vec<_>, _>>()?,
         },
+        Type::StructRepresentation { id, args, fields } => Type::StructRepresentation {
+            id,
+            args: args
+                .into_iter()
+                .map(|arg| folder.try_fold_type(arg))
+                .collect::<Result<Vec<_>, _>>()?,
+            fields: fields
+                .into_iter()
+                .map(|field| folder.try_fold_type(field))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
         Type::Enum { id, args } => Type::Enum {
             id,
             args: args
                 .into_iter()
                 .map(|arg| folder.try_fold_type(arg))
                 .collect::<Result<Vec<_>, _>>()?,
+        },
+        Type::EnumRepresentation { id, args, variants } => Type::EnumRepresentation {
+            id,
+            args: args
+                .into_iter()
+                .map(|arg| folder.try_fold_type(arg))
+                .collect::<Result<_, _>>()?,
+            variants: variants
+                .into_iter()
+                .map(|fields| {
+                    fields
+                        .into_iter()
+                        .map(|field| folder.try_fold_type(field))
+                        .collect::<Result<_, _>>()
+                })
+                .collect::<Result<_, _>>()?,
         },
         Type::Reference { mutable, inner } => Type::Reference {
             mutable,
@@ -508,6 +580,7 @@ mod tests {
                 inner: Box::new(Type::Struct {
                     id: def_id(1),
                     args: vec![Type::Function {
+                        result_borrowing: Default::default(),
                         params: vec![
                             Type::Slice(Box::new(Type::TypeVar(TypeVarId(1)))),
                             Type::Tuple(vec![
@@ -530,7 +603,8 @@ mod tests {
                                 mutable: true,
                                 inner: Box::new(Type::TypeVar(TypeVarId(3))),
                             },
-                        )],
+                        )]
+                        .into_boxed_slice(),
                     }],
                 }),
             }),

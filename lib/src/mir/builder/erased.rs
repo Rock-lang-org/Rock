@@ -11,6 +11,439 @@ impl MirBuilder<'_> {
         functions: &std::collections::BTreeMap<MirFunctionId, MirFunction>,
         tc: &mut TypeContext,
     ) {
+        for (id, implementation) in program.program.impls_in_order() {
+            if let Some(trait_id) = implementation.trait_id {
+                let members = program
+                    .program
+                    .indexes
+                    .effective_trait_methods
+                    .iter()
+                    .filter_map(|((owner, member), method)| {
+                        (*owner == id).then_some((*member, *method))
+                    })
+                    .collect();
+                let factory_compatible =
+                    program
+                        .program
+                        .traits
+                        .get(&trait_id)
+                        .is_some_and(|declaration| {
+                            declaration.associated_types.is_empty()
+                                && declaration.predicates.is_empty()
+                        })
+                        && implementation.associated_types.is_empty();
+                contract.dictionary_impl_members.insert(
+                    id,
+                    MirDictionaryImplAuthority {
+                        trait_id,
+                        members,
+                        factory_compatible,
+                        template: None,
+                    },
+                );
+            }
+        }
+        let orders = program
+            .program
+            .traits
+            .iter()
+            .map(|(id, declaration)| {
+                let mut members = declaration
+                    .signatures
+                    .values()
+                    .map(|s| s.id)
+                    .collect::<Vec<_>>();
+                members.sort();
+                (*id, members)
+            })
+            .collect();
+        contract.erased.dictionary_templates.retain(|id, template| {
+            let Some(implementation) = program.program.impls.get(id) else {
+                return false;
+            };
+            let crate::hir::HirImplReceiverPattern::Exact(Type::Generic(subject)) =
+                &implementation.receiver_pattern
+            else {
+                return false;
+            };
+            let Some(trait_id) = implementation.trait_id else {
+                return false;
+            };
+            let Some(declaration) = program.program.traits.get(&trait_id) else {
+                return false;
+            };
+            if !declaration.associated_types.is_empty()
+                || !declaration.predicates.is_empty()
+                || !implementation.associated_types.is_empty()
+            {
+                return false;
+            }
+            if template.bounds.iter().any(|bound| {
+                program
+                    .program
+                    .traits
+                    .get(&bound.trait_id)
+                    .is_none_or(|declaration| {
+                        !declaration.associated_types.is_empty()
+                            || !declaration.predicates.is_empty()
+                    })
+            }) {
+                return false;
+            }
+            if implementation.bounds.predicates.iter().any(|predicate| {
+                let crate::types::Predicate::Trait {
+                    subject: Type::Generic(parameter),
+                    trait_id,
+                    args,
+                } = predicate
+                else {
+                    return true;
+                };
+                !implementation.bounds.get(parameter).is_some_and(|roots| {
+                    roots.contains(&crate::types::TraitBound {
+                        trait_id: *trait_id,
+                        type_args: args.clone(),
+                    })
+                })
+            }) {
+                return false;
+            }
+            let parameters = implementation
+                .type_generics
+                .iter()
+                .map(|p| MirErasedParameter {
+                    source: p.id,
+                    kind: p.kind.clone(),
+                })
+                .collect::<Vec<_>>();
+            let result_bounds = crate::hir::HirGenericBounds::from_iter([(
+                *subject,
+                vec![crate::types::TraitBound {
+                    trait_id,
+                    type_args: implementation.trait_arg_types.clone(),
+                }],
+            )]);
+            let derive = |bounds: &crate::hir::HirGenericBounds, tc: &mut TypeContext| {
+                crate::mono::object_schema::erased_bound_schemas(
+                    &parameters,
+                    bounds,
+                    &Default::default(),
+                    &program.program.traits,
+                    &orders,
+                    &Default::default(),
+                    tc,
+                    false,
+                )
+            };
+            template.implementation == *id
+                && template.parameters == parameters
+                && derive(&implementation.bounds, tc).is_ok_and(|bounds| bounds == template.bounds)
+                && derive(&result_bounds, tc).is_ok_and(|results| {
+                    results
+                        .into_iter()
+                        .find(|d| d.trait_id == trait_id)
+                        .as_ref()
+                        == Some(&template.result)
+                })
+                && template.members.len() == template.result.members.len()
+                && template
+                    .members
+                    .iter()
+                    .zip(&template.result.members)
+                    .all(|(binding, member)| {
+                        if program
+                            .program
+                            .indexes
+                            .effective_trait_methods
+                            .get(&(*id, binding.member_id))
+                            != Some(&binding.method_id)
+                            || binding.member_id != member.member_id
+                            || binding.entry.definition != binding.method_id
+                            || !binding.entry.static_args.is_empty()
+                        {
+                            return false;
+                        }
+                        let Some(method) = implementation
+                            .methods
+                            .values()
+                            .find(|method| method.id == binding.method_id)
+                        else {
+                            return false;
+                        };
+                        if method.self_receiver != member.receiver
+                            || method.params.len() != member.params.len()
+                        {
+                            return false;
+                        }
+                        let Ok(nested) = member.entry_signature(&parameters) else {
+                            return false;
+                        };
+                        let params = nested.params;
+                        let mut bindings = parameters
+                            .iter()
+                            .enumerate()
+                            .map(|(index, parameter)| (parameter.source, index as u32))
+                            .collect();
+                        params.iter().zip(&method.params).all(|(expected, actual)| {
+                            crate::mono::bind_erased_parameters(
+                                expected,
+                                &actual.ty,
+                                &mut bindings,
+                                tc,
+                            )
+                            .is_ok()
+                        }) && crate::mono::bind_erased_parameters(
+                            &nested.ret,
+                            &method.ret_type,
+                            &mut bindings,
+                            tc,
+                        )
+                        .is_ok()
+                            && method
+                                .generic_params
+                                .iter()
+                                .all(|p| bindings.contains_key(&p.id))
+                    })
+        });
+        for (id, template) in &contract.erased.dictionary_templates {
+            if let Some(authority) = contract.dictionary_impl_members.get_mut(id) {
+                authority.template = Some(template.clone());
+            }
+        }
+        for (key, entry) in &contract.erased.member_entries {
+            let Some(implementation) = program.program.impls.get(&entry.implementation) else {
+                continue;
+            };
+            let Some(method) = implementation
+                .methods
+                .values()
+                .find(|method| method.id == entry.method_id)
+            else {
+                continue;
+            };
+            let Some(declaration) = program.program.traits.get(&entry.trait_id) else {
+                continue;
+            };
+            let Some(canonical) = declaration
+                .signatures
+                .values()
+                .find(|signature| signature.id == entry.member.member_id)
+            else {
+                continue;
+            };
+            if program
+                .program
+                .indexes
+                .effective_trait_methods
+                .get(&(entry.implementation, entry.member.member_id))
+                != Some(&entry.method_id)
+                || implementation.trait_id != Some(entry.trait_id)
+                || method.self_receiver != entry.member.receiver
+                || canonical.self_receiver != entry.member.receiver
+                || canonical.is_unsafe
+                || method.is_unsafe
+                || !polymorphic_impl_member_bounds_are_captured(implementation, method)
+            {
+                continue;
+            }
+            let static_self = if entry.member.receiver.is_none() {
+                let Ok(id) = crate::mono::object_schema::static_member_self(declaration, canonical)
+                else {
+                    continue;
+                };
+                Some(id)
+            } else {
+                None
+            };
+            let locals = canonical
+                .generic_params
+                .iter()
+                .filter(|p| {
+                    !declaration
+                        .generic_params
+                        .iter()
+                        .any(|parent| parent.id == p.id)
+                        && declaration
+                            .target
+                            .as_ref()
+                            .is_none_or(|parent| parent.id != p.id)
+                        && static_self != Some(p.id)
+                })
+                .map(|p| MirErasedParameter {
+                    source: p.id,
+                    kind: p.kind.clone(),
+                })
+                .collect::<Vec<_>>();
+            if locals != entry.member.binder.parameters {
+                continue;
+            }
+            let Ok(signature) = entry.member.entry_signature(&entry.captures) else {
+                continue;
+            };
+            let mut substitution = std::collections::HashMap::new();
+            if entry.captures.is_empty() {
+                if key.static_args.len() != implementation.type_generics.len() {
+                    continue;
+                }
+                if key
+                    .static_args
+                    .iter()
+                    .any(|id| !tc.type_id_tree_is_valid(*id))
+                {
+                    continue;
+                }
+                for (p, id) in implementation.type_generics.iter().zip(&key.static_args) {
+                    substitution.insert(p.id, tc.type_for(*id));
+                }
+                let crate::hir::HirImplReceiverPattern::Exact(subject) =
+                    &implementation.receiver_pattern
+                else {
+                    continue;
+                };
+                let Ok(subject) =
+                    crate::type_services::substitution::instantiate(subject, &substitution)
+                else {
+                    continue;
+                };
+                if !crate::type_services::facts::TypeFacts::is_codegen_concrete(&subject) {
+                    continue;
+                }
+                let subject_id = tc.intern_type(&subject);
+                let synthetic = crate::types::GenericParamId {
+                    owner: implementation.id,
+                    index: 0,
+                };
+                let parent = vec![MirErasedParameter {
+                    source: synthetic,
+                    kind: crate::type_services::kind::Kind::Type,
+                }];
+                let bounds = crate::hir::HirGenericBounds::from_iter([(
+                    synthetic,
+                    vec![crate::types::TraitBound {
+                        trait_id: entry.trait_id,
+                        type_args: implementation.trait_arg_types.clone(),
+                    }],
+                )]);
+                let Ok(schemas) = crate::mono::object_schema::erased_bound_schemas(
+                    &parent,
+                    &bounds,
+                    &substitution,
+                    &program.program.traits,
+                    &orders,
+                    &Default::default(),
+                    tc,
+                    false,
+                ) else {
+                    continue;
+                };
+                let Some(schema) = schemas
+                    .into_iter()
+                    .find(|schema| schema.trait_id == entry.trait_id)
+                else {
+                    continue;
+                };
+                let Ok(schema) = schema.substitute(&[MirErasedType::Concrete(subject_id)], tc)
+                else {
+                    continue;
+                };
+                if !schema.members.iter().any(|member| member == &entry.member) {
+                    continue;
+                }
+            } else {
+                let Some(template) = contract
+                    .dictionary_impl_members
+                    .get(&entry.implementation)
+                    .and_then(|authority| authority.template.as_ref())
+                else {
+                    continue;
+                };
+                if entry.captures != template.parameters
+                    || !template
+                        .result
+                        .members
+                        .iter()
+                        .any(|member| member == &entry.member)
+                    || !key.static_args.is_empty()
+                {
+                    continue;
+                }
+            }
+            let mut bindings = entry
+                .captures
+                .iter()
+                .enumerate()
+                .map(|(index, p)| (p.source, index as u32))
+                .collect();
+            let actual_params = method
+                .params
+                .iter()
+                .map(|p| crate::type_services::substitution::instantiate(&p.ty, &substitution))
+                .collect::<Result<Vec<_>, _>>();
+            let Ok(actual_params) = actual_params else {
+                continue;
+            };
+            let Ok(actual_ret) =
+                crate::type_services::substitution::instantiate(&method.ret_type, &substitution)
+            else {
+                continue;
+            };
+            if signature.params.len() != actual_params.len()
+                || !signature
+                    .params
+                    .iter()
+                    .zip(&actual_params)
+                    .all(|(expected, actual)| {
+                        crate::mono::bind_erased_parameters(expected, actual, &mut bindings, tc)
+                            .is_ok()
+                    })
+                || crate::mono::bind_erased_parameters(
+                    &signature.ret,
+                    &actual_ret,
+                    &mut bindings,
+                    tc,
+                )
+                .is_err()
+            {
+                continue;
+            }
+            let method_locals = method
+                .generic_params
+                .iter()
+                .filter(|p| {
+                    !implementation
+                        .type_generics
+                        .iter()
+                        .any(|parent| parent.id == p.id)
+                })
+                .collect::<Vec<_>>();
+            if method_locals.len() != locals.len()
+                || method_locals.iter().zip(&locals).enumerate().any(
+                    |(index, (actual, canonical))| {
+                        actual.kind != canonical.kind
+                            || bindings.get(&actual.id)
+                                != Some(&((entry.captures.len() + index) as u32))
+                    },
+                )
+            {
+                continue;
+            }
+            if contract
+                .erased
+                .functions
+                .get(key)
+                .is_some_and(|function| function.body.is_none())
+                && contract.erased.imported_member_links.get(key).is_none_or(
+                    |(symbol, imported)| {
+                        imported != entry || contract.erased.functions[key].symbol != *symbol
+                    },
+                )
+            {
+                continue;
+            }
+            contract
+                .dictionary_member_authorities
+                .insert(key.clone(), entry.clone());
+        }
         for definition in program.program.structs.values() {
             contract.erased.constructor_kinds.insert(
                 definition.id,
@@ -31,14 +464,17 @@ impl MirBuilder<'_> {
             .collect::<Vec<_>>();
         for dictionary in &dictionaries {
             for member in &dictionary.members {
+                let Some(target) = member.target.native() else {
+                    continue;
+                };
                 let MirCallableKey::ObjectAdapter(MirObjectAdapterKey::NativeCallable {
                     concrete,
                     kind,
-                }) = &member.target
+                }) = target
                 else {
                     continue;
                 };
-                if contract.callables.contains_key(&member.target) {
+                if contract.callables.contains_key(target) {
                     continue;
                 }
                 let source = tc.type_for(*concrete);
@@ -68,13 +504,13 @@ impl MirBuilder<'_> {
                 );
                 signature.params[0].pass_mode = MirPassMode::Pointer;
                 let release_environment = *kind == CallableKind::FnOnce
-                    && callable_environment_is_unique(&source)
+                    && callable_environment_is_owned(&source)
                     && !matches!(ret.as_ref(), Type::Never);
                 let symbol = format!("rock.erased.native.{}", contract.callables.len());
                 contract.callables.insert(
-                    member.target.clone(),
+                    target.clone(),
                     MirCallableDecl {
-                        key: member.target.clone(),
+                        key: target.clone(),
                         source_def_id: None,
                         kind: MirCallableKind::ObjectAdapter(MirObjectAdapter::NativeCallable {
                             concrete: *concrete,
@@ -91,12 +527,92 @@ impl MirBuilder<'_> {
             }
         }
         let mut needed = BTreeSet::new();
+        for requirement in contract.erased.dictionary_factories.values().flatten() {
+            for argument in &requirement.arguments {
+                let _ = argument.map_types(&mut |id| {
+                    needed.insert(*id);
+                    Ok::<_, std::convert::Infallible>(*id)
+                });
+            }
+        }
+        for schema in contract
+            .erased
+            .dictionary_templates
+            .values()
+            .flat_map(|template| std::iter::once(&template.result).chain(&template.bounds))
+            .chain(
+                contract
+                    .erased
+                    .dictionary_witnesses
+                    .values()
+                    .map(|witness| &witness.schema),
+            )
+        {
+            for ty in
+                std::iter::once(&schema.subject)
+                    .chain(&schema.trait_args)
+                    .chain(schema.members.iter().flat_map(|member| {
+                        member.params.iter().chain(std::iter::once(&member.ret))
+                    }))
+            {
+                let _ = ty.map_types(&mut |id| {
+                    needed.insert(*id);
+                    Ok::<_, std::convert::Infallible>(*id)
+                });
+            }
+        }
+        contract.erased.tuple_factories.clear();
+        contract.erased.nominal_factories.clear();
+        let keys = contract
+            .erased
+            .functions
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for key in keys {
+            // Selected declaration templates are available only at the backend
+            // contract boundary. Invalid/unavailable evidence stays absent and
+            // is rejected by strict MIR rather than fabricated by codegen.
+            if let Ok(requirements) =
+                collect_body_factories(&contract.erased.functions[&key], contract, tc)
+            {
+                let mut tuples = Vec::new();
+                let mut nominals = Vec::new();
+                for requirement in requirements {
+                    match requirement {
+                        MirBodyFactoryRequirement::Tuple(r) => tuples.push(r),
+                        MirBodyFactoryRequirement::Nominal(r) => nominals.push(r),
+                    }
+                }
+                if !tuples.is_empty() {
+                    contract.erased.tuple_factories.insert(key.clone(), tuples);
+                }
+                if !nominals.is_empty() {
+                    contract.erased.nominal_factories.insert(key, nominals);
+                }
+            }
+        }
+        for requirement in contract.erased.nominal_factories.values().flatten() {
+            for ty in requirement
+                .arguments
+                .iter()
+                .chain(requirement.fields.iter().map(|(_, ty)| ty))
+            {
+                let _ = ty.map_types(&mut |id| {
+                    needed.insert(*id);
+                    Ok::<_, std::convert::Infallible>(*id)
+                });
+            }
+        }
         for function in contract.erased.functions.values() {
             let mut collect = |ty: &MirErasedType| {
                 let _ = ty.map_types(&mut |id| {
                     needed.insert(*id);
                     Ok::<_, std::convert::Infallible>(*id)
                 });
+                if let Ok(concrete) = ty.instantiate(&[], tc) {
+                    needed.insert(intern_backend_type(tc, &concrete));
+                }
             };
             for ty in function
                 .signature
@@ -128,7 +644,8 @@ impl MirBuilder<'_> {
                             }
                         }
                         MirErasedRvalue::Call { type_args, .. }
-                        | MirErasedRvalue::OpenedErasedCall { type_args, .. } => {
+                        | MirErasedRvalue::OpenedErasedCall { type_args, .. }
+                        | MirErasedRvalue::DictionaryCall { type_args, .. } => {
                             for ty in type_args {
                                 collect(ty);
                             }
@@ -137,14 +654,14 @@ impl MirBuilder<'_> {
                         | MirErasedRvalue::Literal(_)
                         | MirErasedRvalue::Aggregate(_)
                         | MirErasedRvalue::NativeAggregate { .. }
+                        | MirErasedRvalue::NominalAggregate { .. }
                         | MirErasedRvalue::Borrow { .. }
                         | MirErasedRvalue::Open { .. }
                         | MirErasedRvalue::PackageOpen { .. }
                         | MirErasedRvalue::Reclose { .. }
                         | MirErasedRvalue::OpenedCall { .. }
                         | MirErasedRvalue::NativeCall { .. }
-                        | MirErasedRvalue::NativeApply { .. }
-                        | MirErasedRvalue::DictionaryCall { .. } => {}
+                        | MirErasedRvalue::NativeApply { .. } => {}
                     }
                 }
             }
@@ -217,18 +734,23 @@ impl MirBuilder<'_> {
                 }
             }
         }
-        for id in needed {
+        let mut completed = BTreeSet::new();
+        while let Some(id) = needed.pop_first() {
+            if !completed.insert(id) {
+                continue;
+            }
             if tc.kind(id) != &crate::type_services::kind::Kind::Type {
                 continue;
             }
             let drop = payload_drop_plan(contract, tc, id)
                 .expect("accepted erased values have complete concrete layout/drop evidence");
-            let fields = match &drop.children {
+            let fields: Vec<_> = match &drop.children {
                 MirPayloadDropChildren::Fields(fields) => {
                     fields.iter().map(|field| field.ty).collect()
                 }
                 _ => Vec::new(),
             };
+            needed.extend(fields.iter().copied().filter(|id| !completed.contains(id)));
             contract.erased.descriptors.insert(
                 id,
                 MirTypeDescriptor {

@@ -7,6 +7,7 @@ use super::hir_types::{HirFunction, HirProgram};
 use crate::ids::{DefId, InstanceId, TypeId};
 use crate::lexer::Span;
 use crate::type_context::TypeContext;
+use crate::types::Type;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum InstanceImplOwner {
@@ -31,6 +32,9 @@ pub enum InstanceOrigin {
 pub struct InstanceKey {
     pub origin: InstanceOrigin,
     pub substitution: Vec<TypeId>,
+    /// Actual value layouts not determined by the definition's generic binders.
+    /// Empty when substitution alone determines every parameter representation.
+    pub parameter_representations: Vec<TypeId>,
 }
 
 impl InstanceKey {
@@ -38,6 +42,7 @@ impl InstanceKey {
         Self {
             origin,
             substitution,
+            parameter_representations: Vec::new(),
         }
     }
 }
@@ -152,7 +157,50 @@ impl PreMirInstanceBodies {
 }
 
 #[derive(Debug, Clone)]
+pub struct DefinitionCallableInputs {
+    pub generic_params: Vec<crate::types::GenericParamId>,
+    pub inputs: BTreeMap<usize, Type>,
+    /// Canonical Fn protocol subjects, retained before any caller substitution.
+    pub generic_inputs: BTreeMap<usize, DefinitionGenericCallableInput>,
+    /// Accepted lambda-parameter identities in the enclosing definition.
+    pub closure_inputs:
+        BTreeMap<DefinitionClosureId, BTreeMap<usize, DefinitionGenericCallableInput>>,
+}
+
+/// Identity of an accepted lambda inside one retained definition; generated
+/// adapters with recycled parameter IDs cannot inherit its input contract.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DefinitionClosureId {
+    parameters: Vec<crate::ids::HirLocalId>,
+    file_path: std::path::PathBuf,
+    start: usize,
+    end: usize,
+}
+
+impl DefinitionClosureId {
+    pub(crate) fn new(parameters: Vec<crate::ids::HirLocalId>, span: &crate::lexer::Span) -> Self {
+        Self {
+            parameters,
+            file_path: span.file_path.clone(),
+            start: span.start,
+            end: span.end,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DefinitionGenericCallableInput {
+    pub subject: Type,
+    pub invocation: Type,
+}
+
+#[derive(Debug, Clone)]
 pub struct MonomorphizedProgram {
+    /// Canonical definition requirements retained before generic bodies become
+    /// instances; these are hypotheses, never observed callback producers.
+    pub callable_input_obligations: BTreeMap<DefId, DefinitionCallableInputs>,
+    pub native_return_origins:
+        BTreeMap<DefId, crate::hir::borrowing::NativeReturnOrigins<crate::types::Type>>,
     pub erased: crate::mir::MirErasedContract,
     pub erased_invocations: BTreeMap<crate::mir::MirErasedInvocationKey, crate::mir::MirErasedCall>,
     pub owned_object_calls: BTreeMap<crate::mir::MirOwnedObjectKey, crate::mir::MirOwnedObjectPlan>,
@@ -175,6 +223,8 @@ impl MonomorphizedProgram {
     ) -> Self {
         Self {
             program,
+            callable_input_obligations: BTreeMap::new(),
+            native_return_origins: BTreeMap::new(),
             erased: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),

@@ -6,7 +6,10 @@ use crate::types::{FunctionSafety, GenericParamDecl, GenericParamId, Type};
 
 pub fn receiver_pattern(ty: &Type) -> Vec<Type> {
     match ty {
-        Type::Struct { args, .. } | Type::Enum { args, .. } => args.clone(),
+        Type::Struct { args, .. }
+        | Type::StructRepresentation { args, .. }
+        | Type::Enum { args, .. }
+        | Type::EnumRepresentation { args, .. } => args.clone(),
         Type::Slice(inner) | Type::Array(inner, _) | Type::Pointer(inner) => {
             vec![inner.as_ref().clone()]
         }
@@ -332,6 +335,11 @@ fn collect_section_arguments(
             Type::Struct {
                 id: actual_id,
                 args: actual_args,
+            }
+            | Type::StructRepresentation {
+                id: actual_id,
+                args: actual_args,
+                ..
             },
         )
         | (
@@ -342,6 +350,11 @@ fn collect_section_arguments(
             Type::Enum {
                 id: actual_id,
                 args: actual_args,
+            }
+            | Type::EnumRepresentation {
+                id: actual_id,
+                args: actual_args,
+                ..
             },
         ) => {
             pattern_id == actual_id
@@ -465,20 +478,40 @@ pub(crate) fn type_pattern_matches_after_subst(pattern: &Type, actual: &Type) ->
             Type::Struct {
                 id: expected_id,
                 args: expected_args,
+            }
+            | Type::StructRepresentation {
+                id: expected_id,
+                args: expected_args,
+                ..
             },
             Type::Struct {
                 id: actual_id,
                 args: actual_args,
+            }
+            | Type::StructRepresentation {
+                id: actual_id,
+                args: actual_args,
+                ..
             },
         )
         | (
             Type::Enum {
                 id: expected_id,
                 args: expected_args,
+            }
+            | Type::EnumRepresentation {
+                id: expected_id,
+                args: expected_args,
+                ..
             },
             Type::Enum {
                 id: actual_id,
                 args: actual_args,
+            }
+            | Type::EnumRepresentation {
+                id: actual_id,
+                args: actual_args,
+                ..
             },
         ) => {
             expected_args.len() == actual_args.len()
@@ -519,6 +552,7 @@ pub(crate) fn type_pattern_matches_after_subst(pattern: &Type, actual: &Type) ->
                 safety: expected_safety,
                 callable_kind: expected_kind,
                 captures: expected_captures,
+                result_borrowing: expected_borrowing,
                 ..
             },
             Type::Function {
@@ -527,12 +561,14 @@ pub(crate) fn type_pattern_matches_after_subst(pattern: &Type, actual: &Type) ->
                 safety: actual_safety,
                 callable_kind: actual_kind,
                 captures: actual_captures,
+                result_borrowing: actual_borrowing,
                 ..
             },
         ) => {
             let safety_matches = !matches!(actual_safety, FunctionSafety::Unsafe)
                 || !matches!(expected_safety, FunctionSafety::Safe);
             safety_matches
+                && expected_borrowing.accepts(actual_borrowing)
                 && (expected_captures.is_empty() || actual_kind <= expected_kind)
                 && (expected_captures.is_empty() || expected_captures == actual_captures)
                 && expected_params.len() == actual_params.len()
@@ -700,6 +736,11 @@ pub fn infer_generic_subst_from_types(
             Type::Struct {
                 id: actual_id,
                 args: actual_generics,
+            }
+            | Type::StructRepresentation {
+                id: actual_id,
+                args: actual_generics,
+                ..
             } if expected_generics.len() == actual_generics.len() && expected_id == actual_id => {
                 for (expected_generic, actual_generic) in
                     expected_generics.iter().zip(actual_generics.iter())
@@ -716,6 +757,11 @@ pub fn infer_generic_subst_from_types(
             Type::Enum {
                 id: actual_id,
                 args: actual_generics,
+            }
+            | Type::EnumRepresentation {
+                id: actual_id,
+                args: actual_generics,
+                ..
             } if expected_generics.len() == actual_generics.len() && expected_id == actual_id => {
                 for (expected_generic, actual_generic) in
                     expected_generics.iter().zip(actual_generics.iter())

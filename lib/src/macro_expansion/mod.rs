@@ -729,7 +729,8 @@ macro repeat_b
             .expect_err("proc macro diagnostics should fail expansion");
 
         let diagnostic = diagnostics.0.first().expect("expected diagnostic");
-        assert!(diagnostic.message.contains("fail_macro"));
+        assert!(diagnostic.message.contains("fail_macro"), "{diagnostic:?}");
+        assert!(diagnostic.message.contains("boom"), "{diagnostic:?}");
         assert_eq!(
             diagnostic.code,
             Some(crate::diagnostic::DiagnosticCode::Macro)
@@ -765,6 +766,13 @@ macro repeat_b
             .any(|label| label.message.contains("expanded from macro 'fail_macro'")));
 
         let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn repeated_proc_macro_diagnostics_preserve_the_actual_failure_message() {
+        for _ in 0..128 {
+            proc_macro_diagnostics_use_invocation_span();
+        }
     }
 
     #[test]

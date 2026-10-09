@@ -9,6 +9,7 @@ coverage/
 .worktrees/
 
 # Local agent context, scratch projects, and editor state
+/.agent-work/
 [Aa][Gg][Ee][Nn][Tt][Ss].[Mm][Dd]
 MEMORY.md
 /test_project*

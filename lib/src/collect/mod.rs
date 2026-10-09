@@ -795,13 +795,17 @@ fn collect_impl(
         &resolver.item_names_by_id,
     )?;
 
-    let source_map = crate::source_map::SemanticSourceMap::from_declarations(
+    let mut source_map = crate::source_map::SemanticSourceMap::from_declarations(
         &item_index,
         &program.module,
         &items,
         &source_modules,
         &resolver,
     );
+    for dependency in crate_ctx.extern_crates() {
+        source_map.merge_diagnostic_sources(dependency.metadata().source_map())
+            .map_err(|error| vec![ResolveError::non_source(error)])?;
+    }
     let decls = Declarations {
         indexing_ids,
         item_index,
@@ -998,13 +1002,17 @@ pub fn collect_artifact_declarations(
         &resolver.item_names_by_id,
     )?;
 
-    let source_map = crate::source_map::SemanticSourceMap::from_declarations(
+    let mut source_map = crate::source_map::SemanticSourceMap::from_declarations(
         &item_index,
         module,
         &items,
         &source_modules,
         &resolver,
     );
+    for dependency in crate_ctx.extern_crates() {
+        source_map.merge_diagnostic_sources(dependency.metadata().source_map())
+            .map_err(|error| vec![ResolveError::non_source(error)])?;
+    }
     Ok(ArtifactDeclarations {
         declarations: Declarations {
             indexing_ids,

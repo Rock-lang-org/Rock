@@ -117,6 +117,12 @@ pub(crate) fn is_uniform(
                 Type::Reference { inner, .. } | Type::Pointer(inner) => self.handle(inner),
                 Type::Array(inner, _) => self.ty(inner),
                 Type::Tuple(elements) => elements.iter().all(|element| self.ty(element)),
+                Type::StructRepresentation { fields, .. } => {
+                    fields.iter().all(|field| self.ty(field))
+                }
+                Type::EnumRepresentation { variants, .. } => {
+                    variants.iter().flatten().all(|field| self.ty(field))
+                }
                 Type::Struct { id, args } => self.structs.get(id).is_some_and(|definition| {
                     if definition.generic_params.len() != args.len() {
                         return false;

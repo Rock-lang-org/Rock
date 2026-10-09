@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ids::PlacePathId;
+use crate::ids::{LoanId, PlacePathId};
 use crate::mir::dataflow::analyses::{LoanState, LoanTable};
 use crate::mir::{Place, Projection};
 
@@ -49,6 +49,52 @@ pub fn resolve_place(place: &Place, table: &LoanTable, active_loans: &LoanState)
     }
 
     resolved
+}
+
+/// An interface origin union is a set of possible targets, not an arbitrary
+/// first target. Inspect every carrier's semantic path when checking aliases.
+pub fn resolve_places(place: &Place, table: &LoanTable, active_loans: &LoanState) -> Vec<Place> {
+    let mut pending = vec![(place.clone(), HashSet::new())];
+    let mut resolved = HashSet::new();
+    while let Some((place, mut seen)) = pending.pop() {
+        if !matches!(place.projection.first(), Some(Projection::Deref))
+            || !seen.insert(place.local)
+        {
+            resolved.insert(place);
+            continue;
+        }
+        let mut found = false;
+        for loan_id in active_loans.active_ids() {
+            if !active_loans.owner_contains(loan_id, place.local) { continue; }
+            let Some(source) = table.get(loan_id)
+                .and_then(|loan| table.place_paths().place(loan.place_path)) else { continue; };
+            let mut next = source.clone();
+            if table.is_returned_view(loan_id) {
+                // Result slots are temporary. The current carrier retains the
+                // same checked view and its full origin envelope after a move.
+                next.local = place.local;
+            }
+            next.projection.extend(place.projection.iter().skip(1).cloned());
+            pending.push((next, seen.clone()));
+            found = true;
+        }
+        if !found { resolved.insert(place); }
+    }
+    resolved.into_iter().collect()
+}
+
+pub fn resolve_loan_places(id: LoanId, table: &LoanTable, active_loans: &LoanState) -> Vec<Place> {
+    let Some(place) = table.get(id).and_then(|loan| table.place_paths().place(loan.place_path)) else {
+        return Vec::new();
+    };
+    if !table.is_returned_view(id) { return resolve_places(place, table, active_loans); }
+    let mut resolved = HashSet::new();
+    for owner in active_loans.owners(id).iter() {
+        let mut view = place.clone();
+        view.local = owner;
+        resolved.extend(resolve_places(&view, table, active_loans));
+    }
+    resolved.into_iter().collect()
 }
 
 pub fn resolve_place_path(

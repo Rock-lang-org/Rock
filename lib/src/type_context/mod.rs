@@ -40,6 +40,7 @@ pub enum Ty {
         safety: FunctionSafety,
         callable_kind: CallableKind,
         captures: Vec<TyFunctionCapture>,
+        result_borrowing: crate::types::CallableResultBorrowing,
     },
     Struct {
         id: DefId,
@@ -86,6 +87,16 @@ pub enum Ty {
         kind: Kind,
     },
     Error,
+    StructRepresentation {
+        id: DefId,
+        args: Vec<TypeId>,
+        fields: Vec<TypeId>,
+    },
+    EnumRepresentation {
+        id: DefId,
+        args: Vec<TypeId>,
+        variants: Vec<Vec<TypeId>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -281,9 +292,17 @@ impl TypeContext {
                     params,
                     ret,
                     captures,
+                    result_borrowing,
                     ..
                 } => {
-                    params
+                    result_borrowing.sources_are_valid(params.len(), |index| {
+                        params.get(index as usize).is_some_and(|param| {
+                            matches!(
+                                context.try_ty(*param),
+                                Some(Ty::Reference { .. } | Ty::Pointer(_))
+                            )
+                        })
+                    }) && params
                         .iter()
                         .all(|param| visit(context, *param, visiting, valid))
                         && visit(context, *ret, visiting, valid)
@@ -294,6 +313,14 @@ impl TypeContext {
                 Ty::Struct { args, .. } | Ty::Enum { args, .. } => {
                     args.iter().all(|arg| visit(context, *arg, visiting, valid))
                 }
+                Ty::StructRepresentation { args, fields, .. } => args
+                    .iter()
+                    .chain(fields)
+                    .all(|child| visit(context, *child, visiting, valid)),
+                Ty::EnumRepresentation { args, variants, .. } => args
+                    .iter()
+                    .chain(variants.iter().flatten())
+                    .all(|child| visit(context, *child, visiting, valid)),
                 Ty::Projection { ty, trait_args, .. } => {
                     visit(context, *ty, visiting, valid)
                         && trait_args
@@ -398,6 +425,7 @@ impl TypeContext {
                 safety,
                 callable_kind,
                 captures,
+                result_borrowing,
             } => {
                 let params = params.iter().map(|arg| self.intern_type(arg)).collect();
                 let ret = self.intern_type(ret);
@@ -414,15 +442,37 @@ impl TypeContext {
                     safety: *safety,
                     callable_kind: *callable_kind,
                     captures,
+                    result_borrowing: result_borrowing.clone(),
                 })
             }
             Type::Struct { id, args } => {
                 let args = args.iter().map(|arg| self.intern_type(arg)).collect();
                 self.intern_ty(Ty::Struct { id: *id, args })
             }
+            Type::StructRepresentation { id, args, fields } => {
+                let args = args.iter().map(|arg| self.intern_type(arg)).collect();
+                let fields = fields.iter().map(|field| self.intern_type(field)).collect();
+                self.intern_ty(Ty::StructRepresentation {
+                    id: *id,
+                    args,
+                    fields,
+                })
+            }
             Type::Enum { id, args } => {
                 let args = args.iter().map(|arg| self.intern_type(arg)).collect();
                 self.intern_ty(Ty::Enum { id: *id, args })
+            }
+            Type::EnumRepresentation { id, args, variants } => {
+                let args = args.iter().map(|arg| self.intern_type(arg)).collect();
+                let variants = variants
+                    .iter()
+                    .map(|fields| fields.iter().map(|field| self.intern_type(field)).collect())
+                    .collect();
+                self.intern_ty(Ty::EnumRepresentation {
+                    id: *id,
+                    args,
+                    variants,
+                })
             }
             Type::Reference { mutable, inner } => {
                 let inner = self.intern_type(inner);
@@ -511,11 +561,13 @@ impl TypeContext {
                 safety,
                 callable_kind,
                 captures,
+                result_borrowing,
             } => Type::Function {
                 params: params.iter().map(|param| self.type_for(*param)).collect(),
                 ret: Box::new(self.type_for(*ret)),
                 safety: *safety,
                 callable_kind: *callable_kind,
+                result_borrowing: result_borrowing.clone(),
                 captures: captures
                     .iter()
                     .map(|capture| FunctionCapture {
@@ -528,9 +580,22 @@ impl TypeContext {
                 id: *id,
                 args: args.iter().map(|arg| self.type_for(*arg)).collect(),
             },
+            Ty::StructRepresentation { id, args, fields } => Type::StructRepresentation {
+                id: *id,
+                args: args.iter().map(|arg| self.type_for(*arg)).collect(),
+                fields: fields.iter().map(|field| self.type_for(*field)).collect(),
+            },
             Ty::Enum { id, args } => Type::Enum {
                 id: *id,
                 args: args.iter().map(|arg| self.type_for(*arg)).collect(),
+            },
+            Ty::EnumRepresentation { id, args, variants } => Type::EnumRepresentation {
+                id: *id,
+                args: args.iter().map(|arg| self.type_for(*arg)).collect(),
+                variants: variants
+                    .iter()
+                    .map(|fields| fields.iter().map(|field| self.type_for(*field)).collect())
+                    .collect(),
             },
             Ty::Reference { mutable, inner } => Type::Reference {
                 mutable: *mutable,
@@ -622,6 +687,7 @@ impl TypeContext {
                 safety,
                 callable_kind,
                 captures,
+                result_borrowing,
             } => Ty::Function {
                 params: params
                     .iter()
@@ -630,6 +696,7 @@ impl TypeContext {
                 ret: self.id_for_type(ret)?,
                 safety: *safety,
                 callable_kind: *callable_kind,
+                result_borrowing: result_borrowing.clone(),
                 captures: captures
                     .iter()
                     .map(|capture| {
@@ -646,6 +713,33 @@ impl TypeContext {
                     .iter()
                     .map(|arg| self.id_for_type(arg))
                     .collect::<Option<Vec<_>>>()?,
+            },
+            Type::StructRepresentation { id, args, fields } => Ty::StructRepresentation {
+                id: *id,
+                args: args
+                    .iter()
+                    .map(|arg| self.id_for_type(arg))
+                    .collect::<Option<Vec<_>>>()?,
+                fields: fields
+                    .iter()
+                    .map(|field| self.id_for_type(field))
+                    .collect::<Option<Vec<_>>>()?,
+            },
+            Type::EnumRepresentation { id, args, variants } => Ty::EnumRepresentation {
+                id: *id,
+                args: args
+                    .iter()
+                    .map(|arg| self.id_for_type(arg))
+                    .collect::<Option<_>>()?,
+                variants: variants
+                    .iter()
+                    .map(|fields| {
+                        fields
+                            .iter()
+                            .map(|field| self.id_for_type(field))
+                            .collect::<Option<_>>()
+                    })
+                    .collect::<Option<_>>()?,
             },
             Type::Enum { id, args } => Ty::Enum {
                 id: *id,
@@ -987,6 +1081,7 @@ mod tests {
         let capture_ty = context.intern_type(&Type::I64);
         let function = context.intern_ty(Ty::Function {
             params: Vec::new(),
+            result_borrowing: Default::default(),
             ret: capture_ty,
             safety: FunctionSafety::Safe,
             callable_kind: CallableKind::FnMut,
@@ -1256,6 +1351,7 @@ mod tests {
         assert_eq!(
             context.intern_ty(Ty::Function {
                 params: vec![i64_ty],
+                result_borrowing: Default::default(),
                 ret: bool_ty,
                 safety: FunctionSafety::Safe,
                 callable_kind: CallableKind::Fn,
@@ -1263,6 +1359,7 @@ mod tests {
             }),
             context.intern_ty(Ty::Function {
                 params: vec![i64_ty],
+                result_borrowing: Default::default(),
                 ret: bool_ty,
                 safety: FunctionSafety::Safe,
                 callable_kind: CallableKind::Fn,

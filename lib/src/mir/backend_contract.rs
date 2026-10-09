@@ -1,5 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+mod callable_inputs;
+pub(crate) use callable_inputs::callable_payload_requirements;
+
 use crate::ids::{AssocTypeId, DefId, InstanceId, TypeId};
 use crate::type_context::TypeContext;
 use crate::type_services::projection::{ProjectionImpl, ProjectionNormalizer, ProjectionProvider};
@@ -163,6 +166,22 @@ pub struct MirArtifactExport {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MirBackendContract {
+    /// Definition-owned callable input hypotheses, checked at every binding.
+    /// Ordinary headers and caller-specialized parameter types cannot seed them.
+    pub callable_input_obligations: BTreeMap<MirCallableKey, BTreeMap<usize, TypeId>>,
+    /// Instantiated definition-owned Fn bounds; values are required invocation
+    /// types, not certificates attached to the actual parameter type header.
+    pub generic_callable_input_obligations:
+        BTreeMap<MirCallableKey, BTreeMap<usize, MirGenericCallableInput>>,
+    pub native_return_origins:
+        BTreeMap<MirCallableKey, crate::hir::borrowing::NativeReturnOrigins<TypeId>>,
+    /// Measured nominal result storage, independent of semantic identity and
+    /// borrowing/effect authority. Local rows must agree with the actual MIR.
+    pub native_result_storage: BTreeMap<MirCallableKey, TypeId>,
+    pub dictionary_member_authorities: BTreeMap<super::MirErasedKey, super::MirErasedMemberEntry>,
+    /// Compiler-owned defining product origins, not importer/display identities.
+    pub descriptor_origins: BTreeMap<crate::ids::CrateId, crate::products::ProductCrateIdentity>,
+    pub descriptor_identities: BTreeMap<TypeId, super::descriptor_identity::MirDescriptorIdentity>,
     pub packages: BTreeMap<TypeId, super::MirPackageSchema>,
     pub owned_object_calls: BTreeMap<super::MirOwnedObjectKey, super::MirOwnedObjectPlan>,
     pub erased: super::MirErasedContract,
@@ -171,6 +190,9 @@ pub struct MirBackendContract {
     pub callables: BTreeMap<MirCallableKey, MirCallableDecl>,
     pub function_bodies: BTreeMap<MirFunctionId, MirCallableKey>,
     pub nominal_layouts: BTreeMap<DefId, MirNominalLayout>,
+    pub nominal_field_ids: BTreeMap<DefId, Vec<crate::ids::FieldId>>,
+    pub nominal_drop_authority: BTreeMap<DefId, super::MirNominalDropAuthority>,
+    pub dictionary_impl_members: BTreeMap<DefId, super::MirDictionaryImplAuthority>,
     pub projection_outputs: BTreeMap<MirProjectionKey, TypeId>,
     pub projection_traits: BTreeSet<DefId>,
     pub drop_glue: BTreeMap<TypeId, MirCallableKey>,
@@ -178,12 +200,39 @@ pub struct MirBackendContract {
     pub artifact_exports: Vec<MirArtifactExport>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirGenericCallableInput {
+    pub subject: TypeId,
+    pub invocation: TypeId,
+}
+
 impl MirBackendContract {
     pub fn callable(&self, key: &MirCallableKey) -> Option<&MirCallableDecl> {
         self.callables.get(key)
     }
 
+    pub fn callable_result_storage(&self, callable: &MirCallableDecl) -> TypeId {
+        self.native_result_storage
+            .get(&callable.key)
+            .copied()
+            .unwrap_or(callable.signature.ret.semantic_ty)
+    }
+
+    pub fn function_result_storage(&self, function: &MirFunction) -> TypeId {
+        self.function_bodies
+            .get(&function.id)
+            .and_then(|key| self.native_result_storage.get(key))
+            .copied()
+            .unwrap_or(function.ret_type)
+    }
+
     pub fn normalize_type(&self, type_context: &TypeContext, ty: &Type) -> Type {
+        semantic_nominal_type(self.normalize_storage_type(type_context, ty))
+    }
+
+    /// Normalize without forgetting measured storage required by projections,
+    /// ownership and emission. Semantic normalization is not layout evidence.
+    pub fn normalize_storage_type(&self, type_context: &TypeContext, ty: &Type) -> Type {
         let ty = type_context
             .normalize_type(ty)
             .expect("MIR backend contract requires canonical kind-correct types");
@@ -202,7 +251,7 @@ impl MirBackendContract {
             return None;
         }
         let raw = type_context.type_for(ty);
-        let normalized = self.normalize_type(type_context, &raw);
+        let normalized = self.normalize_storage_type(type_context, &raw);
         if normalized == raw {
             Some(ty)
         } else {
@@ -220,11 +269,23 @@ impl MirBackendContract {
         if !type_context.type_id_tree_is_valid(local.ty) {
             return None;
         }
-        let raw_local_ty = type_context.type_for(local.ty);
-        let mut current_ty = self.normalize_type(type_context, &raw_local_ty);
+        let storage = if place.local == crate::mir::Local(0) {
+            self.function_bodies
+                .get(&function.id)
+                .and_then(|key| self.native_result_storage.get(key))
+                .copied()
+                .unwrap_or(local.ty)
+        } else {
+            local.ty
+        };
+        if !type_context.type_id_tree_is_valid(storage) {
+            return None;
+        }
+        let raw_local_ty = type_context.type_for(storage);
+        let mut current_ty = self.normalize_storage_type(type_context, &raw_local_ty);
         if place.projection.is_empty() {
             return if current_ty == raw_local_ty {
-                Some(local.ty)
+                Some(storage)
             } else {
                 type_context.id_for_type(&current_ty)
             };
@@ -232,7 +293,7 @@ impl MirBackendContract {
 
         let mut downcast_variant = None;
         for projection in &place.projection {
-            current_ty = self.normalize_type(type_context, &current_ty);
+            current_ty = self.normalize_storage_type(type_context, &current_ty);
             current_ty = match projection {
                 Projection::Deref => match &current_ty {
                     Type::Pointer(inner) | Type::Reference { inner, .. } => inner.as_ref().clone(),
@@ -256,7 +317,7 @@ impl MirBackendContract {
                     current_ty.clone()
                 }
             };
-            current_ty = self.normalize_type(type_context, &current_ty);
+            current_ty = self.normalize_storage_type(type_context, &current_ty);
         }
 
         type_context.id_for_type(&current_ty)
@@ -269,9 +330,10 @@ impl MirBackendContract {
         index: usize,
         downcast_variant: Option<crate::ids::VariantId>,
     ) -> Option<Type> {
-        let ty = self.normalize_type(type_context, ty);
+        let ty = self.normalize_storage_type(type_context, ty);
         let projected = match &ty {
             Type::Tuple(fields) => fields.get(index).cloned(),
+            Type::StructRepresentation { fields, .. } => fields.get(index).cloned(),
             Type::Struct { id, args } => {
                 let MirNominalLayout::Struct {
                     fields,
@@ -296,6 +358,10 @@ impl MirBackendContract {
                         .substitute_generics(&substitution),
                 )
             }
+            Type::EnumRepresentation { variants, .. } => variants
+                .get(downcast_variant?.0 as usize)?
+                .get(index)
+                .cloned(),
             Type::Enum { id, args } => {
                 let variant_id = downcast_variant?;
                 let MirNominalLayout::Enum {
@@ -328,8 +394,25 @@ impl MirBackendContract {
             }
             _ => None,
         }?;
-        Some(self.normalize_type(type_context, &projected))
+        Some(self.normalize_storage_type(type_context, &projected))
     }
+}
+
+pub(crate) fn semantic_nominal_type(ty: Type) -> Type {
+    use crate::type_services::visit::{fold_type_children, TypeFolder};
+
+    struct SemanticNominals;
+    impl TypeFolder for SemanticNominals {
+        fn fold_type(&mut self, ty: Type) -> Type {
+            let ty = match ty {
+                Type::StructRepresentation { id, args, .. } => Type::Struct { id, args },
+                Type::EnumRepresentation { id, args, .. } => Type::Enum { id, args },
+                other => other,
+            };
+            fold_type_children(ty, self)
+        }
+    }
+    SemanticNominals.fold_type(ty)
 }
 
 pub fn runtime_requirements_for_functions<'a>(
@@ -367,7 +450,68 @@ pub fn runtime_requirements_for_backend<'a>(
     contract: &MirBackendContract,
     functions: impl IntoIterator<Item = &'a MirFunction>,
 ) -> BTreeSet<MirRuntimeHelper> {
-    let mut requirements = runtime_requirements_for_functions(functions);
+    let functions = functions.into_iter().collect::<Vec<_>>();
+    let mut requirements = runtime_requirements_for_functions(functions.iter().copied());
+    if contract.erased.imported_runtime_support.iter().any(|r| {
+        matches!(
+            r,
+            crate::products::ProductRuntimeSupport::SelectedDictionariesV1 { .. }
+        )
+    }) || contract
+        .erased
+        .dictionary_factories
+        .iter()
+        .any(|(key, requirements)| {
+            !requirements.is_empty()
+                && contract
+                    .erased
+                    .functions
+                    .get(key)
+                    .is_some_and(|entry| entry.body.is_some())
+        })
+    {
+        requirements.insert(MirRuntimeHelper::SelectedDictionaryFactory);
+    }
+    if contract.erased.imported_runtime_support.iter().any(|r| {
+        matches!(
+            r,
+            crate::products::ProductRuntimeSupport::TupleDescriptorsV1 { .. }
+        )
+    }) || contract
+        .erased
+        .tuple_factories
+        .iter()
+        .any(|(key, requirements)| {
+            !requirements.is_empty()
+                && contract
+                    .erased
+                    .functions
+                    .get(key)
+                    .is_some_and(|entry| entry.body.is_some())
+        })
+    {
+        requirements.insert(MirRuntimeHelper::TupleDescriptorFactory);
+    }
+    if contract.erased.imported_runtime_support.iter().any(|r| {
+        matches!(
+            r,
+            crate::products::ProductRuntimeSupport::NominalDescriptorsV1 { .. }
+        )
+    }) || contract
+        .erased
+        .nominal_factories
+        .iter()
+        .any(|(key, requirements)| {
+            !requirements.is_empty()
+                && contract
+                    .erased
+                    .functions
+                    .get(key)
+                    .is_some_and(|entry| entry.body.is_some())
+        })
+    {
+        requirements.insert(MirRuntimeHelper::NominalDescriptorFactory);
+    }
     if contract
         .erased
         .descriptors
@@ -375,6 +519,54 @@ pub fn runtime_requirements_for_backend<'a>(
         .any(|descriptor| descriptor.drop.requires_heap_free())
     {
         requirements.insert(MirRuntimeHelper::HeapFree);
+    }
+    // Concrete Copy environments may be duplicated at any owning transfer,
+    // including arguments or returns whose producer is in another object.
+    // Their structural cleanup plans are the observed layout roots; opaque
+    // descriptors do not supply Copy authority.
+    let environment_layout = |ty| {
+        contract.erased.descriptors.get(&ty).is_some_and(|descriptor| descriptor.drop.requires_heap_free())
+            || contract.callable(&MirCallableKey::ObjectAdapter(super::MirObjectAdapterKey::PayloadDrop(ty)))
+                .is_some_and(|declaration| matches!(&declaration.kind,
+                    MirCallableKind::ObjectAdapter(super::MirObjectAdapter::PayloadDrop(plan)) if plan.requires_heap_free()))
+    };
+    fn erased_environment_layout(
+        ty: &super::MirErasedType,
+        environment: &impl Fn(TypeId) -> bool,
+    ) -> bool {
+        match ty {
+            super::MirErasedType::Concrete(id) => environment(*id),
+            super::MirErasedType::Tuple(fields) => fields
+                .iter()
+                .any(|field| erased_environment_layout(field, environment)),
+            _ => false,
+        }
+    }
+    fn owning_copy(rvalue: &Rvalue) -> bool {
+        let copy = |operand: &Operand| matches!(operand, Operand::Copy(_));
+        match rvalue {
+            Rvalue::Use(value)
+            | Rvalue::Package(value, _)
+            | Rvalue::Object(value, _)
+            | Rvalue::Cast(value, _)
+            | Rvalue::UnaryOp(_, value) => copy(value),
+            Rvalue::BinaryOp(_, lhs, rhs) => copy(lhs) || copy(rhs),
+            Rvalue::Aggregate(_, values) => values.iter().any(copy),
+            _ => false,
+        }
+    }
+    let observed_environment = contract.erased.descriptors.values().any(|descriptor| descriptor.drop.requires_heap_free())
+        || contract.callables.values().any(|declaration| matches!(&declaration.kind,
+            MirCallableKind::ObjectAdapter(super::MirObjectAdapter::PayloadDrop(plan)) if plan.requires_heap_free()));
+    if observed_environment && functions.iter().any(|function| function.basic_blocks.iter().any(|block| {
+        block.statements.iter().any(|statement| matches!(&statement.kind, StatementKind::Assign(_, value) if owning_copy(value)))
+            || matches!(&block.terminator, Some(super::Terminator::Call { func, args, .. })
+                if matches!(func, Operand::Copy(_)) || args.iter().any(|arg| matches!(arg, Operand::Copy(_))))
+    }))
+        || contract.erased.functions.values().filter_map(|function| function.body.as_ref())
+            .any(|body| body.locals.iter().any(|ty| erased_environment_layout(ty, &environment_layout)))
+    {
+        requirements.insert(MirRuntimeHelper::HeapAlloc);
     }
     for declaration in contract.callables.values() {
         let needs_free = match &declaration.kind {
@@ -439,6 +631,17 @@ impl ProjectionProvider for MirBackendContractProjectionProvider<'_> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirBackendContractError {
+    NativeResultStorageMismatch {
+        key: MirCallableKey,
+        storage: TypeId,
+    },
+    CallableInputObligationMismatch {
+        key: MirCallableKey,
+        parameter: usize,
+    },
+    NativeReturnOriginsMismatch {
+        key: MirCallableKey,
+    },
     CallableKeyMismatch {
         map_key: MirCallableKey,
         declaration_key: MirCallableKey,
@@ -509,6 +712,24 @@ pub enum MirBackendContractError {
 
 pub fn validate_backend_contract(contract: &MirBackendContract) -> Vec<MirBackendContractError> {
     let mut errors = Vec::new();
+    for (key, origins) in &contract.native_return_origins {
+        if !contract.callable(key).is_some_and(|declaration| {
+            declaration.key == *key
+                && matches!(declaration.kind, MirCallableKind::ObjectProvided)
+                && origins.params
+                    == declaration
+                        .signature
+                        .params
+                        .iter()
+                        .map(|param| param.semantic_ty)
+                        .collect::<Vec<_>>()
+                && origins.ret == declaration.signature.ret.semantic_ty
+                && origins.ret == declaration.signature.ret.abi_ty
+        }) || !origins.sources_are_valid(|_| true)
+        {
+            errors.push(MirBackendContractError::NativeReturnOriginsMismatch { key: key.clone() });
+        }
+    }
 
     for (key, callable) in &contract.callables {
         if &callable.key != key {
@@ -620,6 +841,50 @@ where
         functions.iter().map(|function| &function.id),
     );
     let mut seen_resolved = BTreeSet::new();
+
+    for (key, inputs) in &contract.callable_input_obligations {
+        for (parameter, ty) in inputs {
+            let valid = contract.callable(key).is_some_and(|header| {
+                header.source_def_id.is_some()
+                    && matches!(&header.kind, MirCallableKind::LocalBody { function_id }
+                        if contract.function_bodies.get(function_id) == Some(key)
+                            && functions.iter().any(|body| &body.id == function_id))
+                    && header
+                        .signature
+                        .params
+                        .get(*parameter)
+                        .is_some_and(|param| param.semantic_ty == *ty)
+            });
+            if !valid {
+                errors.push(MirBackendContractError::CallableInputObligationMismatch {
+                    key: key.clone(),
+                    parameter: *parameter,
+                });
+            }
+        }
+    }
+
+    for (key, inputs) in &contract.generic_callable_input_obligations {
+        for (parameter, input) in inputs {
+            let valid = contract.callable(key).is_some_and(|header| {
+                header.source_def_id.is_some()
+                    && matches!(&header.kind, MirCallableKind::LocalBody { function_id }
+                        if contract.function_bodies.get(function_id) == Some(key)
+                            && functions.iter().any(|body| &body.id == function_id))
+                    && header
+                        .signature
+                        .params
+                        .get(*parameter)
+                        .is_some_and(|param| param.semantic_ty == input.subject)
+            });
+            if !valid {
+                errors.push(MirBackendContractError::CallableInputObligationMismatch {
+                    key: key.clone(),
+                    parameter: *parameter,
+                });
+            }
+        }
+    }
 
     for function in functions {
         validate_local_body_signature(contract, function, &mut errors);

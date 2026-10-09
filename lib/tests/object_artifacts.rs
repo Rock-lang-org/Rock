@@ -40,6 +40,177 @@ fn library(root: &Path, name: &str, source: &str, dependencies: Vec<(String, Pat
 }
 
 #[test]
+fn factored_evidence_supports_later_subset_principals_without_producer_sources_at_o0_and_o3() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join(".agent-work/fixtures")
+        .join(format!(
+            "factored_views_{}_{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+    std::fs::create_dir_all(&root).unwrap();
+    let mut source = String::from("< struct Number\n    < value: I64\n");
+    for index in 0..7 {
+        source.push_str(&format!("< trait T{index}\n    @read{index}: I64\n    @same{index}: &Self\n    @identity{index}: A -> A\nimpl T{index} for Number\n    @read{index} = -> self.value\n    @same{index} = -> self\n    @identity{index} = value -> value\n"));
+    }
+    source.push_str("as_root: &Number -> &(T0 { T1, T2, T3, T4, T5, T6 })\n< as_root = value ->\n    object: &(T0 { T1, T2, T3, T4, T5, T6 }) = value\n    object\n");
+    let artifact = library(&root, "provider", &source, vec![]);
+    let producer_bytes = std::fs::read(&artifact).unwrap();
+    let object_bytes = std::fs::read(root.join("provider.o")).unwrap();
+    let product = CompilerProducts::from_artifact_bytes(&producer_bytes).unwrap();
+    eprintln!(
+        "FACTORED_OBJECT traits=7 schemas={} evidenceEdges={} objectBytes={} fixture={}",
+        product.interface.object_abi.schemas.len(),
+        product
+            .interface
+            .object_abi
+            .schemas
+            .iter()
+            .map(|schema| schema.views.len())
+            .sum::<usize>(),
+        object_bytes.len(),
+        root.display()
+    );
+    assert_eq!(
+        product.interface.object_abi.schemas.len(),
+        8,
+        "one producer signature plus independent evidence for seven traits"
+    );
+    assert_eq!(
+        product
+            .interface
+            .object_abi
+            .schemas
+            .iter()
+            .map(|schema| schema.views.len())
+            .sum::<usize>(),
+        7
+    );
+    assert!(
+        product.interface.object_abi.schemas.iter().all(|schema| {
+            let rock_lib::types::Type::Object(object) = &schema.object else {
+                return false;
+            };
+            object.guarantees.len() == 6 || object.guarantees.is_empty()
+        }),
+        "no two-trait consumer signature may have been precomputed"
+    );
+    assert!(
+        object_bytes.len() < 128 * 1024,
+        "seven traits must not reproduce the historical 852 KB object ({} bytes)",
+        object_bytes.len()
+    );
+    std::fs::remove_file(root.join("provider.rk")).unwrap();
+    for level in [0, 3] {
+        for principal in 0..7 {
+            let other = (principal + 3) % 7;
+            let entry = root.join("main.rk");
+            std::fs::write(
+                &entry,
+                format!(
+                    r#"
+> provider::Number
+> provider::as_root
+> provider::T{principal}
+> provider::T{other}
+main = ->
+    number = Number
+        value: 42
+    original = as_root &number
+    selected: &(T{principal} {{ T{other} }}) = original
+    returned = selected.same{principal}!
+    narrowed: &T{other} = returned
+    value = narrowed.read{other}!
+    narrowed.identity{other} value
+"#
+                ),
+            )
+            .unwrap();
+            let caller = Config {
+                entry_file: entry,
+                output_dir: root.clone(),
+                no_std: true,
+                no_prelude: true,
+                opt_level: level,
+                extern_artifacts: vec![("provider".into(), artifact.clone())],
+                ..Default::default()
+            };
+            rock_lib::compile(&caller).unwrap();
+            let output = std::process::Command::new(root.join("main"))
+                .output()
+                .unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(42),
+                "principal={principal} O{level}: {output:?}"
+            );
+            assert!(output.stdout.is_empty() && output.stderr.is_empty());
+            assert!(!root.join("provider.rk").exists());
+            assert_eq!(std::fs::read(&artifact).unwrap(), producer_bytes);
+            assert_eq!(
+                std::fs::read(root.join("provider.o")).unwrap(),
+                object_bytes
+            );
+        }
+        let entry = root.join(format!("forgotten{level}.rk"));
+        std::fs::write(
+            &entry,
+            r#"
+> provider::Number
+> provider::as_root
+> provider::T1
+> provider::T6
+main = ->
+    number = Number
+        value: 42
+    original = as_root &number
+    narrowed: &T1 = original
+    regained: &T6 = narrowed
+    regained.read6!
+"#,
+        )
+        .unwrap();
+        let caller = Config {
+            entry_file: entry,
+            output_dir: root.clone(),
+            no_std: true,
+            no_prelude: true,
+            no_link: true,
+            opt_level: level,
+            extern_artifacts: vec![("provider".into(), artifact.clone())],
+            ..Default::default()
+        };
+        let diagnostics = rock_lib::compile(&caller)
+            .expect_err("the runtime evidence superset cannot restore forgotten static authority");
+        assert!(
+            diagnostics.0.iter().any(|diagnostic| diagnostic
+                .message
+                .contains("object upcast requires all target guarantees")
+                && diagnostic.primary.is_some()),
+            "{diagnostics:?}"
+        );
+        assert!(!root.join(format!("forgotten{level}")).exists());
+    }
+    let mut incompatible = product;
+    incompatible.interface.object_abi.version = 1;
+    let incompatible_artifact = root.join("incompatible.rkca");
+    let error = incompatible
+        .write_artifact_to_path(&incompatible_artifact)
+        .expect_err("old schema-width producer ABI cannot be serialized as factored evidence");
+    assert!(
+        error.contains("unsupported producer object ABI version"),
+        "{error}"
+    );
+    assert_eq!(std::fs::read(&artifact).unwrap(), producer_bytes);
+    assert_eq!(
+        std::fs::read(root.join("provider.o")).unwrap(),
+        object_bytes
+    );
+}
+
+#[test]
 fn generic_object_entries_accept_a_later_noncopy_type_and_dictionary() {
     let root = std::env::temp_dir().join(format!(
         "rock_erased_artifacts_{}_{}",

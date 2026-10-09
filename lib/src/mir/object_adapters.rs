@@ -59,6 +59,24 @@ pub enum MirPayloadDropChildren {
 }
 
 impl MirPayloadDropPlan {
+    /// Releasing allocation storage does not dereference borrowed capture fields.
+    /// User destructors and opaque packages conservatively may use their loans.
+    pub(crate) fn may_use_borrowed_values(&self) -> bool {
+        self.user_drop.is_some()
+            || match &self.children {
+                MirPayloadDropChildren::None => false,
+                MirPayloadDropChildren::Package => true,
+                MirPayloadDropChildren::Fields(fields)
+                | MirPayloadDropChildren::Variants(fields)
+                | MirPayloadDropChildren::ClosureEnvironment { fields, .. } => {
+                    fields.iter().any(Self::may_use_borrowed_values)
+                }
+                MirPayloadDropChildren::Array { len, element } => {
+                    *len != 0 && element.may_use_borrowed_values()
+                }
+            }
+    }
+
     pub fn has_drop(&self) -> bool {
         self.user_drop.is_some()
             || match &self.children {
@@ -89,8 +107,8 @@ impl MirPayloadDropPlan {
     }
 }
 
-pub fn callable_environment_is_unique(ty: &Type) -> bool {
-    matches!(ty, Type::Function { captures, .. } if !captures.is_empty()) && !ty.is_copy()
+pub fn callable_environment_is_owned(ty: &Type) -> bool {
+    matches!(ty, Type::Function { captures, .. } if !captures.is_empty())
 }
 
 pub fn object_adapter_is_valid(
@@ -169,7 +187,7 @@ pub fn object_adapter_is_valid(
             *release_environment
                 == (*kind == CallableKind::FnOnce
                     && !matches!(ret.as_ref(), Type::Never)
-                    && ty(*concrete).is_some_and(|ty| callable_environment_is_unique(&ty)))
+                    && ty(*concrete).is_some_and(|ty| callable_environment_is_owned(&ty)))
                 && CallableKind::from_captures(&captures) <= callable_kind
                 && callable_kind <= *kind
                 && ty(signature.params[1].semantic_ty) == Some(packed)
@@ -216,10 +234,10 @@ pub fn payload_drop_plan(
         if !super::object_runtime_type_is_valid(contract, tc, ty) || !active.insert(ty) {
             return Err("invalid or recursively unsized payload layout".into());
         }
-        let structural = contract.normalize_type(tc, &tc.type_for(ty));
+        let structural = contract.normalize_storage_type(tc, &tc.type_for(ty));
         let children = match &structural {
             Type::Exists(_) => MirPayloadDropChildren::Package,
-            Type::Tuple(fields) => {
+            Type::Tuple(fields) | Type::StructRepresentation { fields, .. } => {
                 let mut plans = Vec::new();
                 for field in fields {
                     let field = super::intern_backend_type(tc, field);
@@ -250,8 +268,28 @@ pub fn payload_drop_plan(
                 }
                 MirPayloadDropChildren::ClosureEnvironment {
                     fields,
-                    release: callable_environment_is_unique(&structural),
+                    release: callable_environment_is_owned(&structural),
                 }
+            }
+            Type::EnumRepresentation { id, variants, .. } => {
+                let Some(MirNominalLayout::Enum {
+                    variants: declared, ..
+                }) = contract.nominal_layouts.get(id)
+                else {
+                    return Err("payload enum layout missing".into());
+                };
+                let mut plans = Vec::new();
+                for (fields, declared) in variants.iter().zip(declared) {
+                    let payload = match &declared.fields {
+                        MirVariantLayoutFields::Positional(_) if fields.len() == 1 => {
+                            fields[0].clone()
+                        }
+                        _ => Type::Tuple(fields.clone()),
+                    };
+                    let payload = super::intern_backend_type(tc, &payload);
+                    plans.push(build(contract, tc, payload, active)?);
+                }
+                MirPayloadDropChildren::Variants(plans)
             }
             Type::Struct { id, args } | Type::Enum { id, args } => {
                 let layout = contract

@@ -196,18 +196,29 @@ impl<'ctx> CodeGen<'ctx> {
                 symbol, function.name
             ))
         })?;
-        let arg = if let Some(key) = self.drop_glue_callables_by_type.get(&place_ty) {
-            let param = self
-                .callable_signatures_by_key
-                .get(key)
-                .and_then(|signature| signature.params.first())
-                .cloned()
-                .ok_or_else(|| {
-                    CodegenError::backend_contract(
-                        "Drop glue callable is missing its receiver parameter",
-                    )
-                })?;
-            self.compile_mir_place_as_param(ctx, place, &param)?
+        let arg = if let Some(key) = self.mir_drop_callable(place_ty) {
+            if matches!(
+                key,
+                crate::mir::MirCallableKey::ObjectAdapter(
+                    crate::mir::MirObjectAdapterKey::PayloadDrop(_)
+                )
+            ) {
+                // The adapter's reference receiver addresses this value, not a
+                // reference already stored in the value's local slot.
+                self.compile_mir_place_address(ctx, place)?.into()
+            } else {
+                let param = self
+                    .callable_signatures_by_key
+                    .get(&key)
+                    .and_then(|signature| signature.params.first())
+                    .cloned()
+                    .ok_or_else(|| {
+                        CodegenError::backend_contract(
+                            "Drop glue callable is missing its receiver parameter",
+                        )
+                    })?;
+                self.compile_mir_place_as_param(ctx, place, &param)?
+            }
         } else {
             BasicMetadataValueEnum::from(self.compile_mir_place_value(ctx, place)?)
         };
@@ -305,6 +316,7 @@ impl<'ctx> CodeGen<'ctx> {
         } else {
             matches!(self.mir_operand_ty(ctx, func)?, Type::Function { ret, .. } if matches!(ret.as_ref(), Type::Never))
         };
+        let mut environment_to_release = None;
         let result = if let Operand::Constant(Constant::Callable(callable)) = func {
             if let Some(intrinsic) = Self::mir_callable_intrinsic(callable) {
                 let (_, destination_ty_id) = self.compile_mir_place_local_id(ctx, destination)?;
@@ -373,6 +385,14 @@ impl<'ctx> CodeGen<'ctx> {
             }
         } else {
             let callable_ty = self.mir_operand_ty(ctx, func)?;
+            let callable_ty_id = self.mir_operand_ty_id(ctx, func)?;
+            let release_environment = matches!(
+                &callable_ty,
+                Type::Function {
+                    callable_kind: crate::types::CallableKind::FnOnce,
+                    ..
+                }
+            ) && crate::mir::callable_environment_is_owned(&callable_ty);
             let Type::Function {
                 params: param_types,
                 ret: ret_ty,
@@ -384,7 +404,18 @@ impl<'ctx> CodeGen<'ctx> {
                     self.display_type_for_diagnostic(&callable_ty)
                 )));
             };
-            let callable_val = self.compile_mir_operand(function, ctx, func)?;
+            let callable_val = if release_environment {
+                self.compile_mir_operand(function, ctx, func)?
+            } else {
+                // Fn/FnMut borrow their carrier; Copy here is a read, not a
+                // second owning value with an independently scheduled cleanup.
+                let (Operand::Copy(place) | Operand::Move(place)) = func else {
+                    return Err(CodegenError::backend_contract(
+                        "indirect callee has no place",
+                    ));
+                };
+                self.compile_mir_place_value(ctx, place)?
+            };
             let expected_param_ids = param_types
                 .iter()
                 .map(|ty| self.type_context().id_for_type(ty))
@@ -417,6 +448,9 @@ impl<'ctx> CodeGen<'ctx> {
                         CodegenError::from(format!("Failed to extract MIR callable env: {}", e))
                     })?
                     .into_pointer_value();
+                if release_environment {
+                    environment_to_release = Some((callable_val, callable_ty_id));
+                }
                 (code_ptr, env_ptr)
             } else {
                 (callable_val.into_pointer_value(), ptr_ty.const_null())
@@ -458,6 +492,11 @@ impl<'ctx> CodeGen<'ctx> {
                 })?;
         }
 
+        if let Some((callable, concrete)) = environment_to_release {
+            // The body consumes/drops owned captures; only their allocation is
+            // released here, after transporting the result out of that storage.
+            self.cleanup_consumed_callable(callable, concrete)?;
+        }
         self.builder
             .build_unconditional_branch(self.mir_target_block(ctx, target, "call")?)
             .map(|_| ())
@@ -521,10 +560,8 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 match arg {
-                    Operand::Copy(place) | Operand::Move(place) => {
-                        self.compile_mir_place_as_param(ctx, place, param)
-                    }
-                    Operand::Constant(_) => {
+                    Operand::Move(place) => self.compile_mir_place_as_param(ctx, place, param),
+                    Operand::Copy(_) | Operand::Constant(_) => {
                         let temp = self
                             .builder
                             .build_alloca(self.llvm_type_id(param.semantic_ty), "mir_pointer_arg")

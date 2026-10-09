@@ -19,6 +19,7 @@ mod objects;
 mod owner_coercion;
 pub mod paths;
 pub(crate) mod pipeline;
+pub(crate) mod place;
 pub(crate) mod prelude;
 pub mod program;
 pub(crate) mod resolution;
@@ -364,6 +365,7 @@ impl Lowerer {
     ) {
         let owner = self.current_body_def_id().or_else(|| match &target {
             crate::source_map::SourceSymbol::Generic(generic) => Some(generic.owner),
+            crate::source_map::SourceSymbol::Witness(witness) => Some(witness.owner),
             _ => None,
         });
         let scope_id = self.source_scope_stack.last().copied();

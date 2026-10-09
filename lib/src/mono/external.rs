@@ -169,6 +169,33 @@ impl Monomorphizer {
             .collect::<Vec<_>>();
         impls.sort_by_key(|imp| imp.id);
         self.collect_impls_with_crate_capabilities(&impls, crate_ctx);
+        for dependency in crate_ctx.extern_crates() {
+            for implementation in &impls {
+                if implementation.id.crate_id != dependency.crate_id()
+                    || !implementation.type_generics.is_empty()
+                {
+                    continue;
+                }
+                for method in implementation
+                    .methods
+                    .values()
+                    .filter(|method| !method.generic_params.is_empty())
+                {
+                    match dependency.imported_polymorphic_member_symbol(implementation, method) {
+                        Ok(Some(symbol)) => {
+                            self.imported_member_symbols.insert(method.id, symbol);
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            self.diagnostics.push(
+                                crate::diagnostic::Diagnostic::for_internal(error)
+                                    .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         self.register_imported_impl_instances(&impls, crate_ctx);
 
         let mut all_funcs = program
@@ -209,6 +236,7 @@ impl Monomorphizer {
             }
         }
 
+        self.retained_callable_inputs = self.definition_callable_inputs();
         let mut function_ids = self.concrete_functions.keys().copied().collect::<Vec<_>>();
         function_ids.sort();
         for id in function_ids {
@@ -237,6 +265,12 @@ impl Monomorphizer {
         concrete_methods.sort_by_key(|(impl_id, method_id, _, _, _)| (*impl_id, *method_id));
         for (_, _, imp, name, method) in concrete_methods {
             self.register_impl_method_instance(&imp, &name, &method);
+        }
+        if let Err(error) = self.prepare_polymorphic_members(program) {
+            self.diagnostics.push(
+                crate::diagnostic::Diagnostic::for_internal(error)
+                    .with_code(crate::diagnostic::DiagnosticCode::Mono),
+            );
         }
 
         let mut impl_ids = program.impls.keys().copied().collect::<Vec<_>>();
@@ -1024,6 +1058,8 @@ mod tests {
             std::mem::replace(&mut mono.instances, crate::mono::InstanceRegistry::new())
                 .into_parts();
         crate::mono::MonomorphizedProgram {
+            callable_input_obligations: mono.definition_callable_inputs(),
+            native_return_origins: Default::default(),
             erased: mono.erased.clone(),
             erased_invocations: mono.erased_invocations.clone(),
             owned_object_calls: mono.owned_object_calls.clone(),

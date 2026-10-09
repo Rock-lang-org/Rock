@@ -195,6 +195,96 @@ pub enum CallableKind {
     FnOnce,
 }
 
+/// Portable dependencies; argument ordinals are never producer-local IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum CallableResultSource {
+    ArgumentValue(u32),
+    ArgumentContents(u32),
+    ArgumentBorrowedContents(u32),
+    /// References carried by the environment, not a loan of its owned storage.
+    EnvironmentValue,
+    EnvironmentContents,
+    EnvironmentBorrowedContents,
+    /// A loan of the callable's own environment, distinct from carried values.
+    EnvironmentStorage,
+    Static,
+    Unknown,
+}
+
+/// A result-origin obligation, not capture/layout, retention or effect evidence.
+/// Only checked bodies/bindings may discharge a declared dependency envelope.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum CallableResultBorrowing {
+    #[default]
+    Unknown,
+    /// Sorted, unique upper bound. An empty list is an explicit independence
+    /// obligation; absence of a contract must never become this list.
+    // Keep optional authority pointer-sized: Type is recursively copied through
+    // frontend passes, including on the default-sized compiler test stack.
+    #[allow(clippy::box_collection)]
+    Sources(Box<Vec<CallableResultSource>>),
+}
+
+impl CallableResultBorrowing {
+    /// Join result alternatives; reverse the order for callback parameter slots.
+    pub fn merge(&self, other: &Self, covariant: bool) -> Self {
+        match (self, other) {
+            (Self::Unknown, _) | (_, Self::Unknown) if covariant => Self::Unknown,
+            (Self::Unknown, known) | (known, Self::Unknown) => known.clone(),
+            (Self::Sources(left), Self::Sources(right)) => {
+                let left = left
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>();
+                let right = right
+                    .iter()
+                    .copied()
+                    .collect::<std::collections::BTreeSet<_>>();
+                Self::Sources(Box::new(if covariant {
+                    left.union(&right).copied().collect()
+                } else {
+                    left.intersection(&right).copied().collect()
+                }))
+            }
+        }
+    }
+
+    pub fn sources_are_valid(
+        &self,
+        parameter_count: usize,
+        contents_parameter: impl Fn(u32) -> bool,
+    ) -> bool {
+        let Self::Sources(sources) = self else {
+            return true;
+        };
+        if sources.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return false;
+        }
+        sources.iter().all(|source| match source {
+            CallableResultSource::ArgumentValue(index) => (*index as usize) < parameter_count,
+            CallableResultSource::ArgumentContents(index)
+            | CallableResultSource::ArgumentBorrowedContents(index) => {
+                (*index as usize) < parameter_count && contents_parameter(*index)
+            }
+            _ => true,
+        })
+    }
+
+    /// A weaker expected envelope may forget evidence, never manufacture it.
+    pub fn accepts(&self, actual: &Self) -> bool {
+        match (self, actual) {
+            (Self::Unknown, _) => true,
+            (Self::Sources(_), Self::Unknown) => false,
+            (Self::Sources(expected), Self::Sources(actual)) => actual
+                .iter()
+                .all(|source| expected.binary_search(source).is_ok()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod callable_result_tests;
+
 impl CallableKind {
     pub fn from_captures(captures: &[FunctionCapture]) -> Self {
         captures
@@ -279,7 +369,8 @@ pub enum Type {
         ret: Box<Type>,
         safety: FunctionSafety,
         callable_kind: CallableKind,
-        captures: Vec<FunctionCapture>,
+        captures: Box<[FunctionCapture]>,
+        result_borrowing: CallableResultBorrowing,
     },
     /// Named struct type
     Struct {
@@ -343,6 +434,21 @@ pub enum Type {
     },
     /// An error type placeholder (for error recovery)
     Error,
+    /// A constructed nominal value with measured field representations, in
+    /// declaration order. Arguments retain their semantic meaning; fields are
+    /// storage evidence, not generic bindings or callable input authority.
+    StructRepresentation {
+        id: DefId,
+        args: Vec<Type>,
+        fields: Vec<Type>,
+    },
+    /// Measured payload fields in declaration/variant order; arguments remain
+    /// semantic bindings, and only the active variant owns its payload.
+    EnumRepresentation {
+        id: DefId,
+        args: Vec<Type>,
+        variants: Vec<Vec<Type>>,
+    },
 }
 
 struct DefIdRemapper<'a, F> {
@@ -357,7 +463,11 @@ where
 
     fn try_fold_type(&mut self, mut ty: Type) -> Result<Type, E> {
         match &mut ty {
-            Type::Struct { id, .. } | Type::Enum { id, .. } | Type::Constructor { id, .. } => {
+            Type::Struct { id, .. }
+            | Type::StructRepresentation { id, .. }
+            | Type::Enum { id, .. }
+            | Type::EnumRepresentation { id, .. }
+            | Type::Constructor { id, .. } => {
                 *id = (self.remap)(*id)?;
             }
             Type::Projection {
@@ -482,7 +592,8 @@ impl Type {
             ret: Box::new(ret),
             safety,
             callable_kind,
-            captures,
+            captures: captures.into_boxed_slice(),
+            result_borrowing: CallableResultBorrowing::Unknown,
         }
     }
 

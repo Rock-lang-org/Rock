@@ -1491,7 +1491,7 @@ fn runtime_requirements_are_derived_from_mir_and_consumed_by_codegen() {
     assert_present(
         &backend_requirements,
         &[
-            "runtime_requirements_for_functions(functions)",
+            "runtime_requirements_for_functions(functions.iter().copied())",
             "contract.callables.values()",
             "descriptor.drop.requires_heap_free()",
             "MirRuntimeHelper::HeapFree",

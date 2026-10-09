@@ -32,12 +32,16 @@ pub enum NormalizeError {
     NotApplicable { kind: Kind },
     NonCanonicalType { normalized: Type },
     ConflictingObjectBinding(crate::types::ObjectAssociatedType),
+    InvalidCallableResultBorrowing,
     Substitution(crate::type_services::substitution::SubstitutionError),
 }
 
 impl std::fmt::Display for NormalizeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidCallableResultBorrowing => {
+                write!(f, "invalid callable result borrowing contract")
+            }
             Self::Substitution(error) => write!(f, "type substitution failed: {error}"),
             Self::ConflictingObjectBinding(_) => {
                 write!(f, "conflicting associated-type bindings in trait object")
@@ -271,25 +275,50 @@ impl<'a> TypeNormalizer<'a> {
                 safety,
                 callable_kind,
                 captures,
-            } => Ok(Type::Function {
-                params: params
+                result_borrowing,
+            } => {
+                let params = params
                     .into_iter()
                     .map(|ty| self.normalize_inner(ty, depth + 1))
-                    .collect::<Result<_, _>>()?,
-                ret: Box::new(self.normalize_inner(*ret, depth + 1)?),
-                safety,
-                callable_kind,
-                captures: captures
-                    .into_iter()
-                    .map(|mut capture| {
-                        capture.ty = self.normalize_inner(capture.ty, depth + 1)?;
-                        Ok(capture)
-                    })
-                    .collect::<Result<_, NormalizeError>>()?,
-            }),
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !result_borrowing.sources_are_valid(params.len(), |index| {
+                    matches!(
+                        params.get(index as usize),
+                        Some(Type::Reference { .. } | Type::Pointer(_))
+                    )
+                }) {
+                    return Err(NormalizeError::InvalidCallableResultBorrowing);
+                }
+                Ok(Type::Function {
+                    params,
+                    ret: Box::new(self.normalize_inner(*ret, depth + 1)?),
+                    safety,
+                    callable_kind,
+                    result_borrowing,
+                    captures: captures
+                        .into_vec()
+                        .into_iter()
+                        .map(|mut capture| {
+                            capture.ty = self.normalize_inner(capture.ty, depth + 1)?;
+                            Ok(capture)
+                        })
+                        .collect::<Result<_, NormalizeError>>()?,
+                })
+            }
             Type::Struct { id, args } => Ok(Type::Struct {
                 id,
                 args: args
+                    .into_iter()
+                    .map(|ty| self.normalize_inner(ty, depth + 1))
+                    .collect::<Result<_, _>>()?,
+            }),
+            Type::StructRepresentation { id, args, fields } => Ok(Type::StructRepresentation {
+                id,
+                args: args
+                    .into_iter()
+                    .map(|ty| self.normalize_inner(ty, depth + 1))
+                    .collect::<Result<_, _>>()?,
+                fields: fields
                     .into_iter()
                     .map(|ty| self.normalize_inner(ty, depth + 1))
                     .collect::<Result<_, _>>()?,
@@ -299,6 +328,22 @@ impl<'a> TypeNormalizer<'a> {
                 args: args
                     .into_iter()
                     .map(|ty| self.normalize_inner(ty, depth + 1))
+                    .collect::<Result<_, _>>()?,
+            }),
+            Type::EnumRepresentation { id, args, variants } => Ok(Type::EnumRepresentation {
+                id,
+                args: args
+                    .into_iter()
+                    .map(|ty| self.normalize_inner(ty, depth + 1))
+                    .collect::<Result<_, _>>()?,
+                variants: variants
+                    .into_iter()
+                    .map(|fields| {
+                        fields
+                            .into_iter()
+                            .map(|ty| self.normalize_inner(ty, depth + 1))
+                            .collect::<Result<_, _>>()
+                    })
                     .collect::<Result<_, _>>()?,
             }),
             Type::Reference { mutable, inner } => Ok(Type::Reference {
@@ -664,6 +709,10 @@ fn type_children(ty: &Type) -> Vec<&Type> {
             .chain(captures.iter().map(|capture| &capture.ty))
             .collect(),
         Type::Struct { args, .. } | Type::Enum { args, .. } => args.iter().collect(),
+        Type::StructRepresentation { args, fields, .. } => args.iter().chain(fields).collect(),
+        Type::EnumRepresentation { args, variants, .. } => {
+            args.iter().chain(variants.iter().flatten()).collect()
+        }
         Type::Projection { ty, trait_args, .. } => std::iter::once(ty.as_ref())
             .chain(trait_args.iter())
             .collect(),
@@ -688,11 +737,13 @@ fn map_type_children(ty: &Type, map: &mut impl FnMut(&Type) -> Type) -> Type {
             safety,
             callable_kind,
             captures,
+            result_borrowing,
         } => Type::Function {
             params: params.iter().map(&mut *map).collect(),
             ret: Box::new(map(ret)),
             safety: *safety,
             callable_kind: *callable_kind,
+            result_borrowing: result_borrowing.clone(),
             captures: captures
                 .iter()
                 .cloned()
@@ -706,9 +757,22 @@ fn map_type_children(ty: &Type, map: &mut impl FnMut(&Type) -> Type) -> Type {
             id: *id,
             args: args.iter().map(&mut *map).collect(),
         },
+        Type::StructRepresentation { id, args, fields } => Type::StructRepresentation {
+            id: *id,
+            args: args.iter().map(&mut *map).collect(),
+            fields: fields.iter().map(&mut *map).collect(),
+        },
         Type::Enum { id, args } => Type::Enum {
             id: *id,
             args: args.iter().map(&mut *map).collect(),
+        },
+        Type::EnumRepresentation { id, args, variants } => Type::EnumRepresentation {
+            id: *id,
+            args: args.iter().map(&mut *map).collect(),
+            variants: variants
+                .iter()
+                .map(|fields| fields.iter().map(&mut *map).collect())
+                .collect(),
         },
         Type::Reference { mutable, inner } => Type::Reference {
             mutable: *mutable,

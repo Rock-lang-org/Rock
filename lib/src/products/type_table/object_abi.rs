@@ -10,6 +10,46 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SerializedProductLinkData {
+    pub native_return_origins: BTreeMap<ProductDefId, crate::hir::borrowing::NativeReturnOrigins<ProductTypeId>>,
+    pub runtime_support: std::collections::BTreeSet<crate::products::ProductRuntimeSupport>,
+    pub object_path: Option<std::path::PathBuf>,
+    pub records: BTreeMap<ProductDefId, SerializedProductLinkRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SerializedProductLinkRecord {
+    pub backend_symbol: String,
+    pub polymorphic_member: Option<(u64, crate::mir::MirErasedMemberEntry<ProductTypeId>)>,
+}
+
+impl SerializedProductLinkData {
+    pub(super) fn encode(link: &crate::products::ProductLinkData, encoder: &mut ProductTypeEncoder) -> Result<Self, String> {
+        Ok(Self { native_return_origins: link.native_return_origins.iter().map(|(id, origins)|
+                Ok((*id, origins.map_types(&mut |ty| encoder.encode_type(ty))?))).collect::<Result<_, String>>()?,
+            runtime_support: link.runtime_support.clone(), object_path: link.object_path.clone(),
+            records: link.records.iter().map(|(id, record)| {
+                let polymorphic_member = record.polymorphic_member.as_ref().map(|member| {
+                    Ok::<_, String>((member.abi, member.entry.map_types(&mut |ty| encoder.encode_type(ty))?))
+                }).transpose()?;
+                Ok((*id, SerializedProductLinkRecord { backend_symbol: record.backend_symbol.clone(), polymorphic_member }))
+            }).collect::<Result<_, String>>()? })
+    }
+
+    pub(super) fn decode(self, decoder: &mut ProductTypeDecoder<'_>) -> Result<crate::products::ProductLinkData, String> {
+        Ok(crate::products::ProductLinkData { native_return_origins: self.native_return_origins.into_iter().map(|(id, origins)|
+                Ok((id, origins.map_types(&mut |id| decoder.decode_type(*id))?))).collect::<Result<_, String>>()?,
+            runtime_support: self.runtime_support, object_path: self.object_path,
+            records: self.records.into_iter().map(|(id, record)| {
+                let polymorphic_member = record.polymorphic_member.map(|(abi, entry)| {
+                    Ok::<_, String>(crate::products::ProductPolymorphicMemberLink { abi, entry: entry.map_types(&mut |id| decoder.decode_type(*id))? })
+                }).transpose()?;
+                Ok((id, crate::products::ProductLinkRecord { backend_symbol: record.backend_symbol, polymorphic_member }))
+            }).collect::<Result<_, String>>()? })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SerializedObjectAbi {
     pub version: u32,
     pub target: Option<String>,

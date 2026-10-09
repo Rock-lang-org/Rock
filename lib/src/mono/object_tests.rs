@@ -13,7 +13,7 @@ fn bound(index: u32) -> TraitBound {
 }
 
 #[test]
-fn schemas_include_arbitrary_guarantee_subsets_with_exact_associated_bindings() {
+fn factored_trait_evidence_admits_unmaterialized_subsets_with_exact_bindings() {
     let mut mono = Monomorphizer::new();
     let mut object = ObjectType::new(bound(1));
     object.guarantees.extend([bound(2), bound(3)]);
@@ -57,11 +57,22 @@ fn schemas_include_arbitrary_guarantee_subsets_with_exact_associated_bindings() 
             .cloned(),
     );
     let target_ty = Type::Object(Box::new(target));
-    let target_id = mono
-        .type_context
-        .id_for_type(&target_ty)
-        .expect("all producer-admissible views must exist without observing an upcast call");
-    assert!(mono.object_schemas[&source].views.contains(&target_id));
+    assert!(
+        mono.type_context.id_for_type(&target_ty).is_none(),
+        "a producer must not enumerate consumer-selected guarantee subsets"
+    );
+    assert_eq!(
+        mono.object_schemas.len(),
+        4,
+        "one source and three independent trait schemas"
+    );
+    assert_eq!(mono.object_schemas[&source].views.len(), 3);
+    let target_id = mono.ensure_object_schema(&target_ty).unwrap();
+    assert!(crate::mir::object::object_view_is_admitted(
+        &mono.type_context,
+        source,
+        target_id
+    ));
     assert_eq!(mono.type_for(target_id), target_ty);
     let mut changed_binding = mono.type_for(target_id);
     let Type::Object(object) = &mut changed_binding else {
@@ -76,10 +87,51 @@ fn schemas_include_arbitrary_guarantee_subsets_with_exact_associated_bindings() 
     object.bindings.remove(&binding);
     binding.ty = Type::U8;
     object.bindings.insert(binding);
-    assert!(!mono.object_schemas[&source]
-        .views
-        .iter()
-        .any(|id| mono.type_for(*id) == changed_binding));
+    let changed_id = mono.intern_type(&changed_binding);
+    assert!(
+        !crate::mir::object::object_view_is_admitted(&mono.type_context, source, changed_id),
+        "factoring cannot erase the associated binding proof"
+    );
+}
+
+#[test]
+fn independent_trait_evidence_scales_linearly_without_upcast_consumers() {
+    for count in [1, 3, 5, 7, 32] {
+        let mut mono = Monomorphizer::new();
+        let mut object = ObjectType::new(bound(1));
+        for index in 1..=count {
+            mono.object_traits.insert(
+                bound(index).trait_id,
+                HirTraitFor::<AcceptedHir> {
+                    id: bound(index).trait_id,
+                    name: format!("Trait{index}"),
+                    generic_params: vec![],
+                    target: None,
+                    predicates: vec![],
+                    associated_types: vec![],
+                    methods: HashMap::new(),
+                    signatures: HashMap::new(),
+                },
+            );
+            if index != 1 {
+                object.guarantees.insert(bound(index));
+            }
+        }
+        let source = mono
+            .ensure_object_schema(&Type::Object(Box::new(object)))
+            .unwrap();
+        assert_eq!(
+            mono.object_schemas.len(),
+            if count == 1 { 1 } else { count as usize + 1 }
+        );
+        let edges = mono
+            .object_schemas
+            .values()
+            .map(|schema| schema.views.len())
+            .sum::<usize>();
+        assert_eq!(edges, if count == 1 { 0 } else { count as usize });
+        assert!(mono.object_schemas[&source].views.len() <= count as usize);
+    }
 }
 
 #[test]

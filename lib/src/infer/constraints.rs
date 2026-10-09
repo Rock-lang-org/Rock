@@ -92,6 +92,13 @@ pub enum Constraint {
         return_ty: Type,
         span: Span,
     },
+    /// One source dereference; result evidence cannot choose its input kind.
+    Dereference {
+        input: Type,
+        output: Type,
+        unsafe_allowed: bool,
+        span: Span,
+    },
 }
 
 /// Accumulated type constraints produced during lowering.
@@ -199,6 +206,22 @@ impl ConstraintStore {
             output,
             residual,
             return_ty,
+            span,
+        });
+        self.push_obligation()
+    }
+
+    pub fn add_dereference(
+        &mut self,
+        input: Type,
+        output: Type,
+        unsafe_allowed: bool,
+        span: Span,
+    ) -> ObligationId {
+        self.constraints.push(Constraint::Dereference {
+            input,
+            output,
+            unsafe_allowed,
             span,
         });
         self.push_obligation()
@@ -395,7 +418,8 @@ impl ConstraintStore {
             Constraint::Trait { .. }
             | Constraint::Equality { .. }
             | Constraint::Coercion { .. }
-            | Constraint::Try { .. } => false,
+            | Constraint::Try { .. }
+            | Constraint::Dereference { .. } => false,
         })
     }
 }
@@ -519,6 +543,14 @@ fn collect_constraint_vars(constraint: &Constraint, output: &mut HashSet<TypeVar
             collect_type_vars(left, output);
             collect_type_vars(right, output);
         }
+        Constraint::Dereference {
+            input,
+            output: result,
+            ..
+        } => {
+            collect_type_vars(input, output);
+            collect_type_vars(result, output);
+        }
         Constraint::Coercion {
             actual, expected, ..
         } => {
@@ -560,6 +592,16 @@ fn collect_type_vars(ty: &Type, output: &mut HashSet<TypeVarId>) {
         Type::Tuple(items) | Type::Struct { args: items, .. } | Type::Enum { args: items, .. } => {
             for item in items {
                 collect_type_vars(item, output);
+            }
+        }
+        Type::StructRepresentation { args, fields, .. } => {
+            for child in args.iter().chain(fields) {
+                collect_type_vars(child, output);
+            }
+        }
+        Type::EnumRepresentation { args, variants, .. } => {
+            for child in args.iter().chain(variants.iter().flatten()) {
+                collect_type_vars(child, output);
             }
         }
         Type::Function {

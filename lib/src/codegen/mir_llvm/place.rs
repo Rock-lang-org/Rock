@@ -80,10 +80,13 @@ impl<'ctx> CodeGen<'ctx> {
                     let aggregate_ty = self.llvm_type(&current_ty);
                     let field_ty =
                         self.mir_field_projection_ty(&current_ty, *index)
-                            .map_err(|_err| {
+                            .map_err(|error| {
                                 CodegenError::layout(format!(
                                     "invalid MIR field projection while lowering function {}",
                                     ctx.function.get_name().to_string_lossy()
+                                ))
+                                .with_note(format!(
+                                    "{error}; storage {current_ty:?}; place {place:?}"
                                 ))
                             })?;
                     current_pointer = self
@@ -275,15 +278,19 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
                 Projection::Downcast(variant_id) => {
-                    let Type::Enum { id, args } = &current_ty else {
+                    let (Type::Enum { id, .. } | Type::EnumRepresentation { id, .. }) = &current_ty
+                    else {
                         return Err(CodegenError::layout(format!(
-                            "MIR downcast projection expected enum, got {}",
-                            self.display_type_for_diagnostic(&current_ty)
+                            "MIR downcast projection expected enum, got {} ({:?}) in {} at {:?}",
+                            self.display_type_for_diagnostic(&current_ty),
+                            current_ty,
+                            ctx.function.get_name().to_string_lossy(),
+                            place
                         )));
                     };
                     let variant_index = variant_id.0 as usize;
                     let payload_ty = self
-                        .enum_variant_payload_type_by_id(*id, args, variant_index)
+                        .enum_payload_storage_type(&current_ty, variant_index)
                         .ok_or_else(|| {
                             CodegenError::layout(format!(
                                 "Unknown MIR enum variant {}",
@@ -352,9 +359,11 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn mir_field_projection_ty(&self, ty: &Type, index: usize) -> Result<Type, CodegenError> {
         match ty {
-            Type::Tuple(fields) => fields.get(index).cloned().ok_or_else(|| {
-                CodegenError::from(format!("MIR tuple field index {} is out of bounds", index))
-            }),
+            Type::Tuple(fields) | Type::StructRepresentation { fields, .. } => {
+                fields.get(index).cloned().ok_or_else(|| {
+                    CodegenError::from(format!("MIR tuple field index {} is out of bounds", index))
+                })
+            }
             Type::Struct { id, args } => {
                 let fields = self
                     .struct_layouts_by_id

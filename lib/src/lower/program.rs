@@ -9,6 +9,14 @@ use crate::lower::pipeline::LoweringPipeline;
 use crate::lower::resolution::LowerResolutionContext;
 use crate::lower::{collect_exports, path_names, Lowerer};
 
+enum ModuleBody<'a> {
+    Function(&'a ast::FunctionDecl),
+    ImplMethod {
+        declaration: &'a ast::Impl,
+        impl_id: crate::ids::DefId,
+    },
+}
+
 #[allow(dead_code)]
 impl Lowerer {
     pub fn lower_program(
@@ -279,8 +287,9 @@ impl Lowerer {
             module,
             module_prefix,
             |lowerer| {
-                // Lower impl method bodies FIRST so their return types are resolved
-                // before function bodies reference them (e.g. `x.println!`)
+                // Schedule source-backed functions and associated methods together:
+                // a forward static call needs its callee's inferred signature first.
+                let mut bodies = Vec::new();
                 for (ordinal, top_level) in module.top_levels.iter().enumerate() {
                     let ast::TopLevel::Impl(imp) = top_level else {
                         continue;
@@ -297,10 +306,27 @@ impl Lowerer {
                         );
                         continue;
                     }
-                    lowerer.lower_impl_bodies(imp, record.def_id);
+                    let impl_id = record.def_id;
+                    for (method_ident, _) in &imp.methods {
+                        let Some(method_id) = lowerer
+                            .items
+                            .impl_def(impl_id)
+                            .and_then(|implementation| implementation.methods.get(&method_ident.name))
+                            .map(|method| method.id)
+                        else {
+                            lowerer.diagnostics.push_toolchain(format!(
+                                "missing indexed impl method '{}' while scheduling bodies",
+                                method_ident.name,
+                            ));
+                            continue;
+                        };
+                        bodies.push((method_id, ModuleBody::ImplMethod {
+                            declaration: imp,
+                            impl_id,
+                        }));
+                    }
                 }
 
-                // Now lower function bodies (after impl methods are resolved)
                 for (ordinal, top_level) in module.top_levels.iter().enumerate() {
                     let ast::TopLevel::FunctionDecl(fd) = top_level else {
                         continue;
@@ -318,7 +344,24 @@ impl Lowerer {
                         );
                         continue;
                     }
-                    lowerer.lower_function_body_qualified(fd, record.def_id, module_prefix);
+                    bodies.push((record.def_id, ModuleBody::Function(fd)));
+                }
+                bodies.sort_by_key(|(id, body)| {
+                    (
+                        crate::lower::body_lowerer::body_dependency_rank(lowerer, *id),
+                        matches!(body, ModuleBody::Function(_)),
+                        *id,
+                    )
+                });
+                for (id, body) in bodies {
+                    match body {
+                        ModuleBody::Function(fd) => {
+                            lowerer.lower_function_body_qualified(fd, id, module_prefix);
+                        }
+                        ModuleBody::ImplMethod { declaration, impl_id } => {
+                            lowerer.lower_impl_method_body(declaration, impl_id, id);
+                        }
+                    }
                 }
 
                 // Recurse into sub-modules (inline Module declarations and `mod name` files)

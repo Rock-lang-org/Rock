@@ -12,6 +12,9 @@ pub enum AccessKind {
     Move,
     BorrowShared,
     BorrowMut,
+    /// Checked call-result views, not new borrows of an input's storage.
+    ReturnedShared,
+    ReturnedMut,
     Drop,
     CaptureShared,
     CaptureMut,

@@ -1,6 +1,7 @@
 //! Typed object-handle and unique-owner call ABI. Slots retain producer order.
 use crate::ids::{DefId, TypeId};
-use crate::types::ReceiverMode;
+use crate::type_context::TypeContext;
+use crate::types::{ReceiverMode, Type};
 
 use super::{MirCallableKey, MirCallableSignature};
 
@@ -27,7 +28,12 @@ pub fn object_runtime_type_is_valid(
 ) -> bool {
     if tc.type_id_tree_is_valid(id)
         && !crate::type_services::visit::type_any(&tc.type_for(id), |ty| {
-            matches!(ty, crate::types::Type::Exists(_))
+            matches!(
+                ty,
+                crate::types::Type::Exists(_)
+                    | crate::types::Type::StructRepresentation { .. }
+                    | crate::types::Type::EnumRepresentation { .. }
+            )
         })
         && object_runtime_type_is_valid_for_schemas(&contract.object_schemas, tc, id)
     {
@@ -92,6 +98,84 @@ pub fn object_runtime_type_is_valid(
                 } else {
                     value(inner, contract, tc, visiting, true)
                 }
+            }
+            Type::StructRepresentation { id, args, fields } => {
+                let Some(super::MirNominalLayout::Struct {
+                    generic_params,
+                    fields: declared,
+                    ..
+                }) = contract.nominal_layouts.get(id)
+                else {
+                    return false;
+                };
+                if generic_params.len() != args.len()
+                    || declared.len() != fields.len()
+                    || !args.iter().all(|arg| metadata(arg, contract, tc))
+                    || !visiting.insert(ty.clone())
+                {
+                    return false;
+                }
+                let substitution = generic_params
+                    .iter()
+                    .copied()
+                    .zip(args.iter().cloned())
+                    .collect();
+                let valid = declared.iter().zip(fields).all(|((_, declared), actual)| {
+                    tc.type_id_tree_is_valid(*declared)
+                        && crate::type_services::callable::value_representation(
+                            &tc.type_for(*declared).substitute_generics(&substitution),
+                            actual,
+                        )
+                        .as_ref()
+                            == Some(actual)
+                        && value(actual, contract, tc, visiting, false)
+                });
+                visiting.remove(ty);
+                valid
+            }
+            Type::EnumRepresentation { id, args, variants } => {
+                let Some(super::MirNominalLayout::Enum {
+                    generic_params,
+                    variants: declared,
+                    ..
+                }) = contract.nominal_layouts.get(id)
+                else {
+                    return false;
+                };
+                if generic_params.len() != args.len()
+                    || declared.len() != variants.len()
+                    || !args.iter().all(|arg| metadata(arg, contract, tc))
+                    || !visiting.insert(ty.clone())
+                {
+                    return false;
+                }
+                let substitution = generic_params
+                    .iter()
+                    .copied()
+                    .zip(args.iter().cloned())
+                    .collect();
+                let valid = declared.iter().zip(variants).all(|(variant, fields)| {
+                    let declared = match &variant.fields {
+                        super::MirVariantLayoutFields::Unit => vec![],
+                        super::MirVariantLayoutFields::Positional(fields) => fields.clone(),
+                        super::MirVariantLayoutFields::Named(fields) => {
+                            fields.iter().map(|(_, ty)| *ty).collect()
+                        }
+                    };
+                    declared.len() == fields.len()
+                        && declared.iter().zip(fields).all(|(declared, actual)| {
+                            tc.type_id_tree_is_valid(*declared)
+                                && crate::type_services::callable::value_representation(
+                                    &tc.type_for(*declared).substitute_generics(&substitution),
+                                    actual,
+                                )
+                                .as_ref()
+                                    == Some(actual)
+                                && value(actual, contract, tc, visiting, false)
+                        })
+                });
+                visiting.remove(ty);
+                valid
             }
             Type::Struct { id, args } | Type::Enum { id, args } => {
                 if !args.iter().all(|arg| metadata(arg, contract, tc)) {
@@ -388,7 +472,7 @@ pub struct MirObjectSchema {
     pub object: TypeId,
     pub slots: Vec<MirObjectSlot>,
     pub erased_slots: Vec<super::MirErasedObjectSlot>,
-    /// Explicit target views, in producer-defined order.
+    /// Independent trait evidence, in producer-defined order, not subset tables.
     pub views: Vec<TypeId>,
 }
 
@@ -407,7 +491,29 @@ pub struct MirVtable {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirObjectConversion {
     Concrete(MirVtableId),
-    Upcast { source: TypeId, view: u32 },
+    Upcast { source: TypeId, target: TypeId },
+}
+
+/// A target uses a subset of the source's promises, including exact associated
+/// bindings. This checks evidence, not which subsets a producer precomputed.
+pub(crate) fn object_view_is_admitted(tc: &TypeContext, source: TypeId, target: TypeId) -> bool {
+    if !tc.type_id_tree_is_valid(source) || !tc.type_id_tree_is_valid(target) {
+        return false;
+    }
+    let (Type::Object(source), Type::Object(target)) = (tc.type_for(source), tc.type_for(target))
+    else {
+        return false;
+    };
+    let guarantees = std::iter::once(&source.principal)
+        .chain(source.guarantees.iter())
+        .collect::<std::collections::BTreeSet<_>>();
+    std::iter::once(&target.principal)
+        .chain(target.guarantees.iter())
+        .all(|bound| guarantees.contains(bound))
+        && target
+            .bindings
+            .iter()
+            .all(|binding| source.bindings.contains(binding))
 }
 
 /// Validate complete runtime evidence before either borrow checking or LLVM.
@@ -438,6 +544,33 @@ pub fn validate_object_contract(program: &super::MirProgram) -> Vec<MirObjectErr
                                 .bindings
                                 .iter()
                                 .all(|binding| source.bindings.contains(binding))
+                            && contract
+                                .object_schemas
+                                .get(view)
+                                .is_some_and(|target_schema| {
+                                    target_schema.slots.iter().all(|target| {
+                                        schema.slots.iter().any(|source| {
+                                            source.trait_id == target.trait_id
+                                                && source.member_id == target.member_id
+                                                && source.trait_args == target.trait_args
+                                                && source.receiver == target.receiver
+                                                && source.result == target.result
+                                                && source.signature.params.get(1..)
+                                                    == target.signature.params.get(1..)
+                                                && (source.result != MirObjectResult::Direct
+                                                    || source.signature.ret == target.signature.ret)
+                                        })
+                                    }) && target_schema.erased_slots.iter().all(|target| {
+                                        schema.erased_slots.iter().any(|source| {
+                                            source.trait_id == target.trait_id
+                                                && source.member_id == target.member_id
+                                                && source.trait_args == target.trait_args
+                                                && source.receiver == target.receiver
+                                                && source.result == target.result
+                                                && source.signature == target.signature
+                                        })
+                                    })
+                                })
                     }
                     _ => false,
                 })
@@ -805,14 +938,13 @@ fn validate_object_operations(
                                 }
                                 MirObjectConversion::Upcast {
                                     source: expected,
-                                    view,
+                                    target: expected_target,
                                 } => {
                                     source == *expected
-                                        && contract
-                                            .object_schemas
-                                            .get(expected)
-                                            .and_then(|schema| schema.views.get(*view as usize))
-                                            == Some(&target)
+                                        && target == *expected_target
+                                        && contract.object_schemas.contains_key(expected)
+                                        && contract.object_schemas.contains_key(expected_target)
+                                        && object_view_is_admitted(tc, source, target)
                                 }
                             }
                         },

@@ -8,6 +8,7 @@ use crate::Config;
 
 #[derive(Debug, Clone)]
 pub struct SourceDatabase {
+    diagnostic_files: BTreeMap<PathBuf, SourceFile>,
     registered_sources: BTreeMap<PathBuf, RegisteredSource>,
     files: BTreeMap<PathBuf, SourceFile>,
     modules: BTreeMap<PathBuf, ast::Module>,
@@ -244,6 +245,7 @@ impl FromIterator<LoadedModule> for SourceModuleSet {
 impl SourceDatabase {
     pub fn new() -> Self {
         Self {
+            diagnostic_files: BTreeMap::new(),
             registered_sources: BTreeMap::new(),
             files: BTreeMap::new(),
             modules: BTreeMap::new(),
@@ -257,7 +259,19 @@ impl SourceDatabase {
     }
 
     pub fn source_files(&self) -> impl Iterator<Item = &SourceFile> {
-        self.files.values()
+        self.files.values().chain(self.diagnostic_files.values())
+    }
+
+    /// Diagnostic-only text never enters parser/module loading or fingerprints.
+    pub(crate) fn add_artifact_diagnostic_source(&mut self, path: PathBuf, artifact_path: PathBuf, text: String) -> Result<(), String> {
+        if self.source_files().any(|file| (file.original_path == path || file.canonical_path == path || file.display_path == path) && file.text != text) {
+            return Err("conflicting artifact diagnostic source text".into());
+        }
+        self.diagnostic_files.insert(path.clone(), SourceFile {
+            original_path: path.clone(), canonical_path: path.clone(), display_path: path,
+            text, origin: SourceOrigin::Artifact { artifact_path },
+        });
+        Ok(())
     }
 
     pub fn add_virtual_source(&mut self, path: PathBuf, text: impl Into<String>) -> &mut Self {

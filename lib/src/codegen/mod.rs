@@ -11,6 +11,7 @@
 
 #![cfg_attr(not(test), allow(dead_code))]
 
+mod descriptor_runtime;
 mod intrinsics;
 pub(crate) mod mir_llvm;
 mod output;
@@ -303,6 +304,9 @@ pub(crate) struct CodegenEnumVariantLayout {
 }
 
 pub(crate) struct CodeGen<'ctx> {
+    descriptor_runtime_required: bool,
+    descriptor_nominal_runtime_required: bool,
+    dictionary_runtime_required: bool,
     package_schemas: std::collections::BTreeMap<TypeId, crate::mir::MirPackageSchema>,
     context: &'ctx Context,
     module: Module<'ctx>,
@@ -318,6 +322,8 @@ pub(crate) struct CodeGen<'ctx> {
         std::collections::BTreeMap<crate::mir::MirOwnedObjectKey, crate::mir::MirOwnedObjectPlan>,
     object_vtables:
         std::collections::BTreeMap<crate::mir::MirVtableId, inkwell::values::GlobalValue<'ctx>>,
+    object_entry_keys:
+        std::collections::BTreeMap<(TypeId, u32, u32), (inkwell::values::GlobalValue<'ctx>, u64)>,
     /// Known functions
     functions: HashMap<String, FunctionValue<'ctx>>,
     #[allow(dead_code)]
@@ -408,11 +414,21 @@ impl<'ctx> CodeGen<'ctx> {
         module_name: &str,
         symbol_namespace: Option<String>,
     ) -> Self {
+        #[cfg(test)]
+        {
+            // Static release builds need explicit registration before JIT tests.
+            static JIT_INIT: std::sync::Once = std::sync::Once::new();
+            JIT_INIT.call_once(inkwell::execution_engine::ExecutionEngine::link_in_mc_jit);
+        }
+
         let module = context.create_module(module_name);
         let builder = context.create_builder();
 
         Self {
             context,
+            descriptor_runtime_required: false,
+            descriptor_nominal_runtime_required: false,
+            dictionary_runtime_required: false,
             module,
             builder,
             type_context: None,
@@ -424,6 +440,7 @@ impl<'ctx> CodeGen<'ctx> {
             object_schemas: Default::default(),
             owned_object_calls: Default::default(),
             object_vtables: Default::default(),
+            object_entry_keys: Default::default(),
             functions: HashMap::new(),
             mir_function_symbols: HashMap::new(),
             callable_symbols_by_key: HashMap::new(),
@@ -509,10 +526,10 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(crate) fn resolve_mir_drop_glue_symbol(&self, ty: TypeId) -> Result<String, CodegenError> {
-        if let Some(key) = self.drop_glue_callables_by_type.get(&ty) {
+        if let Some(key) = self.mir_drop_callable(ty) {
             return self
                 .callable_symbols_by_key
-                .get(key)
+                .get(&key)
                 .cloned()
                 .ok_or_else(|| {
                     CodegenError::backend_contract(format!(
@@ -526,6 +543,19 @@ impl<'ctx> CodeGen<'ctx> {
             "Missing drop glue for MIR type {:?}",
             ty
         )))
+    }
+
+    fn mir_drop_callable(&self, ty: TypeId) -> Option<MirCallableKey> {
+        if matches!(self.structural_type_for(ty), Type::Function { captures, .. } if !captures.is_empty())
+        {
+            let key =
+                MirCallableKey::ObjectAdapter(crate::mir::MirObjectAdapterKey::PayloadDrop(ty));
+            return self
+                .callable_signatures_by_key
+                .contains_key(&key)
+                .then_some(key);
+        }
+        self.drop_glue_callables_by_type.get(&ty).cloned()
     }
 
     pub(crate) fn mir_drop_without_glue_is_noop(&self, ty: TypeId) -> bool {
@@ -576,6 +606,35 @@ impl<'ctx> CodeGen<'ctx> {
         let ptr_ty = self.context.ptr_type(AddressSpace::default());
         let i32_ty = self.context.i32_type();
         let i64_ty = self.context.i64_type();
+        if runtime_requirements.contains(&MirRuntimeHelper::SelectedDictionaryFactory) {
+            self.dictionary_runtime_required = true;
+            let symbol = crate::products::RuntimeRootSymbol::SelectedDictionaryFactoryV1.symbol();
+            let function =
+                self.module
+                    .add_function(symbol, i32_ty.fn_type(&[ptr_ty.into(); 5], false), None);
+            self.functions.insert(symbol.into(), function);
+        }
+        if runtime_requirements.contains(&MirRuntimeHelper::NominalDescriptorFactory) {
+            self.descriptor_nominal_runtime_required = true;
+            let symbol = crate::products::RuntimeRootSymbol::NominalDescriptorFactoryV1.symbol();
+            let function =
+                self.module
+                    .add_function(symbol, i32_ty.fn_type(&[ptr_ty.into(); 5], false), None);
+            self.functions.insert(symbol.into(), function);
+        }
+        if runtime_requirements.contains(&MirRuntimeHelper::TupleDescriptorFactory) {
+            self.descriptor_runtime_required = true;
+            let symbol = crate::products::RuntimeRootSymbol::TupleDescriptorFactoryV1.symbol();
+            let function = self.module.add_function(
+                symbol,
+                i32_ty.fn_type(
+                    &[ptr_ty.into(), i64_ty.into(), ptr_ty.into(), ptr_ty.into()],
+                    false,
+                ),
+                None,
+            );
+            self.functions.insert(symbol.into(), function);
+        }
 
         if runtime_requirements.contains(&MirRuntimeHelper::BoundsCheck) {
             if self.functions.get("puts").is_none() {
@@ -684,6 +743,11 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         self.validate_mir_backend_contract_type_ids(&mir.backend_contract, &mut messages);
+        let mut storage_report = crate::mir::agreement::MirAgreementReport::default();
+        crate::mir::agreement::validate_native_result_storage(mir, &mut storage_report);
+        if !storage_report.is_clean() {
+            messages.push(format!("invalid native result storage: {storage_report:?}"));
+        }
         self.validate_mir_drop_glue_contract(mir, &mut messages)?;
 
         if messages.is_empty() {
@@ -825,6 +889,30 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 let place_ty = self.mir_place_type_id_for_contract_validation(function, place)?;
+                if matches!(mir.type_context.type_for(place_ty), Type::Function { captures, .. } if !captures.is_empty())
+                {
+                    let key = MirCallableKey::ObjectAdapter(
+                        crate::mir::MirObjectAdapterKey::PayloadDrop(place_ty),
+                    );
+                    if mir
+                        .backend_contract
+                        .callable(&key)
+                        .is_some_and(|declaration| {
+                            crate::mir::object_adapter_is_valid(
+                                &mir.backend_contract,
+                                &mir.type_context,
+                                declaration,
+                            )
+                        })
+                    {
+                        continue;
+                    }
+                    messages.push(format!(
+                        "Missing complete environment drop contract for MIR callable type {:?} in MIR function '{}'",
+                        place_ty, function.name,
+                    ));
+                    continue;
+                }
                 if mir.backend_contract.packages.contains_key(&place_ty)
                     && crate::mir::package_schema_is_valid(
                         &mir.backend_contract,
@@ -977,14 +1065,15 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
                 crate::mir::Projection::Downcast(variant_id) => {
-                    let Type::Enum { id, args } = &current_ty else {
+                    let (Type::Enum { id, .. } | Type::EnumRepresentation { id, .. }) = &current_ty
+                    else {
                         return Err(CodegenError::from(format!(
                             "MIR downcast projection expected enum, got {}",
                             self.display_type_for_diagnostic(&current_ty)
                         )));
                     };
                     let payload_ty = self
-                        .enum_variant_payload_type_by_id(*id, args, variant_id.0 as usize)
+                        .enum_payload_storage_type(&current_ty, variant_id.0 as usize)
                         .ok_or_else(|| {
                             CodegenError::from(format!(
                                 "Unknown MIR enum DefId {:?} variant {}",
@@ -1009,9 +1098,11 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn mir_projection_field_type(&self, ty: &Type, index: usize) -> Result<Type, CodegenError> {
         match ty {
-            Type::Tuple(fields) => fields.get(index).cloned().ok_or_else(|| {
-                CodegenError::from(format!("MIR tuple field index {} is out of bounds", index))
-            }),
+            Type::Tuple(fields) | Type::StructRepresentation { fields, .. } => {
+                fields.get(index).cloned().ok_or_else(|| {
+                    CodegenError::from(format!("MIR tuple field index {} is out of bounds", index))
+                })
+            }
             Type::Struct { id, args } => {
                 let fields = self.struct_layouts_by_id.get(id).ok_or_else(|| {
                     CodegenError::from(format!("Unknown MIR struct DefId {:?}", id))

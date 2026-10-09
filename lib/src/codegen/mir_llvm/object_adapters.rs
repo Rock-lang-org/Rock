@@ -101,7 +101,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .build_extract_value(callable, 1, "object.callable.environment")
                         .map_err(|e| CodegenError::from(e.to_string()))?;
                     if *release_environment {
-                        environment_to_release = Some(env.into_pointer_value());
+                        environment_to_release = Some((callable.into(), *concrete));
                     }
                     let mut args: Vec<BasicMetadataValueEnum> = vec![env.into()];
                     if !params.is_empty() {
@@ -137,8 +137,8 @@ impl<'ctx> CodeGen<'ctx> {
             };
             let ret = self.structural_type_for(declaration.signature.ret.semantic_ty);
             if !matches!(ret, Type::Never) {
-                if let Some(environment) = environment_to_release {
-                    self.release_object_closure_environment(environment)?;
+                if let Some((callable, concrete)) = environment_to_release {
+                    self.cleanup_consumed_callable(callable, concrete)?;
                 }
             }
             if matches!(ret, Type::Never) {
@@ -329,7 +329,7 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    fn release_object_closure_environment(
+    pub(super) fn release_object_closure_environment(
         &self,
         environment: PointerValue<'ctx>,
     ) -> Result<(), CodegenError> {
@@ -340,5 +340,46 @@ impl<'ctx> CodeGen<'ctx> {
             .build_call(free, &[environment.into()], "payload.closure.release")
             .map(|_| ())
             .map_err(|e| CodegenError::from(e.to_string()))
+    }
+
+    pub(super) fn cleanup_consumed_callable(
+        &mut self,
+        callable: BasicValueEnum<'ctx>,
+        concrete: crate::ids::TypeId,
+    ) -> Result<(), CodegenError> {
+        let Type::Function { captures, .. } = self.structural_type_for(concrete) else {
+            return Err(CodegenError::backend_contract(
+                "consumed environment is not callable",
+            ));
+        };
+        if crate::types::CallableKind::from_captures(&captures)
+            == crate::types::CallableKind::FnOnce
+        {
+            // This body owns its capture locals and has already transferred or
+            // destroyed them using ordinary MIR flags.
+            let environment = self
+                .builder
+                .build_extract_value(callable.into_struct_value(), 1, "consumed.environment")
+                .map_err(|e| CodegenError::from(e.to_string()))?
+                .into_pointer_value();
+            self.release_object_closure_environment(environment)
+        } else {
+            // A reusable body's frame owns copies, not the retained environment
+            // fields; consuming its carrier must destroy those originals too.
+            let slot = self
+                .builder
+                .build_alloca(self.llvm_type_id(concrete), "consumed.callable")
+                .map_err(|e| CodegenError::from(e.to_string()))?;
+            self.builder
+                .build_store(slot, callable)
+                .map_err(|e| CodegenError::from(e.to_string()))?;
+            let drop = self.adapter_target(&MirCallableKey::ObjectAdapter(
+                crate::mir::MirObjectAdapterKey::PayloadDrop(concrete),
+            ))?;
+            self.builder
+                .build_call(drop, &[slot.into()], "consumed.callable.drop")
+                .map(|_| ())
+                .map_err(|e| CodegenError::from(e.to_string()))
+        }
     }
 }

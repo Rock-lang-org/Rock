@@ -961,6 +961,14 @@ impl<'ctx> CodeGen<'ctx> {
             Ty::Struct { args, .. } | Ty::Enum { args, .. } => args
                 .iter()
                 .any(|arg| self.type_id_contains_projection(*arg)),
+            Ty::StructRepresentation { args, fields, .. } => args
+                .iter()
+                .chain(fields)
+                .any(|child| self.type_id_contains_projection(*child)),
+            Ty::EnumRepresentation { args, variants, .. } => args
+                .iter()
+                .chain(variants.iter().flatten())
+                .any(|child| self.type_id_contains_projection(*child)),
             Ty::Apply { constructor, args } => {
                 self.type_id_contains_projection(*constructor)
                     || args

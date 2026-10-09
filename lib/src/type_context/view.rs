@@ -52,6 +52,13 @@ impl<'a> TypeView<'a> {
         }
     }
 
+    pub fn result_borrowing(&self, id: TypeId) -> Option<&'a crate::types::CallableResultBorrowing> {
+        match self.ty(id) {
+            Ty::Function { result_borrowing, .. } => Some(result_borrowing),
+            _ => None,
+        }
+    }
+
     pub fn is_slice_shape(&self, id: TypeId) -> bool {
         matches!(self.ty(id), Ty::Slice(_))
     }

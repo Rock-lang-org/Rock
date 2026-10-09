@@ -1,6 +1,7 @@
 use inkwell::basic_block::BasicBlock as LlvmBasicBlock;
 
 mod assert;
+mod copy;
 mod erased;
 mod object;
 mod object_adapters;
@@ -44,7 +45,7 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(CodegenError::internalize)?;
 
         for (_, function) in program.functions() {
-            self.compile_mir_function(function)?;
+            self.compile_mir_function(function, &program.backend_contract)?;
         }
 
         Ok(())
@@ -276,7 +277,11 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    fn compile_mir_function(&mut self, mir_function: &MirFunction) -> Result<(), CodegenError> {
+    fn compile_mir_function(
+        &mut self,
+        mir_function: &MirFunction,
+        contract: &crate::mir::MirBackendContract,
+    ) -> Result<(), CodegenError> {
         let symbol = self
             .mir_function_symbols
             .get(&mir_function.id)
@@ -320,14 +325,19 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.position_at_end(blocks[0]);
             let mut locals = Vec::with_capacity(mir_function.local_decls.len());
             for (index, local) in mir_function.local_decls.iter().enumerate() {
+                let storage = if index == 0 {
+                    contract.function_result_storage(mir_function)
+                } else {
+                    local.ty
+                };
                 let name = Self::mir_local_alloca_name(index, local.name.as_deref());
                 let pointer = self
                     .builder
-                    .build_alloca(self.llvm_type_id(local.ty), &name)
+                    .build_alloca(self.llvm_type_id(storage), &name)
                     .map_err(|e| {
                         CodegenError::from(format!("Failed to create MIR local: {}", e))
                     })?;
-                locals.push(Some((pointer, local.ty)));
+                locals.push(Some((pointer, storage)));
             }
 
             let signature = self
@@ -381,7 +391,7 @@ impl<'ctx> CodeGen<'ctx> {
                 })?;
             }
 
-            let context = MirFunctionContext {
+            let mut context = MirFunctionContext {
                 function,
                 locals,
                 blocks,
@@ -389,6 +399,13 @@ impl<'ctx> CodeGen<'ctx> {
 
             if is_closure {
                 self.bind_mir_closure_captures(mir_function, &context)?;
+                // Capture copies can branch on allocation failure. MIR entry
+                // begins after binding, not in its already-terminated prefix.
+                if let Some(first) = context.blocks.first_mut() {
+                    *first = self.builder.get_insert_block().ok_or_else(|| {
+                        CodegenError::backend_contract("closure binding has no continuation")
+                    })?;
+                }
             }
 
             self.compile_mir_function_body(mir_function, &context)
@@ -449,6 +466,13 @@ impl<'ctx> CodeGen<'ctx> {
                 .collect::<Result<Vec<_>, CodegenError>>()?,
             false,
         );
+        let consuming = mir_function.closure_captures.iter().any(|capture| {
+            capture.kind == crate::mir::MirClosureCaptureKind::ByValue
+                && mir_function
+                    .local_decls
+                    .get(capture.local.0)
+                    .is_some_and(|local| !self.structural_type_for(local.ty).is_copy())
+        });
         let env_ptr = self
             .builder
             .build_pointer_cast(
@@ -486,6 +510,12 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| {
                     CodegenError::from(format!("Failed to load MIR closure capture: {}", e))
                 })?;
+            let value = if !consuming && capture.kind == crate::mir::MirClosureCaptureKind::ByValue
+            {
+                self.copy_mir_value(value, &self.structural_type_for(*local_ty))?
+            } else {
+                value
+            };
             self.builder.build_store(*local_ptr, value).map_err(|e| {
                 CodegenError::from(format!("Failed to store MIR closure capture: {}", e))
             })?;
@@ -667,6 +697,11 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let element_llvm_ty = self.llvm_type(element_ty);
+        if Self::copy_mir_value_requires_allocation(element_ty) {
+            // The fill fast path reuses one value; owning callable copies need
+            // one independent environment per element instead.
+            return Ok(false);
+        }
         let element = self.compile_mir_operand(function, context, &operands[0])?;
         let element = self.coerce_value(element, element_llvm_ty)?;
         let array_llvm_ty = self.llvm_type(&array_ty);

@@ -336,6 +336,7 @@ fn infer_witness(
                     safety: ps,
                     callable_kind: pk,
                     captures: pc,
+                    result_borrowing: pb,
                 },
                 Type::Function {
                     params: a,
@@ -343,8 +344,9 @@ fn infer_witness(
                     safety: as_,
                     callable_kind: ak,
                     captures: ac,
+                    result_borrowing: ab,
                 },
-            ) if ps == as_ && pk == ak && p.len() == a.len() && pc.len() == ac.len() => {
+            ) if ps == as_ && pk == ak && pb == ab && p.len() == a.len() && pc.len() == ac.len() => {
                 for (p, a) in p.iter().zip(a) {
                     pair(p, a, depth, witness)?;
                 }

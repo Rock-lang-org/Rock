@@ -63,7 +63,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Rvalue::Discriminant(place) => {
                 let (_, ty) = self.compile_mir_place_local(context, place)?;
-                if !matches!(ty, Type::Enum { .. }) {
+                if !matches!(ty, Type::Enum { .. } | Type::EnumRepresentation { .. }) {
                     return Err(CodegenError::layout(format!(
                         "MIR discriminant codegen expected enum place, got {}",
                         self.display_type_for_diagnostic(&ty)
@@ -209,6 +209,11 @@ impl<'ctx> CodeGen<'ctx> {
                         .map_err(|e| {
                             CodegenError::from(format!("Failed to load MIR closure capture: {}", e))
                         })?;
+                    let value = if capture_ty.is_copy() {
+                        self.copy_mir_value(value, &capture_ty)?
+                    } else {
+                        value
+                    };
                     capture_values.push((value, capture_ty));
                 }
                 crate::mir::MirClosureCaptureKind::ByRef
@@ -474,7 +479,11 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(value.into())
             }
             AggregateKind::Struct { id, display_name } => {
-                let Type::Struct { id: ty_id, args } = expected_ty else {
+                let (Type::Struct { id: ty_id, args }
+                | Type::StructRepresentation {
+                    id: ty_id, args, ..
+                }) = expected_ty
+                else {
                     return Err(CodegenError::layout(format!(
                         "MIR struct aggregate expected struct destination in {}, got {} for {}",
                         function.name,
@@ -503,13 +512,18 @@ impl<'ctx> CodeGen<'ctx> {
                     operands.len(),
                 )?;
                 let subst = self.struct_substitution_by_id(*id, args);
-                let field_types: Vec<BasicTypeEnum<'ctx>> = fields
-                    .iter()
-                    .map(|(_, ty)| {
-                        let ty = self.structural_type_for(*ty);
-                        self.llvm_type(&ty.substitute_generics(&subst))
-                    })
-                    .collect();
+                let field_types: Vec<BasicTypeEnum<'ctx>> =
+                    if let Type::StructRepresentation { fields, .. } = expected_ty {
+                        fields.iter().map(|field| self.llvm_type(field)).collect()
+                    } else {
+                        fields
+                            .iter()
+                            .map(|(_, ty)| {
+                                let ty = self.structural_type_for(*ty);
+                                self.llvm_type(&ty.substitute_generics(&subst))
+                            })
+                            .collect()
+                    };
                 let struct_ty = self.context.struct_type(&field_types, false);
                 let mut value = struct_ty.get_undef();
 
@@ -533,7 +547,9 @@ impl<'ctx> CodeGen<'ctx> {
                 enum_name,
                 variant_name: _,
             } => {
-                let Type::Enum { id: ty_id, args } = expected_ty else {
+                let (Type::Enum { id: ty_id, .. } | Type::EnumRepresentation { id: ty_id, .. }) =
+                    expected_ty
+                else {
                     return Err(CodegenError::layout(format!(
                         "MIR enum aggregate expected enum destination, got {}",
                         self.display_type_for_diagnostic(expected_ty)
@@ -557,10 +573,7 @@ impl<'ctx> CodeGen<'ctx> {
                     expected_payload_count,
                     operands.len(),
                 )?;
-                let layout_types = self
-                    .enum_layout_types_by_id(*enum_id, args)
-                    .ok_or_else(|| CodegenError::layout("Unknown MIR enum layout"))?;
-                let enum_ty = self.context.struct_type(&layout_types, false);
+                let enum_ty = self.llvm_type(expected_ty).into_struct_type();
                 let mut value = enum_ty.get_undef();
                 value = self
                     .builder
@@ -578,7 +591,7 @@ impl<'ctx> CodeGen<'ctx> {
                     .into_struct_value();
 
                 let payload_ty = self
-                    .enum_variant_payload_type_by_id(*enum_id, args, variant_index)
+                    .enum_payload_storage_type(expected_ty, variant_index)
                     .ok_or_else(|| {
                         CodegenError::layout(format!(
                             "Unknown MIR enum variant index {}",

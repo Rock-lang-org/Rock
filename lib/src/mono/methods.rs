@@ -113,8 +113,32 @@ impl Monomorphizer {
 
         let origin = self.method_instance_origin(imp, &method);
         let substitution = type_args.clone();
-        let instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
-        let backend_symbol = self.backend_symbol_for_origin(&origin, &substitution);
+        let mut signature = self.create_impl_method_signature(
+            &method,
+            &type_args,
+            &imp.type_generics,
+            &method.name,
+            imp.id,
+        );
+        let mut instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
+        if matches!(
+            ty,
+            Type::StructRepresentation { .. } | Type::EnumRepresentation { .. }
+        ) {
+            if let Some(receiver) = signature.params.first_mut() {
+                if let Some(actual) =
+                    crate::type_services::callable::value_representation(&receiver.ty, ty)
+                {
+                    receiver.ty = actual;
+                    instance_key.parameter_representations = signature
+                        .params
+                        .iter()
+                        .map(|parameter| self.intern_type(&parameter.ty))
+                        .collect();
+                }
+            }
+        }
+        let backend_symbol = self.backend_symbol_for_instance_key(&instance_key);
         if let Some(instance_id) = self.instances.get(&instance_key) {
             let receiver = self
                 .instances
@@ -142,7 +166,7 @@ impl Monomorphizer {
             );
             return;
         }
-        let in_progress_key = (imp.id, substitution.clone());
+        let in_progress_key = instance_key.clone();
         if !self
             .drop_monomorphization_in_progress
             .insert(in_progress_key.clone())
@@ -160,14 +184,8 @@ impl Monomorphizer {
                 .join("_")
         };
         let specialized_name = format!("{}_{}_drop", imp.type_name, type_suffix);
-        let specialized_func = self.specialize_impl_method(
-            &method,
-            &type_args,
-            &imp.type_generics,
-            &specialized_name,
-            imp.id,
-            imp.trait_id,
-        );
+        signature.name = specialized_name;
+        let specialized_func = self.process_impl_method_signature(&method, &type_args, signature);
         let concrete_receiver = specialized_func
             .params
             .first()
@@ -326,7 +344,19 @@ impl Monomorphizer {
                 .method_substitution
                 .iter()
                 .find(|binding| binding.param == id)
-                .map(|binding| self.intern_type(&binding.ty))
+                .map(|binding| {
+                    let actual = inferred.get(&id).map(|ty| self.type_for(*ty));
+                    let ty = actual
+                        .as_ref()
+                        .and_then(|actual| {
+                            crate::type_services::callable::value_representation(
+                                &binding.ty,
+                                actual,
+                            )
+                        })
+                        .unwrap_or_else(|| binding.ty.clone());
+                    self.intern_type(&ty)
+                })
                 .or_else(|| inferred.get(&id).copied())
                 .or_else(|| {
                     trait_method_bindings
@@ -759,13 +789,6 @@ impl Monomorphizer {
         let needs_specialization = has_method_generics || !imp.type_generics.is_empty();
 
         if !needs_specialization {
-            let param_types = method.params.iter().map(|param| param.ty.clone()).collect();
-            let ret_type = method.ret_type.clone();
-            let func_ty = Type::function_with_safety(
-                param_types,
-                ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(method.is_unsafe),
-            );
             let instance_key = crate::mono::InstanceKey::new(
                 self.method_instance_origin(&imp, method),
                 Vec::new(),
@@ -774,6 +797,27 @@ impl Monomorphizer {
                 .instances
                 .get(&instance_key)
                 .unwrap_or_else(|| self.register_impl_method_instance(&imp, &method.name, method));
+            if !self.processed_concrete_functions.contains(&method.id)
+                && !method.body.stmts.is_empty()
+                && !self
+                    .instances
+                    .record(instance_id)
+                    .is_some_and(|record| record.provided_by_object)
+                && self.active_concrete_methods.insert(method.id)
+            {
+                let processed = self.process_function(method.clone());
+                self.instances.replace_pre_mir_body(instance_id, processed);
+                self.processed_concrete_functions.insert(method.id);
+                self.active_concrete_methods.remove(&method.id);
+            }
+            let body = self.instances.pre_mir_body(instance_id).unwrap_or(method);
+            let param_types = body.params.iter().map(|param| param.ty.clone()).collect();
+            let ret_type = body.ret_type.clone();
+            let func_ty = Type::function_with_safety(
+                param_types,
+                ret_type.clone(),
+                crate::types::FunctionSafety::from_is_unsafe(method.is_unsafe),
+            );
             let callee = self.instance_callable_expr(display_name, instance_id, func_ty, span);
             return Ok((callee, HirCallTarget::Instance(instance_id), ret_type));
         }
@@ -791,8 +835,49 @@ impl Monomorphizer {
         let specialized_name = format!("{}_{}_{}", type_name, type_suffix, method.name);
         let origin = self.method_instance_origin(&imp, method);
         let substitution = type_args.clone();
-        let instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
-        let backend_symbol = self.backend_symbol_for_origin(&origin, &substitution);
+        let mut signature = self.create_impl_method_signature(
+            method,
+            &type_args,
+            &imp.type_generics,
+            &specialized_name,
+            imp.id,
+        );
+        let original_params = signature
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect::<Vec<_>>();
+        if signature.params.len() == args.len() {
+            for ((parameter, declared), argument) in
+                signature.params.iter_mut().zip(&method.params).zip(args)
+            {
+                if !parameter.is_ref {
+                    if let Some(actual) =
+                        crate::type_services::callable::declared_value_representation(
+                            &declared.ty,
+                            &parameter.ty,
+                            &argument.ty,
+                        )
+                    {
+                        parameter.ty = actual;
+                    }
+                }
+            }
+        }
+        let mut instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
+        if signature
+            .params
+            .iter()
+            .map(|param| &param.ty)
+            .ne(original_params.iter())
+        {
+            instance_key.parameter_representations = signature
+                .params
+                .iter()
+                .map(|param| self.intern_type(&param.ty))
+                .collect();
+        }
+        let backend_symbol = self.backend_symbol_for_instance_key(&instance_key);
 
         let (instance_id, body) = if let Some(instance_id) = self.instances.get(&instance_key) {
             let body = self
@@ -811,14 +896,8 @@ impl Monomorphizer {
                 })?;
             (instance_id, body)
         } else {
-            let specialized_func = self.specialize_impl_method(
-                method,
-                &type_args,
-                &imp.type_generics,
-                &specialized_name,
-                imp.id,
-                imp.trait_id,
-            );
+            let specialized_func =
+                self.process_impl_method_signature(method, &type_args, signature);
             let instance_id =
                 self.instances
                     .intern(instance_key, |id| crate::mono::InstanceRecord {
@@ -1115,6 +1194,24 @@ impl Monomorphizer {
         impl_id: DefId,
         _trait_id: Option<DefId>,
     ) -> HirFunction {
+        let signature = self.create_impl_method_signature(
+            method,
+            type_args,
+            type_generics,
+            specialized_name,
+            impl_id,
+        );
+        self.process_impl_method_signature(method, type_args, signature)
+    }
+
+    fn create_impl_method_signature(
+        &mut self,
+        method: &HirFunction,
+        type_args: &[TypeId],
+        type_generics: &[GenericParamDecl],
+        specialized_name: &str,
+        impl_id: DefId,
+    ) -> HirFunction {
         let mut substitution = HashMap::new();
         let impl_type_arg_count = type_generics.len().min(type_args.len());
         for (i, decl) in type_generics.iter().enumerate() {
@@ -1184,16 +1281,6 @@ impl Monomorphizer {
 
         self.update_self_types(&mut body, &specialized_impl_type);
 
-        let old_type_args = self.current_type_args.clone();
-        let old_var_types = self.var_types.clone();
-        self.current_type_args = type_args.to_vec();
-        self.var_types.clear();
-        let mut params_for_body = params.clone();
-        self.process_params(Some(method.id), &mut params_for_body);
-        self.process_block(&mut body);
-        self.current_type_args = old_type_args;
-        self.var_types = old_var_types;
-
         HirFunction {
             id: DefId::new(CrateId(0), LocalDefId(0)),
             name: specialized_name.to_string(),
@@ -1207,6 +1294,31 @@ impl Monomorphizer {
             self_receiver: method.self_receiver,
             is_unsafe: method.is_unsafe,
         }
+    }
+
+    fn process_impl_method_signature(
+        &mut self,
+        method: &HirFunction,
+        type_args: &[TypeId],
+        mut signature: HirFunction,
+    ) -> HirFunction {
+        let old_type_args = self.current_type_args.clone();
+        let old_var_types = std::mem::take(&mut self.var_types);
+        self.current_type_args = type_args.to_vec();
+        self.process_params(Some(method.id), &mut signature.params);
+        self.process_block(&mut signature.body);
+        self.current_type_args = old_type_args;
+        self.var_types = old_var_types;
+        if let Some(actual) = crate::type_services::callable::declared_value_representation(
+            &method.ret_type,
+            &signature.ret_type,
+            &signature.body.ty,
+        ) {
+            if super::process::block_returns_agree(&signature.body, &actual) {
+                signature.ret_type = actual;
+            }
+        }
+        signature
     }
 
     /// Update all `self` variable expressions in a block to have the correct type
@@ -3255,5 +3367,114 @@ mod tests {
 
         assert_eq!(specialized.params[0].ty, expected);
         assert_eq!(ty, &expected);
+    }
+
+    #[test]
+    fn static_method_specialization_preserves_declared_arrow_layouts_separately_from_binders() {
+        use crate::hir::{HirCallTarget, HirVarRef, HirVarTarget};
+        use crate::ids::HirLocalId;
+        use crate::types::{CallableKind, CaptureKind, FunctionCapture, FunctionSafety};
+
+        let impl_id = def_id(980);
+        let method_id = def_id(981);
+        let owner_id = def_id(982);
+        let generic = GenericParamId {
+            owner: impl_id,
+            index: 0,
+        };
+        let declared = Type::Tuple(vec![
+            Type::function(vec![], Type::Unit),
+            Type::Generic(generic),
+        ]);
+        let method = HirFunction {
+            id: method_id,
+            name: "relay".into(),
+            generic_params: vec![],
+            generic_bounds: HashMap::new().into(),
+            params: vec![HirParam {
+                name: "pair".into(),
+                local_id: HirLocalId(0),
+                ty: declared.clone(),
+                mutable: false,
+                is_ref: false,
+            }],
+            ret_type: declared.clone(),
+            body: HirBlock {
+                ty: declared.clone(),
+                stmts: vec![HirStmt::Expr(HirExpr {
+                    kind: HirExprKind::ResolvedVar(HirVarRef {
+                        name: "pair".into(),
+                        target: HirVarTarget::Local(HirLocalId(0)),
+                    }),
+                    ty: declared,
+                    span: Span::test(),
+                })],
+            },
+            is_curried: false,
+            is_method: false,
+            self_receiver: None,
+            is_unsafe: false,
+        };
+        let owner_ty = Type::Struct {
+            id: owner_id,
+            args: vec![Type::I64],
+        };
+        let mut mono = Monomorphizer::new();
+        mono.generic_impls.insert(
+            impl_id,
+            HirImpl {
+                id: impl_id,
+                owner: HirImplOwner::Named("Relay".into()),
+                type_name: "Relay".into(),
+                type_generics: vec![GenericParamDecl::type_param(generic, "T")],
+                receiver_pattern: HirImplReceiverPattern::Exact(Type::Struct {
+                    id: owner_id,
+                    args: vec![Type::Generic(generic)],
+                }),
+                trait_name: None,
+                trait_id: None,
+                trait_generics: vec![],
+                trait_arg_types: vec![],
+                associated_types: vec![],
+                bounds: HashMap::new().into(),
+                methods: HashMap::from([("relay".into(), method)]),
+            },
+        );
+        let target = selected_impl_target(impl_id, method_id, Type::I64);
+        let mut ids = Vec::new();
+        for count in [1, 2, 1] {
+            let actual = Type::Tuple(vec![
+                Type::function_with_metadata(
+                    vec![],
+                    Type::Unit,
+                    FunctionSafety::Safe,
+                    CallableKind::FnOnce,
+                    vec![FunctionCapture::new(
+                        CaptureKind::Move,
+                        Type::Array(Box::new(Type::I64), count),
+                    )],
+                ),
+                Type::I64,
+            ]);
+            let arg = HirExpr {
+                kind: HirExprKind::Var("actual".into()),
+                ty: actual.clone(),
+                span: Span::test(),
+            };
+            let (_, target, result) = mono
+                .monomorphize_static_method_call(&owner_ty, &target, &[arg], Span::test())
+                .unwrap();
+            let HirCallTarget::Instance(id) = target else {
+                panic!("instance")
+            };
+            let body = mono.instances.pre_mir_body(id).unwrap();
+            assert_eq!(body.params[0].ty, actual);
+            assert_eq!(body.ret_type, actual);
+            assert_eq!(body.body.ty, actual);
+            assert_eq!(result, actual);
+            ids.push(id);
+        }
+        assert_ne!(ids[0], ids[1]);
+        assert_eq!(ids[0], ids[2]);
     }
 }

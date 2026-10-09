@@ -67,7 +67,9 @@ impl TypeLayout {
             | Type::Unit
             | Type::Never
             | Type::Struct { .. }
+            | Type::StructRepresentation { .. }
             | Type::Enum { .. }
+            | Type::EnumRepresentation { .. }
             | Type::Reference { .. }
             | Type::Pointer(_)
             | Type::Function { .. } => Sizedness::Sized,

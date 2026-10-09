@@ -262,6 +262,16 @@ impl<'a> SelectionService<'a> {
     where
         F: FnMut(&Type) -> Type,
     {
+        let mut receiver_ty = normalize(&receiver.ty);
+        while let Type::Reference { inner, .. } = receiver_ty {
+            receiver_ty = *inner;
+        }
+        // A known head uses concrete/bound selection or canonical field lookup;
+        // unrelated rigid implementations cannot provide its receiver authority.
+        if !matches!(receiver_ty, Type::TypeVar(_)) {
+            return Vec::new();
+        }
+
         self.impl_ids_in_order()
             .filter_map(|id| self.impls.get(&id))
             .filter_map(|imp| {
@@ -692,6 +702,50 @@ impl<'a> SelectionService<'a> {
                 operation: "type-constructor inference".to_string(),
                 receiver: actual.clone(),
                 candidates: candidates.iter().map(|(impl_id, _)| *impl_id).collect(),
+            }),
+        }
+    }
+
+    /// Relate fixed arguments of two applications of one canonical unary
+    /// constructor impl. This is an equation, not impl/State/bound evidence.
+    pub(crate) fn unary_constructor_relation(
+        &self,
+        source: &Type,
+        target: &Type,
+        trait_id: DefId,
+    ) -> Result<Option<(Type, Type)>, SelectionDiagnostic> {
+        use crate::type_services::kind::Kind;
+        if self.traits.get(&trait_id).and_then(|definition| definition.target.as_ref())
+            .is_none_or(|target| target.kind != Kind::arrow(Kind::Type, Kind::Type))
+        {
+            return Ok(None);
+        }
+        let candidates = self.impl_ids_in_order()
+            .filter_map(|id| self.impls.get(&id))
+            .filter(|implementation| implementation.trait_id == Some(trait_id))
+            .filter_map(|implementation| {
+                let (source_constructor, _) = constructor_target_from_applied_type(
+                    &implementation.receiver_pattern, source,
+                )?;
+                let (target_constructor, _) = constructor_target_from_applied_type(
+                    &implementation.receiver_pattern, target,
+                )?;
+                for (constructor, actual) in [(&source_constructor, source), (&target_constructor, target)] {
+                    if matches!(constructor, Type::Lambda { params, .. } if params.as_slice() != [Kind::Type])
+                        || constructor_application_arguments(constructor, actual)?.len() != 1
+                    {
+                        return None;
+                    }
+                }
+                Some((implementation.id, source_constructor, target_constructor))
+            }).collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [(_, source, target)] => Ok(Some((source.clone(), target.clone()))),
+            [] => Ok(None),
+            _ => Err(SelectionDiagnostic::AmbiguousCandidates {
+                operation: "owner constructor relation".into(),
+                receiver: target.clone(),
+                candidates: candidates.iter().map(|candidate| candidate.0).collect(),
             }),
         }
     }
@@ -1992,16 +2046,20 @@ impl<'a> SelectionService<'a> {
                 if Self::type_contains_type_var(&subject)
                     || bound.type_args.iter().any(Self::type_contains_type_var)
                 {
-                    obligations.push((subject, bound));
+                    let obligation = (subject, bound);
+                    if !obligations.contains(&obligation) {
+                        obligations.push(obligation);
+                    }
                     continue;
                 }
                 if !self.trait_bound_satisfied(&subject, &bound) {
                     return None;
                 }
             }
-            return Some(obligations);
         }
 
+        // Explicit predicates supplement the bound map, which also carries
+        // implicit canonical obligations such as a declared Sized requirement.
         for (param, bounds) in &imp.bounds {
             let bounded_ty = Type::Generic(*param).substitute_generics(subst);
             for bound in bounds {
@@ -2019,7 +2077,10 @@ impl<'a> SelectionService<'a> {
                 if Self::type_contains_type_var(&bounded_ty)
                     || bound.type_args.iter().any(Self::type_contains_type_var)
                 {
-                    obligations.push((bounded_ty.clone(), bound));
+                    let obligation = (bounded_ty.clone(), bound);
+                    if !obligations.contains(&obligation) {
+                        obligations.push(obligation);
+                    }
                     continue;
                 }
                 if !self.trait_bound_satisfied(&bounded_ty, &bound) {
@@ -2754,6 +2815,134 @@ mod tests {
             })
             .flatten()
             .collect()
+    }
+
+    fn mixed_impl_bounds_fixture() -> crate::infer::PartialHir {
+        let source = r#"
+lang sized
+< trait Layout
+trait Memory
+    @key: I64
+trait Protocol
+    @value: I64
+impl Memory for &[I64]
+    @key = -> 0
+impl Protocol for T where T: Memory
+    @value = -> 0
+unbounded: &T -> () where T: ?Layout
+unbounded = _ !-> ()
+memory_only: &T -> () where T: Memory, T: ?Layout
+memory_only = _ !-> ()
+both_bounds: &T -> () where T: Memory, T: Layout
+both_bounds = _ !-> ()
+main = !-> ()
+"#;
+        let config = crate::Config {
+            no_std: true,
+            no_prelude: true,
+            ..crate::Config::default()
+        };
+        let program = crate::parser::parse_string(source, &config).unwrap();
+        let context = crate::crate_system::CrateContext::new();
+        let declarations = crate::collect::collect(&program, &context, false, None).unwrap();
+        crate::lower::program::lower_from_declarations(&program, declarations, &context, None)
+            .unwrap()
+    }
+
+    #[test]
+    fn mixed_impl_bounds_collect_both_representations_without_duplicate_pending_rows() {
+        let hir = mixed_impl_bounds_fixture();
+        let sized = hir.language_items.sized.as_ref().unwrap().trait_id;
+        let memory = hir.traits.values().find(|trait_def| trait_def.name == "Memory").unwrap().id;
+        let protocol = hir.traits.values().find(|trait_def| trait_def.name == "Protocol").unwrap().id;
+        let implementation = hir.impls.values().find(|implementation| implementation.trait_id == Some(protocol)).unwrap();
+        let parameter = implementation.type_generics[0].id;
+        let function = hir.functions.values().find(|function| function.name == "unbounded").unwrap();
+        let rigid = Type::Generic(function.generic_params[0].id);
+        let memory_bound = TraitBound { trait_id: memory, type_args: Vec::new() };
+        let sized_bound = TraitBound { trait_id: sized, type_args: Vec::new() };
+        assert!(implementation.bounds[&parameter].contains(&memory_bound));
+        assert!(implementation.bounds[&parameter].contains(&sized_bound));
+        assert_eq!(implementation.bounds.predicates, vec![crate::types::Predicate::Trait {
+            subject: Type::Generic(parameter), trait_id: memory, args: Vec::new(),
+        }]);
+        let service = SelectionService::new(&hir.traits, &hir.impls, Some(sized), None, &function.generic_bounds);
+        let substitution = HashMap::from([(parameter, rigid.clone())]);
+        let pending = service.impl_bound_obligations(implementation, &substitution).unwrap();
+        assert_eq!(pending.len(), 2, "predicate/map Memory must be deduplicated: {pending:?}");
+        assert!(pending.contains(&(rigid.clone(), memory_bound)));
+        assert!(pending.contains(&(rigid.clone(), sized_bound)));
+        assert!(pending.iter().all(|(subject, bound)| !service.trait_bound_satisfied(subject, bound)));
+        assert!(!service.impl_matches_trait_ref_strict(implementation, &rigid, protocol, Some(&[])));
+    }
+
+    #[test]
+    fn mixed_impl_bounds_rigid_memory_requires_independent_sized_assumption() {
+        let hir = mixed_impl_bounds_fixture();
+        let sized = hir.language_items.sized.as_ref().unwrap().trait_id;
+        let memory = hir.traits.values().find(|trait_def| trait_def.name == "Memory").unwrap().id;
+        let protocol = hir.traits.values().find(|trait_def| trait_def.name == "Protocol").unwrap().id;
+        let implementation = hir.impls.values().find(|implementation| implementation.trait_id == Some(protocol)).unwrap();
+        let parameter = implementation.type_generics[0].id;
+        for (name, has_sized) in [("memory_only", false), ("both_bounds", true)] {
+            let function = hir.functions.values().find(|function| function.name == name).unwrap();
+            let caller_parameter = function.generic_params[0].id;
+            let rigid = Type::Generic(caller_parameter);
+            let sized_bound = TraitBound { trait_id: sized, type_args: Vec::new() };
+            let service = SelectionService::new(&hir.traits, &hir.impls, Some(sized), None, &function.generic_bounds);
+            assert!(service.trait_bound_satisfied(&rigid, &TraitBound { trait_id: memory, type_args: Vec::new() }));
+            assert_eq!(service.trait_bound_satisfied(&rigid, &sized_bound), has_sized);
+            assert_eq!(function.generic_bounds.relaxed_sized.contains(&caller_parameter), !has_sized);
+            let pending = service.impl_bound_obligations(implementation, &HashMap::from([(parameter, rigid.clone())])).unwrap();
+            let expected = if has_sized { Vec::new() } else { vec![(rigid.clone(), sized_bound)] };
+            assert_eq!(pending, expected);
+            assert_eq!(service.impl_matches_trait_ref_strict(implementation, &rigid, protocol, Some(&[])), has_sized);
+        }
+    }
+
+    #[test]
+    fn mixed_impl_bounds_typed_slice_memory_authority_cannot_hide_ground_unsized_rejection() {
+        let hir = mixed_impl_bounds_fixture();
+        let sized = hir.language_items.sized.as_ref().unwrap().trait_id;
+        let memory = hir.traits.values().find(|trait_def| trait_def.name == "Memory").unwrap().id;
+        let protocol = hir.traits.values().find(|trait_def| trait_def.name == "Protocol").unwrap().id;
+        let implementation = hir.impls.values().find(|implementation| implementation.trait_id == Some(protocol)).unwrap();
+        let parameter = implementation.type_generics[0].id;
+        let assumptions = HirGenericBounds::new();
+        let slice = Type::Slice(Box::new(Type::I64));
+        for (subject, is_sized) in [
+            (slice.clone(), false),
+            (Type::Reference { mutable: false, inner: Box::new(slice) }, true),
+        ] {
+            let mut impls = hir.impls.clone();
+            if !is_sized {
+                // Selection-only typed fixture, not a source-valid bare-slice
+                // impl or an executable body. Keep the source's canonical
+                // Memory/impl/member IDs and adapt its shared receiver header.
+                let memory_impl = impls.values_mut()
+                    .find(|implementation| implementation.trait_id == Some(memory))
+                    .unwrap();
+                assert!(memory_impl.type_generics.is_empty());
+                memory_impl.owner = HirImplOwner::BuiltinSlice;
+                memory_impl.type_name = "[I64]".into();
+                memory_impl.receiver_pattern = HirImplReceiverPattern::SliceFamily {
+                    element: Type::I64,
+                };
+                for method in memory_impl.methods.values_mut() {
+                    assert_eq!(method.self_receiver, Some(ReceiverMode::Shared));
+                    method.params[0].ty = Type::Reference {
+                        mutable: false,
+                        inner: Box::new(subject.clone()),
+                    };
+                }
+            }
+            let service = SelectionService::new(&hir.traits, &impls, Some(sized), None, &assumptions);
+            assert!(service.trait_bound_satisfied(&subject, &TraitBound { trait_id: memory, type_args: Vec::new() }));
+            assert_eq!(service.trait_bound_satisfied(&subject, &TraitBound { trait_id: sized, type_args: Vec::new() }), is_sized);
+            let pending = service.impl_bound_obligations(implementation, &HashMap::from([(parameter, subject.clone())]));
+            assert_eq!(pending, is_sized.then(Vec::new));
+            assert_eq!(service.impl_matches_trait_ref_strict(implementation, &subject, protocol, Some(&[])), is_sized);
+        }
     }
 
     #[test]
@@ -3582,6 +3771,88 @@ mod tests {
         assert_eq!(selected.target.impl_id(), Some(impl_id));
         assert_eq!(selected.target.method_id(), Some(method_id));
         assert_eq!(selected.return_type, Type::I64);
+    }
+
+    #[test]
+    fn inferred_methods_do_not_replace_known_receiver_heads() {
+        let mut impls = HashMap::new();
+        for index in [10, 20] {
+            let owner = def_id(index);
+            let mut audit = method(def_id(index + 2), owner);
+            audit.name = "audit".to_string();
+            let imp = HirImpl {
+                id: def_id(index + 1),
+                owner: HirImplOwner::Named(format!("Allocator{index}")),
+                type_name: format!("Allocator{index}"),
+                type_generics: Vec::new(),
+                receiver_pattern: HirImplReceiverPattern::Exact(Type::Struct {
+                    id: owner,
+                    args: Vec::new(),
+                }),
+                trait_name: None,
+                trait_id: None,
+                trait_generics: Vec::new(),
+                trait_arg_types: Vec::new(),
+                associated_types: Vec::new(),
+                bounds: HirGenericBounds::new(),
+                methods: HashMap::from([("audit".to_string(), audit)]),
+            };
+            impls.insert(imp.id, imp);
+        }
+        let traits = HashMap::new();
+        let bounds = HirGenericBounds::new();
+        let service = SelectionService::new(&traits, &impls, None, None, &bounds);
+        let expr = |ty| HirExpr {
+            ty,
+            kind: HirExprKind::Var("state".to_string()),
+            span: Span::test(),
+        };
+        let state = Type::Struct {
+            id: def_id(30),
+            args: vec![Type::Generic(GenericParamId {
+                owner: def_id(31),
+                index: 0,
+            })],
+        };
+        for ty in [
+            state.clone(),
+            Type::Reference {
+                mutable: false,
+                inner: Box::new(state.clone()),
+            },
+            Type::Struct {
+                id: def_id(30),
+                args: vec![Type::TypeVar(TypeVarId(1))],
+            },
+            Type::Struct {
+                id: def_id(10),
+                args: Vec::new(),
+            },
+        ] {
+            assert!(service
+                .select_inferred_method_candidates(&expr(ty), "audit", Type::clone)
+                .is_empty());
+        }
+        let unresolved = expr(Type::TypeVar(TypeVarId(0)));
+        assert!(service
+            .select_inferred_method_candidates(&unresolved, "audit", |_| state.clone())
+            .is_empty());
+        // True unknown-head inference retains every candidate, not the first one.
+        assert_eq!(
+            service
+                .select_inferred_method_candidates(&unresolved, "audit", Type::clone)
+                .len(),
+            2,
+        );
+        let concrete = expr(Type::Struct {
+            id: def_id(10),
+            args: Vec::new(),
+        });
+        let selected = service
+            .select_concrete_method(&[receiver_candidate(concrete)], "audit", Type::clone)
+            .expect("known matching receivers keep canonical concrete selection");
+        assert_eq!(selected.target.impl_id(), Some(def_id(11)));
+        assert_eq!(selected.target.method_id(), Some(def_id(12)));
     }
 
     #[test]

@@ -60,6 +60,11 @@ impl Lowerer {
                 source_ty: source.ty.clone(),
             };
             self.push_scope();
+            self.source_map.insert_witness_in_scope(
+                witness,
+                open.witness.span.clone(),
+                self.source_scope_stack.last().copied(),
+            );
             self.source_map.insert_local_in_scope(
                 owner_id,
                 value_id,
@@ -126,6 +131,11 @@ impl Lowerer {
             owner,
         };
         self.push_scope();
+        self.source_map.insert_witness_in_scope(
+            witness,
+            open.witness.span.clone(),
+            self.source_scope_stack.last().copied(),
+        );
         self.source_map.insert_local_in_scope(
             owner_id,
             value_id,

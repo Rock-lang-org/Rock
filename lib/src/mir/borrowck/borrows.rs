@@ -63,6 +63,16 @@ pub fn collect_function_borrows_with_contract(
     backend_contract: &MirBackendContract,
     return_summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
 ) -> Vec<BorrowData> {
+    collect_function_borrows_with_return_sources(func, type_context, backend_contract, return_summaries, None)
+}
+
+pub(super) fn collect_function_borrows_with_return_sources(
+    func: &MirFunction,
+    type_context: &TypeContext,
+    backend_contract: &MirBackendContract,
+    return_summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
+    return_sources: Option<&super::return_sources::NativeReturnSources>,
+) -> Vec<BorrowData> {
     let mut borrows = Vec::new();
 
     for (block_idx, block) in func.basic_blocks.iter().enumerate() {
@@ -79,7 +89,7 @@ pub fn collect_function_borrows_with_contract(
                     BasicBlockId(block_idx),
                     StatementIndex(block.statements.len()),
                 ),
-                Some((func, type_context, backend_contract, return_summaries)),
+                Some((func, type_context, backend_contract, return_summaries, return_sources)),
             ));
         }
     }
@@ -95,11 +105,12 @@ fn collect_terminator_borrows_with_context(
         &TypeContext,
         &MirBackendContract,
         &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
+        Option<&super::return_sources::NativeReturnSources>,
     )>,
 ) -> Vec<BorrowData> {
     let term_span = context
         .as_ref()
-        .and_then(|(func, _, _, _)| func.terminator_origin(term).source_span().cloned());
+        .and_then(|(func, _, _, _, _)| func.terminator_origin(term).source_span().cloned());
     let Terminator::Call {
         func,
         args,
@@ -110,20 +121,35 @@ fn collect_terminator_borrows_with_context(
         return Vec::new();
     };
 
-    let Operand::Constant(Constant::Callable(callable)) = func else {
-        return Vec::new();
+    let certified_callable = context.as_ref().and_then(|(body, tc, contract, _, table)|
+        table.and_then(|table| table.callable_result_loan_call(body, tc, contract, func, args, destination)));
+    let (args, callable_summary) = certified_callable.as_ref()
+        .map(|(inputs, summary)| (inputs.as_slice(), Some(summary)))
+        .unwrap_or((args.as_slice(), None));
+    let portable_summary = match func {
+        Operand::Constant(Constant::ErasedCall(call)) => {
+            context.as_ref().and_then(|(_, tc, contract, _, _)| {
+                super::erased_return_summary(contract, tc, call)
+            })
+        }
+        _ => None,
+    };
+    let callable = match func {
+        Operand::Constant(Constant::Callable(callable)) => Some(callable),
+        _ if portable_summary.is_some() || callable_summary.is_some() => None,
+        _ => return Vec::new(),
     };
     let borrow_slice = match callable {
-        MirCallable::Resolved(MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSlice)) => {
+        Some(MirCallable::Resolved(MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSlice))) => {
             Some(AccessKind::BorrowShared)
         }
-        MirCallable::Resolved(MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSliceMut)) => {
+        Some(MirCallable::Resolved(MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSliceMut))) => {
             Some(AccessKind::BorrowMut)
         }
         _ => None,
     };
     if borrow_slice.is_none() {
-        if let Some((mir_func, type_context, backend_contract, return_summaries)) = context {
+        if let Some((mir_func, type_context, backend_contract, return_summaries, return_sources)) = context {
             let Some(destination_decl) = mir_func.local_decls.get(destination.local.0) else {
                 return Vec::new();
             };
@@ -136,17 +162,28 @@ fn collect_terminator_borrows_with_context(
                 return Vec::new();
             }
 
+            if return_sources.and_then(|table|
+                table.borrowed_view_call(mir_func, type_context, backend_contract, func, args, destination)).is_some() {
+                let mut view = destination.clone();
+                view.projection.push(Projection::Deref);
+                return vec![BorrowData {
+                    owner: destination.local, place: view, kind: AccessKind::ReturnedShared,
+                    created_at, origin_span: term_span,
+                }];
+            }
+
             let is_opaque = matches!(
                 callable,
-                MirCallable::Resolved(
+                Some(MirCallable::Resolved(
                     MirCallableKey::Extern(_)
                         | MirCallableKey::Intrinsic(_)
                         | MirCallableKey::RuntimeHelper(_),
-                )
+                ))
             );
-            let summary = callable
-                .function_id()
-                .and_then(|function_id| return_summaries.get(&function_id));
+            let summary = callable_summary.or(portable_summary.as_ref()).or_else(|| {
+                callable.and_then(|callable| callable.function_id())
+                    .and_then(|function_id| return_summaries.get(&function_id))
+            });
             let argument_indices: Vec<(usize, bool)> = if is_opaque || summary.is_none() {
                 (0..args.len()).map(|index| (index, false)).collect()
             } else {
@@ -173,7 +210,20 @@ fn collect_terminator_borrows_with_context(
             } else {
                 AccessKind::BorrowShared
             };
-            return argument_indices
+            let mut borrows = Vec::new();
+            if portable_summary.is_some() || callable_summary.is_some() {
+                // The validated concrete result type supplies the view's access
+                // kind; its origin envelope separately retains incoming loans.
+                let mut view = destination.clone();
+                view.projection.push(Projection::Deref);
+                borrows.push(BorrowData {
+                    owner: destination.local, place: view,
+                    kind: if *mutable { AccessKind::ReturnedMut } else { AccessKind::ReturnedShared },
+                    created_at,
+                    origin_span: term_span.clone(),
+                });
+            }
+            borrows.extend(argument_indices
                 .into_iter()
                 .filter_map(|(index, borrowed_contents)| {
                     args.get(index).and_then(|arg| {
@@ -190,7 +240,8 @@ fn collect_terminator_borrows_with_context(
                         )
                     })
                 })
-                .collect();
+            );
+            return borrows;
         }
         return Vec::new();
     }

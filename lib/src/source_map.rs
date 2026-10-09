@@ -4,7 +4,7 @@ use crate::ast;
 use crate::collect::item_index::ItemIndex;
 use crate::ids::{AssocTypeId, DefId, FieldId, HirLocalId, ModuleId, VariantId};
 use crate::lexer::Span;
-use crate::types::GenericParamId;
+use crate::types::{GenericParamId, WitnessId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SourceSymbol {
@@ -26,6 +26,7 @@ pub enum SourceSymbol {
         associated: AssocTypeId,
     },
     Generic(GenericParamId),
+    Witness(WitnessId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -746,6 +747,14 @@ impl SemanticSourceMap {
             .map(|info| &info.name_span)
     }
 
+    pub(crate) fn merge_diagnostic_sources(&mut self, other: &Self) -> Result<(), String> {
+        if other.symbols.iter().any(|(id, info)| self.symbols.get(id).is_some_and(|current| current != info)) {
+            return Err("conflicting canonical diagnostic source registrations".into());
+        }
+        self.symbols.extend(other.symbols.iter().map(|(id, info)| (id.clone(), info.clone())));
+        Ok(())
+    }
+
     pub fn definition_declaration_span(&self, id: DefId) -> Option<&Span> {
         self.symbol(&SourceSymbol::Definition(id))
             .and_then(|info| info.declaration_span.as_ref())
@@ -816,6 +825,24 @@ impl SemanticSourceMap {
             Some(span),
             Some(owner),
         );
+    }
+
+    pub fn insert_witness_in_scope(
+        &mut self,
+        witness: WitnessId,
+        span: Span,
+        scope_id: Option<u32>,
+    ) {
+        let symbol = SourceSymbol::Witness(witness);
+        self.insert_symbol(
+            symbol.clone(),
+            span.clone(),
+            Some(span),
+            Some(witness.owner),
+        );
+        if let Some(info) = self.symbols.get_mut(&symbol) {
+            info.scope_id = scope_id;
+        }
     }
 
     pub fn record_reference(
@@ -972,6 +999,12 @@ fn remap_source_symbol(symbol: &SourceSymbol, from: DefId, to: DefId) -> Option<
             Some(SourceSymbol::Generic(GenericParamId {
                 owner: to,
                 ..*param
+            }))
+        }
+        SourceSymbol::Witness(witness) if witness.owner == from => {
+            Some(SourceSymbol::Witness(WitnessId {
+                owner: to,
+                ..*witness
             }))
         }
         _ => None,
@@ -1686,6 +1719,15 @@ mod tests {
         sources.insert_definition(from, span(1, 4));
         sources.insert_local(from, local, span(5, 6));
         sources.insert_generic(generic, span(7, 8), from);
+        let witness = WitnessId { owner: from, local };
+        let scope = sources.insert_scope(from, None);
+        sources.insert_witness_in_scope(witness, span(12, 18), Some(scope));
+        sources.record_reference_in_scope(
+            span(20, 26),
+            SourceSymbol::Witness(witness),
+            Some(from),
+            Some(scope),
+        );
         sources.record_reference(
             span(10, 11),
             SourceSymbol::Local { owner: from, local },
@@ -1696,6 +1738,14 @@ mod tests {
 
         assert_eq!(sources.definition_span(to), Some(&span(1, 4)));
         assert_eq!(sources.local_span(to, local), Some(&span(5, 6)));
+        let remapped_witness = SourceSymbol::Witness(WitnessId { owner: to, local });
+        let remapped = sources.symbol(&remapped_witness).unwrap();
+        assert_eq!(remapped.name_span, span(12, 18));
+        assert_eq!(remapped.lexical_owner, Some(to));
+        assert_eq!(remapped.scope_id, Some(scope));
+        assert_eq!(sources.reference_spans(&remapped_witness).count(), 1);
+        assert_eq!(sources.scopes()[scope as usize].owner, to);
+        assert!(sources.symbol(&SourceSymbol::Witness(witness)).is_some());
         assert!(sources
             .symbol(&SourceSymbol::Generic(GenericParamId {
                 owner: to,

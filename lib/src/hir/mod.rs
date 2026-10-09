@@ -16,10 +16,12 @@ use crate::lexer::Span;
 use crate::types::ReceiverMode;
 use crate::types::{GenericParamId, TraitBound, Type};
 
+pub mod borrowing;
 pub(crate) mod existential;
 pub(crate) mod object_methods;
 pub(crate) mod owned_objects;
 pub(crate) mod packages;
+pub(crate) mod visit;
 
 mod sealed {
     pub trait Sealed {}

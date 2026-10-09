@@ -274,11 +274,11 @@ pub fn write_type(ty: &Type, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             }
             write!(f, "{}", display_type(ret))
         }
-        Type::Struct { id, args } => {
+        Type::Struct { id, args } | Type::StructRepresentation { id, args, .. } => {
             write!(f, "struct#{}::{}", id.crate_id.0, id.local.0)?;
             write_type_args(args, f)
         }
-        Type::Enum { id, args } => {
+        Type::Enum { id, args } | Type::EnumRepresentation { id, args, .. } => {
             write!(f, "enum#{}::{}", id.crate_id.0, id.local.0)?;
             write_type_args(args, f)
         }
@@ -427,7 +427,10 @@ fn write_user_type(
             }
             write_user_type(ret, context, f)
         }
-        Type::Struct { id, args } | Type::Enum { id, args } => {
+        Type::Struct { id, args }
+        | Type::StructRepresentation { id, args, .. }
+        | Type::Enum { id, args }
+        | Type::EnumRepresentation { id, args, .. } => {
             write!(
                 f,
                 "{}",

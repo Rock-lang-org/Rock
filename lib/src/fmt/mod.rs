@@ -617,6 +617,45 @@ mod tests {
     }
 
     #[test]
+    fn format_existential_packages_preserves_binders_payloads_and_openings() {
+        let source = r#"trait Read
+    @read: I64
+struct Number
+    < value: I64
+impl Read for Number
+    @read = -> self.value
+// One witness shared by both references.
+type Pair = exists Hidden where Hidden: Read in (&Hidden, &Hidden)
+inspect: Pair -> I64
+inspect = package ->
+    open package as Hidden, pair
+        reference: &Hidden = pair.0
+        reference.read!
+main = ->
+    value = Number
+        value: 42
+    package = pack (Pair) ((&value, &value))
+    inspect package
+"#;
+        let program = parser::parse_string(source, &crate::Config::default()).unwrap();
+        let formatted = format(FormatInput::module_with_source(&program.module, source));
+        for fragment in [
+            "// One witness shared by both references.",
+            "exists Hidden where Hidden: Read in (&Hidden, &Hidden)",
+            "open package as Hidden, pair",
+            "reference: &Hidden",
+            "pack (Pair)",
+        ] {
+            assert!(formatted.contains(fragment), "{formatted}");
+        }
+        let reparsed = parser::parse_string(&formatted, &crate::Config::default()).unwrap();
+        assert_eq!(
+            format(FormatInput::module_with_source(&reparsed.module, &formatted)),
+            formatted,
+        );
+    }
+
+    #[test]
     fn format_input_module_with_source_preserves_struct_field_docs_before_field() {
         let source = "struct Box\n    // field docs\n    value : ()\n";
         let program = parser::parse_string(source, &crate::Config::default())

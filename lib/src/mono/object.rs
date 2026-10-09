@@ -436,9 +436,9 @@ impl Monomorphizer {
                 views: Vec::new(),
             },
         );
-        // Enumerate the finite lattice of admitted guarantee views of this
-        // signature, not the set of callers in this compilation. A producer can
-        // therefore satisfy a subset chosen by a separately compiled consumer.
+        // Retain independent trait witnesses. Runtime member identities let a
+        // source-free consumer choose any admitted combination without a
+        // producer-owned table for every possible subset.
         let mut candidates = std::collections::BTreeMap::new();
         for view in super::object_schema::admitted_object_views(
             ty,
@@ -484,7 +484,8 @@ impl Monomorphizer {
             HirObjectEvidence::Upcast { source, target } => {
                 let source = self.ensure_object_schema(source)?;
                 let target = self.ensure_object_schema(target)?;
-                if source != target && !self.object_schemas[&source].views.contains(&target) {
+                if !crate::mir::object::object_view_is_admitted(&self.type_context, source, target)
+                {
                     return Err(
                         "upcast target is not an admitted guarantee subset of the source signature"
                             .into(),

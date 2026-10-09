@@ -1176,8 +1176,15 @@ impl Lowerer {
             });
 
         if let Some((func_ty, hir_name, target)) = func_binding {
+            let (mut left, mut right) = (left, right);
             self.infer_bounded_constructor_heads(&func_ty, &[&left, &right]);
             let resolved_func_ty = self.resolve_projection_type(&self.engine.resolve(&func_ty));
+            if let Type::Function { params, .. } = &resolved_func_ty {
+                if let [left_ty, right_ty] = params.as_slice() {
+                    left = self.coerce_argument_to_expected(left, left_ty);
+                    right = self.coerce_argument_to_expected(right, right_ty);
+                }
+            }
             let (mut expected_ret_ty, safety) = match resolved_func_ty {
                 Type::Function { ret, safety, .. } => (*ret, safety),
                 _ => (
@@ -1669,6 +1676,22 @@ impl Lowerer {
                         };
                     }
 
+                    if matches!(resolved_inner_ty, Type::TypeVar(_)) {
+                        let result_ty = self.engine.fresh_type_var_at(op.span.clone());
+                        let unsafe_allowed = self.is_in_unsafe();
+                        self.constraint_store.add_dereference(
+                            inner_hir.ty.clone(),
+                            result_ty.clone(),
+                            unsafe_allowed,
+                            op.span.clone(),
+                        );
+                        return HirExpr {
+                            ty: result_ty,
+                            kind: HirExprKind::Deref(Box::new(inner_hir)),
+                            span: op.span.clone(),
+                        };
+                    }
+
                     if let Some(next) = self
                         .autoderef_candidates(inner_hir.clone())
                         .into_iter()
@@ -1677,14 +1700,13 @@ impl Lowerer {
                         return next;
                     }
 
-                    let result_ty = resolved_inner_ty.clone();
                     let receiver_type = self.display_type(&resolved_inner_ty);
                     self.diagnostics.push_type_with_span(
                         format!("Cannot dereference non-pointer type: {}", receiver_type),
                         op.span.clone(),
                     );
                     return HirExpr {
-                        ty: result_ty,
+                        ty: Type::Error,
                         kind: HirExprKind::Deref(Box::new(inner_hir)),
                         span: op.span.clone(),
                     };
@@ -2043,6 +2065,11 @@ impl Lowerer {
                 if let Type::Struct {
                     id,
                     args: ref type_args,
+                }
+                | Type::StructRepresentation {
+                    id,
+                    args: ref type_args,
+                    ..
                 } = base_ty
                 {
                     if let Some(hir_struct) = self.items.structure(id) {
@@ -2059,7 +2086,9 @@ impl Lowerer {
                             .unwrap_or(Type::Error);
                     }
                 }
-                let field = if let Type::Struct { id, .. } = base_ty {
+                let field = if let Type::Struct { id, .. } | Type::StructRepresentation { id, .. } =
+                    base_ty
+                {
                     self.items.structure(id).and_then(|hir_struct| {
                         hir_struct
                             .fields
@@ -2270,6 +2299,507 @@ mod tests {
             assert!(matches!(hir.kind, HirExprKind::UnsafeBlock(_)));
             assert_eq!(hir.span, Span::test());
         }
+    }
+
+    #[test]
+    fn deferred_dereference_captures_source_context_and_separates_result() {
+        for unsafe_allowed in [false, true] {
+            let mut lowerer = Lowerer::new_for_test();
+            let span = Span::new("/virtual/deferred_deref.rk".into(), 14, 15);
+            let input = lowerer.engine.fresh_type_var_at(span.clone());
+            let owner = crate::infer::ConstraintOwner::Body(def_id(901));
+            let expression = UnaryExpr::UnaryExpr(
+                Operator {
+                    value: "*".into(),
+                    span: span.clone(),
+                },
+                Box::new(var_expr("input")),
+            );
+            let hir = lowerer.with_test_body_context(|lowerer| {
+                lowerer.constraint_store.replace_owner(owner);
+                lowerer
+                    .scope
+                    .define_local("input".into(), input.clone(), false, HirLocalId(0));
+                if unsafe_allowed {
+                    lowerer.with_unsafe(|lowerer| lowerer.lower_unary_expr(&expression))
+                } else {
+                    lowerer.lower_unary_expr(&expression)
+                }
+            });
+            assert!(lowerer.diagnostics.errors().is_empty());
+            assert!(matches!(hir.kind, HirExprKind::Deref(_)));
+            assert_ne!(hir.ty, input);
+            assert_eq!(hir.span, span);
+            lowerer.engine.unify(&hir.ty, &Type::I64).unwrap();
+            assert_eq!(
+                lowerer.engine.resolve(&input),
+                input,
+                "numeric results cannot invent input shape"
+            );
+            let constraints = lowerer.constraint_store.iter().collect::<Vec<_>>();
+            assert_eq!(constraints.len(), 1);
+            assert_eq!(
+                lowerer.constraint_store.owner(constraints[0].0),
+                Some(owner)
+            );
+            assert!(
+                matches!(constraints[0].1, crate::infer::constraints::Constraint::Dereference {
+                input: actual, output, unsafe_allowed: captured, span: original,
+            } if *actual == input && *output == hir.ty && *captured == unsafe_allowed && *original == span)
+            );
+        }
+    }
+
+    #[test]
+    fn deferred_trait_dereference_selects_canonical_member_after_caller_evidence() {
+        for helper_first in [false, true] {
+            let declarations = r#"
+lang sized
+< trait LayoutKnown
+trait View
+    @*: &I64
+struct ViewBox
+    < value: I64
+impl View for ViewBox
+    @* = -> &@value
+"#;
+            let helper = "read = input -> *input\n";
+            let caller = "main = ->\n    boxed = ViewBox\n        value: 42\n    read boxed\n";
+            let source = if helper_first {
+                format!("{declarations}{helper}{caller}")
+            } else {
+                format!("{declarations}{caller}{helper}")
+            };
+            let path = std::path::PathBuf::from("/virtual/deferred_trait_deref.rk");
+            let config = crate::Config {
+                entry_file: path.clone(),
+                no_std: true,
+                no_prelude: true,
+                source_providers: vec![crate::SourceProvider::Virtual { path, text: source }],
+                ..crate::Config::default()
+            };
+            let analysis = crate::analyze(&config).unwrap_or_else(|errors| panic!("{errors:?}"));
+            let program = &analysis.hir.program;
+            let helper = program
+                .functions
+                .values()
+                .find(|function| function.name == "read")
+                .unwrap();
+            let owner = program
+                .structs
+                .values()
+                .find(|structure| structure.name == "ViewBox")
+                .unwrap();
+            let view = program
+                .traits
+                .values()
+                .find(|protocol| protocol.name == "View")
+                .unwrap();
+            let implementation = program
+                .impls
+                .values()
+                .find(|implementation| implementation.trait_id == Some(view.id))
+                .unwrap();
+            assert_eq!(
+                helper.params[0].ty,
+                Type::Struct {
+                    id: owner.id,
+                    args: Vec::new()
+                }
+            );
+            assert_eq!(helper.ret_type, Type::I64);
+            let crate::hir::HirStmtFor::Expr(expression) = &helper.body.stmts[0] else {
+                unreachable!()
+            };
+            let crate::hir::HirExprKindFor::Deref(reference) = &expression.kind else {
+                panic!("{expression:?}")
+            };
+            assert_eq!(
+                reference.ty,
+                Type::Reference {
+                    mutable: false,
+                    inner: Box::new(Type::I64)
+                }
+            );
+            let crate::hir::HirExprKindFor::MethodCall(receiver, _, args, mode, target) =
+                &reference.kind
+            else {
+                panic!("{reference:?}")
+            };
+            assert_eq!(receiver.ty, helper.params[0].ty);
+            assert!(args.is_empty());
+            assert_eq!(*mode, Some(crate::types::ReceiverMode::Shared));
+            assert_eq!(target.trait_id(), Some(view.id));
+            assert_eq!(target.impl_id(), Some(implementation.id));
+            assert_eq!(target.method_id(), Some(implementation.methods["*"].id));
+        }
+    }
+
+    #[test]
+    fn deferred_reference_dereference_retains_exact_caller_kind_in_both_source_orders() {
+        for mutable in [false, true] {
+            for helper_first in [false, true] {
+                let declarations =
+                    "lang sized\n< trait LayoutKnown\nstruct Audit\n    < releases: I64\n";
+                let helper = "read = input -> unsafe (*input).releases\n";
+                let argument = if mutable { "(&mut audit)" } else { "(&audit)" };
+                let caller = format!(
+                    "main = ->\n    mut audit = Audit\n        releases: 42\n    read {argument}\n"
+                );
+                let source = if helper_first {
+                    format!("{declarations}{helper}{caller}")
+                } else {
+                    format!("{declarations}{caller}{helper}")
+                };
+                let operation = source.find("*input").unwrap();
+                let path = std::path::PathBuf::from("/virtual/deferred_reference_deref.rk");
+                let config = crate::Config {
+                    entry_file: path.clone(),
+                    no_std: true,
+                    no_prelude: true,
+                    source_providers: vec![crate::SourceProvider::Virtual {
+                        path: path.clone(),
+                        text: source.clone(),
+                    }],
+                    ..crate::Config::default()
+                };
+                assert_preaccepted_dereference_safety(&config, &source, "read");
+                let analysis = crate::analyze(&config).unwrap_or_else(|errors| {
+                    panic!("mutable={mutable}, helper_first={helper_first}: {errors:?}")
+                });
+                let program = &analysis.hir.program;
+                let audit = program
+                    .structs
+                    .values()
+                    .find(|structure| structure.name == "Audit")
+                    .unwrap();
+                let audit_ty = Type::Struct {
+                    id: audit.id,
+                    args: Vec::new(),
+                };
+                let expected = Type::Reference {
+                    mutable,
+                    inner: Box::new(audit_ty.clone()),
+                };
+                let helper = program
+                    .functions
+                    .values()
+                    .find(|function| function.name == "read")
+                    .unwrap();
+                assert!(helper.generic_params.is_empty());
+                assert_eq!(helper.params.len(), 1);
+                assert_eq!(helper.params[0].ty, expected);
+                assert_eq!(helper.ret_type, Type::I64);
+                let crate::hir::HirStmtFor::Expr(expression) = &helper.body.stmts[0] else {
+                    unreachable!()
+                };
+                let (field, discarded) = accepted_value_through_blocks(expression, &Type::I64);
+                assert!(
+                    !discarded,
+                    "a value-returning read must retain its I64 result"
+                );
+                let crate::hir::HirExprKindFor::FieldAccess(base, _, Some(location)) = &field.kind
+                else {
+                    panic!("{field:?}")
+                };
+                assert_eq!(field.ty, Type::I64);
+                assert_eq!(location.owner, audit.id);
+                assert_eq!(location.field_id, audit.fields[0].id);
+                assert_eq!(base.ty, audit_ty);
+                assert_eq!(base.span, Span::new(path, operation, operation + 1));
+                let crate::hir::HirExprKindFor::Deref(input) = &base.kind else {
+                    panic!("{base:?}")
+                };
+                assert_eq!(input.ty, expected);
+                let main = program
+                    .functions
+                    .values()
+                    .find(|function| function.name == "main")
+                    .unwrap();
+                let crate::hir::HirStmtFor::Expr(call) = &main.body.stmts[1] else {
+                    unreachable!()
+                };
+                let crate::hir::HirExprKindFor::Call(_, args, _) = &call.kind else {
+                    panic!("{call:?}")
+                };
+                assert_eq!(args.len(), 1);
+                assert_eq!(args[0].ty, expected);
+                assert!(
+                    matches!(args[0].kind, crate::hir::HirExprKindFor::Ref(access, _) if access == mutable)
+                );
+            }
+        }
+    }
+
+    fn assert_preaccepted_dereference_safety(config: &crate::Config, source: &str, name: &str) {
+        let operation = source.find("*input").unwrap();
+        let span = Span::new(config.entry_file.clone(), operation, operation + 1);
+        let module = crate::parser::parse_source(config.entry_file.clone(), source, config)
+            .expect("same source parses before HIR acceptance");
+        let ast = crate::ast::Program { module };
+        let partial = Lowerer::with_options(false)
+            .lower_program(&ast)
+            .expect("same source lowers before inference and accepted wrapper normalization");
+        let function = partial
+            .functions
+            .values()
+            .find(|function| function.name == name)
+            .unwrap();
+        let relations = partial.constraint_store.iter().filter(|(id, constraint)| {
+            partial.constraint_store.owner(*id) == Some(crate::infer::ConstraintOwner::Body(function.id))
+                && matches!(constraint, crate::infer::constraints::Constraint::Dereference { span: original, .. } if *original == span)
+        }).collect::<Vec<_>>();
+        assert_eq!(
+            relations.len(),
+            1,
+            "source operation must retain exactly one owned relation"
+        );
+        let crate::infer::constraints::Constraint::Dereference {
+            input,
+            output,
+            unsafe_allowed,
+            span: original,
+        } = relations[0].1
+        else {
+            unreachable!()
+        };
+        assert!(
+            *unsafe_allowed,
+            "permission must be captured from this source unsafe block"
+        );
+        assert_eq!(*original, span);
+        assert_ne!(
+            input, output,
+            "source permission cannot reuse or poison the result slot"
+        );
+        assert_eq!(
+            partial.engine.resolve(input),
+            partial.engine.resolve(&function.params[0].ty)
+        );
+    }
+
+    fn accepted_value_through_blocks<'a>(
+        mut expression: &'a crate::hir::HirExprFor<crate::hir::AcceptedHir>,
+        expected: &Type,
+    ) -> (&'a crate::hir::HirExprFor<crate::hir::AcceptedHir>, bool) {
+        let mut saw_unit_tail = false;
+        loop {
+            let body = match &expression.kind {
+                crate::hir::HirExprKindFor::Block(body)
+                | crate::hir::HirExprKindFor::UnsafeBlock(body) => body,
+                _ => break,
+            };
+            assert_eq!(&body.ty, expected);
+            expression = match body.stmts.as_slice() {
+                [crate::hir::HirStmtFor::Expr(value)] => value,
+                [crate::hir::HirStmtFor::Expr(value), crate::hir::HirStmtFor::Expr(tail)] => {
+                    assert_eq!(*expected, Type::Unit);
+                    assert!(matches!(tail.kind, crate::hir::HirExprKindFor::Unit));
+                    assert_eq!(tail.ty, Type::Unit);
+                    saw_unit_tail = true;
+                    value
+                }
+                _ => panic!("unexpected value/discard wrapper: {body:?}"),
+            };
+        }
+        (expression, saw_unit_tail)
+    }
+
+    #[test]
+    fn deferred_dereference_field_assignment_retains_actual_place_and_input_kind() {
+        for argument in ["((&mut audit) as *Audit)", "(&mut audit)"] {
+            for helper_first in [false, true] {
+                let declarations =
+                    "lang sized\n< trait LayoutKnown\nstruct Audit\n    < releases: I64\n";
+                let helper = "write = input !-> unsafe (*input).releases = 42\n";
+                let caller = format!("main = !->\n    mut audit = Audit\n        releases: 0\n    write {argument}\n");
+                let source = if helper_first {
+                    format!("{declarations}{helper}{caller}")
+                } else {
+                    format!("{declarations}{caller}{helper}")
+                };
+                let path = std::path::PathBuf::from("/virtual/deferred_deref_write.rk");
+                let config = crate::Config {
+                    entry_file: path.clone(),
+                    no_std: true,
+                    no_prelude: true,
+                    source_providers: vec![crate::SourceProvider::Virtual {
+                        path,
+                        text: source.clone(),
+                    }],
+                    ..crate::Config::default()
+                };
+                assert_preaccepted_dereference_safety(&config, &source, "write");
+                let analysis =
+                    crate::analyze(&config).unwrap_or_else(|errors| panic!("{errors:?}"));
+                let program = &analysis.hir.program;
+                let audit = program
+                    .structs
+                    .values()
+                    .find(|structure| structure.name == "Audit")
+                    .unwrap();
+                let audit_ty = Type::Struct {
+                    id: audit.id,
+                    args: Vec::new(),
+                };
+                let helper = program
+                    .functions
+                    .values()
+                    .find(|function| function.name == "write")
+                    .unwrap();
+                let expected = if argument.contains("*Audit") {
+                    Type::Pointer(Box::new(audit_ty.clone()))
+                } else {
+                    Type::Reference {
+                        mutable: true,
+                        inner: Box::new(audit_ty.clone()),
+                    }
+                };
+                assert_eq!(helper.params[0].ty, expected);
+                assert_eq!(helper.ret_type, Type::Unit);
+                let crate::hir::HirStmtFor::Expr(expression) = &helper.body.stmts[0] else {
+                    unreachable!()
+                };
+                let (assignment, saw_unit_tail) =
+                    accepted_value_through_blocks(expression, &Type::Unit);
+                assert!(saw_unit_tail, "discard must retain its real unit tail");
+                let crate::hir::HirExprKindFor::Assign(place, _) = &assignment.kind else {
+                    panic!("{assignment:?}")
+                };
+                let crate::hir::HirExprKindFor::FieldAccess(base, _, Some(location)) = &place.kind
+                else {
+                    panic!("{place:?}")
+                };
+                assert_eq!(location.owner, audit.id);
+                assert_eq!(location.field_id, audit.fields[0].id);
+                assert_eq!(place.ty, Type::I64);
+                assert_eq!(base.ty, audit_ty);
+                let operation = source.find("*input").unwrap();
+                assert_eq!(
+                    base.span,
+                    Span::new(config.entry_file.clone(), operation, operation + 1)
+                );
+                let crate::hir::HirExprKindFor::Deref(input) = &base.kind else {
+                    panic!("{base:?}")
+                };
+                assert_eq!(input.ty, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn deferred_shared_field_assignment_rejects_in_analysis_at_actual_place() {
+        for helper_first in [false, true] {
+            for unsafe_source in [false, true] {
+                let declarations =
+                    "lang sized\n< trait LayoutKnown\nstruct Audit\n    < releases: I64\n";
+                let safety = if unsafe_source { "unsafe " } else { "" };
+                let helper = format!("write = input !-> {safety}(*input).releases = 42\n");
+                let caller =
+                    "main = !->\n    audit = Audit\n        releases: 0\n    write (&audit)\n";
+                let source = if helper_first {
+                    format!("{declarations}{helper}{caller}")
+                } else {
+                    format!("{declarations}{caller}{helper}")
+                };
+                let field = source.find(").releases").unwrap() + 2;
+                let path = std::path::PathBuf::from("/virtual/deferred_shared_write.rk");
+                let config = crate::Config {
+                    entry_file: path.clone(),
+                    no_std: true,
+                    no_prelude: true,
+                    source_providers: vec![crate::SourceProvider::Virtual {
+                        path: path.clone(),
+                        text: source,
+                    }],
+                    ..crate::Config::default()
+                };
+                let errors =
+                    crate::analyze(&config).expect_err("shared writes must reject before MIR");
+                assert!(errors
+                    .0
+                    .iter()
+                    .all(|error| error.code != Some(crate::diagnostic::DiagnosticCode::Internal)));
+                assert!(
+                    errors.0.iter().any(|error| {
+                        error.code == Some(crate::diagnostic::DiagnosticCode::Type)
+                            && error.message == crate::lower::place::SHARED_ASSIGNMENT
+                            && error.primary.as_ref().is_some_and(|label| {
+                                label.span
+                                    == Span::new(path.clone(), field, field + "releases".len())
+                            })
+                    }),
+                    "unsafe={unsafe_source}, helper_first={helper_first}: {errors:?}"
+                );
+                assert!(errors.0.iter().all(|error| !error
+                    .message
+                    .contains("cannot determine dereference input kind")));
+            }
+        }
+    }
+
+    #[test]
+    fn known_shared_field_assignment_uses_the_same_source_permission_rule() {
+        let source = "lang sized\n< trait LayoutKnown\nstruct Audit\n    < releases: I64\nmain = !->\n    audit = Audit\n        releases: 0\n    unsafe (*(&audit)).releases = 42\n";
+        let field = source.find(").releases").unwrap() + 2;
+        let path = std::path::PathBuf::from("/virtual/known_shared_write.rk");
+        let config = crate::Config {
+            entry_file: path.clone(),
+            no_std: true,
+            no_prelude: true,
+            source_providers: vec![crate::SourceProvider::Virtual {
+                path: path.clone(),
+                text: source.into(),
+            }],
+            ..crate::Config::default()
+        };
+        let errors =
+            crate::analyze(&config).expect_err("unsafe cannot upgrade known shared access");
+        assert!(
+            errors.0.iter().any(|error| {
+                error.code == Some(crate::diagnostic::DiagnosticCode::Type)
+                    && error.message == crate::lower::place::SHARED_ASSIGNMENT
+                    && error.primary.as_ref().is_some_and(|label| {
+                        label.span == Span::new(path.clone(), field, field + "releases".len())
+                    })
+            }),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn deferred_dereference_rejects_actual_scalar_at_original_operator() {
+        let source =
+            "lang sized\n< trait LayoutKnown\nread = input -> unsafe *input\nmain = -> read 42\n";
+        let path = std::path::PathBuf::from("/virtual/deferred_scalar_deref.rk");
+        let config = crate::Config {
+            entry_file: path.clone(),
+            no_std: true,
+            no_prelude: true,
+            source_providers: vec![crate::SourceProvider::Virtual {
+                path: path.clone(),
+                text: source.into(),
+            }],
+            ..crate::Config::default()
+        };
+        let errors =
+            crate::analyze(&config).expect_err("unsafe does not make a scalar dereferenceable");
+        assert!(errors
+            .0
+            .iter()
+            .all(|error| error.code != Some(crate::diagnostic::DiagnosticCode::Internal)));
+        let operation = source.find("*input").unwrap();
+        assert!(
+            errors.0.iter().any(|error| {
+                error.code == Some(crate::diagnostic::DiagnosticCode::Type)
+                    && error.message.contains("Cannot dereference non-pointer")
+                    && error.message.contains("I64")
+                    && error.primary.as_ref().is_some_and(|label| {
+                        label.span == Span::new(path.clone(), operation, operation + 1)
+                    })
+            }),
+            "{errors:?}"
+        );
     }
 
     #[test]

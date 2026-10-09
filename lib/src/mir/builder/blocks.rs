@@ -1,17 +1,22 @@
+use crate::lexer::Span;
 use crate::types::Type;
 
 use super::{HirBlock, HirStmt, MirBuilder};
 use crate::mir::{
     Constant, DropObligationKind, LocalSource, Mutability, Operand, Place, Projection, Rvalue,
-    StatementData, Terminator,
+    StatementData, StatementKind, Terminator,
 };
 
 impl<'a> MirBuilder<'a> {
-    pub(super) fn finish_scope_locals(&mut self, block_locals: Vec<crate::mir::Local>) {
+    pub(super) fn finish_scope_locals(
+        &mut self,
+        block_locals: Vec<crate::mir::Local>,
+        exit_span: Option<Span>,
+    ) {
         let previous_cleanup_mode = self.cleanup_mode;
         self.cleanup_mode = true;
         let mut current_opt = self.current_block;
-        for local in block_locals.into_iter().rev() {
+        for local in crate::mir::cleanup::cleanup_order(&block_locals) {
             if let Some(current) = current_opt {
                 let ty = self.get_local_type(local).unwrap_or(Type::Unit);
                 if self.type_needs_cleanup(&ty) {
@@ -19,12 +24,15 @@ impl<'a> MirBuilder<'a> {
                         local,
                         projection: vec![],
                     };
-                    self.emit_drop_for_place(&ty, root_place, Some(local));
+                    self.emit_drop_for_place(&ty, root_place, Some(local), exit_span.clone());
                     current_opt = self.current_block;
                 } else {
                     self.blocks[current.0]
                         .statements
-                        .push(StatementData::storage_dead(local, None));
+                        .push(StatementData::cleanup(
+                            StatementKind::StorageDead(local),
+                            exit_span.clone(),
+                        ));
                 }
             }
         }
@@ -36,6 +44,7 @@ impl<'a> MirBuilder<'a> {
         ty: &Type,
         place: Place,
         storage_dead: Option<crate::mir::Local>,
+        operation_span: Option<Span>,
     ) {
         if let Some(flag) = self.drop_flag_for_place(&place) {
             let drop_block = self.new_block();
@@ -48,16 +57,18 @@ impl<'a> MirBuilder<'a> {
                     }),
                     vec![(1, drop_block)],
                     next_block,
-                    self.cleanup_origin(&place),
+                    self.cleanup_origin(operation_span.clone()),
                 ));
             }
 
             self.current_block = Some(drop_block);
             self.set_drop_flag_for_place(&place, false, None);
-            self.emit_unconditional_drop_for_place(ty, place.clone());
+            self.emit_unconditional_drop_for_place(ty, place.clone(), operation_span.clone());
             if let Some(current) = self.current_block {
-                self.blocks[current.0].terminator =
-                    Some(Terminator::goto(next_block, self.cleanup_origin(&place)));
+                self.blocks[current.0].terminator = Some(Terminator::goto(
+                    next_block,
+                    self.cleanup_origin(operation_span.clone()),
+                ));
             }
 
             if let Some(local) = storage_dead {
@@ -65,43 +76,75 @@ impl<'a> MirBuilder<'a> {
                 let projection_flags = self.projection_drop_flags_for_local(local);
                 self.blocks[next_block.0]
                     .statements
-                    .push(StatementData::storage_dead(local, None));
+                    .push(StatementData::cleanup(
+                        StatementKind::StorageDead(local),
+                        operation_span.clone(),
+                    ));
                 self.blocks[next_block.0]
                     .statements
-                    .extend(flag.map(|flag| StatementData::storage_dead(flag, None)));
-                self.blocks[next_block.0].statements.extend(
-                    projection_flags
-                        .into_iter()
-                        .map(|flag| StatementData::storage_dead(flag, None)),
-                );
+                    .extend(flag.map(|flag| {
+                        StatementData::cleanup(
+                            StatementKind::StorageDead(flag),
+                            operation_span.clone(),
+                        )
+                    }));
+                self.blocks[next_block.0]
+                    .statements
+                    .extend(projection_flags.into_iter().map(|flag| {
+                        StatementData::cleanup(
+                            StatementKind::StorageDead(flag),
+                            operation_span.clone(),
+                        )
+                    }));
             }
             self.current_block = Some(next_block);
             return;
         }
 
-        self.emit_unconditional_drop_for_place(ty, place);
+        self.emit_unconditional_drop_for_place(ty, place, operation_span.clone());
 
         if let Some(local) = storage_dead {
             if let Some(current) = self.current_block {
                 self.blocks[current.0]
                     .statements
-                    .push(StatementData::storage_dead(local, None));
+                    .push(StatementData::cleanup(
+                        StatementKind::StorageDead(local),
+                        operation_span.clone(),
+                    ));
                 if let Some(flag) = self.drop_flag_for(local) {
                     self.blocks[current.0]
                         .statements
-                        .push(StatementData::storage_dead(flag, None));
+                        .push(StatementData::cleanup(
+                            StatementKind::StorageDead(flag),
+                            operation_span.clone(),
+                        ));
                 }
                 for flag in self.projection_drop_flags_for_local(local) {
                     self.blocks[current.0]
                         .statements
-                        .push(StatementData::storage_dead(flag, None));
+                        .push(StatementData::cleanup(
+                            StatementKind::StorageDead(flag),
+                            operation_span.clone(),
+                        ));
                 }
             }
         }
     }
 
-    fn emit_unconditional_drop_for_place(&mut self, ty: &Type, place: Place) {
+    fn emit_unconditional_drop_for_place(
+        &mut self,
+        ty: &Type,
+        place: Place,
+        operation_span: Option<Span>,
+    ) {
         if self.place_was_statically_moved_for_cleanup(&place) {
+            return;
+        }
+
+        if matches!(ty, Type::Function { captures, .. } if !captures.is_empty()) {
+            // The complete opaque plan includes any user destructor as well
+            // as the environment; do not emit that destructor a second time.
+            self.emit_child_drop_chain(ty, place, operation_span);
             return;
         }
 
@@ -116,24 +159,25 @@ impl<'a> MirBuilder<'a> {
                 self.blocks[current.0].terminator = Some(Terminator::drop(
                     place.clone(),
                     next_block,
-                    self.drop_origin(&place),
+                    self.drop_origin(operation_span.clone()),
                 ));
             }
             self.current_block = Some(next_block);
         }
 
-        self.emit_child_drop_chain(ty, place);
+        self.emit_child_drop_chain(ty, place, operation_span);
     }
 
     fn has_direct_drop_impl(&self, ty: &Type) -> bool {
         self.direct_drop_types.contains(ty)
     }
 
-    fn emit_child_drop_chain(&mut self, ty: &Type, place: Place) {
+    fn emit_child_drop_chain(&mut self, ty: &Type, place: Place, operation_span: Option<Span>) {
         match ty {
-            Type::Exists(_) => {
-                // The hidden payload is opaque to native MIR; its retained
-                // actual descriptor owns the entire cleanup, not projections.
+            Type::Function { captures, .. } if captures.is_empty() => {}
+            Type::Exists(_) | Type::Function { .. } => {
+                // Hidden payloads and closure environments are not ordinary
+                // local projections; their checked drop plans own cleanup.
                 let next_block = self.new_block();
                 self.record_drop_obligation(
                     place.clone(),
@@ -144,7 +188,7 @@ impl<'a> MirBuilder<'a> {
                     self.blocks[current.0].terminator = Some(Terminator::drop(
                         place.clone(),
                         next_block,
-                        self.drop_origin(&place),
+                        self.drop_origin(operation_span.clone()),
                     ));
                 }
                 self.current_block = Some(next_block);
@@ -155,15 +199,15 @@ impl<'a> MirBuilder<'a> {
                     self.type_id_for(ty),
                     DropObligationKind::Structural,
                 );
-                self.emit_struct_field_drop_chain(*id, args, place);
+                self.emit_struct_field_drop_chain(*id, args, place, operation_span);
             }
-            Type::Tuple(elems) => {
+            Type::Tuple(elems) | Type::StructRepresentation { fields: elems, .. } => {
                 self.record_drop_obligation(
                     place.clone(),
                     self.type_id_for(ty),
                     DropObligationKind::Structural,
                 );
-                self.emit_tuple_drop_chain(elems, place);
+                self.emit_tuple_drop_chain(elems, place, operation_span);
             }
             Type::Array(elem, len) => {
                 self.record_drop_obligation(
@@ -171,7 +215,7 @@ impl<'a> MirBuilder<'a> {
                     self.type_id_for(ty),
                     DropObligationKind::Structural,
                 );
-                self.emit_array_drop_chain(elem, *len, place);
+                self.emit_array_drop_chain(elem, *len, place, operation_span);
             }
             Type::Enum { id, args } => {
                 self.record_drop_obligation(
@@ -179,13 +223,27 @@ impl<'a> MirBuilder<'a> {
                     self.type_id_for(ty),
                     DropObligationKind::Structural,
                 );
-                self.emit_enum_payload_drop_chain(*id, args, place);
+                self.emit_enum_payload_drop_chain(*id, args, None, place, operation_span);
+            }
+            Type::EnumRepresentation { id, args, variants } => {
+                self.record_drop_obligation(
+                    place.clone(),
+                    self.type_id_for(ty),
+                    DropObligationKind::Structural,
+                );
+                self.emit_enum_payload_drop_chain(*id, args, Some(variants), place, operation_span);
             }
             _ => {}
         }
     }
 
-    fn emit_struct_field_drop_chain(&mut self, id: crate::ids::DefId, args: &[Type], place: Place) {
+    fn emit_struct_field_drop_chain(
+        &mut self,
+        id: crate::ids::DefId,
+        args: &[Type],
+        place: Place,
+        operation_span: Option<Span>,
+    ) {
         let field_entries = Self::struct_field_types_with_substitution(self.program, id, args);
         for (i, (_field_id, field_ty)) in field_entries.iter().enumerate().rev() {
             if self.type_needs_cleanup(field_ty) {
@@ -201,13 +259,18 @@ impl<'a> MirBuilder<'a> {
                 if !self.place_may_be_moved(&field_place)
                     || self.drop_flag_for_place(&field_place).is_some()
                 {
-                    self.emit_drop_for_place(field_ty, field_place, None);
+                    self.emit_drop_for_place(field_ty, field_place, None, operation_span.clone());
                 }
             }
         }
     }
 
-    fn emit_tuple_drop_chain(&mut self, elems: &[Type], place: Place) {
+    fn emit_tuple_drop_chain(
+        &mut self,
+        elems: &[Type],
+        place: Place,
+        operation_span: Option<Span>,
+    ) {
         for (i, elem_ty) in elems.iter().enumerate().rev() {
             if self.type_needs_cleanup(elem_ty) {
                 let mut projection = place.projection.clone();
@@ -222,13 +285,19 @@ impl<'a> MirBuilder<'a> {
                 if !self.place_may_be_moved(&field_place)
                     || self.drop_flag_for_place(&field_place).is_some()
                 {
-                    self.emit_drop_for_place(elem_ty, field_place, None);
+                    self.emit_drop_for_place(elem_ty, field_place, None, operation_span.clone());
                 }
             }
         }
     }
 
-    fn emit_array_drop_chain(&mut self, elem_ty: &Type, len: usize, place: Place) {
+    fn emit_array_drop_chain(
+        &mut self,
+        elem_ty: &Type,
+        len: usize,
+        place: Place,
+        operation_span: Option<Span>,
+    ) {
         if !self.type_needs_cleanup(elem_ty) {
             return;
         }
@@ -259,17 +328,27 @@ impl<'a> MirBuilder<'a> {
             if !self.place_may_be_moved(&elem_place)
                 || self.drop_flag_for_place(&elem_place).is_some()
             {
-                self.emit_drop_for_place(elem_ty, elem_place, None);
+                self.emit_drop_for_place(elem_ty, elem_place, None, operation_span.clone());
             }
             if let Some(current) = self.current_block {
                 self.blocks[current.0]
                     .statements
-                    .push(StatementData::storage_dead(index_local, None));
+                    .push(StatementData::cleanup(
+                        StatementKind::StorageDead(index_local),
+                        operation_span.clone(),
+                    ));
             }
         }
     }
 
-    fn emit_enum_payload_drop_chain(&mut self, id: crate::ids::DefId, args: &[Type], place: Place) {
+    fn emit_enum_payload_drop_chain(
+        &mut self,
+        id: crate::ids::DefId,
+        args: &[Type],
+        measured: Option<&[Vec<Type>]>,
+        place: Place,
+        operation_span: Option<Span>,
+    ) {
         let Some((_, enumeration)) = self.program.enum_by_id(id) else {
             return;
         };
@@ -292,10 +371,15 @@ impl<'a> MirBuilder<'a> {
             .variants
             .iter()
             .map(|variant| {
-                let fields = Self::enum_variant_field_types_for(self.program, id, variant.id)
-                    .into_iter()
-                    .map(|ty| ty.substitute_generics(&generic_subst))
-                    .collect::<Vec<_>>();
+                let fields = measured
+                    .and_then(|variants| variants.get(variant.id.0 as usize))
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        Self::enum_variant_field_types_for(self.program, id, variant.id)
+                            .into_iter()
+                            .map(|ty| ty.substitute_generics(&generic_subst))
+                            .collect::<Vec<_>>()
+                    });
                 (variant.id, fields)
             })
             .filter(|(_, fields)| fields.iter().any(|field| self.type_needs_cleanup(field)))
@@ -338,7 +422,7 @@ impl<'a> MirBuilder<'a> {
                     .map(|((variant_id, _), block)| (variant_id.0 as i64, *block))
                     .collect(),
                 done_block,
-                self.cleanup_origin(&place),
+                self.cleanup_origin(operation_span.clone()),
             ));
         }
 
@@ -361,12 +445,14 @@ impl<'a> MirBuilder<'a> {
                 if !self.place_may_be_moved(&field_place)
                     || self.drop_flag_for_place(&field_place).is_some()
                 {
-                    self.emit_drop_for_place(field_ty, field_place, None);
+                    self.emit_drop_for_place(field_ty, field_place, None, operation_span.clone());
                 }
             }
             if let Some(current) = self.current_block {
-                self.blocks[current.0].terminator =
-                    Some(Terminator::goto(done_block, self.cleanup_origin(&place)));
+                self.blocks[current.0].terminator = Some(Terminator::goto(
+                    done_block,
+                    self.cleanup_origin(operation_span.clone()),
+                ));
             }
         }
 
@@ -374,7 +460,10 @@ impl<'a> MirBuilder<'a> {
         if let Some(current) = self.current_block {
             self.blocks[current.0]
                 .statements
-                .push(StatementData::storage_dead(discr_local, None));
+                .push(StatementData::cleanup(
+                    StatementKind::StorageDead(discr_local),
+                    operation_span,
+                ));
         }
     }
 
@@ -387,6 +476,13 @@ impl<'a> MirBuilder<'a> {
             // Even a uniform payload can own a destructor; only its runtime
             // descriptor knows the actual witness-instantiated Drop plan.
             Type::Exists(_) => true,
+            Type::StructRepresentation { fields, .. } => {
+                fields.iter().any(|field| self.type_needs_cleanup(field))
+            }
+            Type::EnumRepresentation { variants, .. } => variants
+                .iter()
+                .flatten()
+                .any(|field| self.type_needs_cleanup(field)),
             Type::Struct { id, args } => {
                 Self::struct_field_types_with_substitution(self.program, *id, args)
                     .iter()
@@ -432,40 +528,44 @@ impl<'a> MirBuilder<'a> {
         &mut self,
         block_locals: Vec<crate::mir::Local>,
         target: crate::mir::BasicBlockId,
+        exit_span: Option<Span>,
     ) -> crate::mir::BasicBlockId {
         let previous_block = self.current_block;
         let cleanup_block = self.new_block();
         self.current_block = Some(cleanup_block);
-        self.finish_scope_locals(block_locals);
+        self.finish_scope_locals(block_locals, exit_span.clone());
         if let Some(current) = self.current_block {
-            self.blocks[current.0].terminator = Some(Terminator::goto(
-                target,
-                crate::mir::MirOrigin::synthetic(crate::mir::MirSyntheticOrigin::Cleanup, None),
-            ));
+            self.blocks[current.0].terminator =
+                Some(Terminator::goto(target, self.cleanup_origin(exit_span)));
         }
         self.current_block = previous_block;
         cleanup_block
     }
 
     pub(super) fn active_cleanup_locals_from(&self, depth: usize) -> Vec<crate::mir::Local> {
-        self.scope_locals
-            .iter()
-            .skip(depth)
-            .flat_map(|locals| locals.iter().copied())
-            .collect()
+        self.scope_locals.active_from(depth)
     }
 
     pub(super) fn terminate_with_cleanup(&mut self, cleanup_depth: usize, terminator: Terminator) {
         let cleanup_locals = self.active_cleanup_locals_from(cleanup_depth);
-        self.finish_scope_locals(cleanup_locals);
+        self.finish_scope_locals(cleanup_locals, terminator.origin().source_span().cloned());
         if let Some(current) = self.current_block {
             self.blocks[current.0].terminator = Some(terminator);
             self.current_block = None;
         }
     }
 
+    pub(super) fn block_exit_span(block: &HirBlock) -> Option<Span> {
+        // Only the actual tail operation owns the normal exit; absent HIR
+        // source stays absent rather than borrowing a declaration's location.
+        match block.stmts.last() {
+            Some(HirStmt::Expr(expr)) => Some(expr.span.clone()),
+            _ => None,
+        }
+    }
+
     pub(super) fn lower_block(&mut self, block: &HirBlock, dest: Place) {
-        self.scope_locals.push(Vec::new());
+        self.scope_locals.enter(Vec::new());
         let mut restored_bindings = Vec::new();
         let stmts_len = block.stmts.len();
 
@@ -492,9 +592,7 @@ impl<'a> MirBuilder<'a> {
                         LocalSource::UserBinding,
                         self.source_local_span(self.current_source_owner, *local_id),
                     );
-                    if let Some(scope_locals) = self.scope_locals.last_mut() {
-                        scope_locals.push(local);
-                    }
+                    self.scope_locals.register(local);
 
                     let place = Place {
                         local,
@@ -502,10 +600,10 @@ impl<'a> MirBuilder<'a> {
                     };
 
                     self.emit_storage_live(local, Some(value.span.clone()));
-                    self.scope_locals.push(Vec::new());
+                    self.scope_locals.enter(Vec::new());
                     self.lower_expr(value, place);
-                    let temp_locals = self.scope_locals.pop().unwrap_or_default();
-                    self.finish_scope_locals(temp_locals);
+                    let temp_locals = self.scope_locals.leave();
+                    self.finish_scope_locals(temp_locals, Some(value.span.clone()));
                     // Initializers still see the outer binding. Restore it
                     // when this lexical block ends, including after shadowing.
                     restored_bindings
@@ -515,25 +613,23 @@ impl<'a> MirBuilder<'a> {
                     // Unit tails are real values too (including the explicit
                     // !-> tail); write the result before lexical cleanup.
                     if is_last {
-                        self.scope_locals.push(Vec::new());
+                        self.scope_locals.enter(Vec::new());
                         self.lower_expr(expr, dest.clone());
-                        let temp_locals = self.scope_locals.pop().unwrap_or_default();
-                        self.finish_scope_locals(temp_locals);
+                        let temp_locals = self.scope_locals.leave();
+                        self.finish_scope_locals(temp_locals, Some(expr.span.clone()));
                     } else {
+                        self.scope_locals.enter(Vec::new());
                         let local = self.new_local_from_expr(expr.ty.clone(), expr);
+                        self.register_scoped_temp(local);
                         self.emit_storage_live(local, Some(expr.span.clone()));
 
                         let place = Place {
                             local,
                             projection: vec![],
                         };
-                        self.scope_locals.push(Vec::new());
-                        if let Some(scope_locals) = self.scope_locals.last_mut() {
-                            scope_locals.push(local);
-                        }
                         self.lower_expr(expr, place);
-                        let temp_locals = self.scope_locals.pop().unwrap_or_default();
-                        self.finish_scope_locals(temp_locals);
+                        let temp_locals = self.scope_locals.leave();
+                        self.finish_scope_locals(temp_locals, Some(expr.span.clone()));
                     }
                 }
                 HirStmt::Return(expr) => {
@@ -542,10 +638,10 @@ impl<'a> MirBuilder<'a> {
                             local: crate::mir::Local(0),
                             projection: vec![],
                         };
-                        self.scope_locals.push(Vec::new());
+                        self.scope_locals.enter(Vec::new());
                         self.lower_expr(e, ret_place);
-                        let temp_locals = self.scope_locals.pop().unwrap_or_default();
-                        self.finish_scope_locals(temp_locals);
+                        let temp_locals = self.scope_locals.leave();
+                        self.finish_scope_locals(temp_locals, Some(e.span.clone()));
                     }
                     let return_span = self.source_operation_span(
                         self.current_source_owner,
@@ -585,8 +681,8 @@ impl<'a> MirBuilder<'a> {
             }
         }
 
-        let block_locals = self.scope_locals.pop().unwrap_or_default();
-        self.finish_scope_locals(block_locals);
+        let block_locals = self.scope_locals.leave();
+        self.finish_scope_locals(block_locals, Self::block_exit_span(block));
         for (name, previous) in restored_bindings.into_iter().rev() {
             if let Some(local) = previous {
                 self.var_map.insert(name, local);

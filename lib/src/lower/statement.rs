@@ -84,10 +84,14 @@ impl Lowerer {
 
     pub(crate) fn lower_lambda_body(&mut self, lambda: &ast::LambdaDecl) -> HirBlock {
         let expected = self.current_body_return_type();
+        // An inferred result is established by the body, not an unconstrained
+        // object-coercion destination. Keep declared/contextual expectations.
+        let expected = expected.as_ref()
+            .filter(|ty| !matches!(self.engine.resolve(ty), Type::TypeVar(_)));
         let mut body = if matches!(lambda.arrow_kind, ast::LambdaArrowKind::Unit) {
             self.lower_block_with_result(&lambda.body, None, BlockResult::Discarded)
         } else {
-            self.lower_block_expected(&lambda.body, expected.as_ref())
+            self.lower_block_expected(&lambda.body, expected)
         };
         if matches!(lambda.arrow_kind, ast::LambdaArrowKind::Unit) {
             Self::append_unit_tail(&mut body, &lambda.span);
@@ -312,6 +316,14 @@ impl Lowerer {
             ast::AssignmentLHS::Expression(unary_expr) => {
                 // This is a reassignment (e.g., x = 5 or x.field = 5)
                 let lhs_expr = self.lower_unary_expr_with_use(unary_expr, ExprUse::AssignmentPlace);
+                if super::place::assignment_access(&lhs_expr, &|ty| {
+                    self.resolve_projection_type(&self.engine.resolve(ty))
+                }) == super::place::AssignmentAccess::Shared
+                {
+                    self.diagnostics.push_type_with_span(
+                        super::place::SHARED_ASSIGNMENT.into(), lhs_expr.span.clone(),
+                    );
+                }
                 // For *ptr = val, unify the pointer's element type with the value type.
                 // This is critical for generic impls: e.g. in `impl Vec T`, the deref
                 // `*(~PtrAdd new_ptr, self.len)` has type `Generic("T")`, and after

@@ -11,6 +11,15 @@ use crate::types::Type;
 
 use super::{InstanceKey, InstanceOrigin, Monomorphizer};
 
+fn has_measured_storage(ty: &Type) -> bool {
+    crate::type_services::visit::type_any(ty, |ty| {
+        matches!(
+            ty,
+            Type::StructRepresentation { .. } | Type::EnumRepresentation { .. }
+        ) || matches!(ty, Type::Function { captures, .. } if !captures.is_empty())
+    })
+}
+
 impl Monomorphizer {
     pub(super) fn register_effective_trait_methods(
         &mut self,
@@ -126,13 +135,19 @@ impl Monomorphizer {
             }
         }
 
+        // Retain accepted definition requirements before processing/removing
+        // concrete definitions or substituting any caller instance.
+        self.retained_callable_inputs = self.definition_callable_inputs();
+        if let Err(error) = self.prepare_polymorphic_members(&program) {
+            self.diagnostics.push(
+                crate::diagnostic::Diagnostic::for_internal(error)
+                    .with_code(crate::diagnostic::DiagnosticCode::Mono),
+            );
+        }
         let mut function_ids = self.concrete_functions.keys().copied().collect::<Vec<_>>();
         function_ids.sort();
         for id in function_ids {
-            if let Some(func) = self.concrete_functions.remove(&id) {
-                let processed = self.process_function(func);
-                self.concrete_functions.insert(id, processed);
-            }
+            self.process_concrete_definition(id);
         }
 
         let mut impl_ids = program.impls.keys().copied().collect::<Vec<_>>();
@@ -187,6 +202,19 @@ impl Monomorphizer {
         names
     }
 
+    fn process_concrete_definition(&mut self, id: DefId) {
+        if self.processed_concrete_functions.contains(&id) {
+            return;
+        }
+        // Removal is the recursion guard: an active definition cannot certify
+        // its own unfinished return representation through a cycle.
+        if let Some(function) = self.concrete_functions.remove(&id) {
+            let processed = self.process_function(function);
+            self.concrete_functions.insert(id, processed);
+            self.processed_concrete_functions.insert(id);
+        }
+    }
+
     pub(super) fn process_function(&mut self, mut func: HirFunction) -> HirFunction {
         let previous_owner = self.current_function_owner;
         self.current_function_owner = Some(func.id);
@@ -216,6 +244,13 @@ impl Monomorphizer {
                 );
             }
         }
+        if let Some(actual) =
+            crate::type_services::callable::value_representation(&func.ret_type, &func.body.ty)
+        {
+            if block_returns_agree(&func.body, &actual) {
+                func.ret_type = actual;
+            }
+        }
         self.current_function_owner = previous_owner;
         self.var_types = previous_var_types;
         func
@@ -242,6 +277,23 @@ impl Monomorphizer {
         for stmt in &mut block.stmts {
             self.process_stmt(stmt);
         }
+        if let Some(HirStmt::Expr(value) | HirStmt::Return(Some(value))) = block.stmts.last() {
+            if let Some(actual) =
+                crate::type_services::callable::value_representation(&block.ty, &value.ty)
+            {
+                if block_returns_agree(block, &actual) {
+                    block.ty = actual;
+                } else if has_measured_storage(&actual) {
+                    self.diagnostics.push(
+                        crate::diagnostic::Diagnostic::new(
+                            "return paths require an agreed field representation".into(),
+                            value.span.clone(),
+                        )
+                        .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                    );
+                }
+            }
+        }
         self.var_types = enclosing_var_types;
     }
 
@@ -267,6 +319,91 @@ impl Monomorphizer {
                 self.process_expr(expr);
                 self.monomorphize_drop_for_type(&expr.ty, Some(expr.span.clone()));
             }
+            _ => {}
+        }
+    }
+
+    // Pattern locals carry the selected value layout, not the inference-era
+    // arrow header. This supplies no callable demand or producer certificate.
+    fn process_pattern_bindings(&mut self, pattern: &crate::hir::HirPattern, ty: &Type) {
+        use crate::hir::HirPattern;
+
+        let instantiate = |owner, args: &[Type], field: &Type| {
+            let generics = self.nominal_generic_params.get(&owner)?;
+            if generics.len() != args.len() {
+                return None;
+            }
+            let substitution = generics.iter().copied().zip(args.iter().cloned()).collect();
+            crate::type_services::substitution::instantiate(field, &substitution).ok()
+        };
+        match (pattern, ty) {
+            (HirPattern::Binding { local_id, .. }, _) => {
+                let ty = self.intern_type(ty);
+                self.var_types.insert(*local_id, ty);
+            }
+            (HirPattern::Tuple(patterns), Type::Tuple(fields))
+                if patterns.len() == fields.len() =>
+            {
+                for (pattern, field) in patterns.iter().zip(fields) {
+                    self.process_pattern_bindings(pattern, field);
+                }
+            }
+            (
+                HirPattern::Enum(_, _, Some(location), patterns),
+                Type::Enum { id, args } | Type::EnumRepresentation { id, args, .. },
+            ) if location.owner == *id => {
+                let fields = if let Type::EnumRepresentation { variants, .. } = ty {
+                    variants.get(location.variant_id.0 as usize).cloned()
+                } else {
+                    self.nominal_variant_fields
+                        .get(&(*id, location.variant_id))
+                        .and_then(|fields| {
+                            fields
+                                .iter()
+                                .map(|field| instantiate(*id, args, field))
+                                .collect::<Option<Vec<_>>>()
+                        })
+                };
+                if let Some(fields) = fields.filter(|fields| fields.len() == patterns.len()) {
+                    for (pattern, field) in patterns.iter().zip(fields) {
+                        self.process_pattern_bindings(pattern, &field);
+                    }
+                }
+            }
+            (
+                HirPattern::Struct(_, Some(owner), _, patterns),
+                Type::Struct { id, args } | Type::StructRepresentation { id, args, .. },
+            ) if owner == id => {
+                let fields = patterns
+                    .iter()
+                    .map(|pattern| {
+                        let location = pattern.field.as_ref()?;
+                        if location.owner != *id {
+                            return None;
+                        }
+                        let index = self
+                            .nominal_field_ids
+                            .get(id)?
+                            .iter()
+                            .position(|field| *field == location.field_id)?;
+                        match ty {
+                            Type::StructRepresentation { fields, .. } => fields.get(index).cloned(),
+                            _ => instantiate(
+                                *id,
+                                args,
+                                self.nominal_field_types.get(id)?.get(index)?,
+                            ),
+                        }
+                    })
+                    .collect::<Option<Vec<_>>>();
+                if let Some(fields) = fields {
+                    for (pattern, field) in patterns.iter().zip(fields) {
+                        self.process_pattern_bindings(&pattern.pattern, &field);
+                    }
+                }
+            }
+            // Borrowed storage and alternatives require independent agreement;
+            // their inferred bindings remain conservative.
             _ => {}
         }
     }
@@ -358,6 +495,21 @@ impl Monomorphizer {
                     }
                     return;
                 }
+                if let HirVarTarget::Function(id) = reference.target {
+                    self.process_concrete_definition(id);
+                    if let Some(definition) = self.concrete_functions.get(&id) {
+                        if let Type::Function { ret, .. } = &mut expr.ty {
+                            if let Some(actual) =
+                                crate::type_services::callable::value_representation(
+                                    ret,
+                                    &definition.ret_type,
+                                )
+                            {
+                                **ret = actual;
+                            }
+                        }
+                    }
+                }
 
                 let generic_target = match reference.target {
                     HirVarTarget::Function(id) | HirVarTarget::Extern(id) => {
@@ -396,12 +548,10 @@ impl Monomorphizer {
                 self.process_expr(inner);
             }
             HirExprKind::Call(func, args, target) => {
-                self.process_expr(func);
-                for arg in args.iter_mut() {
-                    self.process_expr(arg);
-                }
-
-                let generic_target = match &func.kind {
+                // A generic callee's inferred header can abstract over an actual
+                // callable environment. Instantiate its definition from the
+                // processed arguments, rather than eagerly freezing that header.
+                let mut generic_target = match &func.kind {
                     HirExprKind::ResolvedVar(reference) => match reference.target {
                         HirVarTarget::Function(id) | HirVarTarget::Extern(id) => {
                             self.generic_function_by_id(id)
@@ -410,15 +560,61 @@ impl Monomorphizer {
                     },
                     _ => None,
                 };
-                let fallback_name = match &func.kind {
+                let nominal_target = match &func.kind {
                     HirExprKind::ResolvedVar(reference) => match reference.target {
-                        HirVarTarget::Function(_) | HirVarTarget::Extern(_) => {
-                            Some(reference.name.clone())
-                        }
-                        HirVarTarget::Instance(_) | HirVarTarget::Local(_) => None,
+                        HirVarTarget::Function(id) => self.concrete_function_by_id(id),
+                        _ => None,
                     },
                     _ => None,
                 };
+                let immediate_lambda = matches!(func.kind, HirExprKind::Lambda { .. });
+                if generic_target.is_some() || immediate_lambda {
+                    func.ty = self.substitute_generics(&func.ty);
+                } else {
+                    self.process_expr(func);
+                }
+                for arg in args.iter_mut() {
+                    self.process_expr(arg);
+                }
+                if generic_target.is_none() {
+                    // Specialize only a measured local input layout difference;
+                    // ordinary nominal calls keep their canonical native link.
+                    generic_target = nominal_target
+                        .filter(|function| {
+                            !function.body.stmts.is_empty()
+                                && function.params.len() == args.len()
+                                && function.params.iter().zip(args.iter()).any(
+                                    |(parameter, argument)| {
+                                        !parameter.is_ref
+                                            && crate::type_services::visit::type_any(
+                                                &argument.ty,
+                                                |ty| {
+                                                    matches!(
+                                                        ty,
+                                                        Type::StructRepresentation { .. }
+                                                            | Type::EnumRepresentation { .. }
+                                                    )
+                                                },
+                                            )
+                                            && crate::type_services::callable::value_representation(
+                                                &parameter.ty,
+                                                &argument.ty,
+                                            )
+                                            .is_some_and(|actual| actual != parameter.ty)
+                                    },
+                                )
+                        })
+                        .map(|function| (function.name.clone(), function));
+                }
+                if immediate_lambda {
+                    if let HirExprKind::Lambda { params, .. } = &mut func.kind {
+                        self.refine_value_parameters(params, args);
+                    }
+                    self.process_expr(func);
+                    if let Type::Function { ret, .. } = &func.ty {
+                        expr.ty = *ret.clone();
+                    }
+                }
 
                 let args_for_mono: Vec<HirExpr> = args.iter().cloned().collect();
 
@@ -447,10 +643,15 @@ impl Monomorphizer {
                 }
 
                 let unresolved_static = matches!(target, Some(HirCallTarget::StaticMethod(_)));
-                if !had_static_authority && fallback_name.is_some() {
+                if !had_static_authority {
                     if let Some((lookup_name, generic_func)) = generic_target {
                         if let Some((instance_id, specialized_func_type, specialized_ret_type)) =
-                            self.monomorphize_call(&lookup_name, &generic_func, &args_for_mono)
+                            self.monomorphize_call(
+                                &lookup_name,
+                                &generic_func,
+                                &args_for_mono,
+                                Some(&func.ty),
+                            )
                         {
                             *func = Box::new(self.instance_callable_expr(
                                 lookup_name.clone(),
@@ -460,6 +661,13 @@ impl Monomorphizer {
                             ));
                             expr.ty = specialized_ret_type;
                         }
+                    }
+                }
+                if let Type::Function { ret, .. } = &func.ty {
+                    if let Some(actual) =
+                        crate::type_services::callable::value_representation(&expr.ty, ret)
+                    {
+                        expr.ty = actual;
                     }
                 }
 
@@ -499,6 +707,26 @@ impl Monomorphizer {
                 };
 
                 if let Some(callee_func) = callee_func {
+                    // The selected definition owns its parameter contracts.
+                    // A previously inferred reference can still have abstract
+                    // default callable slots; do not use those stale slots to
+                    // erase the actual argument's kind during MIR adaptation.
+                    if let Type::Function {
+                        params,
+                        ret,
+                        safety,
+                        ..
+                    } = &mut func.ty
+                    {
+                        *params = callee_func
+                            .params
+                            .iter()
+                            .map(|param| param.ty.clone())
+                            .collect();
+                        **ret = callee_func.ret_type.clone();
+                        *safety =
+                            crate::types::FunctionSafety::from_is_unsafe(callee_func.is_unsafe);
+                    }
                     for (i, arg) in args.iter_mut().enumerate() {
                         if i < callee_func.params.len() {
                             let param_ty = &callee_func.params[i].ty;
@@ -529,6 +757,39 @@ impl Monomorphizer {
                                             target: HirVarTarget::Instance(instance_id),
                                         });
                                         arg.ty = spec_func_type;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let HirExprKind::ResolvedVar(reference) = &func.kind {
+                    if let HirVarTarget::Instance(instance) = reference.target {
+                        if self
+                            .instances
+                            .record(instance)
+                            .is_some_and(|record| record.provided_by_object)
+                        {
+                            if let Type::Function { params, .. } = &func.ty {
+                                for (parameter, argument) in params.iter().zip(args.iter()) {
+                                    // A bodyless entry cannot specialize its field-copy
+                                    // or cleanup code from a caller's nominal identity.
+                                    if crate::type_services::visit::type_any(&argument.ty, |ty| {
+                                        matches!(
+                                            ty,
+                                            Type::StructRepresentation { .. }
+                                                | Type::EnumRepresentation { .. }
+                                        )
+                                    }) && crate::type_services::callable::value_representation(
+                                        parameter,
+                                        &argument.ty,
+                                    )
+                                    .map_or(true, |actual| actual != *parameter)
+                                    {
+                                        self.diagnostics.push(crate::diagnostic::Diagnostic::new(
+                                            "native parameter requires its declared storage representation".into(),
+                                            argument.span.clone(),
+                                        ).with_code(crate::diagnostic::DiagnosticCode::Mono));
                                     }
                                 }
                             }
@@ -586,12 +847,14 @@ impl Monomorphizer {
                                         && slot.trait_args == trait_args
                                 });
                         if let Some(slot) = slot {
-                            self.prepare_erased_virtual_call(
+                            if let Some(storage) = self.prepare_erased_virtual_call(
                                 object,
                                 slot as u32,
                                 &selected_target,
                                 &expr.span,
-                            )?;
+                            )? {
+                                expr.ty = storage;
+                            }
                         }
                         Ok(())
                     });
@@ -727,23 +990,214 @@ impl Monomorphizer {
                     }
                 }
             }
-            HirExprKind::FieldAccess(inner, _, _) | HirExprKind::TupleIndex(inner, _) => {
+            HirExprKind::FieldAccess(inner, _, location) => {
                 self.process_expr(inner);
-            }
-            HirExprKind::ArrayLiteral(elems) | HirExprKind::TupleLiteral(elems) => {
-                for e in elems {
-                    self.process_expr(e);
+                if let (Type::StructRepresentation { id, fields, .. }, Some(location)) =
+                    (&inner.ty, location)
+                {
+                    if location.owner == *id {
+                        if let Some(field) = self
+                            .nominal_field_ids
+                            .get(id)
+                            .and_then(|ids| ids.iter().position(|id| *id == location.field_id))
+                            .and_then(|index| fields.get(index))
+                        {
+                            if let Some(actual) =
+                                crate::type_services::callable::value_representation(
+                                    &expr.ty, field,
+                                )
+                            {
+                                expr.ty = actual;
+                            }
+                        }
+                    }
                 }
             }
-            HirExprKind::ArrayRepeat(value, _) => self.process_expr(value),
-            HirExprKind::StructLiteral(_, _, fields) => {
+            HirExprKind::TupleIndex(inner, index) => {
+                self.process_expr(inner);
+                if let Type::Tuple(fields) = &inner.ty {
+                    if let Some(actual) = fields.get(*index as usize).and_then(|field| {
+                        crate::type_services::callable::value_representation(&expr.ty, field)
+                    }) {
+                        expr.ty = actual;
+                    }
+                }
+            }
+            HirExprKind::TupleLiteral(elems) => {
+                for element in elems.iter_mut() {
+                    self.process_expr(element);
+                }
+                let actual = Type::Tuple(elems.iter().map(|element| element.ty.clone()).collect());
+                if let Some(actual) =
+                    crate::type_services::callable::value_representation(&expr.ty, &actual)
+                {
+                    expr.ty = actual;
+                }
+            }
+            HirExprKind::ArrayLiteral(elems) => {
+                for e in elems.iter_mut() {
+                    self.process_expr(e);
+                }
+                if let (Type::Array(element, _), Some(first)) = (&mut expr.ty, elems.first()) {
+                    if elems.iter().all(|value| value.ty == first.ty) {
+                        if let Some(actual) =
+                            crate::type_services::callable::value_representation(element, &first.ty)
+                        {
+                            **element = actual;
+                        }
+                    } else if elems.iter().any(|value| {
+                        crate::type_services::callable::value_representation(element, &value.ty)
+                            .is_some_and(|actual| actual != **element)
+                    }) {
+                        self.diagnostics.push(
+                            crate::diagnostic::Diagnostic::new(
+                                "array elements require an agreed storage representation".into(),
+                                expr.span.clone(),
+                            )
+                            .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                        );
+                    }
+                }
+            }
+            HirExprKind::ArrayRepeat(value, _) => {
+                self.process_expr(value);
+                if let Type::Array(element, _) = &mut expr.ty {
+                    if let Some(actual) =
+                        crate::type_services::callable::value_representation(element, &value.ty)
+                    {
+                        **element = actual;
+                    }
+                }
+            }
+            HirExprKind::StructLiteral(_, Some(owner), fields) => {
+                for field in fields.iter_mut() {
+                    self.process_expr(&mut field.value);
+                }
+                if let Type::Struct { id, args } = &expr.ty {
+                    if id == owner {
+                        let actual = self.nominal_field_ids.get(id).and_then(|ids| {
+                            ids.iter()
+                                .map(|id| {
+                                    fields
+                                        .iter()
+                                        .find(|field| {
+                                            field.field.as_ref().is_some_and(|location| {
+                                                location.owner == *owner && location.field_id == *id
+                                            })
+                                        })
+                                        .map(|field| field.value.ty.clone())
+                                })
+                                .collect::<Option<Vec<_>>>()
+                        });
+                        let declared = self.nominal_field_types.get(id).and_then(|fields| {
+                            let parameters = self.nominal_generic_params.get(id)?;
+                            if parameters.len() != args.len() {
+                                return None;
+                            }
+                            let substitution = parameters
+                                .iter()
+                                .copied()
+                                .zip(args.iter().cloned())
+                                .collect();
+                            Some(
+                                fields
+                                    .iter()
+                                    .map(|field| field.substitute_generics(&substitution))
+                                    .collect::<Vec<_>>(),
+                            )
+                        });
+                        if let (Some(actual), Some(declared)) = (actual, declared) {
+                            // Construction measures every field independently; the
+                            // nominal declaration supplies shape, never captures.
+                            let measured = declared
+                                .iter()
+                                .zip(&actual)
+                                .map(|(declared, actual)| {
+                                    crate::type_services::callable::value_representation(
+                                        declared, actual,
+                                    )
+                                })
+                                .collect::<Option<Vec<_>>>();
+                            if let Some(measured) =
+                                measured.filter(|measured| *measured != declared)
+                            {
+                                expr.ty = Type::StructRepresentation {
+                                    id: *id,
+                                    args: args.clone(),
+                                    fields: measured,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+            HirExprKind::StructLiteral(_, None, fields) => {
                 for field in fields {
                     self.process_expr(&mut field.value);
                 }
             }
-            HirExprKind::EnumVariant(_, _, args, _) => {
-                for e in args {
+            HirExprKind::EnumVariant(_, _, values, location) => {
+                for e in values.iter_mut() {
                     self.process_expr(e);
+                }
+                if let (Type::Enum { id, args }, Some(location)) = (&expr.ty, location) {
+                    if location.owner == *id {
+                        let parameters = self.nominal_generic_params.get(id);
+                        let declared = parameters
+                            .filter(|parameters| parameters.len() == args.len())
+                            .and_then(|parameters| {
+                                let substitution = parameters
+                                    .iter()
+                                    .copied()
+                                    .zip(args.iter().cloned())
+                                    .collect();
+                                let count = self
+                                    .nominal_variant_fields
+                                    .keys()
+                                    .filter(|(owner, _)| owner == id)
+                                    .count();
+                                (0..count)
+                                    .map(|index| {
+                                        self.nominal_variant_fields
+                                            .get(&(*id, crate::ids::VariantId(index as u32)))?
+                                            .iter()
+                                            .map(|field| {
+                                                crate::type_services::substitution::instantiate(
+                                                    field,
+                                                    &substitution,
+                                                )
+                                                .ok()
+                                            })
+                                            .collect::<Option<Vec<_>>>()
+                                    })
+                                    .collect::<Option<Vec<_>>>()
+                            });
+                        if let Some(mut variants) = declared {
+                            if let Some(fields) = variants.get_mut(location.variant_id.0 as usize) {
+                                if fields.len() == values.len() {
+                                    let measured = fields
+                                        .iter()
+                                        .zip(values.iter())
+                                        .map(|(field, value)| {
+                                            crate::type_services::callable::value_representation(
+                                                field, &value.ty,
+                                            )
+                                        })
+                                        .collect::<Option<Vec<_>>>();
+                                    if let Some(measured) =
+                                        measured.filter(|measured| measured != fields)
+                                    {
+                                        *fields = measured;
+                                        expr.ty = Type::EnumRepresentation {
+                                            id: *id,
+                                            args: args.clone(),
+                                            variants,
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             HirExprKind::If {
@@ -755,15 +1209,57 @@ impl Monomorphizer {
                 self.process_block(then_branch);
                 if let Some(else_b) = else_branch {
                     self.process_block(else_b);
+                    if then_branch.ty == else_b.ty {
+                        if let Some(actual) = crate::type_services::callable::value_representation(
+                            &expr.ty,
+                            &then_branch.ty,
+                        ) {
+                            expr.ty = actual;
+                        }
+                    } else if [&then_branch.ty, &else_b.ty]
+                        .iter()
+                        .any(|ty| has_measured_storage(ty))
+                    {
+                        self.diagnostics.push(
+                            crate::diagnostic::Diagnostic::new(
+                                "conditional values require an agreed field representation".into(),
+                                expr.span.clone(),
+                            )
+                            .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                        );
+                    }
                 }
             }
             HirExprKind::Match { scrutinee, arms } => {
                 self.process_expr(scrutinee);
-                for arm in arms {
+                for arm in arms.iter_mut() {
+                    let enclosing_var_types = self.var_types.clone();
+                    // A known pointee supplies storage, not permission to move
+                    // it: MIR still makes borrowed pattern bindings references.
+                    self.process_pattern_bindings(&arm.pattern, &scrutinee.ty);
                     if let Some(guard) = &mut arm.guard {
                         self.process_expr(guard);
                     }
                     self.process_block(&mut arm.body);
+                    self.var_types = enclosing_var_types;
+                }
+                if let Some(first) = arms.first() {
+                    if arms.iter().all(|arm| arm.body.ty == first.body.ty) {
+                        if let Some(actual) = crate::type_services::callable::value_representation(
+                            &expr.ty,
+                            &first.body.ty,
+                        ) {
+                            expr.ty = actual;
+                        }
+                    } else if arms.iter().any(|arm| has_measured_storage(&arm.body.ty)) {
+                        self.diagnostics.push(
+                            crate::diagnostic::Diagnostic::new(
+                                "matched values require an agreed field representation".into(),
+                                expr.span.clone(),
+                            )
+                            .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                        );
+                    }
                 }
             }
             HirExprKind::While { condition, body } => {
@@ -776,6 +1272,11 @@ impl Monomorphizer {
             }
             HirExprKind::Loop(body) | HirExprKind::Block(body) | HirExprKind::UnsafeBlock(body) => {
                 self.process_block(body);
+                if let Some(actual) =
+                    crate::type_services::callable::value_representation(&expr.ty, &body.ty)
+                {
+                    expr.ty = actual;
+                }
             }
             HirExprKind::Lambda {
                 params,
@@ -784,16 +1285,65 @@ impl Monomorphizer {
             } => {
                 let old_var_types = std::mem::take(&mut self.var_types);
                 self.process_params(self.current_function_owner, params);
-                for capture in captures {
+                for capture in captures.iter_mut() {
                     capture.ty = self.substitute_generics(&capture.ty);
+                    if let Some(actual) = old_var_types.get(&capture.local_id) {
+                        if let Some(actual) = crate::type_services::callable::value_representation(
+                            &capture.ty,
+                            &self.type_for(*actual),
+                        ) {
+                            capture.ty = actual;
+                        }
+                    }
                     let ty_id = self.intern_type(&capture.ty);
                     self.var_types.insert(capture.local_id, ty_id);
                 }
                 self.process_block(body);
+                if let Type::Function {
+                    params: types,
+                    ret,
+                    captures: environment,
+                    ..
+                } = &mut expr.ty
+                {
+                    *types = params.iter().map(|param| param.ty.clone()).collect();
+                    if let Some(actual) =
+                        crate::type_services::callable::value_representation(ret, &body.ty)
+                    {
+                        **ret = actual;
+                    }
+                    *environment = captures
+                        .iter()
+                        .map(|capture| {
+                            crate::types::FunctionCapture::new(
+                                match capture.kind {
+                                    crate::hir::HirClosureCaptureKind::Move => {
+                                        crate::types::CaptureKind::Move
+                                    }
+                                    crate::hir::HirClosureCaptureKind::SharedBorrow => {
+                                        crate::types::CaptureKind::SharedBorrow
+                                    }
+                                    crate::hir::HirClosureCaptureKind::MutableBorrow => {
+                                        crate::types::CaptureKind::MutableBorrow
+                                    }
+                                },
+                                capture.ty.clone(),
+                            )
+                        })
+                        .collect();
+                }
+                expr.ty = crate::type_services::callable::resolve_environment_kind(expr.ty.clone());
                 self.var_types = old_var_types;
             }
             HirExprKind::Ref(_, inner) => {
                 self.process_expr(inner);
+                if let Type::Reference { inner: pointee, .. } = &mut expr.ty {
+                    if let Some(actual) =
+                        crate::type_services::callable::value_representation(pointee, &inner.ty)
+                    {
+                        **pointee = actual;
+                    }
+                }
             }
             HirExprKind::Deref(inner) => {
                 self.process_expr(inner);
@@ -820,6 +1370,38 @@ impl Monomorphizer {
             _ => {}
         }
     }
+}
+
+// A tail's environment cannot describe a different early-return environment.
+// Nested lambda returns belong to their own callable, not the containing block.
+pub(super) fn block_returns_agree(block: &HirBlock, actual: &Type) -> bool {
+    fn expression_agrees(expression: &HirExpr, actual: &Type) -> bool {
+        if matches!(expression.kind, HirExprKind::Lambda { .. }) {
+            return true;
+        }
+        let mut agrees = true;
+        crate::hir::visit::visit_expr_children(expression, &mut |child| {
+            agrees &= match child {
+                crate::hir::visit::HirChild::Expr(expression) => {
+                    expression_agrees(expression, actual)
+                }
+                crate::hir::visit::HirChild::Block(block) => block_returns_agree(block, actual),
+            };
+        });
+        agrees
+    }
+    block.stmts.iter().all(|statement| match statement {
+        HirStmt::Return(Some(value)) => {
+            crate::type_services::callable::value_representation(actual, &value.ty).as_ref()
+                == Some(actual)
+                && expression_agrees(value, actual)
+        }
+        HirStmt::Return(None) => *actual == Type::Unit,
+        HirStmt::Let { value, .. } | HirStmt::Expr(value) | HirStmt::Break(Some(value)) => {
+            expression_agrees(value, actual)
+        }
+        _ => true,
+    })
 }
 
 fn adapt_array_slice_callback(arg: &mut HirExpr, expected: &Type) {
@@ -975,6 +1557,104 @@ mod tests {
         let mut function = empty_function(receiver);
         function.id = id;
         function
+    }
+
+    #[test]
+    fn specialized_lambda_kind_uses_its_resolved_environment_only() {
+        use crate::types::{CallableKind, CaptureKind, FunctionCapture};
+        let owner = DefId::new(CrateId(0), LocalDefId(900));
+        let parameter = GenericParamId { owner, index: 0 };
+        let local = HirLocalId(1);
+        for (ty, expected) in [
+            (Type::I64, CallableKind::Fn),
+            (
+                Type::Reference {
+                    mutable: false,
+                    inner: Box::new(Type::I64),
+                },
+                CallableKind::Fn,
+            ),
+            (
+                Type::Reference {
+                    mutable: true,
+                    inner: Box::new(Type::I64),
+                },
+                CallableKind::FnOnce,
+            ),
+            (Type::Array(Box::new(Type::I64), 1), CallableKind::FnOnce),
+        ] {
+            let mut mono = Monomorphizer::new();
+            let substitution = HashMap::from([(parameter, mono.intern_type(&ty))]);
+            let mut expression = HirExpr {
+                kind: HirExprKind::Lambda {
+                    params: vec![],
+                    body: HirBlock {
+                        stmts: vec![],
+                        ty: Type::Unit,
+                    },
+                    captures: vec![crate::hir::HirClosureCapture {
+                        name: "value".into(),
+                        local_id: local,
+                        kind: crate::hir::HirClosureCaptureKind::Move,
+                        mutable: false,
+                        ty: Type::Generic(parameter),
+                    }],
+                },
+                ty: Type::Function {
+                    params: vec![],
+                    ret: Box::new(Type::Unit),
+                    safety: crate::types::FunctionSafety::Safe,
+                    callable_kind: CallableKind::FnOnce,
+                    captures: vec![FunctionCapture::new(
+                        CaptureKind::Move,
+                        Type::Generic(parameter),
+                    )]
+                    .into(),
+                    result_borrowing: Default::default(),
+                },
+                span: crate::lexer::Span::test(),
+            };
+            expression = mono.substitute_expr(&expression, &substitution);
+            mono.process_expr(&mut expression);
+            let Type::Function {
+                callable_kind,
+                captures,
+                result_borrowing,
+                ..
+            } = &expression.ty
+            else {
+                unreachable!()
+            };
+            assert_eq!(*callable_kind, expected, "{ty:?}");
+            assert_eq!(captures[0].ty, ty);
+            assert_eq!(
+                *result_borrowing,
+                crate::types::CallableResultBorrowing::Unknown,
+                "capture kind refinement cannot manufacture a borrowing certificate"
+            );
+            // A parameter's protocol remains a declared obligation, not an
+            // environment that specialization is allowed to reclassify.
+            let mut abstract_callable = HirExpr {
+                kind: HirExprKind::Unit,
+                ty: Type::Function {
+                    params: vec![],
+                    ret: Box::new(Type::Unit),
+                    safety: crate::types::FunctionSafety::Safe,
+                    callable_kind: CallableKind::FnOnce,
+                    captures: Box::default(),
+                    result_borrowing: Default::default(),
+                },
+                span: crate::lexer::Span::test(),
+            };
+            mono.process_expr(&mut abstract_callable);
+            assert!(matches!(
+                abstract_callable.ty,
+                Type::Function {
+                    callable_kind: CallableKind::FnOnce,
+                    ..
+                }
+            ));
+        }
     }
 
     #[test]
@@ -1258,6 +1938,372 @@ mod tests {
             is_method: false,
             self_receiver: None,
             is_unsafe: false,
+        }
+    }
+
+    #[test]
+    fn block_representation_refinement_checks_early_returns_and_separate_lambda_scopes() {
+        use crate::types::{CallableKind, CaptureKind, FunctionCapture, FunctionSafety};
+        let captured = Type::function_with_metadata(
+            vec![],
+            Type::I64,
+            FunctionSafety::Safe,
+            CallableKind::FnOnce,
+            vec![FunctionCapture::new(
+                CaptureKind::Move,
+                Type::Array(Box::new(Type::I64), 1),
+            )],
+        );
+        let value = |ty| HirExpr {
+            kind: HirExprKind::Unit,
+            ty,
+            span: crate::lexer::Span::test(),
+        };
+        let mut block = HirBlock {
+            stmts: vec![
+                HirStmt::Return(Some(value(Type::function(vec![], Type::I64)))),
+                HirStmt::Expr(value(captured.clone())),
+            ],
+            ty: Type::function(vec![], Type::I64),
+        };
+        assert!(!block_returns_agree(&block, &captured));
+        block.stmts[0] = HirStmt::Expr(HirExpr {
+            kind: HirExprKind::Lambda {
+                params: vec![],
+                captures: vec![],
+                body: HirBlock {
+                    stmts: vec![HirStmt::Return(Some(value(Type::I64)))],
+                    ty: Type::I64,
+                },
+            },
+            ty: Type::function(vec![], Type::I64),
+            span: crate::lexer::Span::test(),
+        });
+        assert!(block_returns_agree(&block, &captured));
+    }
+
+    #[test]
+    fn match_binding_preserves_actual_environment_without_leaking_between_arms() {
+        use crate::hir::{HirMatchArmFor, HirPattern};
+        use crate::types::{CallableKind, CaptureKind, FunctionCapture};
+
+        let input = HirLocalId(900);
+        let binding = HirLocalId(901);
+        let inferred = Type::function(vec![], Type::Unit);
+        let actual = Type::function_with_metadata(
+            vec![],
+            Type::Unit,
+            crate::types::FunctionSafety::Safe,
+            CallableKind::FnOnce,
+            vec![FunctionCapture::new(
+                CaptureKind::Move,
+                Type::Array(Box::new(Type::I64), 2),
+            )],
+        );
+        let local = |id, ty: Type| HirExpr {
+            kind: HirExprKind::ResolvedVar(HirVarRef {
+                name: "callback".into(),
+                target: HirVarTarget::Local(id),
+            }),
+            ty,
+            span: crate::lexer::Span::test(),
+        };
+        let mut expression = HirExpr {
+            ty: Type::Unit,
+            kind: HirExprKind::Match {
+                scrutinee: Box::new(local(input, Type::Tuple(vec![inferred.clone()]))),
+                arms: vec![
+                    HirMatchArmFor {
+                        pattern: HirPattern::Tuple(vec![HirPattern::Binding {
+                            name: "callback".into(),
+                            local_id: binding,
+                            mutable: false,
+                        }]),
+                        guard: None,
+                        body: HirBlock {
+                            ty: inferred.clone(),
+                            stmts: vec![HirStmt::Expr(local(binding, inferred.clone()))],
+                        },
+                    },
+                    HirMatchArmFor {
+                        pattern: HirPattern::Wildcard,
+                        guard: None,
+                        body: HirBlock {
+                            ty: inferred.clone(),
+                            stmts: vec![HirStmt::Expr(local(binding, inferred.clone()))],
+                        },
+                    },
+                ],
+            },
+            span: crate::lexer::Span::test(),
+        };
+        let mut mono = Monomorphizer::new();
+        let actual_id = mono.intern_type(&Type::Tuple(vec![actual.clone()]));
+        mono.var_types.insert(input, actual_id);
+        mono.process_expr(&mut expression);
+        let HirExprKind::Match { arms, .. } = expression.kind else {
+            panic!("match");
+        };
+        assert_eq!(arms[0].body.ty, actual);
+        assert_eq!(arms[1].body.ty, inferred);
+        assert!(!mono.var_types.contains_key(&binding));
+        assert_eq!(mono.var_types[&input], actual_id);
+    }
+
+    #[test]
+    fn nominal_pattern_bindings_use_canonical_payload_layouts_only() {
+        use crate::hir::{HirFieldLocation, HirPattern, HirStructPatternField, HirVariantLocation};
+        use crate::ids::{FieldId, VariantId};
+        use crate::types::{CallableKind, CaptureKind, FunctionCapture, GenericParamId};
+
+        let owner = DefId::new(CrateId(0), LocalDefId(995));
+        let other = DefId::new(CrateId(0), LocalDefId(996));
+        let generic = GenericParamId { owner, index: 0 };
+        let binding = HirLocalId(900);
+        let variant = VariantId(2);
+        let actual = Type::function_with_metadata(
+            vec![],
+            Type::Unit,
+            crate::types::FunctionSafety::Safe,
+            CallableKind::FnOnce,
+            vec![FunctionCapture::new(
+                CaptureKind::Move,
+                Type::Array(Box::new(Type::I64), 2),
+            )],
+        );
+        let payload = HirPattern::Binding {
+            name: "callback".into(),
+            local_id: binding,
+            mutable: false,
+        };
+        let pattern = HirPattern::Enum(
+            "ignored spelling".into(),
+            "ignored variant spelling".into(),
+            Some(HirVariantLocation {
+                owner,
+                variant_id: variant,
+                name: "ignored".into(),
+            }),
+            vec![payload.clone()],
+        );
+        let mut mono = Monomorphizer::new();
+        mono.nominal_generic_params.insert(owner, vec![generic]);
+        mono.nominal_variant_fields
+            .insert((owner, variant), vec![Type::Generic(generic)]);
+        mono.process_pattern_bindings(
+            &pattern,
+            &Type::Enum {
+                id: owner,
+                args: vec![actual.clone()],
+            },
+        );
+        assert_eq!(mono.type_for(mono.var_types[&binding]), actual);
+        mono.var_types.clear();
+        mono.process_pattern_bindings(
+            &pattern,
+            &Type::Enum {
+                id: other,
+                args: vec![actual.clone()],
+            },
+        );
+        assert!(!mono.var_types.contains_key(&binding));
+        mono.process_pattern_bindings(
+            &pattern,
+            &Type::Reference {
+                mutable: false,
+                inner: Box::new(Type::Enum {
+                    id: owner,
+                    args: vec![actual.clone()],
+                }),
+            },
+        );
+        assert!(!mono.var_types.contains_key(&binding));
+        mono.nominal_field_ids.insert(owner, vec![FieldId(3)]);
+        mono.nominal_field_types
+            .insert(owner, vec![Type::Generic(generic)]);
+        let pattern = HirPattern::Struct(
+            "ignored".into(),
+            Some(owner),
+            vec![],
+            vec![HirStructPatternField {
+                name: "ignored".into(),
+                field: Some(HirFieldLocation {
+                    owner,
+                    field_id: FieldId(3),
+                    name: "ignored".into(),
+                }),
+                pattern: payload,
+            }],
+        );
+        mono.process_pattern_bindings(
+            &pattern,
+            &Type::Struct {
+                id: owner,
+                args: vec![actual.clone()],
+            },
+        );
+        assert_eq!(mono.type_for(mono.var_types[&binding]), actual);
+    }
+
+    #[test]
+    fn immediate_lambda_preserves_actual_callable_environment_through_a_generic_return() {
+        use crate::types::{CallableKind, CaptureKind, FunctionCapture};
+
+        let id = DefId::new(CrateId(0), LocalDefId(990));
+        let input = HirLocalId(10);
+        let argument = HirLocalId(11);
+        let abstract_type = Type::function(vec![], Type::Unit);
+        let actual = Type::function_with_metadata(
+            vec![],
+            Type::Unit,
+            crate::types::FunctionSafety::Safe,
+            CallableKind::FnOnce,
+            vec![FunctionCapture::new(
+                CaptureKind::Move,
+                Type::Array(Box::new(Type::I64), 1),
+            )],
+        );
+        let local = |id, ty: Type| HirExpr {
+            kind: HirExprKind::ResolvedVar(HirVarRef {
+                name: "value".into(),
+                target: HirVarTarget::Local(id),
+            }),
+            ty,
+            span: crate::lexer::Span::test(),
+        };
+        let body = HirExpr {
+            kind: HirExprKind::Call(
+                Box::new(HirExpr {
+                    kind: HirExprKind::ResolvedVar(HirVarRef {
+                        name: "identity".into(),
+                        target: HirVarTarget::Function(id),
+                    }),
+                    ty: Type::function(vec![abstract_type.clone()], abstract_type.clone()),
+                    span: crate::lexer::Span::test(),
+                }),
+                vec![local(input, abstract_type.clone())],
+                Some(HirCallTarget::Function(id)),
+            ),
+            ty: abstract_type.clone(),
+            span: crate::lexer::Span::test(),
+        };
+        let mut expression = HirExpr {
+            kind: HirExprKind::Call(
+                Box::new(HirExpr {
+                    kind: HirExprKind::Lambda {
+                        params: vec![HirParam {
+                            name: "value".into(),
+                            local_id: input,
+                            ty: abstract_type.clone(),
+                            mutable: false,
+                            is_ref: false,
+                        }],
+                        body: HirBlock {
+                            stmts: vec![HirStmt::Expr(body)],
+                            ty: abstract_type.clone(),
+                        },
+                        captures: vec![],
+                    },
+                    ty: Type::function(vec![abstract_type.clone()], abstract_type.clone()),
+                    span: crate::lexer::Span::test(),
+                }),
+                vec![local(argument, abstract_type.clone())],
+                None,
+            ),
+            ty: abstract_type,
+            span: crate::lexer::Span::test(),
+        };
+        let mut mono = Monomorphizer::new();
+        mono.register_generic_function(
+            "identity".into(),
+            generic_identity_for_process_test(id, "identity"),
+        );
+        let actual_id = mono.intern_type(&actual);
+        mono.var_types.insert(argument, actual_id);
+        mono.process_expr(&mut expression);
+        assert_eq!(expression.ty, actual);
+        let HirExprKind::Call(callee, _, _) = &expression.kind else {
+            panic!("immediate call")
+        };
+        let HirExprKind::Lambda { params, body, .. } = &callee.kind else {
+            panic!("lambda retained, not flattened")
+        };
+        assert_eq!(params[0].ty, actual);
+        assert_eq!(body.ty, actual);
+        assert_eq!(
+            callee.ty,
+            Type::function(vec![actual.clone()], actual.clone())
+        );
+        assert!(!crate::type_services::facts::TypeFacts::is_copy(&actual));
+        assert!(mono.diagnostics.0.is_empty());
+    }
+
+    #[test]
+    fn direct_generic_call_specializes_from_actual_environment_not_stale_callable_header() {
+        use crate::types::{CallableKind, CaptureKind, FunctionCapture};
+
+        let id = DefId::new(CrateId(0), LocalDefId(989));
+        let input = HirLocalId(10);
+        let abstract_callable = Type::function(vec![], Type::Unit);
+        let actual = Type::function_with_metadata(
+            vec![],
+            Type::Unit,
+            crate::types::FunctionSafety::Safe,
+            CallableKind::FnOnce,
+            vec![FunctionCapture::new(
+                CaptureKind::Move,
+                Type::Array(Box::new(Type::I64), 1),
+            )],
+        );
+        for nested in [false, true] {
+            let wrap = |ty: Type| if nested { Type::Tuple(vec![ty]) } else { ty };
+            let expected = wrap(abstract_callable.clone());
+            let supplied = wrap(actual.clone());
+            let mut mono = Monomorphizer::new();
+            mono.register_generic_function(
+                "identity".into(),
+                generic_identity_for_process_test(id, "identity"),
+            );
+            let actual_id = mono.intern_type(&supplied);
+            mono.var_types.insert(input, actual_id);
+            let mut expression = HirExpr {
+                kind: HirExprKind::Call(
+                    Box::new(HirExpr {
+                        kind: HirExprKind::ResolvedVar(HirVarRef {
+                            name: "identity".into(),
+                            target: HirVarTarget::Function(id),
+                        }),
+                        ty: Type::function(vec![expected.clone()], expected.clone()),
+                        span: crate::lexer::Span::test(),
+                    }),
+                    vec![HirExpr {
+                        kind: HirExprKind::ResolvedVar(HirVarRef {
+                            name: "producer".into(),
+                            target: HirVarTarget::Local(input),
+                        }),
+                        ty: expected.clone(),
+                        span: crate::lexer::Span::test(),
+                    }],
+                    Some(HirCallTarget::Function(id)),
+                ),
+                ty: expected,
+                span: crate::lexer::Span::test(),
+            };
+            mono.process_expr(&mut expression);
+            assert_eq!(
+                expression.ty, supplied,
+                "the generic value includes its actual environment"
+            );
+            let HirExprKind::Call(_, _, Some(HirCallTarget::Instance(instance))) = expression.kind
+            else {
+                panic!("generic call must resolve by definition identity");
+            };
+            let record = mono.instances.record(instance).unwrap();
+            assert_eq!(record.substitution, vec![actual_id]);
+            let body = mono.instances.pre_mir_body(instance).unwrap();
+            assert_eq!(body.params[0].ty, supplied);
+            assert_eq!(body.ret_type, supplied);
+            assert!(mono.diagnostics.0.is_empty());
         }
     }
 

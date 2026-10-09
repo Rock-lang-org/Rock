@@ -150,10 +150,16 @@ impl Lowerer {
 
                                     let resolved_scrutinee = self.engine.resolve(expected_ty);
                                     let scrutinee_type_args = match &resolved_scrutinee {
-                                        Type::Enum { id, args } if *id == enum_info.id => {
+                                        Type::Enum { id, args }
+                                        | Type::EnumRepresentation { id, args, .. }
+                                            if *id == enum_info.id =>
+                                        {
                                             args.clone()
                                         }
-                                        Type::Enum { .. } | Type::Struct { .. } => {
+                                        Type::Enum { .. }
+                                        | Type::EnumRepresentation { .. }
+                                        | Type::Struct { .. }
+                                        | Type::StructRepresentation { .. } => {
                                             self.report_pattern_type_mismatch(
                                                 &resolved_scrutinee,
                                                 &enum_name,
@@ -269,6 +275,11 @@ impl Lowerer {
                             Type::Enum {
                                 id: expected_enum_id,
                                 args: scrutinee_type_args,
+                            }
+                            | Type::EnumRepresentation {
+                                id: expected_enum_id,
+                                args: scrutinee_type_args,
+                                ..
                             } => {
                                 if let Some(enum_info) =
                                     self.items.enumeration(*expected_enum_id).cloned()
@@ -467,7 +478,12 @@ impl Lowerer {
 
                                 let resolved_expected_ty = self.engine.resolve(expected_ty);
                                 let scrutinee_type_args = match &resolved_expected_ty {
-                                    Type::Enum { id, args } if *id == enum_info.id => args.clone(),
+                                    Type::Enum { id, args }
+                                    | Type::EnumRepresentation { id, args, .. }
+                                        if *id == enum_info.id =>
+                                    {
+                                        args.clone()
+                                    }
                                     Type::TypeVar(_) | Type::Apply { .. } => {
                                         let fresh_type_args: Vec<Type> = enum_info
                                             .generic_params

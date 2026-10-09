@@ -22,6 +22,8 @@ use crate::language_items::{
 use crate::types::{GenericParamDecl, Type};
 
 pub mod object_abi;
+pub(crate) mod native_borrowing;
+pub(crate) mod callable_sources;
 #[cfg(test)]
 mod object_abi_tests;
 mod type_table;
@@ -61,7 +63,7 @@ impl From<DefId> for ProductDefId {
     }
 }
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 55;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 59;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;
@@ -240,6 +242,9 @@ impl PortableProductArtifact {
 
     pub fn into_products(self) -> Result<CompilerProducts, String> {
         let products = type_table::artifact_to_products(self.artifact)?;
+        products.link.validate_runtime_support()?;
+        native_borrowing::validate(&products)?;
+        callable_sources::validate(&products)?;
         if !self.header.matches_products(&products) {
             return Err("Product artifact header does not match semantic payload".to_string());
         }
@@ -597,6 +602,7 @@ pub type ProductLanguageItems = LanguageItems<ProductDefId>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProductBodies {
+    pub callable_sources: callable_sources::ProductCallableSources,
     pub functions: BTreeMap<ProductDefId, AcceptedHirFunction>,
     pub generic_impls: BTreeMap<ProductDefId, HirImplFor<AcceptedHir>>,
     pub trait_default_methods: BTreeMap<ProductDefId, AcceptedHirFunction>,
@@ -604,13 +610,119 @@ pub struct ProductBodies {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProductLinkData {
+    pub native_return_origins: BTreeMap<ProductDefId, crate::hir::borrowing::NativeReturnOrigins<Type>>,
+    pub runtime_support: BTreeSet<ProductRuntimeSupport>,
     pub object_path: Option<PathBuf>,
     pub records: BTreeMap<ProductDefId, ProductLinkRecord>,
+}
+
+impl ProductLinkData {
+    pub fn validate_runtime_support(&self) -> Result<(), String> {
+        for support in &self.runtime_support { support.validate()?; }
+        if self.object_path.is_none() && !self.runtime_support.is_empty() {
+            return Err("runtime support requires an object-backed product link".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum RuntimeRootSymbol {
+    TupleDescriptorFactoryV1,
+    NominalDescriptorFactoryV1,
+    SelectedDictionaryFactoryV1,
+}
+
+impl RuntimeRootSymbol {
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::TupleDescriptorFactoryV1 => "rock_descriptor_tuple",
+            Self::NominalDescriptorFactoryV1 => "rock_descriptor_nominal",
+            Self::SelectedDictionaryFactoryV1 => "rock_dictionary_selected",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ProductRuntimeSupport {
+    TupleDescriptorsV1 { target_key: Vec<u8>, roots: BTreeSet<RuntimeRootSymbol> },
+    NominalDescriptorsV1 { target_key: Vec<u8>, roots: BTreeSet<RuntimeRootSymbol> },
+    SelectedDictionariesV1 { target_key: Vec<u8>, roots: BTreeSet<RuntimeRootSymbol> },
+}
+
+impl ProductRuntimeSupport {
+    pub fn tuple_descriptors(target_key: Vec<u8>) -> Self {
+        Self::TupleDescriptorsV1 { target_key, roots: BTreeSet::from([RuntimeRootSymbol::TupleDescriptorFactoryV1]) }
+    }
+    pub fn nominal_descriptors(target_key: Vec<u8>) -> Self {
+        Self::NominalDescriptorsV1 { target_key, roots: BTreeSet::from([RuntimeRootSymbol::NominalDescriptorFactoryV1]) }
+    }
+
+    pub fn target_key(&self) -> &[u8] {
+        match self { Self::TupleDescriptorsV1 { target_key, .. } | Self::NominalDescriptorsV1 { target_key, .. } | Self::SelectedDictionariesV1 { target_key, .. } => target_key }
+    }
+    pub fn selected_dictionaries(target_key: Vec<u8>) -> Self {
+        Self::SelectedDictionariesV1 { target_key, roots: BTreeSet::from([RuntimeRootSymbol::SelectedDictionaryFactoryV1]) }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        let (target_key, roots, expected) = match self {
+            Self::TupleDescriptorsV1 { target_key, roots } => (target_key, roots, RuntimeRootSymbol::TupleDescriptorFactoryV1),
+            Self::NominalDescriptorsV1 { target_key, roots } => (target_key, roots, RuntimeRootSymbol::NominalDescriptorFactoryV1),
+            Self::SelectedDictionariesV1 { target_key, roots } => (target_key, roots, RuntimeRootSymbol::SelectedDictionaryFactoryV1),
+        };
+        if target_key.len() > 16 * 1024 * 1024 { return Err("tuple descriptor target key exceeds runtime protocol bounds".into()); }
+        if roots != &BTreeSet::from([expected]) {
+            return Err("tuple descriptor runtime support has a missing or stale root symbol requirement".into());
+        }
+        fn frame<'a>(input: &mut &'a [u8]) -> Option<&'a [u8]> {
+            let bytes = *input;
+            let word = bytes.get(..8)?;
+            let rest = &bytes[8..];
+            let len = usize::try_from(u64::from_le_bytes(word.try_into().ok()?)).ok()?;
+            let value = rest.get(..len)?;
+            *input = &rest[len..]; Some(value)
+        }
+        let mut input = target_key.strip_prefix(b"RT01").ok_or("invalid tuple descriptor target protocol")?;
+        let triple = frame(&mut input).ok_or("malformed tuple descriptor target triple")?;
+        let layout = frame(&mut input).ok_or("malformed tuple descriptor data layout")?;
+        if !input.is_empty() || triple.is_empty() || !triple.windows(5).any(|part| part == b"linux") || !layout.starts_with(b"e") {
+            return Err("unsupported tuple descriptor runtime target".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductLinkRecord {
     pub backend_symbol: String,
+    pub polymorphic_member: Option<ProductPolymorphicMemberLink>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductPolymorphicMemberLink {
+    pub abi: u64,
+    pub entry: crate::mir::MirErasedMemberEntry<Type>,
+}
+
+impl ProductPolymorphicMemberLink {
+    pub(crate) fn validate_shape(&self, callable: DefId) -> Result<(), String> {
+        let member = &self.entry.member;
+        if self.abi != 1 || self.entry.method_id != callable || !self.entry.captures.is_empty() || member.params.is_empty() {
+            return Err("polymorphic dictionary link record has wrong ABI/callable/capture authority".into());
+        }
+        for ty in member.params.iter().chain(std::iter::once(&member.ret)) {
+            crate::mir::validate_dictionary_binder_scope(ty, 0, member.binder.parameters.len())
+                .map_err(|error| format!("polymorphic dictionary link record binder scope: {error:?}"))?;
+            ty.map_types(&mut |ty| if crate::type_services::facts::TypeFacts::is_codegen_concrete(ty) {
+                Ok(ty.clone())
+            } else { Err("polymorphic dictionary link record has an unbound concrete type".to_string()) })?;
+        }
+        let borrowing = crate::mir::parametric_member_borrow_contract(&member.binder, &member.params, &member.ret, member.receiver)
+            .map_err(|error| format!("polymorphic dictionary link record contract: {error:?}"))?;
+        if member.borrowing != borrowing { return Err("polymorphic dictionary link record borrow contract disagrees".into()); }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -901,6 +1013,12 @@ impl CompilerProducts {
     }
 
     pub fn to_artifact_bytes(&self) -> Result<Vec<u8>, String> {
+        self.link.validate_runtime_support()?;
+        native_borrowing::validate(self)?;
+        callable_sources::validate(self)?;
+        for (id, record) in &self.link.records {
+            if let Some(member) = &record.polymorphic_member { member.validate_shape(product_def_id_to_def_id(*id))?; }
+        }
         let artifact = type_table::products_to_artifact(self, PRODUCT_ARTIFACT_FORMAT_VERSION)?;
         let header = ProductArtifactHeader::from_products(self);
         encode_product_artifact(&header, &artifact)
@@ -3349,6 +3467,20 @@ fn remap_link_data(link: ProductLinkData, id_remap: &ProductIdRemap) -> ProductL
         .collect();
 
     ProductLinkData {
+        native_return_origins: link.native_return_origins.into_iter().filter_map(|(id, origins)| {
+            let id = unambiguous_product_id(id, id_remap)?;
+            let origins = origins.map_types(&mut |ty| {
+                let mut ty = ty.clone();
+                let mut missing = false;
+                ty.remap_def_ids(&mut |id| match unambiguous_product_id(ProductDefId::from(id), id_remap) {
+                    Some(id) => product_def_id_to_def_id(id),
+                    None => { missing = true; id },
+                });
+                if missing { Err("missing return authority type identity".into()) } else { Ok(ty) }
+            }).ok()?;
+            Some((id, origins))
+        }).collect(),
+        runtime_support: link.runtime_support,
         object_path: link.object_path,
         records,
     }
@@ -3363,7 +3495,7 @@ fn unambiguous_product_id(id: ProductDefId, id_remap: &ProductIdRemap) -> Option
     }
 }
 
-fn strict_object_product_id(
+pub(crate) fn strict_object_product_id(
     id: DefId,
     identities: &ProductIdentityTable,
     remap: &ProductIdRemap,
@@ -5503,11 +5635,14 @@ main = !-> ()
             BTreeMap::new(),
             ProductSourceFingerprint::default(),
             ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: None,
                 records: BTreeMap::from([(
                     method_product_id,
                     ProductLinkRecord {
                         backend_symbol: "box_new".to_string(),
+                        polymorphic_member: None,
                     },
                 )]),
             },
@@ -7803,6 +7938,7 @@ main = !-> ()
             plain_id,
             ProductLinkRecord {
                 backend_symbol: "rock_main".to_string(),
+                polymorphic_member: None,
             },
         );
 
@@ -7813,6 +7949,8 @@ main = !-> ()
             BTreeMap::new(),
             ProductSourceFingerprint::default(),
             ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: None,
                 records,
             },
@@ -8384,6 +8522,7 @@ main = !-> ()
             ProductDefId::from(impl_def_id),
             ProductLinkRecord {
                 backend_symbol: "impl_box_show".to_string(),
+                polymorphic_member: None,
             },
         );
         let owner_id = DefId::new(CrateId(0), LocalDefId(1));
@@ -8446,6 +8585,8 @@ main = !-> ()
             BTreeMap::new(),
             ProductSourceFingerprint::default(),
             ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: None,
                 records,
             },
@@ -8478,6 +8619,7 @@ main = !-> ()
             shared_product_id,
             ProductLinkRecord {
                 backend_symbol: symbol.clone(),
+                polymorphic_member: None,
             },
         );
         let mut functions = HashMap::new();
@@ -8546,6 +8688,8 @@ main = !-> ()
             BTreeMap::new(),
             ProductSourceFingerprint::default(),
             ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: None,
                 records,
             },

@@ -36,6 +36,9 @@ pub enum MirRuntimeHelper {
     HeapAlloc,
     HeapFree,
     DropGlue,
+    TupleDescriptorFactory,
+    NominalDescriptorFactory,
+    SelectedDictionaryFactory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -623,6 +626,22 @@ impl MirIntrinsicId {
     }
 
     pub fn is_value_intrinsic(&self) -> bool {
+        self.is_scalar_operation()
+            || matches!(
+                self,
+                Self::MakeArr
+                    | Self::BorrowSlice
+                    | Self::BorrowSliceMut
+                    | Self::BorrowStr
+                    | Self::AtomicU64Exchange
+                    | Self::AtomicU64FetchAdd
+                    | Self::AtomicU64FetchSub
+            )
+    }
+
+    /// Explicit scalar instructions have no opaque external result source.
+    /// This says nothing about an ordinary function's result shape or effects.
+    pub(crate) fn is_scalar_operation(&self) -> bool {
         matches!(
             self,
             Self::I8Add
@@ -795,13 +814,6 @@ impl MirIntrinsicId {
                 | Self::BoolOr
                 | Self::BoolXor
                 | Self::BoolNot
-                | Self::MakeArr
-                | Self::BorrowSlice
-                | Self::BorrowSliceMut
-                | Self::BorrowStr
-                | Self::AtomicU64Exchange
-                | Self::AtomicU64FetchAdd
-                | Self::AtomicU64FetchSub
         )
     }
 

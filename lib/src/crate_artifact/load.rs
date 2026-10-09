@@ -3,6 +3,18 @@ use std::path::{Path, PathBuf};
 
 mod object_abi;
 
+#[cfg(test)]
+#[path = "runtime_support_tests.rs"]
+mod runtime_support_tests;
+
+#[cfg(test)]
+#[path = "runtime_nominal_support_tests.rs"]
+mod runtime_nominal_support_tests;
+
+#[cfg(test)]
+#[path = "runtime_dictionary_support_tests.rs"]
+mod runtime_dictionary_support_tests;
+
 use crate::collect::resolver::ResolverTables;
 use crate::crate_artifact::{ArtifactCrateInterface, ArtifactExport};
 use crate::crate_system::{
@@ -1611,17 +1623,75 @@ fn extern_crate_from_products(
     let language_items = super::language_items::language_items_from_products(products, remap)?;
     validate_object_link_records(products)?;
     let backend_symbols = backend_symbols_from_products(products, remap)?;
-    let link = if products.link.object_path.is_some() {
+    let mut link = if products.link.object_path.is_some() {
         ExternCrateLink::object(
             resolve_product_object_path(products, artifact_path)?,
             backend_symbols,
         )
+        .with_runtime_support(products.link.runtime_support.clone())
     } else {
         ExternCrateLink::metadata_only(backend_symbols)
     };
+    let type_validator =
+        ProductNominalTypeValidator::from_products_with_context(products, remap, ctx)?;
+    crate::products::native_borrowing::validate(products)?;
+    let mut native_return_origins = BTreeMap::new();
+    for (id, origins) in &products.link.native_return_origins {
+        let origins = origins.map_types(&mut |ty| {
+            let mut ty = ty.clone();
+            remap_type_def_ids(&mut ty, remap, &type_validator)?;
+            Ok::<_, String>(ty)
+        })?;
+        if native_return_origins
+            .insert(remap.def_id(*id)?, origins)
+            .is_some()
+        {
+            return Err("native return authority IDs collide".into());
+        }
+    }
+    link = link.with_native_return_origins(native_return_origins);
+    let mut polymorphic_members = BTreeMap::new();
+    for (id, record) in &products.link.records {
+        let Some(member) = &record.polymorphic_member else {
+            continue;
+        };
+        member.validate_shape(DefId::new(
+            crate::ids::CrateId(id.crate_id.0),
+            crate::ids::LocalDefId(id.local_id.0),
+        ))?;
+        let mut member = member.clone();
+        // Validate nominal leaf arity/identity before remapping all nested IDs.
+        member.entry.map_types(&mut |ty| {
+            let mut ty = ty.clone();
+            remap_type_def_ids(&mut ty, remap, &type_validator)?;
+            Ok::<_, String>(ty)
+        })?;
+        member
+            .entry
+            .try_remap_def_ids(&mut |id| remap.def_id(ProductDefId::from(id)))?;
+        if polymorphic_members
+            .insert(remap.def_id(*id)?, member)
+            .is_some()
+        {
+            return Err("polymorphic dictionary link record IDs collide".into());
+        }
+    }
+    link = link.with_polymorphic_members(polymorphic_members);
     let interface = interface_from_products(products, &crate_name, remap, ctx, &language_items)?;
     let resolver = resolver_from_products(products, &crate_name, remap, ctx)?;
     let cross_crate_hir = cross_crate_hir_from_products(products, &crate_name, remap, ctx)?;
+    crate::products::callable_sources::validate(products)?;
+    let sources = &products.bodies.callable_sources;
+    let mut source_map = crate::source_map::SemanticSourceMap::default();
+    for (owner, row) in &sources.callables {
+        let owner = remap.def_id(*owner)?;
+        if let Some(span) = &row.definition {
+            source_map.insert_definition(owner, span.clone());
+        }
+        for (local, span) in &row.locals {
+            source_map.insert_local(owner, *local, span.clone());
+        }
+    }
     super::owned_calls::validate(
         &interface,
         &cross_crate_hir,
@@ -1642,7 +1712,8 @@ fn extern_crate_from_products(
         crate_name,
         ExternCrateMetadata::new(interface, resolver, prelude_export_ids)
             .with_language_items(language_items)
-            .with_proc_macros(products.proc_macros.clone()),
+            .with_proc_macros(products.proc_macros.clone())
+            .with_diagnostic_sources(source_map, sources.files.clone()),
         ExternCrateBodies::from_cross_crate_hir(cross_crate_hir),
         link,
     ))
@@ -1925,6 +1996,7 @@ fn validate_product_interface_signature_name(
 }
 
 fn validate_object_link_records(products: &CompilerProducts) -> Result<(), String> {
+    products.link.validate_runtime_support()?;
     if products.link.object_path.is_none() {
         return Ok(());
     }
@@ -2635,12 +2707,14 @@ fn remap_type_def_ids(
                     object
                         .try_remap_trait_ids(&mut |id| self.remap.def_id(ProductDefId::from(id)))?;
                 }
-                crate::types::Type::Struct { id, .. } => {
+                crate::types::Type::Struct { id, .. }
+                | crate::types::Type::StructRepresentation { id, .. } => {
                     let product_id = ProductDefId::from(*id);
                     self.validator.validate_struct(product_id)?;
                     *id = self.remap.def_id(product_id)?;
                 }
-                crate::types::Type::Enum { id, .. } => {
+                crate::types::Type::Enum { id, .. }
+                | crate::types::Type::EnumRepresentation { id, .. } => {
                     let product_id = ProductDefId::from(*id);
                     self.validator.validate_enum(product_id)?;
                     *id = self.remap.def_id(product_id)?;
@@ -5376,6 +5450,7 @@ mod product_tests {
             product_id,
             ProductLinkRecord {
                 backend_symbol: format!("{}_answer", crate_name),
+                polymorphic_member: None,
             },
         );
 
@@ -5385,6 +5460,8 @@ mod product_tests {
             interface,
             bodies,
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path),
                 records: link_records,
             },
@@ -5488,6 +5565,7 @@ mod product_tests {
             undeclared_id,
             ProductLinkRecord {
                 backend_symbol: "dep_hidden".to_string(),
+                polymorphic_member: None,
             },
         );
         let artifact_path = base.join("dep.rkca");
@@ -5625,6 +5703,8 @@ mod product_tests {
             interface,
             bodies: ProductBodies::default(),
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path),
                 records: BTreeMap::new(),
             },
@@ -5716,6 +5796,8 @@ mod product_tests {
             interface,
             bodies,
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path),
                 records: BTreeMap::new(),
             },
@@ -5774,6 +5856,8 @@ mod product_tests {
             interface,
             bodies,
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path),
                 records: BTreeMap::new(),
             },
@@ -5804,6 +5888,7 @@ mod product_tests {
             body_only_id,
             ProductLinkRecord {
                 backend_symbol: "dep_hidden".to_string(),
+                polymorphic_member: None,
             },
         );
         let artifact_path = base.join("dep.rkca");
@@ -5839,6 +5924,8 @@ mod product_tests {
             interface: ProductInterface::default(),
             bodies: ProductBodies::default(),
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path),
                 records: BTreeMap::new(),
             },
@@ -10503,11 +10590,14 @@ mod product_tests {
             interface,
             bodies: Default::default(),
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path.clone()),
                 records: BTreeMap::from([(
                     product_id,
                     ProductLinkRecord {
                         backend_symbol: "dep_answer".to_string(),
+                        polymorphic_member: None,
                     },
                 )]),
             },
@@ -10624,6 +10714,8 @@ mod product_tests {
             interface,
             bodies,
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: None,
                 records: Default::default(),
             },
@@ -10761,6 +10853,8 @@ mod product_tests {
             interface: ProductInterface::default(),
             bodies: Default::default(),
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(PathBuf::from("build/dep.o")),
                 records: Default::default(),
             },
@@ -10816,6 +10910,8 @@ mod product_tests {
             interface: ProductInterface::default(),
             bodies: Default::default(),
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path),
                 records: Default::default(),
             },
@@ -10882,6 +10978,8 @@ mod product_tests {
             interface,
             bodies,
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path.clone()),
                 records: Default::default(),
             },
@@ -10999,6 +11097,8 @@ mod product_tests {
             interface,
             bodies: Default::default(),
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path.clone()),
                 records: Default::default(),
             },
@@ -11049,6 +11149,8 @@ mod product_tests {
             interface: ProductInterface::default(),
             bodies: Default::default(),
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path.clone()),
                 records: Default::default(),
             },
@@ -11128,6 +11230,8 @@ mod product_tests {
             interface,
             bodies,
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path.clone()),
                 records: Default::default(),
             },
@@ -11191,6 +11295,8 @@ mod product_tests {
             interface,
             bodies: Default::default(),
             link: ProductLinkData {
+                native_return_origins: BTreeMap::new(),
+                runtime_support: Default::default(),
                 object_path: Some(object_path.clone()),
                 records: Default::default(),
             },

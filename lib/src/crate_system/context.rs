@@ -240,6 +240,15 @@ impl CrateContext {
         self.extern_crates.link_inputs()
     }
 
+    /// Validated dependency callable authority, independent of storage-mode
+    /// decisions in compiler phases; absent rows stay absent.
+    pub(crate) fn dependency_native_return_origins(&self) -> std::collections::BTreeMap<
+        crate::ids::DefId, crate::hir::borrowing::NativeReturnOrigins<crate::types::Type>,
+    > {
+        self.extern_crates.iter().flat_map(|dependency|
+            dependency.link().native_return_origins().iter().map(|(id, origins)| (*id, origins.clone()))).collect()
+    }
+
     pub fn load_crate_with_dependencies(
         &mut self,
         crate_dir: PathBuf,

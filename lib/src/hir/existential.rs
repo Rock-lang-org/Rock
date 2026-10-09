@@ -716,7 +716,7 @@ impl<'a, P: HirPhase> Scope<'a, P> {
                         .collect::<Vec<_>>();
                     if (has_witness(&expression.ty)
                         || captures.iter().any(|capture| has_witness(&capture.ty)))
-                        && &actual_captures != signature_captures
+                        && actual_captures.as_slice() != signature_captures.as_ref()
                     {
                         self.errors.push("opened witness closure capture metadata disagrees with its function type".into());
                     }
@@ -1319,14 +1319,14 @@ main = !-> ()
                 panic!("expected function type");
             };
             match mutation {
-                0 => signature_captures.clear(),
+                0 => *signature_captures = Box::default(),
                 1 => {
                     captures[0].ty = Type::I64;
                     signature_captures[0].ty = Type::I64;
                 }
                 _ => {
                     captures.clear();
-                    signature_captures.clear();
+                    *signature_captures = Box::default();
                 }
             }
             *ty = value.ty.clone();

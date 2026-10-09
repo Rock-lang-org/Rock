@@ -59,10 +59,10 @@ main = !-> ()
 }
 
 #[test]
-fn allocation_cancellation_registry_roundtrips_format55_and_remaps_every_member() {
+fn allocation_cancellation_registry_roundtrips_format59_and_remaps_every_member() {
     let products = products();
-    assert_eq!(crate::products::PRODUCT_ARTIFACT_FORMAT_VERSION, 55);
-    assert_eq!(rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION, 55);
+    assert_eq!(crate::products::PRODUCT_ARTIFACT_FORMAT_VERSION, 59);
+    assert_eq!(rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION, 59);
     let bytes = products.to_artifact_bytes().unwrap();
     let decoded = CompilerProducts::from_artifact_bytes(&bytes).unwrap();
     let original = products

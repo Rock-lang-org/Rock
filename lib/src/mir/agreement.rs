@@ -55,6 +55,7 @@ pub fn check_mir_runtime_agreement(program: &MirProgram) -> MirAgreementReport {
     let mut seen_nominal_layout_ids = HashSet::new();
 
     validate_backend_contract_type_ids(program, &mut report);
+    validate_native_result_storage(program, &mut report);
     validate_backend_contract_projection_traits(program, &backend_contract, &mut report);
     validate_mir_backend_contract(program, &mut report);
     validate_runtime_requirements(program, &mut report);
@@ -183,6 +184,9 @@ fn validate_mir_backend_contract(program: &MirProgram, report: &mut MirAgreement
 }
 
 fn validate_backend_contract_type_ids(program: &MirProgram, report: &mut MirAgreementReport) {
+    for storage in program.backend_contract.native_result_storage.values() {
+        validate_type_id(program, *storage, report);
+    }
     for callable in program.backend_contract.callables.values() {
         for param in &callable.signature.params {
             validate_type_id(program, param.semantic_ty, report);
@@ -249,6 +253,250 @@ fn validate_backend_contract_type_ids(program: &MirProgram, report: &mut MirAgre
     }
 }
 
+pub(crate) fn validate_native_result_storage(
+    program: &MirProgram,
+    report: &mut MirAgreementReport,
+) {
+    let tc = &program.type_context;
+    let contract = &program.backend_contract;
+    for (key, storage) in &contract.native_result_storage {
+        validate_type_id(program, *storage, report);
+        let Some(declaration) = contract.callable(key) else {
+            report.invalid_backend_contract += 1;
+            continue;
+        };
+        if !tc.type_id_tree_is_valid(*storage)
+            || !tc.type_id_tree_is_valid(declaration.signature.ret.semantic_ty)
+        {
+            continue;
+        }
+        let actual = tc.type_for(*storage);
+        let (Type::StructRepresentation { id, .. } | Type::EnumRepresentation { id, .. }) = &actual
+        else {
+            report.invalid_backend_contract += 1;
+            continue;
+        };
+        if contract.normalize_type(tc, &actual)
+            != tc.type_for(declaration.signature.ret.semantic_ty)
+        {
+            report.invalid_backend_contract += 1;
+            continue;
+        }
+        let super::MirCallableKind::LocalBody { function_id } = &declaration.kind else {
+            // Imported storage remains attached to the exact checked product
+            // signature, never a second unproved local row.
+            report.invalid_backend_contract += 1;
+            continue;
+        };
+        let Some(function) = program.functions.get(function_id) else {
+            report.invalid_backend_contract += 1;
+            continue;
+        };
+        let operand_matches = |operand: &Operand, expected: &Type| match operand {
+            Operand::Copy(place) | Operand::Move(place) => contract
+                .place_type_id(tc, function, place)
+                .filter(|ty| tc.type_id_tree_is_valid(*ty))
+                .is_some_and(|ty| tc.type_for(ty) == *expected),
+            Operand::Constant(Constant::Int(_)) => expected.is_integer(),
+            Operand::Constant(Constant::Float(_)) => matches!(expected, Type::F32 | Type::F64),
+            Operand::Constant(Constant::Bool(_)) => *expected == Type::Bool,
+            Operand::Constant(Constant::Char(_)) => *expected == Type::Char,
+            Operand::Constant(Constant::String(_)) => *expected == Type::Str,
+            Operand::Constant(Constant::Unit) => *expected == Type::Unit,
+            _ => false,
+        };
+        for block in &function.basic_blocks {
+            for statement in &block.statements {
+                let StatementKind::Assign(destination, value) = &statement.kind else {
+                    continue;
+                };
+                if destination.local != super::Local(0) || !destination.projection.is_empty() {
+                    continue;
+                }
+                let valid = match value {
+                    Rvalue::Use(operand) => operand_matches(operand, &actual),
+                    Rvalue::Aggregate(AggregateKind::Struct { id: owner, .. }, operands) => {
+                        let Type::StructRepresentation { fields, .. } = &actual else {
+                            report.invalid_backend_contract += 1;
+                            continue;
+                        };
+                        owner == id
+                            && operands.len() == fields.len()
+                            && operands
+                                .iter()
+                                .zip(fields)
+                                .all(|(operand, field)| operand_matches(operand, field))
+                    }
+                    Rvalue::Aggregate(
+                        AggregateKind::EnumVariant {
+                            enum_id,
+                            variant_id,
+                            ..
+                        },
+                        operands,
+                    ) => {
+                        if let Type::EnumRepresentation { variants, .. } = &actual {
+                            enum_id == id
+                                && variants.get(variant_id.0 as usize).is_some_and(|fields| {
+                                    fields.len() == operands.len()
+                                        && operands
+                                            .iter()
+                                            .zip(fields)
+                                            .all(|(operand, field)| operand_matches(operand, field))
+                                })
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                };
+                if !valid {
+                    report.invalid_backend_contract += 1;
+                    report.backend_contract_errors.push(
+                        MirBackendContractError::NativeResultStorageMismatch {
+                            key: key.clone(),
+                            storage: *storage,
+                        },
+                    );
+                }
+            }
+            if let Some(Terminator::Call {
+                func, destination, ..
+            }) = &block.terminator
+            {
+                if destination.local == super::Local(0) && destination.projection.is_empty() {
+                    let valid = match func {
+                        Operand::Constant(Constant::Callable(MirCallable::Resolved(key))) => {
+                            contract.callable(key).is_some_and(|target| {
+                                contract.callable_result_storage(target) == *storage
+                            })
+                        }
+                        _ => false,
+                    };
+                    if !valid {
+                        report.invalid_backend_contract += 1;
+                        report.backend_contract_errors.push(
+                            MirBackendContractError::NativeResultStorageMismatch {
+                                key: key.clone(),
+                                storage: *storage,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+    for function in program.functions.values() {
+        if contract.function_result_storage(function) != function.ret_type
+            || !tc.type_id_tree_is_valid(function.ret_type)
+        {
+            continue;
+        }
+        let (Type::Struct { id, args } | Type::Enum { id, args }) = tc.type_for(function.ret_type)
+        else {
+            continue;
+        };
+        let Some(layout) = contract.nominal_layouts.get(&id) else {
+            continue;
+        };
+        let generic_params = match layout {
+            MirNominalLayout::Struct { generic_params, .. }
+            | MirNominalLayout::Enum { generic_params, .. } => generic_params,
+        };
+        let substitution = generic_params.iter().copied().zip(args).collect();
+        let requires_measured_field = |operand: &Operand, declared| {
+            let (Operand::Copy(source) | Operand::Move(source)) = operand else {
+                return false;
+            };
+            contract
+                .place_type_id(tc, function, source)
+                .filter(|ty| tc.type_id_tree_is_valid(*ty))
+                .is_some_and(|actual| {
+                    let declared = tc.type_for(declared).substitute_generics(&substitution);
+                    crate::type_services::callable::value_representation(
+                        &declared,
+                        &tc.type_for(actual),
+                    )
+                    .is_some_and(|measured| measured != declared)
+                })
+        };
+        for statement in function
+            .basic_blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+        {
+            let StatementKind::Assign(destination, value) = &statement.kind else {
+                continue;
+            };
+            if destination.local != super::Local(0) || !destination.projection.is_empty() {
+                continue;
+            }
+            let requires_storage = match value {
+                Rvalue::Use(Operand::Copy(source) | Operand::Move(source)) => contract
+                    .place_type_id(tc, function, source)
+                    .filter(|ty| tc.type_id_tree_is_valid(*ty))
+                    .is_some_and(|ty| {
+                        matches!(
+                            tc.type_for(ty),
+                            Type::StructRepresentation { .. } | Type::EnumRepresentation { .. }
+                        )
+                    }),
+                Rvalue::Aggregate(AggregateKind::Struct { id: owner, .. }, operands)
+                    if *owner == id =>
+                {
+                    match layout {
+                        MirNominalLayout::Struct { fields, .. }
+                            if fields.len() == operands.len() =>
+                        {
+                            operands.iter().zip(fields).any(|(operand, (_, declared))| {
+                                requires_measured_field(operand, *declared)
+                            })
+                        }
+                        _ => false,
+                    }
+                }
+                Rvalue::Aggregate(
+                    AggregateKind::EnumVariant {
+                        enum_id,
+                        variant_id,
+                        ..
+                    },
+                    operands,
+                ) if *enum_id == id => match layout {
+                    MirNominalLayout::Enum { variants, .. } => {
+                        variants.get(variant_id.0 as usize).is_some_and(|variant| {
+                            let fields = match &variant.fields {
+                                super::MirVariantLayoutFields::Unit => vec![],
+                                super::MirVariantLayoutFields::Positional(fields) => fields.clone(),
+                                super::MirVariantLayoutFields::Named(fields) => {
+                                    fields.iter().map(|(_, ty)| *ty).collect()
+                                }
+                            };
+                            fields.len() == operands.len()
+                                && operands.iter().zip(fields).any(|(operand, declared)| {
+                                    requires_measured_field(operand, declared)
+                                })
+                        })
+                    }
+                    _ => false,
+                },
+                _ => false,
+            };
+            if requires_storage {
+                report.invalid_backend_contract += 1;
+                if let Some(key) = contract.function_bodies.get(&function.id) {
+                    report.backend_contract_errors.push(
+                        MirBackendContractError::NativeResultStorageMismatch {
+                            key: key.clone(),
+                            storage: function.ret_type,
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn validate_layout_template_type_id(
     program: &MirProgram,
     id: TypeId,
@@ -285,6 +533,16 @@ fn validate_layout_template_type_id(
         Ty::Tuple(elems) => {
             for elem in elems {
                 validate_layout_template_type_id(program, *elem, generic_params, report);
+            }
+        }
+        Ty::StructRepresentation { args, fields, .. } => {
+            for child in args.iter().chain(fields) {
+                validate_layout_template_type_id(program, *child, generic_params, report);
+            }
+        }
+        Ty::EnumRepresentation { args, variants, .. } => {
+            for child in args.iter().chain(variants.iter().flatten()) {
+                validate_layout_template_type_id(program, *child, generic_params, report);
             }
         }
         Ty::Function {
@@ -502,7 +760,7 @@ fn validate_type_nominal_layout_id(
     let raw = program.type_context.type_for(id);
     let normalized = program
         .backend_contract
-        .normalize_type(&program.type_context, &raw);
+        .normalize_storage_type(&program.type_context, &raw);
     validate_type_nominal_layout(
         &program.type_context,
         backend_contract,
@@ -594,6 +852,48 @@ fn validate_type_nominal_layout(
                     type_context,
                     backend_contract,
                     elem,
+                    seen_nominals,
+                    report,
+                );
+            }
+        }
+        Type::StructRepresentation { id, args, fields } => {
+            validate_type_nominal_layout(
+                type_context,
+                backend_contract,
+                &Type::Struct {
+                    id: *id,
+                    args: args.clone(),
+                },
+                seen_nominals,
+                report,
+            );
+            for field in fields {
+                validate_type_nominal_layout(
+                    type_context,
+                    backend_contract,
+                    field,
+                    seen_nominals,
+                    report,
+                );
+            }
+        }
+        Type::EnumRepresentation { id, args, variants } => {
+            validate_type_nominal_layout(
+                type_context,
+                backend_contract,
+                &Type::Enum {
+                    id: *id,
+                    args: args.clone(),
+                },
+                seen_nominals,
+                report,
+            );
+            for field in variants.iter().flatten() {
+                validate_type_nominal_layout(
+                    type_context,
+                    backend_contract,
+                    field,
                     seen_nominals,
                     report,
                 );
@@ -708,7 +1008,7 @@ fn validate_type_id(program: &MirProgram, id: TypeId, report: &mut MirAgreementR
         let raw = program.type_context.type_for(id);
         let normalized = program
             .backend_contract
-            .normalize_type(&program.type_context, &raw);
+            .normalize_storage_type(&program.type_context, &raw);
         if matches!(normalized, Type::Projection { .. }) {
             report.missing_projection_facts += 1;
         }
@@ -738,6 +1038,30 @@ fn validate_type_id(program: &MirProgram, id: TypeId, report: &mut MirAgreementR
         Ty::Tuple(elems) => {
             for elem in elems {
                 validate_type_id(program, *elem, report);
+            }
+        }
+        Ty::StructRepresentation { args, fields, .. } => {
+            for child in args.iter().chain(fields) {
+                validate_type_id(program, *child, report);
+            }
+            if !super::object_runtime_type_is_valid(
+                &program.backend_contract,
+                &program.type_context,
+                id,
+            ) {
+                report.invalid_layout_ids += 1;
+            }
+        }
+        Ty::EnumRepresentation { args, variants, .. } => {
+            for child in args.iter().chain(variants.iter().flatten()) {
+                validate_type_id(program, *child, report);
+            }
+            if !super::object_runtime_type_is_valid(
+                &program.backend_contract,
+                &program.type_context,
+                id,
+            ) {
+                report.invalid_layout_ids += 1;
             }
         }
         Ty::Function {
@@ -2899,6 +3223,7 @@ mod tests {
         let invalid = TypeId(999);
         let function_ty = type_context.intern_ty(Ty::Function {
             params: vec![invalid],
+            result_borrowing: Default::default(),
             ret: unit,
             safety: FunctionSafety::Safe,
             callable_kind: crate::types::CallableKind::Fn,
@@ -3003,6 +3328,7 @@ mod tests {
         let callable_ty = type_id(&mut type_context, Type::function(vec![], Type::Unit));
         let callee_ty = type_context.intern_ty(Ty::Function {
             params: vec![callable_ty],
+            result_borrowing: Default::default(),
             ret: unit,
             safety: FunctionSafety::Safe,
             callable_kind: crate::types::CallableKind::Fn,

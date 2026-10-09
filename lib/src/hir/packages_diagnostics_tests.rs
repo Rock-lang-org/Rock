@@ -4,7 +4,7 @@ use crate::diagnostic::{DiagnosticCode, DiagnosticLocation, Diagnostics};
 use crate::lexer::Span;
 
 fn config(source: &str) -> crate::Config {
-    let path = PathBuf::from("/tmp/opencode/rock-package-diagnostics/main.rk");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.agent-work/fixtures/rock-package-diagnostics/main.rk");
     crate::Config {
         entry_file: path.clone(),
         no_std: true,

@@ -13,7 +13,7 @@ pub(crate) struct ObjectMethodAbi {
     pub result: MirObjectResult,
 }
 
-/// Logical view closure, independent of ABI order or importer ID numbering.
+/// Independent trait evidence, never the power set of guarantee subsets.
 pub(crate) fn admitted_object_views<P: HirPhase>(
     ty: &Type,
     traits: &HashMap<crate::ids::DefId, HirTraitFor<P>>,
@@ -22,51 +22,23 @@ pub(crate) fn admitted_object_views<P: HirPhase>(
     let Type::Object(object) = ty else {
         return Err("view closure requires an object signature".into());
     };
-    let bounds = std::iter::once(object.principal.clone())
-        .chain(object.guarantees.iter().cloned())
-        .collect::<Vec<_>>();
-    let mut subsets = vec![Vec::new()];
-    for bound in &bounds {
-        if subsets
-            .len()
-            .checked_mul(2)
-            .and_then(|count| count.checked_mul(bounds.len().max(1)))
-            .is_none_or(|nodes| {
-                nodes > crate::type_services::normalize::DEFAULT_MAX_NORMALIZATION_NODES
-            })
-        {
-            return Err("object view lattice exceeds the compiler metadata resource budget".into());
-        }
-        let extended = subsets
-            .iter()
-            .map(|set| {
-                let mut set = set.clone();
-                set.push(bound.clone());
-                set
-            })
-            .collect::<Vec<_>>();
-        subsets.extend(extended);
-    }
     let mut views = std::collections::BTreeSet::new();
-    for principal in &bounds {
-        for guarantees in &subsets {
-            let mut view = ObjectType::new(principal.clone());
-            view.guarantees.extend(guarantees.iter().cloned());
-            view.bindings = object.bindings.clone();
-            loop {
-                match crate::traits::objects::admit_object(&view, traits, env) {
-                    Ok(view) => {
-                        let view = Type::Object(Box::new(view));
-                        if view != *ty {
-                            views.insert(view);
-                        }
-                        break;
+    for principal in std::iter::once(&object.principal).chain(object.guarantees.iter()) {
+        let mut view = ObjectType::new(principal.clone());
+        view.bindings = object.bindings.clone();
+        loop {
+            match crate::traits::objects::admit_object(&view, traits, env) {
+                Ok(view) => {
+                    let view = Type::Object(Box::new(view));
+                    if view != *ty {
+                        views.insert(view);
                     }
-                    Err(crate::traits::objects::ObjectAdmissionError::UnrelatedBinding(key)) => {
-                        view.bindings.retain(|binding| binding.key != key);
-                    }
-                    Err(error) => return Err(error.to_string()),
+                    break;
                 }
+                Err(crate::traits::objects::ObjectAdmissionError::UnrelatedBinding(key)) => {
+                    view.bindings.retain(|binding| binding.key != key);
+                }
+                Err(error) => return Err(error.to_string()),
             }
         }
     }
@@ -277,7 +249,7 @@ pub(crate) fn erased_object_method_abi<P: HirPhase>(
                 kind: p.kind.clone(),
             }),
     );
-    let indices = parameters
+    let indices: std::collections::BTreeMap<_, _> = parameters
         .iter()
         .enumerate()
         .map(|(index, p)| (p.source, index as u32))
@@ -339,18 +311,13 @@ pub(crate) fn erased_object_method_abi<P: HirPhase>(
     for ty in params.iter().chain(std::iter::once(&ret)) {
         ty.collect_layouts(&mut layouts, true);
     }
-    let mut require_borrow_free = std::collections::BTreeSet::new();
     for dictionary in &dictionaries {
         for member in &dictionary.members {
-            for ty in member.params.iter().chain(std::iter::once(&member.ret)) {
-                ty.collect_layouts(&mut layouts, true);
-            }
-            // Dictionary calls have no symbolic origin transport yet; do not
-            // let their inputs or returned values conceal escaping loans.
-            require_borrow_free.extend(member.params.iter().skip(1).cloned());
-            require_borrow_free.insert(member.ret.clone());
+            member.collect_parent_layouts(&mut layouts, true);
         }
     }
+    let require_borrow_free =
+        crate::mir::erased_callback_storage_requirements(&params, &dictionaries);
     Ok((
         crate::mir::MirErasedSignature {
             parameters,
@@ -364,6 +331,121 @@ pub(crate) fn erased_object_method_abi<P: HirPhase>(
     ))
 }
 
+/// Whole static Self uses the accepted header's ID, including ordinary traits
+/// whose implicit Type-kind Self is inherited rather than an explicit target.
+pub(crate) fn static_member_self<P: HirPhase>(
+    declaration: &HirTraitFor<P>,
+    signature: &HirFunctionSig,
+) -> Result<GenericParamId, String> {
+    let Type::Generic(id) = &signature.ret else {
+        return Err("static member requires a whole declared Self result".into());
+    };
+    if signature.self_receiver.is_some()
+        || id.owner != declaration.id
+        || declaration
+            .generic_params
+            .iter()
+            .any(|parameter| parameter.id == *id)
+        || signature.generic_params.iter().any(|parameter| {
+            parameter.id == *id && parameter.kind != crate::type_services::kind::Kind::Type
+        })
+        || declaration.target.as_ref().is_some_and(|target| {
+            target.id != *id || target.kind != crate::type_services::kind::Kind::Type
+        })
+    {
+        return Err("static result lacks exact declared Type-kind Self authority".into());
+    }
+    // target=None is the ordinary Type-level trait declaration, not an absent
+    // method binder. The inherited Self ID comes from its accepted return type.
+    Ok(*id)
+}
+
+/// Open only a typed, capture-free static path forwarder applied immediately.
+/// Argument order is checked by actual HirLocalIds, not generated local names.
+pub(crate) fn applied_static_forwarder<'a, P: HirPhase>(
+    callee: &'a crate::hir::HirExprFor<P>,
+    args: &[crate::hir::HirExprFor<P>],
+    result: &Type,
+) -> Result<Option<&'a crate::hir::HirExprFor<P>>, String> {
+    use crate::hir::{HirCallTarget, HirExprKindFor, HirStmtFor, HirVarTarget};
+    let HirExprKindFor::Lambda {
+        params,
+        body,
+        captures,
+    } = &callee.kind
+    else {
+        return Ok(None);
+    };
+    let [HirStmtFor::Expr(inner)] = body.stmts.as_slice() else {
+        return Ok(None);
+    };
+    let HirExprKindFor::Call(source, forwarded, Some(HirCallTarget::StaticMethod(target))) =
+        &inner.kind
+    else {
+        return Ok(None);
+    };
+    let Type::Function {
+        params: types,
+        ret,
+        captures: type_captures,
+        safety,
+        callable_kind,
+        ..
+    } = &callee.ty
+    else {
+        return Err("static forwarder lacks its typed callable signature".into());
+    };
+    let Type::Function {
+        params: source_types,
+        ret: source_ret,
+        captures: source_captures,
+        safety: source_safety,
+        callable_kind: source_kind,
+        ..
+    } = &source.ty
+    else {
+        return Err("static forwarder lacks its typed source callable".into());
+    };
+    if !captures.is_empty()
+        || !type_captures.is_empty()
+        || !source_captures.is_empty()
+        || !safety.permits_call_without_unsafe()
+        || safety != source_safety
+        || callable_kind != source_kind
+        || params.len() != args.len()
+        || params.len() != forwarded.len()
+        || params.len() != types.len()
+        || types != source_types
+        || ret != source_ret
+        || ret.as_ref() != result
+        || body.ty != *result
+        || inner.ty != *result
+        || target.owner_ty != *result
+        || params
+            .iter()
+            .map(|param| param.local_id)
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != params.len()
+        || !params.iter().zip(types).zip(args).zip(forwarded).all(
+            |(((param, ty), actual), forwarded)| {
+                !param.mutable
+                    && !param.is_ref
+                    && param.ty == *ty
+                    && actual.ty == *ty
+                    && forwarded.ty == *ty
+                    && matches!(&forwarded.kind, HirExprKindFor::ResolvedVar(reference)
+                    if reference.target == HirVarTarget::Local(param.local_id))
+            },
+        )
+        || !matches!(&source.kind, HirExprKindFor::ResolvedVar(reference)
+            if matches!(reference.target, HirVarTarget::Function(id) if target.method.method_id() == Some(id)))
+    {
+        return Err("static forwarder capture/argument/result/source authority mismatch".into());
+    }
+    Ok(Some(inner))
+}
+
 pub(crate) fn erased_bound_schemas<P: HirPhase>(
     parameters: &[crate::mir::MirErasedParameter],
     bounds: &crate::hir::HirGenericBounds,
@@ -375,7 +457,7 @@ pub(crate) fn erased_bound_schemas<P: HirPhase>(
     witness: bool,
 ) -> Result<Vec<crate::mir::MirErasedDictionarySchema>, String> {
     use crate::mir::{MirErasedDictionaryMember, MirErasedDictionarySchema, MirErasedType};
-    let indices = parameters
+    let indices: std::collections::BTreeMap<_, _> = parameters
         .iter()
         .enumerate()
         .map(|(i, p)| (p.source, i as u32))
@@ -393,6 +475,18 @@ pub(crate) fn erased_bound_schemas<P: HirPhase>(
             let declaration = traits
                 .get(&bound.trait_id)
                 .ok_or("erased bound trait declaration missing")?;
+            let has_static = declaration
+                .signatures
+                .values()
+                .any(|signature| signature.self_receiver.is_none());
+            if has_static
+                && (parameter.kind != crate::type_services::kind::Kind::Type
+                    || declaration.generic_params.len() != bound.type_args.len()
+                    || !declaration.associated_types.is_empty()
+                    || !declaration.predicates.is_empty())
+            {
+                return Err("static dictionaries require declared Type-kind Self without associated/related evidence".into());
+            }
             let args = bound
                 .type_args
                 .iter()
@@ -409,14 +503,29 @@ pub(crate) fn erased_bound_schemas<P: HirPhase>(
                     .zip(&args)
                     .map(|(p, ty)| (p.id, ty.clone())),
             );
-            let self_id = declaration
-                .target
-                .as_ref()
-                .map(|p| p.id)
-                .unwrap_or(GenericParamId {
-                    owner: declaration.id,
-                    index: declaration.generic_params.len() as u32,
-                });
+            let self_id = if has_static {
+                let mut ids = declaration
+                    .signatures
+                    .values()
+                    .filter(|signature| signature.self_receiver.is_none())
+                    .map(|signature| static_member_self(declaration, signature));
+                let id = ids.next().ok_or("static member header missing")??;
+                for next in ids {
+                    if next? != id {
+                        return Err("static member Self headers disagree".into());
+                    }
+                }
+                id
+            } else {
+                declaration
+                    .target
+                    .as_ref()
+                    .map(|p| p.id)
+                    .unwrap_or(GenericParamId {
+                        owner: declaration.id,
+                        index: declaration.generic_params.len() as u32,
+                    })
+            };
             substitutions.insert(self_id, subject.clone());
             let mut members = Vec::new();
             for member in orders
@@ -428,38 +537,98 @@ pub(crate) fn erased_bound_schemas<P: HirPhase>(
                     .values()
                     .find(|sig| sig.id == *member)
                     .ok_or("erased dictionary member identity missing")?;
-                let Some(receiver) = signature.self_receiver else {
-                    continue;
-                };
-                if signature
-                    .generic_params
-                    .iter()
-                    .any(|p| !substitutions.contains_key(&p.id))
+                let receiver = signature.self_receiver;
+                if receiver.is_none()
+                    && (signature.is_unsafe
+                        || !signature.generic_bounds.is_empty()
+                        || !signature.generic_bounds.predicates.is_empty())
                 {
                     return Err(
-                        "generic dictionary members require nested erased entry evidence".into(),
+                        "static dictionaries require safe members without member-bound evidence"
+                            .into(),
                     );
+                }
+                let locals = signature
+                    .generic_params
+                    .iter()
+                    .filter(|p| !substitutions.contains_key(&p.id))
+                    .map(|p| crate::mir::MirErasedParameter {
+                        source: p.id,
+                        kind: p.kind.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                if !locals.is_empty()
+                    && (receiver.is_none()
+                        || signature.is_unsafe
+                        || !signature.generic_bounds.is_empty()
+                        || !signature.generic_bounds.predicates.is_empty()
+                        || !declaration.associated_types.is_empty()
+                        || !declaration.predicates.is_empty()
+                        || locals.iter().any(|p| {
+                            p.kind != crate::type_services::kind::Kind::Type
+                                || parameters.iter().any(|parent| parent.source == p.source)
+                        }))
+                {
+                    return Err("polymorphic dictionary members require distinct Type binders without associated/related/member-bound evidence".into());
+                }
+                let binder = crate::mir::MirErasedMemberBinder {
+                    parameters: locals,
+                    dictionaries: vec![],
+                };
+                let mut nested_indices: std::collections::BTreeMap<_, _> = indices.clone();
+                for (local, parameter) in binder.parameters.iter().enumerate() {
+                    nested_indices.insert(parameter.source, (parameters.len() + local) as u32);
                 }
                 let mut convert = |ty: &Type| {
                     let ty = crate::type_services::substitution::instantiate(ty, &substitutions)
                         .map_err(|e| e.to_string())?;
-                    MirErasedType::from_type(&ty, &indices, witness.then_some(0), tc, env)
-                        .map_err(|e| format!("{e:?}"))
+                    let ty = MirErasedType::from_type(
+                        &ty,
+                        &nested_indices,
+                        witness.then_some(0),
+                        tc,
+                        env,
+                    )
+                    .map_err(|e| format!("{e:?}"))?;
+                    let bindings = (0..parameters.len())
+                        .map(|index| MirErasedType::Parameter(index as u32))
+                        .chain(
+                            (0..binder.parameters.len())
+                                .map(|index| MirErasedType::MemberParameter(index as u32)),
+                        )
+                        .collect::<Vec<_>>();
+                    ty.substitute(&bindings).map_err(|e| format!("{e:?}"))
                 };
                 let mut params = signature
                     .params
                     .iter()
                     .map(&mut convert)
                     .collect::<Result<Vec<_>, _>>()?;
-                if params.is_empty() {
-                    return Err("dictionary receiver missing".into());
+                let ret = convert(&signature.ret)?;
+                if receiver.is_some() {
+                    if params.is_empty() {
+                        return Err("dictionary receiver missing".into());
+                    }
+                    params[0] = MirErasedType::Parameter(index as u32);
+                } else if !crate::mir::static_dictionary_shape_supported(
+                    &params,
+                    &ret,
+                    &MirErasedType::Parameter(index as u32),
+                    tc,
+                ) {
+                    return Err("static dictionaries require scalar arguments and a whole Type-kind Self result".into());
                 }
-                params[0] = MirErasedType::Parameter(index as u32);
+                let borrowing = crate::mir::dictionary_member_borrow_contract(
+                    &binder, &params, &ret, receiver, tc,
+                )
+                .map_err(|error| format!("{error:?}"))?;
                 members.push(MirErasedDictionaryMember {
                     member_id: *member,
+                    binder,
                     receiver,
                     params,
-                    ret: convert(&signature.ret)?,
+                    ret,
+                    borrowing,
                 });
             }
             let trait_args = args

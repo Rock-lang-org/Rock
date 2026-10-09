@@ -377,10 +377,7 @@ pub fn package_plan_is_valid(
             };
             if opened.get(scope as usize) != Some(&true)
                 || view != schema.object
-                || (evidence.object != view
-                    && !contract.object_schemas[&evidence.object]
-                        .views
-                        .contains(&view))
+                || !super::object::object_view_is_admitted(tc, evidence.object, view)
             {
                 return false;
             }

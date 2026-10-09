@@ -97,6 +97,27 @@ impl Monomorphizer {
                 span: span.clone(),
             };
         }
+        // Literal packs need no extra callable boundary. The direct call keeps
+        // receiver-before-argument evaluation and consumes each packed value
+        // once; it grants no new callable input or result authority.
+        let direct_args = match (native_params.as_slice(), &packed.kind) {
+            ([], HirExprKind::Unit) => Some(Vec::new()),
+            ([_], _) => Some(vec![packed.clone()]),
+            (params, HirExprKind::TupleLiteral(values))
+                if params.len() == values.len()
+                    && params.iter().zip(values).all(|(ty, value)| ty == &value.ty) =>
+            {
+                Some(values.clone())
+            }
+            _ => None,
+        };
+        if let Some(arguments) = direct_args {
+            return Some(HirExpr {
+                ty: result.clone(),
+                kind: HirExprKind::Call(Box::new(receiver), arguments, None),
+                span: span.clone(),
+            });
+        }
         let params = vec![
             HirParam {
                 name: "__call_receiver".into(),
