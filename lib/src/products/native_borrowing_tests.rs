@@ -297,3 +297,87 @@ fn native_return_contract_artifact_rejects_malformed_authority_at_decode() {
         );
     }
 }
+
+#[test]
+fn early_return_native_storage_schema_corruption_rejects_at_emission_and_decode() {
+    let (root, _, _) = provider();
+    let source = root.join("absent-early-provider.rk");
+    let text = r#"
+trait CopyValue
+    ~@into_value: I64
+impl CopyValue for I64
+    ~@into_value = -> self
+< struct Holder
+    < value: () -> I64
+< enum Choice
+    Empty
+    Held Holder
+make: Bool -> I64 -> Holder
+< make = flag, seed ->
+    if flag
+        return (Holder
+            value: -> seed.into_value!)
+    Holder
+        value: -> seed.into_value!
+make_choice: Bool -> I64 -> Choice
+< make_choice = flag, seed ->
+    if flag
+        return (Choice::Held (make true, seed))
+    Choice::Held (make false, seed)
+"#;
+    let config = Config {
+        entry_file: source.clone(), output_dir: root.clone(),
+        current_crate_name: Some("early".into()), no_std: true,
+        no_prelude: true, no_link: true, emit_object: Some(root.join("early.o")),
+        source_providers: vec![SourceProvider::Virtual { path: source.clone(), text: text.into() }],
+        ..Default::default()
+    };
+    let mut original = crate::compile_with_products(&config).unwrap().products.unwrap();
+    original.link.object_path = Some("early.o".into());
+    let find = |name: &str| *original.interface.functions.iter()
+        .find(|(_, function)| function.name.rsplit("::").next() == Some(name)).unwrap().0;
+    let holder = find("make");
+    let choice = find("make_choice");
+    assert!(!original.bodies.functions.contains_key(&holder) && !original.bodies.functions.contains_key(&choice));
+    let frozen = original.to_artifact_bytes().unwrap();
+    let object = std::fs::read(root.join("early.o")).unwrap();
+    CompilerProducts::from_artifact_bytes(&frozen).unwrap();
+    assert!(!source.exists());
+    for mutation in 0..7 {
+        let mut products = original.clone();
+        if mutation < 4 {
+            let Type::StructRepresentation { id, args, fields } =
+                &mut products.interface.functions.get_mut(&holder).unwrap().ret_type else { panic!("measured struct producer") };
+            match mutation {
+                0 => fields.clear(),
+                1 => fields.push(Type::I64),
+                2 => {
+                    let Type::Function { ret, .. } = &mut fields[0] else { panic!("measured callable field") };
+                    **ret = Type::Bool;
+                }
+                3 => {
+                    *id = crate::ids::DefId::new(crate::ids::CrateId(0), crate::ids::LocalDefId(u32::MAX));
+                    args.push(Type::I64);
+                }
+                _ => unreachable!(),
+            }
+        } else {
+            let Type::EnumRepresentation { variants, .. } =
+                &mut products.interface.functions.get_mut(&choice).unwrap().ret_type else { panic!("measured enum producer") };
+            match mutation {
+                4 => variants.push(vec![]),
+                5 => { variants.remove(0); }
+                6 => variants.iter_mut().find(|fields| !fields.is_empty()).unwrap().clear(),
+                _ => unreachable!(),
+            };
+        }
+        assert!(products.to_artifact_bytes().is_err(), "emission mutation {mutation}");
+        let artifact = super::super::type_table::products_to_artifact(&products, PRODUCT_ARTIFACT_FORMAT_VERSION).unwrap();
+        let header = ProductArtifactHeader::from_products(&products);
+        let bytes = encode_product_artifact(&header, &artifact).unwrap();
+        assert!(CompilerProducts::from_artifact_bytes(&bytes).is_err(), "decode mutation {mutation}");
+        assert_eq!(original.to_artifact_bytes().unwrap(), frozen);
+        assert_eq!(std::fs::read(root.join("early.o")).unwrap(), object);
+        assert!(!source.exists());
+    }
+}

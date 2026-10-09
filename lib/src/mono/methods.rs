@@ -373,11 +373,36 @@ impl Monomorphizer {
     }
 
     fn rewrite_to_existing_instance_call(
-        &self,
+        &mut self,
         expr: &mut HirExpr,
         args: &[HirExpr],
         instance_id: crate::mono::InstanceId,
     ) -> bool {
+        // Concrete instance methods, like static methods, must publish their
+        // producer storage before the caller binds/projects the result.
+        let concrete_method = self.instances.record(instance_id).and_then(|record| {
+            if record.provided_by_object || !record.substitution.is_empty() {
+                return None;
+            }
+            match &record.origin {
+                super::InstanceOrigin::ImplMethod { method, .. } => Some(*method),
+                _ => None,
+            }
+        });
+        if let Some(method) = concrete_method {
+            if !self.processed_concrete_functions.contains(&method)
+                && self.active_concrete_methods.insert(method)
+            {
+                if let Some(body) = self.instances.pre_mir_body(instance_id).cloned() {
+                    if !body.body.stmts.is_empty() {
+                        let processed = self.process_function(body);
+                        self.instances.replace_pre_mir_body(instance_id, processed);
+                        self.processed_concrete_functions.insert(method);
+                    }
+                }
+                self.active_concrete_methods.remove(&method);
+            }
+        }
         let body = self.instances.pre_mir_body(instance_id).cloned();
         let Some(record) = self.instances.record(instance_id) else {
             return false;
@@ -1309,14 +1334,12 @@ impl Monomorphizer {
         self.process_block(&mut signature.body);
         self.current_type_args = old_type_args;
         self.var_types = old_var_types;
-        if let Some(actual) = crate::type_services::callable::declared_value_representation(
-            &method.ret_type,
+        if let Some(actual) = self.agree_return_storage(
             &signature.ret_type,
-            &signature.body.ty,
+            Some(&method.ret_type),
+            &signature.body,
         ) {
-            if super::process::block_returns_agree(&signature.body, &actual) {
-                signature.ret_type = actual;
-            }
+            signature.ret_type = actual;
         }
         signature
     }

@@ -11,7 +11,7 @@ use crate::types::Type;
 
 use super::{InstanceKey, InstanceOrigin, Monomorphizer};
 
-fn has_measured_storage(ty: &Type) -> bool {
+pub(super) fn has_measured_storage(ty: &Type) -> bool {
     crate::type_services::visit::type_any(ty, |ty| {
         matches!(
             ty,
@@ -244,12 +244,8 @@ impl Monomorphizer {
                 );
             }
         }
-        if let Some(actual) =
-            crate::type_services::callable::value_representation(&func.ret_type, &func.body.ty)
-        {
-            if block_returns_agree(&func.body, &actual) {
-                func.ret_type = actual;
-            }
+        if let Some(actual) = self.agree_return_storage(&func.ret_type, None, &func.body) {
+            func.ret_type = actual;
         }
         self.current_function_owner = previous_owner;
         self.var_types = previous_var_types;
@@ -277,22 +273,24 @@ impl Monomorphizer {
         for stmt in &mut block.stmts {
             self.process_stmt(stmt);
         }
-        if let Some(HirStmt::Expr(value) | HirStmt::Return(Some(value))) = block.stmts.last() {
-            if let Some(actual) =
-                crate::type_services::callable::value_representation(&block.ty, &value.ty)
-            {
-                if block_returns_agree(block, &actual) {
+        if super::return_storage::completes_normally(block) {
+            if let Some(HirStmt::Expr(value)) = block.stmts.last() {
+                if let Some(actual) =
+                    crate::type_services::callable::value_representation(&block.ty, &value.ty)
+                {
                     block.ty = actual;
-                } else if has_measured_storage(&actual) {
+                } else if has_measured_storage(&value.ty) && block.ty != Type::Unit {
                     self.diagnostics.push(
                         crate::diagnostic::Diagnostic::new(
-                            "return paths require an agreed field representation".into(),
+                            "block value requires an agreed field representation".into(),
                             value.span.clone(),
                         )
                         .with_code(crate::diagnostic::DiagnosticCode::Mono),
                     );
                 }
             }
+        } else {
+            block.ty = Type::Never;
         }
         self.var_types = enclosing_var_types;
     }
@@ -1059,8 +1057,17 @@ impl Monomorphizer {
                     }
                 }
             }
-            HirExprKind::ArrayRepeat(value, _) => {
+            HirExprKind::ArrayRepeat(value, len) => {
                 self.process_expr(value);
+                if *len > 1 && !crate::type_services::facts::TypeFacts::is_copy(&value.ty) {
+                    self.diagnostics.push(
+                        crate::diagnostic::Diagnostic::new(
+                            format!("array repeat initializer must be Copy, found '{}'", value.ty),
+                            value.span.clone(),
+                        )
+                        .with_code(crate::diagnostic::DiagnosticCode::Type),
+                    );
+                }
                 if let Type::Array(element, _) = &mut expr.ty {
                     if let Some(actual) =
                         crate::type_services::callable::value_representation(element, &value.ty)
@@ -1209,24 +1216,29 @@ impl Monomorphizer {
                 self.process_block(then_branch);
                 if let Some(else_b) = else_branch {
                     self.process_block(else_b);
-                    if then_branch.ty == else_b.ty {
-                        if let Some(actual) = crate::type_services::callable::value_representation(
-                            &expr.ty,
-                            &then_branch.ty,
-                        ) {
-                            expr.ty = actual;
+                    let continuing = [&then_branch.ty, &else_b.ty]
+                        .into_iter()
+                        .filter(|ty| **ty != Type::Never)
+                        .collect::<Vec<_>>();
+                    if let Some(first) = continuing.first() {
+                        if continuing.iter().all(|ty| *ty == *first) {
+                            if let Some(actual) = crate::type_services::callable::value_representation(
+                                &expr.ty,
+                                first,
+                            ) {
+                                expr.ty = actual;
+                            }
+                        } else if continuing.iter().any(|ty| has_measured_storage(ty)) {
+                            self.diagnostics.push(
+                                crate::diagnostic::Diagnostic::new(
+                                    "conditional values require an agreed field representation".into(),
+                                    expr.span.clone(),
+                                )
+                                .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                            );
                         }
-                    } else if [&then_branch.ty, &else_b.ty]
-                        .iter()
-                        .any(|ty| has_measured_storage(ty))
-                    {
-                        self.diagnostics.push(
-                            crate::diagnostic::Diagnostic::new(
-                                "conditional values require an agreed field representation".into(),
-                                expr.span.clone(),
-                            )
-                            .with_code(crate::diagnostic::DiagnosticCode::Mono),
-                        );
+                    } else {
+                        expr.ty = Type::Never;
                     }
                 }
             }
@@ -1243,15 +1255,18 @@ impl Monomorphizer {
                     self.process_block(&mut arm.body);
                     self.var_types = enclosing_var_types;
                 }
-                if let Some(first) = arms.first() {
-                    if arms.iter().all(|arm| arm.body.ty == first.body.ty) {
+                let continuing = arms.iter()
+                    .filter(|arm| arm.body.ty != Type::Never)
+                    .collect::<Vec<_>>();
+                if let Some(first) = continuing.first() {
+                    if continuing.iter().all(|arm| arm.body.ty == first.body.ty) {
                         if let Some(actual) = crate::type_services::callable::value_representation(
                             &expr.ty,
                             &first.body.ty,
                         ) {
                             expr.ty = actual;
                         }
-                    } else if arms.iter().any(|arm| has_measured_storage(&arm.body.ty)) {
+                    } else if continuing.iter().any(|arm| has_measured_storage(&arm.body.ty)) {
                         self.diagnostics.push(
                             crate::diagnostic::Diagnostic::new(
                                 "matched values require an agreed field representation".into(),
@@ -1260,6 +1275,8 @@ impl Monomorphizer {
                             .with_code(crate::diagnostic::DiagnosticCode::Mono),
                         );
                     }
+                } else {
+                    expr.ty = Type::Never;
                 }
             }
             HirExprKind::While { condition, body } => {
@@ -1308,7 +1325,7 @@ impl Monomorphizer {
                 {
                     *types = params.iter().map(|param| param.ty.clone()).collect();
                     if let Some(actual) =
-                        crate::type_services::callable::value_representation(ret, &body.ty)
+                        self.agree_return_storage(ret, None, body)
                     {
                         **ret = actual;
                     }
@@ -1370,38 +1387,6 @@ impl Monomorphizer {
             _ => {}
         }
     }
-}
-
-// A tail's environment cannot describe a different early-return environment.
-// Nested lambda returns belong to their own callable, not the containing block.
-pub(super) fn block_returns_agree(block: &HirBlock, actual: &Type) -> bool {
-    fn expression_agrees(expression: &HirExpr, actual: &Type) -> bool {
-        if matches!(expression.kind, HirExprKind::Lambda { .. }) {
-            return true;
-        }
-        let mut agrees = true;
-        crate::hir::visit::visit_expr_children(expression, &mut |child| {
-            agrees &= match child {
-                crate::hir::visit::HirChild::Expr(expression) => {
-                    expression_agrees(expression, actual)
-                }
-                crate::hir::visit::HirChild::Block(block) => block_returns_agree(block, actual),
-            };
-        });
-        agrees
-    }
-    block.stmts.iter().all(|statement| match statement {
-        HirStmt::Return(Some(value)) => {
-            crate::type_services::callable::value_representation(actual, &value.ty).as_ref()
-                == Some(actual)
-                && expression_agrees(value, actual)
-        }
-        HirStmt::Return(None) => *actual == Type::Unit,
-        HirStmt::Let { value, .. } | HirStmt::Expr(value) | HirStmt::Break(Some(value)) => {
-            expression_agrees(value, actual)
-        }
-        _ => true,
-    })
 }
 
 fn adapt_array_slice_callback(arg: &mut HirExpr, expected: &Type) {
@@ -1966,7 +1951,8 @@ mod tests {
             ],
             ty: Type::function(vec![], Type::I64),
         };
-        assert!(!block_returns_agree(&block, &captured));
+        let mut mono = Monomorphizer::new();
+        assert_ne!(mono.agree_return_storage(&captured, None, &block), Some(captured.clone()));
         block.stmts[0] = HirStmt::Expr(HirExpr {
             kind: HirExprKind::Lambda {
                 params: vec![],
@@ -1979,7 +1965,8 @@ mod tests {
             ty: Type::function(vec![], Type::I64),
             span: crate::lexer::Span::test(),
         });
-        assert!(block_returns_agree(&block, &captured));
+        block.ty = captured.clone();
+        assert_eq!(mono.agree_return_storage(&captured, None, &block), Some(captured));
     }
 
     #[test]

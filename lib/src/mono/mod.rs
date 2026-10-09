@@ -34,6 +34,7 @@ pub(crate) mod object_schema;
 mod object_tests;
 mod process;
 mod registry;
+mod return_storage;
 mod specialize;
 mod substitute;
 

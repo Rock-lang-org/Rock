@@ -7,9 +7,9 @@ pub(crate) enum HirChild<'a, P: HirPhase> {
     Block(&'a HirBlockFor<P>),
 }
 
-pub(crate) fn visit_expr_children<P: HirPhase>(
-    expr: &HirExprFor<P>,
-    visit: &mut impl FnMut(HirChild<'_, P>),
+pub(crate) fn visit_expr_children<'a, P: HirPhase>(
+    expr: &'a HirExprFor<P>,
+    visit: &mut impl FnMut(HirChild<'a, P>),
 ) {
     match &expr.kind {
         E::PackagePack { payload, .. } => visit(HirChild::Expr(payload)),
@@ -110,6 +110,35 @@ pub(crate) fn visit_block<P: HirPhase>(
 pub(crate) enum HirChildMut<'a, P: HirPhase> {
     Expr(&'a mut HirExprFor<P>),
     Block(&'a mut HirBlockFor<P>),
+}
+
+/// Conservatively find a break owned by the loop containing this body.
+/// Nested loop bodies and lambdas have independent exit owners; a nested
+/// while condition or for iterator is still evaluated in the outer owner.
+pub(crate) fn has_loop_break<P: HirPhase>(body: &HirBlockFor<P>) -> bool {
+    fn expression<P: HirPhase>(expr: &HirExprFor<P>) -> bool {
+        match &expr.kind {
+            E::Lambda { .. } | E::Loop(_) => false,
+            E::While { condition, .. } => expression(condition),
+            E::For { iter, .. } => expression(iter),
+            _ => {
+                let mut found = false;
+                visit_expr_children(expr, &mut |child| {
+                    found |= match child {
+                        HirChild::Expr(expr) => expression(expr),
+                        HirChild::Block(block) => has_loop_break(block),
+                    };
+                });
+                found
+            }
+        }
+    }
+    body.stmts.iter().any(|statement| match statement {
+        HirStmtFor::Break(_) => true,
+        HirStmtFor::Let { value, .. } | HirStmtFor::Expr(value)
+            | HirStmtFor::Return(Some(value)) => expression(value),
+        _ => false,
+    })
 }
 
 pub(crate) fn visit_expr_children_mut<P: HirPhase>(

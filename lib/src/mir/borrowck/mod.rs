@@ -939,6 +939,40 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
         match operand {
             Operand::Copy(place) | Operand::Move(place)
                 if matches!(place.projection.first(), Some(Projection::Deref))
+                    && self.local_type_is_reference(place.local)
+                    && !self.track_value_dependencies
+                    && matches!(checked_place_storage_type(
+                        self.type_context, self.backend_contract, self.func, place,
+                    ), Some(Type::Function { captures, .. }) if !captures.is_empty()) =>
+            {
+                let loaded = checked_place_storage_type(
+                    self.type_context, self.backend_contract, self.func, place,
+                );
+                let mut contents = OriginSet::new();
+                for origin in self.origins_for_place(state, place) {
+                    let owner = origin.local_storage().map(|local| Place {
+                        local, projection: Vec::new(),
+                    });
+                    // Copying a value reads measured contents, not the loan to
+                    // its containing slot. Address-taking remains separate.
+                    // Other carried loans in the envelope must remain intact.
+                    let owner = owner.filter(|owner| {
+                        loaded.as_ref().zip(checked_place_storage_type(
+                            self.type_context, self.backend_contract, self.func, owner,
+                        )).is_some_and(|(loaded, storage)| {
+                            crate::type_services::visit::type_any(&storage, |ty| ty == loaded)
+                        })
+                    });
+                    if let Some(owner) = owner {
+                        contents.extend(self.origins_for_place(state, &owner));
+                    } else {
+                        contents.insert(origin);
+                    }
+                }
+                contents
+            }
+            Operand::Copy(place) | Operand::Move(place)
+                if matches!(place.projection.first(), Some(Projection::Deref))
                     && self.local_type_is_pointer(place.local) =>
             {
                 // A value read through a raw address transports the pointee's
@@ -4718,6 +4752,58 @@ main = !->
     }
 
     #[test]
+    fn early_return_nominal_storage_checks_each_producer_assignment() {
+        use crate::mir::StatementKind;
+
+        let original = enum_origin_source_program(r#"
+struct Holder
+    < value: () -> I64
+trait CopyValue
+    ~@into_value: I64
+impl CopyValue for I64
+    ~@into_value = -> self
+make: Bool -> I64 -> Holder
+make = flag, seed ->
+    if flag
+        return (Holder
+            value: -> seed.into_value!)
+    Holder
+        value: -> seed.into_value!
+main = !->
+    first = make true, 42
+    second = make false, 42
+"#);
+        BorrowChecker::run(&original).unwrap();
+        assert!(crate::mir::agreement::check_mir_runtime_agreement(&original).is_clean());
+        let (key, _) = original.backend_contract.native_result_storage.iter().next().unwrap();
+        let crate::mir::MirCallableKind::LocalBody { function_id } =
+            &original.backend_contract.callables[key].kind else {
+                panic!("actual represented producer body");
+            };
+        let assignments = original.functions[function_id].basic_blocks.iter()
+            .enumerate().flat_map(|(block, body)| {
+                body.statements.iter().enumerate().filter_map(move |(index, statement)| {
+                    matches!(&statement.kind, StatementKind::Assign(place, _)
+                        if place.local == Local(0) && place.projection.is_empty())
+                        .then_some((block, index))
+                })
+            }).collect::<Vec<_>>();
+        assert_eq!(assignments.len(), 2, "both early and tail producers are present");
+        for (block, index) in assignments {
+            let mut corrupt = original.clone();
+            let statement = &mut corrupt.functions.get_mut(function_id).unwrap()
+                .basic_blocks[block].statements[index];
+            let StatementKind::Assign(_, value) = &mut statement.kind else { unreachable!() };
+            *value = Rvalue::Use(Operand::Constant(Constant::Unit));
+            let report = crate::mir::agreement::check_mir_runtime_agreement(&corrupt);
+            assert!(report.invalid_backend_contract > 0, "each alternative validates independently: {report:?}");
+            assert!(report.backend_contract_errors.iter().any(|error| {
+                matches!(error, crate::mir::MirBackendContractError::NativeResultStorageMismatch { .. })
+            }), "{report:?}");
+        }
+    }
+
+    #[test]
     fn measured_enum_payload_does_not_grant_borrowed_capture_escape() {
         let program = enum_origin_source_program(
             r#"
@@ -5002,6 +5088,40 @@ main = !->
             ),
             HashSet::from([ReferenceOrigin::Param(Local(1))]),
         );
+    }
+
+    #[test]
+    fn safe_callable_copy_preserves_payload_loans_but_not_containing_array_storage() {
+        let mut tc = TypeContext::new();
+        let reference = Type::Reference { mutable: false, inner: Box::new(Type::I64) };
+        let mut callback = Type::function(vec![], reference.clone());
+        let Type::Function { captures, .. } = &mut callback else { unreachable!() };
+        *captures = vec![crate::types::FunctionCapture::new(crate::types::CaptureKind::Move, reference)].into();
+        let mut function = reference_return_function(&mut tc, MirOwnershipMetadata::default());
+        function.local_decls[0].ty = tc.intern_type(&Type::Reference {
+            mutable: false, inner: Box::new(callback.clone()),
+        });
+        function.local_decls[1].ty = tc.intern_type(&Type::Array(Box::new(callback), 3));
+        let contract = MirBackendContract::default();
+        let summaries = HashMap::new();
+        let analysis = ReferenceEscapeAnalysis::new(
+            &function, &tc, &contract, &summaries, MissingSummaryMode::Conservative,
+        );
+        let root = |local| Place { local: Local(local), projection: vec![] };
+        let loaded = Place { local: Local(0), projection: vec![Projection::Deref] };
+        let mut state = ReferenceOriginState {
+            origins: HashMap::from([
+                (root(0), HashSet::from([ReferenceOrigin::Local(Local(1)), ReferenceOrigin::Local(Local(2))])),
+                (root(1), HashSet::from([ReferenceOrigin::Local(Local(2))])),
+            ]),
+        };
+        assert_eq!(analysis.origins_for_operand(&state, &Operand::Copy(loaded.clone())),
+            HashSet::from([ReferenceOrigin::Local(Local(2))]));
+        assert_eq!(analysis.origins_for_borrowed_place(&state, &loaded),
+            HashSet::from([ReferenceOrigin::Local(Local(1)), ReferenceOrigin::Local(Local(2))]));
+        state.origins.insert(root(1), HashSet::from([ReferenceOrigin::UnknownExternal]));
+        assert_eq!(analysis.origins_for_operand(&state, &Operand::Copy(loaded)),
+            HashSet::from([ReferenceOrigin::UnknownExternal, ReferenceOrigin::Local(Local(2))]));
     }
 
     #[test]

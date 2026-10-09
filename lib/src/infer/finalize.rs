@@ -394,7 +394,9 @@ fn finalize_expr(ctx: &mut FinalizeCtx<'_>, expr: &mut HirExpr) {
         }
         HirExprKind::ArrayRepeat(value, len) => {
             finalize_expr(ctx, value);
-            if *len > 1 && !TypeFacts::is_copy(&value.ty) {
+            // A generalized result may still select a callable environment at
+            // specialization. Mono checks the actual initializer before emission.
+            if *len > 1 && value.ty.is_concrete() && !TypeFacts::is_copy(&value.ty) {
                 ctx.errors.push(InferenceError {
                     error: UnifyError::NonCopyArrayRepeat {
                         found: value.ty.clone(),

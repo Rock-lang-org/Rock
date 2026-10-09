@@ -104,7 +104,7 @@ impl Lowerer {
                 self.fold_loop_stack.pop();
                 self.pop_scope();
                 HirExpr {
-                    ty: Type::Unit,
+                    ty: if crate::hir::visit::has_loop_break(&body) { Type::Unit } else { Type::Never },
                     kind: HirExprKind::Loop(body),
                     span: span.clone(),
                 }
@@ -223,5 +223,41 @@ mod tests {
             assert!(matches!(hir.kind, HirExprKind::Loop(_)));
             assert_eq!(hir.span, Span::test());
         }
+    }
+
+    #[test]
+    fn loop_without_an_owned_break_has_no_unit_fallthrough() {
+        for (statement, expected) in [
+            (Statement::Continue(None), crate::types::Type::Never),
+            (Statement::Return(None), crate::types::Type::Never),
+            (Statement::Break(None), crate::types::Type::Unit),
+        ] {
+            let mut lowerer = Lowerer::new_for_test();
+            let loop_expr = crate::ast::Loop::Loop(
+                Block { statements: vec![statement] }, Span::test(),
+            );
+            let hir = lowerer.with_test_body_context(|lowerer| lowerer.lower_loop(&loop_expr));
+            assert_eq!(hir.ty, expected);
+        }
+        let inner = crate::hir::HirBlock {
+            stmts: vec![HirStmt::Break(None)], ty: crate::types::Type::Unit,
+        };
+        let expr = |kind| crate::hir::HirExpr {
+            kind, ty: crate::types::Type::Unit, span: Span::test(),
+        };
+        let body = |value| crate::hir::HirBlock {
+            stmts: vec![HirStmt::Expr(value)], ty: crate::types::Type::Unit,
+        };
+        assert!(!crate::hir::visit::has_loop_break(&body(expr(HirExprKind::Loop(inner.clone())))));
+        assert!(!crate::hir::visit::has_loop_break(&body(expr(HirExprKind::While {
+            condition: Box::new(expr(HirExprKind::BoolLiteral(true))), body: inner.clone(),
+        }))));
+        assert!(crate::hir::visit::has_loop_break(&body(expr(HirExprKind::While {
+            condition: Box::new(expr(HirExprKind::Block(inner.clone()))),
+            body: crate::hir::HirBlock { stmts: vec![], ty: crate::types::Type::Unit },
+        }))));
+        assert!(!crate::hir::visit::has_loop_break(&body(expr(HirExprKind::Lambda {
+            params: vec![], body: inner, captures: vec![],
+        }))));
     }
 }

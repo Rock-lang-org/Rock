@@ -516,6 +516,72 @@ fn execute(root: &Path, source: &str, opt_level: u8) {
 }
 
 #[test]
+fn stored_consuming_callable_keeps_payload_loans_and_rejects_second_use() {
+    let root = scratch("stored_consuming_once");
+    let source = CAPTURING
+        .replace("main = ->", "struct Stored F\n    < callback: F\nmain = ->")
+        .replace("result = callback!", "stored = Stored\n        callback: callback\n    result = stored.callback!");
+    for level in [0, 3] {
+        execute(&root, &source, level);
+        for (name, negative) in [
+            ("twice", source.replace("    read result", "    again = stored.callback!\n    read result")),
+            ("mutation", source.replace("value = 42", "mut value = 42")
+                .replace("    read result", "    value = 43\n    read result")),
+        ] {
+            let entry = root.join(format!("{name}_o{level}.rk"));
+            std::fs::write(&entry, negative).unwrap();
+            let mut caller = config(&root, entry.clone(), level);
+            caller.no_link = true;
+            let errors = rock_lib::compile(&caller).expect_err("stored ownership and loans remain authoritative");
+            assert!(errors.0.iter().any(|error| error.code == Some(DiagnosticCode::Borrow)
+                && error.primary.as_ref().is_some_and(|label| label.span.file_path == entry)), "{name}: {errors:?}");
+            assert!(errors.0.iter().all(|error| error.code != Some(DiagnosticCode::Internal)), "{errors:?}");
+            assert!(!root.join(format!("{name}_o{level}")).exists());
+        }
+    }
+}
+
+#[test]
+fn early_return_reference_alternatives_keep_both_input_loans() {
+    let root = scratch("early_return_reference_alternatives");
+    const SOURCE: &str = r#"
+choose = flag, left, right ->
+    if flag
+        return left
+    right
+main = ->
+    mut left = 42
+    mut right = 42
+    result = choose false, &left, &right
+    *result
+"#;
+    for level in [0, 3] {
+        execute(&root, SOURCE, level);
+        for name in ["left", "right"] {
+            let entry = root.join(format!("{name}_o{level}.rk"));
+            std::fs::write(&entry, SOURCE.replace("    *result", &format!("    {name} = 43\n    *result"))).unwrap();
+            let mut caller = config(&root, entry.clone(), level);
+            caller.no_link = true;
+            let errors = rock_lib::compile(&caller).expect_err("literal arguments do not erase a reachable loan alternative");
+            assert!(errors.0.iter().any(|error| error.code == Some(DiagnosticCode::Borrow)
+                && error.message == "borrow conflict on this value"
+                && error.primary.as_ref().is_some_and(|label| label.span.file_path == entry)), "{errors:?}");
+            assert!(errors.0.iter().all(|error| error.code != Some(DiagnosticCode::Internal)), "{errors:?}");
+        }
+        let entry = root.join(format!("dead_alternative_o{level}.rk"));
+        let negative = SOURCE.replace("    right\nmain", "    local = 42\n    &local\nmain");
+        std::fs::write(&entry, negative).unwrap();
+        let mut caller = config(&root, entry.clone(), level);
+        caller.no_link = true;
+        let errors = rock_lib::compile(&caller).unwrap_err();
+        assert!(errors.0.iter().any(|error| error.code == Some(DiagnosticCode::Borrow)
+            && error.message.contains("does not live long enough")
+            && error.primary.as_ref().is_some_and(|label| label.span.file_path == entry)), "{errors:?}");
+        assert!(errors.0.iter().all(|error| error.code != Some(DiagnosticCode::Internal)), "{errors:?}");
+    }
+}
+
+#[test]
 fn callable_environment_cleanup_keeps_owned_capture_destructor_loans_live() {
     let root = scratch("environment_drop_loans");
     const SOURCE: &str = r#"
@@ -1960,5 +2026,192 @@ main = ->
             std::fs::read(root.join("provider.o")).unwrap(),
             object_bytes
         );
+    }
+}
+
+#[test]
+fn branch_and_loop_callable_replacements_validate_every_carried_producer() {
+    let root = scratch("replaced_callable_join");
+    for (name, replacement) in [
+        ("branches", "if flag\n        envelope.callback = identity\n    else\n        envelope.callback = alternate"),
+        ("one_branch", "if flag\n        envelope.callback = alternate"),
+        ("loop", "mut repeat = flag\n    while repeat\n        envelope.callback = alternate\n        repeat = false"),
+    ] {
+        let source = format!(r#"
+struct Envelope F
+    < callback: F
+identity: &I64 -> &I64
+identity = value -> value
+alternate: &I64 -> &I64
+alternate = value -> value
+extern opaque: &I64 -> &I64
+replace = mut envelope, flag ->
+    {replacement}
+    envelope
+invoke = envelope, value -> envelope.callback value
+main = ->
+    mut value = 42
+    initial = Envelope
+        callback: identity
+    first = replace initial, true
+    second = replace first, false
+    result = invoke second, &value
+    *result
+"#);
+        for level in [0, 3] {
+            execute(&root, &source, level);
+            for (kind, negative) in [
+                ("missing", source.replace("envelope.callback = alternate", "envelope.callback = opaque")),
+                ("mutation", source.replace("    *result", "    value = 43\n    *result")),
+            ] {
+                let entry = root.join(format!("{name}_{kind}_{level}.rk"));
+                std::fs::write(&entry, negative).unwrap();
+                let mut caller = config(&root, entry.clone(), level);
+                caller.no_link = true;
+                let errors = rock_lib::compile(&caller).expect_err("all applicable writes and returned loans remain authoritative");
+                assert!(errors.0.iter().any(|error| error.code == Some(DiagnosticCode::Borrow)
+                    && error.primary.as_ref().is_some_and(|label| label.span.file_path == entry)), "{name} {kind}: {errors:?}");
+                assert!(errors.0.iter().all(|error| error.code != Some(DiagnosticCode::Internal)), "{errors:?}");
+                assert!(!entry.with_extension("").exists());
+            }
+        }
+    }
+}
+
+#[test]
+fn source_free_callable_joins_survive_actual_import_id_renumbering() {
+    let root = scratch("import_id_callable_join");
+    let provider = r#"
+< struct Envelope F
+    < callback: F
+identity: &I64 -> &I64
+< identity = value -> value
+alternate: &I64 -> &I64
+< alternate = value -> value
+< select = flag, left, right ->
+    if flag
+        return left
+    right
+< invoke = callback, value -> callback value
+"#;
+    for (name, source) in [("provider", provider), ("decoy", "< struct Marker\n    < value: I64\n")] {
+        let entry = root.join(format!("{name}.rk"));
+        std::fs::write(&entry, source).unwrap();
+        let mut producer = config(&root, entry.clone(), 0);
+        producer.current_crate_name = Some(name.into());
+        producer.no_link = true;
+        producer.emit_object = Some(root.join(format!("{name}.o")));
+        let mut products = rock_lib::compile_with_products(&producer).unwrap().products.unwrap();
+        products.link.object_path = Some(format!("{name}.o").into());
+        if name == "provider" {
+            for function in ["identity", "alternate"] {
+                let id = products.interface.functions.iter().find(|(_, f)| f.name.ends_with(function)).unwrap().0;
+                assert!(!products.bodies.functions.contains_key(id));
+                assert!(products.link.native_return_origins.contains_key(id));
+                let mut missing = products.clone();
+                missing.link.native_return_origins.remove(id).unwrap();
+                missing.write_artifact_to_path(&root.join(format!("missing_{function}.rkca"))).unwrap();
+            }
+        }
+        products.write_artifact_to_path(&root.join(format!("{name}.rkca"))).unwrap();
+        std::fs::remove_file(entry).unwrap();
+    }
+    let frozen = ["provider.rkca", "provider.o", "decoy.rkca", "decoy.o"]
+        .map(|name| (name, std::fs::read(root.join(name)).unwrap()));
+    let source = r#"
+> provider::Envelope
+> provider::identity
+> provider::alternate
+> provider::select
+> provider::invoke
+main = ->
+    mut value = 42
+    first = Envelope
+        callback: identity
+    second = Envelope
+        callback: alternate
+    envelope = select false, first, second
+    result = invoke envelope.callback, &value
+    *result
+"#;
+    let mut ids = Vec::new();
+    for reverse in [false, true] {
+        for level in [0, 3] {
+            let entry = root.join(format!("caller_{reverse}_{level}.rk"));
+            std::fs::write(&entry, source).unwrap();
+            let mut caller = config(&root, entry.clone(), level);
+            let names = if reverse { ["decoy", "provider"] } else { ["provider", "decoy"] };
+            caller.extern_artifacts = names.map(|name| (name.into(), root.join(format!("{name}.rkca")))).into();
+            let analysis = rock_lib::analyze(&caller).unwrap();
+            ids.push(analysis.hir.program.names.structs_by_name["provider::Envelope"].crate_id);
+            rock_lib::compile(&caller).unwrap();
+            let output = std::process::Command::new(entry.with_extension("")).output().unwrap();
+            assert_eq!(output.status.code(), Some(42), "{output:?}");
+            let negative = root.join(format!("negative_{reverse}_{level}.rk"));
+            std::fs::write(&negative, source.replace("    *result", "    value = 43\n    *result")).unwrap();
+            caller.entry_file = negative.clone();
+            caller.no_link = true;
+            let errors = rock_lib::compile(&caller).unwrap_err();
+            assert!(errors.0.iter().any(|error| error.code == Some(DiagnosticCode::Borrow)
+                && error.message == "borrow conflict on this value"
+                && error.primary.as_ref().is_some_and(|label| label.span.file_path == negative)), "{errors:?}");
+            assert!(errors.0.iter().all(|error| error.code != Some(DiagnosticCode::Internal)), "{errors:?}");
+            for function in ["identity", "alternate"] {
+                let uncertified = root.join(format!("missing_{function}_{reverse}_{level}.rk"));
+                std::fs::write(&uncertified, source).unwrap();
+                caller.entry_file = uncertified.clone();
+                caller.extern_artifacts.iter_mut().find(|(name, _)| name == "provider").unwrap().1
+                    = root.join(format!("missing_{function}.rkca"));
+                let errors = rock_lib::compile(&caller).unwrap_err();
+                assert!(errors.0.iter().any(|error| error.code == Some(DiagnosticCode::Borrow)
+                    && error.message == "Callable result borrowing contract is not satisfied"
+                    && error.primary.as_ref().is_some_and(|label| label.span.file_path == uncertified)), "{errors:?}");
+                assert!(errors.0.iter().all(|error| error.code != Some(DiagnosticCode::Internal)), "{errors:?}");
+                assert!(!uncertified.with_extension("").exists());
+            }
+            for (name, bytes) in &frozen { assert_eq!(std::fs::read(root.join(name)).unwrap(), *bytes); }
+        }
+    }
+    assert_ne!(ids[0], ids[2], "the control must really renumber imported runtime identities");
+    assert!(!root.join("provider.rk").exists() && !root.join("decoy.rk").exists());
+}
+
+#[test]
+fn callable_array_access_retains_the_selected_result_loan() {
+    let root = scratch("array_access_loan");
+    let source = r#"
+lang index
+< trait Index Idx
+    lang output
+    type Output
+    lang method
+    @index: Idx -> &Self::Output
+impl Index I64 for [T; 2]
+    type Output = T
+    @index = i ->
+        slice: &[T] = self
+        ptr = ~ArrPtr slice
+        unsafe &*(~PtrOffset ptr, i)
+identity: &I64 -> &I64
+identity = value -> value
+alternate: &I64 -> &I64
+alternate = value -> value
+main = ->
+    mut value = 42
+    callbacks = [identity, alternate]
+    result = callbacks[1] &value
+    *result
+"#;
+    for level in [0, 3] {
+        execute(&root, source, level);
+        let entry = root.join(format!("negative{level}.rk"));
+        std::fs::write(&entry, source.replace("    *result", "    value = 43\n    *result")).unwrap();
+        let mut caller = config(&root, entry.clone(), level);
+        caller.no_link = true;
+        let errors = rock_lib::compile(&caller).unwrap_err();
+        assert!(errors.0.iter().any(|error| error.code == Some(DiagnosticCode::Borrow)
+            && error.message == "borrow conflict on this value"
+            && error.primary.as_ref().is_some_and(|label| label.span.file_path == entry)), "{errors:?}");
+        assert!(errors.0.iter().all(|error| error.code != Some(DiagnosticCode::Internal)), "{errors:?}");
     }
 }

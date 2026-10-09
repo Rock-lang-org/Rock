@@ -916,6 +916,353 @@ main = !->
 }
 
 #[test]
+fn early_return_callable_storage_is_checked_in_both_orders() {
+    for (name, early, tail) in [
+        ("captured_first", "make_callback seed", "-> 0"),
+        ("plain_first", "-> 0", "make_callback seed"),
+        ("different_captures", "make_callback seed", "make_pair (20, 22)"),
+    ] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".agent-work/fixtures")
+            .join(format!("early_storage_{name}_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = format!(r#"
+make_callback = seed -> -> seed
+make_pair = pair -> -> ~I64Add pair.0, pair.1
+choose = flag, seed ->
+    if flag
+        return ({early})
+    {tail}
+main = !->
+    callback = choose true, 42
+    callback!
+"#);
+        std::fs::write(root.join("main.rk"), source).unwrap();
+        for level in [0, 3] {
+            let errors = rock_lib::compile(&config(&root, "main.rk", level))
+                .expect_err("every reachable return must agree, including a plain tail");
+            assert!(errors.0.iter().any(|error| {
+                error.code == Some(rock_lib::diagnostic::DiagnosticCode::Mono)
+                    && error.message.contains("agreed field representation")
+                    && error.primary.as_ref().is_some_and(|label| {
+                        label.span.file_path == root.join("main.rk")
+                    })
+            }), "{name} O{level}: {errors:?}");
+            assert!(errors.0.iter().all(|error| {
+                error.code != Some(rock_lib::diagnostic::DiagnosticCode::Internal)
+            }), "{name} O{level}: {errors:?}");
+        }
+    }
+}
+
+#[test]
+fn compatible_early_return_callable_storage_is_reclaimed() {
+    nominal_storage_boundary("compatible_early_storage", r#"
+extern observe_array_environments: &[(() -> I64); 3] -> I64
+make_callback = seed -> -> seed
+make_other = seed -> -> seed
+choose = flag, seed ->
+    if flag
+        return (make_callback seed)
+    make_other seed
+main = ->
+    callback = choose true, 42
+    second = choose false, 42
+    third = callback
+    callbacks = [callback, second, third]
+    observe_array_environments &callbacks
+"#, 3);
+}
+
+#[test]
+fn all_explicit_returns_preserve_callable_storage() {
+    nominal_storage_boundary("all_explicit_storage", r#"
+extern observe_array_environments: &[(() -> I64); 3] -> I64
+make_callback = seed -> -> seed
+choose = flag, seed ->
+    if flag
+        return (make_callback seed)
+    else
+        return (make_callback seed)
+main = ->
+    callback = choose true, 42
+    second = choose false, 42
+    third = callback
+    callbacks = [callback, second, third]
+    observe_array_environments &callbacks
+"#, 3);
+}
+
+#[test]
+fn nested_callable_returns_and_noncontinuing_branches_preserve_storage() {
+    for (name, declaration) in [
+        ("loop", r#"choose = flag, seed ->
+    loop
+        if flag
+            return (make_callback seed)
+        break
+    make_callback seed
+"#),
+        ("lambda", r#"choose = flag, seed ->
+    producer = ->
+        if flag
+            return (make_callback seed)
+        make_callback seed
+    producer!
+"#),
+        ("lambda_all_returns", r#"choose = flag, seed ->
+    producer = ->
+        if flag
+            return (make_callback seed)
+        else
+            return (make_callback seed)
+    producer!
+"#),
+        ("continuing_conditional", r#"choose = flag, seed ->
+    if flag
+        return (make_callback seed)
+    else
+        make_callback seed
+"#),
+        ("continuing_match", r#"choose = flag, seed ->
+    match flag
+        true => return (make_callback seed)
+        false => make_callback seed
+"#),
+        ("nominal", r#"struct Holder
+    < value: () -> I64
+held = seed ->
+    Holder
+        value: make_callback seed
+select = flag, seed ->
+    if flag
+        return (held seed)
+    held seed
+choose = flag, seed ->
+    holder = select flag, seed
+    holder.value
+"#),
+        ("method", r#"struct Service
+    < marker: I64
+impl Service
+    @choose = flag, seed ->
+        if flag
+            return (make_callback seed)
+        make_callback seed
+choose = flag, seed ->
+    service = Service
+        marker: 0
+    service.choose flag, seed
+"#),
+        ("nominal_method", r#"struct Service
+    < marker: I64
+struct Holder
+    < value: () -> I64
+impl Service
+    @choose = flag, seed ->
+        if flag
+            return (Holder
+                value: make_callback seed)
+        Holder
+            value: make_callback seed
+choose = flag, seed ->
+    service = Service
+        marker: 0
+    held = service.choose flag, seed
+    held.value
+"#),
+        ("generic_nominal_method", r#"struct Service T
+    < marker: T
+struct Holder
+    < value: () -> I64
+impl Service T
+    @choose = flag, seed ->
+        if flag
+            return (Holder
+                value: make_callback seed)
+        Holder
+            value: make_callback seed
+choose = flag, seed ->
+    service = Service
+        marker: 0
+    held = service.choose flag, seed
+    held.value
+"#),
+        ("enum", r#"struct Holder
+    < value: () -> I64
+enum Envelope
+    Held Holder
+wrap = seed ->
+    held = Holder
+        value: make_callback seed
+    Envelope::Held held
+select = flag, seed ->
+    if flag
+        return (wrap seed)
+    wrap seed
+choose = flag, seed ->
+    wrapped = select flag, seed
+    match wrapped
+        Envelope::Held held => held.value
+"#),
+        ("nested_tuple", r#"select = flag, seed ->
+    if flag
+        return (((make_callback seed), 7), 8)
+    (((make_callback seed), 7), 8)
+choose = flag, seed ->
+    pair = select flag, seed
+    (pair.0).0
+"#),
+    ] {
+        let source = format!(r#"
+extern observe_array_environments: &[(() -> I64); 3] -> I64
+make_callback = seed -> -> seed
+{declaration}
+main = ->
+    first = choose true, 42
+    second = choose false, 42
+    callbacks = [first, second, first]
+    observe_array_environments &callbacks
+"#);
+        nominal_storage_boundary(&format!("nested_early_{name}"), &source, 3);
+    }
+}
+
+#[test]
+fn early_return_callable_array_repeats_preserve_each_owned_environment() {
+    nominal_storage_boundary("early_return_array_repeat", r#"
+extern observe_array_environments: &[(() -> I64); 3] -> I64
+make_callback = seed -> -> seed
+select = flag, seed ->
+    if flag
+        return [make_callback seed; 3]
+    [make_callback seed; 3]
+main = ->
+    first = select true, 42
+    second = select false, 42
+    if ~I64Eq (observe_array_environments &first), 84
+        observe_array_environments &second
+    else
+        0
+"#, 6);
+}
+
+#[test]
+fn generalized_array_repeat_still_rejects_noncopy_capture_storage() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()
+        .join(".agent-work/fixtures")
+        .join(format!("noncopy_repeat_{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("main.rk"), r#"
+make_callback = seed -> -> seed
+repeat = seed -> [make_callback seed; 3]
+main = !->
+    values = repeat ([42])
+"#).unwrap();
+    for level in [0, 3] {
+        let errors = rock_lib::compile(&config(&root, "main.rk", level))
+            .expect_err("an actually non-Copy capture cannot be repeated");
+        assert!(errors.0.iter().any(|error| {
+            error.code == Some(rock_lib::diagnostic::DiagnosticCode::Type)
+                && error.message.contains("array repeat initializer must be Copy")
+                && error.primary.as_ref().is_some_and(|label| label.span.file_path == root.join("main.rk"))
+        }), "{errors:?}");
+        assert!(errors.0.iter().all(|error| error.code != Some(rock_lib::diagnostic::DiagnosticCode::Internal)), "{errors:?}");
+    }
+}
+
+#[test]
+fn bodyless_early_return_nominal_producer_preserves_storage_without_sources() {
+    const PROVIDER: &str = r#"
+trait CopyValue
+    ~@into_value: I64
+impl CopyValue for I64
+    ~@into_value = -> self
+< struct Holder
+    < value: () -> I64
+make: Bool -> I64 -> Holder
+< make = flag, seed ->
+    if flag
+        return (Holder
+            value: -> seed.into_value!)
+    Holder
+        value: -> seed.into_value!
+< relay = producer, flag, seed -> producer flag, seed
+< transport = value -> value
+"#;
+    for level in [0, 3] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent().unwrap().join(".agent-work/fixtures")
+            .join(format!("bodyless_early_{}_o{level}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("observer.c"), include_str!("fixtures/copy_environment_observer.c")).unwrap();
+        let compiled = Command::new("cc").args(["-Wall", "-Wextra", "-Werror", "-c"])
+            .arg(root.join("observer.c")).arg("-o").arg(root.join("observer.o"))
+            .output().unwrap();
+        assert!(compiled.status.success(), "{compiled:?}");
+        std::fs::write(root.join("provider.rk"), PROVIDER).unwrap();
+        let mut producer = config(&root, "provider.rk", level);
+        producer.current_crate_name = Some("provider".into());
+        let mut products = rock_lib::compile_with_products(&producer).unwrap().products.unwrap();
+        let (id, make) = products.interface.functions.iter()
+            .find(|(_, function)| function.name.rsplit("::").next() == Some("make")).unwrap();
+        assert!(make.generic_params.is_empty());
+        assert!(!products.bodies.functions.contains_key(id));
+        assert!(products.link.records.contains_key(id));
+        assert!(matches!(make.ret_type, rock_lib::types::Type::StructRepresentation { .. }));
+        assert!(!products.link.native_return_origins.contains_key(id),
+            "untracked non-scalar storage must not publish an invented loan certificate");
+        let (transport_id, transport) = products.interface.functions.iter()
+            .find(|(_, function)| function.name.rsplit("::").next() == Some("transport")).unwrap();
+        assert!(!transport.generic_params.is_empty());
+        assert!(products.bodies.functions.contains_key(transport_id));
+        products.link.object_path = Some("provider.o".into());
+        let artifact = root.join("provider.rkca");
+        products.write_artifact_to_path(&artifact).unwrap();
+        let bytes = std::fs::read(&artifact).unwrap();
+        let object = std::fs::read(root.join("provider.o")).unwrap();
+        std::fs::remove_file(root.join("provider.rk")).unwrap();
+        for entry in ["make", "transport"] {
+            let first = if entry == "transport" { "transport (make true, 42)" } else { "make true, 42" };
+            let second = if entry == "transport" { "transport (make false, 42)" } else { "make false, 42" };
+            let source = format!(r#"
+> provider::make
+> provider::transport
+extern observe_array_environments: &[(() -> I64); 3] -> I64
+main = ->
+    first = {first}
+    second = {second}
+    callbacks = [first.value, second.value, first.value]
+    observe_array_environments &callbacks
+"#);
+            assert!(execute(&root, &format!("bodyless_early_{entry}"), &source, level, Some(&artifact)).0 >= 3);
+        }
+        std::fs::write(root.join("uncertified.rk"), r#"
+> provider::make
+> provider::relay
+main = !->
+    held = relay make, true, 42
+    held.value!
+"#).unwrap();
+        let mut caller = config(&root, "uncertified.rk", level);
+        caller.extern_artifacts = vec![("provider".into(), artifact.clone())];
+        let errors = rock_lib::compile(&caller)
+            .expect_err("nominal storage cannot supply a missing native producer loan record");
+        assert!(errors.0.iter().any(|error| {
+            error.code == Some(rock_lib::diagnostic::DiagnosticCode::Borrow)
+                && error.message.contains("Callable result borrowing contract")
+                && error.primary.as_ref().is_some_and(|label| label.span.file_path == root.join("uncertified.rk"))
+        }), "{errors:?}");
+        assert!(errors.0.iter().all(|error| error.code != Some(rock_lib::diagnostic::DiagnosticCode::Internal)), "{errors:?}");
+        assert_eq!(std::fs::read(&artifact).unwrap(), bytes);
+        assert_eq!(std::fs::read(root.join("provider.o")).unwrap(), object);
+        assert!(!root.join("provider.rk").exists());
+    }
+}
+
+#[test]
 fn nominal_enum_native_return_preserves_storage_without_provider_sources() {
     let provider = ENUM_NATIVE_PROVIDER;
     const MAIN: &str = r#"
@@ -1243,4 +1590,313 @@ main = ->
 "#,
         2,
     );
+}
+
+#[test]
+fn nested_source_returns_preserve_storage_and_real_diagnostic_provenance() {
+    for (name, selection) in [
+        ("block", "selected = if flag\n        return (make_callback seed)\n    else\n        make_callback seed\n    selected"),
+        ("initializer", "selected = if flag then return (make_callback seed) else make_callback seed\n    selected"),
+        ("unsafe", "selected = unsafe\n        if flag\n            return (make_callback seed)\n        make_callback seed\n    selected"),
+        ("argument", "identity (if flag then return (make_callback seed) else make_callback seed)"),
+        ("guard", "match flag\n        true if (if flag then return (make_callback seed) else false) => make_callback seed\n        _ => make_callback seed"),
+        ("returned_lambda", "captured = Captured\n        flag: flag\n        seed: seed\n    producer = ->\n        values = captured.take!\n        if values.0\n            return (make_callback values.1)\n        make_callback values.1\n    producer"),
+    ] {
+        let invocation = if name == "returned_lambda" { "(choose true, 42)!" } else { "choose true, 42" };
+        let other = if name == "returned_lambda" { "(choose false, 42)!" } else { "choose false, 42" };
+        let source = format!(r#"
+extern observe_array_environments: &[(() -> I64); 3] -> I64
+make_callback = seed -> -> seed
+identity = value -> value
+struct Captured
+    < flag: Bool
+    < seed: I64
+trait Take
+    ~@take: (Bool, I64)
+impl Take for Captured
+    ~@take = -> (self.flag, self.seed)
+choose = flag, seed ->
+    {selection}
+main = ->
+    first = {invocation}
+    second = {other}
+    callbacks = [first, second, first]
+    observe_array_environments &callbacks
+"#);
+        if name == "returned_lambda" {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()
+                .join(".agent-work/fixtures").join(format!("returned_lambda_capture_{}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("main.rk"), &source).unwrap();
+            let analysis = rock_lib::analyze(&config(&root, "main.rk", 0)).unwrap();
+            let choose = analysis.hir.program.functions.values().find(|function| function.name == "choose").unwrap();
+            let rock_lib::hir::HirStmtFor::Let { value, .. } = &choose.body.stmts[1] else { panic!("producer binding") };
+            let rock_lib::hir::HirExprKindFor::Lambda { captures, body, .. } = &value.kind else { panic!("returned lambda") };
+            assert!(captures.iter().all(|capture| capture.kind == rock_lib::hir::HirClosureCaptureKind::Move), "{captures:?}\n{body:#?}");
+        }
+        nominal_storage_boundary(&format!("nested_source_{name}"), &source, 3);
+        let negative = if name == "returned_lambda" {
+            source.replacen("return (make_callback values.1)", "return (-> 0)", 1)
+        } else {
+            source.replacen("return (make_callback seed)", "return (-> 0)", 1)
+        };
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()
+            .join(".agent-work/fixtures").join(format!("nested_source_negative_{name}_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("main.rk"), &negative).unwrap();
+        for level in [0, 3] {
+            let errors = rock_lib::compile(&config(&root, "main.rk", level)).unwrap_err();
+            let diagnostic = errors.0.iter().find(|error| {
+                error.code == Some(rock_lib::diagnostic::DiagnosticCode::Mono)
+                    && error.message.contains("agreed field representation")
+            }).unwrap_or_else(|| panic!("{name} O{level}: {errors:?}"));
+            let span = &diagnostic.primary.as_ref().expect("real returned-value provenance").span;
+            assert_eq!(span.file_path, root.join("main.rk"));
+            let text = &negative[span.start..span.end];
+            assert!(text.contains("make_callback seed") || text.contains("make_callback values.1") || text.contains("-> 0")
+                || (text == "->" && span.start == negative.find("return (->").unwrap() + "return (".len()),
+                "{name}: {text:?}");
+            assert!(!text.contains("main ="), "return diagnostics must not invent caller provenance");
+            assert!(errors.0.iter().all(|error| error.code != Some(rock_lib::diagnostic::DiagnosticCode::Internal)), "{errors:?}");
+        }
+    }
+}
+
+#[test]
+fn early_exit_user_destructors_keep_loan_reads_order_and_field_responsibility() {
+    const TYPES: &str = r#"
+lang drop
+< trait Dispose
+    lang method
+    ~@dispose: ()
+struct Guard
+    < value: &I64
+    < log: *I64
+impl Dispose for Guard
+    ~@dispose = !->
+        code = if ~I64Eq (*self.value), 42 then 2 else 9
+        unsafe *self.log = ~I64Add (~I64Mul (*self.log), 10), code
+struct Owner
+    < guard: Guard
+    < callback: () -> I64
+    < log: *I64
+impl Dispose for Owner
+    ~@dispose = !->
+        code = if ~I64Eq (*self.guard.value), 42 then 1 else 9
+        unsafe *self.log = ~I64Add (~I64Mul (*self.log), 10), code
+struct Bundle
+    < guard: Guard
+    < callback: () -> I64
+make_callback = seed -> -> seed
+extern observe_copy_environment: &(() -> I64) -> I64
+"#;
+    for (name, body, expected) in [
+        ("owner", r#"
+run = value, log, flag ->
+    owner = Owner
+        guard: Guard
+            value: value
+            log: log
+        callback: make_callback *value
+        log: log
+    result = observe_copy_environment &owner.callback
+    if flag
+        return result
+    result
+main = ->
+    value = 42
+    mut log = 0
+    first = run &value, ((&mut log) as *I64), true
+    second = run &value, ((&mut log) as *I64), false
+    if ~I64Eq log, EXPECTED
+        ~I64Add first, second
+    else
+        0
+"#, 1212),
+        ("partial", r#"
+run = value, log, flag ->
+    bundle = Bundle
+        guard: Guard
+            value: value
+            log: log
+        callback: make_callback *value
+    moved = bundle.callback
+    if flag
+        return moved
+    moved
+main = ->
+    value = 42
+    mut log = 0
+    first = run &value, ((&mut log) as *I64), true
+    if ~I64Eq log, 2
+        second = run &value, ((&mut log) as *I64), false
+        if ~I64Eq log, EXPECTED
+            ~I64Add (observe_copy_environment &first), (observe_copy_environment &second)
+        else
+            0
+    else
+        0
+"#, 22),
+        ("unused", r#"
+run = value, log, flag ->
+    owner = Owner
+        guard: Guard
+            value: value
+            log: log
+        callback: make_callback *value
+        log: log
+    observed = observe_copy_environment &owner.callback
+    if flag
+        return owner
+    owner
+main = ->
+    value = 42
+    mut log = 0
+    run &value, ((&mut log) as *I64), true
+    if ~I64Eq log, 12
+        run &value, ((&mut log) as *I64), false
+        if ~I64Eq log, EXPECTED
+            84
+        else
+            0
+    else
+        0
+"#, 1212),
+    ] {
+        let source = format!("{TYPES}\n{}", body.replace("EXPECTED", &expected.to_string()));
+        nominal_storage_boundary(&format!("early_drop_{name}"), &source, 2);
+    }
+    for (name, operation) in [
+        ("mutation", "value = 43"),
+        ("borrowed_move", "borrowed = &owner\n    moved = (*borrowed).guard"),
+    ] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()
+            .join(".agent-work/fixtures").join(format!("early_drop_negative_{name}_{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let source = format!(r#"{TYPES}
+main = !->
+    mut value = 42
+    mut log = 0
+    owner = Owner
+        guard: Guard
+            value: &value
+            log: ((&mut log) as *I64)
+        callback: make_callback 42
+        log: ((&mut log) as *I64)
+    {operation}
+"#);
+        std::fs::write(root.join("main.rk"), source).unwrap();
+        for level in [0, 3] {
+            let errors = rock_lib::compile(&config(&root, "main.rk", level)).unwrap_err();
+            assert!(errors.0.iter().any(|error| error.code == Some(rock_lib::diagnostic::DiagnosticCode::Borrow)
+                && error.primary.as_ref().is_some_and(|label| label.span.file_path == root.join("main.rk"))), "{name}: {errors:?}");
+            assert!(errors.0.iter().all(|error| error.code != Some(rock_lib::diagnostic::DiagnosticCode::Internal)), "{errors:?}");
+        }
+    }
+}
+
+#[test]
+fn callable_array_projection_preserves_owned_environments_and_borrowed_access() {
+    nominal_storage_boundary("callable_array_projection", r#"
+lang index
+< trait Index Idx
+    lang output
+    type Output
+    lang method
+    @index: Idx -> &Self::Output
+impl Index I64 for [T; 3]
+    type Output = T
+    @index = i ->
+        slice: &[T] = self
+        ptr = ~ArrPtr slice
+        unsafe &*(~PtrOffset ptr, i)
+extern observe_array_environments: &[(() -> I64); 3] -> I64
+extern observe_copy_environment: &(() -> I64) -> I64
+make = seed -> -> seed
+select = flag, seed ->
+    callbacks = [make seed; 3]
+    observed = observe_array_environments &callbacks
+    index = if flag then 0 else 1
+    selected = callbacks[index]
+    selected
+main = ->
+    first = select true, 42
+    second = select false, 42
+    ~I64Add (observe_copy_environment &first), (observe_copy_environment &second)
+"#, 8);
+}
+
+#[test]
+fn callable_registration_and_branch_order_do_not_change_storage_agreement() {
+    let mut ids = Vec::new();
+    for registration in [false, true] {
+        let definitions = if registration {
+            "other = seed -> -> seed\nmake = seed -> -> seed"
+        } else {
+            "make = seed -> -> seed\nother = seed -> -> seed"
+        };
+        for branches in [false, true] {
+            let (early, tail) = if branches { ("other seed", "make seed") } else { ("make seed", "other seed") };
+            let source = format!(r#"
+extern observe_array_environments: &[(() -> I64); 3] -> I64
+{definitions}
+choose = flag, seed ->
+    if flag
+        return ({early})
+    {tail}
+main = ->
+    first = choose true, 42
+    second = choose false, 42
+    callbacks = [first, second, first]
+    observe_array_environments &callbacks
+"#);
+            let name = format!("registration_{registration}_{branches}");
+            nominal_storage_boundary(&name, &source, 3);
+            let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap()
+                .join(".agent-work/fixtures").join(format!("registration_analyze_{}_{}", std::process::id(), name));
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("main.rk"), &source).unwrap();
+            let analysis = rock_lib::analyze(&config(&root, "main.rk", 0)).unwrap();
+            ids.push(analysis.hir.program.functions.values().find(|function| function.name == "make").unwrap().id);
+            let negative = source.replace("other = seed -> -> seed", "other = seed -> -> ~I64Add seed.0, seed.1");
+            // Explicitly different capture storage, without relying on incidental ABI width.
+            let negative = negative.replace("other seed", "other (20, 22)");
+            std::fs::write(root.join("negative.rk"), negative).unwrap();
+            for level in [0, 3] {
+                let errors = rock_lib::compile(&config(&root, "negative.rk", level)).unwrap_err();
+                assert!(errors.0.iter().any(|error| error.code == Some(rock_lib::diagnostic::DiagnosticCode::Mono)
+                    && error.message.contains("agreed field representation")), "{name}: {errors:?}");
+                assert!(errors.0.iter().all(|error| error.code != Some(rock_lib::diagnostic::DiagnosticCode::Internal)), "{errors:?}");
+            }
+        }
+    }
+    assert_ne!(ids[0], ids[2], "the control must really reorder producer definition identities");
+}
+
+#[test]
+fn nonreturning_exits_do_not_compete_with_actual_return_storage() {
+    nominal_storage_boundary("nonreturning_storage", r#"
+extern observe_array_environments: &[(() -> I64); 3] -> I64
+make = seed -> -> seed
+dead_tail = seed ->
+    return (make seed)
+    -> 0
+never_tail = flag, seed ->
+    if flag
+        return (make seed)
+    loop
+        continue
+never_branch = flag, seed ->
+    if flag
+        make seed
+    else
+        loop
+            continue
+main = ->
+    first = dead_tail 42
+    second = never_tail true, 42
+    third = never_branch true, 42
+    callbacks = [first, second, third]
+    observe_array_environments &callbacks
+"#, 3);
 }

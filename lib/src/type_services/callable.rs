@@ -243,6 +243,35 @@ pub(crate) fn declared_value_representation(
             refined
         }
         (Type::Tuple(d), Type::Tuple(s), Type::Tuple(a)) => Type::Tuple(fields(d, s, a)?),
+        (Type::Array(d, dl), Type::Array(s, sl), Type::Array(a, al)) if dl == sl && sl == al => {
+            Type::Array(Box::new(declared_value_representation(d, s, a)?), *sl)
+        }
+        (
+            Type::Struct { id: di, args: d },
+            Type::Struct { id: si, args: s } | Type::StructRepresentation { id: si, args: s, .. },
+            Type::StructRepresentation { id: ai, args: a, .. },
+        ) if di == si && si == ai => {
+            // Nominal storage is producer-owned; its semantic arguments still
+            // obey declaration-owned slots and selected binder substitutions.
+            let args = fields(d, s, a)?;
+            let mut refined = value_representation(specialized, actual)?;
+            if let Type::StructRepresentation { args: selected, .. } = &mut refined {
+                *selected = args;
+            }
+            refined
+        }
+        (
+            Type::Enum { id: di, args: d },
+            Type::Enum { id: si, args: s } | Type::EnumRepresentation { id: si, args: s, .. },
+            Type::EnumRepresentation { id: ai, args: a, .. },
+        ) if di == si && si == ai => {
+            let args = fields(d, s, a)?;
+            let mut refined = value_representation(specialized, actual)?;
+            if let Type::EnumRepresentation { args: selected, .. } = &mut refined {
+                *selected = args;
+            }
+            refined
+        }
         (
             Type::Struct { id: di, args: d },
             Type::Struct { id: si, args: s },

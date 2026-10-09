@@ -676,12 +676,12 @@ impl Monomorphizer {
         self.process_params(Some(generic_func.id), &mut params_for_body);
         self.process_block(&mut body);
         self.var_types = old_var_types;
-        if let Some(actual) =
-            crate::type_services::callable::value_representation(&signature.ret_type, &body.ty)
-        {
-            if super::process::block_returns_agree(&body, &actual) {
-                signature.ret_type = actual;
-            }
+        if let Some(actual) = self.agree_return_storage(
+            &signature.ret_type,
+            Some(&generic_func.ret_type),
+            &body,
+        ) {
+            signature.ret_type = actual;
         }
 
         HirFunction {

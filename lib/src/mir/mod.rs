@@ -414,7 +414,7 @@ pub struct BasicBlock {
     pub terminator: Option<Terminator>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Local(pub usize);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -439,7 +439,7 @@ impl MirClosureCapture {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Projection {
     Deref,
     Field {

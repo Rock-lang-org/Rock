@@ -1203,6 +1203,78 @@ main = !->
     third = invoke identity, &value
 "#;
 
+#[test]
+fn nominal_field_envelope_and_canonical_demand_check_actual_roles_jointly() {
+    let mut f = fixture("joint_nominal_envelope");
+    let owner = crate::ids::DefId::new(crate::ids::CrateId(0), crate::ids::LocalDefId(990));
+    let parameter = crate::types::GenericParamId { owner, index: 0 };
+    let generic = f.program.type_context.intern_type(&Type::Generic(parameter));
+    f.program.backend_contract.nominal_layouts.insert(owner, crate::mir::MirNominalLayout::Struct {
+        id: owner, fields: vec![("callback".into(), generic)], generic_params: vec![parameter],
+    });
+    let reference = Type::Reference { mutable: false, inner: Box::new(Type::I64) };
+    let params = vec![reference.clone(), reference.clone()];
+    let canonical = crate::type_services::callable::owned_result_requirement(&params).unwrap();
+    let narrow = CallableResultBorrowing::Sources(Box::new(vec![CallableResultSource::ArgumentValue(0)]));
+    for declared in [narrow.clone(), CallableResultBorrowing::Unknown] {
+        let mut field = Type::function(params.clone(), reference.clone());
+        let Type::Function { result_borrowing, .. } = &mut field else { unreachable!() };
+        *result_borrowing = declared.clone();
+        let field_ty = f.program.type_context.intern_type(&field);
+        let mut required = field.clone();
+        let Type::Function { result_borrowing, .. } = &mut required else { unreachable!() };
+        *result_borrowing = canonical.clone();
+        let subject = f.program.type_context.intern_type(&Type::StructRepresentation {
+            id: owner, args: vec![field.clone()], fields: vec![field.clone()],
+        });
+        let invocation = f.program.type_context.intern_type(&Type::Struct { id: owner, args: vec![required] });
+        let input = crate::mir::backend_contract::MirGenericCallableInput { subject, invocation };
+        let local = f.local(subject);
+        let root = Place { local, projection: vec![] };
+        let mut projected = root.clone();
+        projected.projection.push(Projection::Field { index: 0, identity: None });
+        let lifetime = BorrowChecker::reference_return_summaries(&f.program);
+        let values = BorrowChecker::return_summaries_for_purpose(&f.program, OriginPurpose::ValueLoans);
+        let analysis = Bindings {
+            program: &f.program, owner: &f.program.functions[&f.owner],
+            lifetime: &lifetime, values: &values, backend_valid: true, calls: None,
+        };
+        let demands = crate::mir::backend_contract::callable_payload_requirements(
+            &f.program.type_context, &f.program.backend_contract, &input,
+        );
+        assert_eq!(demands.len(), 1);
+        assert_eq!(demands[0].borrowing, if declared == narrow { narrow.clone() } else { canonical.clone() });
+        for (sources, same_roles, present, accepted) in [
+            (narrow.clone(), true, true, true),
+            (CallableResultBorrowing::Sources(Box::new(vec![CallableResultSource::ArgumentValue(1)])), true, true, declared != narrow),
+            (canonical.clone(), true, true, declared != narrow),
+            (CallableResultBorrowing::Sources(Box::new(vec![])), true, true, true),
+            (CallableResultBorrowing::Unknown, true, true, false),
+            (narrow.clone(), false, true, false),
+            (narrow.clone(), true, false, false),
+        ] {
+            let evidence = Evidence {
+                ty: field_ty, sources: sources.clone(),
+                value_sources: if same_roles { sources } else { CallableResultBorrowing::Unknown },
+                environment: None, storage: HashSet::new(), isolated: false, factory: None,
+            };
+            let state = State(Some(if present { HashMap::from([(projected.clone(), evidence)]) } else { HashMap::new() }));
+            let mut errors = Diagnostics::default();
+            analysis.check_generic_input(&input, Some(&Operand::Move(root.clone())), &state, Some(f.span.clone()), &mut errors);
+            assert_eq!(errors.0.is_empty(), accepted, "declared={declared:?}, present={present}, same_roles={same_roles}: {errors:?}");
+            if !accepted { f.assert_rejected(&errors); }
+        }
+        let mut opaque_field = field;
+        let Type::Function { result_borrowing, .. } = &mut opaque_field else { unreachable!() };
+        *result_borrowing = CallableResultBorrowing::Unknown;
+        let opaque = f.program.type_context.intern_type(&Type::Struct { id: owner, args: vec![opaque_field] });
+        let no_demand = crate::mir::backend_contract::MirGenericCallableInput { subject, invocation: opaque };
+        assert!(crate::mir::backend_contract::callable_payload_requirements(
+            &f.program.type_context, &f.program.backend_contract, &no_demand,
+        ).is_empty(), "a physical/narrow field alone cannot seed an enclosing demand");
+    }
+}
+
 struct Fixture {
     program: MirProgram,
     owner: MirFunctionId,

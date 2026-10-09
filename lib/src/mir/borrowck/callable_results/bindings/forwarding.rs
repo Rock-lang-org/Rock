@@ -68,13 +68,49 @@ impl Recipe {
         fields.push((path, value));
         // Parent overrides precede their children; ordering is canonical so
         // the must-evidence lattice cannot depend on HashMap traversal order.
-        fields.sort_by_key(|(path, _)| field_indices(path));
+        fields.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
         Self::Overlay(base, fields, ty)
     }
 
     fn common(&self, other: &Self) -> Option<Self> {
         if self == other {
             return Some(self.clone());
+        }
+        // Only finite input projections and concrete code identities join as
+        // recipes. Calls/overlays cannot recursively grow an alternative tree
+        // around a loop back-edge; they retain the existing opaque boundary.
+        fn leaf_join(left: &Recipe, right: &Recipe) -> Option<Recipe> {
+            #[derive(PartialEq, Eq, PartialOrd, Ord)]
+            enum Key {
+                Input(usize, TypeId, Vec<Projection>, TypeId),
+                Callable(crate::mir::MirCallableKey, TypeId),
+            }
+            fn add(recipe: &Recipe, out: &mut std::collections::BTreeMap<Key, Recipe>) -> Option<()> {
+                let key = match recipe {
+                    Recipe::Argument(index, ty) => Key::Input(*index, *ty, vec![], *ty),
+                    Recipe::Project(base, path, ty) => match base.as_ref() {
+                        Recipe::Argument(index, source) => Key::Input(*index, *source, path.clone(), *ty),
+                        _ => return None,
+                    },
+                    Recipe::Callable(MirCallable::Resolved(key), ty) => Key::Callable(key.clone(), *ty),
+                    Recipe::Alternatives(_, alternatives) => {
+                        for value in alternatives { add(value, out)?; }
+                        return Some(());
+                    }
+                    _ => return None,
+                };
+                out.insert(key, recipe.clone());
+                Some(())
+            }
+            if left.ty() != right.ty() { return None; }
+            let mut values = std::collections::BTreeMap::new();
+            add(left, &mut values)?;
+            add(right, &mut values)?;
+            let values = values.into_values().collect::<Vec<_>>();
+            Some(Recipe::Alternatives(left.ty(), values))
+        }
+        if let Some(joined) = leaf_join(self, other) {
+            return Some(joined);
         }
         let (base, fields) = match self {
             Self::Overlay(base, fields, _) => (base.as_ref(), fields.as_slice()),
@@ -93,7 +129,7 @@ impl Recipe {
             .chain(other_fields)
             .map(|(path, _)| path)
             .collect::<Vec<_>>();
-        paths.sort_by_key(|path| field_indices(path));
+        paths.sort();
         paths.dedup();
         for path in paths {
             let lhs = fields.iter().find(|(field, _)| field == path);
@@ -102,22 +138,16 @@ impl Recipe {
                 (Some((_, lhs)), Some((_, rhs))) => {
                     lhs.common(rhs).unwrap_or(Recipe::Opaque(lhs.ty()))
                 }
-                (Some((_, value)), None) | (None, Some((_, value))) => Recipe::Opaque(value.ty()),
+                (Some((_, value)), None) | (None, Some((_, value))) => {
+                    let previous = Recipe::Project(Box::new(base.clone()), path.clone(), value.ty());
+                    leaf_join(value, &previous).unwrap_or(Recipe::Opaque(value.ty()))
+                }
                 (None, None) => unreachable!("joined path comes from an incoming write"),
             };
             result = result.overwrite(path.clone(), common);
         }
         Some(result)
     }
-}
-
-fn field_indices(path: &[Projection]) -> Vec<usize> {
-    path.iter()
-        .filter_map(|projection| match projection {
-            Projection::Field { index, .. } => Some(*index),
-            _ => None,
-        })
-        .collect()
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -428,7 +458,7 @@ impl Analysis for Measure<'_> {
                 }
             }
             Terminator::Drop { place, .. } | Terminator::DropWithOrigin { place, .. } => {
-                facts.retain(|key, _| key.local != place.local)
+                self.invalidate_place(facts, place);
             }
             _ => {}
         }
@@ -922,19 +952,37 @@ impl Bindings<'_> {
                 return outcome;
             }
             Recipe::Alternatives(_, alternatives) => {
+                if alternatives.iter().any(|value| value.ty() != result.ty) {
+                    return None;
+                }
                 let alternatives = alternatives
                     .iter()
                     .map(|value| self.evaluate(value, inputs, active))
                     .collect::<Option<Vec<_>>>()?;
                 for value in &alternatives {
-                    for (path, evidence) in &value.fields {
-                        let compatible = alternatives.iter().all(|other| {
+                    for path in value.fields.keys() {
+                        let place = Place { local: Local(0), projection: path.clone() };
+                        let mut joined = State::default();
+                        for other in &alternatives {
                             let impossible = path.iter().enumerate().any(|(index, projection)| matches!(projection, Projection::Downcast(variant)
                                 if other.variants.get(&path[..index]).is_some_and(|actual| actual != variant)));
-                            impossible || other.fields.get(path) == Some(evidence)
-                        });
-                        if compatible {
-                            result.fields.insert(path.clone(), evidence.clone());
+                            if impossible { continue; }
+                            let fields = other.fields.get(path).map(|evidence| {
+                                let mut evidence = evidence.clone();
+                                // An uncaptured code value has no environment
+                                // identity: its previous binding slot and a
+                                // directly measured native alternative agree.
+                                if matches!(self.program.type_context.try_ty(evidence.ty),
+                                    Some(Ty::Function { captures, .. }) if captures.is_empty())
+                                {
+                                    evidence.environment = None;
+                                }
+                                HashMap::from([(place.clone(), evidence)])
+                            }).unwrap_or_default();
+                            joined.join(&State(Some(fields)));
+                        }
+                        if let Some(evidence) = joined.0.and_then(|mut fields| fields.remove(&place)) {
+                            result.fields.insert(path.clone(), evidence);
                         }
                     }
                 }
@@ -1076,5 +1124,149 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn overlay_order_preserves_downcast_dereference_and_index_identity() {
+        let ty = TypeId(0);
+        for (first, second) in [
+            (vec![Projection::Downcast(crate::ids::VariantId(0)), field(0)],
+             vec![Projection::Downcast(crate::ids::VariantId(1)), field(0)]),
+            (vec![Projection::Deref, field(0)], vec![field(0)]),
+            (vec![Projection::Index(Local(0)), field(0)],
+             vec![Projection::Index(Local(1)), field(0)]),
+        ] {
+            let base = Recipe::Argument(0, ty);
+            let forward = base.clone()
+                .overwrite(first.clone(), Recipe::Argument(1, ty))
+                .overwrite(second.clone(), Recipe::Argument(2, ty));
+            let reverse = base
+                .overwrite(second, Recipe::Argument(2, ty))
+                .overwrite(first, Recipe::Argument(1, ty));
+            assert_eq!(forward, reverse, "full projection identity must determine ordering");
+            assert_eq!(forward.common(&reverse), Some(forward));
+        }
+    }
+
+    #[test]
+    fn recursive_and_missing_producer_recipes_cannot_certify_return_alternatives() {
+        let source = r#"
+identity: &I64 -> &I64
+identity = value -> value
+factory: () -> (&I64 -> &I64)
+factory = -> identity
+relay: () -> (&I64 -> &I64)
+relay = -> factory!
+main = !->
+    first = factory!
+    second = relay!
+"#;
+        let (program, _) = super::super::super::super::allocator_trace_tests::mutation_source_program(
+            "recursive_producer_recipes", source, false,
+        );
+        let owner = program.functions.values().find(|body| body.name == "main").unwrap();
+        let mut calls = owner.basic_blocks.iter().filter_map(|block| match &block.terminator {
+                Some(Terminator::Call { func: Operand::Constant(Constant::Callable(callable)), .. }) => callable.function_id(),
+                _ => None,
+            });
+        let factory = &program.functions[&calls.next().expect("factory call")];
+        let relay = &program.functions[&calls.next().expect("relay call")];
+        let mut proof = crate::mir::borrowck::BorrowChecker::native_return_loan_proof(&program);
+        let factory_key = program.backend_contract.function_bodies[&factory.id].clone();
+        let relay_key = program.backend_contract.function_bodies[&relay.id].clone();
+        let call = |key| Recipe::Call(Some(MirCallable::Resolved(key)), None, vec![], factory.ret_type);
+        let good = proof.sources.callable_results.forwarded_returns[&factory.id].clone();
+        for indirect in [false, true] {
+            for reverse in [false, true] {
+                let cycle = call(if indirect { relay_key.clone() } else { factory_key.clone() });
+                let alternatives = if reverse { vec![cycle, good.clone()] } else { vec![good.clone(), cycle] };
+                proof.sources.callable_results.forwarded_returns.insert(
+                    factory.id.clone(), Recipe::Alternatives(factory.ret_type, alternatives),
+                );
+                proof.sources.callable_results.forwarded_returns.insert(relay.id.clone(), call(factory_key.clone()));
+                let analysis = Bindings {
+                    program: &program, owner, lifetime: &proof.lifetime, values: &proof.measured,
+                    backend_valid: true, calls: Some(&proof.sources),
+                };
+                let mut active = HashSet::new();
+                assert!(analysis.evaluate(&call(factory_key.clone()), &[], &mut active).is_none(),
+                    "every alternative needs a completed producer, indirect={indirect}, reverse={reverse}");
+                assert!(active.is_empty(), "failed recursion must not leave a partial active certificate");
+                let checked = analysis.evaluate(&good, &[], &mut active).unwrap();
+                assert!(checked.fields.contains_key(&Vec::new()), "failure must not erase unrelated checked evidence");
+            }
+        }
+        proof.sources.callable_results.forwarded_returns.remove(&factory.id);
+        let analysis = Bindings {
+            program: &program, owner, lifetime: &proof.lifetime, values: &proof.measured,
+            backend_valid: true, calls: Some(&proof.sources),
+        };
+        assert!(analysis.evaluate(&call(factory_key), &[], &mut HashSet::new()).is_none(),
+            "a real body/header without its completed producer recipe is not evidence");
+    }
+
+    #[test]
+    fn one_predecessor_replacement_retains_the_checked_initial_field() {
+        let source = r#"
+struct Envelope F
+    < callback: F
+identity: &I64 -> &I64
+identity = value -> value
+alternate: &I64 -> &I64
+alternate = value -> value
+replace = mut envelope, flag ->
+    if flag
+        envelope.callback = alternate
+    envelope
+invoke = envelope, value -> envelope.callback value
+main = !->
+    value = 42
+    initial = Envelope
+        callback: identity
+    result = replace initial, true
+    invoke result, &value
+"#;
+        let (program, _) = super::super::super::super::allocator_trace_tests::mutation_source_program(
+            "one_predecessor_replacement_recipe", source, false,
+        );
+        let proof = crate::mir::borrowck::BorrowChecker::native_return_loan_proof(&program);
+        crate::mir::borrowck::BorrowChecker::run(&program).unwrap_or_else(|errors| {
+            panic!("{errors:?}\n{:#?}", proof.sources.callable_results.forwarded_returns)
+        });
+    }
+
+    #[test]
+    fn copied_array_callable_does_not_borrow_the_array_storage() {
+        let source = r#"
+extern observe_array_environments: &[(() -> I64); 3] -> I64
+extern observe_copy_environment: &(() -> I64) -> I64
+lang index
+< trait Index Idx
+    lang output
+    type Output
+    lang method
+    @index: Idx -> &Self::Output
+impl Index I64 for [T; 3]
+    type Output = T
+    @index = i ->
+        slice: &[T] = self
+        ptr = ~ArrPtr slice
+        unsafe &*(~PtrOffset ptr, i)
+make = seed -> -> seed
+select = flag, seed ->
+    callbacks = [make seed; 3]
+    observed = observe_array_environments &callbacks
+    index = if flag then 0 else 1
+    selected = callbacks[index]
+    selected
+main = !->
+    callback = select true, 42
+    observe_copy_environment &callback
+"#;
+        let (program, _) = super::super::super::super::allocator_trace_tests::mutation_source_program(
+            "array_callable_value_copy", source, false,
+        );
+        crate::mir::borrowck::BorrowChecker::run(&program)
+            .expect("an owning callable field copy carries contents, not its containing array's storage loan");
     }
 }

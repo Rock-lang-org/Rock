@@ -515,12 +515,18 @@ impl<'a> MirBuilder<'a> {
                 self.lower_expr(condition, cond_place.clone());
 
                 if let Some(current) = self.current_block {
-                    self.blocks[current.0].terminator = Some(Terminator::switch_int(
-                        Operand::Copy(cond_place),
-                        vec![(1, body_block)],
-                        merge_block,
-                        self.source_origin(Some(condition.span.clone())),
-                    ));
+                    // A Never loop wrapper has no condition-false exit; a
+                    // synthetic switch would invent a reachable return value.
+                    self.blocks[current.0].terminator = Some(if expr.ty == Type::Never {
+                        Terminator::goto(body_block, self.source_origin(Some(condition.span.clone())))
+                    } else {
+                        Terminator::switch_int(
+                            Operand::Copy(cond_place),
+                            vec![(1, body_block)],
+                            merge_block,
+                            self.source_origin(Some(condition.span.clone())),
+                        )
+                    });
                 }
 
                 self.current_block = Some(body_block);
@@ -546,8 +552,15 @@ impl<'a> MirBuilder<'a> {
                     ));
                 }
 
-                self.current_block = Some(merge_block);
-                self.emit_assign(dest, Rvalue::Use(Operand::Constant(Constant::Unit)), span);
+                if expr.ty == Type::Never {
+                    self.blocks[merge_block.0].terminator = Some(Terminator::Unreachable {
+                        origin: self.source_origin(span.clone()),
+                    });
+                    self.current_block = None;
+                } else {
+                    self.current_block = Some(merge_block);
+                    self.emit_assign(dest, Rvalue::Use(Operand::Constant(Constant::Unit)), span);
+                }
             }
             HirExprKind::For {
                 var,
@@ -1551,6 +1564,12 @@ impl<'a> MirBuilder<'a> {
             } => {
                 let (closure_id, lambda_name) = self.new_closure_id_and_name();
                 let cloned_body = body.clone();
+                // A body with only explicit returns has no normal tail value.
+                // Its callable signature still owns the checked result storage.
+                let ret_type = match &expr.ty {
+                    Type::Function { ret, .. } => ret.as_ref().clone(),
+                    _ => body.ty.clone(),
+                };
                 #[cfg(test)]
                 crate::mir::borrowck::hkt_return_origin_tests::closure_body_clone(
                     expr,
@@ -1561,6 +1580,7 @@ impl<'a> MirBuilder<'a> {
                     closure_id.clone(),
                     &lambda_name,
                     params.clone(),
+                    ret_type,
                     cloned_body,
                     captures.clone(),
                     expr.span.clone(),
