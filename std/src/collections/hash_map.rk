@@ -75,7 +75,7 @@ impl HashMap K, V where K: Hash, K: Eq
                 done = false
                 target_idx = 0 as I64
                 while !done && j < new_cap
-                    idx = ~I64Mod (~I64Add start, j), new_cap
+                    idx = (start + j) % new_cap
                     if unsafe new_occupied_ptr[idx]
                         j = j + 1
                     else

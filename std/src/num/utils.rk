@@ -1,24 +1,30 @@
 // Utility functions
 //
-// These functions provide common utility operations using intrinsics.
+// These functions provide common integer utility operations.
+
+> std::cmp::ord::Ord
+> std::ops::neg::Neg
 
 // Absolute value of an integer
+abs: I64 -> I64
 < abs = x ->
-    if ~I64Lt x, 0
-        ~I64Neg x
+    if x < 0
+        -x
     else
         x
 
 // Minimum of two integers
+min: I64 -> I64 -> I64
 < min = a, b ->
-    if ~I64Lt a, b
+    if a < b
         a
     else
         b
 
 // Maximum of two integers
+max: I64 -> I64 -> I64
 < max = a, b ->
-    if ~I64Gt a, b
+    if a > b
         a
     else
         b

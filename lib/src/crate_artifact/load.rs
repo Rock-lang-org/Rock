@@ -1736,6 +1736,24 @@ fn validate_product_interface_rows(products: &CompilerProducts) -> Result<(), St
         }
         for (signature_name, signature) in &trait_def.signatures {
             validate_product_interface_signature_name("trait", *id, signature_name, signature)?;
+            if let Some(method) = trait_def.methods.get(signature_name)
+                .filter(|method| method.id == signature.id)
+            {
+                // This is one member with both a declaration and a default body,
+                // not a second callable reusing an unrelated declaration's ID.
+                if method.params != signature.params
+                    || method.ret_type != signature.ret
+                    || method.generic_params != signature.generic_params
+                    || method.self_receiver != signature.self_receiver
+                    || method.is_unsafe != signature.is_unsafe
+                {
+                    return Err(format!(
+                        "Product artifact trait {} signature '{}' disagrees with its default method sharing the same ID",
+                        id.local_id.0, signature_name,
+                    ));
+                }
+                continue;
+            }
             record_product_nested_callable_id(
                 &mut callable_ids,
                 local_crate,
@@ -6150,6 +6168,51 @@ mod product_tests {
             err.contains("trait") && err.contains("method 'show'") && err.contains("non-local"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn product_interface_shared_default_member_id_requires_matching_signature() {
+        let trait_id = product_def_id(0, 1);
+        let member_id = product_hir_def_id(product_def_id(0, 2));
+        let method = test_function(member_id, "value");
+        let signature = crate::hir::HirFunctionSig {
+            id: member_id,
+            name: "value".to_string(),
+            generic_params: method.generic_params.clone(),
+            params: method.params.iter().map(|param| param.ty.clone()).collect(),
+            ret: method.ret_type.clone(),
+            generic_bounds: method.generic_bounds.clone(),
+            self_receiver: method.self_receiver,
+            is_unsafe: method.is_unsafe,
+        };
+        let mut products = product_with_function("dep", ProductCrateId(0), 0, PathBuf::from("dep.o"));
+        insert_interface_trait(&mut products, trait_id, HirTrait {
+            id: product_hir_def_id(trait_id),
+            name: "Value".to_string(),
+            generic_params: Vec::new(),
+            target: None,
+            predicates: Vec::new(),
+            associated_types: Vec::new(),
+            methods: HashMap::from([("value".to_string(), method)]),
+            signatures: HashMap::from([("value".to_string(), signature)]),
+        });
+        super::validate_product_interface_rows(&products).unwrap();
+        for change in 0..3 {
+            let mut malformed = products.clone();
+            let signature = malformed.interface.traits.get_mut(&trait_id).unwrap()
+                .signatures.get_mut("value").unwrap();
+            match change {
+                0 => signature.ret = Type::Bool,
+                1 => signature.params.push(Type::I64),
+                _ => signature.is_unsafe = true,
+            }
+            assert!(super::validate_product_interface_rows(&malformed).unwrap_err().contains("disagrees"));
+        }
+        let trait_def = products.interface.traits.get_mut(&trait_id).unwrap();
+        let mut unrelated = trait_def.signatures["value"].clone();
+        unrelated.name = "other".to_string();
+        trait_def.signatures.insert("other".to_string(), unrelated);
+        assert!(super::validate_product_interface_rows(&products).unwrap_err().contains("duplicate callable ID"));
     }
 
     #[test]

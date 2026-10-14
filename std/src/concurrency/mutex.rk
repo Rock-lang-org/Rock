@@ -4,6 +4,7 @@
 > std::mem::alloc::Layout
 > std::mem::alloc::checked_alloc
 > std::concurrency::atomic::AtomicU64
+> std::cmp::eq::Eq
 > std::ops::deref::Deref
 > std::ops::deref::DerefMut
 > std::mem::drop::Drop
@@ -26,7 +27,7 @@ mutex_release_inner: *MutexInner T -> ()
 mutex_release_inner = inner ->
     refs = unsafe &(*inner).refs
     previous = refs.fetch_sub (1 as U64)
-    if ~U64Eq previous, (1 as U64)
+    if previous == (1 as U64)
         unsafe drop_in_place inner
         layout = Layout
             size: ~SizeOf (unsafe *inner)
@@ -56,7 +57,7 @@ impl Mutex T
         mut acquired = false
         while !acquired
             previous = lock_word.exchange (1 as U64)
-            if ~U64Eq previous, (0 as U64)
+            if previous == (0 as U64)
                 acquired = true
             else
                 yielded = sched_yield!
@@ -66,7 +67,7 @@ impl Mutex T
     @try_lock = ->
         lock_word = unsafe &(*self.inner).lock_word
         previous = lock_word.exchange (1 as U64)
-        if ~U64Eq previous, (0 as U64)
+        if previous == (0 as U64)
             Option::Some (mutex_guard self.inner)
         else
             Option::None

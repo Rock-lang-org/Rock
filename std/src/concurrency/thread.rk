@@ -4,6 +4,8 @@
 > std::mem::alloc::Layout
 > std::mem::alloc::checked_alloc
 > std::concurrency::atomic::AtomicU64
+> std::cmp::eq::Eq
+> std::cmp::ord::Ord
 > std::functional::callable::FnOnce
 > std::mem::drop::Drop
 > std::mem::drop::drop_in_place
@@ -114,7 +116,7 @@ thread_state_release_detached: *ThreadState T -> ()
 thread_state_release_detached = state ->
     refs = unsafe &(*state).refs
     previous = refs.fetch_sub (1 as U64)
-    if ~U64Eq previous, (1 as U64)
+    if previous == (1 as U64)
         thread_state_cleanup state, true
     return
 
@@ -122,7 +124,7 @@ thread_state_release_joined: *ThreadState T -> ()
 thread_state_release_joined = state ->
     refs = unsafe &(*state).refs
     previous = refs.fetch_sub (1 as U64)
-    if ~U64Eq previous, (1 as U64)
+    if previous == (1 as U64)
         thread_state_cleanup state, false
     return
 
@@ -151,7 +153,7 @@ spawn: F -> Result (JoinHandle T), ThreadError where F: Send, T: Send, F: FnOnce
     null = 0 as *U8
     mut thread = 0 as U64
     status = pthread_create ((&mut thread) as *U64), null, code, env
-    if ~I32Eq status, 0
+    if status == (0 as I32)
         forget runner
         Result::Ok (JoinHandle::new thread, state)
     else
@@ -172,7 +174,7 @@ impl JoinHandle T
     ~@join = ->
         mut env = 0 as U64
         status = pthread_join self.thread, ((&mut env) as *U64)
-        if ~I32Eq status, 0
+        if status == (0 as I32)
             self.joined = true
             output_ptr = unsafe (*self.state).result
             joined = Result::Ok (unsafe *output_ptr)
@@ -198,7 +200,7 @@ yield_now: () -> ()
 
 sleep_ms: I64 -> ()
 < sleep_ms = milliseconds ->
-    if ~I64Le milliseconds, 0
+    if milliseconds <= 0
         return
     micros = milliseconds * 1000
     status = usleep (micros as U32)

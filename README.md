@@ -829,5 +829,7 @@ A few of the remaining important features which are planned but still missing:
 - Proc macro
 - Tail recursion
 - Dynamic dispatch and vtables
+- Allow to import enum variant in scope
+- Split unit tests in their own modules
 
 - Self-host the compiler

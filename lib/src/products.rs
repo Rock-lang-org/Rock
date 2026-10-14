@@ -1158,6 +1158,7 @@ impl CompilerProducts {
             record_id_remap(&mut id_remap, requested_id, id);
             record_name(&mut identity_table, id, name);
             let mut trt = trt.clone();
+            let mut signature_backed_method_ids = BTreeMap::new();
             let mut signature_names = trt.signatures.keys().cloned().collect::<Vec<_>>();
             signature_names.sort();
             for signature_name in signature_names {
@@ -1176,6 +1177,9 @@ impl CompilerProducts {
                 );
                 record_id_remap(&mut id_remap, requested_signature_id, signature_id);
                 trait_member_product_ids.insert(original_signature_id, signature_id);
+                if trt.methods.get(&signature_name).is_some_and(|method| method.id == original_signature_id) {
+                    signature_backed_method_ids.insert(signature_name.clone(), signature_id);
+                }
                 record_display_name(
                     &mut identity_table,
                     signature_id,
@@ -1189,13 +1193,16 @@ impl CompilerProducts {
                 let method = &trt.methods[&method_name];
                 let original_method_id = method.id;
                 let requested_method_id = ProductDefId::from(original_method_id);
-                let method_id = reserve_product_id(
-                    requested_method_id,
-                    &mut used_ids,
-                    fallback_crate,
-                    &mut next_fallback_local,
-                    false,
-                );
+                // A default body and its signature share one canonical member ID.
+                // Reserving it twice makes call-target remapping ambiguous.
+                let method_id = signature_backed_method_ids.get(&method_name).copied()
+                    .unwrap_or_else(|| reserve_product_id(
+                        requested_method_id,
+                        &mut used_ids,
+                        fallback_crate,
+                        &mut next_fallback_local,
+                        false,
+                    ));
                 record_id_remap(&mut id_remap, requested_method_id, method_id);
                 trait_member_product_ids.insert(original_method_id, method_id);
                 record_display_name(
@@ -7353,6 +7360,46 @@ mod tests {
         .expect("test HIR has valid language items");
 
         assert_eq!(products.bodies.trait_default_methods.len(), 2);
+    }
+
+    #[test]
+    fn compiler_products_share_signature_and_default_member_identity() {
+        let mut hir = resolved_hir_for_products();
+        let trait_id = DefId::new(CrateId(0), LocalDefId(4));
+        let member_id = DefId::new(CrateId(0), LocalDefId(7));
+        let impl_id = DefId::new(CrateId(0), LocalDefId(5));
+        let effective_id = DefId::new(CrateId(0), LocalDefId(8));
+        rebuild_program(&mut hir.program, |_, _, _, traits, _, _, _, _| {
+            let trait_def = traits.get_mut(&trait_id).unwrap();
+            let method = &trait_def.methods["show"];
+            trait_def.signatures.insert("show".to_string(), HirFunctionSig {
+                id: member_id,
+                name: "show".to_string(),
+                generic_params: method.generic_params.clone(),
+                params: method.params.iter().map(|param| param.ty.clone()).collect(),
+                ret: method.ret_type.clone(),
+                generic_bounds: method.generic_bounds.clone(),
+                self_receiver: method.self_receiver,
+                is_unsafe: method.is_unsafe,
+            });
+        });
+        let (products, remap) = CompilerProducts::from_resolved_hir_with_remap(
+            ProductCrateIdentity::local("demo".to_string()),
+            &hir,
+            Vec::new(),
+            BTreeMap::new(),
+            ProductSourceFingerprint::default(),
+            ProductLinkData::default(),
+        ).expect("test HIR has valid language items");
+        let trait_def = &products.interface.traits[&ProductDefId::from(trait_id)];
+        assert_eq!(trait_def.methods["show"].id, trait_def.signatures["show"].id);
+        assert_eq!(trait_def.methods["show"].id, member_id);
+        assert_eq!(remap[&ProductDefId::from(member_id)].len(), 1);
+        assert_eq!(
+            products.interface.effective_trait_methods[&(ProductDefId::from(impl_id), ProductDefId::from(member_id))],
+            ProductDefId::from(effective_id),
+        );
+        assert!(products.bodies.trait_default_methods.contains_key(&ProductDefId::from(member_id)));
     }
 
     #[test]

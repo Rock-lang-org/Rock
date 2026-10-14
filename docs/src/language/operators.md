@@ -85,7 +85,7 @@ This also lets operator sections such as `(+ 1)` work as callbacks receiving `&I
 
 ## Unary Operators
 
-Prefix operators use the same type-directed model. The standard library provides negation for numeric values and logical not for booleans where an implementation exists.
+Prefix operators use the same type-directed model. The standard library provides numeric negation, logical not for booleans, and bitwise not for integers.
 
 ```rock
 main = !->
@@ -95,9 +95,12 @@ main = !->
     opposite = !condition
     negative.println!
     opposite.println!
+    bits = 0 as U8
+    inverted = !bits
+    (inverted as I64).println!
 ```
 
-The output is `-7` and `false`. User-defined types can also implement the `Neg` and `Not` traits with `@-` and `@!` methods and an associated `Output` type.
+The output is `-7`, `false`, and `255`. Integer `!` flips every bit and preserves the operand's type; it is available for signed and unsigned 8-, 16-, 32-, and 64-bit integers. User-defined types can also implement the `Neg` and `Not` traits with `@-` and `@!` methods and an associated `Output` type.
 
 ## Operator Sections
 

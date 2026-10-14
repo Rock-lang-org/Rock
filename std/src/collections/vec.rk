@@ -115,7 +115,7 @@ impl Vec T
             ptr = self.raw.ptr!
             value = unsafe *(ptr + i)
             new_len = self.raw_len - 1
-            if !~I64Eq i, new_len
+            if i != new_len
                 unsafe *(ptr + i) = unsafe *(ptr + new_len)
             self.raw_len = new_len
             Option::Some value

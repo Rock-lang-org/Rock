@@ -17079,6 +17079,109 @@ main = ->
 }
 
 #[test]
+fn test_std_numeric_operators_eq_for_all_integer_widths_and_char() {
+    let mut source = String::from(r#"
+equal: T -> T -> Bool where T: Eq
+equal = a, b -> a == b
+
+unequal: T -> T -> Bool where T: Eq
+unequal = a, b -> a != b
+
+main = !->
+"#);
+    for ty in ["I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64"] {
+        for (method, rhs) in [("equal", 7), ("equal", 8), ("unequal", 7), ("unequal", 8)] {
+            source.push_str(&format!("    ({method} (7 as {ty}), ({rhs} as {ty})).println!\n"));
+        }
+    }
+    source.push_str(r#"
+    (equal '🦀', '🦀').println!
+    (equal 'é', '中').println!
+    (unequal 'é', 'é').println!
+    (unequal 'a', 'b').println!
+    (equal (255 as U8), (127 as U8)).println!
+    (equal (65535 as U16), (32767 as U16)).println!
+    (equal (4294967295 as U32), (2147483647 as U32)).println!
+    high = !(0 as U64)
+    (equal high, (9223372036854775807 as U64)).println!
+"#);
+    assert_eq!(compile_and_run(&source), "true\nfalse\nfalse\ntrue\n".repeat(9) + "false\nfalse\nfalse\nfalse\n");
+}
+
+#[test]
+fn test_std_numeric_operators_not_preserves_integer_width() {
+    let mut source = String::from(r#"
+main = !->
+"#);
+    let mut expected = String::new();
+    for (ty, ones) in [
+        ("I8", -1i64), ("I16", -1), ("I32", -1), ("I64", -1),
+        ("U8", 255), ("U16", 65535), ("U32", 4294967295), ("U64", -1),
+    ] {
+        source.push_str(&format!(
+            "    zero_{ty} = 0 as {ty}
+    ones_{ty}: {ty} = !zero_{ty}
+    (ones_{ty} as I64).println!
+    ((!ones_{ty}) == zero_{ty}).println!
+    ((!(!(85 as {ty}))) == (85 as {ty})).println!
+"
+        ));
+        expected.push_str(&format!("{ones}\ntrue\ntrue\n"));
+    }
+    source.push_str("    (!true).println!\n    (!false).println!\n");
+    expected.push_str("false\ntrue\n");
+    assert_eq!(compile_and_run(&source), expected);
+}
+
+#[test]
+fn test_std_numeric_operators_integer_utilities() {
+    let output = compile_and_run(r#"
+main = !->
+    (abs (-7)).println!
+    (abs 0).println!
+    (abs 7).println!
+    (min (-7), 3).println!
+    (min 3, (-7)).println!
+    (max (-7), 3).println!
+    (max 3, (-7)).println!
+    (min 4, 4).println!
+    (max 4, 4).println!
+    smallest = (-9223372036854775807) - 1
+    ((abs smallest) == smallest).println!
+    ((min smallest, 0) == smallest).println!
+    (max smallest, 0).println!
+"#);
+    assert_eq!(output, "7\n0\n7\n-7\n-7\n3\n3\n4\n4\ntrue\ntrue\n0\n");
+}
+
+#[test]
+fn test_std_numeric_operators_hash_map_explicit_grow_with_collisions() {
+    let output = compile_and_run(r#"
+show_entry: &HashMap I64, I64 -> I64 -> ()
+show_entry = map, key !->
+    match map.get (&key)
+        Option::Some value => (*value).println!
+        Option::None => "missing".println!
+
+main = !->
+    mut map = HashMap::new!
+    map.insert 7, 70
+    map.insert 15, 150
+    map.insert 23, 230
+    map.insert (-1), 10
+    map.grow (size_of 0), (size_of 0)
+    map.len!.println!
+    show_entry &map, 7
+    show_entry &map, 15
+    show_entry &map, 23
+    show_entry &map, (-1)
+    map.insert 15, 151
+    show_entry &map, 15
+"#);
+    assert_eq!(output, "4\n70\n150\n230\n10\n151\n");
+}
+
+#[test]
 fn test_unary_not_dispatches_through_std_trait_with_associated_output() {
     let output = compile_and_run(
         r#"

@@ -15,8 +15,26 @@ impl Eq for I64
 impl Eq for I32
     @== = other -> ~I32Eq *self, *other
 
+impl Eq for I16
+    @== = other -> ~I16Eq *self, *other
+
+impl Eq for I8
+    @== = other -> ~I8Eq *self, *other
+
+impl Eq for U64
+    @== = other -> ~U64Eq *self, *other
+
+impl Eq for U32
+    @== = other -> ~U32Eq *self, *other
+
+impl Eq for U16
+    @== = other -> ~U16Eq *self, *other
+
 impl Eq for U8
     @== = other -> ~U8Eq *self, *other
+
+impl Eq for Char
+    @== = other -> (*self as U32) == (*other as U32)
 
 impl Eq for F64
     @== = other -> ~F64Eq *self, *other

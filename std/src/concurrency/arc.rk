@@ -5,6 +5,8 @@
 > std::mem::alloc::checked_alloc
 > std::concurrency::atomic::AtomicU64
 > std::clone::Clone
+> std::cmp::eq::Eq
+> std::ops::not::Not
 > std::ops::deref::Deref
 > std::mem::drop::Drop
 > std::mem::drop::drop_in_place
@@ -36,7 +38,7 @@ impl Clone for Arc T
     @clone = ->
         refs = unsafe &(*self.inner).refs
         previous = refs.fetch_add (1 as U64)
-        if ~U64Eq previous, (~U64Not (0 as U64))
+        if previous == !(0 as U64)
             exit (1 as I32)
         Arc T
             inner: self.inner
@@ -49,7 +51,7 @@ impl Drop for Arc T
     ~@drop = ->
         refs = unsafe &(*self.inner).refs
         previous = refs.fetch_sub (1 as U64)
-        if ~U64Eq previous, (1 as U64)
+        if previous == (1 as U64)
             unsafe drop_in_place self.inner
             layout = Layout
                 size: ~SizeOf (unsafe *self.inner)

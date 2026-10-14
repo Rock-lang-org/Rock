@@ -7,3 +7,35 @@
 impl Not for Bool
     type Output = Bool
     @! = -> ~BoolNot *self
+
+impl Not for I64
+    type Output = I64
+    @! = -> ~I64Not *self
+
+impl Not for I32
+    type Output = I32
+    @! = -> ~I32Not *self
+
+impl Not for I16
+    type Output = I16
+    @! = -> ~I16Not *self
+
+impl Not for I8
+    type Output = I8
+    @! = -> ~I8Not *self
+
+impl Not for U64
+    type Output = U64
+    @! = -> ~U64Not *self
+
+impl Not for U32
+    type Output = U32
+    @! = -> ~U32Not *self
+
+impl Not for U16
+    type Output = U16
+    @! = -> ~U16Not *self
+
+impl Not for U8
+    type Output = U8
+    @! = -> ~U8Not *self
