@@ -65,7 +65,7 @@ impl JoinHandle T
 unsafe callable_word: &(() -> *U8) -> I64 -> U64
 unsafe callable_word = callable, index ->
     words = callable as *U64
-    unsafe *(~PtrOffset words, index)
+    unsafe words[index]
 
 free_env: *U8 -> I64 -> ()
 free_env = env, bytes ->

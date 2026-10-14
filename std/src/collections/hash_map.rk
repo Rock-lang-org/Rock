@@ -52,39 +52,39 @@ impl HashMap K, V where K: Hash, K: Eq
         new_occupied: RawBuffer Bool = unsafe RawBuffer::with_capacity (std::mem::utils::size_of true), new_cap
         new_keys: RawBuffer K = unsafe RawBuffer::with_capacity key_size, new_cap
         new_values: RawBuffer V = unsafe RawBuffer::with_capacity value_size, new_cap
-        new_hashes_ptr = new_hashes.ptr!
-        new_occupied_ptr = new_occupied.ptr!
+        mut new_hashes_ptr = new_hashes.ptr!
+        mut new_occupied_ptr = new_occupied.ptr!
         new_keys_ptr = new_keys.ptr!
         new_values_ptr = new_values.ptr!
 
         i = 0 as I64
         while i < new_cap
-            unsafe *(~PtrOffset new_occupied_ptr, i) = false
+            unsafe new_occupied_ptr[i] = false
             i = i + 1
 
         new_len = 0 as I64
 
         i = 0 as I64
         while i < old_cap
-            if unsafe *(~PtrOffset old_occupied, i)
-                old_hash = unsafe *(~PtrOffset old_hashes, i)
-                old_key = unsafe *(~PtrOffset old_keys, i)
-                old_value = unsafe *(~PtrOffset old_values, i)
+            if unsafe old_occupied[i]
+                old_hash = unsafe old_hashes[i]
+                old_key = unsafe *(old_keys + i)
+                old_value = unsafe *(old_values + i)
                 start = hash_map_bucket_index old_hash, new_cap
                 j = 0 as I64
                 done = false
                 target_idx = 0 as I64
                 while !done && j < new_cap
                     idx = ~I64Mod (~I64Add start, j), new_cap
-                    if unsafe *(~PtrOffset new_occupied_ptr, idx)
+                    if unsafe new_occupied_ptr[idx]
                         j = j + 1
                     else
                         target_idx = idx
                         done = true
-                unsafe *(~PtrOffset new_hashes_ptr, target_idx) = old_hash
-                unsafe *(~PtrOffset new_occupied_ptr, target_idx) = true
-                unsafe *(~PtrOffset new_keys_ptr, target_idx) = old_key
-                unsafe *(~PtrOffset new_values_ptr, target_idx) = old_value
+                unsafe new_hashes_ptr[target_idx] = old_hash
+                unsafe new_occupied_ptr[target_idx] = true
+                unsafe *(new_keys_ptr + target_idx) = old_key
+                unsafe *(new_values_ptr + target_idx) = old_value
                 new_len = new_len + 1
             i = i + 1
 
@@ -119,38 +119,38 @@ impl HashMap K, V where K: Hash, K: Eq
             new_occupied: RawBuffer Bool = unsafe RawBuffer::with_capacity (std::mem::utils::size_of true), new_cap
             new_keys: RawBuffer K = unsafe RawBuffer::with_capacity key_size, new_cap
             new_values: RawBuffer V = unsafe RawBuffer::with_capacity value_size, new_cap
-            new_hashes_ptr = new_hashes.ptr!
-            new_occupied_ptr = new_occupied.ptr!
+            mut new_hashes_ptr = new_hashes.ptr!
+            mut new_occupied_ptr = new_occupied.ptr!
             new_keys_ptr = new_keys.ptr!
             new_values_ptr = new_values.ptr!
 
             grow_i = 0 as I64
             while grow_i < new_cap
-                unsafe *(~PtrOffset new_occupied_ptr, grow_i) = false
+                unsafe new_occupied_ptr[grow_i] = false
                 grow_i = grow_i + 1
 
             new_len = 0 as I64
             grow_i = 0 as I64
             while grow_i < old_cap
-                if unsafe *(~PtrOffset old_occupied, grow_i)
-                    old_hash = unsafe *(~PtrOffset old_hashes, grow_i)
-                    old_key = unsafe *(~PtrOffset old_keys, grow_i)
-                    old_value = unsafe *(~PtrOffset old_values, grow_i)
+                if unsafe old_occupied[grow_i]
+                    old_hash = unsafe old_hashes[grow_i]
+                    old_key = unsafe *(old_keys + grow_i)
+                    old_value = unsafe *(old_values + grow_i)
                     start = hash_map_bucket_index old_hash, new_cap
                     j = 0 as I64
                     grow_done = false
                     target_idx = 0 as I64
                     while !grow_done && j < new_cap
                         idx = (start + j) % new_cap
-                        if unsafe *(~PtrOffset new_occupied_ptr, idx)
+                        if unsafe new_occupied_ptr[idx]
                             j = j + 1
                         else
                             target_idx = idx
                             grow_done = true
-                    unsafe *(~PtrOffset new_hashes_ptr, target_idx) = old_hash
-                    unsafe *(~PtrOffset new_occupied_ptr, target_idx) = true
-                    unsafe *(~PtrOffset new_keys_ptr, target_idx) = old_key
-                    unsafe *(~PtrOffset new_values_ptr, target_idx) = old_value
+                    unsafe new_hashes_ptr[target_idx] = old_hash
+                    unsafe new_occupied_ptr[target_idx] = true
+                    unsafe *(new_keys_ptr + target_idx) = old_key
+                    unsafe *(new_values_ptr + target_idx) = old_value
                     new_len = new_len + 1
                 grow_i = grow_i + 1
 
@@ -161,8 +161,8 @@ impl HashMap K, V where K: Hash, K: Eq
             self.raw_len = new_len
             self.raw_cap = new_cap
 
-        hashes_ptr = self.hashes.ptr!
-        occupied_ptr = self.occupied.ptr!
+        mut hashes_ptr = self.hashes.ptr!
+        mut occupied_ptr = self.occupied.ptr!
         keys_ptr = self.keys.ptr!
         values_ptr = self.values.ptr!
         hash = key.hash!
@@ -175,9 +175,9 @@ impl HashMap K, V where K: Hash, K: Eq
 
         while !done && i < cap
             idx = (start + i) % cap
-            if unsafe *(~PtrOffset occupied_ptr, idx)
-                if (unsafe *(~PtrOffset hashes_ptr, idx)) == hash
-                    stored_key = unsafe &*(~PtrOffset keys_ptr, idx)
+            if unsafe occupied_ptr[idx]
+                if (unsafe hashes_ptr[idx]) == hash
+                    stored_key = unsafe &keys_ptr[idx]
                     if *stored_key == key
                         target_idx = idx
                         found_existing = true
@@ -188,13 +188,13 @@ impl HashMap K, V where K: Hash, K: Eq
             i = i + 1
 
         if found_existing
-            unsafe drop_in_place (~PtrOffset values_ptr, target_idx)
-            unsafe *(~PtrOffset values_ptr, target_idx) = value
+            unsafe drop_in_place (values_ptr + target_idx)
+            unsafe *(values_ptr + target_idx) = value
         else
-            unsafe *(~PtrOffset hashes_ptr, target_idx) = hash
-            unsafe *(~PtrOffset occupied_ptr, target_idx) = true
-            unsafe *(~PtrOffset keys_ptr, target_idx) = key
-            unsafe *(~PtrOffset values_ptr, target_idx) = value
+            unsafe hashes_ptr[target_idx] = hash
+            unsafe occupied_ptr[target_idx] = true
+            unsafe *(keys_ptr + target_idx) = key
+            unsafe *(values_ptr + target_idx) = value
             self.raw_len = next_len
 
     @get: &K -> Option &V
@@ -214,11 +214,11 @@ impl HashMap K, V where K: Hash, K: Eq
 
             while !found && i < self.raw_cap
                 idx = (start + i) % self.raw_cap
-                if unsafe *(~PtrOffset occupied_ptr, idx)
-                    if (unsafe *(~PtrOffset hashes_ptr, idx)) == hash
-                        stored_key = unsafe &*(~PtrOffset keys_ptr, idx)
+                if unsafe occupied_ptr[idx]
+                    if (unsafe hashes_ptr[idx]) == hash
+                        stored_key = unsafe &keys_ptr[idx]
                         if *stored_key == *key
-                            result = Option::Some (unsafe &*(~PtrOffset values_ptr, idx))
+                            result = Option::Some (unsafe &values_ptr[idx])
                             found = true
                 else
                     found = true
@@ -242,9 +242,9 @@ impl HashMap K, V where K: Hash, K: Eq
 
             while !found && i < self.raw_cap
                 idx = (start + i) % self.raw_cap
-                if unsafe *(~PtrOffset occupied_ptr, idx)
-                    if (unsafe *(~PtrOffset hashes_ptr, idx)) == hash
-                        stored_key = unsafe &*(~PtrOffset keys_ptr, idx)
+                if unsafe occupied_ptr[idx]
+                    if (unsafe hashes_ptr[idx]) == hash
+                        stored_key = unsafe &keys_ptr[idx]
                         if *stored_key == *key
                             result = true
                             found = true
@@ -274,8 +274,8 @@ impl Drop for HashMap K, V
         keys_ptr = self.keys.ptr!
         i = 0 as I64
         while i < self.raw_cap
-            if unsafe *(~PtrOffset occupied_ptr, i)
-                unsafe drop_in_place (~PtrOffset values_ptr, i)
-                unsafe drop_in_place (~PtrOffset keys_ptr, i)
+            if unsafe occupied_ptr[i]
+                unsafe drop_in_place (values_ptr + i)
+                unsafe drop_in_place (keys_ptr + i)
             i = i + 1
         return

@@ -49,12 +49,12 @@ range_bounds_check: Range -> I64 -> (I64, I64)
 
 borrow_slice_range: *T -> I64 -> I64 -> &[T]
 < borrow_slice_range = ptr, start, len ->
-    offset: *T = unsafe ~PtrOffset ptr, start
+    offset: *T = unsafe ptr + start
     unsafe ~BorrowSlice offset, len
 
 borrow_slice_range_mut: *T -> I64 -> I64 -> &mut [T]
 < borrow_slice_range_mut = ptr, start, len ->
-    offset: *T = unsafe ~PtrOffset ptr, start
+    offset: *T = unsafe ptr + start
     unsafe ~BorrowSliceMut offset, len
 
 impl Index I64 for &[T]
@@ -63,15 +63,15 @@ impl Index I64 for &[T]
         slice = *self
         index_bounds_check i, slice.len!
         ptr = slice.as_ptr!
-        unsafe &*(~PtrOffset ptr, i)
+        unsafe &ptr[i]
 
 impl IndexMut I64 for &mut [T]
     type Output = T
     ^@index_mut = i ->
         slice = &mut *self
         index_bounds_check i, slice.len!
-        ptr = slice.as_mut_ptr!
-        unsafe &mut *(~PtrOffset ptr, i)
+        mut ptr = slice.as_mut_ptr!
+        unsafe &mut ptr[i]
 
 impl Index Range for &[T]
     type Output = [T]
@@ -91,11 +91,11 @@ impl IndexMut Range for &mut [T]
 
 impl Index I64 for *T where T: Sized
     type Output = T
-    unsafe @index = i -> unsafe &*(~PtrOffset *self, i)
+    unsafe @index = i -> unsafe &*((*self) + i)
 
 impl IndexMut I64 for *T where T: Sized
     type Output = T
-    unsafe ^@index_mut = i -> unsafe &mut *(~PtrOffset *self, i)
+    unsafe ^@index_mut = i -> unsafe &mut *((*self) + i)
 
 impl Index I64 for *[T]
     type Output = T
@@ -103,12 +103,12 @@ impl Index I64 for *[T]
         slice = unsafe &*(*self)
         index_bounds_check i, slice.len!
         ptr = slice.as_ptr!
-        unsafe &*(~PtrOffset ptr, i)
+        unsafe &ptr[i]
 
 impl IndexMut I64 for *[T]
     type Output = T
     unsafe ^@index_mut = i ->
         slice = unsafe &mut *(*self)
         index_bounds_check i, slice.len!
-        ptr = slice.as_mut_ptr!
-        unsafe &mut *(~PtrOffset ptr, i)
+        mut ptr = slice.as_mut_ptr!
+        unsafe &mut ptr[i]

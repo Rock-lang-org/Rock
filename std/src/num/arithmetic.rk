@@ -30,7 +30,7 @@ impl Add I64 for *T where T: Sized
 impl Sub I64 for *T where T: Sized
     type Output = *T
 
-    unsafe @- = offset -> ~PtrOffset *self, (~I64Sub 0, offset)
+    unsafe @- = offset -> *self + (~I64Sub 0, offset)
 
 impl Add I64 for I64
     type Output = I64

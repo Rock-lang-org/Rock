@@ -208,7 +208,7 @@ str_slice: &Str -> Range -> &Str
         puts "string index is not a UTF-8 boundary".as_ptr!
         exit (1 as I32)
     base: *U8 = text.as_ptr!
-    ptr: *U8 = unsafe ~PtrOffset base, bounds.0
+    ptr: *U8 = unsafe base + bounds.0
     unsafe ~BorrowStr ptr, (bounds.1 - bounds.0)
 
 impl Index Range for &Str

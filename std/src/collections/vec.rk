@@ -81,14 +81,14 @@ impl Vec T
 
             i = 0
             while i < self.raw_len
-                unsafe *(~PtrOffset new_ptr, i) = unsafe *(~PtrOffset old_ptr, i)
+                unsafe *(new_ptr + i) = unsafe *(old_ptr + i)
                 i = i + 1
 
-            unsafe *(~PtrOffset new_ptr, self.raw_len) = elem
+            unsafe *(new_ptr + self.raw_len) = elem
             self.raw = new_raw
         else
             ptr = self.raw.ptr!
-            unsafe *(~PtrOffset ptr, self.raw_len) = elem
+            unsafe *(ptr + self.raw_len) = elem
 
         self.raw_len = new_len
 
@@ -96,7 +96,7 @@ impl Vec T
     @get = i ->
         if i >= 0 && i < self.raw_len
             ptr = self.raw.ptr!
-            unsafe Option::Some (unsafe &*(~PtrOffset ptr, i))
+            unsafe Option::Some (unsafe &ptr[i])
         else
             Option::None
 
@@ -104,8 +104,8 @@ impl Vec T
     ^@set = i, val ->
         if i >= 0 && i < self.raw_len
             ptr = self.raw.ptr!
-            unsafe drop_in_place (~PtrOffset ptr, i)
-            unsafe *(~PtrOffset ptr, i) = val
+            unsafe drop_in_place (ptr + i)
+            unsafe *(ptr + i) = val
 
     ^@swap_remove: I64 -> Option T
     ^@swap_remove = i ->
@@ -113,10 +113,10 @@ impl Vec T
             Option::None
         else
             ptr = self.raw.ptr!
-            value = unsafe *(~PtrOffset ptr, i)
+            value = unsafe *(ptr + i)
             new_len = self.raw_len - 1
             if !~I64Eq i, new_len
-                unsafe *(~PtrOffset ptr, i) = unsafe *(~PtrOffset ptr, new_len)
+                unsafe *(ptr + i) = unsafe *(ptr + new_len)
             self.raw_len = new_len
             Option::Some value
 
@@ -137,7 +137,7 @@ impl Vec T
             raw_len: 0
         i = 0
         while i < len
-            item = unsafe *(~PtrOffset ptr, i)
+            item = unsafe *(ptr + i)
             output.push (mapper item)
             i = i + 1
         output
@@ -151,7 +151,7 @@ impl Vec T
             raw_len: 0
         i = 0
         while i < len
-            item = unsafe &*(~PtrOffset ptr, i)
+            item = unsafe &ptr[i]
             output.push (mapper item)
             i = i + 1
         output
@@ -162,7 +162,7 @@ impl Vec T
         ptr = self.raw.ptr!
         i = 0
         while i < len
-            item = unsafe &*(~PtrOffset ptr, i)
+            item = unsafe &ptr[i]
             action item
             i = i + 1
 
@@ -174,7 +174,7 @@ impl Vec T
         source.raw_len = 0
         i = 0
         while i < len
-            item = unsafe *(~PtrOffset ptr, i)
+            item = unsafe *(ptr + i)
             action item
             i = i + 1
 
@@ -185,9 +185,9 @@ impl Vec T
         self.raw_len = 0
         read = 0
         while read < len
-            item = unsafe *(~PtrOffset ptr, read)
+            item = unsafe *(ptr + read)
             if predicate (&item)
-                unsafe *(~PtrOffset ptr, self.raw_len) = item
+                unsafe *(ptr + self.raw_len) = item
                 self.raw_len = self.raw_len + 1
             read = read + 1
 
@@ -202,7 +202,7 @@ impl Vec T
             raw_len: 0
         i = 0
         while i < len
-            item = unsafe *(~PtrOffset ptr, i)
+            item = unsafe *(ptr + i)
             if predicate (&item)
                 output.push item
             i = i + 1
@@ -219,7 +219,7 @@ impl Vec T
             raw_len: 0
         i = 0
         while i < len
-            item = unsafe *(~PtrOffset ptr, i)
+            item = unsafe *(ptr + i)
             mapped: Option U = mapper item
             match mapped
                 Option::Some value => output.push value
@@ -238,14 +238,14 @@ impl Vec T
             raw_len: 0
         i = 0
         while i < len
-            item = unsafe *(~PtrOffset ptr, i)
+            item = unsafe *(ptr + i)
             mapped: Result U, E = mapper item
             match mapped
                 Result::Ok value => output.push value
                 Result::Err error =>
                     j = i + 1
                     while j < len
-                        unsafe drop_in_place (~PtrOffset ptr, j)
+                        unsafe drop_in_place (ptr + j)
                         j = j + 1
                     failure: Result (Vec U), E = Result::Err error
                     return failure
@@ -259,7 +259,7 @@ impl Vec T
         ptr = self.raw.ptr!
         i = 0
         while i < len
-            item = unsafe &*(~PtrOffset ptr, i)
+            item = unsafe &ptr[i]
             result: Result (), E = action item
             match result
                 Result::Ok unit => vec_unit!
@@ -276,7 +276,7 @@ impl Drop for Vec T
         i = self.raw_len
         while i > 0
             i = i - 1
-            unsafe drop_in_place (~PtrOffset self.raw.ptr!, i)
+            unsafe drop_in_place (self.raw.ptr! + i)
         return
 
 impl Show for Vec T where T: Show
@@ -287,14 +287,14 @@ impl Index I64 for Vec T
     @index = i ->
         index_bounds_check i, self.raw_len
         ptr = self.raw.ptr!
-        unsafe &*(~PtrOffset ptr, i)
+        unsafe &ptr[i]
 
 impl IndexMut I64 for Vec T
     type Output = T
     ^@index_mut = i ->
         index_bounds_check i, self.raw_len
-        ptr = self.raw.ptr!
-        unsafe &mut *(~PtrOffset ptr, i)
+        mut ptr = self.raw.ptr!
+        unsafe &mut ptr[i]
 
 impl Index Range for Vec T
     type Output = [T]
@@ -316,7 +316,7 @@ impl Functor for Vec
         mut output = Vec::new!
         i = 0
         while i < len
-            item = unsafe *(~PtrOffset ptr, i)
+            item = unsafe *(ptr + i)
             output.push (mapper item)
             i = i + 1
         output
@@ -329,13 +329,13 @@ impl Foldable for Vec
         mut output = initial
         i = 0
         while i < len
-            item = unsafe *(~PtrOffset ptr, i)
+            item = unsafe *(ptr + i)
             match step (output, item)
                 ControlFlow::Continue next => output = next
                 ControlFlow::Break result =>
                     j = i + 1
                     while j < len
-                        unsafe drop_in_place (~PtrOffset ptr, j)
+                        unsafe drop_in_place (ptr + j)
                         j = j + 1
                     stopped: ControlFlow R, B = ControlFlow::Break result
                     return stopped
@@ -353,7 +353,7 @@ impl Traversable for Vec
         mut output: G (Vec B) = G::pure empty
         i = 0
         while i < len
-            item = unsafe *(~PtrOffset ptr, i)
+            item = unsafe *(ptr + i)
             effect = visitor item
             append = G::ap (G::pure vec_push_owned), output
             output = G::ap append, effect
@@ -369,7 +369,7 @@ impl Traversable for Vec
         mut output: G (VecTraverseState V, B) = G::pure initial_state
         i = 0
         while i < len
-            item: A = unsafe *(~PtrOffset ptr, i)
+            item: A = unsafe *(ptr + i)
             step: VecTraverseState V, B -> G (VecTraverseState V, B) = state ->
                 visited: (V, G B) = vec_traverse_visit state.visitor, item
                 next_state: VecTraverseState V, B = vec_traverse_state_new state.values, visited.0
