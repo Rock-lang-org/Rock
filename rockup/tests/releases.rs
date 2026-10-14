@@ -171,6 +171,20 @@ fn script(path: &Path, body: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+fn copy_manager(path: &Path) {
+    // Keep writable executable descriptors out of the multithreaded test process:
+    // concurrent child spawns can inherit them until exec and cause ETXTBSY.
+    // Waiting for cp also ensures its writable descriptor is closed before use.
+    success(
+        Command::new("cp")
+            .arg("--")
+            .arg(env!("CARGO_BIN_EXE_rockup"))
+            .arg(path)
+            .output()
+            .unwrap(),
+    );
+}
+
 fn success(output: Output) {
     assert!(
         output.status.success(),
@@ -184,7 +198,7 @@ fn success(output: Output) {
 fn self_install_persists_only_manager_then_install_fetches_toolchain() {
     let fixture = Fixture::new();
     let downloaded = fixture.root.join("downloaded-rockup");
-    fs::copy(env!("CARGO_BIN_EXE_rockup"), &downloaded).unwrap();
+    copy_manager(&downloaded);
     success(
         fixture
             .command_for(&downloaded)
@@ -466,7 +480,7 @@ fn unsafe_names_are_rejected_without_network_or_outside_writes() {
 fn self_update_is_atomic_and_keeps_shim_destination() {
     let fixture = Fixture::new();
     let executable = fixture.root.join("rockup");
-    fs::copy(env!("CARGO_BIN_EXE_rockup"), &executable).unwrap();
+    copy_manager(&executable);
     let source = fixture.source("old");
     success(
         fixture

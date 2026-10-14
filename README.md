@@ -814,7 +814,6 @@ Questions, small reproductions, and contributions are welcome through [GitHub is
 
 A few of the remaining important features which are planned but still missing:
 
-- Dynamic dispatch and vtables
 - Better trait resolution
 - More complete stdlib
 - Multiline imports like in rust
@@ -825,5 +824,10 @@ A few of the remaining important features which are planned but still missing:
 - RockDoc
 - Windows/Macos support
 - Release for other arch than x64
+- If-Let deconstruction
+- Derive
+- Proc macro
+- Tail recursion
+- Dynamic dispatch and vtables
 
 - Self-host the compiler
