@@ -176,10 +176,10 @@ pub struct Config {
     /// Emit object file to this exact path
     #[arg(long)]
     emit_object: Option<PathBuf>,
-    /// Don't inject stdlib prelude
+    /// Don't inject std prelude
     #[arg(long)]
     no_prelude: bool,
-    /// Don't auto-load bundled stdlib from the sysroot
+    /// Don't auto-load bundled std from the sysroot
     #[arg(long)]
     no_std: bool,
     /// Override the compiler sysroot

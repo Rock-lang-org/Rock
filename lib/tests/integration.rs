@@ -15,9 +15,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bincode::Options;
 use serde::Serialize;
 
-#[path = "support/stdlib_cache_key.rs"]
-mod stdlib_cache_key;
-use stdlib_cache_key::{stdlib_cache_compiler_stamp, stdlib_cache_key};
+#[path = "support/std_cache_key.rs"]
+mod std_cache_key;
+use std_cache_key::{std_cache_compiler_stamp, std_cache_key};
 
 #[path = "support/callable.rs"]
 mod callable;
@@ -25,7 +25,7 @@ mod callable;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn test_stdlib_domain_facades_without_prelude() {
+fn test_std_domain_facades_without_prelude() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     std::fs::create_dir_all(&dir).unwrap();
@@ -33,25 +33,25 @@ fn test_stdlib_domain_facades_without_prelude() {
     std::fs::write(
         &entry,
         r#"
-> stdlib::collections::Vec
-> stdlib::control::Option
-> stdlib::control::Result
-> stdlib::control::ControlFlow
-> stdlib::mem::Box
-> stdlib::mem::size_of
-> stdlib::string::String
-> stdlib::functional::Functor
-> stdlib::functional::fmap
-> stdlib::cmp::Eq
-> stdlib::num::Add
-> stdlib::ops::Index
-> stdlib::ops::Deref
-> stdlib::concurrency::Mutex
-> stdlib::concurrency::thread::spawn
-> stdlib::io::Write
-> stdlib::io::fs::File
-> stdlib::io::net::Ipv4Addr
-> stdlib::ffi::libc::sqrt
+> std::collections::Vec
+> std::control::Option
+> std::control::Result
+> std::control::ControlFlow
+> std::mem::Box
+> std::mem::size_of
+> std::string::String
+> std::functional::Functor
+> std::functional::fmap
+> std::cmp::Eq
+> std::num::Add
+> std::ops::Index
+> std::ops::Deref
+> std::concurrency::Mutex
+> std::concurrency::thread::spawn
+> std::io::Write
+> std::io::fs::File
+> std::io::net::Ipv4Addr
+> std::ffi::libc::sqrt
 
 first: &Vec I64 -> I64
 first = values -> values[0]
@@ -76,13 +76,13 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_domain_facades_with_prelude() {
+fn test_std_domain_facades_with_prelude() {
     let output = compile_and_run(
         r#"
-> stdlib::collections::Vec
-> stdlib::control::Option
-> stdlib::mem::Box
-> stdlib::string::String
+> std::collections::Vec
+> std::control::Option
+> std::mem::Box
+> std::string::String
 
 main = !->
     mut values: Vec I64 = Vec::new!
@@ -99,15 +99,15 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_old_flat_module_paths_are_not_aliases() {
+fn test_std_old_flat_module_paths_are_not_aliases() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     std::fs::create_dir_all(&dir).unwrap();
     let entry = dir.join("old_paths.rk");
     for (path, value) in [
-        ("stdlib::vec::Vec", "values: Vec I64 = Vec::new!"),
-        ("stdlib::option::Option", "value: Option I64 = Option::Some 42"),
-        ("stdlib::sync::Mutex", "value: Mutex I64 = Mutex::new 42"),
+        ("std::vec::Vec", "values: Vec I64 = Vec::new!"),
+        ("std::option::Option", "value: Option I64 = Option::Some 42"),
+        ("std::sync::Mutex", "value: Mutex I64 = Mutex::new 42"),
     ] {
         std::fs::write(&entry, format!("> {path}\nmain = !->\n    {value}\n")).unwrap();
         let mut config = test_config(entry.clone(), dir.clone());
@@ -246,8 +246,8 @@ main = !->
 }
 
 #[test]
-fn test_fold_loop_uses_marked_protocol_without_stdlib() {
-    let status = compile_and_run_without_stdlib(
+fn test_fold_loop_uses_marked_protocol_without_std() {
+    let status = compile_and_run_without_std(
         r#"
 lang control_flow
 < enum Signal Stop, State
@@ -907,8 +907,8 @@ main = !->
 }
 
 #[test]
-fn test_do_notation_without_stdlib() {
-    let status = compile_and_run_without_stdlib(
+fn test_do_notation_without_std() {
+    let status = compile_and_run_without_std(
         r#"
 bind: I64 -> (I64 -> I64) -> I64
 bind = value, callback -> callback value
@@ -1031,7 +1031,7 @@ increment: F I64 -> F I64 where F _: Monad
 
 #[test]
 fn test_do_notation_does_not_reserve_bind_operator_globally() {
-    let status = compile_and_run_without_stdlib(
+    let status = compile_and_run_without_std(
         r#"
 infix 8 <-
 <-: I64 -> I64 -> I64
@@ -1074,7 +1074,7 @@ macro make_main
     assert_eq!(output, "42\n");
 }
 
-const STDLIB_CACHE_LOCK_STALE_AFTER: Duration = Duration::from_secs(10 * 60);
+const STD_CACHE_LOCK_STALE_AFTER: Duration = Duration::from_secs(10 * 60);
 const TEST_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn test_temp_dir(id: u64) -> PathBuf {
@@ -1089,8 +1089,8 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn stdlib_path() -> PathBuf {
-    workspace_root().join("stdlib")
+fn std_path() -> PathBuf {
+    workspace_root().join("std")
 }
 
 struct CacheLock {
@@ -1114,7 +1114,7 @@ fn acquire_cache_lock(path: &Path) -> Option<CacheLock> {
                 if let Err(err) = file.write_all(cache_lock_metadata().as_bytes()) {
                     let _ = std::fs::remove_file(path);
                     panic!(
-                        "failed to write stdlib cache lock {}: {}",
+                        "failed to write std cache lock {}: {}",
                         path.display(),
                         err
                     );
@@ -1124,16 +1124,16 @@ fn acquire_cache_lock(path: &Path) -> Option<CacheLock> {
                 });
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                if stdlib_cache_entry_is_ready_for_lock(path) {
+                if std_cache_entry_is_ready_for_lock(path) {
                     return None;
                 }
-                if recover_stale_cache_lock(path, STDLIB_CACHE_LOCK_STALE_AFTER) {
+                if recover_stale_cache_lock(path, STD_CACHE_LOCK_STALE_AFTER) {
                     continue;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(25));
             }
             Err(err) => panic!(
-                "failed to acquire stdlib cache lock {}: {}",
+                "failed to acquire std cache lock {}: {}",
                 path.display(),
                 err
             ),
@@ -1156,16 +1156,16 @@ fn current_unix_nanos() -> u128 {
         .unwrap_or_default()
 }
 
-fn stdlib_cache_entry_is_ready_for_lock(lock_path: &Path) -> bool {
+fn std_cache_entry_is_ready_for_lock(lock_path: &Path) -> bool {
     let artifact_dir = lock_path.with_extension("");
-    stdlib_cache_entry_is_ready(
-        &artifact_dir.join("stdlib.rkca"),
-        &artifact_dir.join("stdlib.o"),
+    std_cache_entry_is_ready(
+        &artifact_dir.join("std.rkca"),
+        &artifact_dir.join("std.o"),
         &artifact_dir.join("ready"),
     )
 }
 
-fn stdlib_cache_lock_is_stale(path: &Path, stale_after: Duration) -> bool {
+fn std_cache_lock_is_stale(path: &Path, stale_after: Duration) -> bool {
     let age = std::fs::read_to_string(path)
         .ok()
         .and_then(|contents| lock_age_from_metadata(&contents))
@@ -1175,7 +1175,7 @@ fn stdlib_cache_lock_is_stale(path: &Path, stale_after: Duration) -> bool {
 }
 
 fn recover_stale_cache_lock(path: &Path, stale_after: Duration) -> bool {
-    if stdlib_cache_entry_is_ready_for_lock(path) || !stdlib_cache_lock_is_stale(path, stale_after)
+    if std_cache_entry_is_ready_for_lock(path) || !std_cache_lock_is_stale(path, stale_after)
     {
         return false;
     }
@@ -1184,7 +1184,7 @@ fn recover_stale_cache_lock(path: &Path, stale_after: Duration) -> bool {
         Ok(()) => true,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
         Err(err) => panic!(
-            "failed to remove stale stdlib cache lock {}: {}",
+            "failed to remove stale std cache lock {}: {}",
             path.display(),
             err
         ),
@@ -1216,7 +1216,7 @@ fn lock_age_from_file_metadata(path: &Path) -> Option<Duration> {
         .ok()
 }
 
-fn stdlib_cache_entry_is_ready(
+fn std_cache_entry_is_ready(
     artifact_path: &Path,
     object_path: &Path,
     ready_path: &Path,
@@ -1243,28 +1243,28 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn publish_stdlib_cache_dir(
+fn publish_std_cache_dir(
     build_dir: &Path,
     artifact_dir: &Path,
     ready_path: &Path,
 ) -> Result<(), String> {
     remove_file_if_exists(ready_path).map_err(|err| {
         format!(
-            "failed to remove stale stdlib cache ready marker {}: {}",
+            "failed to remove stale std cache ready marker {}: {}",
             ready_path.display(),
             err
         )
     })?;
     remove_dir_if_exists(artifact_dir).map_err(|err| {
         format!(
-            "failed to remove stale stdlib cache directory {}: {}",
+            "failed to remove stale std cache directory {}: {}",
             artifact_dir.display(),
             err
         )
     })?;
     if artifact_dir.exists() {
         return Err(format!(
-            "stdlib cache destination still exists before publish: {}",
+            "std cache destination still exists before publish: {}",
             artifact_dir.display()
         ));
     }
@@ -1279,7 +1279,7 @@ fn publish_stdlib_cache_dir(
             ));
             remove_dir_if_exists(&publish_dir).map_err(|cleanup_err| {
                 format!(
-                    "failed to clean stdlib cache publish directory {} after rename failed: {}; cleanup failed: {}",
+                    "failed to clean std cache publish directory {} after rename failed: {}; cleanup failed: {}",
                     publish_dir.display(),
                     rename_err,
                     cleanup_err
@@ -1288,7 +1288,7 @@ fn publish_stdlib_cache_dir(
             copy_dir_all(build_dir, &publish_dir).map_err(|copy_err| {
                 let cleanup = cleanup_error_suffix(remove_dir_if_exists(&publish_dir));
                 format!(
-                    "failed to copy stdlib cache from {} to {} after rename failed: {}; copy failed: {}{}",
+                    "failed to copy std cache from {} to {} after rename failed: {}; copy failed: {}{}",
                     build_dir.display(),
                     publish_dir.display(),
                     rename_err,
@@ -1296,10 +1296,10 @@ fn publish_stdlib_cache_dir(
                     cleanup
                 )
             })?;
-            validate_stdlib_cache_payload(&publish_dir).map_err(|validate_err| {
+            validate_std_cache_payload(&publish_dir).map_err(|validate_err| {
                 let cleanup = cleanup_error_suffix(remove_dir_if_exists(&publish_dir));
                 format!(
-                    "failed to validate stdlib cache publish directory {}: {}{}",
+                    "failed to validate std cache publish directory {}: {}{}",
                     publish_dir.display(),
                     validate_err,
                     cleanup
@@ -1308,7 +1308,7 @@ fn publish_stdlib_cache_dir(
             std::fs::rename(&publish_dir, artifact_dir).map_err(|publish_err| {
                 let cleanup = cleanup_error_suffix(remove_dir_if_exists(&publish_dir));
                 format!(
-                    "failed to publish copied stdlib cache from {} to {} after rename failed: {}; publish failed: {}{}",
+                    "failed to publish copied std cache from {} to {} after rename failed: {}; publish failed: {}{}",
                     publish_dir.display(),
                     artifact_dir.display(),
                     rename_err,
@@ -1318,7 +1318,7 @@ fn publish_stdlib_cache_dir(
             })?;
             remove_dir_if_exists(build_dir).map_err(|cleanup_err| {
                 format!(
-                    "failed to remove copied stdlib cache build directory {}: {}",
+                    "failed to remove copied std cache build directory {}: {}",
                     build_dir.display(),
                     cleanup_err
                 )
@@ -1326,10 +1326,10 @@ fn publish_stdlib_cache_dir(
         }
     }
 
-    validate_stdlib_cache_payload(artifact_dir)?;
+    validate_std_cache_payload(artifact_dir)?;
     std::fs::write(ready_path, b"ready").map_err(|err| {
         format!(
-            "failed to mark stdlib cache directory ready {}: {}",
+            "failed to mark std cache directory ready {}: {}",
             ready_path.display(),
             err
         )
@@ -1359,26 +1359,26 @@ fn cleanup_error_suffix(result: std::io::Result<()>) -> String {
     }
 }
 
-fn validate_stdlib_cache_payload(dir: &Path) -> Result<(), String> {
-    let artifact_path = dir.join("stdlib.rkca");
-    let object_path = dir.join("stdlib.o");
+fn validate_std_cache_payload(dir: &Path) -> Result<(), String> {
+    let artifact_path = dir.join("std.rkca");
+    let object_path = dir.join("std.o");
     if !object_path.is_file() {
         return Err(format!(
-            "stdlib cache object file is missing: {}",
+            "std cache object file is missing: {}",
             object_path.display()
         ));
     }
     rock_lib::products::CompilerProducts::read_artifact_from_path(&artifact_path).map(|_| ())
 }
 
-fn write_minimal_stdlib_artifact_for_cache_test(path: &Path) {
+fn write_minimal_std_artifact_for_cache_test(path: &Path) {
     rock_lib::products::CompilerProducts {
-        crate_identity: rock_lib::products::ProductCrateIdentity::local("stdlib".to_string()),
+        crate_identity: rock_lib::products::ProductCrateIdentity::local("std".to_string()),
         identity_table: rock_lib::products::ProductIdentityTable::default(),
         interface: rock_lib::products::ProductInterface::default(),
         bodies: rock_lib::products::ProductBodies::default(),
         link: rock_lib::products::ProductLinkData {
-            object_path: Some(PathBuf::from("stdlib.o")),
+            object_path: Some(PathBuf::from("std.o")),
             ..rock_lib::products::ProductLinkData::default()
         },
         dependencies: Vec::new(),
@@ -1391,57 +1391,57 @@ fn write_minimal_stdlib_artifact_for_cache_test(path: &Path) {
 }
 
 #[test]
-fn stdlib_cache_key_changes_when_stdlib_source_changes() {
+fn std_cache_key_changes_when_std_source_changes() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
-    let stdlib_dir = dir.join("stdlib");
-    std::fs::create_dir_all(stdlib_dir.join("src/values")).unwrap();
-    std::fs::write(stdlib_dir.join("src/lib.rk"), "mod values\n").unwrap();
-    let values = stdlib_dir.join("src/values/mod.rk");
+    let std_dir = dir.join("std");
+    std::fs::create_dir_all(std_dir.join("src/values")).unwrap();
+    std::fs::write(std_dir.join("src/lib.rk"), "mod values\n").unwrap();
+    let values = std_dir.join("src/values/mod.rk");
     std::fs::write(&values, "answer = -> 0\n").unwrap();
 
-    let first = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
-    let second = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
+    let first = std_cache_key(&std_dir, "compiler-stamp");
+    let second = std_cache_key(&std_dir, "compiler-stamp");
     assert_eq!(first, second);
 
     std::fs::write(&values, "answer = -> 1\n").unwrap();
-    let changed = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
+    let changed = std_cache_key(&std_dir, "compiler-stamp");
 
     assert_ne!(first, changed);
-    assert_ne!(changed, stdlib_cache_key(&stdlib_dir, "rebuilt-compiler"));
+    assert_ne!(changed, std_cache_key(&std_dir, "rebuilt-compiler"));
 
-    std::fs::write(stdlib_dir.join("rock.toml"), "[crate]\nname = \"stdlib\"\n").unwrap();
-    let with_manifest = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
+    std::fs::write(std_dir.join("rock.toml"), "[crate]\nname = \"std\"\n").unwrap();
+    let with_manifest = std_cache_key(&std_dir, "compiler-stamp");
     assert_ne!(changed, with_manifest);
     std::fs::write(
-        stdlib_dir.join("rock.toml"),
+        std_dir.join("rock.toml"),
         "[crate]\nname = \"renamed\"\n",
     )
     .unwrap();
     assert_ne!(
         with_manifest,
-        stdlib_cache_key(&stdlib_dir, "compiler-stamp")
+        std_cache_key(&std_dir, "compiler-stamp")
     );
     let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
-fn stdlib_cache_rejects_missing_ready_marker() {
+fn std_cache_rejects_missing_ready_marker() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     std::fs::create_dir_all(&dir).unwrap();
-    write_minimal_stdlib_artifact_for_cache_test(&dir.join("stdlib.rkca"));
-    std::fs::write(dir.join("stdlib.o"), b"object").unwrap();
+    write_minimal_std_artifact_for_cache_test(&dir.join("std.rkca"));
+    std::fs::write(dir.join("std.o"), b"object").unwrap();
 
-    assert!(!stdlib_cache_entry_is_ready(
-        &dir.join("stdlib.rkca"),
-        &dir.join("stdlib.o"),
+    assert!(!std_cache_entry_is_ready(
+        &dir.join("std.rkca"),
+        &dir.join("std.o"),
         &dir.join("ready")
     ));
 }
 
 #[test]
-fn stdlib_cache_stale_lock_recovery_does_not_spin_forever() {
+fn std_cache_stale_lock_recovery_does_not_spin_forever() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     std::fs::create_dir_all(&dir).unwrap();
@@ -1454,7 +1454,7 @@ fn stdlib_cache_stale_lock_recovery_does_not_spin_forever() {
 }
 
 #[test]
-fn stdlib_cache_publish_replaces_stale_ready_entry_atomically() {
+fn std_cache_publish_replaces_stale_ready_entry_atomically() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     let artifact_dir = dir.join("cache");
@@ -1463,66 +1463,66 @@ fn stdlib_cache_publish_replaces_stale_ready_entry_atomically() {
     std::fs::create_dir_all(&artifact_dir).unwrap();
     std::fs::create_dir_all(&build_dir).unwrap();
     std::fs::write(artifact_dir.join("ready"), b"ready").unwrap();
-    std::fs::write(artifact_dir.join("stdlib.rkca"), b"invalid stale artifact").unwrap();
-    std::fs::write(artifact_dir.join("stdlib.o"), b"stale object").unwrap();
-    write_minimal_stdlib_artifact_for_cache_test(&build_dir.join("stdlib.rkca"));
-    std::fs::write(build_dir.join("stdlib.o"), b"fresh object").unwrap();
+    std::fs::write(artifact_dir.join("std.rkca"), b"invalid stale artifact").unwrap();
+    std::fs::write(artifact_dir.join("std.o"), b"stale object").unwrap();
+    write_minimal_std_artifact_for_cache_test(&build_dir.join("std.rkca"));
+    std::fs::write(build_dir.join("std.o"), b"fresh object").unwrap();
 
-    publish_stdlib_cache_dir(&build_dir, &artifact_dir, &ready_path)
+    publish_std_cache_dir(&build_dir, &artifact_dir, &ready_path)
         .expect("cache publish should replace stale ready entry");
 
-    assert!(stdlib_cache_entry_is_ready(
-        &artifact_dir.join("stdlib.rkca"),
-        &artifact_dir.join("stdlib.o"),
+    assert!(std_cache_entry_is_ready(
+        &artifact_dir.join("std.rkca"),
+        &artifact_dir.join("std.o"),
         &ready_path,
     ));
     assert_eq!(
-        std::fs::read(artifact_dir.join("stdlib.o")).unwrap(),
+        std::fs::read(artifact_dir.join("std.o")).unwrap(),
         b"fresh object"
     );
 }
 
-fn stdlib_artifact_path() -> PathBuf {
-    static STDLIB_ARTIFACT: OnceLock<PathBuf> = OnceLock::new();
+fn std_artifact_path() -> PathBuf {
+    static STD_ARTIFACT: OnceLock<PathBuf> = OnceLock::new();
 
-    STDLIB_ARTIFACT
+    STD_ARTIFACT
         .get_or_init(|| {
-            let stdlib_dir = stdlib_path();
-            let cache_key = stdlib_cache_key(&stdlib_dir, &stdlib_cache_compiler_stamp());
+            let std_dir = std_path();
+            let cache_key = std_cache_key(&std_dir, &std_cache_compiler_stamp());
             let artifact_dir = std::env::temp_dir().join(format!(
-                "rock_integration_stdlib_product_artifact_{}",
+                "rock_integration_std_product_artifact_{}",
                 cache_key
             ));
-            let artifact_path = artifact_dir.join("stdlib.rkca");
-            let object_path = artifact_dir.join("stdlib.o");
+            let artifact_path = artifact_dir.join("std.rkca");
+            let object_path = artifact_dir.join("std.o");
             let ready_path = artifact_dir.join("ready");
             let lock_path = artifact_dir.with_extension("lock");
-            if stdlib_cache_entry_is_ready(&artifact_path, &object_path, &ready_path) {
+            if std_cache_entry_is_ready(&artifact_path, &object_path, &ready_path) {
                 return artifact_path;
             }
 
             let Some(_cache_lock) = acquire_cache_lock(&lock_path) else {
                 return artifact_path;
             };
-            if stdlib_cache_entry_is_ready(&artifact_path, &object_path, &ready_path) {
+            if std_cache_entry_is_ready(&artifact_path, &object_path, &ready_path) {
                 return artifact_path;
             }
 
             let build_dir = artifact_dir.with_extension(format!("building-{}", std::process::id()));
             remove_dir_if_exists(&build_dir)
-                .expect("Failed to clean stdlib product artifact build directory");
+                .expect("Failed to clean std product artifact build directory");
             std::fs::create_dir_all(&build_dir).unwrap();
-            let build_artifact_path = build_dir.join("stdlib.rkca");
-            let build_object_path = build_dir.join("stdlib.o");
+            let build_artifact_path = build_dir.join("std.rkca");
+            let build_object_path = build_dir.join("std.o");
 
             let output = rock_lib::compile_with_products(&rock_lib::Config {
-                entry_file: stdlib_dir.join("src/lib.rk"),
+                entry_file: std_dir.join("src/lib.rk"),
                 output_dir: build_dir.clone(),
                 debug_print: vec![],
                 meta_files: vec![],
                 extern_artifacts: vec![],
                 source_providers: Vec::new(),
-                current_crate_name: Some("stdlib".to_string()),
+                current_crate_name: Some("std".to_string()),
                 opt_level: 0,
                 emit_llvm: false,
                 no_link: true,
@@ -1531,20 +1531,20 @@ fn stdlib_artifact_path() -> PathBuf {
                 no_std: true,
                 sysroot: None,
             })
-            .expect("Failed to compile stdlib product artifact for integration tests");
+            .expect("Failed to compile std product artifact for integration tests");
             let mut products = output
                 .products
-                .expect("stdlib compile should produce product data");
-            products.link.object_path = Some(PathBuf::from("stdlib.o"));
+                .expect("std compile should produce product data");
+            products.link.object_path = Some(PathBuf::from("std.o"));
             products
                 .write_artifact_to_path(&build_artifact_path)
-                .expect("Failed to write stdlib product artifact for integration tests");
+                .expect("Failed to write std product artifact for integration tests");
 
             rock_lib::products::CompilerProducts::read_artifact_from_path(&build_artifact_path)
-                .expect("Failed to validate stdlib product artifact for integration tests");
+                .expect("Failed to validate std product artifact for integration tests");
 
-            publish_stdlib_cache_dir(&build_dir, &artifact_dir, &ready_path)
-                .expect("Failed to publish stdlib product artifact cache");
+            publish_std_cache_dir(&build_dir, &artifact_dir, &ready_path)
+                .expect("Failed to publish std product artifact cache");
             artifact_path
         })
         .clone()
@@ -1556,7 +1556,7 @@ fn test_config(entry_file: PathBuf, output_dir: PathBuf) -> rock_lib::Config {
         output_dir,
         debug_print: vec![],
         meta_files: vec![],
-        extern_artifacts: vec![("stdlib".to_string(), stdlib_artifact_path())],
+        extern_artifacts: vec![("std".to_string(), std_artifact_path())],
         source_providers: Vec::new(),
         current_crate_name: None,
         opt_level: 0,
@@ -1712,7 +1712,7 @@ fn run_test_command(command: &mut Command) -> Output {
     }
 }
 
-fn compile_and_run_without_stdlib(source: &str) -> i32 {
+fn compile_and_run_without_std(source: &str) -> i32 {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     fs::create_dir_all(&dir).unwrap();
@@ -1724,7 +1724,7 @@ fn compile_and_run_without_stdlib(source: &str) -> i32 {
     config.extern_artifacts.clear();
     config.no_std = true;
     config.no_prelude = true;
-    rock_lib::compile(&config).expect("no-stdlib compilation failed");
+    rock_lib::compile(&config).expect("no-std compilation failed");
 
     let mut command = Command::new(dir.join(format!("no_std_{id}")));
     run_test_command(&mut command).status.code().unwrap_or(1)
@@ -1839,10 +1839,10 @@ fn test_hello_world() {
 }
 
 #[test]
-fn test_stdlib_program_args_are_owned_and_available_outside_main() {
+fn test_std_program_args_are_owned_and_available_outside_main() {
     let output = compile_and_run_with_args(
         r#"
-> stdlib::env::args
+> std::env::args
 
 read_args = -> args!
 
@@ -1897,7 +1897,7 @@ fn test_arithmetic() {
 }
 
 #[test]
-fn test_operator_resolution_does_not_depend_on_stdlib_trait_names() {
+fn test_operator_resolution_does_not_depend_on_std_trait_names() {
     let output = compile_and_run(
         r#"< struct Boxed
     < value: I64
@@ -3350,7 +3350,7 @@ main = ->
 fn nested_index_mut_updates_matrix_element() {
     let output = compile_and_run(
         r#"
-> stdlib::collections::Vec
+> std::collections::Vec
 
 main = ->
     mut first = Vec::new!
@@ -3806,16 +3806,16 @@ fn test_mut_ref_assign() {
 }
 
 #[test]
-fn test_stdlib_math() {
+fn test_std_math() {
     let output = compile_and_run(
         r#"
 main = ->
-    stdlib::ffi::libc::sqrt 144.0 .println!
-    stdlib::ffi::libc::sin 0.0 .println!
-    stdlib::ffi::libc::cos 0.0 .println!
-    stdlib::ffi::libc::pow 2.0, 10.0 .println!
-    stdlib::ffi::libc::ceil 3.2 .println!
-    stdlib::ffi::libc::floor 3.8 .println!
+    std::ffi::libc::sqrt 144.0 .println!
+    std::ffi::libc::sin 0.0 .println!
+    std::ffi::libc::cos 0.0 .println!
+    std::ffi::libc::pow 2.0, 10.0 .println!
+    std::ffi::libc::ceil 3.2 .println!
+    std::ffi::libc::floor 3.8 .println!
     string_len "hello" .println!
     0
 "#,
@@ -3831,7 +3831,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_prelude_extern_is_available_without_explicit_import() {
+fn test_std_prelude_extern_is_available_without_explicit_import() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -3847,9 +3847,9 @@ main = ->
 fn test_socket_posix_ffi_surface_compiles_and_returns_errno() {
     let output = compile_and_run(
         r#"
-> stdlib::ffi::libc::socket
-> stdlib::ffi::libc::close
-> stdlib::ffi::libc::__errno_location
+> std::ffi::libc::socket
+> std::ffi::libc::close
+> std::ffi::libc::__errno_location
 
 last_errno = ->
     ptr = __errno_location!
@@ -3878,8 +3878,8 @@ main = ->
 fn test_socket_addr_v4_constructors() {
     let output = compile_and_run(
         r#"
-> stdlib::io::net::Ipv4Addr
-> stdlib::io::net::SocketAddrV4
+> std::io::net::Ipv4Addr
+> std::io::net::SocketAddrV4
 
 main = ->
     local = Ipv4Addr::localhost!
@@ -3912,9 +3912,9 @@ main = ->
 fn test_tcp_listener_bind_port_zero_reports_local_addr() {
     let output = compile_and_run(
         r#"
-> stdlib::io::net::TcpListener
-> stdlib::io::net::SocketAddrV4
-> stdlib::control::Result
+> std::io::net::TcpListener
+> std::io::net::SocketAddrV4
+> std::control::Result
 
 main = ->
     match (TcpListener::bind (SocketAddrV4::localhost 0))
@@ -3940,9 +3940,9 @@ main = ->
 fn test_tcp_listener_fd_field_is_private() {
     compile_should_fail(
         r#"
-> stdlib::control::Result
-> stdlib::io::net::TcpListener
-> stdlib::io::net::SocketAddrV4
+> std::control::Result
+> std::io::net::TcpListener
+> std::io::net::SocketAddrV4
 
 main = ->
     match (TcpListener::bind (SocketAddrV4::localhost 0))
@@ -3959,9 +3959,9 @@ main = ->
 fn test_tcp_stream_fd_field_is_private() {
     compile_should_fail(
         r#"
-> stdlib::control::Result
-> stdlib::io::net::TcpStream
-> stdlib::io::net::SocketAddrV4
+> std::control::Result
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
 
 main = ->
     match (TcpStream::connect (SocketAddrV4::localhost 1))
@@ -3978,10 +3978,10 @@ main = ->
 fn test_tcp_stream_connect_failure_returns_error() {
     let output = compile_and_run(
         r#"
-> stdlib::control::Result
-> stdlib::io::net::TcpStream
-> stdlib::io::net::SocketAddrV4
-> stdlib::io::IoError
+> std::control::Result
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
+> std::io::IoError
 
 main = ->
     match (TcpStream::connect (SocketAddrV4::localhost 70000))
@@ -4007,13 +4007,13 @@ fn test_tcp_stream_shared_safe_io_and_write_shutdown() {
     let _cleanup = TestDirCleanup(dir.clone());
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::concurrency::Arc
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::control::Result
-> stdlib::io::net::TcpListener
-> stdlib::io::net::TcpStream
-> stdlib::io::net::SocketAddrV4
+> std::concurrency::Arc
+> std::io::IoError
+> std::io::Write
+> std::control::Result
+> std::io::net::TcpListener
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
 
 roundtrip: () -> Result I64, IoError
 roundtrip = ->
@@ -4059,7 +4059,7 @@ main = ->
 fn test_stdout_write_all_uses_native_slice() {
     let output = compile_and_run(
         r#"
-> stdlib::io::stdout
+> std::io::stdout
 
 main = ->
     mut output = stdout!
@@ -4073,20 +4073,20 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_arc_forwards_shared_write_bound() {
+fn test_std_arc_forwards_shared_write_bound() {
     let output = compile_and_run(
         r#"
-> stdlib::concurrency::Arc
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::control::Result
+> std::concurrency::Arc
+> std::io::IoError
+> std::io::Write
+> std::control::Result
 
 struct Sink
 
 impl Write for Sink
     @write = _ -> Result::Ok 1
-    @write_str = value -> stdlib::io::write_str self, value
-    @write_all = bytes -> stdlib::io::write_all self, bytes
+    @write_str = value -> std::io::write_str self, value
+    @write_all = bytes -> std::io::write_all self, bytes
 
 write_one: &W -> Result I64, IoError where W: Write
 write_one = target ->
@@ -4109,9 +4109,9 @@ main = ->
 fn test_write_helpers_handle_partial_string_and_zero_writes() {
     let output = compile_and_run(
         r#"
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::control::Result
+> std::io::IoError
+> std::io::Write
+> std::control::Result
 
 struct PartialSink
 struct ZeroSink
@@ -4123,13 +4123,13 @@ impl Write for PartialSink
             len
         else
             2)
-    @write_str = value -> stdlib::io::write_str self, value
-    @write_all = bytes -> stdlib::io::write_all self, bytes
+    @write_str = value -> std::io::write_str self, value
+    @write_all = bytes -> std::io::write_all self, bytes
 
 impl Write for ZeroSink
     @write = _ -> Result::Ok 0
-    @write_str = value -> stdlib::io::write_str self, value
-    @write_all = bytes -> stdlib::io::write_all self, bytes
+    @write_str = value -> std::io::write_str self, value
+    @write_all = bytes -> std::io::write_all self, bytes
 
 main = ->
     sink = PartialSink
@@ -4158,13 +4158,13 @@ fn test_tcp_listener_stream_localhost_roundtrip() {
     let _cleanup = TestDirCleanup(dir.clone());
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::io::IoError
-> stdlib::io::Read
-> stdlib::io::Write
-> stdlib::control::Result
-> stdlib::io::net::TcpListener
-> stdlib::io::net::TcpStream
-> stdlib::io::net::SocketAddrV4
+> std::io::IoError
+> std::io::Read
+> std::io::Write
+> std::control::Result
+> std::io::net::TcpListener
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
 
 roundtrip: () -> Result I64, IoError
 roundtrip = ->
@@ -4208,13 +4208,13 @@ fn test_tcp_listener_accept_method_section_in_result_chain() {
     let _cleanup = TestDirCleanup(dir.clone());
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::io::IoError
-> stdlib::io::Read
-> stdlib::io::Write
-> stdlib::control::Result
-> stdlib::io::net::TcpListener
-> stdlib::io::net::TcpStream
-> stdlib::io::net::SocketAddrV4
+> std::io::IoError
+> std::io::Read
+> std::io::Write
+> std::control::Result
+> std::io::net::TcpListener
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
 
 accept_with_method_section: TcpListener -> Result TcpStream, IoError
 accept_with_method_section = listener ->
@@ -4263,10 +4263,10 @@ fn test_file_create_write_str_uses_generic_write_trait() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::io::fs::File
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::control::Result
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
+> std::control::Result
 
 write_text: &mut W -> &Str -> Result I64, IoError where W: Write
 write_text = writer, text ->
@@ -4309,10 +4309,10 @@ fn test_file_open_read_uses_generic_read_trait() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::io::fs::File
-> stdlib::io::IoError
-> stdlib::io::Read
-> stdlib::control::Result
+> std::io::fs::File
+> std::io::IoError
+> std::io::Read
+> std::control::Result
 
 read_into: &mut R -> &mut [U8] -> Result I64, IoError where R: Read
 read_into = reader, buf ->
@@ -4361,10 +4361,10 @@ fn test_file_append_writes_at_end() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::io::fs::File
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::control::Result
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
+> std::control::Result
 
 append_text: &Str -> Result I64, IoError
 append_text = path ->
@@ -4401,9 +4401,9 @@ fn test_io_pipe_operator_consumes_reader_and_copies_until_eof() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::io::fs::File
-> stdlib::io::IoError
-> stdlib::control::Result
+> std::io::fs::File
+> std::io::IoError
+> std::control::Result
 
 copy_file: &Str -> &Str -> Result I64, IoError
 copy_file = source, target ->
@@ -4447,10 +4447,10 @@ fn test_file_create_rejects_embedded_nul_path() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::io::fs::File
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::control::Result
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
+> std::control::Result
 
 overwrite: &Str -> Result I64, IoError
 overwrite = path ->
@@ -4482,9 +4482,9 @@ fn test_file_open_missing_path_returns_os_error() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::io::fs::File
-> stdlib::io::IoError
-> stdlib::control::Result
+> std::io::fs::File
+> std::io::IoError
+> std::control::Result
 
 main = ->
     match File::open "missing.txt"
@@ -4502,9 +4502,9 @@ main = ->
 fn test_file_fd_field_is_private() {
     compile_should_fail(
         r#"
-> stdlib::io::fs::File
-> stdlib::io::IoError
-> stdlib::control::Result
+> std::io::fs::File
+> std::io::IoError
+> std::control::Result
 
 read_fd: &Str -> Result I64, IoError
 read_fd = path ->
@@ -4521,14 +4521,14 @@ main = -> 0
 fn test_file_raw_fd_constructor_not_public() {
     compile_should_fail(
         r#"
-> stdlib::io::fs::File
+> std::io::fs::File
 
 main = ->
     file = File
         fd: 0
     0
 "#,
-        "Cannot construct struct 'stdlib::io::fs::File' because it has private fields",
+        "Cannot construct struct 'std::io::fs::File' because it has private fields",
     );
 }
 
@@ -4536,7 +4536,7 @@ main = ->
 fn test_function_name_can_match_c_extern_symbol() {
     let output = compile_and_run(
         r#"
-> stdlib::io::net::TcpListener
+> std::io::net::TcpListener
 
 main = ->
     listen! .println!
@@ -4553,14 +4553,14 @@ listen = -> 42
 fn test_tcp_listener_raw_fd_constructor_not_public() {
     compile_should_fail(
         r#"
-> stdlib::io::net::TcpListener
+> std::io::net::TcpListener
 
 main = ->
     listener = TcpListener
         fd: 0
     0
 "#,
-        "Cannot construct struct 'stdlib::io::net::TcpListener' because it has private fields",
+        "Cannot construct struct 'std::io::net::TcpListener' because it has private fields",
     );
 }
 
@@ -4717,7 +4717,7 @@ main = ->
 fn deferred_method_section_autorefs_shared_receiver() {
     let output = compile_and_run(
         r#"
-> stdlib::control::Result
+> std::control::Result
 
 struct Counter
     < value: I64
@@ -5015,15 +5015,15 @@ main = !->
 }
 
 #[test]
-fn unit_arrow_main_exits_zero_without_stdlib() {
+fn unit_arrow_main_exits_zero_without_std() {
     for source in [
         "main = !-> 42\n",
         "main = !-> (42, 7)\n",
         "main = !-> return\n",
     ] {
-        assert_eq!(compile_and_run_without_stdlib(source), 0);
+        assert_eq!(compile_and_run_without_std(source), 0);
     }
-    assert_eq!(compile_and_run_without_stdlib("main = -> 7\n"), 7);
+    assert_eq!(compile_and_run_without_std("main = -> 7\n"), 7);
 }
 
 #[test]
@@ -6055,10 +6055,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_join_returns_value() {
+fn test_std_thread_spawn_join_returns_value() {
     let output = compile_and_run(
         r#"
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::spawn
 
 main = ->
     match spawn (-> 42)
@@ -6075,11 +6075,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_handle_drop_detaches_without_waiting() {
+fn test_std_thread_handle_drop_detaches_without_waiting() {
     let output = compile_and_run(
         r#"
-> stdlib::concurrency::thread::sleep_ms
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::sleep_ms
+> std::concurrency::thread::spawn
 
 launch = ->
     match spawn (->
@@ -6100,11 +6100,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_detached_thread_drops_unobserved_result() {
+fn test_std_detached_thread_drops_unobserved_result() {
     let output = compile_and_run(
         r#"
-> stdlib::concurrency::thread::sleep_ms
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::sleep_ms
+> std::concurrency::thread::spawn
 
 struct DetachedResult
 
@@ -6142,10 +6142,10 @@ main = -> 0
 }
 
 #[test]
-fn test_stdlib_thread_spawn_accepts_owned_send_capture() {
+fn test_std_thread_spawn_accepts_owned_send_capture() {
     let output = compile_and_run(
         r#"
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::spawn
 
 struct Owned
     < value: I64
@@ -6170,10 +6170,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_rejects_borrowed_capture() {
+fn test_std_thread_spawn_rejects_borrowed_capture() {
     compile_should_fail(
         r#"
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::spawn
 
 main = ->
     value = 41
@@ -6185,10 +6185,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_rejects_borrowed_capture_after_branch_merge() {
+fn test_std_thread_spawn_rejects_borrowed_capture_after_branch_merge() {
     compile_should_fail(
         r#"
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::spawn
 
 main = ->
     value = 41
@@ -6201,10 +6201,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_rejects_borrowed_method_value() {
+fn test_std_thread_spawn_rejects_borrowed_method_value() {
     compile_should_fail(
         r#"
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::spawn
 
 struct Value
     < number: I64
@@ -6224,10 +6224,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_rejects_downstream_send_impl() {
+fn test_std_thread_spawn_rejects_downstream_send_impl() {
     compile_should_fail(
         r#"
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::spawn
 
 struct FakeSend
     < pointer: *I64
@@ -6248,10 +6248,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_accepts_struct_callable_impl() {
+fn test_std_thread_spawn_accepts_struct_callable_impl() {
     let output = compile_and_run(
         r#"
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::spawn
 
 struct Task
 
@@ -6274,12 +6274,12 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_arc_mutex_synchronizes_threaded_updates() {
+fn test_std_arc_mutex_synchronizes_threaded_updates() {
     let output = compile_and_run(
         r#"
-> stdlib::concurrency::Arc
-> stdlib::concurrency::Mutex
-> stdlib::concurrency::thread::spawn
+> std::concurrency::Arc
+> std::concurrency::Mutex
+> std::concurrency::thread::spawn
 
 struct Counter
     < value: I64
@@ -6328,10 +6328,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_mutex_guard_drop_unlocks_mutex() {
+fn test_std_mutex_guard_drop_unlocks_mutex() {
     let output = compile_and_run(
         r#"
-> stdlib::concurrency::Mutex
+> std::concurrency::Mutex
 
 set_value: &Mutex I64 -> ()
 set_value = mutex ->
@@ -6352,11 +6352,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_mutex_guard_is_not_send() {
+fn test_std_mutex_guard_is_not_send() {
     compile_should_fail(
         r#"
-> stdlib::concurrency::Mutex
-> stdlib::concurrency::thread::spawn
+> std::concurrency::Mutex
+> std::concurrency::thread::spawn
 
 main = ->
     mutex = Mutex::new 7
@@ -6369,10 +6369,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_rejects_reference_hidden_in_moved_struct() {
+fn test_std_thread_spawn_rejects_reference_hidden_in_moved_struct() {
     compile_should_fail(
         r#"
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::spawn
 
 struct Borrowed
     < value: &I64
@@ -6392,10 +6392,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_mutex_try_lock_observes_guard_lifetime() {
+fn test_std_mutex_try_lock_observes_guard_lifetime() {
     let output = compile_and_run(
         r#"
-> stdlib::concurrency::Mutex
+> std::concurrency::Mutex
 
 lock_once: &Mutex I64 -> ()
 lock_once = mutex ->
@@ -6419,10 +6419,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_arc_drops_owned_value_once() {
+fn test_std_arc_drops_owned_value_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::concurrency::Arc
+> std::concurrency::Arc
 
 main = ->
     value = Arc::new (String::from "shared")
@@ -7125,7 +7125,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_try_protocol_methods() {
+fn test_std_try_protocol_methods() {
     let output = compile_and_run(
         r#"
 main: () -> I64
@@ -7143,7 +7143,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_into_uses_from_blanket_impl() {
+fn test_std_into_uses_from_blanket_impl() {
     let output = compile_and_run(
         r#"
 struct Small
@@ -7169,8 +7169,8 @@ main = ->
 }
 
 #[test]
-fn test_static_trait_overloads_infer_arguments_without_stdlib() {
-    let status = compile_and_run_without_stdlib(
+fn test_static_trait_overloads_infer_arguments_without_std() {
+    let status = compile_and_run_without_std(
         r#"
 trait Convert T
     convert: T -> Self
@@ -7200,7 +7200,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_string_from_conversions() {
+fn test_std_string_from_conversions() {
     let output = compile_and_run(
         r#"
 convert: T -> U where U: From T
@@ -7235,7 +7235,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_string_from_rejects_unsupported_source() {
+fn test_std_string_from_rejects_unsupported_source() {
     compile_should_fail(
         r#"
 main = !->
@@ -7246,7 +7246,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_fixed_u8_arrays_convert_to_string_for_any_length() {
+fn test_std_fixed_u8_arrays_convert_to_string_for_any_length() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -7474,7 +7474,7 @@ main = ->
 
 #[test]
 fn test_try_uses_complete_renamed_language_item_protocol() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"
 lang control_flow
 < enum Flow B, C
@@ -7941,9 +7941,9 @@ main = !->
 fn test_signatureless_io_callback_receiver_is_inferred_through_result_loop() {
     let output = compile_and_run(
         r#"
-> stdlib::io::Write
-> stdlib::io::stdout
-> stdlib::io::IoError
+> std::io::Write
+> std::io::stdout
+> std::io::IoError
 
 struct Source
 
@@ -8847,7 +8847,7 @@ main = ->
 fn vec_deref_does_not_return_reference_to_temporary_slice() {
     compile_should_fail(
         r#"
-> stdlib::collections::Vec
+> std::collections::Vec
 
 bad: Vec I64 -> &I64
 bad = v -> &v.len!
@@ -8893,7 +8893,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_show_formats_owned_elements() {
+fn test_std_vec_show_formats_owned_elements() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -8909,7 +8909,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_rejects_zero_sized_elements_on_push() {
+fn test_std_vec_rejects_zero_sized_elements_on_push() {
     let (_output, success) = compile_and_run_with_status(
         r#"
 struct Empty
@@ -8925,7 +8925,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_new_as_slice_uses_non_null_buffer() {
+fn test_std_vec_new_as_slice_uses_non_null_buffer() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -8940,7 +8940,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_push_uses_non_null_buffer() {
+fn test_std_vec_push_uses_non_null_buffer() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -8956,7 +8956,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_index_works() {
+fn test_std_vec_index_works() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -8972,7 +8972,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_index_out_of_bounds_traps() {
+fn test_std_vec_index_out_of_bounds_traps() {
     let (_output, success) = compile_and_run_with_status(
         r#"
 main = ->
@@ -8987,7 +8987,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_shared_binding_index_works() {
+fn test_std_vec_shared_binding_index_works() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -9040,7 +9040,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_rejects_zero_sized_values_on_insert() {
+fn test_std_hash_map_rejects_zero_sized_values_on_insert() {
     let (_output, success) = compile_and_run_with_status(
         r#"
 struct Empty
@@ -9056,7 +9056,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_rejects_zero_sized_keys_on_insert() {
+fn test_std_hash_map_rejects_zero_sized_keys_on_insert() {
     let (_output, success) = compile_and_run_with_status(
         r#"
 struct Empty
@@ -9360,7 +9360,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_drops_keys_and_values() {
+fn test_std_hash_map_drops_keys_and_values() {
     let output = compile_and_run(
         r#"
 struct TrackedKey
@@ -9411,7 +9411,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_overwrite_drops_old_value_and_unused_key_once() {
+fn test_std_hash_map_overwrite_drops_old_value_and_unused_key_once() {
     let output = compile_and_run(
         r#"
 struct TrackedKey
@@ -9461,7 +9461,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_get_and_contains_borrow_probe_key_without_consuming() {
+fn test_std_hash_map_get_and_contains_borrow_probe_key_without_consuming() {
     let output = compile_and_run(
         r#"
 struct TrackedKey
@@ -9537,7 +9537,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_growth_drops_moved_keys_and_values_once() {
+fn test_std_hash_map_growth_drops_moved_keys_and_values_once() {
     let output = compile_and_run(
         r#"
 struct TrackedKey
@@ -9987,7 +9987,7 @@ main = ->
 }
 
 #[test]
-fn test_generic_function_argument_app_ir_does_not_define_stdlib_object_symbols() {
+fn test_generic_function_argument_app_ir_does_not_define_std_object_symbols() {
     let llvm = compile_to_llvm_ir(
         r#"
 identity = x -> x
@@ -10010,11 +10010,11 @@ main = ->
     );
     let offending_defs: Vec<&str> = llvm
         .lines()
-        .filter(|line| line.starts_with("define ") && line.contains("@stdlib__String_none_new"))
+        .filter(|line| line.starts_with("define ") && line.contains("@std__String_none_new"))
         .collect();
     assert!(
         offending_defs.is_empty(),
-        "app IR unexpectedly defines stdlib object-backed symbols: {:?}",
+        "app IR unexpectedly defines std object-backed symbols: {:?}",
         offending_defs
     );
 }
@@ -10069,7 +10069,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_conversions_return_owned_strings() {
+fn test_std_conversions_return_owned_strings() {
     let (output, success) = compile_and_run_with_status(
         r#"
 main = ->
@@ -10103,7 +10103,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_string_helpers_return_owned_values() {
+fn test_std_string_helpers_return_owned_values() {
     let (output, success) = compile_and_run_with_status(
         r#"
 main = ->
@@ -10127,7 +10127,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_string_add_operators() {
+fn test_std_string_add_operators() {
     let src = r#"
 main = ->
     suffix = String::from "!"
@@ -10144,7 +10144,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_eq_default_not_equal() {
+fn test_std_eq_default_not_equal() {
     let src = r#"
 main = ->
     1 != 2 .println!
@@ -10159,7 +10159,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_repeated_primitive_show_println_drops_temporaries() {
+fn test_std_repeated_primitive_show_println_drops_temporaries() {
     let (output, success) = compile_and_run_with_status(
         r#"
 main = ->
@@ -11123,7 +11123,7 @@ fn compile_should_pass(source: &str) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-fn compile_should_pass_without_stdlib(source: &str) {
+fn compile_should_pass_without_std(source: &str) {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     fs::create_dir_all(&dir).unwrap();
@@ -11141,7 +11141,7 @@ fn compile_should_pass_without_stdlib(source: &str) {
 
 #[test]
 fn test_integer_literal_defaults_to_i64() {
-    compile_should_pass_without_stdlib(
+    compile_should_pass_without_std(
         r#"main = ->
     value = 42
     0
@@ -11151,7 +11151,7 @@ fn test_integer_literal_defaults_to_i64() {
 
 #[test]
 fn test_float_literal_defaults_to_f64() {
-    compile_should_pass_without_stdlib(
+    compile_should_pass_without_std(
         r#"main = ->
     value = 4.2
     0
@@ -11172,7 +11172,7 @@ fn test_unconstrained_local_lambda_is_rejected() {
 
 #[test]
 fn test_generic_function_remains_polymorphic_under_strict_finalization() {
-    compile_should_pass_without_stdlib(
+    compile_should_pass_without_std(
         r#"identity = value -> value
 
 main = ->
@@ -11746,7 +11746,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_drops_initialized_elements() {
+fn test_std_vec_drops_initialized_elements() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -11774,7 +11774,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_set_drops_replaced_element_once() {
+fn test_std_vec_set_drops_replaced_element_once() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -11802,7 +11802,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_set_out_of_bounds_drops_ignored_value_once() {
+fn test_std_vec_set_out_of_bounds_drops_ignored_value_once() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -11830,7 +11830,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_growth_drops_initialized_elements_once() {
+fn test_std_vec_growth_drops_initialized_elements_once() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -11864,7 +11864,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_methods() {
+fn test_std_option_methods() {
     let output = compile_and_run(
         r#"
 inc = x -> x + 1
@@ -11909,7 +11909,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_inspect_borrows_payload_and_returns_option() {
+fn test_std_option_inspect_borrows_payload_and_returns_option() {
     let output = compile_and_run(
         r#"
 print_ref: &I64 -> I32
@@ -11927,7 +11927,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_inspect_owned_string_borrows_and_returns_owned_option() {
+fn test_std_option_inspect_owned_string_borrows_and_returns_owned_option() {
     let output = compile_and_run(
         r#"
 print_len: &String -> I32
@@ -11945,7 +11945,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_inspect_owned_string_consumes_receiver() {
+fn test_std_option_inspect_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 print_len: &String -> I32
@@ -11963,7 +11963,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_methods() {
+fn test_std_result_methods() {
     let output = compile_and_run(
         r#"
 inc = x -> x + 1
@@ -12012,8 +12012,8 @@ main = ->
 #[test]
 fn test_hkt_functor_option_result_vec() {
     let products =
-        rock_lib::products::CompilerProducts::read_artifact_from_path(&stdlib_artifact_path())
-            .expect("read stdlib artifact");
+        rock_lib::products::CompilerProducts::read_artifact_from_path(&std_artifact_path())
+            .expect("read std artifact");
     let functional_trait_ids = products
         .interface
         .traits
@@ -12062,7 +12062,7 @@ fn test_hkt_functor_option_result_vec() {
 
     let output = compile_and_run(
         r#"
-> stdlib::io::IoError
+> std::io::IoError
 
 type IoResult = Result _, IoError
 
@@ -12758,7 +12758,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_traversable_sequence() {
+fn test_std_traversable_sequence() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -12790,7 +12790,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_eager_map_move_only_preserves_order() {
+fn test_std_vec_eager_map_move_only_preserves_order() {
     let output = compile_and_run(
         r#"
 string_len: String -> I64
@@ -12815,7 +12815,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_for_each_ranges_and_mutable_capture() {
+fn test_std_for_each_ranges_and_mutable_capture() {
     let output = compile_and_run(
         r#"
 main = !->
@@ -12851,7 +12851,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_for_each_owned_and_borrowed_collections() {
+fn test_std_for_each_owned_and_borrowed_collections() {
     let output = compile_and_run(
         r#"
 main = !->
@@ -12876,7 +12876,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_for_each_book_fizzbuzz() {
+fn test_std_for_each_book_fizzbuzz() {
     let source = include_str!("../../docs/examples/fizzbuzz.rk");
     let chapter = include_str!("../../docs/src/getting-started/first-project.md");
     let listing = chapter
@@ -12902,7 +12902,7 @@ fn test_stdlib_for_each_book_fizzbuzz() {
 }
 
 #[test]
-fn test_stdlib_for_each_hkt_foldable_carriers() {
+fn test_std_for_each_hkt_foldable_carriers() {
     let output = compile_and_run(
         r#"
 struct One T
@@ -12967,7 +12967,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_for_each_rejects_open_ended_ranges() {
+fn test_std_for_each_rejects_open_ended_ranges() {
     for range in ["(..)", "(1..)", "(..3)", "(..=3)"] {
         let (output, success) = compile_and_run_with_status(&format!(
             "main = !->\n    for_each {range}, number !-> number.println!\n"
@@ -12978,7 +12978,7 @@ fn test_stdlib_for_each_rejects_open_ended_ranges() {
 }
 
 #[test]
-fn test_stdlib_for_each_drops_owned_items_and_callback_once() {
+fn test_std_for_each_drops_owned_items_and_callback_once() {
     let output = compile_and_run(
         r#"
 struct Item
@@ -13019,7 +13019,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_for_each_consumes_owned_source() {
+fn test_std_for_each_consumes_owned_source() {
     compile_should_fail(
         r#"
 main = !->
@@ -13033,7 +13033,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_for_each_rejects_non_unit_action() {
+fn test_std_for_each_rejects_non_unit_action() {
     compile_should_fail(
         r#"
 main = !->
@@ -13044,7 +13044,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_vec_map_ref_preserves_source() {
+fn test_std_vec_map_ref_preserves_source() {
     let output = compile_and_run(
         r#"
 string_len: &String -> I64
@@ -13070,7 +13070,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_map_ref_contextually_types_closure_parameter() {
+fn test_std_vec_map_ref_contextually_types_closure_parameter() {
     let output = compile_and_run(
         r#"
 print_value: I64 -> ()
@@ -13093,7 +13093,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_try_for_each_short_circuits() {
+fn test_std_vec_try_for_each_short_circuits() {
     let output = compile_and_run(
         r#"
 visit: &I64 -> Result (), I64
@@ -13127,7 +13127,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_eager_operations_preserve_order_and_are_stack_safe() {
+fn test_std_vec_eager_operations_preserve_order_and_are_stack_safe() {
     let output = compile_and_run(
         r#"
 double: I64 -> I64
@@ -13245,7 +13245,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_eager_operations_drop_inputs_and_outputs_once() {
+fn test_std_vec_eager_operations_drop_inputs_and_outputs_once() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -13281,7 +13281,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_filtering_and_try_map_drop_each_value_once() {
+fn test_std_vec_filtering_and_try_map_drop_each_value_once() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -13371,7 +13371,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_result_fp_operators() {
+fn test_std_option_result_fp_operators() {
     let output = compile_and_run(
         r#"
 inc = x -> x + 1
@@ -13429,11 +13429,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_bifunctor_and_error_operator() {
+fn test_std_result_bifunctor_and_error_operator() {
     let output = compile_and_run(
         r#"
-> stdlib::functional::first
-> stdlib::functional::second
+> std::functional::first
+> std::functional::second
 
 inc = value -> value + 1
 double = value -> value * 2
@@ -13484,7 +13484,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_show_default_println() {
+fn test_std_show_default_println() {
     let src = r#"
 struct Named
     < value: I64
@@ -13507,12 +13507,12 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_result_show_prints_payloads() {
+fn test_std_option_result_show_prints_payloads() {
     let output = compile_and_run(
         r#"
-> stdlib::control::Option
-> stdlib::control::Result
-> stdlib::io::IoError
+> std::control::Option
+> std::control::Result
+> std::io::IoError
 
 main = ->
     none: Option I64 = Option::None
@@ -13548,7 +13548,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_show_owned_string_is_non_consuming() {
+fn test_std_option_show_owned_string_is_non_consuming() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -13563,7 +13563,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_show_owned_string_is_non_consuming() {
+fn test_std_result_show_owned_string_is_non_consuming() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -13581,7 +13581,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_map_owned_string_consumes_receiver() {
+fn test_std_option_map_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 main = ->
@@ -13597,7 +13597,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_map_owned_string_consumes_receiver() {
+fn test_std_result_map_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 main = ->
@@ -13613,7 +13613,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_map_err_owned_string_consumes_receiver() {
+fn test_std_result_map_err_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 main = ->
@@ -13629,7 +13629,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_bind_owned_string_forwards_move_receiver() {
+fn test_std_option_bind_owned_string_forwards_move_receiver() {
     let output = compile_and_run(
         r#"
 bind: String -> Option I64
@@ -13647,7 +13647,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_bind_owned_string_forwards_move_receiver() {
+fn test_std_result_bind_owned_string_forwards_move_receiver() {
     let output = compile_and_run(
         r#"
 bind: String -> Result I64, String
@@ -13668,7 +13668,7 @@ main = ->
 fn test_result_method_sections_preserve_unresolved_payload_until_materialization() {
     let output = compile_and_run(
         r#"
-> stdlib::control::Result
+> std::control::Result
 
 struct Source
     < value: I64
@@ -13701,7 +13701,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_pipe_operator_function() {
+fn test_std_pipe_operator_function() {
     let output = compile_and_run(
         r#"
 inc = x -> x + 1
@@ -14316,7 +14316,7 @@ main = ->
 
 #[test]
 fn safe_custom_pointer_index_impl_allows_read_and_write_outside_unsafe() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang index
 < trait ReadAt Key
     lang output
@@ -14526,7 +14526,7 @@ main = ->
 
 #[test]
 fn marked_renamed_sized_trait_drives_implicit_bounds_by_id() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang sized
 < trait StaticLayout
 
@@ -14595,11 +14595,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_drops_inner_value() {
+fn test_std_box_drops_inner_value() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14620,10 +14620,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_rejects_zero_sized_value() {
+fn test_std_box_rejects_zero_sized_value() {
     let (_output, success) = compile_and_run_with_status(
         r#"
-> stdlib::mem::Box
+> std::mem::Box
 
 struct Empty
 
@@ -14637,10 +14637,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_new_uses_non_null_pointer() {
+fn test_std_box_new_uses_non_null_pointer() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::Box
+> std::mem::Box
 
 main = ->
     boxed = Box::new 42
@@ -14676,11 +14676,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_drops_aggregate_field_value() {
+fn test_std_box_drops_aggregate_field_value() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14708,7 +14708,7 @@ main = ->
 fn test_drop_order_runs_owner_before_field_cleanup() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::drop::Drop
+> std::mem::drop::Drop
 
 struct Child
     < value: I64
@@ -14741,7 +14741,7 @@ main = ->
 fn test_branch_move_drops_value_once_after_merge() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::drop::Drop
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14772,7 +14772,7 @@ main = ->
 fn test_field_assignment_drops_old_field_before_overwrite() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::drop::Drop
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14802,7 +14802,7 @@ main = ->
 fn test_tuple_array_and_enum_payload_cleanup_drop_elements() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::drop::Drop
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14839,7 +14839,7 @@ main = ->
 fn test_expression_statement_temporary_is_dropped() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::drop::Drop
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14865,7 +14865,7 @@ main = ->
 fn test_borrowed_temporary_drops_when_call_expression_finishes() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::drop::Drop
+> std::mem::drop::Drop
 
 struct Holder
     < value: I64
@@ -14899,7 +14899,7 @@ main = ->
 fn test_return_expression_temporary_drops_before_returning_to_caller() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::drop::Drop
+> std::mem::drop::Drop
 
 struct Holder
     < value: I64
@@ -14934,8 +14934,8 @@ main = ->
 fn test_owned_string_temporary_lives_through_ffi_call() {
     let output = compile_and_run(
         r#"
-> stdlib::ffi::libc::puts
-> stdlib::string::String
+> std::ffi::libc::puts
+> std::string::String
 
 main = ->
     puts ((String::from "hello").as_ptr!)
@@ -14947,12 +14947,12 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_has_no_keep_alive_lifetime_workarounds() {
-    let stdlib_files = ["src/convert.rk", "src/control/option.rk", "src/control/result.rk", "src/show.rk"];
-    let offenders = stdlib_files
+fn test_std_has_no_keep_alive_lifetime_workarounds() {
+    let std_files = ["src/convert.rk", "src/control/option.rk", "src/control/result.rk", "src/show.rk"];
+    let offenders = std_files
         .iter()
         .filter_map(|file| {
-            let path = stdlib_path().join(file);
+            let path = std_path().join(file);
             let source = fs::read_to_string(&path).unwrap();
             source.contains("keep_alive").then_some(file.to_string())
         })
@@ -14960,7 +14960,7 @@ fn test_stdlib_has_no_keep_alive_lifetime_workarounds() {
 
     assert!(
         offenders.is_empty(),
-        "stdlib should rely on full-expression temporary lifetimes, found keep_alive in {offenders:?}"
+        "std should rely on full-expression temporary lifetimes, found keep_alive in {offenders:?}"
     );
 }
 
@@ -15023,11 +15023,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_move_drops_inner_value_once() {
+fn test_std_box_move_drops_inner_value_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15050,11 +15050,11 @@ main = ->
 }
 
 #[test]
-fn test_returned_stdlib_box_binding_drops_inner_value_once() {
+fn test_returned_std_box_binding_drops_inner_value_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15082,8 +15082,8 @@ main = ->
 fn test_method_by_value_owned_arg_drops_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -15117,8 +15117,8 @@ main = ->
 fn test_partial_move_from_direct_drop_type_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -15153,8 +15153,8 @@ main = ->
 fn test_nested_partial_move_from_direct_drop_type_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -15193,7 +15193,7 @@ main = ->
 fn test_tuple_partial_move_from_direct_drop_type_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::mem::drop::Drop
+> std::mem::drop::Drop
 
 struct Child
     < id: I64
@@ -15226,8 +15226,8 @@ main = ->
 fn test_array_element_move_of_cleanup_value_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -15251,11 +15251,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_reassignment_drops_old_and_new_values_once() {
+fn test_std_box_reassignment_drops_old_and_new_values_once() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15282,8 +15282,8 @@ main = ->
 fn test_by_value_owned_parameter_is_dropped_when_unused() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15311,7 +15311,7 @@ main = ->
 fn test_by_value_owned_parameter_with_local_drop_is_dropped_when_unused() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::drop::Drop
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15339,8 +15339,8 @@ main = ->
 fn test_assigning_moved_out_field_does_not_drop_stale_value() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15373,8 +15373,8 @@ main = ->
 fn test_enum_partial_payload_move_drops_unmoved_payload_field() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15406,8 +15406,8 @@ main = ->
 fn test_parent_cleanup_skips_moved_field_but_drops_unmoved_sibling() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15441,8 +15441,8 @@ main = ->
 fn test_branch_skipped_field_move_drops_both_fields_after_merge() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15477,8 +15477,8 @@ main = ->
 fn test_branch_taken_field_move_drops_moved_field_once_and_sibling_after_merge() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::Box
-> stdlib::mem::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15510,16 +15510,16 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_raw_buffer_capacity_and_pointer_access() {
+fn test_std_raw_buffer_capacity_and_pointer_access() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::mem::raw_buffer::RawBuffer
+> std::mem::raw_buffer::RawBuffer
 
 main = ->
     empty: RawBuffer I64 = RawBuffer::new!
     empty.cap!.println!
 
-    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (stdlib::mem::size_of 0), 2
+    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (std::mem::size_of 0), 2
     buf.cap!.println!
     ptr = buf.ptr!
     unsafe *ptr = 41
@@ -15536,13 +15536,13 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_raw_buffer_with_capacity_requires_unsafe() {
+fn test_std_raw_buffer_with_capacity_requires_unsafe() {
     compile_should_fail(
         r#"
-> stdlib::mem::raw_buffer::RawBuffer
+> std::mem::raw_buffer::RawBuffer
 
 main = ->
-    buf = RawBuffer::with_capacity (stdlib::mem::size_of 0), 2
+    buf = RawBuffer::with_capacity (std::mem::size_of 0), 2
     0
 "#,
         "requires an unsafe block",
@@ -15550,10 +15550,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_raw_buffer_as_slice_rejects_len_above_capacity() {
+fn test_std_raw_buffer_as_slice_rejects_len_above_capacity() {
     let (_output, success) = compile_and_run_with_status(
         r#"
-> stdlib::mem::raw_buffer::RawBuffer
+> std::mem::raw_buffer::RawBuffer
 
 main = ->
     buf: RawBuffer I64 = RawBuffer::new!
@@ -15569,10 +15569,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_raw_buffer_as_slice_requires_unsafe() {
+fn test_std_raw_buffer_as_slice_requires_unsafe() {
     compile_should_fail(
         r#"
-> stdlib::mem::raw_buffer::RawBuffer
+> std::mem::raw_buffer::RawBuffer
 
 main = ->
     buf: RawBuffer I64 = RawBuffer::new!
@@ -15584,13 +15584,13 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_raw_buffer_zero_capacity_as_slice_uses_non_null_buffer() {
+fn test_std_raw_buffer_zero_capacity_as_slice_uses_non_null_buffer() {
     let output = compile_and_run(
         r#"
-> stdlib::mem::raw_buffer::RawBuffer
+> std::mem::raw_buffer::RawBuffer
 
 main = ->
-    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (stdlib::mem::size_of 0), 0
+    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (std::mem::size_of 0), 0
     slice = unsafe buf.as_slice 0
     ((~ArrPtr (*slice)) as I64) != 0 .println!
     0
@@ -15604,8 +15604,8 @@ main = ->
 fn test_global_alloc_requires_unsafe() {
     compile_should_fail(
         r#"
-> stdlib::mem::alloc::Global
-> stdlib::mem::alloc::Layout
+> std::mem::alloc::Global
+> std::mem::alloc::Layout
 
 main = ->
     layout = Layout
@@ -15962,7 +15962,7 @@ main = ->
 fn returning_vec_get_from_local_vec_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::collections::Vec
+> std::collections::Vec
 
 bad: () -> Option &I64
 bad = ->
@@ -15982,7 +15982,7 @@ main = ->
 fn returning_reference_to_local_vec_index_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::collections::Vec
+> std::collections::Vec
 
 bad: () -> &I64
 bad = ->
@@ -16002,7 +16002,7 @@ main = ->
 fn returning_box_as_ref_from_local_box_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::mem::Box
+> std::mem::Box
 
 bad: () -> &I64
 bad = ->
@@ -16021,7 +16021,7 @@ main = ->
 fn returning_raw_deref_from_local_box_pointer_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::mem::Box
+> std::mem::Box
 
 bad: () -> &I64
 bad = ->
@@ -16041,7 +16041,7 @@ main = ->
 fn returning_vec_get_from_input_vec_reference_is_allowed() {
     let output = compile_and_run(
         r#"
-> stdlib::collections::Vec
+> std::collections::Vec
 
 get_first: &Vec I64 -> Option &I64
 get_first = v -> (*v).get 0
@@ -16063,7 +16063,7 @@ main = ->
 fn returning_vec_index_from_input_vec_reference_is_allowed() {
     let output = compile_and_run(
         r#"
-> stdlib::collections::Vec
+> std::collections::Vec
 
 first: &Vec I64 -> &I64
 first = v -> &((*v)[0])
@@ -16940,7 +16940,7 @@ main = -> 0
 }
 
 #[test]
-fn test_unary_neg_dispatches_through_stdlib_trait_with_associated_output() {
+fn test_unary_neg_dispatches_through_std_trait_with_associated_output() {
     let output = compile_and_run(
         r#"
 struct Wrapper
@@ -16962,7 +16962,7 @@ main = ->
 }
 
 #[test]
-fn test_unary_not_dispatches_through_stdlib_trait_with_associated_output() {
+fn test_unary_not_dispatches_through_std_trait_with_associated_output() {
     let output = compile_and_run(
         r#"
 struct Wrapper
@@ -17084,7 +17084,7 @@ main = ->
 
 #[test]
 fn index_syntax_uses_marked_trait_member_and_output_ids() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang index
 < trait Lookup Key
     lang output
@@ -17110,7 +17110,7 @@ main = ->
 
 #[test]
 fn index_syntax_selects_separate_read_and_write_authority() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang index
 < trait ReadAt Key
     lang output
@@ -17295,7 +17295,7 @@ main = ->
 
 #[test]
 fn index_mut_impl_pairs_reordered_bounds() {
-    compile_should_pass_without_stdlib(
+    compile_should_pass_without_std(
         r#"trait First
 trait Second
 
@@ -17333,7 +17333,7 @@ main = ->
 
 #[test]
 fn index_mut_impl_accepts_shared_mutable_slice_pair() {
-    compile_should_pass_without_stdlib(
+    compile_should_pass_without_std(
         r#"lang index
 < trait ReadAt Key
     lang output
@@ -17442,7 +17442,7 @@ main = ->
 
 #[test]
 fn index_syntax_prefers_marked_array_impl_before_builtin_key_coercion() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang index
 < trait Lookup Key
     lang output
@@ -17468,7 +17468,7 @@ main = ->
 
 #[test]
 fn marked_slice_index_mut_updates_fixed_array() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang index
 < trait ReadAt Key
     lang output
@@ -17547,7 +17547,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_index_trait_is_available_from_prelude() {
+fn test_std_index_trait_is_available_from_prelude() {
     let output = compile_and_run(
         r#"
 struct Boxed
@@ -17569,7 +17569,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_deref_trait_is_available_from_prelude() {
+fn test_std_deref_trait_is_available_from_prelude() {
     let output = compile_and_run(
         r#"
 struct Box T

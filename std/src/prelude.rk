@@ -1,0 +1,82 @@
+// Rock Prelude
+//
+// All items exported here are automatically available in every Rock program
+// without explicit imports. To add something to the prelude, add a re-export
+// line: `< full::qualified::path` or `< module::path::*` to re-export all items.
+
+// I/O and Math (selective from libc - not all C functions should be in prelude)
+< std::ffi::libc::puts
+< std::ffi::libc::exit
+< std::ffi::libc::sqrt
+< std::ffi::libc::sin
+< std::ffi::libc::cos
+< std::ffi::libc::tan
+< std::ffi::libc::asin
+< std::ffi::libc::acos
+< std::ffi::libc::atan
+< std::ffi::libc::exp
+< std::ffi::libc::log
+< std::ffi::libc::log2
+< std::ffi::libc::log10
+< std::ffi::libc::ceil
+< std::ffi::libc::floor
+< std::ffi::libc::round
+< std::ffi::libc::abs_f64
+< std::ffi::libc::fabs
+< std::ffi::libc::pow
+< std::ffi::libc::atan2
+< std::ffi::libc::strlen
+< std::ffi::libc::strcmp
+
+// String, conversion, utility, memory - re-export all exported items
+< std::string::operations::*
+< std::convert::*
+< std::num::utils::*
+< std::mem::utils::*
+< std::functional::pipe::|>
+< std::io::traits::|>>
+
+// Types
+< std::string::owned::*
+< std::control::option::*
+< std::control::result::*
+< std::mem::box::Box
+< std::concurrency::arc::Arc
+< std::concurrency::mutex::Mutex
+< std::concurrency::mutex::MutexGuard
+< std::collections::vec::*
+< std::collections::hash_map::*
+< std::collections::slice::slice_len
+
+// Traits
+< std::show::*
+< std::ops::deref::*
+< std::ops::index::Index
+< std::ops::index::IndexMut
+< std::ops::range::Range
+< std::control::control_flow::*
+< std::functional::callable::*
+< std::functional::bifunctor::Bifunctor
+< std::functional::bifunctor::bimap
+< std::functional::bifunctor::<!>
+< std::functional::functor::*
+< std::functional::functor::<$>
+< std::functional::functor::<&>
+< std::functional::applicative::*
+< std::functional::applicative::<*>
+< std::functional::monad::*
+< std::functional::monad::>>=
+< std::functional::foldable::*
+< std::collections::for_each::*
+< std::functional::traversable::*
+< std::concurrency::thread_safety::*
+< std::clone::*
+< std::mem::drop::*
+< std::num::arithmetic::*
+< std::cmp::ord::*
+< std::cmp::eq::*
+< std::hash::*
+< std::ops::bitwise::*
+< std::ops::neg::*
+< std::ops::not::*
+< std::mem::sized::*

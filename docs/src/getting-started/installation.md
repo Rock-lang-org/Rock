@@ -143,8 +143,8 @@ $ cargo build --release
 Package the standard library beside the release binaries, then install that directory as a local toolchain:
 
 ```console
-$ target/release/rockup dev stdlib package \
-    --path stdlib \
+$ target/release/rockup dev std package \
+    --path std \
     --sysroot target/release
 $ target/release/rockup install dev --path target/release
 $ target/release/rockup default dev

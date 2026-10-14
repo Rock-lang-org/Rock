@@ -1,4 +1,4 @@
-use super::{compile_and_run, compile_and_run_without_stdlib, compile_should_fail};
+use super::{compile_and_run, compile_and_run_without_std, compile_should_fail};
 
 #[test]
 fn callable_generic_mut_repeated_and_native_reborrow() {
@@ -199,8 +199,8 @@ main = !->
 }
 
 #[test]
-fn callable_uses_marked_member_identity_without_stdlib() {
-    let status = compile_and_run_without_stdlib(
+fn callable_uses_marked_member_identity_without_std() {
+    let status = compile_and_run_without_std(
         r#"
 lang fn_once
 < trait Run Args, Ret
@@ -307,7 +307,7 @@ main = !->
 }
 
 #[test]
-fn callable_stdlib_artifact_callback_uses_ordinary_calls() {
+fn callable_std_artifact_callback_uses_ordinary_calls() {
     let output = compile_and_run(
         r#"
 main = !->

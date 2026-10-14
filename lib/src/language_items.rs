@@ -725,7 +725,7 @@ mod tests {
             ..LanguageItems::default()
         };
 
-        let merged = merge_language_item_providers([("stdlib", &provider)])
+        let merged = merge_language_item_providers([("std", &provider)])
             .expect("callable and marker bundles should merge");
 
         assert_eq!(merged.fn_once, provider.fn_once);

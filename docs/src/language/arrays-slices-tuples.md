@@ -132,7 +132,7 @@ Slices support the same indexing traits as arrays. A slice does not resize, allo
 Use a range to borrow a prefix, suffix, or middle portion of an array or slice. Range indexing selects a view through `Index` or `IndexMut`; the surrounding `&` or `&mut` makes the borrow explicit. No elements are copied or allocated.
 
 ```rock
-> stdlib::collections::slice_len
+> std::collections::slice_len
 
 inspect: &[I64] -> ()
 inspect = values !->
@@ -176,7 +176,7 @@ These values have the standard library type `Range`, whose endpoints are `I64`. 
 An exclusive range must satisfy `0 <= start <= end <= length`. Equal endpoints produce an empty view, including `length..length` at the end of a sequence. An inclusive endpoint must identify an actual element, so it must be less than the length. `..=length` is not a spelling for the whole sequence; use `..` instead.
 
 ```rock
-> stdlib::collections::slice_len
+> std::collections::slice_len
 
 main = !->
     values = [10, 20, 30, 40]
@@ -184,7 +184,7 @@ main = !->
     slice_len empty .println!
 ```
 
-The output is `0`. Do not index element zero of an empty slice. Negative, reversed, or out-of-bounds ranges terminate the process with `range out of bounds`; slicing does not clamp endpoints or return an `Option`. Validate a count from untrusted input before constructing its view. A byte count returned by a successful standard-library read already fits the supplied buffer, which makes `&buffer[..count]` useful for [safe I/O](../stdlib/io-and-files.md).
+The output is `0`. Do not index element zero of an empty slice. Negative, reversed, or out-of-bounds ranges terminate the process with `range out of bounds`; slicing does not clamp endpoints or return an `Option`. Validate a count from untrusted input before constructing its view. A byte count returned by a successful standard-library read already fits the supplied buffer, which makes `&buffer[..count]` useful for [safe I/O](../std/io-and-files.md).
 
 ### Mutable Subslices
 
@@ -237,7 +237,7 @@ The output is `3` and `20`. `values` owns all three elements before and after `p
 `Vec T` also supports the native range forms. A shared range produces `&[T]`, while a mutable range produces `&mut [T]`; neither operation copies the selected elements.
 
 ```rock
-> stdlib::collections::slice_len
+> std::collections::slice_len
 
 main = !->
     mut values = Vec::new!

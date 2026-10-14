@@ -227,7 +227,7 @@ Native `Range` is a concrete integer type, not a unary type constructor. Its ded
 
 ## Sequencing Effects
 
-`sequence` is the standard `Traversable` operation for turning `T (G A)` into `G (T A)`. The following exact stdlib pattern sequences a vector of options.
+`sequence` is the standard `Traversable` operation for turning `T (G A)` into `G (T A)`. The following exact std pattern sequences a vector of options.
 
 ```rock
 main = !->
@@ -295,6 +295,6 @@ This prints `5`. The standalone `fmap` function uses the same implementation.
 
 ## Current Limits and Design Guidance
 
-Use `F _` for a unary constructor bound and `Result _, E` when fixing one `Result` parameter. Do not pass a bare binary `Result` where a unary constructor is required. The current stdlib intentionally gives `Vec` no `Applicative` or `Monad` implementation because Cartesian and zipped list semantics would make an arbitrary choice. Existing `.map` and `.and_then` methods remain useful for concrete containers; `fmap` and `bind` provide a shared vocabulary for constructor-generic code.
+Use `F _` for a unary constructor bound and `Result _, E` when fixing one `Result` parameter. Do not pass a bare binary `Result` where a unary constructor is required. The current std intentionally gives `Vec` no `Applicative` or `Monad` implementation because Cartesian and zipped list semantics would make an arbitrary choice. Existing `.map` and `.and_then` methods remain useful for concrete containers; `fmap` and `bind` provide a shared vocabulary for constructor-generic code.
 
 The examples here use constructor holes, standalone functions, and receiver methods. Explicit type-lambda syntax is not needed for these APIs.

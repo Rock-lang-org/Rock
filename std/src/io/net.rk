@@ -1,0 +1,272 @@
+// Blocking IPv4 TCP networking.
+
+> std::mem::drop::Drop
+> std::io::traits::IoError
+> std::io::traits::Read
+> std::io::traits::Write
+> std::io::traits::last_os_error
+> std::io::traits::write_all
+> std::io::traits::write_str
+> std::ffi::libc::socket
+> std::ffi::libc::bind
+> std::ffi::libc::listen
+> std::ffi::libc::accept
+> std::ffi::libc::connect
+> std::ffi::libc::read
+> std::ffi::libc::send
+> std::ffi::libc::shutdown
+> std::ffi::libc::getsockname
+> std::ffi::libc::htons
+> std::ffi::libc::ntohs
+> std::ffi::libc::htonl
+> std::ffi::libc::ntohl
+> std::ffi::libc::close
+> std::mem::raw_buffer::RawBuffer
+> std::control::result::Result
+
+< struct Ipv4Addr
+    < a: U8
+    < b: U8
+    < c: U8
+    < d: U8
+
+< struct SocketAddrV4
+    < ip: Ipv4Addr
+    < port: I64
+
+< struct TcpListener
+    fd: I32
+
+< struct TcpStream
+    fd: I32
+
+af_inet = -> 2
+sock_stream = -> 1
+sockaddr_in_len = -> 16
+somaxconn_default = -> 128
+msg_nosignal = -> 16384 as I32
+
+unit = ->
+    return
+
+port_is_valid: I64 -> Bool
+port_is_valid = port -> port >= 0 && port <= 65535
+
+ipv4_to_u32: Ipv4Addr -> U32
+ipv4_to_u32 = ip ->
+    ((ip.a as U32) << (24 as U32)) | ((ip.b as U32) << (16 as U32)) | ((ip.c as U32) << (8 as U32)) | (ip.d as U32)
+
+u32_to_ipv4: U32 -> Ipv4Addr
+u32_to_ipv4 = value ->
+    Ipv4Addr
+        a: ((value >> (24 as U32)) & (255 as U32)) as U8
+        b: ((value >> (16 as U32)) & (255 as U32)) as U8
+        c: ((value >> (8 as U32)) & (255 as U32)) as U8
+        d: (value & (255 as U32)) as U8
+
+sockaddr_v4_new: SocketAddrV4 -> RawBuffer U8
+sockaddr_v4_new = addr ->
+    raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, (sockaddr_in_len! as I64)
+    mut buf = raw.ptr!
+    i = 0 as I64
+    while i < (sockaddr_in_len! as I64)
+        unsafe buf[i] = 0
+        i = i + 1
+    unsafe
+        *((buf + 0) as *U16) = af_inet! as U16
+        *((buf + 2) as *U16) = htons (addr.port as U16)
+        *((buf + 4) as *U32) = htonl (ipv4_to_u32 addr.ip)
+    raw
+
+sockaddr_v4_read: *U8 -> SocketAddrV4
+sockaddr_v4_read = buf ->
+    port = ntohs (unsafe *((buf + 2) as *U16))
+    ip = ntohl (unsafe *((buf + 4) as *U32))
+    SocketAddrV4
+        ip: u32_to_ipv4 ip
+        port: port as I64
+
+tcp_listener_from_fd: I32 -> TcpListener
+tcp_listener_from_fd = fd ->
+    unsafe *((&fd) as *TcpListener)
+
+tcp_stream_from_fd: I32 -> TcpStream
+tcp_stream_from_fd = fd ->
+    unsafe *((&fd) as *TcpStream)
+
+tcp_stream_read_fd: I32 -> &mut [U8] -> Result I64, IoError
+tcp_stream_read_fd = fd, buf ->
+    count = std::ffi::libc::read fd, (~ArrPtr *buf), (~ArrayLen *buf)
+    if count < 0
+        Result::Err (last_os_error!)
+    else
+        Result::Ok count
+
+tcp_stream_write_fd: I32 -> &[U8] -> Result I64, IoError
+tcp_stream_write_fd = fd, buf ->
+    count = send fd, (~ArrPtr buf), (~ArrayLen buf), msg_nosignal!
+    if count < 0
+        Result::Err (last_os_error!)
+    else
+        Result::Ok count
+
+tcp_stream_shutdown_fd: I32 -> Result (), IoError
+tcp_stream_shutdown_fd = fd ->
+    result = std::ffi::libc::shutdown fd, 2
+    if result < (0 as I32)
+        Result::Err (last_os_error!)
+    else
+        Result::Ok (unit!)
+
+impl Ipv4Addr
+    localhost = ->
+        Ipv4Addr
+            a: 127
+            b: 0
+            c: 0
+            d: 1
+
+    any = ->
+        Ipv4Addr
+            a: 0
+            b: 0
+            c: 0
+            d: 0
+
+    new = a, b, c, d ->
+        Ipv4Addr
+            a: a
+            b: b
+            c: c
+            d: d
+
+impl SocketAddrV4
+    new = ip, port ->
+        SocketAddrV4
+            ip: ip
+            port: port
+
+    localhost = port ->
+        SocketAddrV4
+            ip: Ipv4Addr::localhost!
+            port: port
+
+    any = port ->
+        SocketAddrV4
+            ip: Ipv4Addr::any!
+            port: port
+
+impl TcpListener
+    bind: SocketAddrV4 -> Result TcpListener, IoError
+    bind = addr ->
+        if !(port_is_valid addr.port)
+            err = IoError::InvalidAddress
+            Result::Err err
+        else
+            fd = socket af_inet!, sock_stream!, 0
+            if fd < (0 as I32)
+                Result::Err (last_os_error!)
+            else
+                sockaddr = sockaddr_v4_new addr
+                bind_result = std::ffi::libc::bind fd, sockaddr.ptr!, sockaddr_in_len!
+                if bind_result < (0 as I32)
+                    err = last_os_error!
+                    closed = close fd
+                    Result::Err (err)
+                else
+                    listen_result = listen fd, somaxconn_default!
+                    if listen_result < (0 as I32)
+                        err = last_os_error!
+                        closed = close fd
+                        Result::Err (err)
+                    else
+                        Result::Ok (tcp_listener_from_fd fd)
+
+impl TcpListener
+    @local_addr: Result SocketAddrV4, IoError
+    @local_addr = ->
+        sockaddr = sockaddr_v4_new (SocketAddrV4::any 0)
+        mut len = sockaddr_in_len!
+        result = getsockname self.fd, sockaddr.ptr!, ((&mut len) as *I32)
+        if result < (0 as I32)
+            err = last_os_error!
+            Result::Err (err)
+        else
+            addr = sockaddr_v4_read (sockaddr.ptr!)
+            Result::Ok (addr)
+
+impl TcpListener
+    @accept: Result TcpStream, IoError
+    @accept = ->
+        sockaddr = sockaddr_v4_new (SocketAddrV4::any 0)
+        mut len = sockaddr_in_len!
+        fd = std::ffi::libc::accept self.fd, sockaddr.ptr!, ((&mut len) as *I32)
+        if fd < (0 as I32)
+            err = last_os_error!
+            Result::Err (err)
+        else
+            Result::Ok (tcp_stream_from_fd fd)
+
+impl TcpStream
+    connect: SocketAddrV4 -> Result TcpStream, IoError
+    connect = addr ->
+        if !(port_is_valid addr.port)
+            err = IoError::InvalidAddress
+            Result::Err err
+        else
+            fd = socket af_inet!, sock_stream!, 0
+            if fd < (0 as I32)
+                Result::Err (last_os_error!)
+            else
+                sockaddr = sockaddr_v4_new addr
+                connect_result = std::ffi::libc::connect fd, sockaddr.ptr!, sockaddr_in_len!
+                if connect_result < (0 as I32)
+                    err = last_os_error!
+                    closed = close fd
+                    Result::Err (err)
+                else
+                    Result::Ok (tcp_stream_from_fd fd)
+
+impl Read for TcpStream
+    ^@read: &mut [U8] -> Result I64, IoError
+    ^@read = buf ->
+        tcp_stream_read_fd self.fd, buf
+
+impl Write for TcpStream
+    @write: &[U8] -> Result I64, IoError
+    @write = buf ->
+        tcp_stream_write_fd self.fd, buf
+
+    @write_str = value -> write_str self, value
+    @write_all = buf -> write_all self, buf
+
+impl TcpStream
+    @recv: &mut [U8] -> Result I64, IoError
+    @recv = buf ->
+        tcp_stream_read_fd self.fd, buf
+
+    @send: &[U8] -> Result I64, IoError
+    @send = buf ->
+        tcp_stream_write_fd self.fd, buf
+
+    @shutdown: Result (), IoError
+    @shutdown = ->
+        tcp_stream_shutdown_fd self.fd
+
+    @shutdown_write: Result (), IoError
+    @shutdown_write = ->
+        result = std::ffi::libc::shutdown self.fd, 1
+        if result < (0 as I32)
+            Result::Err (last_os_error!)
+        else
+            Result::Ok (unit!)
+
+impl Drop for TcpListener
+    ~@drop = ->
+        closed = close self.fd
+        return
+
+impl Drop for TcpStream
+    ~@drop = ->
+        closed = close self.fd
+        return

@@ -7,7 +7,7 @@ use std::{
 #[cfg(test)]
 use std::{collections::HashSet, sync::Mutex};
 
-use rock_shared::{process, sysroot::STDLIB_CRATE_NAME};
+use rock_shared::{process, sysroot::STD_CRATE_NAME};
 
 use crate::package::Package;
 
@@ -114,7 +114,7 @@ pub(crate) fn build_dependency_artifact_invocation(
         .arg("--emit-artifact")
         .arg(package.artifact_path());
 
-    if package.manifest.crate_.no_std || package.manifest.crate_.name == STDLIB_CRATE_NAME {
+    if package.manifest.crate_.no_std || package.manifest.crate_.name == STD_CRATE_NAME {
         invocation = invocation.arg("--no-std");
     }
     if package.manifest.crate_.no_std {
@@ -144,7 +144,7 @@ pub(crate) fn build_root_invocation(
         .arg("--output-dir")
         .arg(package.build_dir());
 
-    if package.manifest.crate_.no_std || package.manifest.crate_.name == STDLIB_CRATE_NAME {
+    if package.manifest.crate_.no_std || package.manifest.crate_.name == STD_CRATE_NAME {
         invocation = invocation.arg("--no-std");
     }
     if package.manifest.crate_.no_std {
@@ -265,8 +265,8 @@ mod tests {
                     path: PathBuf::from("/tmp/dep_a.rkca"),
                 },
                 ExternArtifact {
-                    name: STDLIB_CRATE_NAME.to_string(),
-                    path: PathBuf::from("/tmp/stdlib.rkca"),
+                    name: STD_CRATE_NAME.to_string(),
+                    path: PathBuf::from("/tmp/std.rkca"),
                 },
             ],
         );
@@ -296,7 +296,7 @@ mod tests {
             .windows(2)
             .any(|pair| pair[0] == "--extern-artifact" && pair[1] == "dep_a=/tmp/dep_a.rkca"));
         assert!(args.windows(2).any(|pair| {
-            pair[0] == "--extern-artifact" && pair[1] == "stdlib=/tmp/stdlib.rkca"
+            pair[0] == "--extern-artifact" && pair[1] == "std=/tmp/std.rkca"
         }));
 
         let _ = std::fs::remove_dir_all(temp_dir);
@@ -316,8 +316,8 @@ mod tests {
                     path: PathBuf::from("/tmp/dep.rkca"),
                 },
                 ExternArtifact {
-                    name: STDLIB_CRATE_NAME.to_string(),
-                    path: PathBuf::from("/tmp/stdlib.rkca"),
+                    name: STD_CRATE_NAME.to_string(),
+                    path: PathBuf::from("/tmp/std.rkca"),
                 },
             ],
         );
@@ -334,7 +334,7 @@ mod tests {
             .windows(2)
             .any(|pair| pair[0] == "--extern-artifact" && pair[1] == "dep=/tmp/dep.rkca"));
         assert!(args.windows(2).any(|pair| {
-            pair[0] == "--extern-artifact" && pair[1] == "stdlib=/tmp/stdlib.rkca"
+            pair[0] == "--extern-artifact" && pair[1] == "std=/tmp/std.rkca"
         }));
         assert!(!args.contains(&"--emit-artifact".to_string()));
         assert!(!args.contains(&"--no-link".to_string()));

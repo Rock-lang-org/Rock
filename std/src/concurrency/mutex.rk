@@ -1,0 +1,105 @@
+// Mutual exclusion with RAII unlocking.
+
+> std::mem::alloc::Global
+> std::mem::alloc::Layout
+> std::mem::alloc::checked_alloc
+> std::concurrency::atomic::AtomicU64
+> std::ops::deref::Deref
+> std::ops::deref::DerefMut
+> std::mem::drop::Drop
+> std::mem::drop::drop_in_place
+> std::ffi::libc::sched_yield
+> std::control::option::Option
+
+struct MutexInner T
+    < lock_word: AtomicU64
+    < refs: AtomicU64
+    < value: T
+
+< struct Mutex T
+    inner: *MutexInner T
+
+< struct MutexGuard T
+    inner: *MutexInner T
+
+mutex_release_inner: *MutexInner T -> ()
+mutex_release_inner = inner ->
+    refs = unsafe &(*inner).refs
+    previous = refs.fetch_sub (1 as U64)
+    if ~U64Eq previous, (1 as U64)
+        unsafe drop_in_place inner
+        layout = Layout
+            size: ~SizeOf (unsafe *inner)
+            align: 1
+        unsafe Global::dealloc (inner as *U8), layout
+    return
+
+impl Mutex T
+    new: T -> Mutex T
+    new = value ->
+        null = 0 as *MutexInner T
+        bytes = ~SizeOf (unsafe *null)
+        layout = Layout
+            size: bytes
+            align: 1
+        inner = (checked_alloc layout) as *MutexInner T
+        unsafe *inner = MutexInner T
+            lock_word: AtomicU64::new (0 as U64)
+            refs: AtomicU64::new (1 as U64)
+            value: value
+        Mutex T
+            inner: inner
+
+    @lock: MutexGuard T
+    @lock = ->
+        lock_word = unsafe &(*self.inner).lock_word
+        mut acquired = false
+        while !acquired
+            previous = lock_word.exchange (1 as U64)
+            if ~U64Eq previous, (0 as U64)
+                acquired = true
+            else
+                yielded = sched_yield!
+        mutex_guard self.inner
+
+    @try_lock: Option (MutexGuard T)
+    @try_lock = ->
+        lock_word = unsafe &(*self.inner).lock_word
+        previous = lock_word.exchange (1 as U64)
+        if ~U64Eq previous, (0 as U64)
+            Option::Some (mutex_guard self.inner)
+        else
+            Option::None
+
+mutex_guard: *MutexInner T -> MutexGuard T
+mutex_guard = inner ->
+    refs = unsafe &(*inner).refs
+    previous = refs.fetch_add (1 as U64)
+    unsafe *((&inner) as *MutexGuard T)
+
+impl MutexGuard T
+    @get: &T
+    @get = -> unsafe &(*self.inner).value
+
+    ^@get_mut: &mut T
+    ^@get_mut = -> unsafe &mut (*self.inner).value
+
+impl Deref for MutexGuard T
+    type Target = T
+    @* = -> self.get!
+
+impl DerefMut for MutexGuard T
+    type Target = T
+    ^@* = -> self.get_mut!
+
+impl Drop for MutexGuard T
+    ~@drop = ->
+        lock_word = unsafe &(*self.inner).lock_word
+        lock_word.store (0 as U64)
+        mutex_release_inner self.inner
+        return
+
+impl Drop for Mutex T
+    ~@drop = ->
+        mutex_release_inner self.inner
+        return

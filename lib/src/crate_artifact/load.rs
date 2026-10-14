@@ -10543,8 +10543,8 @@ mod product_tests {
         ));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
-        let artifact_path = base.join("stdlib.rkca");
-        let object_path = base.join("stdlib.o");
+        let artifact_path = base.join("std.rkca");
+        let object_path = base.join("std.o");
         fs::write(&object_path, []).unwrap();
 
         let struct_id = DefId::new(CrateId(1), LocalDefId(7));
@@ -10553,7 +10553,7 @@ mod product_tests {
         identity_table.local_crate = Some(ProductCrateId(1));
         identity_table
             .display_names
-            .insert(product_id, "stdlib::prelude::String".to_string());
+            .insert(product_id, "std::prelude::String".to_string());
         identity_table
             .prelude_export_names
             .insert("Text".to_string(), product_id);
@@ -10570,7 +10570,7 @@ mod product_tests {
         );
 
         let products = CompilerProducts {
-            crate_identity: ProductCrateIdentity::local("stdlib".to_string()),
+            crate_identity: ProductCrateIdentity::local("std".to_string()),
             identity_table,
             interface,
             bodies: Default::default(),
@@ -10588,9 +10588,9 @@ mod product_tests {
         let mut ctx = CrateContext::new();
         ctx.load_product_artifact_from_path(artifact_path).unwrap();
 
-        let stdlib = ctx.extern_crate("stdlib").unwrap();
-        let export = stdlib.metadata().prelude_export_ids().get("Text").unwrap();
-        assert_eq!(export.source, "stdlib::prelude::String");
+        let std = ctx.extern_crate("std").unwrap();
+        let export = std.metadata().prelude_export_ids().get("Text").unwrap();
+        assert_eq!(export.source, "std::prelude::String");
         assert_eq!(export.id.crate_id, CrateId(1));
 
         let _ = fs::remove_dir_all(base);
@@ -10605,8 +10605,8 @@ mod product_tests {
         ));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
-        let artifact_path = base.join("stdlib.rkca");
-        let object_path = base.join("stdlib.o");
+        let artifact_path = base.join("std.rkca");
+        let object_path = base.join("std.o");
         fs::write(&object_path, []).unwrap();
 
         let product_id = ProductDefId {
@@ -10620,7 +10620,7 @@ mod product_tests {
             .insert("String".to_string(), product_id);
 
         let products = CompilerProducts {
-            crate_identity: ProductCrateIdentity::local("stdlib".to_string()),
+            crate_identity: ProductCrateIdentity::local("std".to_string()),
             identity_table,
             interface: ProductInterface::default(),
             bodies: Default::default(),
@@ -10738,8 +10738,8 @@ mod product_tests {
         ));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
-        let artifact_path = base.join("stdlib.rkca");
-        let object_path = base.join("stdlib.o");
+        let artifact_path = base.join("std.rkca");
+        let object_path = base.join("std.o");
         fs::write(&object_path, []).unwrap();
 
         let struct_id = DefId::new(CrateId(1), LocalDefId(7));
@@ -10748,7 +10748,7 @@ mod product_tests {
         identity_table.local_crate = Some(ProductCrateId(1));
         identity_table
             .display_names
-            .insert(product_id, "stdlib::prelude::String".to_string());
+            .insert(product_id, "std::prelude::String".to_string());
 
         let mut interface = ProductInterface::default();
         interface.structs.insert(
@@ -10762,7 +10762,7 @@ mod product_tests {
         );
 
         let products = CompilerProducts {
-            crate_identity: ProductCrateIdentity::local("stdlib".to_string()),
+            crate_identity: ProductCrateIdentity::local("std".to_string()),
             identity_table,
             interface,
             bodies: Default::default(),
@@ -10780,17 +10780,17 @@ mod product_tests {
         let mut ctx = CrateContext::new();
         ctx.load_product_artifact_from_path(artifact_path).unwrap();
 
-        let stdlib = ctx.extern_crate("stdlib").unwrap();
-        let interface = stdlib.metadata().interface();
+        let std = ctx.extern_crate("std").unwrap();
+        let interface = std.metadata().interface();
         let exported_struct = interface
-            .struct_by_canonical_name("stdlib::prelude::String")
+            .struct_by_canonical_name("std::prelude::String")
             .unwrap();
-        let prelude_export = stdlib
+        let prelude_export = std
             .metadata()
             .prelude_export_ids()
             .get("String")
             .unwrap();
-        assert_eq!(prelude_export.source, "stdlib::prelude::String");
+        assert_eq!(prelude_export.source, "std::prelude::String");
         assert_eq!(prelude_export.id, exported_struct.id);
 
         let _ = fs::remove_dir_all(base);

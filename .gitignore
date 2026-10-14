@@ -4,7 +4,7 @@
 /docs/.deps/
 /docs/plans/
 /docs/superpowers/
-/stdlib/build/
+/std/build/
 coverage/
 .worktrees/
 

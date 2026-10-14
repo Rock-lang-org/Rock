@@ -43,15 +43,15 @@
 
 # The Standard Library
 
-- [The Prelude and Common Traits](stdlib/prelude.md)
-- [Strings and Collections](stdlib/collections.md)
-- [Input, Output, and Files](stdlib/io-and-files.md)
-- [Networking](stdlib/networking.md)
-- [Threads and Synchronization](stdlib/concurrency.md)
+- [The Prelude and Common Traits](std/prelude.md)
+- [Strings and Collections](std/collections.md)
+- [Input, Output, and Files](std/io-and-files.md)
+- [Networking](std/networking.md)
+- [Threads and Synchronization](std/concurrency.md)
 
 # A Practical Project
 
-- [Building an HTTP Server](stdlib/http.md)
+- [Building an HTTP Server](std/http.md)
 
 # Systems Programming
 

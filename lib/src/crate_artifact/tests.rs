@@ -17,9 +17,9 @@ use crate::products::{CompilerProducts, ProductDefId, ProductLanguageItems};
 use crate::types::Type;
 use crate::Config;
 
-#[path = "../../tests/support/stdlib_cache_key.rs"]
-mod stdlib_cache_key;
-use stdlib_cache_key::{stdlib_cache_compiler_stamp, stdlib_cache_key};
+#[path = "../../tests/support/std_cache_key.rs"]
+mod std_cache_key;
+use std_cache_key::{std_cache_compiler_stamp, std_cache_key};
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 const TEST_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
@@ -234,9 +234,9 @@ fn write_crate(dir: &PathBuf, name: &str, dependencies: &str, lib: &str) {
     fs::write(dir.join("lib.rk"), lib).unwrap();
 }
 
-fn write_answer_stdlib(dir: &PathBuf, answer: i32) {
-    write_crate(dir, "stdlib", "", "< mod prelude\n< mod math\n");
-    fs::write(dir.join("prelude.rk"), "< stdlib::math::answer\n").unwrap();
+fn write_answer_std(dir: &PathBuf, answer: i32) {
+    write_crate(dir, "std", "", "< mod prelude\n< mod math\n");
+    fs::write(dir.join("prelude.rk"), "< std::math::answer\n").unwrap();
     fs::write(
         dir.join("math.rk"),
         format!("< answer = -> {}\n< answer\n", answer),
@@ -361,8 +361,8 @@ fn build_product_artifact_with_extern_artifacts(
     object_path
 }
 
-fn build_stdlib_product_artifact(stdlib_dir: &PathBuf, artifact_path: &PathBuf) -> PathBuf {
-    build_product_artifact(stdlib_dir, "stdlib", artifact_path, true, false)
+fn build_std_product_artifact(std_dir: &PathBuf, artifact_path: &PathBuf) -> PathBuf {
+    build_product_artifact(std_dir, "std", artifact_path, true, false)
 }
 
 fn collect_index_authorities_from_block(
@@ -432,20 +432,20 @@ fn collect_index_authorities_from_function(
     targets
 }
 
-fn shared_stdlib_product_artifact() -> PathBuf {
-    static STDLIB_ARTIFACT: OnceLock<PathBuf> = OnceLock::new();
+fn shared_std_product_artifact() -> PathBuf {
+    static STD_ARTIFACT: OnceLock<PathBuf> = OnceLock::new();
 
-    STDLIB_ARTIFACT
+    STD_ARTIFACT
         .get_or_init(|| {
-            let stdlib_dir = workspace_root().join("stdlib");
-            let key = stdlib_cache_key(&stdlib_dir, &stdlib_cache_compiler_stamp());
-            let artifact_dir = std::env::temp_dir().join(format!("rock_artifact_stdlib_{key}"));
-            cached_stdlib_product_artifact(&stdlib_dir, &artifact_dir)
+            let std_dir = workspace_root().join("std");
+            let key = std_cache_key(&std_dir, &std_cache_compiler_stamp());
+            let artifact_dir = std::env::temp_dir().join(format!("rock_artifact_std_{key}"));
+            cached_std_product_artifact(&std_dir, &artifact_dir)
         })
         .clone()
 }
 
-fn cached_stdlib_product_artifact(stdlib_dir: &PathBuf, artifact_dir: &PathBuf) -> PathBuf {
+fn cached_std_product_artifact(std_dir: &PathBuf, artifact_dir: &PathBuf) -> PathBuf {
     // Keep the lock outside the payload directory; the OS releases it on exit,
     // including a crashed test process, without stale-lock polling.
     let lock = fs::OpenOptions::new()
@@ -455,8 +455,8 @@ fn cached_stdlib_product_artifact(stdlib_dir: &PathBuf, artifact_dir: &PathBuf) 
         .open(artifact_dir.with_extension("lock"))
         .unwrap();
     lock.lock().unwrap();
-    let artifact_path = artifact_dir.join("stdlib.rkca");
-    let object_path = artifact_dir.join("stdlib.o");
+    let artifact_path = artifact_dir.join("std.rkca");
+    let object_path = artifact_dir.join("std.o");
     if object_path.is_file() && CompilerProducts::read_artifact_from_path(&artifact_path).is_ok() {
         return artifact_path;
     }
@@ -465,14 +465,14 @@ fn cached_stdlib_product_artifact(stdlib_dir: &PathBuf, artifact_dir: &PathBuf) 
     match fs::remove_file(&artifact_path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => panic!("failed to invalidate cached stdlib artifact: {error}"),
+        Err(error) => panic!("failed to invalidate cached std artifact: {error}"),
     }
-    // Build in the private cache, never in the checked-out stdlib/build directory.
-    let manifest = rock_shared::manifest::load_manifest(&stdlib_dir.join("rock.toml")).unwrap();
+    // Build in the private cache, never in the checked-out std/build directory.
+    let manifest = rock_shared::manifest::load_manifest(&std_dir.join("rock.toml")).unwrap();
     let output = crate::compile_with_products(&Config {
-        entry_file: stdlib_dir.join(&manifest.lib.path),
+        entry_file: std_dir.join(&manifest.lib.path),
         output_dir: artifact_dir.clone(),
-        current_crate_name: Some("stdlib".to_string()),
+        current_crate_name: Some("std".to_string()),
         no_std: true,
         no_link: true,
         emit_object: Some(object_path),
@@ -480,8 +480,8 @@ fn cached_stdlib_product_artifact(stdlib_dir: &PathBuf, artifact_dir: &PathBuf) 
     })
     .unwrap();
     let mut products = output.products.unwrap();
-    products.link.object_path = Some(PathBuf::from("stdlib.o"));
-    let pending = artifact_dir.join("stdlib.rkca.pending");
+    products.link.object_path = Some(PathBuf::from("std.o"));
+    let pending = artifact_dir.join("std.rkca.pending");
     products.write_artifact_to_path(&pending).unwrap();
     CompilerProducts::read_artifact_from_path(&pending).unwrap();
     fs::rename(pending, &artifact_path).unwrap();
@@ -489,51 +489,51 @@ fn cached_stdlib_product_artifact(stdlib_dir: &PathBuf, artifact_dir: &PathBuf) 
 }
 
 #[test]
-fn stdlib_product_cache_reuses_and_repairs_artifacts() {
-    let temp_dir = temp_test_dir("stdlib_cache_repair");
+fn std_product_cache_reuses_and_repairs_artifacts() {
+    let temp_dir = temp_test_dir("std_cache_repair");
     let _cleanup = TestDirCleanup(temp_dir.clone());
-    let stdlib_dir = temp_dir.join("stdlib");
-    write_answer_stdlib(&stdlib_dir, 7);
+    let std_dir = temp_dir.join("std");
+    write_answer_std(&std_dir, 7);
     let cache_dir = temp_dir.join("cache");
 
     let artifact = std::thread::scope(|scope| {
-        let first = scope.spawn(|| cached_stdlib_product_artifact(&stdlib_dir, &cache_dir));
-        let second = scope.spawn(|| cached_stdlib_product_artifact(&stdlib_dir, &cache_dir));
+        let first = scope.spawn(|| cached_std_product_artifact(&std_dir, &cache_dir));
+        let second = scope.spawn(|| cached_std_product_artifact(&std_dir, &cache_dir));
         let artifact = first.join().unwrap();
         assert_eq!(artifact, second.join().unwrap());
         artifact
     });
     let modified = fs::metadata(&artifact).unwrap().modified().unwrap();
-    cached_stdlib_product_artifact(&stdlib_dir, &cache_dir);
+    cached_std_product_artifact(&std_dir, &cache_dir);
     assert_eq!(
         modified,
         fs::metadata(&artifact).unwrap().modified().unwrap()
     );
 
-    fs::remove_file(cache_dir.join("stdlib.o")).unwrap();
-    cached_stdlib_product_artifact(&stdlib_dir, &cache_dir);
-    assert!(cache_dir.join("stdlib.o").is_file());
+    fs::remove_file(cache_dir.join("std.o")).unwrap();
+    cached_std_product_artifact(&std_dir, &cache_dir);
+    assert!(cache_dir.join("std.o").is_file());
 
     fs::write(&artifact, b"interrupted artifact write").unwrap();
-    cached_stdlib_product_artifact(&stdlib_dir, &cache_dir);
+    cached_std_product_artifact(&std_dir, &cache_dir);
     CompilerProducts::read_artifact_from_path(&artifact).unwrap();
     assert_eq!(
         write_and_run_artifact_app(
-            "> stdlib::math::answer\n\nmain = -> answer!\n",
-            vec![("stdlib".to_string(), artifact)],
+            "> std::math::answer\n\nmain = -> answer!\n",
+            vec![("std".to_string(), artifact)],
         ),
         7
     );
 }
 
-fn write_sysroot_stdlib_product_bundle(stdlib_dir: &PathBuf, sysroot: &PathBuf) -> PathBuf {
+fn write_sysroot_std_product_bundle(std_dir: &PathBuf, sysroot: &PathBuf) -> PathBuf {
     let layout =
         crate::sysroot::SysrootLayout::new(sysroot.clone(), crate::sysroot::host_target_triple());
     fs::create_dir_all(&layout.target_libdir).unwrap();
 
-    let artifact_path = layout.stdlib_artifact.clone();
-    let object_path = build_stdlib_product_artifact(stdlib_dir, &artifact_path);
-    fs::copy(object_path, &layout.stdlib_object).unwrap();
+    let artifact_path = layout.std_artifact.clone();
+    let object_path = build_std_product_artifact(std_dir, &artifact_path);
+    fs::copy(object_path, &layout.std_object).unwrap();
 
     artifact_path
 }
@@ -637,7 +637,7 @@ fn compile_and_run_artifact_app(
     )
 }
 
-fn compile_artifact_app_without_stdlib_failure(
+fn compile_artifact_app_without_std_failure(
     source: &str,
     extern_artifacts: Vec<(String, PathBuf)>,
 ) -> crate::diagnostic::Diagnostics {
@@ -662,14 +662,14 @@ fn compile_artifact_app_without_stdlib_failure(
         no_std: true,
         sysroot: None,
     })
-    .expect_err("no-stdlib compilation should fail")
+    .expect_err("no-std compilation should fail")
 }
 
 #[test]
-fn test_compile_with_stdlib_artifact() {
+fn test_compile_with_std_artifact() {
     let hello_path = workspace_root().join("examples").join("hello.rk");
-    let temp_dir = temp_test_dir("stdlib_artifact_compile");
-    let artifact_path = shared_stdlib_product_artifact();
+    let temp_dir = temp_test_dir("std_artifact_compile");
+    let artifact_path = shared_std_product_artifact();
     CompilerProducts::read_artifact_from_path(&artifact_path).unwrap();
 
     crate::compile(&Config {
@@ -677,7 +677,7 @@ fn test_compile_with_stdlib_artifact() {
         output_dir: temp_dir.join("out"),
         debug_print: vec![],
         meta_files: vec![],
-        extern_artifacts: vec![("stdlib".to_string(), artifact_path.clone())],
+        extern_artifacts: vec![("std".to_string(), artifact_path.clone())],
         source_providers: Vec::new(),
         current_crate_name: None,
         opt_level: 0,
@@ -694,8 +694,8 @@ fn test_compile_with_stdlib_artifact() {
 }
 
 #[test]
-fn stdlib_index_selection_persists_exact_impl_and_trait_authority() {
-    let temp_dir = temp_test_dir("stdlib_index_authority");
+fn std_index_selection_persists_exact_impl_and_trait_authority() {
+    let temp_dir = temp_test_dir("std_index_authority");
     let entry_file = temp_dir.join("main.rk");
     fs::write(
         &entry_file,
@@ -720,13 +720,13 @@ main = ->
 "#,
     )
     .unwrap();
-    let artifact_path = shared_stdlib_product_artifact();
+    let artifact_path = shared_std_product_artifact();
     let output = crate::compile_with_products(&Config {
         entry_file,
         output_dir: temp_dir.join("out"),
         debug_print: vec![],
         meta_files: vec![],
-        extern_artifacts: vec![("stdlib".to_string(), artifact_path)],
+        extern_artifacts: vec![("std".to_string(), artifact_path)],
         source_providers: Vec::new(),
         current_crate_name: Some("app".to_string()),
         opt_level: 0,
@@ -737,11 +737,11 @@ main = ->
         no_std: false,
         sysroot: None,
     })
-    .expect("stdlib-backed indexing should lower");
+    .expect("std-backed indexing should lower");
     let products = output.products.expect("products should be emitted");
-    let stdlib_products =
-        CompilerProducts::read_artifact_from_path(&shared_stdlib_product_artifact())
-            .expect("stdlib artifact should load for authority assertions");
+    let std_products =
+        CompilerProducts::read_artifact_from_path(&shared_std_product_artifact())
+            .expect("std artifact should load for authority assertions");
     let probe = products
         .bodies
         .generic_impls
@@ -750,13 +750,13 @@ main = ->
         .find(|method| method.name == "probe")
         .expect("generic probe body should be present");
     let targets = collect_index_authorities_from_function(probe);
-    let index = stdlib_products
+    let index = std_products
         .interface
         .language_items
         .index
         .as_ref()
         .expect("Index provider should be loaded");
-    let index_mut = stdlib_products
+    let index_mut = std_products
         .interface
         .language_items
         .index_mut
@@ -792,7 +792,7 @@ main = ->
             panic!("index method must persist concrete impl authority");
         };
         let external_crate_id = selected_trait.trait_id.crate_id;
-        let impl_def = stdlib_products
+        let impl_def = std_products
             .interface
             .impls
             .values()
@@ -831,77 +831,77 @@ main = ->
 }
 
 #[test]
-fn stdlib_product_artifact_provides_index_mut_language_items() {
-    let artifact_path = shared_stdlib_product_artifact();
+fn std_product_artifact_provides_index_mut_language_items() {
+    let artifact_path = shared_std_product_artifact();
     let products = CompilerProducts::read_artifact_from_path(&artifact_path)
-        .expect("shared stdlib product artifact should load");
+        .expect("shared std product artifact should load");
     let language_items = &products.interface.language_items;
 
     assert!(
         language_items.index.is_some(),
-        "stdlib artifact must provide Index"
+        "std artifact must provide Index"
     );
     assert!(
         language_items.index_mut.is_some(),
-        "stdlib artifact must provide IndexMut"
+        "std artifact must provide IndexMut"
     );
 }
 
 #[test]
-fn stdlib_product_artifact_provides_complete_language_item_registry() {
-    let artifact_path = shared_stdlib_product_artifact();
+fn std_product_artifact_provides_complete_language_item_registry() {
+    let artifact_path = shared_std_product_artifact();
     let products = CompilerProducts::read_artifact_from_path(&artifact_path)
-        .expect("shared stdlib product artifact should load");
+        .expect("shared std product artifact should load");
     let product_sized = products
         .interface
         .language_items
         .sized
         .as_ref()
-        .expect("stdlib product must provide Sized");
+        .expect("std product must provide Sized");
     let product_drop = products
         .interface
         .language_items
         .drop
         .as_ref()
-        .expect("stdlib product must provide Drop");
+        .expect("std product must provide Drop");
     let product_index = products
         .interface
         .language_items
         .index
         .as_ref()
-        .expect("stdlib product must provide Index");
+        .expect("std product must provide Index");
     let product_try = products
         .interface
         .language_items
         .try_protocol
         .as_ref()
-        .expect("stdlib product must provide Try");
+        .expect("std product must provide Try");
 
     let mut crate_ctx = CrateContext::new();
     crate_ctx
-        .load_product_artifact_from_path_as("stdlib", artifact_path)
-        .expect("stdlib artifact should load into a fresh crate context");
-    let runtime_stdlib = crate_ctx
-        .extern_crate("stdlib")
-        .expect("fresh context should contain stdlib");
-    let runtime_crate_id = runtime_stdlib.crate_id();
-    let runtime_language_items = runtime_stdlib.metadata().language_items();
+        .load_product_artifact_from_path_as("std", artifact_path)
+        .expect("std artifact should load into a fresh crate context");
+    let runtime_std = crate_ctx
+        .extern_crate("std")
+        .expect("fresh context should contain std");
+    let runtime_crate_id = runtime_std.crate_id();
+    let runtime_language_items = runtime_std.metadata().language_items();
     let runtime_sized = runtime_language_items
         .sized
         .as_ref()
-        .expect("loaded stdlib must provide Sized");
+        .expect("loaded std must provide Sized");
     let runtime_drop = runtime_language_items
         .drop
         .as_ref()
-        .expect("loaded stdlib must provide Drop");
+        .expect("loaded std must provide Drop");
     let runtime_index = runtime_language_items
         .index
         .as_ref()
-        .expect("loaded stdlib must provide Index");
+        .expect("loaded std must provide Index");
     let runtime_try = runtime_language_items
         .try_protocol
         .as_ref()
-        .expect("loaded stdlib must provide Try");
+        .expect("loaded std must provide Try");
     let remapped = |id: ProductDefId| DefId::new(runtime_crate_id, LocalDefId(id.local_id.0));
 
     assert_eq!(runtime_sized.trait_id, remapped(product_sized.trait_id));
@@ -936,7 +936,7 @@ fn stdlib_product_artifact_provides_complete_language_item_registry() {
         product_try.continue_variant_id
     );
 
-    let interface = runtime_stdlib.metadata().interface();
+    let interface = runtime_std.metadata().interface();
     assert!(interface.traits.contains_key(&runtime_sized.trait_id));
     for (trait_id, assoc_type_ids, member_id) in [
         (runtime_drop.trait_id, &[][..], runtime_drop.method_id),
@@ -992,14 +992,14 @@ fn stdlib_product_artifact_provides_complete_language_item_registry() {
 }
 
 #[test]
-fn test_run_with_stdlib_product_artifact_links() {
-    let temp_dir = temp_test_dir("stdlib_artifact_methods");
-    let artifact_path = shared_stdlib_product_artifact();
+fn test_run_with_std_product_artifact_links() {
+    let temp_dir = temp_test_dir("std_artifact_methods");
+    let artifact_path = shared_std_product_artifact();
     CompilerProducts::read_artifact_from_path(&artifact_path).unwrap();
 
     let exit_code = write_and_run_artifact_app(
         "main = -> 40 + 2\n",
-        vec![("stdlib".to_string(), artifact_path)],
+        vec![("std".to_string(), artifact_path)],
     );
     assert_eq!(exit_code, 42);
 
@@ -1007,11 +1007,11 @@ fn test_run_with_stdlib_product_artifact_links() {
 }
 
 #[test]
-fn test_product_stdlib_artifact_preserves_string_method_abi_and_prelude_exports() {
-    let artifact_path = shared_stdlib_product_artifact();
+fn test_product_std_artifact_preserves_string_method_abi_and_prelude_exports() {
+    let artifact_path = shared_std_product_artifact();
     let products = CompilerProducts::read_artifact_from_path(&artifact_path).unwrap();
 
-    assert_eq!(products.crate_identity.name, "stdlib");
+    assert_eq!(products.crate_identity.name, "std");
     let sqrt_id = products.identity_table.prelude_export_names["sqrt"];
     let deref_id = products.identity_table.prelude_export_names["Deref"];
     assert_eq!(
@@ -1020,7 +1020,7 @@ fn test_product_stdlib_artifact_preserves_string_method_abi_and_prelude_exports(
             .display_names
             .get(&sqrt_id)
             .map(String::as_str),
-        Some("stdlib::ffi::libc::sqrt")
+        Some("std::ffi::libc::sqrt")
     );
     assert_eq!(
         products
@@ -1028,7 +1028,7 @@ fn test_product_stdlib_artifact_preserves_string_method_abi_and_prelude_exports(
             .display_names
             .get(&deref_id)
             .map(String::as_str),
-        Some("stdlib::ops::deref::Deref")
+        Some("std::ops::deref::Deref")
     );
     assert_eq!(products.infix_precedence.get("+"), Some(&9));
     assert_eq!(products.infix_precedence.get("*"), Some(&10));
@@ -1070,12 +1070,12 @@ fn test_product_stdlib_artifact_preserves_string_method_abi_and_prelude_exports(
         .interface
         .traits
         .values()
-        .any(|trait_| trait_.name == "stdlib::ops::deref::Deref"));
+        .any(|trait_| trait_.name == "std::ops::deref::Deref"));
 }
 
 #[test]
-fn test_product_stdlib_artifact_records_static_impl_method_link_symbol_by_product_id() {
-    let artifact_path = shared_stdlib_product_artifact();
+fn test_product_std_artifact_records_static_impl_method_link_symbol_by_product_id() {
+    let artifact_path = shared_std_product_artifact();
     let products = CompilerProducts::read_artifact_from_path(&artifact_path).unwrap();
 
     let from = products
@@ -1209,8 +1209,8 @@ fn test_product_artifacts_distinguish_separator_underscore_exported_backend_symb
 }
 
 #[test]
-fn test_stdlib_product_artifact_links_static_impl_method() {
-    let artifact_path = shared_stdlib_product_artifact();
+fn test_std_product_artifact_links_static_impl_method() {
+    let artifact_path = shared_std_product_artifact();
 
     let exit_code = write_and_run_artifact_app(
         r#"
@@ -1218,23 +1218,23 @@ main = ->
     s = String::from "hello"
     s.len!
 "#,
-        vec![("stdlib".to_string(), artifact_path)],
+        vec![("std".to_string(), artifact_path)],
     );
     assert_eq!(exit_code, 5);
 }
 
 #[test]
-fn test_stdlib_product_artifact_links_arithmetic_operator_impl_methods() {
-    let artifact_path = shared_stdlib_product_artifact();
+fn test_std_product_artifact_links_arithmetic_operator_impl_methods() {
+    let artifact_path = shared_std_product_artifact();
     let arithmetic_path = workspace_root().join("examples").join("arithmetic.rk");
-    let temp_dir = temp_test_dir("stdlib_artifact_arithmetic");
+    let temp_dir = temp_test_dir("std_artifact_arithmetic");
 
     crate::compile(&Config {
         entry_file: arithmetic_path,
         output_dir: temp_dir.join("out"),
         debug_print: vec![],
         meta_files: vec![],
-        extern_artifacts: vec![("stdlib".to_string(), artifact_path)],
+        extern_artifacts: vec![("std".to_string(), artifact_path)],
         source_providers: Vec::new(),
         current_crate_name: None,
         opt_level: 0,
@@ -1256,7 +1256,7 @@ fn test_hkt_receiver_authority_survives_artifact_round_trip() {
     let _cleanup = TestDirCleanup(temp_dir.clone());
     let dep_dir = temp_dir.join("dep");
     let artifact_path = temp_dir.join("dep.rkca");
-    let stdlib = shared_stdlib_product_artifact();
+    let std = shared_std_product_artifact();
     write_crate(
         &dep_dir,
         "dep",
@@ -1282,14 +1282,14 @@ compute: () -> I64
         &artifact_path,
         true,
         false,
-        vec![("stdlib".to_string(), stdlib.clone())],
+        vec![("std".to_string(), std.clone())],
     );
     delete_crate_source_files(&dep_dir);
     assert_eq!(
         write_and_run_artifact_app(
             "> dep::compute\n\nmain = -> compute!\n",
             vec![
-                ("stdlib".to_string(), stdlib),
+                ("std".to_string(), std),
                 ("dep".to_string(), artifact_path)
             ],
         ),
@@ -1348,8 +1348,8 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_product_artifact_specializes_generic_function_used_by_generic_impl() {
-    let artifact_path = shared_stdlib_product_artifact();
+fn test_std_product_artifact_specializes_generic_function_used_by_generic_impl() {
+    let artifact_path = shared_std_product_artifact();
 
     let exit_code = write_and_run_artifact_app(
         r#"
@@ -1358,7 +1358,7 @@ main = ->
     v.push 1
     v.len!
 "#,
-        vec![("stdlib".to_string(), artifact_path)],
+        vec![("std".to_string(), artifact_path)],
     );
     assert_eq!(exit_code, 1);
 }
@@ -1539,15 +1539,15 @@ fn test_product_artifact_imported_extern_call_links_by_def_id() {
 }
 
 #[test]
-fn test_compile_requires_explicit_stdlib_artifact_even_with_sysroot() {
-    let temp_dir = temp_test_dir("sysroot_stdlib_compile");
+fn test_compile_requires_explicit_std_artifact_even_with_sysroot() {
+    let temp_dir = temp_test_dir("sysroot_std_compile");
     let sysroot = temp_dir.join("toolchain");
-    let stdlib_dir = temp_dir.join("stdlib");
+    let std_dir = temp_dir.join("std");
     let entry_file = temp_dir.join("main.rk");
     let output_dir = temp_dir.join("out");
 
-    write_answer_stdlib(&stdlib_dir, 7);
-    write_sysroot_stdlib_product_bundle(&stdlib_dir, &sysroot);
+    write_answer_std(&std_dir, 7);
+    write_sysroot_std_product_bundle(&std_dir, &sysroot);
     fs::write(&entry_file, "main = -> answer!\n").unwrap();
 
     let config = Config {
@@ -1573,24 +1573,24 @@ fn test_compile_requires_explicit_stdlib_artifact_even_with_sysroot() {
 }
 
 #[test]
-fn test_explicit_stdlib_artifact_works_when_sysroot_is_set() {
-    let temp_dir = temp_test_dir("sysroot_stdlib_override");
+fn test_explicit_std_artifact_works_when_sysroot_is_set() {
+    let temp_dir = temp_test_dir("sysroot_std_override");
     let sysroot = temp_dir.join("toolchain");
-    let sysroot_stdlib = temp_dir.join("sysroot_stdlib");
-    let explicit_stdlib = temp_dir.join("explicit_stdlib");
-    let explicit_artifact_path = temp_dir.join("explicit_stdlib.rkca");
+    let sysroot_std = temp_dir.join("sysroot_std");
+    let explicit_std = temp_dir.join("explicit_std");
+    let explicit_artifact_path = temp_dir.join("explicit_std.rkca");
 
-    write_answer_stdlib(&sysroot_stdlib, 7);
-    write_answer_stdlib(&explicit_stdlib, 5);
+    write_answer_std(&sysroot_std, 7);
+    write_answer_std(&explicit_std, 5);
 
-    write_sysroot_stdlib_product_bundle(&sysroot_stdlib, &sysroot);
+    write_sysroot_std_product_bundle(&sysroot_std, &sysroot);
 
-    build_stdlib_product_artifact(&explicit_stdlib, &explicit_artifact_path);
+    build_std_product_artifact(&explicit_std, &explicit_artifact_path);
     CompilerProducts::read_artifact_from_path(&explicit_artifact_path).unwrap();
 
     let exit_code = write_and_run_artifact_app_with_options(
-        "> stdlib::math::answer\n\nmain = -> answer!\n",
-        vec![("stdlib".to_string(), explicit_artifact_path)],
+        "> std::math::answer\n\nmain = -> answer!\n",
+        vec![("std".to_string(), explicit_artifact_path)],
         Some(sysroot),
         false,
         false,
@@ -1601,14 +1601,14 @@ fn test_explicit_stdlib_artifact_works_when_sysroot_is_set() {
 }
 
 #[test]
-fn test_compile_without_explicit_stdlib_artifact_fails_with_no_std() {
+fn test_compile_without_explicit_std_artifact_fails_with_no_std() {
     let temp_dir = temp_test_dir("sysroot_no_std");
     let sysroot = temp_dir.join("toolchain");
-    let stdlib_dir = temp_dir.join("stdlib");
+    let std_dir = temp_dir.join("std");
     let entry_file = temp_dir.join("main.rk");
 
-    write_answer_stdlib(&stdlib_dir, 7);
-    write_sysroot_stdlib_product_bundle(&stdlib_dir, &sysroot);
+    write_answer_std(&std_dir, 7);
+    write_sysroot_std_product_bundle(&std_dir, &sysroot);
     fs::write(&entry_file, "main = -> answer!\n").unwrap();
 
     let config = Config {
@@ -2624,7 +2624,7 @@ main = -> identity (local!)
 
 #[test]
 fn unmarked_try_and_index_protocol_spellings_have_no_authority_without_provider() {
-    let try_diagnostics = compile_artifact_app_without_stdlib_failure(
+    let try_diagnostics = compile_artifact_app_without_std_failure(
         r#"enum ControlFlow B, C
     Break B
     Continue C
@@ -2651,7 +2651,7 @@ main = ->
         diagnostic.message == "Cannot use '?' because the Try language-item protocol is unavailable"
     }));
 
-    let index_diagnostics = compile_artifact_app_without_stdlib_failure(
+    let index_diagnostics = compile_artifact_app_without_std_failure(
         r#"trait Index Key
     type Output
     @index: Key -> &Self::Output
@@ -2687,7 +2687,7 @@ fn duplicate_language_item_provider_artifacts_report_sorted_provider_names() {
     build_product_artifact(&alpha_dir, "alpha", &alpha_artifact, true, true);
     build_product_artifact(&zeta_dir, "zeta", &zeta_artifact, true, true);
 
-    let diagnostics = compile_artifact_app_without_stdlib_failure(
+    let diagnostics = compile_artifact_app_without_std_failure(
         "main = -> 0\n",
         vec![
             ("zeta".to_string(), zeta_artifact),
@@ -2845,7 +2845,7 @@ consume = packet ->
         "isolated non-provider artifact must not confer protocol authority"
     );
 
-    let diagnostics = compile_artifact_app_without_stdlib_failure(
+    let diagnostics = compile_artifact_app_without_std_failure(
         r#"> isolated_bridge::*
 
 enum ControlFlow B, C
@@ -2869,7 +2869,7 @@ main = ->
     assert!(diagnostics.0.iter().any(|diagnostic| {
         diagnostic.message == "Cannot use '?' because the Try language-item protocol is unavailable"
     }));
-    let index_diagnostics = compile_artifact_app_without_stdlib_failure(
+    let index_diagnostics = compile_artifact_app_without_std_failure(
         r#"> isolated_bridge::*
 
 trait Index Key

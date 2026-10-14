@@ -7499,7 +7499,7 @@ mod tests {
                     ("Outer".to_string(), outer_id),
                 ]),
                 traits_by_name: std::collections::HashMap::from([(
-                    "stdlib::drop::Drop".to_string(),
+                    "std::drop::Drop".to_string(),
                     drop_trait_id,
                 )]),
                 ..HirNameTables::default()

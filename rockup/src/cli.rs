@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use crate::{
-    dev::package_dev_stdlib,
+    dev::package_dev_std,
     fsutil::exit_code,
     home::{home_dir, RockupHome},
     shell::{
@@ -92,8 +92,8 @@ pub(crate) fn run() -> Result<Exit, String> {
             }
         },
         CommandConfig::Dev { command } => match command {
-            DevCommand::Stdlib { command } => match command {
-                DevStdlibCommand::Package {
+            DevCommand::Std { command } => match command {
+                DevStdCommand::Package {
                     path,
                     sysroot,
                     target,
@@ -101,7 +101,7 @@ pub(crate) fn run() -> Result<Exit, String> {
                     rockc,
                 } => {
                     let packaged =
-                        package_dev_stdlib(&path, &sysroot, target, copy_source, rockc.as_deref())?;
+                        package_dev_std(&path, &sysroot, target, copy_source, rockc.as_deref())?;
                     println!("{}", packaged.display());
                     Ok(Exit::Success)
                 }
@@ -234,14 +234,14 @@ pub(crate) enum TargetCommand {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum DevCommand {
-    Stdlib {
+    Std {
         #[command(subcommand)]
-        command: DevStdlibCommand,
+        command: DevStdCommand,
     },
 }
 
 #[derive(Subcommand, Debug)]
-pub(crate) enum DevStdlibCommand {
+pub(crate) enum DevStdCommand {
     Package {
         #[arg(long)]
         path: PathBuf,

@@ -1,0 +1,48 @@
+> std::mem::alloc::Global
+> std::mem::alloc::Layout
+> std::mem::alloc::checked_alloc
+> std::ops::deref::Deref
+> std::mem::drop::Drop
+> std::mem::drop::drop_in_place
+
+unsafe box_ptr_as_ref: *T -> &T
+unsafe box_ptr_as_ref = ptr -> unsafe &*ptr
+
+unsafe box_ptr_as_mut: *T -> &mut T
+unsafe box_ptr_as_mut = ptr -> unsafe &mut *ptr
+
+< struct Box T
+    raw_ptr: *T
+    raw_bytes: I64
+
+impl Box T
+    new: T -> Box T
+    new = value ->
+        bytes = ~SizeOf value
+        layout = Layout
+            size: bytes
+            align: 1
+        ptr: *T = (checked_alloc layout) as *T
+        unsafe *ptr = value
+        return Box T
+            raw_ptr: ptr
+            raw_bytes: bytes
+
+    @as_ptr: *T
+    @as_ptr = -> self.raw_ptr
+    @as_ref: &T
+    @as_ref = -> unsafe box_ptr_as_ref self.raw_ptr
+    ^@as_mut: &mut T
+    ^@as_mut = -> unsafe box_ptr_as_mut self.raw_ptr
+
+impl Deref for Box T
+    type Target = T
+    @* = -> self.as_ref!
+
+impl Drop for Box T
+    ~@drop = ->
+        layout = Layout
+            size: self.raw_bytes
+            align: 1
+        unsafe drop_in_place self.raw_ptr
+        unsafe Global::dealloc (self.raw_ptr as *U8), layout

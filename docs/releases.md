@@ -26,11 +26,11 @@ For `VERSION=0.6.0` and `TARGET=x86_64-unknown-linux-gnu`, attach:
 | --- | --- |
 | `rock-v0.6.0-x86_64-unknown-linux-gnu.tar.gz` | Complete toolchain, extracted directly into its toolchain root |
 | `rockup-x86_64-unknown-linux-gnu` | Standalone executable, not an archive |
-| `stdlib-v0.6.0-x86_64-unknown-linux-gnu.tar.gz` | Matching standard-library component archive |
+| `std-v0.6.0-x86_64-unknown-linux-gnu.tar.gz` | Matching standard-library component archive |
 | Each binary/archive name followed by `.sha256` | SHA-256 sidecar for that exact asset |
 | `install.sh` | POSIX bootstrap from `scripts/install.sh` |
 
-The complete toolchain contains `bin/rock`, `bin/rockc`, `bin/rock-lsp`, the matching standard-library artifacts and component metadata under `lib/rocklib/TARGET/`, standard-library sources under `src/stdlib/`, and LLVM license notices under `share/licenses/llvm/`. Keep the compiler, object files, serialized artifacts, and metadata from the same build. Do not add an enclosing version directory inside the archive.
+The complete toolchain contains `bin/rock`, `bin/rockc`, `bin/rock-lsp`, the matching standard-library artifacts and component metadata under `lib/rocklib/TARGET/`, standard-library sources under `src/std/`, and LLVM license notices under `share/licenses/llvm/`. Keep the compiler, object files, serialized artifacts, and metadata from the same build. Do not add an enclosing version directory inside the archive.
 
 Generate sidecars from the asset directory using `sha256sum ASSET > ASSET.sha256`. Each sidecar must contain exactly one checksum line naming the asset's basename, not a local path. The bootstrap accepts the standard text or binary sha256sum separator; unrelated filenames, extra lines, and mismatched hashes are rejected. These are integrity checks, not signed provenance.
 
@@ -61,9 +61,9 @@ export LLVM_SYS_180_PREFIX=/usr/lib/llvm-18
 
 Static LLVM archives are mandatory; there is no dynamic-linking fallback. The new packaging contract requires rejecting shared LLVM dependencies via `ldd` and including LLVM license notices under `share/licenses/llvm/`.
 
-Before tagging, synchronize the package versions in `rock/Cargo.toml`, `rockc/Cargo.toml`, `rockup/Cargo.toml`, `rock-lsp/Cargo.toml`, `lib/Cargo.toml`, and `rock-shared/Cargo.toml`, and refresh `Cargo.lock`; the script rejects mismatched CLI versions. Existing output directories are never overwritten. The separate stdlib archive extracts directly to a target component directory and includes its manifests, artifact, and object file.
+Before tagging, synchronize the package versions in `rock/Cargo.toml`, `rockc/Cargo.toml`, `rockup/Cargo.toml`, `rock-lsp/Cargo.toml`, `lib/Cargo.toml`, and `rock-shared/Cargo.toml`, and refresh `Cargo.lock`; the script rejects mismatched CLI versions. Existing output directories are never overwritten. The separate std archive extracts directly to a target component directory and includes its manifests, artifact, and object file.
 
-Before accepting the output, inspect archive layouts, verify every sidecar from the output directory, and smoke-test with a disposable `HOME` and `ROCKUP_HOME`. Test that the bootstrap installs the manager, shims, shell setup, and selected toolchain in one invocation. Remove temporary downloads afterward: `rockup self install` must persist the downloaded manager at `ROCKUP_HOME/bin/rockup`. Activate the shell, then check `rock --version`, `rock-lsp --help`, and compilation/execution of a small application with the packaged stdlib without a separate install command. All three shims must work even though the bootstrap staging directory is gone. A shim pointing into the build or download staging directory is a release blocker.
+Before accepting the output, inspect archive layouts, verify every sidecar from the output directory, and smoke-test with a disposable `HOME` and `ROCKUP_HOME`. Test that the bootstrap installs the manager, shims, shell setup, and selected toolchain in one invocation. Remove temporary downloads afterward: `rockup self install` must persist the downloaded manager at `ROCKUP_HOME/bin/rockup`. Activate the shell, then check `rock --version`, `rock-lsp --help`, and compilation/execution of a small application with the packaged std without a separate install command. All three shims must work even though the bootstrap staging directory is gone. A shim pointing into the build or download staging directory is a release blocker.
 
 Run the bootstrap checks without network access:
 

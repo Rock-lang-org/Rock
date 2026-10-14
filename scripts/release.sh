@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build one matched compiler/stdlib distribution; uploading is explicitly opt-in.
+# Build one matched compiler/std distribution; uploading is explicitly opt-in.
 set -euo pipefail
 export LC_ALL=C
 unset TAR_OPTIONS
@@ -64,8 +64,8 @@ install -m 644 "$root"/licenses/llvm/*.txt "$toolchain/share/licenses/llvm/"
 for binary in rock rockc rock-lsp; do
     install -m 755 "$build/$binary" "$toolchain/bin/$binary"
 done
-"$build/rockup" dev stdlib package --path "$root/stdlib" --sysroot "$toolchain" --copy-source --rockc "$build/rockc"
-rm -rf -- "$toolchain/src/stdlib/build" "$toolchain/src/stdlib/target"
+"$build/rockup" dev std package --path "$root/std" --sysroot "$toolchain" --copy-source --rockc "$build/rockc"
+rm -rf -- "$toolchain/src/std/build" "$toolchain/src/std/target"
 manifest=$toolchain/lib/rocklib/$target/manifest.json
 sed -i "s/\"toolchain_version\": \"dev-[^\"]*\"/\"toolchain_version\": \"$tag\"/" "$manifest"
 
@@ -89,7 +89,7 @@ printf 'main = ->\n    "Hello, Rock!".println!\n    0\n' > "$stage/project/main.
 
 assets=$stage/assets
 tar --format=ustar -czf "$assets/rock-$tag-$target.tar.gz" -C "$toolchain" bin lib src share
-tar --format=ustar -czf "$assets/stdlib-$tag-$target.tar.gz" -C "$toolchain/lib/rocklib/$target" .
+tar --format=ustar -czf "$assets/std-$tag-$target.tar.gz" -C "$toolchain/lib/rocklib/$target" .
 install -m 755 "$build/rockup" "$assets/rockup-$target"
 install -m 644 scripts/install.sh "$assets/install.sh"
 (

@@ -62,7 +62,7 @@ fn test_build_project_with_transitive_artifacts() {
 }
 
 #[test]
-fn test_build_project_no_std_disables_implicit_stdlib() {
+fn test_build_project_no_std_disables_implicit_std() {
     let _guard = sysroot_env_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());

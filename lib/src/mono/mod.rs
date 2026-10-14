@@ -2056,7 +2056,7 @@ mod tests {
     fn receiver_type_match_accepts_artifact_owner_alias_for_canonical_receiver_path() {
         let mono = Monomorphizer::new();
         let option_id = DefId::new(CrateId(1), LocalDefId(10));
-        let mut imp = generic_impl("stdlib::Option", "Option", option_id);
+        let mut imp = generic_impl("std::Option", "Option", option_id);
         imp.receiver_pattern = HirImplReceiverPattern::Exact(Type::Enum {
             id: option_id,
             args: vec![Type::Generic(crate::types::GenericParamId {

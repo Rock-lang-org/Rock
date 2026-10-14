@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     artifact::{collect_root_artifacts, ArtifactBuildState},
-    bundled_sysroot::STDLIB_CRATE_NAME,
+    bundled_sysroot::STD_CRATE_NAME,
     package::Package,
 };
 
@@ -38,7 +38,7 @@ pub fn resolve_analysis_project(project_root: &Path) -> Result<AnalysisProject, 
     Ok(AnalysisProject {
         root_dir: package.root_dir.clone(),
         entry_file: package.entry_file(),
-        no_prelude: no_std || crate_name == STDLIB_CRATE_NAME,
+        no_prelude: no_std || crate_name == STD_CRATE_NAME,
         no_std,
         crate_name,
         extern_artifacts: artifacts
@@ -86,23 +86,23 @@ mod tests {
     }
 
     #[test]
-    fn resolves_toolchain_stdlib_for_project_analysis() {
+    fn resolves_toolchain_std_for_project_analysis() {
         let _guard = sysroot_env_lock()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let root = temp_test_dir("analysis_stdlib");
+        let root = temp_test_dir("analysis_std");
         write_package(&root, "app", "src/main.rk", &[], "main = -> 42.println!\n");
 
         let project = resolve_analysis_project(&root).unwrap();
 
         assert!(!project.no_std);
         assert!(!project.no_prelude);
-        let stdlib = project
+        let std = project
             .extern_artifacts
             .iter()
-            .find(|(name, _)| name == "stdlib")
-            .expect("project analysis should include the toolchain stdlib");
-        assert!(stdlib.1.is_file());
+            .find(|(name, _)| name == "std")
+            .expect("project analysis should include the toolchain std");
+        assert!(std.1.is_file());
 
         fs::remove_dir_all(root).unwrap();
     }

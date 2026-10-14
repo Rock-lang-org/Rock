@@ -4,7 +4,7 @@ use crate::artifact::{collect_dependency_artifacts, ensure_artifact, ArtifactBui
 use crate::build::build_project;
 
 use super::support::{
-    assert_executable_exit_code, assert_sysroot_stdlib_files_exist, load_package, sysroot_env_lock,
+    assert_executable_exit_code, assert_sysroot_std_files_exist, load_package, sysroot_env_lock,
     temp_test_dir, write_package, write_package_with_options,
 };
 
@@ -140,7 +140,7 @@ fn test_rock_artifact_command_builds_cache_file() {
 
     assert!(artifact_path.exists());
     assert!(load_package(temp_dir.clone()).object_path().exists());
-    assert_sysroot_stdlib_files_exist();
+    assert_sysroot_std_files_exist();
 
     let _ = fs::remove_dir_all(temp_dir);
 }
@@ -312,11 +312,11 @@ fn test_ensure_artifact_reuses_dependency_artifacts_after_dependency_sources_are
 }
 
 #[test]
-fn test_ensure_artifact_loads_sysroot_stdlib_for_no_std_root_with_stdlib_using_dependency() {
+fn test_ensure_artifact_loads_sysroot_std_for_no_std_root_with_std_using_dependency() {
     let _guard = sysroot_env_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let temp_dir = temp_test_dir("artifact_dependency_sysroot_stdlib");
+    let temp_dir = temp_test_dir("artifact_dependency_sysroot_std");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
 

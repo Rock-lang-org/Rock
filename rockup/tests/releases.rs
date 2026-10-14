@@ -101,8 +101,8 @@ fi
         fs::create_dir_all(&lib).unwrap();
         // Filenames match the current ToolchainLayout contract.
         for file in [
-            rock_shared::sysroot::STDLIB_ARTIFACT_FILE_NAME,
-            rock_shared::sysroot::STDLIB_OBJECT_FILE_NAME,
+            rock_shared::sysroot::STD_ARTIFACT_FILE_NAME,
+            rock_shared::sysroot::STD_OBJECT_FILE_NAME,
             rock_shared::sysroot::TOOLCHAIN_MANIFEST_FILE_NAME,
             rock_shared::sysroot::COMPONENTS_MANIFEST_FILE_NAME,
         ] {

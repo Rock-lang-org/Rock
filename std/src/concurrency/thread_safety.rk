@@ -1,0 +1,62 @@
+// Marker traits used by safe concurrency APIs.
+
+> std::mem::box::Box
+> std::concurrency::arc::Arc
+> std::mem::raw_buffer::RawBuffer
+> std::concurrency::mutex::Mutex
+> std::string::owned::String
+
+lang send
+< trait Send
+
+lang sync
+< trait Sync
+
+impl Send for Box T where T: Send
+
+impl Sync for Box T where T: Sync
+
+impl Send for RawBuffer T where T: Send
+
+impl Sync for RawBuffer T where T: Sync
+
+impl Send for String
+
+impl Sync for String
+
+impl Send for Mutex T where T: Send
+
+impl Sync for Mutex T where T: Send
+
+impl Send for Arc T where T: Send, T: Sync
+
+impl Sync for Arc T where T: Send, T: Sync
+
+impl Send for I8
+impl Send for I16
+impl Send for I32
+impl Send for I64
+impl Send for U8
+impl Send for U16
+impl Send for U32
+impl Send for U64
+impl Send for F32
+impl Send for F64
+impl Send for Bool
+impl Send for Char
+impl Send for ()
+
+impl Sync for I8
+impl Sync for I16
+impl Sync for I32
+impl Sync for I64
+impl Sync for U8
+impl Sync for U16
+impl Sync for U32
+impl Sync for U64
+impl Sync for F32
+impl Sync for F64
+impl Sync for Bool
+impl Sync for Char
+impl Sync for ()
+impl Sync for &Str

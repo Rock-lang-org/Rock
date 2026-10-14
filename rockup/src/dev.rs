@@ -38,16 +38,16 @@ fn resolve_rockc_path(override_path: Option<&Path>) -> Result<PathBuf, String> {
     rock_shared::process::dev_target_binary_from_current_exe("rockc")
 }
 
-pub(crate) fn build_stdlib_package_invocation(
+pub(crate) fn build_std_package_invocation(
     executable: PathBuf,
-    stdlib_root: &Path,
+    std_root: &Path,
     layout: &crate::layout::ToolchainLayout,
 ) -> Result<RockcInvocation, String> {
-    let manifest = rock_shared::manifest::load_manifest(&stdlib_root.join("rock.toml"))?;
-    if manifest.crate_.name != rock_shared::sysroot::STDLIB_CRATE_NAME {
+    let manifest = rock_shared::manifest::load_manifest(&std_root.join("rock.toml"))?;
+    if manifest.crate_.name != rock_shared::sysroot::STD_CRATE_NAME {
         return Err(format!(
-            "Expected stdlib crate at {}, found '{}' instead",
-            stdlib_root.display(),
+            "Expected std crate at {}, found '{}' instead",
+            std_root.display(),
             manifest.crate_.name
         ));
     }
@@ -56,41 +56,41 @@ pub(crate) fn build_stdlib_package_invocation(
         executable,
         args: vec![
             "--crate-name".into(),
-            rock_shared::sysroot::STDLIB_CRATE_NAME.into(),
+            rock_shared::sysroot::STD_CRATE_NAME.into(),
             "--entry-file".into(),
-            stdlib_root.join(&manifest.lib.path).into_os_string(),
+            std_root.join(&manifest.lib.path).into_os_string(),
             "--output-dir".into(),
             layout.target_component_dir.clone().into_os_string(),
             "--no-std".into(),
             "--no-prelude".into(),
             "--no-link".into(),
             "--emit-object".into(),
-            layout.stdlib_object.clone().into_os_string(),
+            layout.std_object.clone().into_os_string(),
             "--emit-artifact".into(),
-            layout.stdlib_artifact.clone().into_os_string(),
+            layout.std_artifact.clone().into_os_string(),
         ],
     })
 }
 
-pub(crate) fn package_dev_stdlib(
-    stdlib_root: &Path,
+pub(crate) fn package_dev_std(
+    std_root: &Path,
     sysroot_root: &Path,
     target_triple: Option<String>,
     copy_source: bool,
     rockc: Option<&Path>,
 ) -> Result<PathBuf, String> {
-    let stdlib_root = stdlib_root.canonicalize().map_err(|e| {
+    let std_root = std_root.canonicalize().map_err(|e| {
         format!(
-            "Failed to resolve stdlib source directory {}: {}",
-            stdlib_root.display(),
+            "Failed to resolve std source directory {}: {}",
+            std_root.display(),
             e
         )
     })?;
-    let manifest = rock_shared::manifest::load_manifest(&stdlib_root.join("rock.toml"))?;
-    if manifest.crate_.name != rock_shared::sysroot::STDLIB_CRATE_NAME {
+    let manifest = rock_shared::manifest::load_manifest(&std_root.join("rock.toml"))?;
+    if manifest.crate_.name != rock_shared::sysroot::STD_CRATE_NAME {
         return Err(format!(
-            "Expected stdlib crate at {}, found '{}' instead",
-            stdlib_root.display(),
+            "Expected std crate at {}, found '{}' instead",
+            std_root.display(),
             manifest.crate_.name
         ));
     }
@@ -122,14 +122,14 @@ pub(crate) fn package_dev_stdlib(
     })?;
 
     let executable = resolve_rockc_path(rockc)?;
-    let invocation = build_stdlib_package_invocation(executable, &stdlib_root, &layout)?;
+    let invocation = build_std_package_invocation(executable, &std_root, &layout)?;
     let status = invocation
         .into_command()
         .status()
-        .map_err(|e| format!("Failed to spawn rockc for dev stdlib packaging: {}", e))?;
+        .map_err(|e| format!("Failed to spawn rockc for dev std packaging: {}", e))?;
     if !status.success() {
         return Err(format!(
-            "rockc failed for dev stdlib packaging with status {}",
+            "rockc failed for dev std packaging with status {}",
             status
         ));
     }
@@ -137,7 +137,7 @@ pub(crate) fn package_dev_stdlib(
     write_sysroot_metadata(&layout, &manifest.crate_.version)?;
 
     if copy_source {
-        install_stdlib_source_component(&stdlib_root, &layout.sysroot)?;
+        install_std_source_component(&std_root, &layout.sysroot)?;
     }
 
     Ok(layout.target_component_dir)
@@ -145,7 +145,7 @@ pub(crate) fn package_dev_stdlib(
 
 fn write_sysroot_metadata(
     layout: &crate::layout::ToolchainLayout,
-    stdlib_version: &str,
+    std_version: &str,
 ) -> Result<(), String> {
     let manifest = [
         "{\n".to_string(),
@@ -154,15 +154,15 @@ fn write_sysroot_metadata(
             env!("CARGO_PKG_VERSION")
         ),
         format!("  \"target_triple\": \"{}\",\n", layout.target_triple),
-        "  \"stdlib\": {\n".to_string(),
-        format!("    \"crate_version\": \"{}\",\n", stdlib_version),
+        "  \"std\": {\n".to_string(),
+        format!("    \"crate_version\": \"{}\",\n", std_version),
         format!(
             "    \"artifact\": \"{}\",\n",
-            rock_shared::sysroot::STDLIB_ARTIFACT_FILE_NAME
+            rock_shared::sysroot::STD_ARTIFACT_FILE_NAME
         ),
         format!(
             "    \"object\": \"{}\",\n",
-            rock_shared::sysroot::STDLIB_OBJECT_FILE_NAME
+            rock_shared::sysroot::STD_OBJECT_FILE_NAME
         ),
         format!(
             "    \"artifact_format_version\": {}\n",
@@ -183,15 +183,15 @@ fn write_sysroot_metadata(
     let components = [
         "{\n".to_string(),
         "  \"components\": {\n".to_string(),
-        "    \"stdlib\": {\n".to_string(),
+        "    \"std\": {\n".to_string(),
         "      \"present\": true,\n".to_string(),
         format!(
             "      \"artifact\": \"{}\",\n",
-            rock_shared::sysroot::STDLIB_ARTIFACT_FILE_NAME
+            rock_shared::sysroot::STD_ARTIFACT_FILE_NAME
         ),
         format!(
             "      \"object\": \"{}\"\n",
-            rock_shared::sysroot::STDLIB_OBJECT_FILE_NAME
+            rock_shared::sysroot::STD_OBJECT_FILE_NAME
         ),
         "    }\n".to_string(),
         "  }\n".to_string(),
@@ -209,19 +209,19 @@ fn write_sysroot_metadata(
     Ok(())
 }
 
-fn install_stdlib_source_component(stdlib_root: &Path, sysroot_root: &Path) -> Result<(), String> {
+fn install_std_source_component(std_root: &Path, sysroot_root: &Path) -> Result<(), String> {
     let destination = sysroot_root
         .join("src")
-        .join(rock_shared::sysroot::STDLIB_CRATE_NAME);
+        .join(rock_shared::sysroot::STD_CRATE_NAME);
     if destination.exists() {
         fs::remove_dir_all(&destination).map_err(|e| {
             format!(
-                "Failed to replace stdlib source component {}: {}",
+                "Failed to replace std source component {}: {}",
                 destination.display(),
                 e
             )
         })?;
     }
 
-    copy_directory_recursive(stdlib_root, &destination)
+    copy_directory_recursive(std_root, &destination)
 }

@@ -1184,7 +1184,7 @@ impl CollectContext {
                     self.record_canonical_alias(short_name.clone(), &export);
                 } else {
                     self.push_error(format!(
-                        "Failed to inject stdlib prelude alias '{}': declaration '{}' not found",
+                        "Failed to inject std prelude alias '{}': declaration '{}' not found",
                         short_name, qualified_name
                     ));
                 }
@@ -1270,7 +1270,7 @@ impl CollectContext {
             );
         }
 
-        if crate_name == "stdlib" && !dep.prelude_exports().is_empty() {
+        if crate_name == "std" && !dep.prelude_exports().is_empty() {
             self.record_loaded_prelude_exports(
                 dep.prelude_exports()
                     .iter()

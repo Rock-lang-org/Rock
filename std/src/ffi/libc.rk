@@ -1,0 +1,78 @@
+// libc extern declarations
+//
+// Central module for all C standard library function declarations.
+// All extern functions are exported (< prefix) so they are available
+// to the rest of the std without re-declaration.
+
+// Memory allocation
+< extern malloc: I64 -> *U8
+< extern free: *U8 -> ()
+< extern realloc: *U8 -> I64 -> *U8
+
+// Memory operations
+< extern memcpy: *U8 -> *U8 -> I64 -> *U8
+
+// I/O
+< extern puts: *U8 -> I32
+< extern putchar: I32 -> I32
+< extern exit: I32 -> ()
+
+// POSIX sockets and file descriptors
+< extern socket: I32 -> I32 -> I32 -> I32
+< extern bind: I32 -> *U8 -> I32 -> I32
+< extern listen: I32 -> I32 -> I32
+< extern accept: I32 -> *U8 -> *I32 -> I32
+< extern connect: I32 -> *U8 -> I32 -> I32
+< extern open: *U8 -> I32 -> I32 -> I32
+< extern read: I32 -> *U8 -> I64 -> I64
+< extern write: I32 -> *U8 -> I64 -> I64
+< extern send: I32 -> *U8 -> I64 -> I32 -> I64
+< extern shutdown: I32 -> I32 -> I32
+< extern close: I32 -> I32
+< extern getsockname: I32 -> *U8 -> *I32 -> I32
+< extern htons: U16 -> U16
+< extern ntohs: U16 -> U16
+< extern htonl: U32 -> U32
+< extern ntohl: U32 -> U32
+< extern __errno_location: () -> *I32
+
+// POSIX threads
+< extern pthread_create: *U64 -> *U8 -> *U8 -> *U8 -> I32
+< extern pthread_join: U64 -> *U64 -> I32
+< extern pthread_detach: U64 -> I32
+< extern pthread_self: () -> U64
+< extern sched_yield: () -> I32
+< extern usleep: U32 -> I32
+
+// String functions
+< extern strlen: *U8 -> I64
+< extern strcmp: *U8 -> *U8 -> I32
+< extern strcpy: *U8 -> *U8 -> *U8
+< extern strcat: *U8 -> *U8 -> *U8
+< extern strstr: *U8 -> *U8 -> *U8
+
+// Conversion functions
+< extern atoi: *U8 -> I32
+< extern atol: *U8 -> I64
+< extern atof: *U8 -> F64
+< extern gcvt: F64 -> I64 -> *U8 -> *U8
+
+// Math functions (libm)
+< extern sqrt: F64 -> F64
+< extern sin: F64 -> F64
+< extern cos: F64 -> F64
+< extern tan: F64 -> F64
+< extern asin: F64 -> F64
+< extern acos: F64 -> F64
+< extern atan: F64 -> F64
+< extern exp: F64 -> F64
+< extern log: F64 -> F64
+< extern log2: F64 -> F64
+< extern log10: F64 -> F64
+< extern ceil: F64 -> F64
+< extern floor: F64 -> F64
+< extern round: F64 -> F64
+< extern abs_f64: F64 -> F64
+< extern fabs: F64 -> F64
+< extern pow: F64 -> F64 -> F64
+< extern atan2: F64 -> F64 -> F64

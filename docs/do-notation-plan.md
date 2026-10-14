@@ -6,7 +6,7 @@ Status: parser-level expansion and formatter support implemented; validation is 
 
 `lib/src/parser/items/do_expr.rs` expands the block immediately into ordinary `bind` calls and lambdas. A single wildcard arm of `match true` provides lexical scope, including before the first bind, without introducing another closure. `Match::do_syntax` retains the original statements for formatting only; it is skipped by serialization and semantic visitors operate on the expanded arms. No new language-item protocol, HIR operation, or artifact format is introduced.
 
-Runtime validation covers `Option`, `Result`, nested blocks, short-circuiting, ownership and drops, custom repeated-callback bindings, no-stdlib use, macro expansion, and exported generic artifact bodies. Parser tests cover invalid control flow and formatting round trips. `cargo test -p rock-lib` passes with 2,336 unit tests, 686 integration tests, and one parser integration test; one existing doc-test is ignored. `cargo clippy --workspace --all-targets` completes with warnings. The release compiler has been rebuilt for book validation.
+Runtime validation covers `Option`, `Result`, nested blocks, short-circuiting, ownership and drops, custom repeated-callback bindings, no-std use, macro expansion, and exported generic artifact bodies. Parser tests cover invalid control flow and formatting round trips. `cargo test -p rock-lib` passes with 2,336 unit tests, 686 integration tests, and one parser integration test; one existing doc-test is ignored. `cargo clippy --workspace --all-targets` completes with warnings. The release compiler has been rebuilt for book validation.
 
 `node docs/checks/compile-examples.cjs` passes with 268 compiled examples, four expected rejections, and no unexpected failures. All eight I/O chapter programs were also linked and run with their expected output and file contents; four file-error scenarios returned exit code `1` without printing success output. `cargo fmt --all` and `git diff --check` complete successfully.
 
@@ -20,16 +20,16 @@ The pinned commit was fetched successfully from GitHub. The book builds with mdB
 
 Provide flat, expression-oriented monadic sequencing by expanding `do` into existing AST calls, closures, and assignments. Preserve the behavior, ownership rules, and static dispatch of ordinary bind calls. The semantic compiler pipeline receives ordinary syntax, not a new monadic operation.
 
-Rock already defines `Monad::bind`, the standalone `bind`, `.bind`, and `>>=` in `stdlib/src/functional/monad.rk`, and `Applicative::pure` plus standalone `pure` in `stdlib/src/functional/applicative.rk`. Both traits and functions are exported by the explicitly supplied stdlib prelude. `Option` and `Result _, E` already implement these traits.
+Rock already defines `Monad::bind`, the standalone `bind`, `.bind`, and `>>=` in `std/src/functional/monad.rk`, and `Applicative::pure` plus standalone `pure` in `std/src/functional/applicative.rk`. Both traits and functions are exported by the explicitly supplied std prelude. `Option` and `Result _, E` already implement these traits.
 
 ## Proposed User Experience
 
 This complete proposed program performs two dependent file operations without nested callbacks:
 
 ```rock
-> stdlib::io::fs::File
-> stdlib::io::IoError
-> stdlib::io::Write
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
 
 write_greeting: &Str -> Result I64, IoError
 write_greeting = path ->
@@ -69,29 +69,29 @@ Introduce an indentation-delimited `do` expression with these statement forms:
 | Nonfinal bare expression | Bind a carrier and discard its payload. |
 | Final expression | Return the carrier unchanged. |
 
-The final expression is unchanged; with stdlib binds it must have their required carrier type. There is no implicit `pure` or independent monad check on a block containing no binds. `pure` remains an ordinary library function, not a keyword. Use existing assignment syntax instead of adding Haskell's `let`. Initially permit identifier and wildcard bind targets; defer destructuring until its failure semantics are designed.
+The final expression is unchanged; with std binds it must have their required carrier type. There is no implicit `pure` or independent monad check on a block containing no binds. `pure` remains an ordinary library function, not a keyword. Use existing assignment syntax instead of adding Haskell's `let`. Initially permit identifier and wildcard bind targets; defer destructuring until its failure semantics are designed.
 
-With the stdlib's `bind`, all bind statements use one unary constructor `F`; payload types can vary. For `Result`, the error parameter is fixed unless explicitly converted by ordinary code. `Option` skips the continuation on `None`; `Result` skips it on `Err`. These rules come from the resolved function's existing signature and implementation, not from `do` itself. A custom implementation determines its own continuation behavior, including whether it invokes a callback multiple times.
+With the std's `bind`, all bind statements use one unary constructor `F`; payload types can vary. For `Result`, the error parameter is fixed unless explicitly converted by ordinary code. `Option` skips the continuation on `None`; `Result` skips it on `Err`. These rules come from the resolved function's existing signature and implementation, not from `do` itself. A custom implementation determines its own continuation behavior, including whether it invokes a callback multiple times.
 
 Rock remains eager. Each bind source is evaluated once per execution of its containing continuation, and the remainder is evaluated only when that bind invokes its callback. Ordinary local bindings after a bind stay inside that callback. Do not hoist later operations or promise global exactly-once execution for arbitrary monads.
 
-With the stdlib's `bind`, nonfinal bare expressions must be carriers: Rock's ordinary `println!` returns an `I32`, not a Haskell `IO` action. Keep printing at the boundary as above, or use an explicit ordinary binding when an eager side effect is intentionally part of a continuation. Do not silently select between plain sequencing and monadic sequencing based on an expression's inferred type.
+With the std's `bind`, nonfinal bare expressions must be carriers: Rock's ordinary `println!` returns an `I32`, not a Haskell `IO` action. Keep printing at the boundary as above, or use an explicit ordinary binding when an eager side effect is intentionally part of a continuation. Do not silently select between plain sequencing and monadic sequencing based on an expression's inferred type.
 
 The block is lexical: bound names are visible in the remainder, not outside it. Nested blocks expand independently and ordinary inference handles their types. Empty blocks and blocks ending in a binding are errors.
 
 Initially reject `return`, `break`, and `continue` that would cross a generated callback boundary, and reject `?` directly in the `do` sequencing region; otherwise generated closures could silently change their targets. Explicit nested functions and loops retain their ordinary rules. Use `<-` for propagation and the final expression for the result. Define and test these boundaries before lowering.
 
-Recognize `<-` as bind syntax in a `do` statement, without installing or globally redefining a stdlib operator. Reserve `do` as syntax and document that language change.
+Recognize `<-` as bind syntax in a `do` statement, without installing or globally redefining a std operator. Reserve `do` as syntax and document that language change.
 
 ## Compiler Integration
 
 ### Ordinary Name Resolution
 
-Expand each sequencing step to an ordinary unqualified call to `bind`. Resolve that identifier exactly as if the programmer had written the expanded call at that lexical position. The stdlib prelude already exports `bind`; a custom library or local binding can supply a different function. Shadowing `bind` deliberately changes the meaning of subsequent generated calls, including when a preceding assignment or bind target introduces that name.
+Expand each sequencing step to an ordinary unqualified call to `bind`. Resolve that identifier exactly as if the programmer had written the expanded call at that lexical position. The std prelude already exports `bind`; a custom library or local binding can supply a different function. Shadowing `bind` deliberately changes the meaning of subsequent generated calls, including when a preceding assignment or bind target introduces that name.
 
-This is rebindable syntax: the parser knows the expansion spelling, but does not know a stdlib path, operator meaning, trait identity, or carrier implementation. The generated calls use the same canonical resolution and selection machinery as user-written calls. Missing or unsuitable `bind` definitions produce ordinary resolution or type errors at source-backed spans.
+This is rebindable syntax: the parser knows the expansion spelling, but does not know a std path, operator meaning, trait identity, or carrier implementation. The generated calls use the same canonical resolution and selection machinery as user-written calls. Missing or unsuitable `bind` definitions produce ordinary resolution or type errors at source-backed spans.
 
-`pure` remains an explicitly written ordinary function. No new language-item protocol, implicit stdlib dependency, compiler-owned pure operation, or artifact protocol metadata is required.
+`pure` remains an explicitly written ordinary function. No new language-item protocol, implicit std dependency, compiler-owned pure operation, or artifact protocol metadata is required.
 
 ### Expansion Rules
 

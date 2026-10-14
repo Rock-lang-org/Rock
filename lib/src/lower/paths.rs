@@ -4725,17 +4725,17 @@ main = ->
         let method_id = def_id(49);
         lowerer
             .items
-            .insert_structure(empty_struct(struct_id, "stdlib::string::String"));
+            .insert_structure(empty_struct(struct_id, "std::string::String"));
         lowerer.resolver.insert_import_alias_with_name(
             "String".to_string(),
-            "stdlib::string::String".to_string(),
+            "std::string::String".to_string(),
             struct_id,
         );
         lowerer
             .items
             .insert_impl(HirImpl {
                 id: def_id(50),
-                owner: HirImplOwner::Named("stdlib::string::String".to_string()),
+                owner: HirImplOwner::Named("std::string::String".to_string()),
                 type_name: "String".to_string(),
                 type_generics: Vec::new(),
                 receiver_pattern: HirImplReceiverPattern::Exact(Type::Struct {
@@ -4754,7 +4754,7 @@ main = ->
         let expr = lowerer.lower_identifier_path(&identifier_path(&["String", "from"]));
 
         let (reference, target) = static_method_value_parts(&expr);
-        assert_eq!(reference.name, "stdlib::string::String::from");
+        assert_eq!(reference.name, "std::string::String::from");
         assert_eq!(reference.target, HirVarTarget::Function(method_id));
         assert_eq!(target.method.impl_id(), Some(def_id(50)));
         assert_eq!(target.method.method_id(), Some(method_id));
@@ -4789,14 +4789,14 @@ main = ->
             .insert_structure(empty_struct(struct_id, "String"));
         lowerer.resolver.insert_import_alias_with_name(
             "String".to_string(),
-            "stdlib::string::String".to_string(),
+            "std::string::String".to_string(),
             struct_id,
         );
         register_static_impl(
             &mut lowerer,
             def_id(155),
             struct_id,
-            "stdlib::string::String",
+            "std::string::String",
             "from",
             test_function(canonical_method_id, "from"),
         );
@@ -4804,7 +4804,7 @@ main = ->
         let expr = lowerer.lower_identifier_path(&identifier_path(&["String", "from"]));
 
         let (reference, target) = static_method_value_parts(&expr);
-        assert_eq!(reference.name, "stdlib::string::String::from");
+        assert_eq!(reference.name, "std::string::String::from");
         assert_eq!(
             reference.target,
             HirVarTarget::Function(canonical_method_id)
@@ -5412,7 +5412,7 @@ main = ->
             .insert_structure(private_field_struct(struct_id, "String"));
         lowerer.items.insert_structure(private_field_struct(
             struct_id,
-            "stdlib::string_type::String",
+            "std::string_type::String",
         ));
         lowerer
             .resolver
@@ -5421,7 +5421,7 @@ main = ->
         lowerer
             .resolver
             .item_names_by_id
-            .insert(struct_id, "stdlib::string_type::String".to_string());
+            .insert(struct_id, "std::string_type::String".to_string());
         lowerer.current_struct_impl = Some("String".to_string());
 
         let _literal = lowerer.lower_instance(&ast::Instance {
@@ -5447,7 +5447,7 @@ main = ->
         let struct_id = def_id(58);
         lowerer.items.insert_structure(private_field_struct(
             struct_id,
-            "stdlib::string_type::String",
+            "std::string_type::String",
         ));
         lowerer
             .resolver
@@ -5456,8 +5456,8 @@ main = ->
         lowerer
             .resolver
             .item_names_by_id
-            .insert(struct_id, "stdlib::string_type::String".to_string());
-        lowerer.current_struct_impl = Some("stdlib::string_type::String".to_string());
+            .insert(struct_id, "std::string_type::String".to_string());
+        lowerer.current_struct_impl = Some("std::string_type::String".to_string());
 
         let _literal = lowerer.lower_instance(&ast::Instance {
             name: ast::TypePath {
@@ -5485,15 +5485,15 @@ main = ->
             .insert_structure(private_field_struct(struct_id, "String"));
         lowerer.items.insert_structure(private_field_struct(
             struct_id,
-            "stdlib::string_type::String",
+            "std::string_type::String",
         ));
-        register_item_path(&mut lowerer, "stdlib::string_type::String", struct_id);
+        register_item_path(&mut lowerer, "std::string_type::String", struct_id);
         lowerer.current_struct_impl = Some("String".to_string());
 
         let _literal = lowerer.lower_instance(&ast::Instance {
             name: ast::TypePath {
                 path: vec![
-                    IdentOrType::Ident(ident("stdlib")),
+                    IdentOrType::Ident(ident("std")),
                     IdentOrType::Ident(ident("string_type")),
                     IdentOrType::Ident(ident("String")),
                 ],

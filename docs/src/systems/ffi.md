@@ -61,7 +61,7 @@ module. This complete wrapper imports it explicitly, declares its pointer local,
 and keeps the owning `String` alive until the foreign call returns:
 
 ```rock
-> stdlib::ffi::libc::strlen
+> std::ffi::libc::strlen
 
 unsafe c_string_length: String -> I64
 c_string_length = text ->
@@ -75,7 +75,7 @@ main = !->
 ```
 
 The imported declaration is equivalent to `extern strlen: *U8 -> I64` in the
-stdlib's libc module. Its contract requires a non-null pointer to a readable,
+std's libc module. Its contract requires a non-null pointer to a readable,
 initialized, null-terminated byte sequence. `String` supplies that terminator;
 the wrapper moves the owner into the function and drops it only after `strlen`
 has returned. A borrowed `&Str` is not automatically safe for this API because
@@ -89,8 +89,8 @@ bytes, rejects non-positive sizes, checks the returned pointer, and frees one
 successful allocation exactly once:
 
 ```rock
-> stdlib::ffi::libc::malloc
-> stdlib::ffi::libc::free
+> std::ffi::libc::malloc
+> std::ffi::libc::free
 
 unsafe allocate_and_release: I64 -> I64
 allocate_and_release = size ->
@@ -109,7 +109,7 @@ main = !->
     result.println!
 ```
 
-The `malloc` and `free` declarations are exported by the POSIX-oriented stdlib
+The `malloc` and `free` declarations are exported by the POSIX-oriented std
 libc module. The wrapper's unsafe contract is that `size` is a positive byte
 count and that the returned pointer is freed only by the allocator that created
 it. Since the example does not write or read the allocation, it does not claim
@@ -140,7 +140,7 @@ invariant.
 
 ## Target scope
 
-The shipped FFI-backed stdlib currently assumes POSIX APIs and the
+The shipped FFI-backed std currently assumes POSIX APIs and the
 `x86_64-unknown-linux-gnu` target. Put foreign declarations in target-specific
 modules and isolate them behind portable traits where that improves the public
 API. A program that needs Windows, another architecture, nonblocking sockets,

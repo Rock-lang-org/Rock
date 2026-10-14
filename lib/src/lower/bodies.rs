@@ -1084,21 +1084,21 @@ mod tests {
         let function_id = def_id(42);
         lowerer.items.insert_structure(private_field_struct(
             struct_id,
-            "stdlib::string_type::String",
+            "std::string_type::String",
         ));
         lowerer
             .resolver
             .scoped_module_aliases
-            .entry("stdlib::string_type".to_string())
+            .entry("std::string_type".to_string())
             .or_default()
             .insert("String".to_string(), struct_id);
         lowerer
             .resolver
             .item_names_by_id
-            .insert(struct_id, "stdlib::string_type::String".to_string());
+            .insert(struct_id, "std::string_type::String".to_string());
         lowerer
             .modules
-            .replace_qualified_module_prefix(Some("stdlib::string_type"));
+            .replace_qualified_module_prefix(Some("std::string_type"));
         let function = empty_impl_function(
             "new",
             function_id,

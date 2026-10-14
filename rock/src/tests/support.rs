@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use crate::{
-    bundled_sysroot::{current_sysroot_layout, STDLIB_CRATE_NAME},
+    bundled_sysroot::{current_sysroot_layout, STD_CRATE_NAME},
     package::Package,
 };
 
@@ -71,24 +71,24 @@ pub(super) fn write_package_with_options(
     fs::write(lib_file, source).unwrap();
 }
 
-pub(super) fn assert_sysroot_stdlib_files_exist() {
+pub(super) fn assert_sysroot_std_files_exist() {
     let layout = current_sysroot_layout().unwrap();
 
-    assert!(layout.stdlib_artifact.exists());
-    assert!(layout.stdlib_object.exists());
+    assert!(layout.std_artifact.exists());
+    assert!(layout.std_object.exists());
     assert!(layout.manifest_path.exists());
     assert!(layout.components_path.exists());
 }
 
-pub(super) fn write_answer_stdlib(root: &Path, answer: i32) {
+pub(super) fn write_answer_std(root: &Path, answer: i32) {
     write_package(
         root,
-        STDLIB_CRATE_NAME,
+        STD_CRATE_NAME,
         "lib.rk",
         &[],
         "< mod prelude\n< mod math\n",
     );
-    fs::write(root.join("prelude.rk"), "< stdlib::math::answer\n").unwrap();
+    fs::write(root.join("prelude.rk"), "< std::math::answer\n").unwrap();
     fs::write(
         root.join("math.rk"),
         format!("< answer = -> {}\n< answer\n", answer),

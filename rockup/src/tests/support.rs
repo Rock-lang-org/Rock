@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::{
     constants::{
         BIN_DIR, COMPONENTS_MANIFEST_NAME, DEFAULT_TOOLCHAIN_FILE, LIB_DIR, ROCKC_BIN_NAME,
-        ROCK_BIN_NAME, ROCK_LSP_BIN_NAME, ROCK_TOOLCHAIN_FILE, STDLIB_ARTIFACT_NAME,
-        STDLIB_OBJECT_NAME, TOOLCHAIN_MANIFEST_NAME,
+        ROCK_BIN_NAME, ROCK_LSP_BIN_NAME, ROCK_TOOLCHAIN_FILE, STD_ARTIFACT_NAME,
+        STD_OBJECT_NAME, TOOLCHAIN_MANIFEST_NAME,
     },
     home::RockupHome,
     layout::host_target_triple,
@@ -42,8 +42,8 @@ pub(super) fn write_fake_toolchain_root(root: &Path) {
     write_script(&bin_dir.join(ROCK_BIN_NAME), "exit 17\n");
     write_script(&bin_dir.join(ROCKC_BIN_NAME), "exit 0\n");
     write_script(&bin_dir.join(ROCK_LSP_BIN_NAME), "exit 31\n");
-    fs::write(target_libdir.join(STDLIB_ARTIFACT_NAME), "artifact").unwrap();
-    fs::write(target_libdir.join(STDLIB_OBJECT_NAME), "object").unwrap();
+    fs::write(target_libdir.join(STD_ARTIFACT_NAME), "artifact").unwrap();
+    fs::write(target_libdir.join(STD_OBJECT_NAME), "object").unwrap();
     fs::write(target_libdir.join(TOOLCHAIN_MANIFEST_NAME), "{}\n").unwrap();
     fs::write(target_libdir.join(COMPONENTS_MANIFEST_NAME), "{}\n").unwrap();
 }
@@ -58,8 +58,8 @@ pub(super) fn write_fake_cargo_build_dir(root: &Path) {
     write_script(&root.join(ROCK_BIN_NAME), "exit 13\n");
     write_script(&root.join(ROCKC_BIN_NAME), "exit 0\n");
     write_script(&root.join(ROCK_LSP_BIN_NAME), "exit 31\n");
-    fs::write(target_libdir.join(STDLIB_ARTIFACT_NAME), "artifact").unwrap();
-    fs::write(target_libdir.join(STDLIB_OBJECT_NAME), "object").unwrap();
+    fs::write(target_libdir.join(STD_ARTIFACT_NAME), "artifact").unwrap();
+    fs::write(target_libdir.join(STD_OBJECT_NAME), "object").unwrap();
     fs::write(target_libdir.join(TOOLCHAIN_MANIFEST_NAME), "{}\n").unwrap();
     fs::write(target_libdir.join(COMPONENTS_MANIFEST_NAME), "{}\n").unwrap();
 }
@@ -67,11 +67,11 @@ pub(super) fn write_fake_cargo_build_dir(root: &Path) {
 pub(super) fn write_target_component_dir(root: &Path, label: &str) {
     fs::create_dir_all(root).unwrap();
     fs::write(
-        root.join(STDLIB_ARTIFACT_NAME),
+        root.join(STD_ARTIFACT_NAME),
         format!("{} artifact\n", label),
     )
     .unwrap();
-    fs::write(root.join(STDLIB_OBJECT_NAME), format!("{} object\n", label)).unwrap();
+    fs::write(root.join(STD_OBJECT_NAME), format!("{} object\n", label)).unwrap();
     fs::write(
         root.join(TOOLCHAIN_MANIFEST_NAME),
         format!("{} manifest\n", label),
@@ -117,9 +117,9 @@ pub(super) fn read_default_toolchain(home: &RockupHome) -> String {
         .to_string()
 }
 
-pub(super) fn workspace_stdlib_root() -> PathBuf {
+pub(super) fn workspace_std_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("stdlib")
+        .join("std")
 }

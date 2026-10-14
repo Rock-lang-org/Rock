@@ -7,7 +7,7 @@ use std::{
 use crate::{
     constants::{
         BIN_DIR, COMPONENTS_MANIFEST_NAME, LIB_DIR, ROCKC_BIN_NAME, ROCKUP_TOOLCHAIN_ENV,
-        ROCK_BIN_NAME, ROCK_LSP_BIN_NAME, STDLIB_ARTIFACT_NAME, STDLIB_OBJECT_NAME,
+        ROCK_BIN_NAME, ROCK_LSP_BIN_NAME, STD_ARTIFACT_NAME, STD_OBJECT_NAME,
         TOOLCHAIN_MANIFEST_NAME,
     },
     fsutil::copy_directory_recursive,
@@ -273,8 +273,8 @@ pub(crate) fn validate_toolchain_layout(layout: &ToolchainLayout) -> Result<(), 
     }
 
     validate_target_component_paths(
-        &layout.stdlib_artifact,
-        &layout.stdlib_object,
+        &layout.std_artifact,
+        &layout.std_object,
         &layout.manifest_path,
         &layout.components_path,
         &layout.target_component_dir,
@@ -319,12 +319,12 @@ fn validate_cargo_build_dir(layout: &CargoBuildDirLayout) -> Result<(), String> 
         (&layout.rockc_bin, "rockc binary"),
         (&layout.rock_lsp_bin, "rock-lsp binary"),
         (
-            &layout.target_libdir.join(STDLIB_ARTIFACT_NAME),
-            "stdlib artifact",
+            &layout.target_libdir.join(STD_ARTIFACT_NAME),
+            "std artifact",
         ),
         (
-            &layout.target_libdir.join(STDLIB_OBJECT_NAME),
-            "stdlib object",
+            &layout.target_libdir.join(STD_OBJECT_NAME),
+            "std object",
         ),
         (
             &layout.target_libdir.join(TOOLCHAIN_MANIFEST_NAME),

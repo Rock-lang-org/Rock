@@ -90,8 +90,8 @@ pub struct Config {
     pub emit_llvm: bool,
     pub no_link: bool,
     pub emit_object: Option<PathBuf>,
-    pub no_prelude: bool,         // Don't inject stdlib prelude
-    pub no_std: bool,             // Don't auto-load bundled stdlib
+    pub no_prelude: bool,         // Don't inject std prelude
+    pub no_std: bool,             // Don't auto-load bundled std
     pub sysroot: Option<PathBuf>, // Toolchain sysroot override
 }
 
@@ -285,7 +285,7 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
             diagnostics.push(diagnostic::Diagnostic::for_internal(error));
             diagnostics
         })?;
-        if config.current_crate_name.as_deref() == Some("stdlib") {
+        if config.current_crate_name.as_deref() == Some("std") {
             products.record_prelude_export_ids(
                 loaded_prelude_export_ids
                     .iter()

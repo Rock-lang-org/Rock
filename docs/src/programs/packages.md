@@ -113,7 +113,7 @@ The package graph still remains explicit. Declare each dependency in `rock.toml`
 
 ## Prelude and `no_std`
 
-Passing the `stdlib` artifact makes its prelude available automatically. A low-level package can opt out in its manifest. The complete no-stdlib source returns unit (`()`), so it does not rely on prelude operators or types.
+Passing the `std` artifact makes its prelude available automatically. A low-level package can opt out in its manifest. The complete no-std source returns unit (`()`), so it does not rely on prelude operators or types.
 
 Project tree:
 
@@ -163,5 +163,5 @@ $ rock artifact
 - Keep the manifest's crate name, imported crate path, and artifact name aligned.
 - Keep `[lib].path` relative to the package root and ensure the file exists.
 - Declare every path dependency in `rock.toml` and let `rock` build it in dependency order.
-- Do not expect registry resolution, implicit source discovery, or compiler-owned stdlib injection.
+- Do not expect registry resolution, implicit source discovery, or compiler-owned std injection.
 - `no_std = true` is a package-level choice; code that uses prelude types must opt into the appropriate explicit dependency instead.

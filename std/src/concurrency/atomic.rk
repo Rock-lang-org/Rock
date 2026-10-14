@@ -1,0 +1,42 @@
+// Internal aligned atomic storage used by synchronization primitives.
+
+> std::mem::alloc::Global
+> std::mem::alloc::Layout
+> std::mem::alloc::checked_alloc
+> std::mem::drop::Drop
+
+< struct AtomicU64
+    ptr: *U64
+
+impl AtomicU64
+    new: U64 -> AtomicU64
+    new = value ->
+        layout = Layout
+            size: 8
+            align: 8
+        ptr = (checked_alloc layout) as *U64
+        unsafe *ptr = value
+        AtomicU64
+            ptr: ptr
+
+    @exchange: U64 -> U64
+    @exchange = value -> unsafe ~AtomicU64Exchange self.ptr, value
+
+    @fetch_add: U64 -> U64
+    @fetch_add = value -> unsafe ~AtomicU64FetchAdd self.ptr, value
+
+    @fetch_sub: U64 -> U64
+    @fetch_sub = value -> unsafe ~AtomicU64FetchSub self.ptr, value
+
+    @store: U64 -> ()
+    @store = value ->
+        unsafe ~AtomicU64Store self.ptr, value
+        return
+
+impl Drop for AtomicU64
+    ~@drop = ->
+        layout = Layout
+            size: 8
+            align: 8
+        unsafe Global::dealloc (self.ptr as *U8), layout
+        return

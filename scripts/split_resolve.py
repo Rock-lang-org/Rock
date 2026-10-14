@@ -46,8 +46,8 @@ SECTIONS = [
     # Lowerer impl: Main entry points (lines 491-590)
     (491, 590, "lowerer_entry_points", "Lowerer main entry points"),
 
-    # Lowerer impl: Stdlib/crate registration (lines 591-822)
-    (591, 822, "lowerer_registration", "Stdlib and crate registration"),
+    # Lowerer impl: Std/crate registration (lines 591-822)
+    (591, 822, "lowerer_registration", "Std and crate registration"),
 
     # Lowerer impl: Crate body lowering (lines 823-1102)
     (823, 1102, "lowerer_crate_bodies", "Crate body lowering"),

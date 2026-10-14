@@ -3109,9 +3109,9 @@ mod tests {
         let assoc_id = crate::ids::AssocTypeId(7);
         context
             .import_aliases
-            .insert("Deref".to_string(), "stdlib::deref::Deref".to_string());
+            .insert("Deref".to_string(), "std::deref::Deref".to_string());
         context.traits.insert(
-            "stdlib::deref::Deref".to_string(),
+            "std::deref::Deref".to_string(),
             HirTrait {
                 target: None,
                 predicates: Vec::new(),
@@ -3163,7 +3163,7 @@ mod tests {
             .canonical_import_aliases
             .insert("Clone".to_string(), trait_id);
         context.traits.insert(
-            "stdlib::clone::Clone".to_string(),
+            "std::clone::Clone".to_string(),
             HirTrait {
                 target: None,
                 predicates: Vec::new(),

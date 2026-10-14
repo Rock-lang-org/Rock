@@ -5,8 +5,8 @@ data declarations, traits, modules, and the standard-library boundaries. The
 next step depends on which boundary you want to practice:
 
 1. Use the FizzBuzz checkpoint below if you want a short review of core syntax with deterministic output.
-2. Combine owned buffers and `Result` in [Input, Output, and Files](../stdlib/io-and-files.md), then compare direct error propagation with the combinators in [Option, Result, and `?`](../functional/error-handling.md).
-3. Move on to the [HTTP server guide](../stdlib/http.md) for a library-backed application that brings together requests, responses, configuration, and concurrent connection handling. Read [Threads and Synchronization](../stdlib/concurrency.md) before changing task lifetimes or shutdown behavior.
+2. Combine owned buffers and `Result` in [Input, Output, and Files](../std/io-and-files.md), then compare direct error propagation with the combinators in [Option, Result, and `?`](../functional/error-handling.md).
+3. Move on to the [HTTP server guide](../std/http.md) for a library-backed application that brings together requests, responses, configuration, and concurrent connection handling. Read [Threads and Synchronization](../std/concurrency.md) before changing task lifetimes or shutdown behavior.
 4. Use [Editors and Diagnostics](../getting-started/editor-and-diagnostics.md) to keep editor feedback and project builds aligned, then reduce unexpected behavior to a focused regression.
 
 ## Checkpoint: a complete FizzBuzz executable
@@ -89,8 +89,8 @@ examples/enums.rk
 examples/enum_match.rk
 examples/test_mod.rk
 examples/extern_test.rk
-stdlib/src/io/traits.rk
-stdlib/src/io/fs.rk
+std/src/io/traits.rk
+std/src/io/fs.rk
 ```
 
 Read public signatures first, then inspect the implementation body that owns
@@ -107,7 +107,7 @@ library suite:
 $ cargo test -p rock-lib --test integration test_functions -- --exact
 $ cargo test -p rock-lib --test integration test_enum_match -- --exact
 $ cargo test -p rock-lib --test integration test_for_loop -- --exact
-$ cargo test -p rock-lib --test integration test_stdlib_program_args_are_owned_and_available_outside_main -- --exact
+$ cargo test -p rock-lib --test integration test_std_program_args_are_owned_and_available_outside_main -- --exact
 $ cargo test -p rock-lib
 ```
 

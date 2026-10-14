@@ -41,7 +41,7 @@ impl LocalCollector {
                 root_module_id,
                 &crate_name,
                 &root_exports,
-                crate_name == "stdlib",
+                crate_name == "std",
             );
         }
 
@@ -53,7 +53,7 @@ impl LocalCollector {
         module: &ast::Module,
         root_module_id: ModuleId,
         crate_name: &str,
-        is_stdlib: bool,
+        is_std: bool,
     ) {
         let root_exports = collect_exports(module);
 
@@ -62,7 +62,7 @@ impl LocalCollector {
             root_module_id,
             crate_name,
             &root_exports,
-            is_stdlib,
+            is_std,
         );
 
         for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
@@ -257,7 +257,7 @@ impl LocalCollector {
                     }
                 }
                 ast::TopLevel::Mod(ident, _) => {
-                    let is_prelude = is_stdlib && ident.name == "prelude";
+                    let is_prelude = is_std && ident.name == "prelude";
                     let qualified_prefix = format!("{}::{}", crate_name, ident.name);
                     if !root_exports.contains_key(&ident.name)
                         && !export_references_module(&root_exports, &ident.name, &qualified_prefix)
@@ -831,7 +831,7 @@ impl LocalCollector {
         module_id: ModuleId,
         crate_name: &str,
         root_exports: &HashMap<String, Option<String>>,
-        is_stdlib: bool,
+        is_std: bool,
     ) {
         for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
             match top_level {
@@ -891,7 +891,7 @@ impl LocalCollector {
                     else {
                         continue;
                     };
-                    let is_prelude = is_stdlib && ident.name == "prelude";
+                    let is_prelude = is_std && ident.name == "prelude";
                     let qualified_prefix = format!("{}::{}", crate_name, ident.name);
                     if !root_exports.contains_key(&ident.name)
                         && !export_references_module(root_exports, &ident.name, &qualified_prefix)
@@ -1189,8 +1189,8 @@ impl LocalCollector {
             &exports,
             &reference_exports,
         );
-        if self.context.current_crate_name.as_deref() == Some("stdlib")
-            && qualified_module_name == "stdlib::prelude"
+        if self.context.current_crate_name.as_deref() == Some("std")
+            && qualified_module_name == "std::prelude"
         {
             let export_ids = exports
                 .iter()

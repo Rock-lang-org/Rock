@@ -78,7 +78,7 @@ impl<'a> LoweringSessionServices<'a> {
     }
 
     fn apply_loaded_prelude(&self, lowerer: &mut Lowerer) {
-        if !lowerer.prelude.is_enabled() || !self.ctx.has_extern_crate("stdlib") {
+        if !lowerer.prelude.is_enabled() || !self.ctx.has_extern_crate("std") {
             return;
         }
 
@@ -131,17 +131,17 @@ mod tests {
     fn session_services_seed_resolvers_and_prelude_before_body_lowering() {
         let export_id = DefId::new(CrateId(7), LocalDefId(1));
         let mut interface = ArtifactCrateInterface::default();
-        let qualified_name = "stdlib::prelude::answer".to_string();
+        let qualified_name = "std::prelude::answer".to_string();
         let function = test_function(export_id, "answer");
         interface.insert_function(qualified_name.clone(), function.clone());
 
         let mut resolver = crate::collect::resolver::ResolverTables::default();
         resolver
             .item_paths
-            .insert("stdlib::prelude::answer".to_string(), export_id);
+            .insert("std::prelude::answer".to_string(), export_id);
         resolver
             .item_names_by_id
-            .insert(export_id, "stdlib::prelude::answer".to_string());
+            .insert(export_id, "std::prelude::answer".to_string());
 
         let prelude_exports = BTreeMap::from([(
             "answer".to_string(),
@@ -153,7 +153,7 @@ mod tests {
         let mut ctx = CrateContext::new();
         ctx.add_extern_crate(ExternCrateRecord::new(
             CrateId(7),
-            "stdlib".to_string(),
+            "std".to_string(),
             ExternCrateMetadata::new(interface, resolver, prelude_exports),
             ExternCrateBodies::default(),
             ExternCrateLink::metadata_only(BTreeMap::new()),
@@ -164,7 +164,7 @@ mod tests {
         lowerer.items.insert_function(function);
         LoweringSessionServices::new(&ctx, Some("demo"), None).prepare_lowerer(&mut lowerer);
 
-        assert!(lowerer.dependency_resolvers.contains_key("stdlib"));
+        assert!(lowerer.dependency_resolvers.contains_key("std"));
         assert_eq!(
             lowerer.resolver.import_aliases.get("answer"),
             Some(&export_id)
@@ -173,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn session_services_preserve_non_stdlib_prelude_provider_without_injection() {
+    fn session_services_preserve_non_std_prelude_provider_without_injection() {
         let export_id = DefId::new(CrateId(9), LocalDefId(1));
         let mut interface = ArtifactCrateInterface::default();
         let qualified_name = "tools::prelude::answer".to_string();

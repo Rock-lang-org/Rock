@@ -5003,8 +5003,8 @@ mod tests {
         let dependency_id = DefId::new(CrateId(1), LocalDefId(42));
         let mut hir = resolved_hir_for_products();
         hir.resolver.insert_export_alias_with_name(
-            "stdlib::alloc::Global".to_string(),
-            "stdlib::alloc::Global".to_string(),
+            "std::alloc::Global".to_string(),
+            "std::alloc::Global".to_string(),
             dependency_id,
         );
 
@@ -5021,7 +5021,7 @@ mod tests {
         assert!(!products
             .identity_table
             .export_names
-            .contains_key("stdlib::alloc::Global"));
+            .contains_key("std::alloc::Global"));
     }
 
     #[test]
@@ -5992,7 +5992,7 @@ mod tests {
                 foreign_function_id,
                 accept_function(test_function(
                     foreign_function_id,
-                    "stdlib::identity",
+                    "std::identity",
                     generic_params(foreign_function_id, &["T"]),
                 )),
             );
@@ -6000,8 +6000,8 @@ mod tests {
                 foreign_impl_id,
                 HirImplFor::<AcceptedHir> {
                     id: foreign_impl_id,
-                    owner: crate::hir::HirImplOwner::Named("stdlib::Box".to_string()),
-                    type_name: "stdlib::Box".to_string(),
+                    owner: crate::hir::HirImplOwner::Named("std::Box".to_string()),
+                    type_name: "std::Box".to_string(),
                     type_generics: generic_params(foreign_impl_id, &["T"]),
                     receiver_pattern: crate::hir::HirImplReceiverPattern::Exact(Type::Struct {
                         id: DefId::new(CrateId(0), LocalDefId(2)),
@@ -6010,7 +6010,7 @@ mod tests {
                             index: 0,
                         })],
                     }),
-                    trait_name: Some("stdlib::Show".to_string()),
+                    trait_name: Some("std::Show".to_string()),
                     trait_id: None,
                     trait_generics: Vec::new(),
                     trait_arg_types: Vec::new(),
@@ -6025,8 +6025,8 @@ mod tests {
             ProductCrateIdentity::local("demo".to_string()),
             &hir,
             vec![ProductDependencyIdentity::artifact_object(
-                "stdlib".to_string(),
-                PathBuf::from("build/stdlib.rkca"),
+                "std".to_string(),
+                PathBuf::from("build/std.rkca"),
             )],
             BTreeMap::new(),
             ProductSourceFingerprint::default(),
@@ -6067,7 +6067,7 @@ mod tests {
                     foreign_function_id,
                     accept_function(test_function(
                         foreign_function_id,
-                        "stdlib::identity",
+                        "std::identity",
                         generic_params(foreign_function_id, &["T"]),
                     )),
                 );
@@ -6078,8 +6078,8 @@ mod tests {
             ProductCrateIdentity::local("demo".to_string()),
             &hir,
             vec![ProductDependencyIdentity::artifact_object(
-                "stdlib".to_string(),
-                PathBuf::from("build/stdlib.rkca"),
+                "std".to_string(),
+                PathBuf::from("build/std.rkca"),
             )],
             BTreeMap::new(),
             ProductSourceFingerprint::default(),
@@ -6146,9 +6146,9 @@ mod tests {
     #[test]
     fn compiler_products_record_dependency_identities_by_product_crate_id() {
         let hir = resolved_hir_for_products();
-        let stdlib = ProductDependencyIdentity::artifact_object(
-            "stdlib".to_string(),
-            PathBuf::from("build/stdlib.rkca"),
+        let std = ProductDependencyIdentity::artifact_object(
+            "std".to_string(),
+            PathBuf::from("build/std.rkca"),
         );
         let math = ProductDependencyIdentity::artifact_object(
             "math".to_string(),
@@ -6158,11 +6158,11 @@ mod tests {
         let products = CompilerProducts::from_resolved_hir(
             ProductCrateIdentity::local("demo".to_string()),
             &hir,
-            vec![stdlib, math],
+            vec![std, math],
             BTreeMap::from([
                 (
                     ProductCrateId(7),
-                    ProductCrateIdentity::local("stdlib".to_string()),
+                    ProductCrateIdentity::local("std".to_string()),
                 ),
                 (
                     ProductCrateId(42),
@@ -6187,7 +6187,7 @@ mod tests {
         );
         assert_eq!(
             products.identity_table.dependencies[&ProductCrateId(7)].name,
-            "stdlib"
+            "std"
         );
         assert_eq!(
             products.identity_table.dependencies[&ProductCrateId(42)].name,
@@ -6210,12 +6210,12 @@ mod tests {
             crate_identity,
             &hir,
             vec![ProductDependencyIdentity::artifact_object(
-                "stdlib".to_string(),
-                PathBuf::from("build/stdlib.rkca"),
+                "std".to_string(),
+                PathBuf::from("build/std.rkca"),
             )],
             BTreeMap::from([(
                 ProductCrateId(7),
-                ProductCrateIdentity::local("stdlib".to_string()),
+                ProductCrateIdentity::local("std".to_string()),
             )]),
             source_fingerprint.clone(),
             ProductLinkData::default(),
@@ -6231,13 +6231,13 @@ mod tests {
         assert_eq!(freshness.target_triple.as_deref(), Some("test-target"));
         assert_eq!(freshness.source_fingerprint, source_fingerprint);
         assert_eq!(freshness.dependencies.len(), 1);
-        assert_eq!(freshness.dependencies[0].name, "stdlib");
+        assert_eq!(freshness.dependencies[0].name, "std");
         assert_eq!(
             freshness.dependencies[0]
                 .crate_identity
                 .as_ref()
                 .map(|identity| identity.name.as_str()),
-            Some("stdlib")
+            Some("std")
         );
         assert!(!freshness.compiler_version.is_empty());
     }

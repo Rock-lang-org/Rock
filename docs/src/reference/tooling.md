@@ -68,8 +68,8 @@ Without the standard library, familiar operators, collections, strings, and prel
 
 ```console
 $ cargo build --release
-$ target/release/rockup dev stdlib package \
-    --path stdlib \
+$ target/release/rockup dev std package \
+    --path std \
     --sysroot target/release
 $ target/release/rockup install dev --path target/release
 $ target/release/rockup default dev

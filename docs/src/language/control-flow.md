@@ -111,7 +111,7 @@ main = !->
         value.println!
 ```
 
-`values` owns its growable allocation throughout. `as_slice!` borrows its initialized elements, and `*view` supplies the slice value accepted by `for`. The loop prints `4`, `5`, and `6`; the borrow ends after its final use. Slice views and consuming traversal methods are covered in [Arrays, Slices, and Tuples](arrays-slices-tuples.md) and [Strings and Collections](../stdlib/collections.md).
+`values` owns its growable allocation throughout. `as_slice!` borrows its initialized elements, and `*view` supplies the slice value accepted by `for`. The loop prints `4`, `5`, and `6`; the borrow ends after its final use. Slice views and consuming traversal methods are covered in [Arrays, Slices, and Tuples](arrays-slices-tuples.md) and [Strings and Collections](../std/collections.md).
 
 ## `loop`, `break`, and `continue`
 

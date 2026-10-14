@@ -41,7 +41,7 @@ impl PreludeImports {
         crate_name: &str,
         exports: &BTreeMap<String, ArtifactExport>,
     ) {
-        if crate_name != "stdlib" || exports.is_empty() {
+        if crate_name != "std" || exports.is_empty() {
             return;
         }
 
@@ -163,35 +163,35 @@ mod tests {
                 (
                     "zebra".to_string(),
                     ArtifactExport {
-                        source: "stdlib::zebra".to_string(),
+                        source: "std::zebra".to_string(),
                         id: DefId::new(CrateId(7), LocalDefId(5)),
                     },
                 ),
                 (
                     "omega".to_string(),
                     ArtifactExport {
-                        source: "stdlib::omega".to_string(),
+                        source: "std::omega".to_string(),
                         id: DefId::new(CrateId(7), LocalDefId(4)),
                     },
                 ),
                 (
                     "gamma".to_string(),
                     ArtifactExport {
-                        source: "stdlib::gamma".to_string(),
+                        source: "std::gamma".to_string(),
                         id: DefId::new(CrateId(7), LocalDefId(3)),
                     },
                 ),
                 (
                     "beta".to_string(),
                     ArtifactExport {
-                        source: "stdlib::beta".to_string(),
+                        source: "std::beta".to_string(),
                         id: DefId::new(CrateId(7), LocalDefId(2)),
                     },
                 ),
                 (
                     "alpha".to_string(),
                     ArtifactExport {
-                        source: "stdlib::alpha".to_string(),
+                        source: "std::alpha".to_string(),
                         id: DefId::new(CrateId(7), LocalDefId(1)),
                     },
                 ),
@@ -207,11 +207,11 @@ mod tests {
         assert_eq!(
             errors,
             vec![
-                "Missing loaded prelude declaration for stdlib::alpha",
-                "Missing loaded prelude declaration for stdlib::beta",
-                "Missing loaded prelude declaration for stdlib::gamma",
-                "Missing loaded prelude declaration for stdlib::omega",
-                "Missing loaded prelude declaration for stdlib::zebra",
+                "Missing loaded prelude declaration for std::alpha",
+                "Missing loaded prelude declaration for std::beta",
+                "Missing loaded prelude declaration for std::gamma",
+                "Missing loaded prelude declaration for std::omega",
+                "Missing loaded prelude declaration for std::zebra",
             ]
         );
     }

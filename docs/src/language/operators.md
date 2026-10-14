@@ -81,7 +81,7 @@ main = !->
 
 The output is `5`, `true`, and `4`. Although `borrowed` has type `&I64`, method lookup can select the `I64` implementations of `+` and `%`. Those implementations use shared receivers (`@`) and read the integer through `self`, so the caller does not need to write `*borrowed`. The original integer remains available.
 
-This also lets operator sections such as `(+ 1)` work as callbacks receiving `&I64`, as shown in the [collection transformations](../stdlib/collections.md#consuming-and-borrowing-transformations). Receiver adjustment does not make references and values interchangeable in every argument position; the selected operator's signature still determines its requirements.
+This also lets operator sections such as `(+ 1)` work as callbacks receiving `&I64`, as shown in the [collection transformations](../std/collections.md#consuming-and-borrowing-transformations). Receiver adjustment does not make references and values interchangeable in every argument position; the selected operator's signature still determines its requirements.
 
 ## Unary Operators
 

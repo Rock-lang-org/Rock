@@ -1,0 +1,164 @@
+// Option T - represents an optional value (Some or None)
+
+> std::show::Show
+> std::string::owned::String
+> std::control::result::Result
+> std::control::control_flow::ControlFlow
+> std::control::control_flow::FromResidual
+> std::control::control_flow::Try
+> std::functional::callable::FnMut
+> std::functional::functor::Functor
+> std::functional::applicative::Applicative
+> std::functional::monad::Monad
+> std::functional::foldable::Foldable
+> std::functional::traversable::Traversable
+
+< enum Option T
+    Some T
+    None
+
+< enum OptionResidual
+    None
+
+option_map: Option T -> (T -> U) -> Option U
+option_map = opt, f ->
+    match opt
+        Option::Some val => Option::Some (f val)
+        Option::None => Option::None
+
+option_and_then: Option T -> (T -> Option U) -> Option U
+option_and_then = opt, f ->
+    match opt
+        Option::Some val => f val
+        Option::None => Option::None
+
+impl Functor for Option
+    fmap = mut mapper, value ->
+        match value
+            Option::Some item => Option::Some (mapper item)
+            Option::None => Option::None
+
+impl Applicative for Option
+    pure = value -> Option::Some value
+
+    ap = wrapped_function, wrapped_value ->
+        match wrapped_function
+            Option::Some function =>
+                match wrapped_value
+                    Option::Some value => Option::Some (function value)
+                    Option::None => Option::None
+            Option::None => Option::None
+
+impl Monad for Option
+    bind = value, mut callback ->
+        match value
+            Option::Some item => callback item
+            Option::None => Option::None
+
+impl Foldable for Option
+    try_fold = mut step, initial, value ->
+        match value
+            Option::Some item => step (initial, item)
+            Option::None => ControlFlow::Continue initial
+
+impl Traversable for Option
+    traverse = mut visitor, value ->
+        match value
+            Option::Some item =>
+                effect = visitor item
+                wrap: B -> Option B = mapped -> Option::Some mapped
+                G::ap (G::pure wrap), effect
+            Option::None =>
+                none: Option B = Option::None
+                G::pure none
+
+    traverse_m = mut visitor, value ->
+        match value
+            Option::Some item =>
+                effect = visitor item
+                G::bind effect, (mapped ->
+                    some: Option B = Option::Some mapped
+                    G::pure some)
+            Option::None =>
+                none: Option B = Option::None
+                G::pure none
+
+impl Option T
+    ~@and_then: (T -> Option U) -> Option U
+    ~@map: (T -> U) -> Option U
+    ~@inspect: (&T -> U) -> Option T
+    ~@ok_or: E -> Result T, E
+    ~@map = f ->
+        match self
+            Option::Some val => Option::Some (f val)
+            Option::None => Option::None
+
+    ~@and_then = f ->
+        match self
+            Option::Some val => f val
+            Option::None => Option::None
+
+    ~@or = other ->
+        match self
+            Option::Some val => Option::Some val
+            Option::None => other
+
+    ~@fold = default, f ->
+        match self
+            Option::Some val => f val
+            Option::None => default
+
+    ~@ok_or = error ->
+        match self
+            Option::Some val => Result::Ok val
+            Option::None => Result::Err error
+
+    ~@inspect = f ->
+        match self
+            Option::Some val =>
+                f &val
+                Option::Some val
+            Option::None => Option::None
+
+    ~@<|>: Option T -> Option T
+    ~@<|> = other -> self.or other
+
+    ~@!>: E -> Result T, E
+    ~@!> = error -> self.ok_or error
+
+    ~@unwrap_or = default ->
+        match self
+            Option::Some val => val
+            Option::None => default
+
+impl Option (Option T)
+    ~@flatten = ->
+        match self
+            Option::Some inner => inner
+            Option::None => Option::None
+
+impl Try for Option T
+    type Output = T
+    type Residual = OptionResidual
+
+    ~@branch = ->
+        match self
+            Option::Some val => ControlFlow::Continue val
+            Option::None =>
+                residual = OptionResidual::None
+                ControlFlow::Break residual
+
+impl FromResidual OptionResidual for Option T
+    from_residual = residual ->
+        match residual
+            OptionResidual::None => Option::None
+
+impl Show for Option T where T: Show
+    @show = ->
+        match *self
+            Option::Some val =>
+                start = String::from "Some("
+                body = start.concat (val.show!)
+                body.concat (String::from ")")
+            Option::None =>
+                String::from "None"

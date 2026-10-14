@@ -104,7 +104,7 @@ Hello, Rock!
 
 Prefer `main = !->` for ordinary programs. Use `main = ->` when you intentionally return an integer process exit status instead; the discard form does not turn a discarded error value into a failure status.
 
-**Trying the tour:** each Rock code block below is a complete replacement for `src/main.rk`, independent of earlier blocks. The modules section shows its complete two-file project separately. Standard prelude names such as `Option`, `Vec`, and `println` are available through the installed stdlib; non-prelude imports are shown explicitly. In the examples, `|>` passes a result to the next function, and `(.println!)` is a lambda that prints its input.
+**Trying the tour:** each Rock code block below is a complete replacement for `src/main.rk`, independent of earlier blocks. The modules section shows its complete two-file project separately. Standard prelude names such as `Option`, `Vec`, and `println` are available through the installed std; non-prelude imports are shown explicitly. In the examples, `|>` passes a result to the next function, and `(.println!)` is a lambda that prints its input.
 
 ## Everyday Syntax
 
@@ -294,7 +294,7 @@ main = !->
 
 This prints `10`, `é`, `Some(🦀)`, and `🦀`. Use `&text[start..end]` for a borrowed substring, `char_at` for a zero-based Unicode scalar lookup, and `as_bytes!` for byte indexing. Integer string indexing is intentionally unsupported; a byte, a Unicode scalar, and a displayed character are different units. `String::from_utf8` validates raw bytes and returns `Option String`.
 
-See [Strings and Collections](https://rock-lang-org.github.io/Rock/stdlib/collections.html) for range forms, validation, and Unicode details.
+See [Strings and Collections](https://rock-lang-org.github.io/Rock/std/collections.html) for range forms, validation, and Unicode details.
 
 Use `chars!` to traverse Unicode scalars and `char_indices!` to include their byte offsets. Both borrow the text without allocating a collection and work with `for_each` and `for..in`:
 
@@ -474,9 +474,9 @@ This prints `Ok(21)` and `Err(calculation: division by zero)`. In `quarter`, the
 Use `do` when later operations need values from earlier ones. This program creates a file, writes two lines, and adds their byte counts without nesting callbacks:
 
 ```haskell
-> stdlib::io::fs::File
-> stdlib::io::IoError
-> stdlib::io::Write
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
 
 write_greeting: &Str -> Result I64, IoError
 write_greeting = path -> do
@@ -497,9 +497,9 @@ On success, this prints `Ok(22)` and leaves both lines in `greeting.txt`; creati
 `do` is syntax sugar for calls to the `bind` function in scope; the prelude supplies its **Monad** implementation. The `>>=` operator exposes the same sequencing explicitly, so the program above can also be written with nested callbacks:
 
 ```haskell
-> stdlib::io::fs::File
-> stdlib::io::IoError
-> stdlib::io::Write
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
 
 write_greeting: &Str -> Result I64, IoError
 write_greeting = path ->
@@ -599,7 +599,7 @@ The final call uses `fmap` with two arguments: the mapping function and the cont
 
 ### Implement the Abstraction Yourself
 
-These traits are not reserved for stdlib types. Here is a small container implementing `Functor`:
+These traits are not reserved for std types. Here is a small container implementing `Functor`:
 
 ```haskell
 enum Wrap T
@@ -735,7 +735,7 @@ Functional code is not limited to numbers and options. The standard library incl
 Threads use the same `Result` operators as other fallible operations. A single chain can start a task, join it, and handle either outcome:
 
 ```haskell
-> stdlib::concurrency::thread::spawn
+> std::concurrency::thread::spawn
 
 main = !->
     spawn (-> 42)
@@ -759,7 +759,7 @@ main = !->
 
 This prints `7` using C's integer `abs`. Rock also exposes raw pointers and explicit `unsafe` operations; read the [FFI](https://rock-lang-org.github.io/Rock/systems/ffi.html) and [Unsafe Code](https://rock-lang-org.github.io/Rock/systems/unsafe.html) chapters before working with memory at that boundary.
 
-For larger examples, explore the [TCP chat program](test_projects/new_new/main.rk), [file I/O guide](https://rock-lang-org.github.io/Rock/stdlib/io-and-files.html), and [concurrency guide](https://rock-lang-org.github.io/Rock/stdlib/concurrency.html). They combine these small building blocks rather than introducing a separate style of language.
+For larger examples, explore the [TCP chat program](test_projects/new_new/main.rk), [file I/O guide](https://rock-lang-org.github.io/Rock/std/io-and-files.html), and [concurrency guide](https://rock-lang-org.github.io/Rock/std/concurrency.html). They combine these small building blocks rather than introducing a separate style of language.
 
 ## Build From Source
 
@@ -783,7 +783,7 @@ From the repository root, with Rust and Cargo installed, build the workspace and
 
 ```sh
 cargo build --release
-target/release/rockup dev stdlib package --path stdlib --sysroot target/release
+target/release/rockup dev std package --path std --sysroot target/release
 target/release/rockup install dev --path target/release
 target/release/rockup default dev
 ```
@@ -815,7 +815,7 @@ Questions, small reproductions, and contributions are welcome through [GitHub is
 A few of the remaining important features which are planned but still missing:
 
 - Better trait resolution
-- More complete stdlib
+- More complete std
 - Multiline imports like in rust
 - bin/lib compilation distinction
 - --debug/--release mode (optimisations are there already)

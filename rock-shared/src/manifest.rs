@@ -126,7 +126,7 @@ mod tests {
     fn test_parse_rock_toml() {
         let content = r#"
 [crate]
-name = "stdlib"
+name = "std"
 version = "0.1.0"
 
 [lib]
@@ -134,7 +134,7 @@ path = "lib.rk"
 "#;
 
         let manifest = parse_rock_toml(content).unwrap();
-        assert_eq!(manifest.crate_.name, "stdlib");
+        assert_eq!(manifest.crate_.name, "std");
         assert_eq!(manifest.crate_.version, "0.1.0");
         assert!(!manifest.crate_.no_std);
         assert_eq!(manifest.lib.path, "lib.rk");
@@ -160,7 +160,7 @@ path = "lib.rk"
     fn test_parse_rock_toml_missing_section() {
         let content = r#"
 [crate]
-name = "stdlib"
+name = "std"
 "#;
 
         let result = parse_rock_toml(content);

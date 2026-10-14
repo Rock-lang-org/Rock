@@ -79,8 +79,8 @@ pub(crate) fn detect_target_component_source(path: &Path, triple: &str) -> Resul
 
 pub(crate) fn validate_target_component_dir(path: &Path) -> Result<(), String> {
     validate_target_component_paths(
-        &path.join(crate::constants::STDLIB_ARTIFACT_NAME),
-        &path.join(crate::constants::STDLIB_OBJECT_NAME),
+        &path.join(crate::constants::STD_ARTIFACT_NAME),
+        &path.join(crate::constants::STD_OBJECT_NAME),
         &path.join(crate::constants::TOOLCHAIN_MANIFEST_NAME),
         &path.join(crate::constants::COMPONENTS_MANIFEST_NAME),
         path,
@@ -88,15 +88,15 @@ pub(crate) fn validate_target_component_dir(path: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn validate_target_component_paths(
-    stdlib_artifact: &Path,
-    stdlib_object: &Path,
+    std_artifact: &Path,
+    std_object: &Path,
     manifest_path: &Path,
     components_path: &Path,
     root: &Path,
 ) -> Result<(), String> {
     let required_paths = [
-        (stdlib_artifact, "stdlib artifact"),
-        (stdlib_object, "stdlib object"),
+        (std_artifact, "std artifact"),
+        (std_object, "std object"),
         (manifest_path, "toolchain manifest"),
         (components_path, "components manifest"),
     ];
@@ -127,8 +127,8 @@ pub(crate) fn install_target_component_dir(
     })?;
 
     for file_name in [
-        crate::constants::STDLIB_ARTIFACT_NAME,
-        crate::constants::STDLIB_OBJECT_NAME,
+        crate::constants::STD_ARTIFACT_NAME,
+        crate::constants::STD_OBJECT_NAME,
         crate::constants::TOOLCHAIN_MANIFEST_NAME,
         crate::constants::COMPONENTS_MANIFEST_NAME,
     ] {

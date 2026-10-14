@@ -5,7 +5,7 @@ use crate::Config;
 
 #[test]
 fn test_glob_export_syntax() {
-    let input = "< stdlib::string::*\n";
+    let input = "< std::string::*\n";
     let tokens = lex_test_toplevel(input);
     let config = Config::default();
 
@@ -13,7 +13,7 @@ fn test_glob_export_syntax() {
 
     match top_level {
         TopLevel::GlobExport(path) => {
-            assert_eq!(path, vec!["stdlib", "string"]);
+            assert_eq!(path, vec!["std", "string"]);
         }
         _ => panic!("Expected glob export, got: {:?}", top_level),
     }

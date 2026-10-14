@@ -37,7 +37,7 @@ fn test_new_project_rejects_invalid_names_without_creating_files() {
         "1app",
         "a b",
         "a\"b",
-        "stdlib",
+        "std",
     ] {
         assert!(new_project(&parent, name).is_err(), "accepted {name:?}");
     }

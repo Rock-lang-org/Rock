@@ -667,7 +667,7 @@ fn collect_impl(
     inject_prelude: bool,
     current_crate_name: Option<&str>,
 ) -> Result<Declarations, Vec<ResolveError>> {
-    let inject_prelude = inject_prelude && crate_ctx.has_extern_crate("stdlib");
+    let inject_prelude = inject_prelude && crate_ctx.has_extern_crate("std");
     let mut context = context::CollectContext::bootstrap_for_collection(
         inject_prelude,
         current_crate_name,
@@ -837,7 +837,7 @@ pub fn collect_artifact_declarations(
         .expect("artifact declaration collection requires loaded current source crate");
     let module = &source_crate.ast;
     let root_module_path = source_crate.root_module_path();
-    let inject_prelude = inject_prelude && crate_ctx.has_extern_crate("stdlib");
+    let inject_prelude = inject_prelude && crate_ctx.has_extern_crate("std");
     let mut context = context::CollectContext::bootstrap_for_collection(
         inject_prelude,
         Some(current_crate_name),
@@ -932,7 +932,7 @@ pub fn collect_artifact_declarations(
         module,
         root_module_id,
         current_crate_name,
-        current_crate_name == "stdlib",
+        current_crate_name == "std",
     );
 
     let context::LocalCollection {
@@ -2703,25 +2703,25 @@ mod tests {
     }
 
     #[test]
-    fn collect_records_stdlib_prelude_alias_by_canonical_def_id() {
+    fn collect_records_std_prelude_alias_by_canonical_def_id() {
         let print_id = DefId::new(CrateId(8), LocalDefId(3));
         let mut print = hir_function("print");
         print.id = print_id;
 
         let mut interface = ArtifactCrateInterface::default();
-        interface.insert_function("stdlib::prelude::print".to_string(), print);
+        interface.insert_function("std::prelude::print".to_string(), print);
 
         let mut resolver = crate::collect::resolver::ResolverTables::default();
         resolver
             .item_paths
-            .insert("stdlib::prelude::print".to_string(), print_id);
+            .insert("std::prelude::print".to_string(), print_id);
         resolver
             .item_names_by_id
-            .insert(print_id, "stdlib::prelude::print".to_string());
+            .insert(print_id, "std::prelude::print".to_string());
         let prelude_export_ids = BTreeMap::from([(
             "print".to_string(),
             ArtifactExport {
-                source: "stdlib::prelude::print".to_string(),
+                source: "std::prelude::print".to_string(),
                 id: print_id,
             },
         )]);
@@ -2729,7 +2729,7 @@ mod tests {
         let mut crate_ctx = CrateContext::new();
         add_artifact_extern_crate(
             &mut crate_ctx,
-            "stdlib",
+            "std",
             interface,
             resolver,
             prelude_export_ids,
@@ -2744,17 +2744,17 @@ mod tests {
         };
 
         let decls = collect(&program, &crate_ctx, true, Some("test"))
-            .expect("collect should record stdlib prelude alias IDs");
+            .expect("collect should record std prelude alias IDs");
 
         assert_eq!(decls.resolver.import_aliases.get("print"), Some(&print_id));
         assert_eq!(
             decls.resolver.item_names_by_id.get(&print_id),
-            Some(&"stdlib::prelude::print".to_string())
+            Some(&"std::prelude::print".to_string())
         );
     }
 
     #[test]
-    fn collect_preserves_non_stdlib_prelude_capability_without_unqualified_injection() {
+    fn collect_preserves_non_std_prelude_capability_without_unqualified_injection() {
         let util_id = DefId::new(CrateId(9), LocalDefId(3));
         let mut util = hir_function("util");
         util.id = util_id;
@@ -2795,7 +2795,7 @@ mod tests {
         };
 
         let decls = collect(&program, &crate_ctx, true, Some("test"))
-            .expect("collect should preserve non-stdlib prelude providers without injection");
+            .expect("collect should preserve non-std prelude providers without injection");
 
         assert!(decls.resolver.import_aliases.get("util").is_none());
         assert!(decls.items.functions().contains_key(&util_id));
@@ -2883,11 +2883,11 @@ mod tests {
     }
 
     #[test]
-    fn collect_context_bootstraps_interface_stdlib_prelude() {
+    fn collect_context_bootstraps_interface_std_prelude() {
         let print_id = DefId::new(CrateId(0), LocalDefId(0));
         let mut interface = ArtifactCrateInterface::default();
         interface.insert_function(
-            "stdlib::print".to_string(),
+            "std::print".to_string(),
             HirFunction {
                 id: print_id,
                 name: "print".to_string(),
@@ -2910,14 +2910,14 @@ mod tests {
         crate_ctx
             .add_extern_crate(crate::crate_system::ExternCrateRecord::new(
                 CrateId(1),
-                "stdlib".to_string(),
+                "std".to_string(),
                 crate::crate_system::ExternCrateMetadata::new(
                     interface,
                     crate::collect::resolver::ResolverTables::default(),
                     BTreeMap::from([(
                         "print".to_string(),
                         ArtifactExport {
-                            source: "stdlib::print".to_string(),
+                            source: "std::print".to_string(),
                             id: print_id,
                         },
                     )]),
@@ -2934,9 +2934,9 @@ mod tests {
 
         assert_eq!(
             context.import_aliases.get("print"),
-            Some(&"stdlib::print".to_string())
+            Some(&"std::print".to_string())
         );
-        assert!(context.functions.contains_key("stdlib::print"));
+        assert!(context.functions.contains_key("std::print"));
         assert!(!context.functions.contains_key("print"));
     }
 
@@ -5601,10 +5601,10 @@ lang index_mut
     }
 
     #[test]
-    fn collect_language_items_merges_stdlib_metadata_without_prelude_injection() {
+    fn collect_language_items_merges_std_metadata_without_prelude_injection() {
         let sized_id = DefId::new(CrateId(7), LocalDefId(11));
         let crate_ctx = language_item_provider_context([(
-            "stdlib",
+            "std",
             LanguageItems {
                 sized: Some(SizedLanguageItems { trait_id: sized_id }),
                 ..LanguageItems::default()
@@ -5617,7 +5617,7 @@ lang index_mut
             false,
             Some("app"),
         )
-        .expect("explicit stdlib metadata should merge without prelude injection");
+        .expect("explicit std metadata should merge without prelude injection");
 
         assert_eq!(
             decls.language_items.sized.map(|items| items.trait_id),
