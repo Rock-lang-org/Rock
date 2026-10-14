@@ -6,13 +6,14 @@ use std::{
 use crate::{
     artifact::{collect_root_artifacts, ArtifactBuildState},
     compile::output_executable_path,
-    package::Package,
+    package::{BuildProfile, Package},
     rockc::{build_root_invocation, resolve_rockc_path, run_invocation},
 };
 
-pub(crate) fn build_project(project_root: &Path) -> Result<PathBuf, String> {
-    let package = Package::load(project_root.to_path_buf())?;
-    let mut state = ArtifactBuildState::default();
+pub(crate) fn build_project(project_root: &Path, profile: BuildProfile) -> Result<PathBuf, String> {
+    let mut package = Package::load(project_root.to_path_buf())?;
+    package.profile = profile;
+    let mut state = ArtifactBuildState::new(profile);
     let artifacts = collect_root_artifacts(&package, &mut state)?;
     let output_dir = package.build_dir();
     fs::create_dir_all(&output_dir).map_err(|e| {
@@ -35,8 +36,8 @@ pub(crate) fn build_project(project_root: &Path) -> Result<PathBuf, String> {
     Ok(output_executable_path(&output_dir, &package.entry_file()))
 }
 
-pub(crate) fn run_project(project_root: &Path, args: &[String]) -> Result<i32, String> {
-    let executable = build_project(project_root)?;
+pub(crate) fn run_project(project_root: &Path, profile: BuildProfile, args: &[String]) -> Result<i32, String> {
+    let executable = build_project(project_root, profile)?;
     let status = std::process::Command::new(&executable)
         .args(args)
         .status()

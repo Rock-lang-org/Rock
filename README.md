@@ -104,6 +104,16 @@ Hello, Rock!
 
 Prefer `main = !->` for ordinary programs. Use `main = ->` when you intentionally return an integer process exit status instead; the discard form does not turn a discarded error value into a failure status.
 
+Builds default to `--debug`, with optimization disabled. Use `--release` for an optimized build or run:
+
+```console
+$ rock build --release
+$ rock run --release
+Hello, Rock!
+```
+
+Debug and release products are kept separately in `build/debug/` and `build/release/`. See the [build-profile reference](https://rock-lang-org.github.io/Rock/reference/tooling.html#debug-and-release-builds) for artifact and direct-compiler workflows.
+
 **Trying the tour:** each Rock code block below is a complete replacement for `src/main.rk`, independent of earlier blocks. The modules section shows its complete two-file project separately. Standard prelude names such as `Option`, `Vec`, and `println` are available through the installed std; non-prelude imports are shown explicitly. In the examples, `|>` passes a result to the next function, and `(.println!)` is a lambda that prints its input.
 
 ## Everyday Syntax

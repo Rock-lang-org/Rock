@@ -1,6 +1,7 @@
 use std::fs;
 
 use crate::build::{build_project, run_project};
+use crate::package::BuildProfile;
 
 use super::support::{
     assert_executable_exit_code, load_package, sysroot_env_lock, temp_test_dir, write_package,
@@ -13,6 +14,48 @@ fn test_rock_cargo_toml_does_not_depend_on_rock_lib() {
         std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")).unwrap();
 
     assert!(!manifest.contains("rock-lib"));
+}
+
+#[test]
+fn test_debug_and_release_builds_keep_transitive_dependency_caches_separate() {
+    let _guard = sysroot_env_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let temp_dir = temp_test_dir("build_profile_caches");
+    let dep_a = temp_dir.join("dep_a");
+    let dep_b = temp_dir.join("dep_b");
+    let app = temp_dir.join("app");
+    write_package_with_options(&dep_a, "dep_a", "lib.rk", &[], "< answer = -> 42\n", true);
+    write_package_with_options(
+        &dep_b, "dep_b", "lib.rk", &[("dep_a", dep_a.display().to_string())],
+        "> dep_a::answer\n< relay = -> answer!\n", true,
+    );
+    write_package_with_options(
+        &app, "app", "src/main.rk", &[("dep_b", dep_b.display().to_string())],
+        "> dep_b::relay\nmain = -> relay!\n", true,
+    );
+
+    let mut cached_products = Vec::new();
+    for profile in [BuildProfile::Debug, BuildProfile::Release] {
+        let executable = build_project(&app, profile).unwrap();
+        assert_eq!(executable, app.join("build").join(profile.directory()).join("main"));
+        assert_executable_exit_code(&executable, 42);
+        for root in [&dep_a, &dep_b] {
+            let mut package = load_package(root.clone());
+            package.profile = profile;
+            for path in [package.artifact_path(), package.object_path()] {
+                assert!(path.exists(), "missing {}", path.display());
+                cached_products.push((path.clone(), fs::metadata(path).unwrap().modified().unwrap()));
+            }
+        }
+    }
+    for profile in [BuildProfile::Debug, BuildProfile::Release] {
+        assert_eq!(run_project(&app, profile, &[]).unwrap(), 42);
+        for (path, modified) in &cached_products {
+            assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), *modified, "rebuilt {}", path.display());
+        }
+    }
+    let _ = fs::remove_dir_all(temp_dir);
 }
 
 #[test]
@@ -47,7 +90,7 @@ fn test_build_project_with_transitive_artifacts() {
         "> dep_b::relay\n\nmain = -> relay 42\n",
     );
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert!(executable.exists());
     let dep_a_package = load_package(dep_a.clone());
     let dep_b_package = load_package(dep_b.clone());
@@ -76,7 +119,7 @@ fn test_build_project_no_std_disables_implicit_std() {
         true,
     );
 
-    let error = build_project(&temp_dir).unwrap_err();
+    let error = build_project(&temp_dir, BuildProfile::Debug).unwrap_err();
     assert!(error.contains("root executable for crate 'no_std_opt_out'"));
 
     let _ = fs::remove_dir_all(temp_dir);
@@ -107,7 +150,7 @@ fn test_no_std_root_with_std_using_dependency_does_not_get_prelude() {
         true,
     );
 
-    let error = build_project(&app).unwrap_err();
+    let error = build_project(&app, BuildProfile::Debug).unwrap_err();
     assert!(error.contains("root executable for crate 'app'"));
 
     let _ = fs::remove_dir_all(temp_dir);
@@ -143,7 +186,7 @@ fn test_no_std_root_with_no_std_dependency_does_not_load_explicit_empty_sysroot(
     );
 
     std::env::set_var("ROCK_SYSROOT", &explicit_sysroot);
-    let executable = build_project(&app);
+    let executable = build_project(&app, BuildProfile::Debug);
 
     match previous {
         Some(value) => std::env::set_var("ROCK_SYSROOT", value),
@@ -171,7 +214,7 @@ fn test_build_project_reports_missing_rockc_override() {
     let previous = std::env::var_os("ROCKC");
 
     std::env::set_var("ROCKC", temp_dir.join("does-not-exist-rockc"));
-    let result = build_project(&temp_dir);
+    let result = build_project(&temp_dir, BuildProfile::Debug);
 
     match previous {
         Some(value) => std::env::set_var("ROCKC", value),
@@ -193,7 +236,7 @@ fn test_rock_run_propagates_exit_code() {
     let temp_dir = temp_test_dir("run_exit_code");
     write_package(&temp_dir, "run_app", "src/main.rk", &[], "main = -> 7\n");
 
-    let exit_code = run_project(&temp_dir, &[]).unwrap();
+    let exit_code = run_project(&temp_dir, BuildProfile::Debug, &[]).unwrap();
     assert_eq!(exit_code, 7);
 
     let _ = fs::remove_dir_all(temp_dir);
@@ -213,7 +256,7 @@ fn test_rock_run_forwards_args_to_binary() {
         "main = -> 9\n",
     );
 
-    let exit_code = run_project(&temp_dir, &["--flag".to_string(), "value".to_string()]).unwrap();
+    let exit_code = run_project(&temp_dir, BuildProfile::Debug, &["--flag".to_string(), "value".to_string()]).unwrap();
     assert_eq!(exit_code, 9);
 
     let _ = fs::remove_dir_all(temp_dir);

@@ -6,10 +6,34 @@ pub(crate) const BUILD_DIR: &str = "build";
 pub(crate) const ARTIFACTS_DIR: &str = "artifacts";
 pub(crate) const OBJECTS_DIR: &str = "objects";
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum BuildProfile {
+    #[default]
+    Debug,
+    Release,
+}
+
+impl BuildProfile {
+    pub(crate) fn directory(self) -> &'static str {
+        match self {
+            Self::Debug => "debug",
+            Self::Release => "release",
+        }
+    }
+
+    pub(crate) fn flag(self) -> &'static str {
+        match self {
+            Self::Debug => "--debug",
+            Self::Release => "--release",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Package {
     pub(crate) root_dir: PathBuf,
     pub(crate) manifest: CrateManifest,
+    pub(crate) profile: BuildProfile,
 }
 
 impl Package {
@@ -27,11 +51,12 @@ impl Package {
         Ok(Self {
             root_dir: canonical_root,
             manifest,
+            profile: BuildProfile::default(),
         })
     }
 
     pub(crate) fn build_dir(&self) -> PathBuf {
-        self.root_dir.join(BUILD_DIR)
+        self.root_dir.join(BUILD_DIR).join(self.profile.directory())
     }
 
     pub(crate) fn artifact_path(&self) -> PathBuf {

@@ -102,6 +102,7 @@ pub(crate) fn build_dependency_artifact_invocation(
     dependency_artifacts: &[ExternArtifact],
 ) -> RockcInvocation {
     let mut invocation = RockcInvocation::new(executable)
+        .arg(package.profile.flag())
         .arg("--crate-name")
         .arg(package.manifest.crate_.name.clone())
         .arg("--entry-file")
@@ -139,6 +140,7 @@ pub(crate) fn build_root_invocation(
     artifacts: &[ExternArtifact],
 ) -> RockcInvocation {
     let mut invocation = RockcInvocation::new(executable)
+        .arg(package.profile.flag())
         .arg("--entry-file")
         .arg(package.entry_file())
         .arg("--output-dir")
@@ -215,6 +217,7 @@ pub(crate) fn run_invocation(invocation: RockcInvocation, context: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::package::BuildProfile;
     use crate::tests::support::{load_package, temp_test_dir, write_package};
 
     fn args_as_strings(invocation: &RockcInvocation) -> Vec<String> {
@@ -243,6 +246,30 @@ mod tests {
             rockc_path_from_current_exe(&current).unwrap(),
             PathBuf::from("/workspace/target/release/rockc")
         );
+    }
+
+    #[test]
+    fn test_invocations_and_output_paths_use_the_selected_profile() {
+        let temp_dir = temp_test_dir("rockc_build_profiles");
+        write_package(&temp_dir, "app", "src/main.rk", &[], "main = !-> ()\n");
+        let mut package = load_package(temp_dir.clone());
+        let executable = PathBuf::from("rockc");
+        for profile in [BuildProfile::Debug, BuildProfile::Release] {
+            package.profile = profile;
+            assert_eq!(package.build_dir(), package.root_dir.join("build").join(profile.directory()));
+            assert!(package.artifact_path().starts_with(package.build_dir()));
+            assert!(package.object_path().starts_with(package.build_dir()));
+            for invocation in [
+                build_root_invocation(executable.clone(), &package, &[]),
+                build_dependency_artifact_invocation(executable.clone(), &package, &[]),
+            ] {
+                let args = args_as_strings(&invocation);
+                assert!(args.contains(&profile.flag().to_string()));
+                let other = if profile == BuildProfile::Debug { "--release" } else { "--debug" };
+                assert!(!args.iter().any(|arg| arg == other || arg == "-O" || arg == "--opt-level"));
+            }
+        }
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[test]

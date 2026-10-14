@@ -12,7 +12,7 @@ use crate::{
         ensure_sysroot_std_available, package_requires_sysroot_std, STD_CRATE_NAME,
     },
     deps::resolve_dependency_root,
-    package::Package,
+    package::{BuildProfile, Package},
     rockc::{
         build_dependency_artifact_invocation, resolve_rockc_path, run_invocation, ExternArtifact,
     },
@@ -20,12 +20,17 @@ use crate::{
 
 #[derive(Default)]
 pub(crate) struct ArtifactBuildState {
+    profile: BuildProfile,
     artifacts: HashMap<PathBuf, PathBuf>,
     uses_std: HashMap<PathBuf, bool>,
     stack: Vec<PathBuf>,
 }
 
 impl ArtifactBuildState {
+    pub(crate) fn new(profile: BuildProfile) -> Self {
+        Self { profile, ..Self::default() }
+    }
+
     pub(crate) fn dependency_artifacts_use_std(
         &self,
         dependency_artifacts: &[(String, PathBuf)],
@@ -144,7 +149,8 @@ pub(crate) fn ensure_artifact(
     state.stack.push(canonical_root.clone());
 
     let result = (|| {
-        let package = Package::load(canonical_root.clone())?;
+        let mut package = Package::load(canonical_root.clone())?;
+        package.profile = state.profile;
         let mut implicit_artifact_inputs = if package_requires_sysroot_std(&package) {
             vec![ensure_sysroot_std_available()?.std_artifact.clone()]
         } else {

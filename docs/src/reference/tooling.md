@@ -46,6 +46,29 @@ $ rock artifact
 
 There is no `rock test` command. Use a complete Rock executable as an application smoke test, or use the Rust integration suite when changing the compiler itself.
 
+## Debug and release builds
+
+`rock build`, `rock run`, and `rock artifact` use the debug profile by default. This profile disables optimization; you can also select it explicitly with `--debug`. Use `--release` to enable full optimization for the project and its source-built dependencies:
+
+```console
+$ rock build
+$ rock build --debug
+$ rock build --release
+$ rock run --release -- 7
+$ rock artifact --release
+```
+
+Debug outputs live in `build/debug/`, and release outputs live in `build/release/`. Each profile has its own dependency artifacts and objects, so switching profiles does not reuse products built with different optimization settings. The toolchain's precompiled standard library is shared between profiles. `--debug` and `--release` cannot be combined.
+
+For compiler contributors and artifact-level workflows, `rockc` accepts the same flags. Unlike `rock`, it takes an entry file and explicit dependency artifacts rather than resolving `rock.toml`:
+
+```console
+$ rockc --entry-file main.rk --extern-artifact std=build/std.rkca --debug
+$ rockc --entry-file main.rk --extern-artifact std=build/std.rkca --release
+```
+
+`rockc` writes to its configured `--output-dir` (default: `build/`); `rock` chooses the profile-specific directories. `cargo build --release` optimizes the Rust compiler executable itself; use `rock build --release`, `rock run --release`, or `rockc --release` to optimize the Rock program being compiled.
+
 ## Standard library selection
 
 The active toolchain supplies a matching precompiled standard library. `rock` loads it automatically for ordinary projects and makes the prelude available. A package can opt out explicitly:

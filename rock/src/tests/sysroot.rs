@@ -3,6 +3,7 @@ use std::process::Command as ProcessCommand;
 
 use crate::build::build_project;
 use crate::bundled_sysroot::STD_CRATE_NAME;
+use crate::package::BuildProfile;
 
 use super::support::{
     assert_executable_exit_code, assert_sysroot_std_files_exist, sysroot_env_lock,
@@ -23,7 +24,7 @@ fn test_build_project_uses_sysroot_std() {
         "main = -> 42.println!\n",
     );
 
-    let executable = build_project(&temp_dir).unwrap();
+    let executable = build_project(&temp_dir, BuildProfile::Debug).unwrap();
     let output = ProcessCommand::new(&executable).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
     assert_sysroot_std_files_exist();
@@ -55,7 +56,7 @@ fn test_build_project_uses_sysroot_std_for_dependencies() {
         "> dep::print_answer\n\nmain = -> print_answer!\n",
     );
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     let output = ProcessCommand::new(&executable).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
     assert_sysroot_std_files_exist();
@@ -81,7 +82,7 @@ fn test_build_project_explicit_std_dependency_overrides_sysroot() {
         "> std::math::answer\n\nmain = -> answer!\n",
     );
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert_executable_exit_code(&executable, 5);
 
     let _ = fs::remove_dir_all(temp_dir);
@@ -105,7 +106,7 @@ fn test_explicit_rock_sysroot_does_not_bootstrap_workspace_std() {
     );
 
     std::env::set_var("ROCK_SYSROOT", &explicit_sysroot);
-    let error = build_project(&temp_dir.join("app")).unwrap_err();
+    let error = build_project(&temp_dir.join("app"), BuildProfile::Debug).unwrap_err();
 
     match previous {
         Some(value) => std::env::set_var("ROCK_SYSROOT", value),
