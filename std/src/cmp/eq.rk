@@ -32,13 +32,13 @@ impl Eq for &Str
     @== = other ->
         lhs_str = *self
         rhs_str = *other
-        len = ~ArrayLen lhs_str
-        other_len = ~ArrayLen rhs_str
+        len = lhs_str.len!
+        other_len = rhs_str.len!
         if len != other_len
             false
         else
-            lhs = ~ArrPtr lhs_str
-            rhs = ~ArrPtr rhs_str
+            lhs = lhs_str.as_ptr!
+            rhs = rhs_str.as_ptr!
             i = 0
             equal = true
             while equal && i < len

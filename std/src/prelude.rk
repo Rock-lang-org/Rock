@@ -46,7 +46,6 @@
 < std::concurrency::mutex::MutexGuard
 < std::collections::vec::*
 < std::collections::hash_map::*
-< std::collections::slice::slice_len
 
 // Traits
 < std::show::*

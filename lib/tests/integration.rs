@@ -25,6 +25,123 @@ mod callable;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn test_slice_methods_lengths_and_empty_views() {
+    let output = compile_and_run(r#"
+inspect: &[I64] -> ()
+inspect = values !->
+    values.len!.println!
+    values.is_empty!.println!
+
+main = !->
+    mut values = [10, 20, 30]
+    values.len!.println!
+    values.is_empty!.println!
+    inspect &values
+    inspect &values[1..]
+    inspect &values[3..3]
+    view = &mut values[..]
+    view.len!.println!
+    view.is_empty!.println!
+    ptr = view.as_mut_ptr!
+    unsafe *ptr = 42
+    view[0].println!
+    view.len!.println!
+    empty: [U8; 0] = []
+    empty.len!.println!
+    empty.is_empty!.println!
+"#);
+    assert_eq!(output, "3\nfalse\n3\nfalse\n2\nfalse\n0\ntrue\n3\nfalse\n42\n3\n0\ntrue\n");
+}
+
+#[test]
+fn test_slice_methods_pointer_identity_and_mutation() {
+    let output = compile_and_run(r#"
+main = !->
+    mut values = [10, 20, 30]
+    original = values.as_ptr! as I64
+    borrowed = (&values).as_ptr! as I64
+    (original == borrowed).println!
+    tail = &values[1..]
+    offset = unsafe ~PtrOffset values.as_ptr!, 1
+    ((tail.as_ptr! as I64) == (offset as I64)).println!
+    ptr = values.as_mut_ptr!
+    ((ptr as I64) == original).println!
+    unsafe *ptr = 42
+    values[0].println!
+    values[1].println!
+"#);
+    assert_eq!(output, "true\ntrue\ntrue\n42\n20\n");
+}
+
+#[test]
+fn test_slice_methods_do_not_move_non_copy_elements() {
+    let output = compile_and_run(r#"
+main = !->
+    values = [(String::from "first"), (String::from "second")]
+    values.len!.println!
+    ptr = values.as_ptr!
+    (unsafe &*ptr).println!
+    values[1].println!
+    values.len!.println!
+"#);
+    assert_eq!(output, "2\nfirst\nsecond\n2\n");
+}
+
+#[test]
+fn test_slice_methods_borrowed_str_bytes_and_pointer() {
+    let output = compile_and_run(r#"
+main = !->
+    text = "aé🦀"
+    text.len!.println!
+    text.is_empty!.println!
+    "".is_empty!.println!
+    bytes = text.as_bytes!
+    bytes.len!.println!
+    bytes[0].println!
+    bytes[1].println!
+    ((text.as_ptr! as I64) == (bytes.as_ptr! as I64)).println!
+    owned = String::from text
+    owned.as_str!.as_bytes!.len!.println!
+    owned.println!
+"#);
+    assert_eq!(output, "7\nfalse\ntrue\n7\n97\n195\ntrue\n7\naé🦀\n");
+}
+
+#[test]
+fn test_slice_methods_shared_slice_cannot_get_mut_pointer() {
+    compile_should_fail(r#"
+main = !->
+    values = [1, 2]
+    shared = &values[..]
+    ptr = shared.as_mut_ptr!
+    unsafe *ptr = 42
+"#, "as_mut_ptr");
+}
+
+#[test]
+fn test_slice_methods_immutable_array_cannot_get_mut_pointer() {
+    compile_should_fail(r#"
+main = !->
+    values = [1, 2]
+    ptr = values.as_mut_ptr!
+    unsafe *ptr = 42
+"#, "mutable receiver");
+}
+
+#[test]
+fn test_slice_methods_byte_view_cannot_escape_local_string() {
+    compile_should_fail(r#"
+make_bytes: () -> &[U8]
+make_bytes = ->
+    text = String::from "local"
+    text.as_str!.as_bytes!
+
+main = !->
+    make_bytes!.len!.println!
+"#, "does not live long enough");
+}
+
+#[test]
 fn test_std_domain_facades_without_prelude() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
@@ -481,14 +598,14 @@ fn test_utf8_strings_and_range_indexing() {
         r#"
 main = !->
     text = "aé中🦀z"
-    string_len text .println!
+    text.len!.println!
     (&text[1..3]).println!
     (&text[3..=5]).println!
     (&text[6..10]).println!
     (&text[..1]).println!
     (&text[10..]).println!
     (&text[..]).println!
-    string_len (&text[11..11]) .println!
+    (&text[11..11]).len!.println!
     owned = String::from text
     (&owned[1..6]).println!
     owned.char_at 3 .println!
@@ -3816,7 +3933,7 @@ main = ->
     std::ffi::libc::pow 2.0, 10.0 .println!
     std::ffi::libc::ceil 3.2 .println!
     std::ffi::libc::floor 3.8 .println!
-    string_len "hello" .println!
+    "hello".len!.println!
     0
 "#,
     );
@@ -5097,9 +5214,9 @@ fn test_string_operations() {
     let output = compile_and_run(
         r#"
 main = ->
-    string_len "hello" .println!
-    string_len "" .println!
-    string_len "world!" .println!
+    "hello".len!.println!
+    "".len!.println!
+    "world!".len!.println!
     0
 "#,
     );
@@ -10309,7 +10426,7 @@ extern malloc: I64 -> *U8
 
 main = ->
     s = "Hello, World!"
-    string_len s .println!
+    s.len!.println!
     string_find s, "World" .println!
     string_find s, "xyz" .println!
     string_contains s, "Hello" .println!
@@ -14019,7 +14136,7 @@ fn test_as_cast_ptr_to_int() {
         r#"
 main = ->
     s = "hello"
-    p = str_raw_ptr s
+    p = s.as_ptr!
     i = p as I64
     if i > 0
         "ok".println!

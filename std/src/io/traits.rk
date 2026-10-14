@@ -9,7 +9,6 @@
 > std::control::result::Result
 > std::show::Show
 > std::string::owned::String
-> std::string::operations::str_as_bytes
 
 < enum IoError
     Os I32
@@ -37,7 +36,7 @@
 write_all: &W -> &[U8] -> Result I64, IoError where W: Write
 < write_all = target, buf ->
     mut total: I64 = 0
-    len = ~ArrayLen buf
+    len = buf.len!
     while total < len
         match target.write (&buf[total..])
             Result::Ok count =>
@@ -51,7 +50,7 @@ write_all: &W -> &[U8] -> Result I64, IoError where W: Write
     Result::Ok total
 
 write_str: &W -> &Str -> Result I64, IoError where W: Write
-< write_str = target, value -> write_all target, (str_as_bytes value)
+< write_str = target, value -> write_all target, value.as_bytes!
 
 impl Write for Arc W where W: Write
     @write = buf -> (*(*self)).write buf
@@ -65,7 +64,7 @@ impl Write for Arc W where W: Write
 impl Stdin
     ^@read_bytes: &mut [U8] -> Result I64, IoError
     ^@read_bytes = buf ->
-        count = read 0, (~ArrPtr *buf), (~ArrayLen *buf)
+        count = read 0, buf.as_mut_ptr!, buf.len!
         if count < 0
             Result::Err (last_os_error!)
         else
@@ -98,7 +97,7 @@ copy: &mut R -> &W -> Result I64, IoError where R: Read, W: Write
 
 impl Write for Stdout
     @write = buf ->
-        count = write 1, (~ArrPtr buf), (~ArrayLen buf)
+        count = write 1, buf.as_ptr!, buf.len!
         if count < 0
             Result::Err (last_os_error!)
         else

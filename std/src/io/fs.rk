@@ -27,8 +27,8 @@ default_mode = -> 438
 
 path_has_nul: &Str -> Bool
 path_has_nul = path ->
-    ptr = ~ArrPtr path
-    len = ~ArrayLen path
+    ptr = path.as_ptr!
+    len = path.len!
     i = 0
     while i < len
         if (unsafe ptr[i]) == (0 as U8)
@@ -69,7 +69,7 @@ impl File
 impl Read for File
     ^@read: &mut [U8] -> Result I64, IoError
     ^@read = buf ->
-        count = read self.fd, (~ArrPtr *buf), (~ArrayLen *buf)
+        count = read self.fd, buf.as_mut_ptr!, buf.len!
         if count < 0
             Result::Err (last_os_error!)
         else
@@ -78,7 +78,7 @@ impl Read for File
 impl Write for File
     @write: &[U8] -> Result I64, IoError
     @write = buf ->
-        count = write self.fd, (~ArrPtr buf), (~ArrayLen buf)
+        count = write self.fd, buf.as_ptr!, buf.len!
         if count < 0
             Result::Err (last_os_error!)
         else

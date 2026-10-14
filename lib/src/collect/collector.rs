@@ -206,7 +206,7 @@ impl LocalCollector {
                         root_module_id,
                         top_level_index,
                         top_level,
-                        &imp.name.span,
+                        &imp.name.span(),
                     ) else {
                         continue;
                     };
@@ -601,7 +601,7 @@ impl LocalCollector {
                         module_id,
                         top_level_index,
                         top_level,
-                        &imp.name.span,
+                        &imp.name.span(),
                     ) else {
                         continue;
                     };
@@ -1410,7 +1410,7 @@ impl LocalCollector {
                         module_id,
                         top_level_index,
                         top_level,
-                        &imp.name.span,
+                        &imp.name.span(),
                     ) else {
                         continue;
                     };
@@ -2099,7 +2099,7 @@ mod tests {
                     language_items: Default::default(),
                 }),
                 TopLevel::Impl(Impl {
-                    name: type_inner("Show"),
+                    name: ParseType::Type(type_inner("Show")),
                     for_: Some(ParseType::Type(type_inner("Box"))),
                     associated_types: vec![],
                     methods: HashMap::from([(ident("show"), function_decl("show"))]),

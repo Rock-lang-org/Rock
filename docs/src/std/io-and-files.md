@@ -123,12 +123,11 @@ Select the data first, then write the resulting slice. Prefix and subslice write
 > std::io::IoError
 > std::io::Write
 > std::io::stdout
-> std::string::str_as_bytes
 
 write_parts: () -> Result I64, IoError
 write_parts = ->
     output = stdout!
-    bytes = str_as_bytes "hello"
+    bytes = "hello".as_bytes!
     first = output.write_all &bytes[..2]?
     rest = output.write_all &bytes[2..]?
     Result::Ok first + rest
@@ -138,7 +137,7 @@ main = ->
     status.unwrap_or 1
 ```
 
-This writes `hello`. `str_as_bytes` borrows an `&Str` as `&[U8]`; an owned `String` offers the equivalent `as_bytes!` method. Neither operation copies the data. The offsets count bytes, not Unicode characters, and the resulting view is a byte slice, not a string. Range bounds are checked and invalid bounds terminate the process rather than returning `IoError`.
+This writes `hello`. The `as_bytes!` method borrows either an `&Str` or an owned `String` as `&[U8]` without copying the data. The offsets count bytes, not Unicode characters, and the resulting view is a byte slice, not a string. Range bounds are checked and invalid bounds terminate the process rather than returning `IoError`.
 
 ## Standard streams
 

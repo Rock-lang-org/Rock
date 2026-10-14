@@ -55,7 +55,7 @@ impl Show for &[T] where T: Show
         out = String::from "["
         i = 0
         value = *self
-        len = ~ArrayLen value
+        len = value.len!
         while i < len
             if i > 0
                 out = out.concat (String::from ", ")
@@ -67,8 +67,8 @@ impl Show for &Str
     @show = -> String::from *self
     @println = ->
         value = *self
-        ptr = ~ArrPtr value
-        len = ~ArrayLen value
+        ptr = value.as_ptr!
+        len = value.len!
         i = 0
         while i < len
             putchar ((unsafe ptr[i]) as I32)

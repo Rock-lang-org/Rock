@@ -6,7 +6,6 @@
 > std::ffi::libc::exit
 > std::ffi::libc::puts
 > std::ops::range::Range
-> std::collections::slice::slice_len
 > std::collections::vec::Vec
 
 for_each: C -> A -> () where C: FoldableValue T, A: FnMut T, ()
@@ -43,7 +42,7 @@ impl FoldableValue I64 for Range
                         break
                     index = index + 1
             _ =>
-                puts (~ArrPtr "for_each requires a bounded range")
+                puts "for_each requires a bounded range".as_ptr!
                 exit (1 as I32)
         ControlFlow::Continue state
 
@@ -53,7 +52,7 @@ impl FoldableValue &T for &Vec T
 
 impl FoldableValue &T for &[T]
     ~@try_fold = mut step, initial ->
-        len = slice_len self
+        len = self.len!
         index = 0
         state = initial
         while index < len

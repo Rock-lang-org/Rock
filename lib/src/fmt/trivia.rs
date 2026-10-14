@@ -251,7 +251,7 @@ impl<'a> FormatTrivia<'a> {
                 .as_ref()
                 .map(|marker| &marker.span)
                 .or(Some(&decl.name.span)),
-            TopLevel::Impl(impl_) => Some(&impl_.name.span),
+            TopLevel::Impl(impl_) => Self::parse_type_span(&impl_.name),
             TopLevel::NewType(inner, _) => Some(&inner.span),
             TopLevel::MacroDecl(decl) => Some(&decl.name.span),
             TopLevel::MacroInvoc(invoc) => Some(&invoc.name.span),

@@ -1,4 +1,16 @@
 // Safe borrowed-slice operations.
 
-slice_len: &[T] -> I64
-< slice_len = value -> ~ArrayLen value
+impl &[T]
+    @len: I64
+    @len = -> ~ArrayLen *self
+
+    @is_empty: Bool
+    @is_empty = -> self.len! == 0
+
+    // The pointer borrows the original storage; dereferencing it remains unsafe.
+    @as_ptr: *T
+    @as_ptr = -> ~ArrPtr *self
+
+impl &mut [T]
+    ^@as_mut_ptr: *T
+    ^@as_mut_ptr = -> ~ArrPtr (&mut *self)

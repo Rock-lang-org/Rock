@@ -96,7 +96,7 @@ tcp_stream_from_fd = fd ->
 
 tcp_stream_read_fd: I32 -> &mut [U8] -> Result I64, IoError
 tcp_stream_read_fd = fd, buf ->
-    count = std::ffi::libc::read fd, (~ArrPtr *buf), (~ArrayLen *buf)
+    count = std::ffi::libc::read fd, buf.as_mut_ptr!, buf.len!
     if count < 0
         Result::Err (last_os_error!)
     else
@@ -104,7 +104,7 @@ tcp_stream_read_fd = fd, buf ->
 
 tcp_stream_write_fd: I32 -> &[U8] -> Result I64, IoError
 tcp_stream_write_fd = fd, buf ->
-    count = send fd, (~ArrPtr buf), (~ArrayLen buf), msg_nosignal!
+    count = send fd, buf.as_ptr!, buf.len!, msg_nosignal!
     if count < 0
         Result::Err (last_os_error!)
     else

@@ -1579,7 +1579,7 @@ mod tests {
                     )),
                     TopLevel::FunctionDecl(single_param_function_decl("identity", "value")),
                     TopLevel::Impl(Impl {
-                        name: generic_type_inner("Outer", vec![generic_t()]),
+                        name: ParseType::Type(generic_type_inner("Outer", vec![generic_t()])),
                         for_: None,
                         associated_types: vec![],
                         methods: HashMap::from([(ident("new"), function_decl("new"))]),
@@ -1902,7 +1902,7 @@ mod tests {
 
     fn inherent_impl(type_name: &str, method_name: &str) -> Impl {
         Impl {
-            name: type_inner(type_name),
+            name: ParseType::Type(type_inner(type_name)),
             for_: None,
             associated_types: vec![],
             methods: HashMap::from([(ident(method_name), function_decl(method_name))]),
@@ -1927,7 +1927,7 @@ mod tests {
 
     fn trait_impl(type_name: &str, trait_name: &str, method_name: &str) -> Impl {
         Impl {
-            name: type_inner(trait_name),
+            name: ParseType::Type(type_inner(trait_name)),
             for_: Some(crate::ast::ParseType::Type(type_inner(type_name))),
             associated_types: vec![],
             methods: HashMap::from([(ident(method_name), function_decl(method_name))]),
@@ -2226,7 +2226,7 @@ mod tests {
                         language_items: Default::default(),
                     }),
                     TopLevel::Impl(Impl {
-                        name: type_inner("Iterable"),
+                        name: ParseType::Type(type_inner("Iterable")),
                         for_: Some(ParseType::Type(type_inner("Box"))),
                         associated_types: vec![crate::ast::AssociatedTypeDef {
                             name: ident("Output"),

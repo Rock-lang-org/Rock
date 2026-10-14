@@ -451,15 +451,16 @@ impl SemanticSourceMap {
                     .collect::<HashMap<_, _>>();
                 if let Some(trait_id) = impl_def.trait_id {
                     self.record_reference(
-                        type_inner_name_span(&implementation.name),
+                        implementation.name.named_inner().map(type_inner_name_span)
+                            .unwrap_or_else(|| implementation.name.span()),
                         SourceSymbol::Definition(trait_id),
                         None,
                     );
-                    for generic in &implementation.name.generics {
+                    for generic in implementation.name.generics() {
                         record_type_references(generic, &generic_ids, resolver, self);
                     }
                 } else {
-                    record_type_inner_reference(&implementation.name, &generic_ids, resolver, self);
+                    record_type_references(&implementation.name, &generic_ids, resolver, self);
                 }
                 if let Some(receiver) = &implementation.for_ {
                     record_type_references(receiver, &generic_ids, resolver, self);
@@ -669,7 +670,7 @@ impl SemanticSourceMap {
 
     fn record_impl_generics(&mut self, impl_def: &crate::hir::HirImpl, source: &ast::Impl) {
         let mut spans = HashMap::new();
-        collect_parse_type_name_spans(&ast::ParseType::Type(source.name.clone()), &mut spans);
+        collect_parse_type_name_spans(&source.name, &mut spans);
         if let Some(for_type) = &source.for_ {
             collect_parse_type_name_spans(for_type, &mut spans);
         }
@@ -968,22 +969,7 @@ fn record_type_references(
 ) {
     match ty {
         ast::ParseType::Type(inner) => {
-            if let Some(generic) = generic_ids.get(&inner.name) {
-                map.record_reference(
-                    type_inner_name_span(inner),
-                    SourceSymbol::Generic(*generic),
-                    Some(generic.owner),
-                );
-            } else if let Some(def_id) = resolver.resolve_item_or_alias(&inner.name) {
-                map.record_reference(
-                    type_inner_name_span(inner),
-                    SourceSymbol::Definition(def_id),
-                    None,
-                );
-            }
-            for generic in &inner.generics {
-                record_type_references(generic, generic_ids, resolver, map);
-            }
+            record_type_inner_reference(inner, generic_ids, resolver, map);
         }
         ast::ParseType::Application(application) => {
             record_type_references(&application.constructor, generic_ids, resolver, map);
@@ -1258,7 +1244,7 @@ fn top_level_declaration_span(top_level: &ast::TopLevel, name_span: &Span) -> Sp
             }
         }
         ast::TopLevel::Impl(implementation) => {
-            for generic in &implementation.name.generics {
+            for generic in implementation.name.generics() {
                 extend(generic.span());
             }
             if let Some(receiver) = &implementation.for_ {
@@ -1285,7 +1271,8 @@ fn top_level_name_span(top_level: &ast::TopLevel, indexed: &Span) -> Span {
         ast::TopLevel::StructDecl(decl) => (&decl.name.name, &decl.name.span),
         ast::TopLevel::EnumDecl(decl) => (&decl.name.name, &decl.name.span),
         ast::TopLevel::TraitDecl(decl) => (&decl.name.name, &decl.name.span),
-        ast::TopLevel::Impl(decl) => (&decl.name.name, &decl.name.span),
+        ast::TopLevel::Impl(decl) => return decl.name.named_inner()
+            .map(type_inner_name_span).unwrap_or_else(|| decl.name.span()),
         _ => return indexed.clone(),
     };
     Span::new(span.file_path.clone(), span.start, span.start + name.len())

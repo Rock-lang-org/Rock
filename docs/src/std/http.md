@@ -186,14 +186,13 @@ Requests retain headers in order, including duplicates. `request.header name` re
 The parser can be used independently of `Server`. This complete alternative `src/main.rk` uses the same project manifest and illustrates duplicate lookup without opening a port:
 
 ```rock
-> std::string::str_as_bytes
 > rock_http::config::ServerConfig
 > rock_http::parser::DecodeResult
 > rock_http::parser::parse_request
 
 main = ->
     config = ServerConfig::default!
-    bytes = str_as_bytes "GET / HTTP/1.1\r\nHost: local\r\nX-Tag: one\r\nX-Tag: two\r\n\r\n"
+    bytes = "GET / HTTP/1.1\r\nHost: local\r\nX-Tag: one\r\nX-Tag: two\r\n\r\n".as_bytes!
     match parse_request bytes, &config
         DecodeResult::Complete request, consumed =>
             match request.header "HOST"

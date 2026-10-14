@@ -195,7 +195,7 @@ pub fn walk_trait<'a, V: Visitor<'a>>(visitor: &mut V, t: &'a TraitDecl) {
 }
 
 pub fn walk_impl<'a, V: Visitor<'a>>(visitor: &mut V, i: &'a Impl) {
-    visitor.visit_parse_type_inner(&i.name);
+    visitor.visit_parse_type(&i.name);
     if let Some(for_) = &i.for_ {
         visitor.visit_parse_type(for_);
     }

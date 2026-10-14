@@ -199,7 +199,7 @@ impl Lowerer {
         let receiver = imp
             .for_
             .clone()
-            .unwrap_or_else(|| ast::ParseType::Type(imp.name.clone()));
+            .unwrap_or_else(|| imp.name.clone());
         let mut type_generics = Vec::new();
         collect_generic_names_from_parse_type(&receiver, &mut type_generics, &|name| {
             is_known_nominal_type_name(self, name)
@@ -360,13 +360,11 @@ impl Lowerer {
                 is_known_nominal_type_name(self, name)
             });
         } else {
-            for generic in &imp.name.generics {
-                collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name| {
-                    is_known_nominal_type_name(self, name)
-                });
-            }
+            collect_generic_names_from_parse_type(&imp.name, &mut impl_generic_params, &|name| {
+                is_known_nominal_type_name(self, name)
+            });
         }
-        for generic in &imp.name.generics {
+        for generic in imp.name.generics() {
             collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name| {
                 is_known_nominal_type_name(self, name)
             });
@@ -378,7 +376,7 @@ impl Lowerer {
         else {
             self.diagnostics.push_with_span(
                 "missing indexed impl declaration while lowering bodies".to_string(),
-                imp.name.span.clone(),
+                imp.name.span(),
             );
             return;
         };
@@ -1128,11 +1126,11 @@ mod tests {
             })
             .unwrap();
         let ast_impl = crate::ast::Impl {
-            name: crate::ast::ParseTypeInner {
+            name: ast::ParseType::Type(crate::ast::ParseTypeInner {
                 name: "String".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
-            },
+            }),
             for_: None,
             associated_types: Vec::new(),
             methods: HashMap::from([(
@@ -1228,11 +1226,11 @@ mod tests {
             })
             .unwrap();
         let ast_impl = crate::ast::Impl {
-            name: ParseTypeInner {
+            name: ast::ParseType::Type(ParseTypeInner {
                 name: "Thing".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
-            },
+            }),
             for_: None,
             associated_types: Vec::new(),
             methods: HashMap::from([(
@@ -1360,11 +1358,11 @@ mod tests {
             })
             .unwrap();
         let ast_impl = crate::ast::Impl {
-            name: ParseTypeInner {
+            name: ast::ParseType::Type(ParseTypeInner {
                 name: "Convert".to_string(),
                 generics: vec![parse_type("Bool", Vec::new())],
                 span: Span::test(),
-            },
+            }),
             for_: Some(parse_type("Box", vec![parse_type("T", Vec::new())])),
             associated_types: Vec::new(),
             methods: HashMap::from([(ident("take"), empty_function_decl("take"))]),
@@ -1471,11 +1469,11 @@ mod tests {
             })
             .unwrap();
         let ast_impl = crate::ast::Impl {
-            name: ParseTypeInner {
+            name: ast::ParseType::Type(ParseTypeInner {
                 name: "Point".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
-            },
+            }),
             for_: None,
             associated_types: Vec::new(),
             methods: HashMap::from([(
@@ -1575,11 +1573,11 @@ mod tests {
             })
             .unwrap();
         let ast_impl = crate::ast::Impl {
-            name: ParseTypeInner {
+            name: ast::ParseType::Type(ParseTypeInner {
                 name: "Option".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
-            },
+            }),
             for_: None,
             associated_types: Vec::new(),
             methods: HashMap::from([(
@@ -1687,11 +1685,11 @@ mod tests {
             })
             .unwrap();
         let ast_impl = ast::Impl {
-            name: ParseTypeInner {
+            name: ast::ParseType::Type(ParseTypeInner {
                 name: "Missing".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
-            },
+            }),
             for_: None,
             associated_types: Vec::new(),
             methods: HashMap::from([(ident("value"), empty_function_decl("value"))]),

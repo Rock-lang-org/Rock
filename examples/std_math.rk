@@ -5,5 +5,5 @@ main = ->
     pow 2.0, 10.0 .println!
     ceil 3.2 .println!
     floor 3.8 .println!
-    string_len "hello" .println!
+    "hello".len!.println!
     0

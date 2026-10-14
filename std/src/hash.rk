@@ -22,8 +22,8 @@ impl Hash for Char
 impl Hash for &Str
     @hash = ->
         value = *self
-        ptr = ~ArrPtr value
-        len = ~ArrayLen value
+        ptr = value.as_ptr!
+        len = value.len!
         h = 5381
         i = 0
         while i < len

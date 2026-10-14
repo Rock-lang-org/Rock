@@ -1366,13 +1366,11 @@ pub(crate) fn build_impl_with_id(
             });
         }
     } else {
-        for generic in &imp.name.generics {
-            collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name| {
-                is_known_nominal_type_name(context, name)
-            });
-        }
+        collect_generic_names_from_parse_type(&imp.name, &mut impl_generic_params, &|name| {
+            is_known_nominal_type_name(context, name)
+        });
     }
-    for generic in &imp.name.generics {
+    for generic in imp.name.generics() {
         collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name| {
             is_known_nominal_type_name(context, name)
         });
@@ -1392,7 +1390,15 @@ pub(crate) fn build_impl_with_id(
             &|name| is_known_nominal_type_name(context, name),
         );
     }
-    for generic in &imp.name.generics {
+    if imp.for_.is_none() {
+        collect_declared_generic_kinds(
+            &imp.name,
+            &mut impl_generic_kinds,
+            &mut impl_generic_kind_conflicts,
+            &|name| is_known_nominal_type_name(context, name),
+        );
+    }
+    for generic in imp.name.generics() {
         collect_declared_generic_kinds(
             generic,
             &mut impl_generic_kinds,
@@ -1411,7 +1417,7 @@ pub(crate) fn build_impl_with_id(
     for (name, declared, required) in impl_generic_kind_conflicts {
         context.push_error_with_span(format!(
             "generic parameter '{name}' was declared with kind {declared}, but a later binder requires {required}",
-        ), imp.name.span.clone());
+        ), imp.name.span());
     }
     let generic_kinds = impl_generic_params
         .iter()
@@ -1422,7 +1428,7 @@ pub(crate) fn build_impl_with_id(
                 .unwrap_or(crate::type_services::kind::Kind::Type)
         })
         .collect();
-    let generic_spans = vec![imp.name.span.clone(); impl_generic_params.len()];
+    let generic_spans = vec![imp.name.span(); impl_generic_params.len()];
     let (prev_owner, prev_params, prev_kinds) = context.push_generic_context_with_kinds_at(
         id,
         impl_generic_params,
@@ -1436,7 +1442,7 @@ pub(crate) fn build_impl_with_id(
             type_name,
             type_generics,
             receiver_pattern,
-            Some(imp.name.name.clone()),
+            Some(imp.name.type_name()),
         )
     } else {
         let (type_name, type_generics, receiver_pattern) = context.impl_type_info(imp);
@@ -1445,7 +1451,7 @@ pub(crate) fn build_impl_with_id(
 
     let trait_generic_names: Vec<String> = imp
         .name
-        .generics
+        .generics()
         .iter()
         .filter_map(|g| {
             if let ast::ParseType::Type(inner) = g {
@@ -1457,7 +1463,7 @@ pub(crate) fn build_impl_with_id(
         .collect();
     let trait_arg_types: Vec<Type> = imp
         .name
-        .generics
+        .generics()
         .iter()
         .map(|g| context.lower_parse_type(g))
         .collect();
@@ -1488,14 +1494,14 @@ pub(crate) fn build_impl_with_id(
                 imp.for_
                     .as_ref()
                     .map(|ty| ty.span())
-                    .unwrap_or_else(|| imp.name.span.clone()),
+                    .unwrap_or_else(|| imp.name.span()),
             ),
             Err(error) => context.push_error_with_span(
                 error,
                 imp.for_
                     .as_ref()
                     .map(|ty| ty.span())
-                    .unwrap_or_else(|| imp.name.span.clone()),
+                    .unwrap_or_else(|| imp.name.span()),
             ),
             _ => {}
         }
@@ -1575,11 +1581,32 @@ pub(crate) fn build_impl_with_id(
                     &impl_target_ty,
                 )
             });
-        let func = if let Some(signature) = trait_signature {
+        let explicit_signature = imp.signatures.iter()
+            .find(|(name, _)| name.name == ident.name)
+            .map(|(_, signature)| build_function_sig_with_id(context, signature, method_id));
+        let mut func = if let Some(signature) = explicit_signature.or(trait_signature) {
             build_function_header_with_sig(context, fd, &signature, method_id)
         } else {
             build_function_header_with_id(context, fd, method_id)
         };
+        // Receiver identity is already known at collection time, even when
+        // this method's body is lowered after its callers in another module.
+        if imp.for_.is_none() && imp.signatures.contains_key(ident) {
+            if let (Some(receiver_mode), Some(receiver)) = (func.self_receiver, func.params.first_mut()) {
+                receiver.ty = match (receiver_mode, impl_target_ty.clone()) {
+                    (crate::types::ReceiverMode::Mut, target @ Type::Reference { mutable: true, .. }) => target,
+                    (crate::types::ReceiverMode::Shared, target) => Type::Reference {
+                        mutable: false,
+                        inner: Box::new(target),
+                    },
+                    (crate::types::ReceiverMode::Mut, target) => Type::Reference {
+                        mutable: true,
+                        inner: Box::new(target),
+                    },
+                    (crate::types::ReceiverMode::Move, target) => target,
+                };
+            }
+        }
         let method_name = ident.name.clone();
         methods.insert(method_name, func);
     }
@@ -1836,6 +1863,40 @@ mod tests {
             is_unsafe: false,
             exported: false,
         }
+    }
+
+    #[test]
+    fn collect_structural_inherent_method_has_declared_return_and_receiver() {
+        let mut context = CollectContext::new();
+        let impl_id = def_id(100);
+        let method_id = def_id(101);
+        let implementation = Impl {
+            name: ParseType::Reference {
+                is_mut: false,
+                pointee: Box::new(ParseType::Slice(Box::new(named_type("T")))),
+            },
+            for_: None,
+            associated_types: vec![],
+            methods: HashMap::from([(
+                ident("pointer"),
+                function_decl("pointer", &[], Some(SelfReceiverMode::Shared), LambdaArrowKind::Normal),
+            )]),
+            signatures: HashMap::from([(
+                ident("pointer"),
+                function_sig("pointer", ParseType::Pointer(Box::new(named_type("T"))), Some(SelfReceiverMode::Shared), vec![]),
+            )]),
+            where_clauses: vec![],
+        };
+        let collected = build_impl_with_id(&mut context, &implementation, impl_id, &impl_method_ids(&[("pointer", method_id)]));
+        assert!(context.errors.is_empty(), "{:?}", context.errors);
+        let element = Type::Generic(GenericParamId { owner: impl_id, index: 0 });
+        let target = Type::Reference { mutable: false, inner: Box::new(Type::Slice(Box::new(element.clone()))) };
+        assert_eq!(collected.type_generics.len(), 1);
+        assert_eq!(collected.receiver_pattern, crate::hir::HirImplReceiverPattern::Exact(target.clone()));
+        let method = &collected.methods["pointer"];
+        assert_eq!(method.ret_type, Type::Pointer(Box::new(element)));
+        assert_eq!(method.params[0].ty, Type::Reference { mutable: false, inner: Box::new(target) });
+        assert_eq!(method.id, method_id);
     }
 
     #[test]
@@ -3129,7 +3190,7 @@ mod tests {
         );
 
         let imp = Impl {
-            name: type_inner("Deref"),
+            name: ParseType::Type(type_inner("Deref")),
             for_: Some(ParseType::Type(ParseTypeInner {
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],
@@ -3177,7 +3238,7 @@ mod tests {
         );
 
         let imp = Impl {
-            name: type_inner("Clone"),
+            name: ParseType::Type(type_inner("Clone")),
             for_: Some(ParseType::Type(type_inner("String"))),
             associated_types: Vec::new(),
             methods: HashMap::new(),
@@ -3270,11 +3331,11 @@ mod tests {
     fn test_build_impl_registers_methods_and_tracks_function_type_vars_by_id() {
         let mut lowerer = CollectContext::new();
         let imp = Impl {
-            name: ParseTypeInner {
+            name: ParseType::Type(ParseTypeInner {
                 name: "Show".to_string(),
                 generics: vec![],
                 span: Span::test(),
-            },
+            }),
             for_: Some(named_type("Point")),
             associated_types: vec![],
             methods: HashMap::from([(
@@ -3305,7 +3366,7 @@ mod tests {
     fn build_impl_assigns_source_order_associated_type_def_ids_per_owner() {
         let mut context = CollectContext::new();
         let left = Impl {
-            name: type_inner("Iterable"),
+            name: ParseType::Type(type_inner("Iterable")),
             for_: Some(named_type("List")),
             associated_types: vec![AssociatedTypeDef {
                 name: ident("Item"),
@@ -3317,7 +3378,7 @@ mod tests {
             where_clauses: vec![],
         };
         let right = Impl {
-            name: type_inner("Iterable"),
+            name: ParseType::Type(type_inner("Iterable")),
             for_: Some(named_type("Tree")),
             associated_types: vec![
                 AssociatedTypeDef {
@@ -3387,7 +3448,7 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: type_inner("Families"),
+            name: ParseType::Type(type_inner("Families")),
             for_: Some(ParseType::Type(ParseTypeInner {
                 name: "Box".to_string(),
                 generics: vec![named_type("I64")],
@@ -3432,7 +3493,7 @@ mod tests {
             span: Span::test(),
         });
         let imp = Impl {
-            name: type_inner("Functor"),
+            name: ParseType::Type(type_inner("Functor")),
             for_: Some(receiver),
             associated_types: Vec::new(),
             methods: HashMap::new(),
@@ -3490,11 +3551,11 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: ParseTypeInner {
+            name: ParseType::Type(ParseTypeInner {
                 name: "Holder".to_string(),
                 generics: vec![generic_type("F")],
                 span: Span::test(),
-            },
+            }),
             for_: Some(named_type("I64")),
             associated_types: vec![],
             methods: HashMap::new(),
@@ -3566,7 +3627,7 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: type_inner("Functor"),
+            name: ParseType::Type(type_inner("Functor")),
             for_: Some(named_type("Option")),
             associated_types: Vec::new(),
             methods: HashMap::new(),
@@ -3606,11 +3667,11 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: ParseTypeInner {
+            name: ParseType::Type(ParseTypeInner {
                 name: "Show".to_string(),
                 generics: vec![named_type("U8")],
                 span: Span::test(),
-            },
+            }),
             for_: Some(ParseType::Type(ParseTypeInner {
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],
@@ -3685,7 +3746,7 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: type_inner("Vec"),
+            name: ParseType::Type(type_inner("Vec")),
             for_: Some(ParseType::Type(ParseTypeInner {
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],
@@ -3731,7 +3792,7 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: type_inner("Vec"),
+            name: ParseType::Type(type_inner("Vec")),
             for_: Some(ParseType::Type(ParseTypeInner {
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],

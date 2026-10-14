@@ -32,6 +32,39 @@ The output is `0`, `Rock`, `4`, `Rock`, `Rock42`, and `Hello, Rock!`. `String::f
 
 Both string types contain valid UTF-8. `Char` is a 32-bit Unicode scalar value, and converting it to `String` encodes one to four UTF-8 bytes. Lengths and search offsets count bytes, not Unicode scalars or displayed characters. Strings can contain embedded NUL bytes; their stored length includes these bytes, and `println!` prints the whole string. C functions that consume null-terminated strings still stop at the first NUL.
 
+Borrowed strings also expose `len!`, `is_empty!`, and `as_bytes!` directly:
+
+```rock
+main = !->
+    text = "aé🦀"
+    text.len!.println!
+    "".is_empty!.println!
+    bytes = text.as_bytes!
+    bytes.len!.println!
+    bytes[0].println!
+```
+
+This prints `7`, `true`, `7`, and `97`. The byte view borrows the same storage without allocating or copying; keep its source alive while using it.
+
+## Raw sequence pointers
+
+For low-level interoperation, arrays and slices expose `as_ptr!`, and mutable arrays and slices expose `as_mut_ptr!`. These methods point into the original storage, including the start of a subslice; they do not copy elements. Prefer ordinary indexing unless a raw pointer is needed, and use an unsafe block to dereference one:
+
+```rock
+main = !->
+    mut values = [10, 20]
+    before = values.as_ptr!
+    (unsafe *before).println!
+    ptr = values.as_mut_ptr!
+    unsafe *ptr = 42
+    values[0].println!
+    text = "Rock"
+    text_ptr = text.as_ptr!
+    (unsafe *text_ptr).println!
+```
+
+This prints `10`, `42`, and `82`. Do not dereference a pointer from an empty sequence, use it after its backing storage is destroyed or moved, or access outside the sequence bounds. The `&Str.as_ptr!` method likewise exposes UTF-8 bytes; it does not promise a null-terminated string.
+
 ## UTF-8 range indexing
 
 Use a borrowed range to select text from either `&Str` or `String`:
@@ -46,7 +79,7 @@ main = !->
     (&owned[..1]).println!
     (&text[10..]).println!
     (&owned[..]).println!
-    string_len (&text[11..11]) .println!
+    (&text[11..11]).len!.println!
 ```
 
 The output is `é`, `中`, `🦀`, `a`, `z`, `aé中🦀z`, and `0`. `start..end` excludes `end`; `start..=end` includes that byte, so the checked end boundary is `end + 1`. The forms `..end`, `..=end`, `start..`, and `..` work too. Empty slices at valid boundaries, including the end of a string, are allowed.
@@ -130,11 +163,10 @@ The search helpers live in `std::string` and are re-exported by the prelude. Exp
 > std::string::byte_substr
 > std::string::string_contains
 > std::string::string_find
-> std::string::string_len
 
 main = !->
     text = "rock"
-    length = string_len text
+    length = text.len!
     offset = string_find text, "oc"
     contains = string_contains text, "ck"
     bytes = [114, 111, 99, 107]
