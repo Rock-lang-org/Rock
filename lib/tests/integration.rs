@@ -5144,6 +5144,58 @@ fn unit_arrow_main_exits_zero_without_std() {
 }
 
 #[test]
+fn test_main_exit_status_at_all_optimization_levels() {
+    let cases = [
+        ("std_effect", "main = !-> true.println!\n", true, true, 0, "true\n"),
+        ("raw_effect", "extern putchar: I32 -> I32\nmain = !-> putchar (65 as I32)\n", false, true, 0, "A"),
+        ("discard_integer", "main = !-> 42\n", false, true, 0, ""),
+        ("explicit_unit", "main = -> ()\n", false, true, 0, ""),
+        ("early_cleanup", r#"
+struct Cleanup
+    < value: I64
+
+impl Drop for Cleanup
+    ~@drop = !-> self.value.println!
+
+main = !->
+    cleanup = Cleanup
+        value: 17
+    true.println!
+    return
+"#, true, true, 0, "true\n17\n"),
+        ("integer_i64", "main = -> 7\n", false, false, 7, ""),
+        ("integer_i32", "main = -> 13 as I32\n", false, false, 13, ""),
+    ];
+    for opt_level in 0..=3 {
+        for (name, source, with_std, unit_return, exit_code, stdout) in cases {
+            let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let dir = test_temp_dir(id);
+            fs::create_dir_all(&dir).unwrap();
+            let _cleanup = TestDirCleanup(dir.clone());
+            let entry = dir.join(format!("{name}.rk"));
+            fs::write(&entry, source).unwrap();
+            let mut config = test_config(entry, dir.clone());
+            config.opt_level = opt_level;
+            config.emit_llvm = true;
+            if !with_std {
+                config.extern_artifacts.clear();
+                config.no_std = true;
+                config.no_prelude = true;
+            }
+            rock_lib::compile(&config).unwrap_or_else(|error| panic!("{name} at -O {opt_level}: {error:?}"));
+            let output = run_test_command(&mut Command::new(dir.join(name)));
+            assert_eq!(output.status.code(), Some(exit_code), "{name} at -O {opt_level}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{name} at -O {opt_level}");
+            if unit_return {
+                let ir = fs::read_to_string(dir.join(format!("{name}.ll"))).unwrap();
+                assert!(ir.contains("define internal void @__rock_main()"), "{name} must retain its unit ABI");
+                assert!(ir.contains("ret i32 0"), "{name} must return zero from the C entry wrapper");
+            }
+        }
+    }
+}
+
+#[test]
 fn test_impl_methods() {
     let output = compile_example("impl_methods");
     let lines: Vec<&str> = output.trim().lines().collect();

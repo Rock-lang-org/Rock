@@ -3169,8 +3169,7 @@ mod tests {
         let mut codegen = CodeGen::new(&context, "test");
         let type_context = RefCell::new(TypeContext::new());
         let function_id = MirFunctionId::Instance(InstanceId(0));
-        let ret_type = type_id(&type_context, Type::I64);
-        let ret_abi_type = type_id(&type_context, Type::I32);
+        let ret_type = type_id(&type_context, Type::Unit);
         let function = MirFunction {
             id: function_id.clone(),
             name: "main".to_string(),
@@ -3179,7 +3178,7 @@ mod tests {
                 terminator: Some(Terminator::Return),
             }],
             local_decls: vec![LocalDecl {
-                ty: type_id(&type_context, Type::I64),
+                ty: ret_type,
                 mutability: Mutability::Mut,
                 name: Some("return_place".to_string()),
                 span: None,
@@ -3193,20 +3192,33 @@ mod tests {
         let mir = MirProgram {
             functions: BTreeMap::from([(function_id.clone(), function)]),
             type_context: type_context.borrow().clone(),
-            backend_contract: local_body_contract_with_return_abi(
-                function_id,
-                "main",
-                ret_type,
-                ret_abi_type,
-            ),
+            backend_contract: local_body_contract(function_id, "main", ret_type),
         };
 
         compile_valid_mir_program(&mut codegen, &mir).unwrap();
 
         let ir = codegen.get_ir();
-        assert!(ir.contains("define internal i32 @__rock_main"));
+        assert!(ir.contains("define internal void @__rock_main"));
         assert!(ir.contains("define i32 @main(i32"));
-        assert!(ir.contains("call i32 @__rock_main()"));
+        assert!(ir.contains("call void @__rock_main()"));
+        assert!(ir.contains("ret void"));
+        assert!(ir.contains("ret i32 0"));
+
+        let mut malformed = mir.clone();
+        malformed.backend_contract = local_body_contract_with_return_abi(
+            MirFunctionId::Instance(InstanceId(0)),
+            "main",
+            ret_type,
+            type_id(&type_context, Type::I32),
+        );
+        let errors = crate::mir::backend_contract::validate_backend_contract_against_mir(
+            &malformed.backend_contract,
+            malformed.functions.values(),
+        );
+        assert!(errors.iter().any(|error| matches!(
+            error,
+            crate::mir::backend_contract::MirBackendContractError::LocalBodyReturnAbiTypeMismatch { .. },
+        )));
     }
 
     #[test]
@@ -3216,7 +3228,6 @@ mod tests {
         let type_context = RefCell::new(TypeContext::new());
         let function_id = MirFunctionId::Instance(InstanceId(0));
         let ret_type = type_id(&type_context, Type::I64);
-        let ret_abi_type = type_id(&type_context, Type::I32);
         let function = MirFunction {
             id: function_id.clone(),
             name: "main".to_string(),
@@ -3248,18 +3259,15 @@ mod tests {
         let mir = MirProgram {
             functions: BTreeMap::from([(function_id.clone(), function)]),
             type_context: type_context.borrow().clone(),
-            backend_contract: local_body_contract_with_return_abi(
-                function_id,
-                "main",
-                ret_type,
-                ret_abi_type,
-            ),
+            backend_contract: local_body_contract(function_id, "main", ret_type),
         };
 
         compile_valid_mir_program(&mut codegen, &mir).unwrap();
 
         let ir = codegen.get_ir();
-        assert!(ir.contains("ret i32 42"));
+        assert!(ir.contains("define internal i64 @__rock_main"));
+        assert!(ir.contains("ret i64 42"));
+        assert!(ir.contains("trunc i64 %rock_main to i32"));
         assert!(!ir.contains("store i64 42"));
     }
 

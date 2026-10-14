@@ -644,9 +644,7 @@ fn validate_local_body_signature(
             body_ty: function.ret_type,
         });
     }
-    if callable.signature.ret.abi_ty != function.ret_type
-        && !local_body_allows_distinct_return_abi(function, callable)
-    {
+    if callable.signature.ret.abi_ty != function.ret_type {
         errors.push(MirBackendContractError::LocalBodyReturnAbiTypeMismatch {
             function: function.id.clone(),
             signature_ty: callable.signature.ret.abi_ty,
@@ -667,13 +665,6 @@ fn validate_local_body_signature(
             body_ty: function.ret_type,
         });
     }
-}
-
-fn local_body_allows_distinct_return_abi(
-    function: &MirFunction,
-    callable: &MirCallableDecl,
-) -> bool {
-    function.name == "main" && callable.llvm_symbol == "main"
 }
 
 fn validate_function_callable_operands(

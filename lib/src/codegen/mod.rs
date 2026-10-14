@@ -1293,17 +1293,12 @@ mod tests {
         let key = crate::mir::MirCallableKey::Instance(instance_id);
         let function_id = crate::mir::MirFunctionId::Instance(instance_id);
         let mut contract = crate::mir::MirBackendContract::default();
-        let mut signature = crate::mir::MirCallableSignature::from_instance_type_ids(
+        let signature = crate::mir::MirCallableSignature::from_instance_type_ids(
             &params,
             ret,
             is_method,
             type_context,
         );
-        if symbol == "main" {
-            if let Some(i32_ty) = type_context.id_for_type(&Type::I32) {
-                signature.ret.abi_ty = i32_ty;
-            }
-        }
         contract.callables.insert(
             key.clone(),
             crate::mir::MirCallableDecl {
@@ -1588,8 +1583,8 @@ mod tests {
         codegen.compile_program_from_mir(&mir).unwrap();
 
         let ir = codegen.get_ir();
-        assert!(ir.contains("ret i32 99"), "IR was:\n{}", ir);
-        assert!(!ir.contains("ret i32 1"), "IR was:\n{}", ir);
+        assert!(ir.contains("ret i64 99"), "IR was:\n{}", ir);
+        assert!(!ir.contains("ret i64 1"), "IR was:\n{}", ir);
     }
 
     #[test]
@@ -1648,7 +1643,7 @@ mod tests {
         super::mir_llvm::compile_mir_program(&mut codegen, &mir).unwrap();
 
         let ir = codegen.get_ir();
-        assert!(ir.contains("ret i32 7"), "IR was:\n{}", ir);
+        assert!(ir.contains("ret i64 7"), "IR was:\n{}", ir);
     }
 
     #[test]
@@ -1707,7 +1702,7 @@ mod tests {
         codegen.compile_program_from_mir(&mir).unwrap();
 
         let ir = codegen.get_ir();
-        assert!(ir.contains("ret i32 42"), "IR was:\n{}", ir);
+        assert!(ir.contains("ret i64 42"), "IR was:\n{}", ir);
     }
 
     #[test]

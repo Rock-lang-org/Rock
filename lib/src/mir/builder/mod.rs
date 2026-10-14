@@ -458,16 +458,11 @@ impl<'a> MirBuilder<'a> {
                 .take(function.arg_count)
                 .map(|local| local.ty)
                 .collect::<Vec<_>>();
-            let mut signature = super::MirCallableSignature::from_type_ids(
+            let signature = super::MirCallableSignature::from_type_ids(
                 &params,
                 function.ret_type,
                 super::MirPassMode::Direct,
             );
-            if function.name == "main" {
-                if let Some(i32_ty) = type_context.id_for_type(&Type::I32) {
-                    signature.ret.abi_ty = i32_ty;
-                }
-            }
 
             contract.callables.insert(
                 key.clone(),
@@ -835,15 +830,12 @@ impl<'a> MirBuilder<'a> {
                 );
                 super::MirCallableKind::LocalBody { function_id }
             };
-            let mut signature = super::MirCallableSignature::from_instance_type_ids(
+            let signature = super::MirCallableSignature::from_instance_type_ids(
                 &params,
                 ret,
                 is_method,
                 type_context,
             );
-            if record.symbols.backend_symbol == "main" {
-                signature.ret.abi_ty = type_context.intern_type(&Type::I32);
-            }
             let linkage = if record.is_specialization
                 && !record.provided_by_object
                 && !exportable_drop_glue_symbols.contains(record.symbols.backend_symbol.as_str())
