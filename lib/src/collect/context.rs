@@ -1252,6 +1252,14 @@ impl CollectContext {
             self.record_canonical_item_name(*id, name);
         }
 
+        // Nested public facades resolve to the same dependency declarations as
+        // their canonical paths, including while collecting function signatures.
+        for (alias, id) in &metadata.resolver().export_aliases {
+            if let Some(source) = metadata.resolver().canonical_name(*id) {
+                self.export_aliases.insert(alias.clone(), source.to_string());
+            }
+        }
+
         if !dep.root_exports().is_empty() {
             self.dependency_root_export_ids.insert(
                 crate_name.to_string(),

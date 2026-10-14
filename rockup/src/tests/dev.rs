@@ -25,13 +25,15 @@ fn test_package_dev_stdlib_writes_sysroot_layout() {
     // Layout/source-copy behavior needs a real artifact, not the full stdlib.
     // The relocation test below still packages the complete shipped library.
     let stdlib = temp_dir.join("stdlib");
-    fs::create_dir_all(&stdlib).unwrap();
+    fs::create_dir_all(stdlib.join("src")).unwrap();
     fs::write(
         stdlib.join("rock.toml"),
-        "[crate]\nname = \"stdlib\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"lib.rk\"\n",
+        "[crate]\nname = \"stdlib\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"src/lib.rk\"\n",
     )
     .unwrap();
-    fs::write(stdlib.join("lib.rk"), "< answer = -> 42\n").unwrap();
+    fs::write(stdlib.join("src/lib.rk"), "< mod values\n").unwrap();
+    fs::create_dir_all(stdlib.join("src/values")).unwrap();
+    fs::write(stdlib.join("src/values/mod.rk"), "< answer = -> 42\n").unwrap();
 
     let packaged =
         package_dev_stdlib(&stdlib, &sysroot, Some(target.clone()), true, Some(&rockc)).unwrap();
@@ -55,8 +57,12 @@ fn test_package_dev_stdlib_writes_sysroot_layout() {
         .join("rock.toml")
         .exists());
     assert_eq!(
-        fs::read(sysroot.join("src/stdlib/lib.rk")).unwrap(),
-        fs::read(stdlib.join("lib.rk")).unwrap()
+        fs::read(sysroot.join("src/stdlib/src/lib.rk")).unwrap(),
+        fs::read(stdlib.join("src/lib.rk")).unwrap()
+    );
+    assert_eq!(
+        fs::read(sysroot.join("src/stdlib/src/values/mod.rk")).unwrap(),
+        fs::read(stdlib.join("src/values/mod.rk")).unwrap()
     );
 
     let _ = fs::remove_dir_all(temp_dir);
@@ -161,6 +167,8 @@ fn test_stdlib_package_invocation_uses_rockc_product_outputs() {
     let args = invocation.args_as_strings();
 
     assert_eq!(invocation.executable, PathBuf::from("/tmp/rockc"));
+    assert!(args.windows(2).any(|pair| pair[0] == "--entry-file"
+        && pair[1] == stdlib.join("src/lib.rk").to_string_lossy().as_ref()));
     assert!(args
         .windows(2)
         .any(|pair| pair[0] == "--crate-name" && pair[1] == "stdlib"));

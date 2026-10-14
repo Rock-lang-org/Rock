@@ -1,0 +1,82 @@
+// Rock Prelude
+//
+// All items exported here are automatically available in every Rock program
+// without explicit imports. To add something to the prelude, add a re-export
+// line: `< full::qualified::path` or `< module::path::*` to re-export all items.
+
+// I/O and Math (selective from libc - not all C functions should be in prelude)
+< stdlib::ffi::libc::puts
+< stdlib::ffi::libc::exit
+< stdlib::ffi::libc::sqrt
+< stdlib::ffi::libc::sin
+< stdlib::ffi::libc::cos
+< stdlib::ffi::libc::tan
+< stdlib::ffi::libc::asin
+< stdlib::ffi::libc::acos
+< stdlib::ffi::libc::atan
+< stdlib::ffi::libc::exp
+< stdlib::ffi::libc::log
+< stdlib::ffi::libc::log2
+< stdlib::ffi::libc::log10
+< stdlib::ffi::libc::ceil
+< stdlib::ffi::libc::floor
+< stdlib::ffi::libc::round
+< stdlib::ffi::libc::abs_f64
+< stdlib::ffi::libc::fabs
+< stdlib::ffi::libc::pow
+< stdlib::ffi::libc::atan2
+< stdlib::ffi::libc::strlen
+< stdlib::ffi::libc::strcmp
+
+// String, conversion, utility, memory - re-export all exported items
+< stdlib::string::operations::*
+< stdlib::convert::*
+< stdlib::num::utils::*
+< stdlib::mem::utils::*
+< stdlib::functional::pipe::|>
+< stdlib::io::traits::|>>
+
+// Types
+< stdlib::string::owned::*
+< stdlib::control::option::*
+< stdlib::control::result::*
+< stdlib::mem::box::Box
+< stdlib::concurrency::arc::Arc
+< stdlib::concurrency::mutex::Mutex
+< stdlib::concurrency::mutex::MutexGuard
+< stdlib::collections::vec::*
+< stdlib::collections::hash_map::*
+< stdlib::collections::slice::slice_len
+
+// Traits
+< stdlib::show::*
+< stdlib::ops::deref::*
+< stdlib::ops::index::Index
+< stdlib::ops::index::IndexMut
+< stdlib::ops::range::Range
+< stdlib::control::control_flow::*
+< stdlib::functional::callable::*
+< stdlib::functional::bifunctor::Bifunctor
+< stdlib::functional::bifunctor::bimap
+< stdlib::functional::bifunctor::<!>
+< stdlib::functional::functor::*
+< stdlib::functional::functor::<$>
+< stdlib::functional::functor::<&>
+< stdlib::functional::applicative::*
+< stdlib::functional::applicative::<*>
+< stdlib::functional::monad::*
+< stdlib::functional::monad::>>=
+< stdlib::functional::foldable::*
+< stdlib::collections::for_each::*
+< stdlib::functional::traversable::*
+< stdlib::concurrency::thread_safety::*
+< stdlib::clone::*
+< stdlib::mem::drop::*
+< stdlib::num::arithmetic::*
+< stdlib::cmp::ord::*
+< stdlib::cmp::eq::*
+< stdlib::hash::*
+< stdlib::ops::bitwise::*
+< stdlib::ops::neg::*
+< stdlib::ops::not::*
+< stdlib::mem::sized::*

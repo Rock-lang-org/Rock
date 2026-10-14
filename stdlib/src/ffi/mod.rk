@@ -1,0 +1,2 @@
+// Foreign declarations used by operating-system and memory implementations.
+< mod libc

@@ -1502,6 +1502,57 @@ fn propagate_call_instance(
             } else {
                 let _ = hir.engine.unify(ret.as_ref(), source_ret.as_ref());
             }
+            // A caller can be lowered before this body's callable predicates
+            // exist. Refresh them using this instance's substitutions, never
+            // by specializing the declaration's callback to one caller.
+            let callback_instances = instance_bindings.clone();
+            for (source_id, instance) in callback_instances {
+                let native = hir.engine.resolve(&instance);
+                let mut native_type = &native;
+                while let Type::Reference { inner, .. } = native_type {
+                    native_type = inner;
+                }
+                let Type::Function { params, ret, .. } = native_type else {
+                    continue;
+                };
+                let packed = match params.as_slice() {
+                    [] => Type::Unit,
+                    [param] => param.clone(),
+                    params => Type::Tuple(params.to_vec()),
+                };
+                for bound in hir.engine.get_bounds(source_id) {
+                    if bound.type_args.len() != 2
+                        || !hir.language_items.callable_protocols()
+                            .any(|(_, id, _)| id == bound.trait_id)
+                    {
+                        continue;
+                    }
+                    for (source, actual) in bound.type_args.iter().zip([&packed, ret.as_ref()]) {
+                        propagate_instance_relation(
+                            &mut hir.engine, source, actual, &mut instance_bindings, &shared_vars,
+                        );
+                    }
+                    let instantiated = crate::types::TraitBound {
+                        trait_id: bound.trait_id,
+                        type_args: bound.type_args.iter()
+                            .map(|ty| hir.engine.resolve(ty).substitute(&instance_bindings))
+                            .collect(),
+                    };
+                    let already_recorded = hir.constraint_store.iter().any(|(_, constraint)| {
+                        matches!(constraint, Constraint::Trait { ty, bound, span, .. }
+                            if span == &callee.span
+                                && hir.engine.resolve(ty) == hir.engine.resolve(&instance)
+                                && bound.trait_id == instantiated.trait_id
+                                && bound.type_args.iter().map(|ty| hir.engine.resolve(ty)).collect::<Vec<_>>()
+                                    == instantiated.type_args.iter().map(|ty| hir.engine.resolve(ty)).collect::<Vec<_>>())
+                    });
+                    if !already_recorded {
+                        hir.constraint_store.add_trait(
+                            instance.clone(), instantiated, callee.span.clone(), "inferred callable argument",
+                        );
+                    }
+                }
+            }
             if args.len() < source_params.len() {
                 source_partial_result = Some(Type::function_with_safety(
                     source_params[args.len()..].to_vec(),

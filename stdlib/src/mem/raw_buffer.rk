@@ -1,0 +1,62 @@
+> stdlib::mem::alloc::Global
+> stdlib::mem::alloc::Layout
+> stdlib::mem::alloc::checked_alloc
+> stdlib::mem::alloc::checked_mul_i64
+> stdlib::ffi::libc::exit
+> stdlib::mem::drop::Drop
+
+< struct RawBuffer T
+    raw_ptr: *T
+    raw_cap: I64
+    raw_bytes: I64
+
+impl RawBuffer T
+    new: () -> RawBuffer T
+    new = ->
+        bytes = 1
+        layout = Layout
+            size: bytes
+            align: 1
+        RawBuffer T
+            raw_ptr: (checked_alloc layout) as *T
+            raw_cap: 0
+            raw_bytes: bytes
+
+    unsafe with_capacity: I64 -> I64 -> RawBuffer T
+    unsafe with_capacity = elem_size, cap ->
+        if cap < 0
+            exit (1 as I32)
+
+        bytes = if cap == 0 || elem_size == 0
+            1
+        else
+            checked_mul_i64 elem_size, cap
+
+        layout = Layout
+            size: bytes
+            align: 1
+        ptr = (checked_alloc layout) as *T
+
+        RawBuffer T
+            raw_ptr: ptr
+            raw_cap: cap
+            raw_bytes: bytes
+
+    @ptr: *T
+    @ptr = -> self.raw_ptr
+    @cap: I64
+    @cap = -> self.raw_cap
+    unsafe @as_slice: I64 -> &[T]
+    unsafe @as_slice = len ->
+        if len < 0 || len > self.raw_cap
+            exit (1 as I32)
+        unsafe ~BorrowSlice self.raw_ptr, len
+
+impl Drop for RawBuffer T
+    ~@drop = ->
+        if self.raw_bytes > 0
+            layout = Layout
+                size: self.raw_bytes
+                align: 1
+            unsafe Global::dealloc (self.raw_ptr as *U8), layout
+        return

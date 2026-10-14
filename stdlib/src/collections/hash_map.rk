@@ -1,0 +1,281 @@
+// HashMap[K, V] - open-addressed hash table with linear probing.
+
+> stdlib::control::option::Option
+> stdlib::mem::alloc::require_non_zero_size
+> stdlib::mem::alloc::checked_add_i64
+> stdlib::mem::alloc::checked_mul_i64
+> stdlib::hash::Hash
+> stdlib::cmp::eq::Eq
+> stdlib::num::arithmetic::Add
+> stdlib::num::arithmetic::Mod
+> stdlib::cmp::ord::Ord
+> stdlib::mem::drop::Drop
+> stdlib::mem::drop::drop_in_place
+> stdlib::mem::raw_buffer::RawBuffer
+
+hash_map_bucket_index: I64 -> I64 -> I64
+hash_map_bucket_index = hash, cap ->
+    idx = hash % cap
+    if idx < 0
+        idx + cap
+    else
+        idx
+
+< struct HashMap K, V
+    hashes: RawBuffer I64
+    occupied: RawBuffer Bool
+    keys: RawBuffer K
+    values: RawBuffer V
+    raw_len: I64
+    raw_cap: I64
+
+impl HashMap K, V where K: Hash, K: Eq
+    @len = -> self.raw_len
+
+    ^@grow: I64 -> I64 -> ()
+    ^@grow = key_size, value_size ->
+        require_non_zero_size key_size
+        require_non_zero_size value_size
+
+        old_hashes = self.hashes.ptr!
+        old_occupied = self.occupied.ptr!
+        old_keys = self.keys.ptr!
+        old_values = self.values.ptr!
+        old_cap = self.raw_cap
+
+        new_cap = if old_cap == 0
+            8
+        else
+            checked_mul_i64 old_cap, 2
+
+        new_hashes: RawBuffer I64 = unsafe RawBuffer::with_capacity (stdlib::mem::utils::size_of 0), new_cap
+        new_occupied: RawBuffer Bool = unsafe RawBuffer::with_capacity (stdlib::mem::utils::size_of true), new_cap
+        new_keys: RawBuffer K = unsafe RawBuffer::with_capacity key_size, new_cap
+        new_values: RawBuffer V = unsafe RawBuffer::with_capacity value_size, new_cap
+        new_hashes_ptr = new_hashes.ptr!
+        new_occupied_ptr = new_occupied.ptr!
+        new_keys_ptr = new_keys.ptr!
+        new_values_ptr = new_values.ptr!
+
+        i = 0 as I64
+        while i < new_cap
+            unsafe *(~PtrOffset new_occupied_ptr, i) = false
+            i = i + 1
+
+        new_len = 0 as I64
+
+        i = 0 as I64
+        while i < old_cap
+            if unsafe *(~PtrOffset old_occupied, i)
+                old_hash = unsafe *(~PtrOffset old_hashes, i)
+                old_key = unsafe *(~PtrOffset old_keys, i)
+                old_value = unsafe *(~PtrOffset old_values, i)
+                start = hash_map_bucket_index old_hash, new_cap
+                j = 0 as I64
+                done = false
+                target_idx = 0 as I64
+                while !done && j < new_cap
+                    idx = ~I64Mod (~I64Add start, j), new_cap
+                    if unsafe *(~PtrOffset new_occupied_ptr, idx)
+                        j = j + 1
+                    else
+                        target_idx = idx
+                        done = true
+                unsafe *(~PtrOffset new_hashes_ptr, target_idx) = old_hash
+                unsafe *(~PtrOffset new_occupied_ptr, target_idx) = true
+                unsafe *(~PtrOffset new_keys_ptr, target_idx) = old_key
+                unsafe *(~PtrOffset new_values_ptr, target_idx) = old_value
+                new_len = new_len + 1
+            i = i + 1
+
+        self.hashes = new_hashes
+        self.occupied = new_occupied
+        self.keys = new_keys
+        self.values = new_values
+        self.raw_len = new_len
+        self.raw_cap = new_cap
+
+    ^@insert: K -> V -> ()
+    ^@insert = key, value ->
+        next_len = checked_add_i64 self.raw_len, 1
+        if self.raw_cap == 0 || (checked_mul_i64 next_len, 4) > (checked_mul_i64 self.raw_cap, 3)
+            key_size = ~SizeOf key
+            value_size = ~SizeOf value
+            require_non_zero_size key_size
+            require_non_zero_size value_size
+
+            old_hashes = self.hashes.ptr!
+            old_occupied = self.occupied.ptr!
+            old_keys = self.keys.ptr!
+            old_values = self.values.ptr!
+            old_cap = self.raw_cap
+
+            new_cap = if old_cap == 0
+                8
+            else
+                checked_mul_i64 old_cap, 2
+
+            new_hashes: RawBuffer I64 = unsafe RawBuffer::with_capacity (stdlib::mem::utils::size_of 0), new_cap
+            new_occupied: RawBuffer Bool = unsafe RawBuffer::with_capacity (stdlib::mem::utils::size_of true), new_cap
+            new_keys: RawBuffer K = unsafe RawBuffer::with_capacity key_size, new_cap
+            new_values: RawBuffer V = unsafe RawBuffer::with_capacity value_size, new_cap
+            new_hashes_ptr = new_hashes.ptr!
+            new_occupied_ptr = new_occupied.ptr!
+            new_keys_ptr = new_keys.ptr!
+            new_values_ptr = new_values.ptr!
+
+            grow_i = 0 as I64
+            while grow_i < new_cap
+                unsafe *(~PtrOffset new_occupied_ptr, grow_i) = false
+                grow_i = grow_i + 1
+
+            new_len = 0 as I64
+            grow_i = 0 as I64
+            while grow_i < old_cap
+                if unsafe *(~PtrOffset old_occupied, grow_i)
+                    old_hash = unsafe *(~PtrOffset old_hashes, grow_i)
+                    old_key = unsafe *(~PtrOffset old_keys, grow_i)
+                    old_value = unsafe *(~PtrOffset old_values, grow_i)
+                    start = hash_map_bucket_index old_hash, new_cap
+                    j = 0 as I64
+                    grow_done = false
+                    target_idx = 0 as I64
+                    while !grow_done && j < new_cap
+                        idx = (start + j) % new_cap
+                        if unsafe *(~PtrOffset new_occupied_ptr, idx)
+                            j = j + 1
+                        else
+                            target_idx = idx
+                            grow_done = true
+                    unsafe *(~PtrOffset new_hashes_ptr, target_idx) = old_hash
+                    unsafe *(~PtrOffset new_occupied_ptr, target_idx) = true
+                    unsafe *(~PtrOffset new_keys_ptr, target_idx) = old_key
+                    unsafe *(~PtrOffset new_values_ptr, target_idx) = old_value
+                    new_len = new_len + 1
+                grow_i = grow_i + 1
+
+            self.hashes = new_hashes
+            self.occupied = new_occupied
+            self.keys = new_keys
+            self.values = new_values
+            self.raw_len = new_len
+            self.raw_cap = new_cap
+
+        hashes_ptr = self.hashes.ptr!
+        occupied_ptr = self.occupied.ptr!
+        keys_ptr = self.keys.ptr!
+        values_ptr = self.values.ptr!
+        hash = key.hash!
+        cap: I64 = self.raw_cap
+        start = hash_map_bucket_index hash, cap
+        i = 0 as I64
+        done = false
+        target_idx = 0 as I64
+        found_existing = false
+
+        while !done && i < cap
+            idx = (start + i) % cap
+            if unsafe *(~PtrOffset occupied_ptr, idx)
+                if (unsafe *(~PtrOffset hashes_ptr, idx)) == hash
+                    stored_key = unsafe &*(~PtrOffset keys_ptr, idx)
+                    if *stored_key == key
+                        target_idx = idx
+                        found_existing = true
+                        done = true
+            else
+                target_idx = idx
+                done = true
+            i = i + 1
+
+        if found_existing
+            unsafe drop_in_place (~PtrOffset values_ptr, target_idx)
+            unsafe *(~PtrOffset values_ptr, target_idx) = value
+        else
+            unsafe *(~PtrOffset hashes_ptr, target_idx) = hash
+            unsafe *(~PtrOffset occupied_ptr, target_idx) = true
+            unsafe *(~PtrOffset keys_ptr, target_idx) = key
+            unsafe *(~PtrOffset values_ptr, target_idx) = value
+            self.raw_len = next_len
+
+    @get: &K -> Option &V
+    @get = key ->
+        if self.raw_cap == 0
+            Option::None
+        else
+            hashes_ptr = self.hashes.ptr!
+            occupied_ptr = self.occupied.ptr!
+            keys_ptr = self.keys.ptr!
+            values_ptr = self.values.ptr!
+            hash = key.hash!
+            start = hash_map_bucket_index hash, self.raw_cap
+            i = 0 as I64
+            found = false
+            result = Option::None
+
+            while !found && i < self.raw_cap
+                idx = (start + i) % self.raw_cap
+                if unsafe *(~PtrOffset occupied_ptr, idx)
+                    if (unsafe *(~PtrOffset hashes_ptr, idx)) == hash
+                        stored_key = unsafe &*(~PtrOffset keys_ptr, idx)
+                        if *stored_key == *key
+                            result = Option::Some (unsafe &*(~PtrOffset values_ptr, idx))
+                            found = true
+                else
+                    found = true
+                i = i + 1
+
+            result
+
+    @contains_key: &K -> Bool
+    @contains_key = key ->
+        if self.raw_cap == 0
+            false
+        else
+            hashes_ptr = self.hashes.ptr!
+            occupied_ptr = self.occupied.ptr!
+            keys_ptr = self.keys.ptr!
+            hash = key.hash!
+            start = hash_map_bucket_index hash, self.raw_cap
+            i = 0 as I64
+            found = false
+            result = false
+
+            while !found && i < self.raw_cap
+                idx = (start + i) % self.raw_cap
+                if unsafe *(~PtrOffset occupied_ptr, idx)
+                    if (unsafe *(~PtrOffset hashes_ptr, idx)) == hash
+                        stored_key = unsafe &*(~PtrOffset keys_ptr, idx)
+                        if *stored_key == *key
+                            result = true
+                            found = true
+                else
+                    found = true
+                i = i + 1
+
+            result
+
+    new = ->
+        hashes: RawBuffer I64 = RawBuffer::new!
+        occupied: RawBuffer Bool = RawBuffer::new!
+        keys: RawBuffer K = RawBuffer::new!
+        values: RawBuffer V = RawBuffer::new!
+        HashMap K, V
+            hashes: hashes
+            occupied: occupied
+            keys: keys
+            values: values
+            raw_len: 0
+            raw_cap: 0
+
+impl Drop for HashMap K, V
+    ~@drop = ->
+        occupied_ptr = self.occupied.ptr!
+        values_ptr = self.values.ptr!
+        keys_ptr = self.keys.ptr!
+        i = 0 as I64
+        while i < self.raw_cap
+            if unsafe *(~PtrOffset occupied_ptr, i)
+                unsafe drop_in_place (~PtrOffset values_ptr, i)
+                unsafe drop_in_place (~PtrOffset keys_ptr, i)
+            i = i + 1
+        return

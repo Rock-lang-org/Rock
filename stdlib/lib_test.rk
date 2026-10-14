@@ -1,4 +1,0 @@
-// Test lib.rk in isolation
-extern sqrt: F64 -> F64
-main = ->
-    0

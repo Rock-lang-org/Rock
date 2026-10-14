@@ -89,8 +89,8 @@ examples/enums.rk
 examples/enum_match.rk
 examples/test_mod.rk
 examples/extern_test.rk
-stdlib/io.rk
-stdlib/fs.rk
+stdlib/src/io/traits.rk
+stdlib/src/io/fs.rk
 ```
 
 Read public signatures first, then inspect the implementation body that owns

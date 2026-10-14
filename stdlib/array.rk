@@ -1,3 +1,0 @@
-// Array stdlib - fixed arrays are distinct from slices.
-// Use ~ArrayLen to get the length of a fixed array or slice.
-// Use Vec for growable mutable arrays.

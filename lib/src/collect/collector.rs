@@ -7,7 +7,7 @@ use crate::collect::context::{
 };
 use crate::collect::headers;
 use crate::collect::{CollectedIdEnvironment, CollectedTraitMemberIds};
-use crate::hir::{HirAssociatedTypeDecl, HirTrait, HirTypeAlias};
+use crate::hir::{HirAssociatedTypeDecl, HirEnum, HirStruct, HirTrait, HirTypeAlias};
 use crate::ids::{AssocTypeId, DefId, ModuleId};
 use crate::types::Type;
 
@@ -33,6 +33,7 @@ impl LocalCollector {
     }
 
     pub fn collect_local_declarations(&mut self, module: &ast::Module, root_module_id: ModuleId) {
+        self.predeclare_nominal_identities(module, root_module_id, None);
         if let Some(crate_name) = self.context.current_crate_name.clone() {
             let root_exports = collect_exports(module);
             self.predeclare_source_backed_trait_identities(
@@ -281,6 +282,99 @@ impl LocalCollector {
                     self.context
                         .infix_precedence
                         .insert(name.clone(), *precedence);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn predeclare_nominal_identities(
+        &mut self,
+        module: &ast::Module,
+        module_id: ModuleId,
+        prefix: Option<&str>,
+    ) {
+        // Signatures need constructor identities and kinds, not completed fields.
+        // Seed every local module before lowering headers, including private children.
+        for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
+            match top_level {
+                ast::TopLevel::StructDecl(sd) => {
+                    let Some(id) = self.item_id_at_source(
+                        module_id, top_level_index, top_level, &sd.name.span,
+                    ) else {
+                        continue;
+                    };
+                    let name = prefix
+                        .map(|prefix| format!("{}::{}", prefix, sd.name.name))
+                        .unwrap_or_else(|| sd.name.name.clone());
+                    self.context.structs.insert(name, HirStruct {
+                        id,
+                        name: sd.name.name.clone(),
+                        generic_params: crate::type_lowering::lower_generic_param_decls(
+                            id, &sd.generic_params,
+                        ),
+                        fields: Vec::new(),
+                    });
+                }
+                ast::TopLevel::EnumDecl(ed) => {
+                    let Some(id) = self.item_id_at_source(
+                        module_id, top_level_index, top_level, &ed.name.span,
+                    ) else {
+                        continue;
+                    };
+                    let name = prefix
+                        .map(|prefix| format!("{}::{}", prefix, ed.name.name))
+                        .unwrap_or_else(|| ed.name.name.clone());
+                    self.context.enums.insert(name, HirEnum {
+                        id,
+                        name: ed.name.name.clone(),
+                        generic_params: crate::type_lowering::lower_parse_generic_param_decls(
+                            id, &ed.name.generics,
+                        ),
+                        variants: Vec::new(),
+                    });
+                }
+                ast::TopLevel::Module(module_decl) => {
+                    let inner = &module_decl.0;
+                    if let Some(name) = &inner.name {
+                        let Some(child_id) = self.child_module_id(module_id, name, &name.span) else {
+                            continue;
+                        };
+                        let child_prefix = prefix
+                            .map(|prefix| format!("{}::{}", prefix, name.name))
+                            .unwrap_or_else(|| name.name.clone());
+                        self.predeclare_nominal_identities(inner, child_id, Some(&child_prefix));
+                    } else {
+                        self.predeclare_nominal_identities(inner, module_id, prefix);
+                    }
+                }
+                ast::TopLevel::Mod(ident, _) => {
+                    let Some(child_id) = self.child_module_id(module_id, ident, &ident.span) else {
+                        continue;
+                    };
+                    let loading_prefix = prefix
+                        .map(str::to_owned)
+                        .or_else(|| self.context.current_module_prefix());
+                    let loaded = match self.context.load_module_with_prefix(&ident.name, loading_prefix.as_deref()) {
+                        Ok(module) => module,
+                        Err(err) => {
+                            self.context.push_error_with_span(err, ident.span.clone());
+                            continue;
+                        }
+                    };
+                    let Some(path) = self.context.loaded_module_path_for_prefix(&ident.name, loading_prefix.as_deref()) else {
+                        self.context.push_error_with_span(
+                            format!("Module '{}' was not loaded by the source database", ident.name),
+                            ident.span.clone(),
+                        );
+                        continue;
+                    };
+                    let child_prefix = loading_prefix.as_deref()
+                        .map(|prefix| format!("{}::{}", prefix, ident.name))
+                        .unwrap_or_else(|| ident.name.clone());
+                    let old_path = std::mem::replace(&mut self.context.current_module_path, path);
+                    self.predeclare_nominal_identities(&loaded, child_id, Some(&child_prefix));
+                    self.context.current_module_path = old_path;
                 }
                 _ => {}
             }
@@ -1283,16 +1377,6 @@ impl LocalCollector {
                             continue;
                         };
                         let new_prefix = format!("{}::{}", prefix, mod_name.name);
-                        if !exports.contains_key(&mod_name.name)
-                            && !export_references_module(
-                                reference_exports,
-                                &mod_name.name,
-                                &new_prefix,
-                            )
-                        {
-                            continue;
-                        }
-
                         let inner_exports = self
                             .context
                             .expand_glob_exports_with_prefix(&new_prefix, collect_exports(inner));
@@ -1310,13 +1394,6 @@ impl LocalCollector {
                     }
                 }
                 ast::TopLevel::Mod(ident, _) => {
-                    let new_prefix = format!("{}::{}", prefix, ident.name);
-                    if !exports.contains_key(&ident.name)
-                        && !export_references_module(reference_exports, &ident.name, &new_prefix)
-                    {
-                        continue;
-                    }
-
                     let Some(child_module_id) = self.child_module_id(module_id, ident, &ident.span)
                     else {
                         continue;

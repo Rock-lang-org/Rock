@@ -25,6 +25,100 @@ mod callable;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn test_stdlib_domain_facades_without_prelude() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let entry = dir.join("facades.rk");
+    std::fs::write(
+        &entry,
+        r#"
+> stdlib::collections::Vec
+> stdlib::control::Option
+> stdlib::control::Result
+> stdlib::control::ControlFlow
+> stdlib::mem::Box
+> stdlib::mem::size_of
+> stdlib::string::String
+> stdlib::functional::Functor
+> stdlib::functional::fmap
+> stdlib::cmp::Eq
+> stdlib::num::Add
+> stdlib::ops::Index
+> stdlib::ops::Deref
+> stdlib::concurrency::Mutex
+> stdlib::concurrency::thread::spawn
+> stdlib::io::Write
+> stdlib::io::fs::File
+> stdlib::io::net::Ipv4Addr
+> stdlib::ffi::libc::sqrt
+
+first: &Vec I64 -> I64
+first = values -> values[0]
+
+main = ->
+    mut values: Vec I64 = Vec::new!
+    values.push 42
+    boxed: Box I64 = Box::new (first &values)
+    selected: Option I64 = fmap (value -> value), (Option::Some *boxed)
+    match selected
+        Option::Some value => value
+        Option::None => 0
+"#,
+    )
+    .unwrap();
+    let mut config = test_config(entry, dir.clone());
+    config.no_prelude = true;
+    rock_lib::compile(&config).expect("domain facades should work without prelude imports");
+    let output = Command::new(dir.join("facades")).output().unwrap();
+    assert_eq!(output.status.code(), Some(42));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_stdlib_domain_facades_with_prelude() {
+    let output = compile_and_run(
+        r#"
+> stdlib::collections::Vec
+> stdlib::control::Option
+> stdlib::mem::Box
+> stdlib::string::String
+
+main = !->
+    mut values: Vec I64 = Vec::new!
+    values.push 42
+    first: Option I64 = Option::Some values[0]
+    first.println!
+    boxed = Box::new 42
+    (*boxed).println!
+    text = String::from "hello"
+    text.println!
+"#,
+    );
+    assert_eq!(output, "Some(42)\n42\nhello\n");
+}
+
+#[test]
+fn test_stdlib_old_flat_module_paths_are_not_aliases() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let entry = dir.join("old_paths.rk");
+    for (path, value) in [
+        ("stdlib::vec::Vec", "values: Vec I64 = Vec::new!"),
+        ("stdlib::option::Option", "value: Option I64 = Option::Some 42"),
+        ("stdlib::sync::Mutex", "value: Mutex I64 = Mutex::new 42"),
+    ] {
+        std::fs::write(&entry, format!("> {path}\nmain = !->\n    {value}\n")).unwrap();
+        let mut config = test_config(entry.clone(), dir.clone());
+        config.no_prelude = true;
+        let diagnostics = rock_lib::compile(&config).expect_err("old module paths must not resolve");
+        assert!(format!("{diagnostics:?}").contains(path));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_fold_loop_utf8_traversal() {
     let output = compile_and_run(
         r#"
@@ -1301,14 +1395,16 @@ fn stdlib_cache_key_changes_when_stdlib_source_changes() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     let stdlib_dir = dir.join("stdlib");
-    std::fs::create_dir_all(&stdlib_dir).unwrap();
-    std::fs::write(stdlib_dir.join("lib.rk"), "main = -> 0\n").unwrap();
+    std::fs::create_dir_all(stdlib_dir.join("src/values")).unwrap();
+    std::fs::write(stdlib_dir.join("src/lib.rk"), "mod values\n").unwrap();
+    let values = stdlib_dir.join("src/values/mod.rk");
+    std::fs::write(&values, "answer = -> 0\n").unwrap();
 
     let first = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
     let second = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
     assert_eq!(first, second);
 
-    std::fs::write(stdlib_dir.join("lib.rk"), "main = -> 1\n").unwrap();
+    std::fs::write(&values, "answer = -> 1\n").unwrap();
     let changed = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
 
     assert_ne!(first, changed);
@@ -1420,7 +1516,7 @@ fn stdlib_artifact_path() -> PathBuf {
             let build_object_path = build_dir.join("stdlib.o");
 
             let output = rock_lib::compile_with_products(&rock_lib::Config {
-                entry_file: stdlib_dir.join("lib.rk"),
+                entry_file: stdlib_dir.join("src/lib.rk"),
                 output_dir: build_dir.clone(),
                 debug_print: vec![],
                 meta_files: vec![],
@@ -3254,7 +3350,7 @@ main = ->
 fn nested_index_mut_updates_matrix_element() {
     let output = compile_and_run(
         r#"
-> stdlib::vec::Vec
+> stdlib::collections::Vec
 
 main = ->
     mut first = Vec::new!
@@ -3714,12 +3810,12 @@ fn test_stdlib_math() {
     let output = compile_and_run(
         r#"
 main = ->
-    stdlib::libc::sqrt 144.0 .println!
-    stdlib::libc::sin 0.0 .println!
-    stdlib::libc::cos 0.0 .println!
-    stdlib::libc::pow 2.0, 10.0 .println!
-    stdlib::libc::ceil 3.2 .println!
-    stdlib::libc::floor 3.8 .println!
+    stdlib::ffi::libc::sqrt 144.0 .println!
+    stdlib::ffi::libc::sin 0.0 .println!
+    stdlib::ffi::libc::cos 0.0 .println!
+    stdlib::ffi::libc::pow 2.0, 10.0 .println!
+    stdlib::ffi::libc::ceil 3.2 .println!
+    stdlib::ffi::libc::floor 3.8 .println!
     string_len "hello" .println!
     0
 "#,
@@ -3751,9 +3847,9 @@ main = ->
 fn test_socket_posix_ffi_surface_compiles_and_returns_errno() {
     let output = compile_and_run(
         r#"
-> stdlib::libc::socket
-> stdlib::libc::close
-> stdlib::libc::__errno_location
+> stdlib::ffi::libc::socket
+> stdlib::ffi::libc::close
+> stdlib::ffi::libc::__errno_location
 
 last_errno = ->
     ptr = __errno_location!
@@ -3782,8 +3878,8 @@ main = ->
 fn test_socket_addr_v4_constructors() {
     let output = compile_and_run(
         r#"
-> stdlib::net::Ipv4Addr
-> stdlib::net::SocketAddrV4
+> stdlib::io::net::Ipv4Addr
+> stdlib::io::net::SocketAddrV4
 
 main = ->
     local = Ipv4Addr::localhost!
@@ -3816,9 +3912,9 @@ main = ->
 fn test_tcp_listener_bind_port_zero_reports_local_addr() {
     let output = compile_and_run(
         r#"
-> stdlib::net::TcpListener
-> stdlib::net::SocketAddrV4
-> stdlib::result::Result
+> stdlib::io::net::TcpListener
+> stdlib::io::net::SocketAddrV4
+> stdlib::control::Result
 
 main = ->
     match (TcpListener::bind (SocketAddrV4::localhost 0))
@@ -3844,9 +3940,9 @@ main = ->
 fn test_tcp_listener_fd_field_is_private() {
     compile_should_fail(
         r#"
-> stdlib::result::Result
-> stdlib::net::TcpListener
-> stdlib::net::SocketAddrV4
+> stdlib::control::Result
+> stdlib::io::net::TcpListener
+> stdlib::io::net::SocketAddrV4
 
 main = ->
     match (TcpListener::bind (SocketAddrV4::localhost 0))
@@ -3863,9 +3959,9 @@ main = ->
 fn test_tcp_stream_fd_field_is_private() {
     compile_should_fail(
         r#"
-> stdlib::result::Result
-> stdlib::net::TcpStream
-> stdlib::net::SocketAddrV4
+> stdlib::control::Result
+> stdlib::io::net::TcpStream
+> stdlib::io::net::SocketAddrV4
 
 main = ->
     match (TcpStream::connect (SocketAddrV4::localhost 1))
@@ -3882,9 +3978,9 @@ main = ->
 fn test_tcp_stream_connect_failure_returns_error() {
     let output = compile_and_run(
         r#"
-> stdlib::result::Result
-> stdlib::net::TcpStream
-> stdlib::net::SocketAddrV4
+> stdlib::control::Result
+> stdlib::io::net::TcpStream
+> stdlib::io::net::SocketAddrV4
 > stdlib::io::IoError
 
 main = ->
@@ -3911,13 +4007,13 @@ fn test_tcp_stream_shared_safe_io_and_write_shutdown() {
     let _cleanup = TestDirCleanup(dir.clone());
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::arc::Arc
+> stdlib::concurrency::Arc
 > stdlib::io::IoError
 > stdlib::io::Write
-> stdlib::result::Result
-> stdlib::net::TcpListener
-> stdlib::net::TcpStream
-> stdlib::net::SocketAddrV4
+> stdlib::control::Result
+> stdlib::io::net::TcpListener
+> stdlib::io::net::TcpStream
+> stdlib::io::net::SocketAddrV4
 
 roundtrip: () -> Result I64, IoError
 roundtrip = ->
@@ -3980,10 +4076,10 @@ main = ->
 fn test_stdlib_arc_forwards_shared_write_bound() {
     let output = compile_and_run(
         r#"
-> stdlib::arc::Arc
+> stdlib::concurrency::Arc
 > stdlib::io::IoError
 > stdlib::io::Write
-> stdlib::result::Result
+> stdlib::control::Result
 
 struct Sink
 
@@ -4015,7 +4111,7 @@ fn test_write_helpers_handle_partial_string_and_zero_writes() {
         r#"
 > stdlib::io::IoError
 > stdlib::io::Write
-> stdlib::result::Result
+> stdlib::control::Result
 
 struct PartialSink
 struct ZeroSink
@@ -4065,10 +4161,10 @@ fn test_tcp_listener_stream_localhost_roundtrip() {
 > stdlib::io::IoError
 > stdlib::io::Read
 > stdlib::io::Write
-> stdlib::result::Result
-> stdlib::net::TcpListener
-> stdlib::net::TcpStream
-> stdlib::net::SocketAddrV4
+> stdlib::control::Result
+> stdlib::io::net::TcpListener
+> stdlib::io::net::TcpStream
+> stdlib::io::net::SocketAddrV4
 
 roundtrip: () -> Result I64, IoError
 roundtrip = ->
@@ -4115,10 +4211,10 @@ fn test_tcp_listener_accept_method_section_in_result_chain() {
 > stdlib::io::IoError
 > stdlib::io::Read
 > stdlib::io::Write
-> stdlib::result::Result
-> stdlib::net::TcpListener
-> stdlib::net::TcpStream
-> stdlib::net::SocketAddrV4
+> stdlib::control::Result
+> stdlib::io::net::TcpListener
+> stdlib::io::net::TcpStream
+> stdlib::io::net::SocketAddrV4
 
 accept_with_method_section: TcpListener -> Result TcpStream, IoError
 accept_with_method_section = listener ->
@@ -4167,10 +4263,10 @@ fn test_file_create_write_str_uses_generic_write_trait() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Write
-> stdlib::result::Result
+> stdlib::control::Result
 
 write_text: &mut W -> &Str -> Result I64, IoError where W: Write
 write_text = writer, text ->
@@ -4213,10 +4309,10 @@ fn test_file_open_read_uses_generic_read_trait() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Read
-> stdlib::result::Result
+> stdlib::control::Result
 
 read_into: &mut R -> &mut [U8] -> Result I64, IoError where R: Read
 read_into = reader, buf ->
@@ -4265,10 +4361,10 @@ fn test_file_append_writes_at_end() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Write
-> stdlib::result::Result
+> stdlib::control::Result
 
 append_text: &Str -> Result I64, IoError
 append_text = path ->
@@ -4305,9 +4401,9 @@ fn test_io_pipe_operator_consumes_reader_and_copies_until_eof() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
-> stdlib::result::Result
+> stdlib::control::Result
 
 copy_file: &Str -> &Str -> Result I64, IoError
 copy_file = source, target ->
@@ -4351,10 +4447,10 @@ fn test_file_create_rejects_embedded_nul_path() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Write
-> stdlib::result::Result
+> stdlib::control::Result
 
 overwrite: &Str -> Result I64, IoError
 overwrite = path ->
@@ -4386,9 +4482,9 @@ fn test_file_open_missing_path_returns_os_error() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
-> stdlib::result::Result
+> stdlib::control::Result
 
 main = ->
     match File::open "missing.txt"
@@ -4406,9 +4502,9 @@ main = ->
 fn test_file_fd_field_is_private() {
     compile_should_fail(
         r#"
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
-> stdlib::result::Result
+> stdlib::control::Result
 
 read_fd: &Str -> Result I64, IoError
 read_fd = path ->
@@ -4425,14 +4521,14 @@ main = -> 0
 fn test_file_raw_fd_constructor_not_public() {
     compile_should_fail(
         r#"
-> stdlib::fs::File
+> stdlib::io::fs::File
 
 main = ->
     file = File
         fd: 0
     0
 "#,
-        "Cannot construct struct 'stdlib::fs::File' because it has private fields",
+        "Cannot construct struct 'stdlib::io::fs::File' because it has private fields",
     );
 }
 
@@ -4440,7 +4536,7 @@ main = ->
 fn test_function_name_can_match_c_extern_symbol() {
     let output = compile_and_run(
         r#"
-> stdlib::net::TcpListener
+> stdlib::io::net::TcpListener
 
 main = ->
     listen! .println!
@@ -4457,14 +4553,14 @@ listen = -> 42
 fn test_tcp_listener_raw_fd_constructor_not_public() {
     compile_should_fail(
         r#"
-> stdlib::net::TcpListener
+> stdlib::io::net::TcpListener
 
 main = ->
     listener = TcpListener
         fd: 0
     0
 "#,
-        "Cannot construct struct 'stdlib::net::TcpListener' because it has private fields",
+        "Cannot construct struct 'stdlib::io::net::TcpListener' because it has private fields",
     );
 }
 
@@ -4621,7 +4717,7 @@ main = ->
 fn deferred_method_section_autorefs_shared_receiver() {
     let output = compile_and_run(
         r#"
-> stdlib::result::Result
+> stdlib::control::Result
 
 struct Counter
     < value: I64
@@ -5962,7 +6058,7 @@ main = ->
 fn test_stdlib_thread_spawn_join_returns_value() {
     let output = compile_and_run(
         r#"
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 main = ->
     match spawn (-> 42)
@@ -5982,8 +6078,8 @@ main = ->
 fn test_stdlib_thread_handle_drop_detaches_without_waiting() {
     let output = compile_and_run(
         r#"
-> stdlib::thread::sleep_ms
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::sleep_ms
+> stdlib::concurrency::thread::spawn
 
 launch = ->
     match spawn (->
@@ -6007,8 +6103,8 @@ main = ->
 fn test_stdlib_detached_thread_drops_unobserved_result() {
     let output = compile_and_run(
         r#"
-> stdlib::thread::sleep_ms
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::sleep_ms
+> stdlib::concurrency::thread::spawn
 
 struct DetachedResult
 
@@ -6049,7 +6145,7 @@ main = -> 0
 fn test_stdlib_thread_spawn_accepts_owned_send_capture() {
     let output = compile_and_run(
         r#"
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 struct Owned
     < value: I64
@@ -6077,7 +6173,7 @@ main = ->
 fn test_stdlib_thread_spawn_rejects_borrowed_capture() {
     compile_should_fail(
         r#"
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 main = ->
     value = 41
@@ -6092,7 +6188,7 @@ main = ->
 fn test_stdlib_thread_spawn_rejects_borrowed_capture_after_branch_merge() {
     compile_should_fail(
         r#"
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 main = ->
     value = 41
@@ -6108,7 +6204,7 @@ main = ->
 fn test_stdlib_thread_spawn_rejects_borrowed_method_value() {
     compile_should_fail(
         r#"
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 struct Value
     < number: I64
@@ -6131,7 +6227,7 @@ main = ->
 fn test_stdlib_thread_spawn_rejects_downstream_send_impl() {
     compile_should_fail(
         r#"
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 struct FakeSend
     < pointer: *I64
@@ -6155,7 +6251,7 @@ main = ->
 fn test_stdlib_thread_spawn_accepts_struct_callable_impl() {
     let output = compile_and_run(
         r#"
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 struct Task
 
@@ -6181,9 +6277,9 @@ main = ->
 fn test_stdlib_arc_mutex_synchronizes_threaded_updates() {
     let output = compile_and_run(
         r#"
-> stdlib::arc::Arc
-> stdlib::sync::Mutex
-> stdlib::thread::spawn
+> stdlib::concurrency::Arc
+> stdlib::concurrency::Mutex
+> stdlib::concurrency::thread::spawn
 
 struct Counter
     < value: I64
@@ -6235,7 +6331,7 @@ main = ->
 fn test_stdlib_mutex_guard_drop_unlocks_mutex() {
     let output = compile_and_run(
         r#"
-> stdlib::sync::Mutex
+> stdlib::concurrency::Mutex
 
 set_value: &Mutex I64 -> ()
 set_value = mutex ->
@@ -6259,8 +6355,8 @@ main = ->
 fn test_stdlib_mutex_guard_is_not_send() {
     compile_should_fail(
         r#"
-> stdlib::sync::Mutex
-> stdlib::thread::spawn
+> stdlib::concurrency::Mutex
+> stdlib::concurrency::thread::spawn
 
 main = ->
     mutex = Mutex::new 7
@@ -6276,7 +6372,7 @@ main = ->
 fn test_stdlib_thread_spawn_rejects_reference_hidden_in_moved_struct() {
     compile_should_fail(
         r#"
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 struct Borrowed
     < value: &I64
@@ -6299,7 +6395,7 @@ main = ->
 fn test_stdlib_mutex_try_lock_observes_guard_lifetime() {
     let output = compile_and_run(
         r#"
-> stdlib::sync::Mutex
+> stdlib::concurrency::Mutex
 
 lock_once: &Mutex I64 -> ()
 lock_once = mutex ->
@@ -6326,7 +6422,7 @@ main = ->
 fn test_stdlib_arc_drops_owned_value_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::arc::Arc
+> stdlib::concurrency::Arc
 
 main = ->
     value = Arc::new (String::from "shared")
@@ -7814,6 +7910,84 @@ main = ->
 }
 
 #[test]
+fn test_signatureless_named_callback_receives_call_site_receiver_type() {
+    let output = compile_and_run(
+        r#"
+struct First
+struct Second
+
+impl First
+    @write_all: &[U8] -> I64
+    @write_all = bytes -> ~ArrayLen bytes
+
+impl Second
+    @write_all: &[U8] -> I64
+    @write_all = _ -> 99
+
+dispatch = mut target, callback ->
+    bytes = [1 as U8, 2 as U8]
+    callback &mut target, &bytes[..], 0
+
+forward = output, bytes, _ -> output.write_all bytes
+
+main = !->
+    dispatch First, forward .println!
+"#,
+    );
+    assert_eq!(output.trim(), "2");
+}
+
+#[test]
+fn test_signatureless_io_callback_receiver_is_inferred_through_result_loop() {
+    let output = compile_and_run(
+        r#"
+> stdlib::io::Write
+> stdlib::io::stdout
+> stdlib::io::IoError
+
+struct Source
+
+impl Source
+    @recv: &mut [U8] -> Result I64, I64
+    @recv = _ -> Result::Ok 0
+
+receive_with = stream, mut target, write ->
+    mut buffer = [0; 4]
+    mut total = 0
+    while true
+        match stream.recv &mut buffer
+            Result::Ok count =>
+                if count <= 0
+                    return total
+                else
+                    match write &mut target, &buffer[..count], count
+                        Result::Ok written => total = total + written
+                        Result::Err _ => return total
+            Result::Err _ => return total
+    total
+
+discard = _, _, count ->
+    if true
+        Result::Ok count
+    else
+        Result::Err IoError::Os 1
+
+impl Source
+    @consume = -> receive_with Source, 0, discard
+    @consume_stdout = -> receive_with Source, stdout!, write_stdout
+
+write_stdout = output, bytes, _ -> output.write_all bytes
+
+main = !->
+    source = Source
+    source.consume!.println!
+    source.consume_stdout!.println!
+"#,
+    );
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), vec!["0", "0"]);
+}
+
+#[test]
 fn test_signatureless_forward_try_and_hkt_map_are_inferred() {
     let output = compile_and_run(
         r#"
@@ -8673,7 +8847,7 @@ main = ->
 fn vec_deref_does_not_return_reference_to_temporary_slice() {
     compile_should_fail(
         r#"
-> stdlib::vec::Vec
+> stdlib::collections::Vec
 
 bad: Vec I64 -> &I64
 bad = v -> &v.len!
@@ -13258,8 +13432,8 @@ main = ->
 fn test_stdlib_result_bifunctor_and_error_operator() {
     let output = compile_and_run(
         r#"
-> stdlib::bifunctor::first
-> stdlib::bifunctor::second
+> stdlib::functional::first
+> stdlib::functional::second
 
 inc = value -> value + 1
 double = value -> value * 2
@@ -13336,8 +13510,8 @@ main = ->
 fn test_stdlib_option_result_show_prints_payloads() {
     let output = compile_and_run(
         r#"
-> stdlib::option::Option
-> stdlib::result::Result
+> stdlib::control::Option
+> stdlib::control::Result
 > stdlib::io::IoError
 
 main = ->
@@ -13494,7 +13668,7 @@ main = ->
 fn test_result_method_sections_preserve_unresolved_payload_until_materialization() {
     let output = compile_and_run(
         r#"
-> stdlib::result::Result
+> stdlib::control::Result
 
 struct Source
     < value: I64
@@ -14424,8 +14598,8 @@ main = ->
 fn test_stdlib_box_drops_inner_value() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14449,7 +14623,7 @@ main = ->
 fn test_stdlib_box_rejects_zero_sized_value() {
     let (_output, success) = compile_and_run_with_status(
         r#"
-> stdlib::box_type::Box
+> stdlib::mem::Box
 
 struct Empty
 
@@ -14466,7 +14640,7 @@ main = ->
 fn test_stdlib_box_new_uses_non_null_pointer() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
+> stdlib::mem::Box
 
 main = ->
     boxed = Box::new 42
@@ -14505,8 +14679,8 @@ main = ->
 fn test_stdlib_box_drops_aggregate_field_value() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14534,7 +14708,7 @@ main = ->
 fn test_drop_order_runs_owner_before_field_cleanup() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> stdlib::mem::drop::Drop
 
 struct Child
     < value: I64
@@ -14567,7 +14741,7 @@ main = ->
 fn test_branch_move_drops_value_once_after_merge() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14598,7 +14772,7 @@ main = ->
 fn test_field_assignment_drops_old_field_before_overwrite() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14628,7 +14802,7 @@ main = ->
 fn test_tuple_array_and_enum_payload_cleanup_drop_elements() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14665,7 +14839,7 @@ main = ->
 fn test_expression_statement_temporary_is_dropped() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14691,7 +14865,7 @@ main = ->
 fn test_borrowed_temporary_drops_when_call_expression_finishes() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> stdlib::mem::drop::Drop
 
 struct Holder
     < value: I64
@@ -14725,7 +14899,7 @@ main = ->
 fn test_return_expression_temporary_drops_before_returning_to_caller() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> stdlib::mem::drop::Drop
 
 struct Holder
     < value: I64
@@ -14760,8 +14934,8 @@ main = ->
 fn test_owned_string_temporary_lives_through_ffi_call() {
     let output = compile_and_run(
         r#"
-> stdlib::libc::puts
-> stdlib::string_type::String
+> stdlib::ffi::libc::puts
+> stdlib::string::String
 
 main = ->
     puts ((String::from "hello").as_ptr!)
@@ -14774,7 +14948,7 @@ main = ->
 
 #[test]
 fn test_stdlib_has_no_keep_alive_lifetime_workarounds() {
-    let stdlib_files = ["convert.rk", "option.rk", "result.rk", "show.rk"];
+    let stdlib_files = ["src/convert.rk", "src/control/option.rk", "src/control/result.rk", "src/show.rk"];
     let offenders = stdlib_files
         .iter()
         .filter_map(|file| {
@@ -14852,8 +15026,8 @@ main = ->
 fn test_stdlib_box_move_drops_inner_value_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14879,8 +15053,8 @@ main = ->
 fn test_returned_stdlib_box_binding_drops_inner_value_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14908,8 +15082,8 @@ main = ->
 fn test_method_by_value_owned_arg_drops_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -14943,8 +15117,8 @@ main = ->
 fn test_partial_move_from_direct_drop_type_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -14979,8 +15153,8 @@ main = ->
 fn test_nested_partial_move_from_direct_drop_type_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -15019,7 +15193,7 @@ main = ->
 fn test_tuple_partial_move_from_direct_drop_type_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::drop::Drop
+> stdlib::mem::drop::Drop
 
 struct Child
     < id: I64
@@ -15052,8 +15226,8 @@ main = ->
 fn test_array_element_move_of_cleanup_value_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -15080,8 +15254,8 @@ main = ->
 fn test_stdlib_box_reassignment_drops_old_and_new_values_once() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15108,8 +15282,8 @@ main = ->
 fn test_by_value_owned_parameter_is_dropped_when_unused() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15137,7 +15311,7 @@ main = ->
 fn test_by_value_owned_parameter_with_local_drop_is_dropped_when_unused() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15165,8 +15339,8 @@ main = ->
 fn test_assigning_moved_out_field_does_not_drop_stale_value() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15199,8 +15373,8 @@ main = ->
 fn test_enum_partial_payload_move_drops_unmoved_payload_field() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15232,8 +15406,8 @@ main = ->
 fn test_parent_cleanup_skips_moved_field_but_drops_unmoved_sibling() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15267,8 +15441,8 @@ main = ->
 fn test_branch_skipped_field_move_drops_both_fields_after_merge() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15303,8 +15477,8 @@ main = ->
 fn test_branch_taken_field_move_drops_moved_field_once_and_sibling_after_merge() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> stdlib::mem::Box
+> stdlib::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -15339,7 +15513,7 @@ main = ->
 fn test_stdlib_raw_buffer_capacity_and_pointer_access() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::raw_buffer::RawBuffer
+> stdlib::mem::raw_buffer::RawBuffer
 
 main = ->
     empty: RawBuffer I64 = RawBuffer::new!
@@ -15365,7 +15539,7 @@ main = ->
 fn test_stdlib_raw_buffer_with_capacity_requires_unsafe() {
     compile_should_fail(
         r#"
-> stdlib::raw_buffer::RawBuffer
+> stdlib::mem::raw_buffer::RawBuffer
 
 main = ->
     buf = RawBuffer::with_capacity (stdlib::mem::size_of 0), 2
@@ -15379,7 +15553,7 @@ main = ->
 fn test_stdlib_raw_buffer_as_slice_rejects_len_above_capacity() {
     let (_output, success) = compile_and_run_with_status(
         r#"
-> stdlib::raw_buffer::RawBuffer
+> stdlib::mem::raw_buffer::RawBuffer
 
 main = ->
     buf: RawBuffer I64 = RawBuffer::new!
@@ -15398,7 +15572,7 @@ main = ->
 fn test_stdlib_raw_buffer_as_slice_requires_unsafe() {
     compile_should_fail(
         r#"
-> stdlib::raw_buffer::RawBuffer
+> stdlib::mem::raw_buffer::RawBuffer
 
 main = ->
     buf: RawBuffer I64 = RawBuffer::new!
@@ -15413,7 +15587,7 @@ main = ->
 fn test_stdlib_raw_buffer_zero_capacity_as_slice_uses_non_null_buffer() {
     let output = compile_and_run(
         r#"
-> stdlib::raw_buffer::RawBuffer
+> stdlib::mem::raw_buffer::RawBuffer
 
 main = ->
     buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (stdlib::mem::size_of 0), 0
@@ -15430,8 +15604,8 @@ main = ->
 fn test_global_alloc_requires_unsafe() {
     compile_should_fail(
         r#"
-> stdlib::alloc::Global
-> stdlib::alloc::Layout
+> stdlib::mem::alloc::Global
+> stdlib::mem::alloc::Layout
 
 main = ->
     layout = Layout
@@ -15788,7 +15962,7 @@ main = ->
 fn returning_vec_get_from_local_vec_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::vec::Vec
+> stdlib::collections::Vec
 
 bad: () -> Option &I64
 bad = ->
@@ -15808,7 +15982,7 @@ main = ->
 fn returning_reference_to_local_vec_index_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::vec::Vec
+> stdlib::collections::Vec
 
 bad: () -> &I64
 bad = ->
@@ -15828,7 +16002,7 @@ main = ->
 fn returning_box_as_ref_from_local_box_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::box_type::Box
+> stdlib::mem::Box
 
 bad: () -> &I64
 bad = ->
@@ -15847,7 +16021,7 @@ main = ->
 fn returning_raw_deref_from_local_box_pointer_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::box_type::Box
+> stdlib::mem::Box
 
 bad: () -> &I64
 bad = ->
@@ -15867,7 +16041,7 @@ main = ->
 fn returning_vec_get_from_input_vec_reference_is_allowed() {
     let output = compile_and_run(
         r#"
-> stdlib::vec::Vec
+> stdlib::collections::Vec
 
 get_first: &Vec I64 -> Option &I64
 get_first = v -> (*v).get 0
@@ -15889,7 +16063,7 @@ main = ->
 fn returning_vec_index_from_input_vec_reference_is_allowed() {
     let output = compile_and_run(
         r#"
-> stdlib::vec::Vec
+> stdlib::collections::Vec
 
 first: &Vec I64 -> &I64
 first = v -> &((*v)[0])

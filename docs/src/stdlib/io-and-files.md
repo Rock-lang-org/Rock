@@ -14,7 +14,7 @@ Rock's I/O abstractions use `Result` and ownership rather than exceptions or man
 | `writer.write_str text` | Writes the entire string's bytes using the complete-write helper. |
 
 ```rock
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Read
 > stdlib::io::Write
@@ -47,7 +47,7 @@ The free functions `stdlib::io::write_all` and `stdlib::io::write_str` supply th
 `File::open` reads an existing path, `File::create` creates or truncates a path, and `File::append` creates or appends. Each returns `Result File, IoError`, so a function that uses `?` must return a compatible `Result`.
 
 ```rock
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Write
 
@@ -81,7 +81,7 @@ The successful output is `22`, and `rock-greeting.txt` contains `Hello from Rock
 Only the prefix indicated by the returned count contains newly read bytes. A zero count from a read into a nonempty buffer means end of file. A read is not a request to fill the buffer: loop until the format's expected length or end of file. This complete program creates its input first, then copies it to standard output using a small buffer.
 
 ```rock
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Read
 > stdlib::io::Write
@@ -179,7 +179,7 @@ main = !->
 The generic `copy` function reads from `&mut R` and writes to `&W` until end of file. `|>>` is its pipeline-oriented spelling and consumes the source reader while borrowing the destination writer. This program creates a source file so the example has no hidden input.
 
 ```rock
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Write
 

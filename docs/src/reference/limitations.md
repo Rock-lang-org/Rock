@@ -246,7 +246,7 @@ Unicode scalars. Grapheme segmentation and Unicode normalization are not yet
 provided. This program measures encoded bytes, not user-perceived characters:
 
 ```rock
-> stdlib::eq::Eq
+> stdlib::cmp::Eq
 > stdlib::hash::Hash
 
 main = !->
@@ -348,9 +348,9 @@ abstraction. This complete program demonstrates the supported bind boundary:
 
 ```rock
 > stdlib::io::IoError
-> stdlib::net::Ipv4Addr
-> stdlib::net::SocketAddrV4
-> stdlib::net::TcpListener
+> stdlib::io::net::Ipv4Addr
+> stdlib::io::net::SocketAddrV4
+> stdlib::io::net::TcpListener
 
 bind_local = ->
     address: SocketAddrV4 = SocketAddrV4::new Ipv4Addr::localhost!, 0

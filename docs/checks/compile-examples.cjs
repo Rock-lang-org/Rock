@@ -46,7 +46,7 @@ function artifact(name, entry, dependencies) {
 
 function main() {
     console.log(`Compiler: ${compiler}\nLogs: ${output}`);
-    const stdlib = artifact("stdlib", path.join(root, "stdlib/lib.rk"), []);
+    const stdlib = artifact("stdlib", path.join(root, "stdlib/src/lib.rk"), []);
     const examples = [];
     for (const file of [path.join(root, "README.md"), ...walk(path.join(root, "docs/src"))]
         .filter(file => file.endsWith(".md"))) {

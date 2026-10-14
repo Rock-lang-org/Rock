@@ -7,8 +7,8 @@ The current networking module provides safe ownership wrappers around blocking I
 `Ipv4Addr::new` accepts four octets. `SocketAddrV4::new` combines an address and an integer port. The convenience constructors `localhost` and `any` use loopback and all-interface addresses respectively.
 
 ```rock
-> stdlib::net::Ipv4Addr
-> stdlib::net::SocketAddrV4
+> stdlib::io::net::Ipv4Addr
+> stdlib::io::net::SocketAddrV4
 
 main = !->
     loopback: Ipv4Addr = Ipv4Addr::new 127, 0, 0, 1
@@ -29,9 +29,9 @@ The output is `127`, `8080`, `1`, and `0`. Ports are checked to fit the valid ra
 
 ```rock
 > stdlib::io::IoError
-> stdlib::net::Ipv4Addr
-> stdlib::net::SocketAddrV4
-> stdlib::net::TcpStream
+> stdlib::io::net::Ipv4Addr
+> stdlib::io::net::SocketAddrV4
+> stdlib::io::net::TcpStream
 
 connect_checked: () -> Result TcpStream, IoError
 connect_checked = ->
@@ -55,8 +55,8 @@ The output is `invalid port`. For a valid address, `connect` performs a blocking
 
 ```rock
 > stdlib::io::IoError
-> stdlib::net::SocketAddrV4
-> stdlib::net::TcpListener
+> stdlib::io::net::SocketAddrV4
+> stdlib::io::net::TcpListener
 
 open_listener: () -> Result SocketAddrV4, IoError
 open_listener = ->
@@ -81,9 +81,9 @@ The output is `true` and `127`. A listener created with port zero must be querie
 ```rock
 > stdlib::io::IoError
 > stdlib::io::Write
-> stdlib::net::SocketAddrV4
-> stdlib::net::TcpListener
-> stdlib::net::TcpStream
+> stdlib::io::net::SocketAddrV4
+> stdlib::io::net::TcpListener
+> stdlib::io::net::TcpStream
 
 roundtrip: () -> Result I64, IoError
 roundtrip = ->

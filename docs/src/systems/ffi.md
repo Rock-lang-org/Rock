@@ -61,7 +61,7 @@ module. This complete wrapper imports it explicitly, declares its pointer local,
 and keeps the owning `String` alive until the foreign call returns:
 
 ```rock
-> stdlib::libc::strlen
+> stdlib::ffi::libc::strlen
 
 unsafe c_string_length: String -> I64
 c_string_length = text ->
@@ -89,8 +89,8 @@ bytes, rejects non-positive sizes, checks the returned pointer, and frees one
 successful allocation exactly once:
 
 ```rock
-> stdlib::libc::malloc
-> stdlib::libc::free
+> stdlib::ffi::libc::malloc
+> stdlib::ffi::libc::free
 
 unsafe allocate_and_release: I64 -> I64
 allocate_and_release = size ->

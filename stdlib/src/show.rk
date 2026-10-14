@@ -1,0 +1,76 @@
+// Show trait - provides string representation and printing for types
+
+> stdlib::ffi::libc::putchar
+> stdlib::convert::int_to_string
+> stdlib::convert::float_to_string
+> stdlib::string::owned::String
+> stdlib::clone::Clone
+
+show_println_string: String -> I32
+show_println_string = out -> out.as_str!.println!
+
+< trait Show
+    @show: String
+    @println: I32
+    @println = ->
+        out = @show!
+        show_println_string out
+
+impl Show for I64
+    @show = -> int_to_string *self
+
+impl Show for I32
+    @show = ->
+        value = *self as I64
+        int_to_string value
+
+impl Show for U8
+    @show = ->
+        value = *self as I64
+        int_to_string value
+
+impl Show for F64
+    @show = -> float_to_string *self
+
+impl Show for F32
+    @show = ->
+        value = *self as F64
+        float_to_string value
+
+impl Show for Bool
+    @show = ->
+        if *self
+            String::from "true"
+        else
+            String::from "false"
+
+impl Show for String
+    @show = -> self.clone!
+
+impl Show for Char
+    @show = -> String::from *self
+
+impl Show for &[T] where T: Show
+    @show = ->
+        out = String::from "["
+        i = 0
+        value = *self
+        len = ~ArrayLen value
+        while i < len
+            if i > 0
+                out = out.concat (String::from ", ")
+            out = out.concat ((value[i]).show!)
+            i = i + 1
+        out.concat (String::from "]")
+
+impl Show for &Str
+    @show = -> String::from *self
+    @println = ->
+        value = *self
+        ptr = ~ArrPtr value
+        len = ~ArrayLen value
+        i = 0
+        while i < len
+            putchar ((unsafe ptr[i]) as I32)
+            i = i + 1
+        putchar 10

@@ -72,7 +72,7 @@ Do not replace this path with a registry version or Git dependency: those manife
 Put the following complete application in `src/main.rk`:
 
 ```rock
-> stdlib::net::SocketAddrV4
+> stdlib::io::net::SocketAddrV4
 > rock_http::config::ServerConfig
 > rock_http::error::HttpError
 > rock_http::request::Method

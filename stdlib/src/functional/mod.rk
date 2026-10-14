@@ -1,0 +1,22 @@
+// Callable protocols, composition, and higher-kinded abstractions.
+< mod pipe
+< mod callable
+< mod bifunctor
+< mod functor
+< mod applicative
+< mod monad
+< mod foldable
+< mod traversable
+
+< pipe::|>
+< callable::*
+< bifunctor::*
+< functor::*
+< functor::<$>
+< functor::<&>
+< applicative::*
+< applicative::<*>
+< monad::*
+< monad::>>=
+< foldable::*
+< traversable::*

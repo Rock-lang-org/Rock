@@ -7,7 +7,7 @@ The standard library provides owned POSIX threads, atomic reference counting, a 
 `spawn` is an explicitly imported function. It accepts an owned `FnOnce` task whose captured environment and result implement `Send`, and returns `Result (JoinHandle T), ThreadError`. `join!` consumes the handle and returns the task result or a concrete `ThreadError`.
 
 ```rock
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 main = !->
     match spawn (-> 42)
@@ -25,7 +25,7 @@ The output is `42`. A successful `spawn` transfers the closure to the new thread
 Use the explicitly imported `spawn_detached` when no join handle is needed. It accepts an owned `Send` task implementing `FnOnce (), ()` and returns `Result (), ThreadError`: success reports that the thread started, not that the task finished.
 
 ```rock
-> stdlib::thread::spawn_detached
+> stdlib::concurrency::thread::spawn_detached
 
 main = ->
     match spawn_detached (->
@@ -44,7 +44,7 @@ The explicit `return` makes the task return unit (`()`), rather than the result 
 A spawned closure cannot borrow a stack value that might end before the thread. Move owned data into the closure by using a consuming method or an owned container.
 
 ```rock
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 struct Owned
     < value: I64
@@ -71,9 +71,9 @@ The output is `73`. The consuming `owned.take!` call makes the closure capture `
 Use `Arc (Mutex T)` when several owned workers must update one value. `Arc::clone` shares ownership; `Mutex::lock!` gives one worker a `MutexGuard T`; `get_mut!` changes the protected value; and dropping the guard releases the lock.
 
 ```rock
-> stdlib::arc::Arc
-> stdlib::sync::Mutex
-> stdlib::thread::spawn
+> stdlib::concurrency::Arc
+> stdlib::concurrency::Mutex
+> stdlib::concurrency::thread::spawn
 
 struct Counter
     < value: I64
@@ -132,7 +132,7 @@ Both workers own a cloned `Arc`, but only one guard can update the `Counter` at 
 `lock!` waits by yielding while the lock word is held. `try_lock!` returns immediately with `Option (MutexGuard T)`. A guard's lifetime controls the lock lifetime, so the second attempt below returns `None` until the first guard is dropped.
 
 ```rock
-> stdlib::sync::Mutex
+> stdlib::concurrency::Mutex
 
 lock_once: &Mutex I64 -> ()
 lock_once = mutex ->
@@ -157,7 +157,7 @@ The output is `locked` and `9`. `guard` leaves scope before `lock_once` returns,
 `AtomicU64` is an explicitly imported heap-backed atomic value. `exchange`, `fetch_add`, `fetch_sub`, and `store` return or update exact `U64` values.
 
 ```rock
-> stdlib::atomic::AtomicU64
+> stdlib::concurrency::atomic::AtomicU64
 
 main = !->
     counter: AtomicU64 = AtomicU64::new 0 as U64
@@ -177,9 +177,9 @@ The output is `0`, `3`, and `5`: `exchange` observes zero and writes three, `fet
 The thread module also exports `current_id`, `yield_now`, and `sleep_ms`. They are explicit imports because they are not prelude vocabulary.
 
 ```rock
-> stdlib::thread::current_id
-> stdlib::thread::sleep_ms
-> stdlib::thread::yield_now
+> stdlib::concurrency::thread::current_id
+> stdlib::concurrency::thread::sleep_ms
+> stdlib::concurrency::thread::yield_now
 
 main = !->
     thread_id: U64 = current_id!

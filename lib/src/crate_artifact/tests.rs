@@ -244,6 +244,44 @@ fn write_answer_stdlib(dir: &PathBuf, answer: i32) {
     .unwrap();
 }
 
+#[test]
+fn test_nested_facade_imports_resolve_headers_without_dependency_sources() {
+    let dir = temp_test_dir("nested_facade_headers");
+    let _cleanup = TestDirCleanup(dir.clone());
+    let dependency = dir.join("dependency");
+    write_crate(&dependency, "dependency", "", "< mod values\n");
+    fs::create_dir_all(dependency.join("values")).unwrap();
+    fs::write(
+        dependency.join("values/mod.rk"),
+        "mod data\n< data::Value\n< data::extract\n",
+    )
+    .unwrap();
+    fs::write(
+        dependency.join("values/data.rk"),
+        "< struct Value\n    < number: I32\nextract: Value -> I32\n< extract = value -> value.number\n",
+    )
+    .unwrap();
+    let artifact = dir.join("dependency.rkca");
+    build_product_artifact(&dependency, "dependency", &artifact, true, true);
+    delete_crate_source_files(&dependency);
+    let exit = write_and_run_artifact_app(
+        r#"
+> dependency::values::Value
+> dependency::values::extract
+
+apply: Value -> I32
+apply = value -> extract value
+
+main = ->
+    value = Value
+        number: 42
+    apply value
+"#,
+        vec![("dependency".to_string(), artifact)],
+    );
+    assert_eq!(exit, 42);
+}
+
 fn delete_crate_source_files(crate_dir: &PathBuf) {
     fn remove_rk_files(path: &std::path::Path) {
         if let Ok(entries) = fs::read_dir(path) {
@@ -430,8 +468,9 @@ fn cached_stdlib_product_artifact(stdlib_dir: &PathBuf, artifact_dir: &PathBuf) 
         Err(error) => panic!("failed to invalidate cached stdlib artifact: {error}"),
     }
     // Build in the private cache, never in the checked-out stdlib/build directory.
+    let manifest = rock_shared::manifest::load_manifest(&stdlib_dir.join("rock.toml")).unwrap();
     let output = crate::compile_with_products(&Config {
-        entry_file: stdlib_dir.join("lib.rk"),
+        entry_file: stdlib_dir.join(&manifest.lib.path),
         output_dir: artifact_dir.clone(),
         current_crate_name: Some("stdlib".to_string()),
         no_std: true,
@@ -981,7 +1020,7 @@ fn test_product_stdlib_artifact_preserves_string_method_abi_and_prelude_exports(
             .display_names
             .get(&sqrt_id)
             .map(String::as_str),
-        Some("stdlib::libc::sqrt")
+        Some("stdlib::ffi::libc::sqrt")
     );
     assert_eq!(
         products
@@ -989,7 +1028,7 @@ fn test_product_stdlib_artifact_preserves_string_method_abi_and_prelude_exports(
             .display_names
             .get(&deref_id)
             .map(String::as_str),
-        Some("stdlib::deref::Deref")
+        Some("stdlib::ops::deref::Deref")
     );
     assert_eq!(products.infix_precedence.get("+"), Some(&9));
     assert_eq!(products.infix_precedence.get("*"), Some(&10));
@@ -1031,7 +1070,7 @@ fn test_product_stdlib_artifact_preserves_string_method_abi_and_prelude_exports(
         .interface
         .traits
         .values()
-        .any(|trait_| trait_.name == "stdlib::deref::Deref"));
+        .any(|trait_| trait_.name == "stdlib::ops::deref::Deref"));
 }
 
 #[test]

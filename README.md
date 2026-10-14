@@ -474,7 +474,7 @@ This prints `Ok(21)` and `Err(calculation: division by zero)`. In `quarter`, the
 Use `do` when later operations need values from earlier ones. This program creates a file, writes two lines, and adds their byte counts without nesting callbacks:
 
 ```haskell
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Write
 
@@ -497,7 +497,7 @@ On success, this prints `Ok(22)` and leaves both lines in `greeting.txt`; creati
 `do` is syntax sugar for calls to the `bind` function in scope; the prelude supplies its **Monad** implementation. The `>>=` operator exposes the same sequencing explicitly, so the program above can also be written with nested callbacks:
 
 ```haskell
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Write
 
@@ -735,7 +735,7 @@ Functional code is not limited to numbers and options. The standard library incl
 Threads use the same `Result` operators as other fallible operations. A single chain can start a task, join it, and handle either outcome:
 
 ```haskell
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 main = !->
     spawn (-> 42)

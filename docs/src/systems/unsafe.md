@@ -91,8 +91,8 @@ allocation result, never dereferences uninitialized memory, and frees the
 allocation once:
 
 ```rock
-> stdlib::libc::malloc
-> stdlib::libc::free
+> stdlib::ffi::libc::malloc
+> stdlib::ffi::libc::free
 
 unsafe allocate_and_release: I64 -> I64
 allocate_and_release = size ->

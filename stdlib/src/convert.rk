@@ -1,0 +1,47 @@
+// Type conversion functions
+//
+// These functions provide conversions between different types.
+
+> stdlib::ffi::libc::atol
+> stdlib::ffi::libc::atof
+> stdlib::string::owned::String
+
+< trait From T
+    from: T -> Self
+
+< trait Into T
+    ~@into: T
+
+impl From T for T
+    from = value -> value
+
+impl Into U for T where U: From T
+    ~@into = -> U::from self
+
+// Convert integer to float (uses LLVM sitofp intrinsic)
+to_float: I64 -> F64
+< to_float = x -> x as F64
+
+// Convert float to integer (uses LLVM fptosi intrinsic)
+to_int: F64 -> I64
+< to_int = x -> x as I64
+
+// Convert integer to string, returns an owned String
+int_to_string: I64 -> String
+< int_to_string = x -> String::from x
+
+// Convert float to string, returns an owned String
+float_to_string: F64 -> String
+< float_to_string = x -> String::from x
+
+// Parse string to integer (wraps C atol, needs a NUL-terminated copy)
+string_to_int: &Str -> I64
+< string_to_int = s ->
+    owned = String::from s
+    atol owned.as_ptr!
+
+// Parse string to float (wraps C atof, needs a NUL-terminated copy)
+string_to_float: &Str -> F64
+< string_to_float = s ->
+    owned = String::from s
+    atof owned.as_ptr!

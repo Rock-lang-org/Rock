@@ -1379,6 +1379,60 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
+    #[test]
+    fn nested_modules_resolve_later_nominals_and_collect_private_children() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rock_collect_nested_nominals_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(temp_dir.join("api")).unwrap();
+        std::fs::create_dir_all(temp_dir.join("model")).unwrap();
+        let entry = temp_dir.join("main.rk");
+        std::fs::write(&entry, "mod api\nmod model\n").unwrap();
+        std::fs::write(
+            temp_dir.join("api/mod.rk"),
+            "mod state\n> demo::model::Value\n> demo::model::Choice\n> demo::api::state::State\n< struct Envelope\n    value: Choice Value\n    state: State\ntake: Choice Value -> Value\n< take = choice -> match choice\n    Choice::Some value => value\n",
+        )
+        .unwrap();
+        std::fs::write(
+            temp_dir.join("api/state.rk"),
+            "< struct State\n    count: I64\n",
+        )
+        .unwrap();
+        std::fs::write(
+            temp_dir.join("model/mod.rk"),
+            "< struct Value\n    number: I64\n< enum Choice T\n    Some T\n",
+        )
+        .unwrap();
+        let config = crate::Config {
+            entry_file: entry.clone(),
+            no_std: true,
+            no_prelude: true,
+            current_crate_name: Some("demo".to_string()),
+            ..crate::Config::default()
+        };
+        let mut db = crate::source_loader::SourceDatabase::new();
+        let graph = db.load_entry(entry, &config).unwrap();
+        let program = crate::ast::Program {
+            module: graph.root_module().clone(),
+        };
+        let decls = collect_with_source_graph(
+            &program,
+            &graph,
+            &crate::crate_system::CrateContext::new(),
+            false,
+            Some("demo"),
+        )
+        .expect("nested headers should resolve later nominal declarations");
+        let state = decls.items.structs().values().find(|item| item.name == "State").unwrap();
+        assert_eq!(state.fields.len(), 1, "private children need complete declarations");
+        let take = function_named(&decls, "demo::api::take").unwrap();
+        assert!(take.generic_params.is_empty(), "imported types are not inferred generics");
+        assert!(matches!(take.params[0].ty, Type::Enum { .. }));
+        assert!(matches!(take.ret_type, Type::Struct { .. }));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
     fn ident_expr(name: &str) -> crate::ast::Expression {
         crate::ast::Expression::UnaryExpr(crate::ast::UnaryExpr::PrimaryExpr(
             crate::ast::PrimaryExpr {

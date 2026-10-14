@@ -162,10 +162,10 @@ The output is `owned` twice. `duplicate` moves into `Arc`, while `original` rema
 A prelude reduces noise for universal vocabulary; it should not hide domain dependencies. This complete program imports file, I/O, and thread APIs and uses each one.
 
 ```rock
-> stdlib::fs::File
+> stdlib::io::fs::File
 > stdlib::io::IoError
 > stdlib::io::Write
-> stdlib::thread::spawn
+> stdlib::concurrency::thread::spawn
 
 write_marker: &Str -> Result I64, IoError
 write_marker = path ->
