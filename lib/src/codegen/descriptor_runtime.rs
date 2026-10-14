@@ -79,3 +79,7 @@ mod nominal_tests;
 #[cfg(test)]
 #[path = "descriptor_dictionary_tests.rs"]
 mod dictionary_tests;
+
+#[cfg(test)]
+#[path = "descriptor_thin_handle_tests.rs"]
+mod thin_handle_tests;

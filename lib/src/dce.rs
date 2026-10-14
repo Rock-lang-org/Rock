@@ -306,6 +306,10 @@ fn instance_roots(program: &MonomorphizedProgram, bodies: &MirInstanceBodies) ->
                         target: MirCallableKey::Instance(id),
                         ..
                     } => Some(*id),
+                    crate::mir::MirErasedRvalue::OwnerOpen { plan, .. } => match &plan.split.target {
+                        crate::mir::MirErasedOwnerTarget::Native(MirCallableKey::Instance(id)) => Some(*id),
+                        _ => None,
+                    },
                     _ => None,
                 }),
         );

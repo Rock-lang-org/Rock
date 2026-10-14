@@ -275,11 +275,14 @@ impl<'ctx> CodeGen<'ctx> {
                 word.into(),
                 ptr.into(),
                 word.into(),
+                ptr.into(),
+                word.into(),
+                ptr.into(),
             ],
             false,
         )
     }
-    fn descriptor_bytes(&self, bytes: &[u8], name: &str) -> PointerValue<'ctx> {
+    pub(super) fn descriptor_bytes(&self, bytes: &[u8], name: &str) -> PointerValue<'ctx> {
         let value = self.context.i8_type().const_array(
             &bytes
                 .iter()
@@ -309,6 +312,9 @@ impl<'ctx> CodeGen<'ctx> {
             word.const_zero().into(),
             ptr.const_null().into(),
             word.const_int(i64::MAX as u64, false).into(),
+            ptr.const_null().into(),
+            word.const_zero().into(),
+            ptr.const_null().into(),
         ]
     }
     fn erased_function_type(&self, signature: &MirErasedSignature) -> FunctionType<'ctx> {
@@ -323,10 +329,10 @@ impl<'ctx> CodeGen<'ctx> {
             false,
         )
     }
-    fn erased_error(message: impl Into<String>) -> CodegenError {
+    pub(super) fn erased_error(message: impl Into<String>) -> CodegenError {
         CodegenError::backend_contract(message)
     }
-    fn erased_layout(
+    pub(super) fn erased_layout(
         &self,
         ty: &MirErasedType,
         layouts: &BTreeMap<MirErasedType, PointerValue<'ctx>>,
@@ -385,7 +391,7 @@ impl<'ctx> CodeGen<'ctx> {
             "erased value requires unavailable layout/application evidence",
         ))
     }
-    fn erased_descriptor_word(
+    pub(super) fn erased_descriptor_word(
         &self,
         descriptor: PointerValue<'ctx>,
         field: u32,
@@ -405,12 +411,15 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| Self::erased_error(e.to_string()))
     }
 
-    fn emit_body_factory(
+    pub(super) fn emit_body_factory(
         &self,
         function: inkwell::values::FunctionValue<'ctx>,
         requirement: &MirBodyFactoryRequirement,
         layouts: &BTreeMap<MirErasedType, PointerValue<'ctx>>,
     ) -> Result<PointerValue<'ctx>, CodegenError> {
+        if let MirBodyFactoryRequirement::ThinHandle(requirement) = requirement {
+            return self.emit_thin_handle_factory(function, requirement, layouts);
+        }
         let (root, label, fields) = match requirement {
             MirBodyFactoryRequirement::Tuple(r) => (
                 crate::products::RuntimeRootSymbol::TupleDescriptorFactoryV1,
@@ -422,6 +431,7 @@ impl<'ctx> CodeGen<'ctx> {
                 "nominal.factory",
                 r.fields.iter().map(|(_, ty)| ty.clone()).collect(),
             ),
+            MirBodyFactoryRequirement::ThinHandle(_) => unreachable!("handled before aggregate factories"),
         };
         let factory = self.module.get_function(root.symbol()).ok_or_else(|| {
             Self::erased_error("body factory has no observed runtime helper declaration")
@@ -482,9 +492,16 @@ impl<'ctx> CodeGen<'ctx> {
             ],
             MirBodyFactoryRequirement::Nominal(r) => {
                 let bytes = self.descriptor_bytes(&r.template, "rock.nominal.template.key");
+                let owner = match &r.result { MirErasedType::Nominal { id, .. } => *id, _ => return Err(Self::erased_error("nominal factory owner missing")) };
+                let drop_name = format!("rock.nominal.userdrop.{}.{}", owner.crate_id.0, owner.local.0);
+                let drop_key = self.module.get_global(&format!("{drop_name}.key"));
+                let drop_entry = self.module.get_function(&drop_name);
+                if r.user_drop.is_some() != drop_entry.is_some() || drop_key.is_some() != drop_entry.is_some() {
+                    return Err(Self::erased_error("selected nominal destructor environment missing"));
+                }
                 let template_ty = self
                     .context
-                    .struct_type(&[word.into(), word.into(), ptr.into()], false);
+                    .struct_type(&[word.into(), word.into(), ptr.into(), word.into(), ptr.into(), ptr.into()], false);
                 let template = self
                     .module
                     .add_global(template_ty, None, "rock.nominal.template");
@@ -492,6 +509,10 @@ impl<'ctx> CodeGen<'ctx> {
                     word.const_int(r.descriptor_abi, false).into(),
                     word.const_int(r.template.len() as u64, false).into(),
                     bytes.into(),
+                    drop_key.map(|key| key.get_initializer().map(|value| value.into_array_value().get_type().len()).unwrap_or(0))
+                        .map(|len| word.const_int(len as u64, false)).unwrap_or_else(|| word.const_zero()).into(),
+                    drop_key.map(|key| key.as_pointer_value()).unwrap_or_else(|| ptr.const_null()).into(),
+                    drop_entry.map(|entry| entry.as_global_value().as_pointer_value()).unwrap_or_else(|| ptr.const_null()).into(),
                 ]));
                 template.set_constant(true);
                 template.set_linkage(Linkage::Private);
@@ -508,6 +529,7 @@ impl<'ctx> CodeGen<'ctx> {
                     output.into(),
                 ]
             }
+            MirBodyFactoryRequirement::ThinHandle(_) => unreachable!("handled before aggregate factories"),
         };
         let result = self
             .builder
@@ -590,7 +612,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
         Ok(address)
     }
-    fn erased_descriptor_pointer(
+    pub(super) fn erased_descriptor_pointer(
         &self,
         descriptor: PointerValue<'ctx>,
         field: u32,
@@ -743,7 +765,7 @@ impl<'ctx> CodeGen<'ctx> {
                     )?;
                 }
             }
-            MirErasedType::Reference { mutable: false, .. } => {}
+            MirErasedType::Reference { mutable: false, .. } | MirErasedType::Pointer(_) => {}
             _ => {
                 return Err(Self::erased_error(
                     "erased Copy lacks concrete structural authority",
@@ -943,7 +965,7 @@ impl<'ctx> CodeGen<'ctx> {
                 } else {
                     1
                 };
-                let suffix: [BasicValueEnum<'ctx>; 12] = [
+                let suffix: [BasicValueEnum<'ctx>; 15] = [
                     word.const_int(crate::mir::descriptor_identity::DESCRIPTOR_ABI, false)
                         .into(),
                     word.const_int(kind, false).into(),
@@ -966,8 +988,35 @@ impl<'ctx> CodeGen<'ctx> {
                     word.const_int(target_key.len() as u64, false).into(),
                     target_pointer.into(),
                     word.const_int(i64::MAX as u64, false).into(),
+                    ptr.const_null().into(),
+                    word.const_zero().into(),
+                    ptr.const_null().into(),
                 ];
                 values.extend(suffix);
+                if identity.drop_template.get(4) == Some(&b'h') {
+                    let crate::types::Type::Struct { args, .. } = self.type_context().type_for(*id) else {
+                        return Err(Self::erased_error("selected native nominal drop has no declaration"));
+                    };
+                    let arguments = args.iter().map(|argument| {
+                        let ty = self.type_context().id_for_type(argument).ok_or_else(|| Self::erased_error("native destructor argument type missing"))?;
+                        self.erased_descriptors.get(&ty).map(|global| global.as_pointer_value())
+                            .ok_or_else(|| Self::erased_error("native destructor argument descriptor missing"))
+                    }).collect::<Result<Vec<_>, _>>()?;
+                    let array = ptr.const_array(&arguments);
+                    let environment = self.module.add_global(array.get_type(), None, &format!("rock.native.drop.arguments.{}", id.0));
+                    environment.set_initializer(&array); environment.set_constant(true); environment.set_linkage(Linkage::Private);
+                    let user_drop = self.module.add_function(&format!("rock.native.user.drop.{}", id.0),
+                        self.context.void_type().fn_type(&[ptr.into(), ptr.into()], false), Some(Linkage::Internal));
+                    self.builder.position_at_end(self.context.append_basic_block(user_drop, "entry"));
+                    let mut user_plan = descriptor.drop.clone();
+                    user_plan.children = MirPayloadDropChildren::None;
+                    self.emit_payload_drop_plan(contract, user_drop,
+                        user_drop.get_first_param().ok_or_else(|| Self::erased_error("native user Drop receiver missing"))?.into_pointer_value(), &user_plan)?;
+                    self.builder.build_return(None).map_err(|error| Self::erased_error(error.to_string()))?;
+                    values[17] = user_drop.as_global_value().as_pointer_value().into();
+                    values[18] = word.const_int(arguments.len() as u64, false).into();
+                    values[19] = environment.as_pointer_value().into();
+                }
             } else {
                 values.extend(self.descriptor_opaque_suffix());
             }
@@ -978,6 +1027,7 @@ impl<'ctx> CodeGen<'ctx> {
             global.set_linkage(Linkage::Private);
             self.erased_descriptors.insert(*id, global);
         }
+        self.emit_nominal_destructors(contract)?;
         self.emit_erased_dictionaries(contract)?;
         self.emit_selected_dictionary_templates(contract)?;
         for schema in contract.packages.values() {
@@ -1428,7 +1478,7 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(entry.as_global_value().as_pointer_value())
     }
 
-    fn selected_reference_descriptor(&self) -> Result<PointerValue<'ctx>, CodegenError> {
+    pub(super) fn selected_reference_descriptor(&self) -> Result<PointerValue<'ctx>, CodegenError> {
         if let Some(global) = self
             .module
             .get_global("rock.dictionary.reference.descriptor")
@@ -1612,19 +1662,52 @@ impl<'ctx> CodeGen<'ctx> {
         local: MirErasedLocal,
         locals: &[PointerValue<'ctx>],
         initialized: &[PointerValue<'ctx>],
+        paths: &crate::mir::erased_moves::MirErasedMovePaths,
         layouts: &BTreeMap<MirErasedType, PointerValue<'ctx>>,
         contract: &MirBackendContract,
     ) -> Result<(), CodegenError> {
         let index = local.0 as usize;
-        let flag = *initialized
-            .get(index)
-            .ok_or_else(|| Self::erased_error("cleanup local missing"))?;
+        // The selected user destructor runs before structural field cleanup;
+        // its receiver is storage owned by the descriptor's enclosing drop.
+        if index == 0 && contract.erased.nominal_drop_entries.values().any(|selection| selection.entry == body.key) {
+            return Ok(());
+        }
         let ty = body
             .body
             .as_ref()
             .and_then(|body| body.locals.get(index))
             .ok_or_else(|| Self::erased_error("cleanup local type missing"))?;
-        let function = self.erased_functions[&body.key];
+        self.cleanup_erased_path(
+            self.erased_functions[&body.key], index,
+            self.erased_place_address(body, locals, &MirErasedPlace::local(local), layouts, contract)?,
+            self.erased_layout(ty, layouts)?, initialized, paths,
+        )
+    }
+
+    fn set_erased_path_initialized(
+        &self,
+        initialized: &[PointerValue<'ctx>],
+        paths: &crate::mir::erased_moves::MirErasedMovePaths,
+        index: usize,
+        live: bool,
+    ) -> Result<(), CodegenError> {
+        for index in paths.affected(index, live) {
+            self.builder.build_store(initialized[index], self.context.bool_type().const_int(u64::from(live), false))
+                .map_err(|error| Self::erased_error(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn cleanup_erased_path(
+        &mut self,
+        function: inkwell::values::FunctionValue<'ctx>,
+        index: usize,
+        address: PointerValue<'ctx>,
+        descriptor: PointerValue<'ctx>,
+        initialized: &[PointerValue<'ctx>],
+        paths: &crate::mir::erased_moves::MirErasedMovePaths,
+    ) -> Result<(), CodegenError> {
+        let flag = initialized[index];
         let live = self
             .builder
             .build_load(self.context.bool_type(), flag, "erased.drop.live")
@@ -1634,27 +1717,85 @@ impl<'ctx> CodeGen<'ctx> {
         let next_block = self
             .context
             .append_basic_block(function, "erased.drop.next");
+        let partial_block = self.context.append_basic_block(function, "erased.drop.partial");
         self.builder
-            .build_conditional_branch(live, drop_block, next_block)
+            .build_conditional_branch(live, drop_block, partial_block)
             .map_err(|e| Self::erased_error(e.to_string()))?;
         self.builder.position_at_end(drop_block);
-        self.builder
-            .build_store(flag, self.context.bool_type().const_zero())
-            .map_err(|e| Self::erased_error(e.to_string()))?;
-        self.drop_erased_value(
-            self.erased_place_address(
-                body,
-                locals,
-                &MirErasedPlace::local(local),
-                layouts,
-                contract,
-            )?,
-            self.erased_layout(ty, layouts)?,
-        )?;
+        self.set_erased_path_initialized(initialized, paths, index, false)?;
+        self.drop_erased_value(address, descriptor)?;
         self.builder
             .build_unconditional_branch(next_block)
             .map_err(|e| Self::erased_error(e.to_string()))?;
+        self.builder.position_at_end(partial_block);
+        if !paths.children[index].is_empty() {
+            let mut surviving = self.context.bool_type().const_zero();
+            for child in paths.descendants(index).into_iter().skip(1) {
+                let live = self.builder.build_load(self.context.bool_type(), initialized[child], "erased.drop.field.live")
+                    .map_err(|error| Self::erased_error(error.to_string()))?.into_int_value();
+                surviving = self.builder.build_or(surviving, live, "erased.drop.fields.live")
+                    .map_err(|error| Self::erased_error(error.to_string()))?;
+            }
+            let fields_block = self.context.append_basic_block(function, "erased.drop.fields");
+            self.builder.build_conditional_branch(surviving, fields_block, next_block)
+                .map_err(|error| Self::erased_error(error.to_string()))?;
+            self.builder.position_at_end(fields_block);
+        }
+        // A partial structural owner has no user destructor; each surviving
+        // field retains its own descriptor and conditional initialization flag.
+        for (ordinal, child) in paths.children[index].iter().enumerate().rev() {
+            let child_address = self.erased_field_address(address, descriptor, ordinal as u32)?;
+            let children = self.erased_descriptor_pointer(descriptor, 13)?;
+            let ptr = self.context.ptr_type(AddressSpace::default());
+            let child_slot = unsafe { self.builder.build_gep(ptr, children,
+                &[self.context.i64_type().const_int(ordinal as u64, false)], "erased.drop.child.slot") }
+                .map_err(|error| Self::erased_error(error.to_string()))?;
+            let child_descriptor = self.builder.build_load(ptr, child_slot, "erased.drop.child.descriptor")
+                .map_err(|error| Self::erased_error(error.to_string()))?.into_pointer_value();
+            self.cleanup_erased_path(function, *child, child_address, child_descriptor, initialized, paths)?;
+        }
+        self.builder.build_unconditional_branch(next_block)
+            .map_err(|error| Self::erased_error(error.to_string()))?;
         self.builder.position_at_end(next_block);
+        Ok(())
+    }
+
+    fn emit_owner_operation(
+        &mut self,
+        operation: &MirErasedOwnerOperation,
+        destination: PointerValue<'ctx>,
+        arguments: &[PointerValue<'ctx>],
+        layouts: &BTreeMap<MirErasedType, PointerValue<'ctx>>,
+        contract: &MirBackendContract,
+    ) -> Result<(), CodegenError> {
+        match &operation.target {
+            MirErasedOwnerTarget::Native(key) => {
+                let declaration = contract.callable(key).ok_or_else(|| Self::erased_error("owner protocol target missing"))?;
+                let target = self.adapter_target(key)?;
+                let mut values = Vec::new();
+                for (address, parameter) in arguments.iter().zip(&declaration.signature.params) {
+                    values.push(self.erased_native_argument(*address, parameter)?);
+                }
+                let result = self.builder.build_call(target, &values, "owner.protocol.native")
+                    .map_err(|error| Self::erased_error(error.to_string()))?;
+                if let Some(value) = result.try_as_basic_value().left() {
+                    self.builder.build_store(destination, value).map_err(|error| Self::erased_error(error.to_string()))?;
+                } else if self.structural_type_for(declaration.signature.ret.semantic_ty) != crate::types::Type::Unit {
+                    return Err(Self::erased_error("owner protocol lost its result"));
+                }
+            }
+            MirErasedOwnerTarget::Erased { key, type_args } => {
+                let signature = &contract.erased.functions[key].signature;
+                let mut values: Vec<BasicMetadataValueEnum> = vec![destination.into()];
+                for layout in &signature.layouts {
+                    let layout = layout.substitute(type_args).map_err(|error| Self::erased_error(format!("{error:?}")))?;
+                    values.push(self.erased_layout(&layout, layouts)?.into());
+                }
+                for address in arguments { values.push((*address).into()); }
+                self.builder.build_call(self.erased_functions[key], &values, "owner.protocol.erased")
+                    .map_err(|error| Self::erased_error(error.to_string()))?;
+            }
+        }
         Ok(())
     }
 
@@ -1667,6 +1808,8 @@ impl<'ctx> CodeGen<'ctx> {
             return Ok(());
         };
         let function = self.erased_functions[&body.key];
+        let move_paths = crate::mir::erased_moves::validated_erased_move_paths(body, contract, self.type_context())
+            .map_err(|error| Self::erased_error(format!("{error:?}")))?;
         self.builder
             .position_at_end(self.context.append_basic_block(function, "entry"));
         let out = function
@@ -1750,6 +1893,15 @@ impl<'ctx> CodeGen<'ctx> {
             }
             scope_payload_descriptors.push(payload_descriptor);
         }
+        for handles in contract.erased.scoped_factories.get(&body.key).into_iter().flat_map(|scopes| scopes.values()) {
+            for handle in handles {
+                if !layouts.contains_key(handle.result()) {
+                    let slot = self.builder.build_alloca(ptr, "opened.factory.descriptor.slot")
+                        .map_err(|e| Self::erased_error(e.to_string()))?;
+                    layouts.insert(handle.result().clone(), slot);
+                }
+            }
+        }
         let mut locals = Vec::new();
         let mut initialized = Vec::new();
         for (index, ty) in code.locals.iter().enumerate() {
@@ -1789,6 +1941,14 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| Self::erased_error(e.to_string()))?;
             locals.push(slot);
         }
+        for place in move_paths.places.iter().skip(code.locals.len()) {
+            let flag = self.builder.build_alloca(self.context.bool_type(), "erased.field.live")
+                .map_err(|error| Self::erased_error(error.to_string()))?;
+            self.builder.build_store(flag, self.context.bool_type().const_int(
+                u64::from((place.local.0 as usize) < body.signature.params.len()), false,
+            )).map_err(|error| Self::erased_error(error.to_string()))?;
+            initialized.push(flag);
+        }
         let blocks = code
             .blocks
             .iter()
@@ -1805,6 +1965,32 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.position_at_end(blocks[index]);
             for statement in &block.statements {
                 let destination_place = MirErasedPlace::local(statement.destination);
+                let owner_parts = if let MirErasedRvalue::OwnerOpen { scope, source, plan } = &statement.value {
+                    let (_, parts_ty) = crate::mir::owner_open::operation_types(&plan.split, contract)
+                        .map_err(|error| Self::erased_error(format!("{error:?}")))?;
+                    let descriptor = self.erased_layout(&parts_ty, &layouts)?;
+                    let parts = self.allocate_erased_local(descriptor)?;
+                    let source = self.erased_argument_address(body, &locals, source, &layouts, contract)?;
+                    self.emit_owner_operation(&plan.split, parts, &[source], &layouts, contract)?;
+                    let pointer = self.erased_field_address(parts, descriptor, 0)?;
+                    let state = self.erased_field_address(parts, descriptor, 1)?;
+                    let handle = self.builder.build_load(self.object_handle_type(), pointer, "owner.open.closed.pointer")
+                        .map_err(|error| Self::erased_error(error.to_string()))?;
+                    let (data, metadata) = self.object_parts(handle)?;
+                    let schema = &contract.object_schemas[&code.scopes[*scope as usize].object];
+                    let field = self.builder.build_struct_gep(self.object_table_type(schema), metadata, 5, "owner.open.descriptor.address")
+                        .map_err(|error| Self::erased_error(error.to_string()))?;
+                    let descriptor = self.builder.build_load(ptr, field, "owner.open.descriptor")
+                        .map_err(|error| Self::erased_error(error.to_string()))?;
+                    self.builder.build_store(layouts[&MirErasedType::Scoped(*scope)], descriptor)
+                        .map_err(|error| Self::erased_error(error.to_string()))?;
+                    self.builder.build_store(scope_tables[*scope as usize], metadata)
+                        .map_err(|error| Self::erased_error(error.to_string()))?;
+                    let thin = self.builder.build_alloca(ptr, "owner.open.thin.pointer")
+                        .map_err(|error| Self::erased_error(error.to_string()))?;
+                    self.builder.build_store(thin, data).map_err(|error| Self::erased_error(error.to_string()))?;
+                    Some((thin, state))
+                } else { None };
                 if let MirErasedRvalue::PackageOpen { scope, source } = &statement.value {
                     let evidence = &code.scopes[*scope as usize];
                     let MirErasedScopeSource::Package { package } = evidence.source else {
@@ -1861,6 +2047,35 @@ impl<'ctx> CodeGen<'ctx> {
                         )
                         .map_err(|e| Self::erased_error(e.to_string()))?;
                 }
+                let opening = match &statement.value {
+                    MirErasedRvalue::Open { scope, .. } | MirErasedRvalue::PackageOpen { scope, .. }
+                    | MirErasedRvalue::OwnerOpen { scope, .. } => Some(*scope),
+                    _ => None,
+                };
+                if let Some(handles) = opening.and_then(|scope| {
+                    contract.erased.scoped_factories.get(&body.key).and_then(|scopes| scopes.get(&scope))
+                }) {
+                    if let MirErasedRvalue::Open { scope, source } = &statement.value {
+                        // Bind evidence before allocating the opened value. This
+                        // does not evaluate the source twice or inspect payload bytes.
+                        let address = self.erased_argument_address(body, &locals, source, &layouts, contract)?;
+                        let value = self.builder.build_load(self.object_handle_type(), address, "opened.handle.source")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        let (_, metadata) = self.object_parts(value)?;
+                        let schema = &contract.object_schemas[&code.scopes[*scope as usize].object];
+                        let field = self.builder.build_struct_gep(self.object_table_type(schema), metadata, 5, "opened.handle.payload.descriptor.address")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        let descriptor = self.builder.build_load(ptr, field, "opened.handle.payload.descriptor")
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                        self.builder.build_store(layouts[&MirErasedType::Scoped(*scope)], descriptor)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                    }
+                    for handle in handles {
+                        let descriptor = self.emit_body_factory(function, handle, &layouts)?;
+                        self.builder.build_store(layouts[handle.result()], descriptor)
+                            .map_err(|e| Self::erased_error(e.to_string()))?;
+                    }
+                }
                 let mut scoped = std::collections::BTreeSet::new();
                 code.locals[statement.destination.0 as usize].scoped_binders(&mut scoped);
                 let destination = if scoped.is_empty() {
@@ -1883,6 +2098,82 @@ impl<'ctx> CodeGen<'ctx> {
                     address
                 };
                 match &statement.value {
+                    MirErasedRvalue::OwnerOpen { plan, .. } => {
+                        let (pointer, state) = owner_parts.ok_or_else(|| Self::erased_error("owner Open transport missing"))?;
+                        self.emit_owner_operation(&plan.rebuild, destination, &[pointer, state], &layouts, contract)?;
+                    }
+                    MirErasedRvalue::OwnerCall { scope, owner, split, release, slot, args } => {
+                        let (_, parts_ty) = crate::mir::owner_open::operation_types(split, contract)
+                            .map_err(|error| Self::erased_error(format!("{error:?}")))?;
+                        let descriptor = self.erased_layout(&parts_ty, &layouts)?;
+                        let parts = self.allocate_erased_local(descriptor)?;
+                        let owner = self.erased_argument_address(body, &locals, owner, &layouts, contract)?;
+                        self.emit_owner_operation(split, parts, &[owner], &layouts, contract)?;
+                        let pointer = self.erased_field_address(parts, descriptor, 0)?;
+                        let state = self.erased_field_address(parts, descriptor, 1)?;
+                        let data = self.builder.build_load(ptr, pointer, "owner.consume.payload")
+                            .map_err(|error| Self::erased_error(error.to_string()))?.into_pointer_value();
+                        let schema = &contract.object_schemas[&code.scopes[*scope as usize].object];
+                        let metadata = self.builder.build_load(ptr, scope_tables[*scope as usize], "owner.consume.table")
+                            .map_err(|error| Self::erased_error(error.to_string()))?.into_pointer_value();
+                        match slot {
+                            MirErasedOwnedSlot::Concrete(index) => {
+                                let member = &schema.slots[*index as usize];
+                                let target = self.load_object_entry(metadata, schema, 3, *index)?;
+                                let mut values: Vec<BasicMetadataValueEnum> = vec![data.into()];
+                                for (arg, parameter) in args.iter().zip(member.signature.params.iter().skip(1)) {
+                                    let address = self.erased_argument_address(body, &locals, arg, &layouts, contract)?;
+                                    values.push(self.erased_native_argument(address, parameter)?);
+                                }
+                                let result = self.builder.build_indirect_call(self.virtual_function_type(member), target, &values, "owner.consume.native")
+                                    .map_err(|error| Self::erased_error(error.to_string()))?;
+                                if let Some(value) = result.try_as_basic_value().left() {
+                                    self.builder.build_store(destination, value).map_err(|error| Self::erased_error(error.to_string()))?;
+                                } else if self.structural_type_for(member.signature.ret.semantic_ty) == crate::types::Type::Unit {
+                                    self.builder.build_store(destination, self.context.i64_type().const_zero())
+                                        .map_err(|error| Self::erased_error(error.to_string()))?;
+                                } else {
+                                    return Err(Self::erased_error("owner consuming entry lost its result"));
+                                }
+                            }
+                            MirErasedOwnedSlot::Erased { slot, type_args, dictionaries } => {
+                                let signature = &schema.erased_slots[*slot as usize].signature;
+                                let target = self.load_object_entry(metadata, schema, 6, *slot)?;
+                                let mut values: Vec<BasicMetadataValueEnum> = vec![destination.into()];
+                                for layout in &signature.layouts {
+                                    let layout = layout.substitute(type_args).map_err(|error| Self::erased_error(format!("{error:?}")))?;
+                                    values.push(self.erased_layout(&layout, &layouts)?.into());
+                                }
+                                for dictionary in dictionaries {
+                                    values.push((*body_dictionaries.get(*dictionary as usize).ok_or_else(|| Self::erased_error("owner consume dictionary missing"))?).into());
+                                }
+                                // The entry takes payload initialization, not a borrowed
+                                // pointer slot; release below must never drop it again.
+                                values.push(data.into());
+                                for arg in args {
+                                    values.push(self.erased_argument_address(body, &locals, arg, &layouts, contract)?.into());
+                                }
+                                self.builder.build_indirect_call(self.erased_function_type(signature), target, &values, "owner.consume.erased")
+                                    .map_err(|error| Self::erased_error(error.to_string()))?;
+                            }
+                        }
+                        let (_, release_ty) = crate::mir::owner_open::operation_types(release, contract)
+                            .map_err(|error| Self::erased_error(format!("{error:?}")))?;
+                        let released = self.allocate_erased_local(self.erased_layout(&release_ty, &layouts)?)?;
+                        self.emit_owner_operation(release, released, &[pointer, state], &layouts, contract)?;
+                    }
+                    MirErasedRvalue::Forget(value) | MirErasedRvalue::DropInPlace { pointer: value, .. } => {
+                        if let MirErasedRvalue::DropInPlace { pointee, .. } = &statement.value {
+                            let address = self.erased_argument_address(body, &locals, value, &layouts, contract)?;
+                            let pointer = self.builder.build_load(ptr, address, "drop.in.place.pointer")
+                                .map_err(|error| Self::erased_error(error.to_string()))?.into_pointer_value();
+                            self.drop_erased_value(pointer, self.erased_layout(pointee, &layouts)?)?;
+                        }
+                        if let MirErasedOperand::Move(place) = value {
+                            self.builder.build_store(initialized[place.local.0 as usize], self.context.bool_type().const_zero())
+                                .map_err(|error| Self::erased_error(error.to_string()))?;
+                        }
+                    }
                     MirErasedRvalue::PackageOpen { scope, source } => {
                         let MirErasedScopeSource::Package { package } =
                             code.scopes[*scope as usize].source
@@ -2458,12 +2749,8 @@ impl<'ctx> CodeGen<'ctx> {
                             let receiver = receiver.as_ref().ok_or_else(|| {
                                 Self::erased_error("consuming dictionary receiver missing")
                             })?;
-                            self.builder
-                                .build_store(
-                                    initialized[receiver.local.0 as usize],
-                                    self.context.bool_type().const_zero(),
-                                )
-                                .map_err(|e| Self::erased_error(e.to_string()))?;
+                            let index = move_paths.exact(receiver).ok_or_else(|| Self::erased_error("unchecked consuming receiver"))?;
+                            self.set_erased_path_initialized(&initialized, &move_paths, index, false)?;
                         }
                         for operand in args {
                             let place = match operand {
@@ -2499,12 +2786,13 @@ impl<'ctx> CodeGen<'ctx> {
                             .map_err(|e| Self::erased_error(e.to_string()))?;
                     }
                 }
-                self.builder
-                    .build_store(
-                        initialized[statement.destination.0 as usize],
-                        self.context.bool_type().const_int(1, false),
-                    )
-                    .map_err(|e| Self::erased_error(e.to_string()))?;
+                for operand in crate::mir::erased_moves::operands(&statement.value) {
+                    if let MirErasedOperand::Move(place) = operand {
+                        let index = move_paths.exact(place).ok_or_else(|| Self::erased_error("unchecked projected move"))?;
+                        self.set_erased_path_initialized(&initialized, &move_paths, index, false)?;
+                    }
+                }
+                self.set_erased_path_initialized(&initialized, &move_paths, statement.destination.0 as usize, true)?;
             }
             match &block.terminator {
                 MirErasedTerminator::Cleanup {
@@ -2517,6 +2805,7 @@ impl<'ctx> CodeGen<'ctx> {
                             local,
                             &locals,
                             &initialized,
+                            &move_paths,
                             &layouts,
                             contract,
                         )?;
@@ -2543,6 +2832,8 @@ impl<'ctx> CodeGen<'ctx> {
                         .map_err(|e| Self::erased_error(e.to_string()))?
                         .into_int_value();
                     if let MirErasedOperand::Move(place) = condition {
+                        let index = move_paths.exact(place).ok_or_else(|| Self::erased_error("unchecked projected branch move"))?;
+                        self.set_erased_path_initialized(&initialized, &move_paths, index, false)?;
                         self.builder
                             .build_store(
                                 initialized[place.local.0 as usize],
@@ -2576,6 +2867,8 @@ impl<'ctx> CodeGen<'ctx> {
                         &layouts,
                     )?;
                     if matches!(returned, MirErasedOperand::Move(_)) {
+                        let index = move_paths.exact(result).ok_or_else(|| Self::erased_error("unchecked projected return move"))?;
+                        self.set_erased_path_initialized(&initialized, &move_paths, index, false)?;
                         self.builder
                             .build_store(
                                 initialized[result.local.0 as usize],
@@ -2583,7 +2876,7 @@ impl<'ctx> CodeGen<'ctx> {
                             )
                             .map_err(|e| Self::erased_error(e.to_string()))?;
                     }
-                    let remaining = (0..initialized.len())
+                    let remaining = (0..code.locals.len())
                         .map(|index| MirErasedLocal(index as u32))
                         .collect::<Vec<_>>();
                     for local in crate::mir::cleanup::cleanup_order(&remaining) {
@@ -2592,6 +2885,7 @@ impl<'ctx> CodeGen<'ctx> {
                             local,
                             &locals,
                             &initialized,
+                            &move_paths,
                             &layouts,
                             contract,
                         )?;

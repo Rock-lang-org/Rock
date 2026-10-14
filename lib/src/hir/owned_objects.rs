@@ -1,4 +1,4 @@
-//! Canonical unique-owner evidence for consuming virtual dispatch.
+//! Canonical owner transport and unique-owner evidence for consuming dispatch.
 use std::collections::{HashMap, HashSet};
 
 use super::*;
@@ -17,24 +17,25 @@ pub(crate) fn object(ty: &Type) -> Option<&ObjectType> {
     objects.next().is_none().then_some(object)
 }
 
-fn closed_owner_application(
+/// Prove the exact payload slot and independent State without granting unique access.
+pub(super) fn owner_application(
     owner: &Type,
-    object: &ObjectType,
+    payload: &Type,
     items: &HirLanguageItems,
     service: &SelectionService<'_>,
 ) -> Result<(Type, Vec<Type>), String> {
     let transport = items.object_owner.as_ref().ok_or("consuming object dispatch requires object_owner")?;
-    let (constructor, payload, state_args) = service
+    let (constructor, actual_payload, state_args) = service
         .infer_unary_constructor_application(owner, transport.trait_id)
         .map_err(|error| error.message())?
         .ok_or("owner transport State is not uniquely determined")?;
-    if payload != Type::Object(Box::new(object.clone())) || self::object(owner) != Some(object) {
+    if &actual_payload != payload {
         return Err("owner transport application has a different object payload".into());
     }
     // Phase inputs are canonical. Beta-apply the recovered section using the
     // normalizer's checked binder substitution, without solving any equation.
     let applied = match &constructor {
-        Type::Lambda { .. } => crate::type_services::normalize::apply_type_lambda(&constructor, std::slice::from_ref(&payload)),
+        Type::Lambda { .. } => crate::type_services::normalize::apply_type_lambda(&constructor, std::slice::from_ref(payload)),
         Type::Constructor { id, flavor: NominalTypeKind::Struct } => Some(Type::Struct { id: *id, args: vec![payload.clone()] }),
         _ => None,
     };
@@ -61,7 +62,7 @@ fn closed_owner_application(
             crate::type_services::visit::visit_type_children(ty, self);
         }
     }
-    let mut independent = IndependentState { payload: &payload, constructor: &constructor, depth: 0, valid: true };
+    let mut independent = IndependentState { payload, constructor: &constructor, depth: 0, valid: true };
     crate::type_services::visit::visit_type(state, &mut independent);
     let sized = items.sized.as_ref().ok_or("unique owner State requires a canonical Sized capability")?;
     if !independent.valid || !service.trait_bound_satisfied(state, &TraitBound { trait_id: sized.trait_id, type_args: Vec::new() }) {
@@ -95,8 +96,7 @@ pub(crate) fn select_opened(
     service: &SelectionService<'_>,
     binding: &HirOpenBinding,
 ) -> Result<Option<(SelectedMethod, HirOwnedObjectCall)>, String> {
-    if !matches!(&owner.ty, Type::Struct { args, .. } if args.as_slice() == [Type::Witness(binding.witness)])
-    {
+    if !binding.matches_owner(&owner.ty) {
         return Ok(None);
     }
     select_with_witness(
@@ -226,7 +226,7 @@ fn prove_with_witness(
     object: &ObjectType,
     witness: Option<crate::types::WitnessId>,
 ) -> Result<HirOwnedObjectCall, String> {
-    let Type::Struct { id, .. } = owner else {
+    let Type::Struct { .. } = owner else {
         return Err("consuming object dispatch requires a nominal owner value".into());
     };
     let transport = items
@@ -254,10 +254,6 @@ fn prove_with_witness(
         return Err("owned virtual call has inconsistent witness authority".into());
     }
     let opened = if let Some(witness) = witness {
-        if !matches!(owner, Type::Struct { args, .. } if args.as_slice() == [Type::Witness(witness)])
-        {
-            return Err("opened consuming call has a different payload witness".into());
-        }
         object
             .try_map_types(|ty| {
                 crate::type_services::substitution::instantiate_object_self(
@@ -290,29 +286,15 @@ fn prove_with_witness(
     } else {
         super::object_methods::consuming_signature(traits, &method, object)?;
     }
-    let (constructor, state_args) = if witness.is_some() {
-        // The existing unary opened-owner frontier is not widened here.
-        let constructor = Type::Constructor { id: *id, flavor: NominalTypeKind::Struct };
-        let state_args = service.infer_trait_arguments(&constructor, transport.trait_id)
-            .ok_or("owner transport State is not uniquely determined")?;
-        (constructor, state_args)
-    } else {
-        closed_owner_application(owner, object, items, service)?
-    };
+    let (constructor, state_args) = owner_application(
+        owner,
+        &witness.map(Type::Witness).unwrap_or_else(|| Type::Object(Box::new(object.clone()))),
+        items,
+        service,
+    )?;
     let [state] = state_args.as_slice() else {
         return Err("invalid owner transport State arity".into());
     };
-    if witness.is_some() && (crate::type_services::visit::type_any(state, |ty| {
-        matches!(
-            ty,
-            Type::Generic(_) | Type::TypeVar(_) | Type::ObjectSelf { .. } | Type::Witness(_)
-        )
-    }) || crate::type_services::layout::TypeLayout::sizedness(state, &|_| {
-        crate::type_services::layout::Sizedness::Unknown
-    }) != crate::type_services::layout::Sizedness::Sized)
-    {
-        return Err("unique owner State must be sized and independent of the payload".into());
-    }
     let signature = Type::Object(Box::new(object.clone()));
     let split_ty = Type::function_with_safety(
         vec![owner.clone()],
@@ -612,6 +594,103 @@ main = !-> ()
 "#,
             header = args("A", "(T: ?Layout)"), section = args("A", "_"),
             small = args("Small", "Take"), large = args("Large", "Take"), generic = args("A", "Take"))
+    }
+
+    fn opened_owner_source(payload_first: bool) -> String {
+        let mut source = closed_owner_source(payload_first, Some("State A"));
+        for name in ["consume_small", "consume_large", "consume_generic"] {
+            source = source.replace(
+                &format!("{name} = owner -> owner.take!"),
+                &format!("{name} = owner ->\n    open owner as Hidden, value\n        value.take!"),
+            );
+        }
+        source
+    }
+
+    #[test]
+    fn opened_owner_lookup_requires_the_exact_constructor_and_fixed_arguments() {
+        let program = program_from_source(&opened_owner_source(false));
+        let function = program.functions.values().find(|f| f.name == "consume_small").unwrap();
+        let HirStmtFor::Expr(expression) = &function.body.stmts[0] else { unreachable!() };
+        let HirExprKindFor::Open { binding, .. } = &expression.kind else { unreachable!() };
+        assert!(binding.matches_owner(&binding.value.ty));
+        let Type::Struct { id, args } = &binding.value.ty else { unreachable!() };
+        let other = program.structs.values().find(|s| s.name == "Large").unwrap().id;
+        let mut changed = args.clone();
+        changed[0] = Type::Struct { id: other, args: Vec::new() };
+        assert!(!binding.matches_owner(&Type::Struct { id: *id, args: changed }));
+        assert!(!binding.matches_owner(&Type::Struct { id: other, args: args.clone() }));
+        assert!(!binding.matches_owner(&Type::Reference {
+            inner: Box::new(binding.value.ty.clone()),
+            mutable: true,
+        }));
+
+        // A one-argument unrelated constructor must not acquire the old unary
+        // binding just because it mentions the same rigid witness.
+        let program = self::program();
+        let function = program.functions.values().find(|f| f.name == "consume_opened").unwrap();
+        let HirStmtFor::Expr(expression) = &function.body.stmts[0] else { unreachable!() };
+        let HirExprKindFor::Open { binding, .. } = &expression.kind else { unreachable!() };
+        let foreign = program.traits.values().find(|t| t.name == "Take").unwrap().id;
+        assert!(!binding.matches_owner(&Type::Struct {
+            id: foreign,
+            args: vec![Type::Witness(binding.witness)],
+        }));
+    }
+
+    #[test]
+    fn opened_owner_revalidation_rejects_forged_constructor_state_and_payload_slots() {
+        for payload_first in [false, true] {
+            for mutation in 0..4 {
+                let mut program = program_from_source(&opened_owner_source(payload_first));
+                AcceptedHirProgram::revalidate_for_test(program.clone()).unwrap();
+                let other = program.structs.values().find(|s| s.name == "Large").unwrap().id;
+                let function = program.functions.values_mut().find(|f| f.name == "consume_small").unwrap();
+                let HirStmtFor::Expr(expression) = &mut function.body.stmts[0] else { unreachable!() };
+                let HirExprKindFor::Open { binding, .. } = &mut expression.kind else { unreachable!() };
+                let owner = binding.owner.as_mut().unwrap();
+                match mutation {
+                    0 => owner.state_ty = Type::I64,
+                    1 => {
+                        let Type::Lambda { body, .. } = &mut owner.from_parts.owner_ty else { unreachable!() };
+                        let Type::Struct { args, .. } = body.as_mut() else { unreachable!() };
+                        args[usize::from(payload_first)] = Type::Struct { id: other, args: Vec::new() };
+                    }
+                    2 => {
+                        let Type::Struct { args, .. } = &mut binding.value.ty else { unreachable!() };
+                        args[usize::from(payload_first)] = Type::Struct { id: other, args: Vec::new() };
+                    }
+                    _ => {
+                        let Type::Struct { args, .. } = &mut binding.value.ty else { unreachable!() };
+                        args.swap(0, 1);
+                    }
+                }
+                let errors = AcceptedHirProgram::revalidate_for_test(program).unwrap_err();
+                assert!(errors.iter().any(|error| {
+                    error.contains("opened owner split/rebuild authority")
+                        || error.contains("opening must preserve the exact owner constructor")
+                        || error.contains("opening handle does not preserve its exact source access")
+                }), "payload_first={payload_first}, mutation={mutation}: {errors:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn opened_owner_revalidation_requires_actual_contextual_allocator_bounds() {
+        for payload_first in [false, true] {
+            let mut program = program_from_source(&opened_owner_source(payload_first));
+            AcceptedHirProgram::revalidate_for_test(program.clone()).unwrap();
+            let memory = program.traits.values().find(|t| t.name == "Memory").unwrap().id;
+            let function = program.functions.values_mut().find(|f| f.name == "consume_generic").unwrap();
+            let parameter = function.generic_params[0].id;
+            function.generic_bounds.get_mut(&parameter).unwrap().retain(|bound| bound.trait_id != memory);
+            function.generic_bounds.predicates.retain(|predicate| {
+                let crate::types::Predicate::Trait { trait_id, .. } = predicate;
+                *trait_id != memory
+            });
+            let errors = AcceptedHirProgram::revalidate_for_test(program).unwrap_err();
+            assert!(errors.iter().any(|error| error.contains("owner transport State is not uniquely determined")), "{errors:?}");
+        }
     }
 
     #[test]

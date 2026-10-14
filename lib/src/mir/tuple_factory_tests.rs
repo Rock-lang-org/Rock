@@ -99,7 +99,7 @@ fn dependency_first_factory_order_is_required_before_local_allocation() {
     let nested = MirErasedType::Tuple(vec![tuple.clone(), MirErasedType::Parameter(0)]);
     program.backend_contract.erased.functions.get_mut(&key).unwrap().body.as_mut().unwrap().locals.push(nested.clone());
     let entry = program.backend_contract.erased.tuple_factories.get_mut(&key).unwrap();
-    entry.push(MirTupleFactoryRequirement { descriptor_abi: 1, result: nested, children: vec![tuple, MirErasedType::Parameter(0)] });
+    entry.push(MirTupleFactoryRequirement { descriptor_abi: super::super::descriptor_identity::DESCRIPTOR_ABI, result: nested, children: vec![tuple, MirErasedType::Parameter(0)] });
     assert!(validate_erased_contract(&program).is_empty());
     program.backend_contract.erased.tuple_factories.get_mut(&key).unwrap().reverse();
     assert_eq!(validate_erased_function(&program.backend_contract.erased.functions[&key], &program.backend_contract, &program.type_context), Err(MirErasedError::MissingLayout));

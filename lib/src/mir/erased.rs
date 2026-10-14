@@ -791,6 +791,21 @@ pub enum MirErasedLiteral {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirErasedRvalue {
+    OwnerOpen {
+        scope: u32,
+        source: MirErasedOperand,
+        plan: MirErasedOwnerOpening,
+    },
+    OwnerCall {
+        scope: u32,
+        owner: MirErasedOperand,
+        split: MirErasedOwnerOperation,
+        release: MirErasedOwnerOperation,
+        slot: MirErasedOwnedSlot,
+        args: Vec<MirErasedOperand>,
+    },
+    Forget(MirErasedOperand),
+    DropInPlace { pointer: MirErasedOperand, pointee: MirErasedType },
     PackageOpen {
         scope: u32,
         source: MirErasedOperand,
@@ -904,6 +919,54 @@ pub struct MirErasedScope {
 pub enum MirErasedScopeSource {
     Object { mutable: bool },
     Package { package: TypeId },
+    Owner { opening: MirErasedOwnerOpening },
+}
+
+/// Selected protocol operations keep declaration identity independently of the ABI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirErasedOwnerOperation {
+    pub constructor: TypeId,
+    pub implementation: DefId,
+    pub trait_id: DefId,
+    pub member: DefId,
+    pub definition: DefId,
+    pub target: MirErasedOwnerTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MirErasedOwnerTarget {
+    Native(MirCallableKey),
+    Erased { key: MirErasedKey, type_args: Vec<MirErasedType> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirErasedOwnerOpening {
+    pub closed: TypeId,
+    pub opened: MirErasedType,
+    pub state: MirErasedType,
+    pub split: MirErasedOwnerOperation,
+    pub rebuild: MirErasedOwnerOperation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MirErasedOwnedSlot {
+    Concrete(u32),
+    Erased { slot: u32, type_args: Vec<MirErasedType>, dictionaries: Vec<u32> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirOwnerProtocolAuthority {
+    pub transport: DefId,
+    pub split: DefId,
+    pub rebuild: DefId,
+    pub unique: Option<(DefId, DefId)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MirScopedEntryKey {
+    pub definition: DefId,
+    pub params: Vec<TypeId>,
+    pub ret: TypeId,
 }
 
 impl MirErasedScope {
@@ -913,6 +976,7 @@ impl MirErasedScope {
         match self.source {
             MirErasedScopeSource::Object { mutable } => mutable,
             MirErasedScopeSource::Package { .. } => true,
+            MirErasedScopeSource::Owner { .. } => true,
         }
     }
 }
@@ -1022,6 +1086,11 @@ pub struct MirConcreteDictionaryMember {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MirErasedContract {
+    /// Only a selected owner rebuild may carry payload ownership through a raw
+    /// pointer input; ordinary pointer calls acquire no loan-return permission.
+    pub owner_rebuild_entries: BTreeMap<MirErasedKey, (DefId, DefId)>,
+    pub move_paths: BTreeMap<MirErasedKey, super::erased_moves::MirErasedMovePaths>,
+    pub nominal_drop_entries: BTreeMap<DefId, super::MirNominalDropSelection>,
     pub imported_member_links: BTreeMap<MirErasedKey, (String, super::MirErasedMemberEntry)>,
     pub member_entries: BTreeMap<MirErasedKey, super::MirErasedMemberEntry>,
     pub dictionary_templates: BTreeMap<DefId, super::MirDictionaryFactoryTemplate>,
@@ -1029,6 +1098,10 @@ pub struct MirErasedContract {
     pub dictionary_witnesses: BTreeMap<MirDictionaryId, super::MirDictionaryWitness>,
     pub nominal_factories: BTreeMap<MirErasedKey, Vec<super::MirNominalFactoryRequirement>>,
     pub tuple_factories: BTreeMap<MirErasedKey, Vec<super::MirTupleFactoryRequirement>>,
+    pub thin_handle_factories: BTreeMap<MirErasedKey, Vec<super::MirThinHandleFactoryRequirement>>,
+    pub scoped_factories: BTreeMap<MirErasedKey, BTreeMap<u32, Vec<super::MirBodyFactoryRequirement>>>,
+    /// Diagnostic provenance only; never type, layout, or loan authority.
+    pub statement_origins: BTreeMap<MirErasedKey, BTreeMap<(MirErasedBlock, usize), crate::lexer::Span>>,
     pub imported_runtime_support: BTreeSet<crate::products::ProductRuntimeSupport>,
     /// Session remapping to actual defining product identity; never a runtime key.
     pub descriptor_origins: BTreeMap<crate::ids::CrateId, crate::products::ProductCrateIdentity>,
@@ -1037,7 +1110,7 @@ pub struct MirErasedContract {
     pub dictionaries: BTreeMap<MirDictionaryId, MirConcreteDictionary>,
     pub constructor_kinds: BTreeMap<DefId, Kind>,
     /// Concrete wrappers delegate their whole body, including early exits, to this entry.
-    pub scoped_entries: BTreeMap<DefId, MirErasedKey>,
+    pub scoped_entries: BTreeMap<MirScopedEntryKey, MirErasedKey>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1064,6 +1137,46 @@ pub fn validate_erased_contract(
     let mut errors = Vec::new();
     let contract = &program.backend_contract;
     let tc = &program.type_context;
+    for key in contract.erased.owner_rebuild_entries.keys() {
+        if let Err(error) = super::owner_open::validate_rebuild_entry(key, contract, tc) {
+            errors.push((Some(key.clone()), error));
+        }
+    }
+    for key in contract.erased.move_paths.keys() {
+        if !contract.erased.functions.contains_key(key) {
+            errors.push((Some(key.clone()), MirErasedError::MissingCallable));
+        }
+    }
+    for (owner, authority) in &contract.nominal_drop_authority {
+        let super::MirNominalDropAuthority::Selected(selection) = authority else { continue; };
+        let Some(super::MirNominalLayout::Struct { generic_params, .. }) = contract.nominal_layouts.get(owner) else {
+            errors.push((Some(selection.entry.clone()), MirErasedError::MissingLayout));
+            continue;
+        };
+        let subject = MirErasedType::Nominal {
+            id: *owner, flavor: NominalTypeKind::Struct,
+            args: (0..generic_params.len()).map(|index| MirErasedType::Parameter(index as u32)).collect(),
+        };
+        if let Err(error) = super::nominal_requirement(contract, tc, &subject) {
+            errors.push((Some(selection.entry.clone()), error));
+        }
+        if !selection.entry.static_args.is_empty()
+            || contract.erased.functions.get(&selection.entry).is_none_or(|entry| entry.body.is_none())
+        {
+            errors.push((Some(selection.entry.clone()), MirErasedError::MissingCallable));
+        }
+    }
+    for (owner, selection) in &contract.erased.nominal_drop_entries {
+        if contract.nominal_drop_authority.get(owner)
+            != Some(&super::MirNominalDropAuthority::Selected(selection.clone()))
+            || !contract.dictionary_impl_members.get(&selection.implementation).is_some_and(|authority| {
+                authority.members.get(&selection.member) == Some(&selection.entry.definition)
+            })
+            || !contract.erased.functions.contains_key(&selection.entry)
+        {
+            errors.push((Some(selection.entry.clone()), MirErasedError::MissingCallable));
+        }
+    }
     if contract
         .erased
         .imported_runtime_support
@@ -1081,6 +1194,22 @@ pub fn validate_erased_contract(
         }
     }
     for (key, requirements) in &contract.erased.nominal_factories {
+        if !contract.erased.functions.contains_key(key) {
+            errors.push((Some(key.clone()), MirErasedError::MissingCallable));
+        }
+        if requirements.is_empty() {
+            errors.push((Some(key.clone()), MirErasedError::InvalidType));
+        }
+    }
+    for (key, requirements) in &contract.erased.thin_handle_factories {
+        if !contract.erased.functions.contains_key(key) {
+            errors.push((Some(key.clone()), MirErasedError::MissingCallable));
+        }
+        if requirements.is_empty() {
+            errors.push((Some(key.clone()), MirErasedError::InvalidType));
+        }
+    }
+    for (key, requirements) in &contract.erased.scoped_factories {
         if !contract.erased.functions.contains_key(key) {
             errors.push((Some(key.clone()), MirErasedError::MissingCallable));
         }
@@ -1568,6 +1697,33 @@ pub(crate) fn native_retention_diagnostics(
                 None => crate::diagnostic::Diagnostic::for_internal("erased retention failure is missing its call origin"),
             };
             diagnostics.push(diagnostic);
+        }
+    }
+    diagnostics
+}
+
+pub(crate) fn erased_body_borrow_diagnostics(
+    program: &super::MirProgram,
+) -> crate::diagnostic::Diagnostics {
+    let mut diagnostics = crate::diagnostic::Diagnostics::default();
+    for (key, function) in &program.backend_contract.erased.functions {
+        let Some(origins) = program.backend_contract.erased.statement_origins.get(key) else {
+            continue;
+        };
+        let mut failure = None;
+        let error = validate_erased_function_at(
+            function, &program.backend_contract, &program.type_context, &mut failure,
+        );
+        let message = match error {
+            Err(MirErasedError::BorrowConflict) => "borrow conflict on this value in an erased body",
+            Err(MirErasedError::BorrowEscape) => "borrowed value escapes its erased-body lifetime",
+            Err(MirErasedError::UninitializedOrMoved) => "use of an uninitialized or moved value in an erased body",
+            _ => continue,
+        };
+        // Corrupt or provenance-free MIR still fails the strict agreement
+        // boundary; do not invent a source location for it.
+        if let Some(span) = failure.and_then(|site| origins.get(&site)) {
+            diagnostics.push(super::borrowck::diagnostics::borrow_error(message, span.clone()));
         }
     }
     diagnostics
@@ -2467,6 +2623,15 @@ pub fn validate_erased_function(
     contract: &super::MirBackendContract,
     tc: &crate::type_context::TypeContext,
 ) -> Result<(), MirErasedError> {
+    validate_erased_function_at(function, contract, tc, &mut None)
+}
+
+fn validate_erased_function_at(
+    function: &MirErasedFunction,
+    contract: &super::MirBackendContract,
+    tc: &crate::type_context::TypeContext,
+    failure: &mut Option<(MirErasedBlock, usize)>,
+) -> Result<(), MirErasedError> {
     use super::dataflow::analyses::init::{InitState, MoveInfo};
     use super::dataflow::analyses::loans::{LoanAnalysis, LoanKind, LoanState, LoanTable};
     use super::dataflow::Lattice;
@@ -2483,8 +2648,13 @@ pub fn validate_erased_function(
     }
 
     let signature = &function.signature;
+    let move_paths = super::erased_moves::validated_erased_move_paths(function, contract, tc)?;
     validate_erased_signature(signature, contract, tc)?;
-    let factory_layouts = super::validate_body_factories(function, contract, tc)?;
+    super::validate_scoped_factories(function, contract, tc)?;
+    let mut factory_layouts = super::validate_body_factories(function, contract, tc)?;
+    for handles in contract.erased.scoped_factories.get(&function.key).into_iter().flat_map(|scopes| scopes.values()) {
+        factory_layouts.extend(handles.iter().map(|handle| handle.result().clone()));
+    }
     let body_dictionaries =
         super::validate_dictionary_factories(function, contract, tc, &factory_layouts)?;
     let Some(body) = &function.body else {
@@ -2533,7 +2703,7 @@ pub fn validate_erased_function(
                     })
             }
         };
-        if !scoped.is_empty() && !scoped_layout {
+        if !scoped.is_empty() && !scoped_layout && !factory_layouts.contains(ty) {
             return Err(MirErasedError::MissingLayout);
         }
         if scoped.is_empty()
@@ -2545,7 +2715,7 @@ pub fn validate_erased_function(
         }
     }
     let mut witnesses = BTreeSet::new();
-    for scope in &body.scopes {
+    for (index, scope) in body.scopes.iter().enumerate() {
         if scope.witness.owner != function.key.definition
             || !witnesses.insert(scope.witness)
             || !contract.object_schemas.contains_key(&scope.object)
@@ -2558,6 +2728,9 @@ pub fn validate_erased_function(
             {
                 return Err(MirErasedError::InvalidType);
             }
+        }
+        if let MirErasedScopeSource::Owner { opening } = &scope.source {
+            super::owner_open::validate_opening(opening, index as u32, scope, contract, tc)?;
         }
     }
     if body.blocks.is_empty() {
@@ -2606,8 +2779,10 @@ pub fn validate_erased_function(
     impl Lattice for State {
         fn join(&mut self, other: &Self) -> bool {
             let previous = self.clone();
-            for local in 0..self.initialized.len() {
-                self.initialized[local].join(&other.initialized[local]);
+            for (target, source) in self.initialized.iter_mut().zip(&other.initialized) {
+                target.join(source);
+            }
+            for local in 0..self.possibly_live.len() {
                 self.possibly_live[local] |= other.possibly_live[local];
                 self.origins[local].join(&other.origins[local]);
                 if self.payload_sources[local] != other.payload_sources[local] {
@@ -2624,7 +2799,7 @@ pub fn validate_erased_function(
     let loan_table =
         LoanTable::root_envelopes(body.locals.len()).ok_or(MirErasedError::InvalidLocal)?;
     let mut entry = State {
-        initialized: vec![InitState::Uninit; body.locals.len()],
+        initialized: vec![InitState::Uninit; move_paths.places.len()],
         possibly_live: vec![false; body.locals.len()],
         origins: vec![OriginSet::new(); body.locals.len()],
         borrows: LoanState::new(loan_table.len()),
@@ -2632,6 +2807,9 @@ pub fn validate_erased_function(
         payload_sources: vec![None; body.locals.len()],
     };
     entry.initialized[..signature.params.len()].fill(InitState::Init);
+    for index in 0..signature.params.len() {
+        for path in move_paths.descendants(index) { entry.initialized[path] = InitState::Init; }
+    }
     entry.possibly_live[..signature.params.len()].fill(true);
     for (index, origin) in entry
         .origins
@@ -2669,6 +2847,7 @@ pub fn validate_erased_function(
         function: &MirErasedFunction,
         contract: &super::MirBackendContract,
         tc: &crate::type_context::TypeContext,
+        paths: &super::erased_moves::MirErasedMovePaths,
         initialized: &mut [InitState],
         possibly_live: &mut [bool],
         borrows: &LoanState,
@@ -2678,14 +2857,19 @@ pub fn validate_erased_function(
             MirErasedOperand::Move(place) => (place, true),
             MirErasedOperand::Copy(place) => (place, false),
         };
+        if moving && place.local.0 == 0 && contract.erased.nominal_drop_entries.values()
+            .any(|selection| selection.entry == function.key)
+        {
+            return Err(MirErasedError::ProjectedMoveRequiresDropProof);
+        }
         if !initialized
-            .get(place.local.0 as usize)
+            .get(paths.containing(place))
             .is_some_and(InitState::is_initialized)
         {
             return Err(MirErasedError::UninitializedOrMoved);
         }
         let ty = erased_place_type(function, place, contract, tc)?;
-        if moving && !place.projection.is_empty() {
+        if moving && paths.exact(place).is_none() {
             return Err(MirErasedError::ProjectedMoveRequiresDropProof);
         }
         if access_conflicts(
@@ -2702,8 +2886,11 @@ pub fn validate_erased_function(
             return Err(MirErasedError::BorrowConflict);
         }
         if moving {
-            initialized[place.local.0 as usize] = InitState::Moved(MoveInfo { span: None });
-            possibly_live[place.local.0 as usize] = false;
+            let index = paths.exact(place).ok_or(MirErasedError::ProjectedMoveRequiresDropProof)?;
+            for path in paths.affected(index, false) {
+                initialized[path] = InitState::Moved(MoveInfo { span: None });
+            }
+            if place.projection.is_empty() { possibly_live[place.local.0 as usize] = false; }
         } else if !copy_proven(&ty, tc) {
             return Err(MirErasedError::CopyWithoutProof);
         }
@@ -2720,14 +2907,15 @@ pub fn validate_erased_function(
             payload_sources,
         } = &mut state;
         let block = &body.blocks[block_index];
-        for statement in &block.statements {
+        for (statement_index, statement) in block.statements.iter().enumerate() {
+            *failure = Some((MirErasedBlock(block_index as u32), statement_index));
             let dest = statement.destination.0 as usize;
             let expected = body.locals.get(dest).ok_or(MirErasedError::InvalidLocal)?;
             let mut scoped = BTreeSet::new();
             expected.scoped_binders(&mut scoped);
             if !matches!(
                 statement.value,
-                MirErasedRvalue::Open { .. } | MirErasedRvalue::PackageOpen { .. }
+                MirErasedRvalue::Open { .. } | MirErasedRvalue::PackageOpen { .. } | MirErasedRvalue::OwnerOpen { .. }
             ) && scoped.iter().any(|index| !opened[*index as usize])
             {
                 return Err(MirErasedError::UnboundParameter);
@@ -2745,7 +2933,7 @@ pub fn validate_erased_function(
                 }
                 | MirErasedRvalue::OpenedCall { receiver, .. }
                 | MirErasedRvalue::OpenedErasedCall { receiver, .. } => initialized
-                    .get(receiver.local.0 as usize)
+                    .get(move_paths.containing(receiver))
                     .is_some_and(InitState::is_initialized),
                 _ => true,
             };
@@ -2782,6 +2970,7 @@ pub fn validate_erased_function(
                     function,
                     contract,
                     tc,
+                    &move_paths,
                     initialized,
                     possibly_live,
                     local_borrows,
@@ -2809,6 +2998,102 @@ pub fn validate_erased_function(
                 Ok::<_, MirErasedError>(ty)
             };
             let actual = match &statement.value {
+                MirErasedRvalue::OwnerOpen { scope, source, plan } => {
+                    let evidence = body.scopes.get(*scope as usize).ok_or(MirErasedError::UnboundParameter)?;
+                    if opened[*scope as usize]
+                        || evidence.source != (MirErasedScopeSource::Owner { opening: plan.clone() })
+                        || !matches!(source, MirErasedOperand::Move(_))
+                        || !erased_types_agree(&use_operand(source)?, &MirErasedType::Concrete(plan.closed), tc)
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    // Metadata becomes authoritative only through this selected
+                    // split. Validate the rebuild in that newly bound environment.
+                    opened[*scope as usize] = true;
+                    validate_owner_environment(&plan.rebuild, signature, &body_dictionaries, opened, &factory_layouts, contract, tc)?;
+                    plan.opened.clone()
+                }
+                MirErasedRvalue::OwnerCall { scope, owner, split, release, slot, args } => {
+                    let evidence = body.scopes.get(*scope as usize).ok_or(MirErasedError::UnboundParameter)?;
+                    let MirErasedScopeSource::Owner { opening } = &evidence.source else {
+                        return Err(MirErasedError::InvalidType);
+                    };
+                    let protocol = contract.owner_protocol.as_ref().ok_or(MirErasedError::MissingCallable)?;
+                    let (unique, release_member) = protocol.unique.ok_or(MirErasedError::MissingCallable)?;
+                    if !opened[*scope as usize] || !matches!(owner, MirErasedOperand::Move(_))
+                        || !matches!(split.target, MirErasedOwnerTarget::Erased { .. })
+                        || !matches!(release.target, MirErasedOwnerTarget::Erased { .. })
+                        || split.constructor != opening.split.constructor
+                        || split.implementation != opening.split.implementation
+                        || split.trait_id != protocol.transport || split.member != protocol.split
+                        || release.constructor != split.constructor
+                        || release.trait_id != unique || release.member != release_member
+                        || !erased_types_agree(&use_operand(owner)?, &opening.opened, tc)
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    validate_owner_environment(split, signature, &body_dictionaries, opened, &factory_layouts, contract, tc)?;
+                    validate_owner_environment(release, signature, &body_dictionaries, opened, &factory_layouts, contract, tc)?;
+                    let (params, parts) = super::owner_open::operation_types(split, contract)?;
+                    let (release_params, release_ret) = super::owner_open::operation_types(release, contract)?;
+                    let unit = MirErasedType::Concrete(tc.id_for_type(&Type::Unit).ok_or(MirErasedError::MissingLayout)?);
+                    let byte_pointer = MirErasedType::Pointer(Box::new(MirErasedType::Concrete(tc.id_for_type(&Type::U8).ok_or(MirErasedError::MissingLayout)?)));
+                    if params.len() != 1 || !erased_types_agree(&params[0], &opening.opened, tc)
+                        || !erased_types_agree(&parts, &MirErasedType::Tuple(vec![MirErasedType::Pointer(Box::new(MirErasedType::Scoped(*scope))), opening.state.clone()]), tc)
+                        || release_params.len() != 2 || !erased_types_agree(&release_params[0], &byte_pointer, tc)
+                        || !erased_types_agree(&release_params[1], &opening.state, tc)
+                        || !erased_types_agree(&release_ret, &unit, tc)
+                    {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    let schema = &contract.object_schemas[&evidence.object];
+                    match slot {
+                        MirErasedOwnedSlot::Concrete(index) => {
+                            let member = schema.slots.get(*index as usize).ok_or(MirErasedError::MissingCallable)?;
+                            if member.receiver != ReceiverMode::Move || member.result != super::MirObjectResult::Direct
+                                || args.len() + 1 != member.signature.params.len()
+                            { return Err(MirErasedError::InvalidType); }
+                            for (arg, expected) in args.iter().zip(member.signature.params.iter().skip(1)) {
+                                if !erased_types_agree(&use_operand(arg)?, &MirErasedType::Concrete(expected.semantic_ty), tc) {
+                                    return Err(MirErasedError::InvalidType);
+                                }
+                            }
+                            MirErasedType::Concrete(member.signature.ret.semantic_ty)
+                        }
+                        MirErasedOwnedSlot::Erased { slot, type_args, dictionaries } => {
+                            let member = schema.erased_slots.get(*slot as usize).ok_or(MirErasedError::MissingCallable)?;
+                            if member.receiver != ReceiverMode::Move || member.result != super::MirObjectResult::Direct
+                                || type_args.first() != Some(&MirErasedType::Scoped(*scope))
+                                || member.signature.params.first() != Some(&MirErasedType::Parameter(0))
+                                || args.len() + 1 != member.signature.params.len()
+                            { return Err(MirErasedError::InvalidType); }
+                            validate_body_erased_environment(&member.signature, type_args, dictionaries, signature, &body_dictionaries, opened, &factory_layouts, contract, tc)?;
+                            for (arg, expected) in args.iter().zip(member.signature.params.iter().skip(1)) {
+                                if !erased_types_agree(&use_operand(arg)?, &expected.substitute(type_args)?, tc) {
+                                    return Err(MirErasedError::InvalidType);
+                                }
+                            }
+                            member.signature.ret.substitute(type_args)?
+                        }
+                    }
+                }
+                MirErasedRvalue::Forget(value) => {
+                    use_operand(value)?;
+                    result_origins.clear(); result_borrows.clear();
+                    MirErasedType::Concrete(tc.id_for_type(&Type::Unit).ok_or(MirErasedError::MissingLayout)?)
+                }
+                MirErasedRvalue::DropInPlace { pointer, pointee } => {
+                    if use_operand(pointer)? != MirErasedType::Pointer(Box::new(pointee.clone())) {
+                        return Err(MirErasedError::InvalidType);
+                    }
+                    if !signature.layouts.contains(pointee) && !factory_layouts.contains(pointee)
+                        && !matches!(pointee, MirErasedType::Concrete(id) if contract.erased.descriptors.contains_key(id))
+                    {
+                        return Err(MirErasedError::MissingLayout);
+                    }
+                    result_origins.clear(); result_borrows.clear();
+                    MirErasedType::Concrete(tc.id_for_type(&Type::Unit).ok_or(MirErasedError::MissingLayout)?)
+                }
                 MirErasedRvalue::PackageOpen { scope, source } => {
                     let evidence = body
                         .scopes
@@ -3347,7 +3632,7 @@ pub fn validate_erased_function(
                 ),
                 MirErasedRvalue::Borrow { place, mutable } => {
                     if !initialized
-                        .get(place.local.0 as usize)
+                        .get(move_paths.containing(place))
                         .is_some_and(InitState::is_initialized)
                     {
                         return Err(MirErasedError::UninitializedOrMoved);
@@ -3580,6 +3865,7 @@ pub fn validate_erased_function(
                 return Err(MirErasedError::InvalidType);
             }
             initialized[dest] = InitState::Init;
+            for path in move_paths.descendants(dest) { initialized[path] = InitState::Init; }
             possibly_live[dest] = true;
             if !erased_type_may_borrow(&actual, signature, contract, tc) {
                 result_borrows.clear();
@@ -3595,6 +3881,7 @@ pub fn validate_erased_function(
             }
             payload_sources[dest] = payload_source;
         }
+        *failure = Some((MirErasedBlock(block_index as u32), block.statements.len()));
         let successors = match &block.terminator {
             MirErasedTerminator::Goto(target) => vec![*target],
             MirErasedTerminator::Cleanup { locals, target } => {
@@ -3620,6 +3907,7 @@ pub fn validate_erased_function(
                         return Err(MirErasedError::BorrowConflict);
                     }
                     initialized[index] = InitState::Uninit;
+                    for path in move_paths.descendants(index) { initialized[path] = InitState::Uninit; }
                     possibly_live[index] = false;
                     local_borrows.release_owner(Local(index));
                     origins[index].clear();
@@ -3637,6 +3925,7 @@ pub fn validate_erased_function(
                     function,
                     contract,
                     tc,
+                    &move_paths,
                     initialized,
                     possibly_live,
                     local_borrows,
@@ -3666,12 +3955,16 @@ pub fn validate_erased_function(
                     } else {
                         erased_borrow_contract(&signature.params, &signature.ret, None, tc)?
                     };
-                let authorized = borrowing
+                let mut authorized = borrowing
                     .returns
                     .iter()
                     .flat_map(|result| &result.sources)
                     .map(|source| source.argument as usize)
                     .collect::<BTreeSet<_>>();
+                if contract.erased.owner_rebuild_entries.contains_key(&function.key) {
+                    super::owner_open::validate_rebuild_entry(&function.key, contract, tc)?;
+                    authorized.insert(0);
+                }
                 if erased_type_may_borrow(&signature.ret, signature, contract, tc)
                     && origins[returned.local.0 as usize]
                         .iter()
@@ -3695,6 +3988,7 @@ pub fn validate_erased_function(
                         function,
                         contract,
                         tc,
+                        &move_paths,
                         initialized,
                         possibly_live,
                         local_borrows,
@@ -3838,6 +4132,23 @@ fn validate_body_erased_environment(
         {
             return Err(MirErasedError::MissingLayout);
         }
+    }
+    Ok(())
+}
+
+fn validate_owner_environment(
+    operation: &MirErasedOwnerOperation,
+    signature: &MirErasedSignature,
+    dictionaries: &[MirErasedDictionarySchema],
+    opened: &[bool],
+    factories: &BTreeSet<MirErasedType>,
+    contract: &super::MirBackendContract,
+    tc: &crate::type_context::TypeContext,
+) -> Result<(), MirErasedError> {
+    super::owner_open::operation_types(operation, contract)?;
+    super::owner_open::validate_constructor(operation, contract, tc)?;
+    if let MirErasedOwnerTarget::Erased { key, type_args } = &operation.target {
+        validate_body_erased_environment(&contract.erased.functions[key].signature, type_args, &[], signature, dictionaries, opened, factories, contract, tc)?;
     }
     Ok(())
 }

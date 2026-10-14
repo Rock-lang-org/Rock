@@ -159,6 +159,49 @@ as_dispatch: &Service -> &Dispatch
     object
 "#;
 
+#[test]
+fn native_static_forwarder_keeps_exact_safe_capture_free_source_authority() {
+    let path = std::path::PathBuf::from("/virtual/native_static_forwarder/main.rk");
+    let analysis = crate::analyze(&crate::Config {
+        entry_file: path.clone(), no_std: true, no_prelude: true,
+        source_providers: vec![crate::SourceProvider::Virtual { path, text: r#"
+struct Service
+impl Service
+    finish: I64 -> ()
+    finish = value !-> ()
+main = !-> Service::finish 2
+"#.into() }], ..Default::default()
+    }).unwrap();
+    let main = analysis.hir.program.functions.values().find(|function| function.name == "main").unwrap();
+    let HirStmtFor::Expr(expression) = &main.body.stmts[0] else { panic!("source application"); };
+    let HirExprKindFor::Call(callee, args, None) = &expression.kind else { panic!("static path wrapper: {expression:?}"); };
+    assert!(crate::mono::object_schema::applied_static_forwarder(callee, args, &expression.ty).is_err());
+    assert!(crate::mono::object_schema::applied_native_static_forwarder(callee, args, &expression.ty).unwrap().is_some());
+    for control in 0..5 {
+        let mut forged = callee.as_ref().clone();
+        let HirExprKindFor::Lambda { params, body, .. } = &mut forged.kind else { unreachable!(); };
+        match control {
+            0 => params[0].mutable = true,
+            1 => params[0].ty = Type::Bool,
+            2 => {
+                let HirStmtFor::Expr(inner) = &mut body.stmts[0] else { unreachable!(); };
+                let HirExprKindFor::Call(source, _, _) = &mut inner.kind else { unreachable!(); };
+                source.kind = HirExprKindFor::Unit;
+            }
+            3 => {
+                let HirStmtFor::Expr(inner) = &mut body.stmts[0] else { unreachable!(); };
+                let HirExprKindFor::Call(_, forwarded, _) = &mut inner.kind else { unreachable!(); };
+                forwarded[0].kind = HirExprKindFor::Unit;
+            }
+            _ => {
+                let Type::Function { safety, .. } = &mut forged.ty else { unreachable!(); };
+                *safety = crate::types::FunctionSafety::Unsafe;
+            }
+        }
+        assert!(crate::mono::object_schema::applied_native_static_forwarder(&forged, args, &expression.ty).is_err(), "control={control}");
+    }
+}
+
 pub(crate) fn selected_source() -> String {
     PRODUCER.replace("< trait Factory", "< trait StaticMake\n    create: I64 -> Self\n< trait Factory")
         .replace("where T: Factory", "where T: StaticMake")

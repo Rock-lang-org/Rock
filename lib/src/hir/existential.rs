@@ -86,6 +86,7 @@ pub(crate) fn validate_function<P: HirPhase>(
         loops: Vec::new(),
         returns: Vec::new(),
         return_ty: &function.ret_type,
+        bounds: &function.generic_bounds,
         uncaptured_witness_locals: Vec::new(),
         errors,
         phase: std::marker::PhantomData,
@@ -121,6 +122,7 @@ struct Scope<'a, P: HirPhase> {
     loops: Vec<(Vec<WitnessId>, &'a Type)>,
     returns: Vec<WitnessId>,
     return_ty: &'a Type,
+    bounds: &'a HirGenericBounds,
     uncaptured_witness_locals: Vec<HashSet<HirLocalId>>,
     errors: &'a mut Vec<String>,
     phase: std::marker::PhantomData<P>,
@@ -411,14 +413,14 @@ impl<'a, P: HirPhase> Scope<'a, P> {
                             inner: Box::new(Type::Witness(binding.witness)),
                         })
                     }
-                    Type::Struct { id, args }
-                        if args.as_slice() == [Type::Object(Box::new(binding.object.clone()))]
-                            && binding.owner.is_some() =>
-                    {
-                        Some(Type::Struct {
-                            id: *id,
-                            args: vec![Type::Witness(binding.witness)],
-                        })
+                    Type::Struct { .. } if binding.owner.is_some() => {
+                        match validate_owner(self.program, binding, self.bounds) {
+                            Ok(value) => Some(value),
+                            Err(message) => {
+                                self.errors.push(message);
+                                None
+                            }
+                        }
                     }
                     _ => None,
                 };
@@ -440,9 +442,6 @@ impl<'a, P: HirPhase> Scope<'a, P> {
                 if let Some(owner) = &binding.owner {
                     self.target(&owner.into_parts.method);
                     self.target(&owner.from_parts.method);
-                    if let Err(message) = validate_owner(self.program, binding) {
-                        self.errors.push(message);
-                    }
                 }
                 self.block(body);
                 self.active.remove(&binding.witness);
@@ -995,11 +994,14 @@ impl<'a, P: HirPhase> Scope<'a, P> {
     }
 }
 
-fn validate_owner(program: &HirProgram, binding: &HirOpenBinding) -> Result<(), String> {
+fn validate_owner(
+    program: &HirProgram,
+    binding: &HirOpenBinding,
+    bounds: &HirGenericBounds,
+) -> Result<Type, String> {
     let Some(owner) = &binding.owner else {
-        return Ok(());
+        return Err("opened owner has no split/rebuild authority".into());
     };
-    let bounds = HirGenericBounds::new();
     let service = crate::selection::SelectionService::new(
         &program.traits,
         &program.impls,
@@ -1009,16 +1011,18 @@ fn validate_owner(program: &HirProgram, binding: &HirOpenBinding) -> Result<(), 
             .as_ref()
             .map(|item| item.trait_id),
         None,
-        &bounds,
+        bounds,
     )
     .with_effective_trait_methods(&program.indexes.effective_trait_methods);
-    let expected = prove_open_owner(
+    let (object, value, expected) = open_owner_handle(
         &binding.source_ty,
-        &binding.value.ty,
         binding.witness,
         &service,
         &program.language_items,
     )?;
+    if object != binding.object || value != binding.value.ty {
+        return Err("opening must preserve the exact owner constructor and witness".into());
+    }
     if owner.state_ty != expected.state_ty
         || owner.into_parts != expected.into_parts
         || owner.from_parts != expected.from_parts
@@ -1027,60 +1031,43 @@ fn validate_owner(program: &HirProgram, binding: &HirOpenBinding) -> Result<(), 
             "opened owner split/rebuild authority disagrees with canonical protocol".into(),
         );
     }
-    Ok(())
+    Ok(value)
 }
 
 /// Opening transports the existing allocation; no construction or release is performed.
-pub(crate) fn prove_open_owner(
+pub(crate) fn open_owner_handle(
     source: &Type,
-    value: &Type,
     witness: WitnessId,
     service: &crate::selection::SelectionService<'_>,
     items: &HirLanguageItems,
-) -> Result<HirOpenOwner, String> {
-    let Type::Struct { id, args } = source else {
-        return Err("opened owner requires nominal source".into());
-    };
-    let [payload @ Type::Object(_)] = args.as_slice() else {
-        return Err("opened owner must contain one object payload".into());
-    };
-    if value
-        != &(Type::Struct {
-            id: *id,
-            args: vec![Type::Witness(witness)],
-        })
-    {
-        return Err("opening must preserve the exact owner constructor and witness".into());
-    }
+) -> Result<(crate::types::ObjectType, Type, HirOpenOwner), String> {
+    let object = super::owned_objects::object(source)
+        .ok_or("open requires a borrowed object or a protocol-backed object owner")?;
+    let payload = Type::Object(Box::new(object.clone()));
     let protocol = items
         .object_owner
         .as_ref()
         .ok_or("opened owner has no protocol provider")?;
-    let constructor = Type::Constructor {
-        id: *id,
-        flavor: crate::types::NominalTypeKind::Struct,
-    };
-    let state = service
-        .infer_trait_arguments(&constructor, protocol.trait_id)
-        .ok_or("opened owner lacks unique constructor evidence")?;
+    let (constructor, state) = super::owned_objects::owner_application(
+        source, &payload, items, service,
+    )?;
+    let value = match &constructor {
+        Type::Lambda { .. } => crate::type_services::normalize::apply_type_lambda(
+            &constructor,
+            &[Type::Witness(witness)],
+        ),
+        Type::Constructor { id, flavor: crate::types::NominalTypeKind::Struct } => {
+            Some(Type::Struct { id: *id, args: vec![Type::Witness(witness)] })
+        }
+        _ => None,
+    }.ok_or("opened owner lacks a canonical unary constructor section")?;
     let [state_ty] = state.as_slice() else {
         return Err("invalid object_owner State arity".into());
     };
-    if crate::type_services::visit::type_any(state_ty, |ty| {
-        matches!(
-            ty,
-            Type::Witness(_) | Type::Generic(_) | Type::TypeVar(_) | Type::ObjectSelf { .. }
-        )
-    }) || crate::type_services::layout::TypeLayout::sizedness(state_ty, &|_| {
-        crate::type_services::layout::Sizedness::Unknown
-    }) != crate::type_services::layout::Sizedness::Sized
-    {
-        return Err("opened owner has forged payload-dependent State".into());
-    }
     let expected_into = Type::function_with_safety(
         vec![source.clone()],
         Type::Tuple(vec![
-            Type::Pointer(Box::new(payload.clone())),
+            Type::Pointer(Box::new(payload)),
             state_ty.clone(),
         ]),
         crate::types::FunctionSafety::Unsafe,
@@ -1109,11 +1096,11 @@ pub(crate) fn prove_open_owner(
         protocol.from_parts_id,
         &expected_from,
     )?;
-    Ok(HirOpenOwner {
+    Ok((object.clone(), value, HirOpenOwner {
         state_ty: state_ty.clone(),
         into_parts,
         from_parts,
-    })
+    }))
 }
 
 #[cfg(test)]

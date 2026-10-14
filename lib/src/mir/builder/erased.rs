@@ -11,8 +11,22 @@ impl MirBuilder<'_> {
         functions: &std::collections::BTreeMap<MirFunctionId, MirFunction>,
         tc: &mut TypeContext,
     ) {
+        contract.owner_protocol = program.program.language_items.object_owner.as_ref().map(|protocol| {
+            MirOwnerProtocolAuthority {
+                transport: protocol.trait_id,
+                split: protocol.into_parts_id,
+                rebuild: protocol.from_parts_id,
+                unique: program.program.language_items.object_owner_unique.as_ref()
+                    .map(|unique| (unique.trait_id, unique.method_id)),
+            }
+        });
         for (id, implementation) in program.program.impls_in_order() {
             if let Some(trait_id) = implementation.trait_id {
+                if contract.owner_protocol.as_ref().is_some_and(|protocol| {
+                    protocol.transport == trait_id || protocol.unique.is_some_and(|(unique, _)| unique == trait_id)
+                }) {
+                    contract.owner_constructor_patterns.insert(id, implementation.receiver_pattern.clone());
+                }
                 let members = program
                     .program
                     .indexes
@@ -562,6 +576,14 @@ impl MirBuilder<'_> {
             }
         }
         contract.erased.tuple_factories.clear();
+        contract.erased.move_paths.clear();
+        for (key, function) in &contract.erased.functions {
+            if let Ok(paths) = crate::mir::erased_moves::collect_erased_move_paths(function, contract, tc) {
+                if paths != crate::mir::erased_moves::MirErasedMovePaths::roots(function) {
+                    contract.erased.move_paths.insert(key.clone(), paths);
+                }
+            }
+        }
         contract.erased.nominal_factories.clear();
         let keys = contract
             .erased
@@ -578,18 +600,38 @@ impl MirBuilder<'_> {
             {
                 let mut tuples = Vec::new();
                 let mut nominals = Vec::new();
+                let mut handles = Vec::new();
                 for requirement in requirements {
                     match requirement {
                         MirBodyFactoryRequirement::Tuple(r) => tuples.push(r),
                         MirBodyFactoryRequirement::Nominal(r) => nominals.push(r),
+                        MirBodyFactoryRequirement::ThinHandle(r) => handles.push(r),
                     }
                 }
                 if !tuples.is_empty() {
                     contract.erased.tuple_factories.insert(key.clone(), tuples);
                 }
                 if !nominals.is_empty() {
-                    contract.erased.nominal_factories.insert(key, nominals);
+                    contract.erased.nominal_factories.insert(key.clone(), nominals);
                 }
+                if !handles.is_empty() {
+                    contract.erased.thin_handle_factories.insert(key, handles);
+                }
+            }
+        }
+        for (key, function) in &contract.erased.functions {
+            if let Ok(requirements) = collect_scoped_factories(function, contract, tc) {
+                if !requirements.is_empty() {
+                    contract.erased.scoped_factories.insert(key.clone(), requirements);
+                }
+            }
+        }
+        for requirement in contract.erased.scoped_factories.values().flat_map(|scopes| scopes.values()).flatten() {
+            for ty in std::iter::once(requirement.result()).chain(requirement.dependencies()) {
+                let _ = ty.map_types(&mut |id| {
+                    needed.insert(*id);
+                    Ok::<_, std::convert::Infallible>(*id)
+                });
             }
         }
         for requirement in contract.erased.nominal_factories.values().flatten() {
@@ -635,7 +677,12 @@ impl MirBuilder<'_> {
                     collect(ty);
                 }
                 for statement in body.blocks.iter().flat_map(|block| &block.statements) {
+                    if let Ok(types) = crate::mir::owner_open::transport_types(&statement.value, contract) {
+                        for ty in &types { collect(ty); }
+                    }
                     match &statement.value {
+                        MirErasedRvalue::OwnerOpen { .. } | MirErasedRvalue::OwnerCall { .. } => {}
+                        MirErasedRvalue::DropInPlace { pointee, .. } => collect(pointee),
                         MirErasedRvalue::PackagePack { plan, .. } => {
                             if let MirPackagePayloadDescriptor::Concrete(id) =
                                 plan.payload_descriptor
@@ -650,7 +697,8 @@ impl MirBuilder<'_> {
                                 collect(ty);
                             }
                         }
-                        MirErasedRvalue::Use(_)
+                        MirErasedRvalue::Forget(_)
+                        | MirErasedRvalue::Use(_)
                         | MirErasedRvalue::Literal(_)
                         | MirErasedRvalue::Aggregate(_)
                         | MirErasedRvalue::NativeAggregate { .. }
@@ -741,6 +789,16 @@ impl MirBuilder<'_> {
             }
             if tc.kind(id) != &crate::type_services::kind::Kind::Type {
                 continue;
+            }
+            if let Type::Struct { id: owner, args } = tc.type_for(id) {
+                // Closed owners keep their native destructor and opaque metadata;
+                // an unsized Object argument is not a payload descriptor. Only
+                // exact sealable nominal identities need a frozen argument array.
+                if matches!(contract.nominal_drop_authority.get(&owner), Some(MirNominalDropAuthority::Selected(_)))
+                    && descriptor_identity::semantic_identity(contract, tc, id).is_some()
+                {
+                    for argument in args { needed.insert(intern_backend_type(tc, &argument)); }
+                }
             }
             let drop = payload_drop_plan(contract, tc, id)
                 .expect("accepted erased values have complete concrete layout/drop evidence");

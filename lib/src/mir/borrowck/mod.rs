@@ -2824,6 +2824,7 @@ fn type_id_is_mut_reference(view: TypeView<'_>, ty: crate::ids::TypeId) -> bool 
 impl BorrowChecker {
     pub fn run(program: &MirProgram) -> Result<(), Diagnostics> {
         let mut diagnostics = crate::mir::erased::native_retention_diagnostics(program);
+        diagnostics.0.extend(crate::mir::erased::erased_body_borrow_diagnostics(program).0);
         let value_loan_proof = Self::native_return_loan_proof(program);
         let return_summaries = &value_loan_proof.lifetime;
         callable_results::validate_declarations(

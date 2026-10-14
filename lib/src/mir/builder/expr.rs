@@ -902,20 +902,20 @@ impl<'a> MirBuilder<'a> {
                 let direct_move_receiver_call =
                     matches!(receiver_mode, Some(crate::types::ReceiverMode::Move));
 
-                let scoped_entry = match target {
-                    Some(crate::hir::HirCallTarget::Function(id)) => {
-                        self.scoped_entries.get(id).cloned()
-                    }
-                    // Mono resolves the wrapper's function call to its exact
-                    // empty-substitution instance before MIR lowering.
-                    Some(crate::hir::HirCallTarget::Instance(instance)) => self
-                        .callable_instances_by_def_id
-                        .iter()
-                        .find(|(_, id)| *id == instance)
-                        .and_then(|(definition, _)| self.scoped_entries.get(definition))
-                        .cloned(),
+                let scoped_definition = match target {
+                    Some(crate::hir::HirCallTarget::Function(id)) => Some(*id),
+                    Some(crate::hir::HirCallTarget::Instance(instance)) => self.scoped_callable_sources.get(instance).copied(),
                     _ => None,
                 };
+                let scoped_entry = scoped_definition.and_then(|definition| {
+                    let Type::Function { params, .. } = &func.ty else { return None; };
+                    let key = crate::mir::MirScopedEntryKey {
+                        definition,
+                        params: params.iter().map(|ty| self.type_id_for(ty)).collect(),
+                        ret: self.type_id_for(&expr.ty),
+                    };
+                    self.scoped_entries.get(&key).cloned()
+                });
                 let func_operand = if let Some(key) = scoped_entry {
                     Operand::Constant(Constant::ErasedCall(crate::mir::MirErasedCall {
                         target: crate::mir::MirErasedCallTarget::Direct(key),

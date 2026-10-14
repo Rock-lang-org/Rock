@@ -49,6 +49,19 @@ fn selected_nominal_protocol_executes_exact_keys_templates_drops_and_rejection_c
         let empty_drop = MirPayloadDropPlan { ty: empty_type, user_drop: None, children: MirPayloadDropChildren::None };
         let empty_identity = descriptor_identity::descriptor_identity(contract, tc, &empty_drop).unwrap();
         let (empty_template, _) = nominal_template(contract, tc, empty_owner).unwrap();
+        let selected_owner = DefId::new(CrateId(0), LocalDefId(303));
+        contract.nominal_layouts.insert(selected_owner, MirNominalLayout::Struct {
+            id: selected_owner, fields: vec![], generic_params: vec![crate::types::GenericParamId { owner: selected_owner, index: 0 }],
+        });
+        contract.nominal_field_ids.insert(selected_owner, vec![]);
+        contract.nominal_drop_authority.insert(selected_owner, MirNominalDropAuthority::FieldsOnly);
+        let (selected_template, _) = nominal_template(contract, tc, selected_owner).unwrap();
+        let selection = MirNominalDropSelection {
+            implementation: selected_owner, member: selected_owner,
+            entry: MirErasedKey { definition: DefId::new(CrateId(0), LocalDefId(304)), static_args: vec![] },
+            arguments: vec![MirErasedType::Parameter(0)],
+        };
+        let selected_drop_key = nominal_factory::nominal_drop_template_key(contract, tc, &selection).unwrap();
         let mut duplicate = template.clone();
         // RN01 header = magic + framed origin + argument count + field count.
         let origin_len = u64::from_le_bytes(template[4..12].try_into().unwrap()) as usize;
@@ -63,6 +76,8 @@ fn selected_nominal_protocol_executes_exact_keys_templates_drops_and_rejection_c
         assert_eq!(bad_ordinal[parameter + 4], b'v');
         bad_ordinal[parameter + 13..parameter + 21].copy_from_slice(&99u64.to_le_bytes());
         let mut header = format!("#define NESTED {}\n", u8::from(nested));
+        header.push_str(&array("selected_template_key", &selected_template));
+        header.push_str(&array("selected_drop_key", &selected_drop_key));
         for (name, bytes) in [("target_key", &target), ("template_key", &template), ("later_key", &later_identity.semantic), ("later_drop_key", &later_identity.drop_template),
             ("tag_key", &tag_identity.semantic), ("tag_drop_key", &tag_identity.drop_template), ("product_key", &native.semantic), ("product_drop_key", &native.drop_template),
             ("bad_ordinal", &bad_ordinal), ("duplicate_fields", &duplicate), ("conflicting_template", &conflicting),

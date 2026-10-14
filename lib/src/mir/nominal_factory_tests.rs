@@ -55,6 +55,7 @@ pub(crate) fn fixture(nested: bool) -> (MirProgram, MirErasedKey, DefId) {
         match requirement {
             MirBodyFactoryRequirement::Tuple(r) => contract.erased.tuple_factories.entry(key.clone()).or_default().push(r),
             MirBodyFactoryRequirement::Nominal(r) => contract.erased.nominal_factories.entry(key.clone()).or_default().push(r),
+            MirBodyFactoryRequirement::ThinHandle(r) => contract.erased.thin_handle_factories.entry(key.clone()).or_default().push(r),
         }
     }
     contract.runtime_requirements = runtime_requirements_for_backend(contract, program.functions.values());
@@ -103,6 +104,71 @@ fn unsupported_user_drop_never_turns_into_a_fields_only_factory() {
     let (mut program, key, owner) = fixture(false);
     program.backend_contract.nominal_drop_authority.insert(owner, MirNominalDropAuthority::UnsupportedUserDrop);
     assert_eq!(validate_erased_function(&program.backend_contract.erased.functions[&key], &program.backend_contract, &program.type_context), Err(MirErasedError::UnsupportedOperation));
+}
+
+fn selected_drop_fixture() -> (MirProgram, MirErasedKey, DefId, MirErasedKey) {
+    let (mut program, key, owner) = fixture(false);
+    let contract = &mut program.backend_contract;
+    let unit = program.type_context.intern_type(&Type::Unit);
+    let entry = MirErasedKey { definition: DefId::new(CrateId(0), LocalDefId(110)), static_args: vec![] };
+    let implementation = DefId::new(CrateId(0), LocalDefId(111));
+    let member = DefId::new(CrateId(0), LocalDefId(112));
+    let subject = contract.erased.nominal_factories[&key][0].result.clone();
+    let selection = MirNominalDropSelection { implementation, member, entry: entry.clone(), arguments: vec![MirErasedType::Parameter(0)] };
+    contract.dictionary_impl_members.insert(implementation, MirDictionaryImplAuthority {
+        trait_id: DefId::new(CrateId(0), LocalDefId(113)),
+        members: [(member, entry.definition)].into_iter().collect(), factory_compatible: false, template: None,
+    });
+    contract.nominal_drop_authority.insert(owner, MirNominalDropAuthority::Selected(selection.clone()));
+    contract.erased.nominal_drop_entries.insert(owner, selection.clone());
+    contract.erased.functions.insert(entry.clone(), MirErasedFunction {
+        key: entry.clone(), symbol: "selected.nominal.drop".into(), linkage: MirLinkage::Internal,
+        signature: MirErasedSignature {
+            parameters: contract.erased.functions[&key].signature.parameters.clone(), params: vec![subject.clone()],
+            ret: MirErasedType::Concrete(unit), dictionaries: vec![],
+            layouts: vec![MirErasedType::Parameter(0), subject.clone()], require_borrow_free: BTreeSet::new(),
+        },
+        body: Some(MirErasedBody {
+            locals: vec![subject, MirErasedType::Concrete(unit)], mutable_locals: BTreeSet::new(), scopes: vec![],
+            blocks: vec![MirErasedBasicBlock {
+                statements: vec![MirErasedAssignment { destination: MirErasedLocal(1), value: MirErasedRvalue::Literal(MirErasedLiteral::Unit) }],
+                terminator: MirErasedTerminator::Return(MirErasedOperand::Move(MirErasedPlace::local(MirErasedLocal(1)))),
+            }],
+        }),
+    });
+    contract.erased.nominal_factories.get_mut(&key).unwrap()[0].user_drop = Some(selection);
+    (program, key, owner, entry)
+}
+
+#[test]
+fn selected_nominal_drop_requires_exact_entry_and_substitution_authority() {
+    let (program, _, _, _) = selected_drop_fixture();
+    assert!(validate_erased_contract(&program).is_empty());
+    for control in 0..7 {
+        let (mut program, key, owner, entry) = selected_drop_fixture();
+        let contract = &mut program.backend_contract;
+        match control {
+            0 => { contract.erased.nominal_drop_entries.remove(&owner); },
+            1 => { contract.dictionary_impl_members.clear(); },
+            2 => { contract.erased.functions.remove(&entry); },
+            3 => { contract.erased.functions.get_mut(&entry).unwrap().signature.params[0] = MirErasedType::Parameter(0); },
+            4 => { contract.erased.functions.get_mut(&entry).unwrap().signature.ret = MirErasedType::Concrete(program.type_context.intern_type(&Type::I64)); },
+            5 => { contract.erased.nominal_factories.get_mut(&key).unwrap()[0].user_drop.as_mut().unwrap().arguments[0] = MirErasedType::Parameter(99); },
+            _ => { contract.erased.nominal_drop_entries.get_mut(&owner).unwrap().member = owner; },
+        }
+        assert!(!validate_erased_contract(&program).is_empty(), "control={control}");
+    }
+}
+
+#[test]
+fn selected_destructor_cannot_transfer_its_enclosing_payload_storage() {
+    let (mut program, _, _, entry) = selected_drop_fixture();
+    let body = program.backend_contract.erased.functions.get_mut(&entry).unwrap().body.as_mut().unwrap();
+    body.locals.push(body.locals[0].clone());
+    body.blocks[0].statements.insert(0, MirErasedAssignment {
+        destination: MirErasedLocal(2), value: MirErasedRvalue::Use(MirErasedOperand::Move(MirErasedPlace::local(MirErasedLocal(0)))),
+    });
+    assert_eq!(validate_erased_function(&program.backend_contract.erased.functions[&entry], &program.backend_contract, &program.type_context), Err(MirErasedError::ProjectedMoveRequiresDropProof));
 }
 
 #[test]

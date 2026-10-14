@@ -15,7 +15,7 @@ fn nominal_and_nested_tuple_factories_dominate_storage_and_forward_exact_descrip
         if nested { assert!(body.find("tuple.factory.status").unwrap() < body.find("nominal.factory.status").unwrap()); }
         let template = cg.module.get_global("rock.nominal.template").unwrap().get_initializer().unwrap().into_struct_value();
         let target = TargetData::create(cg.module.get_data_layout().as_str().to_str().unwrap());
-        assert_eq!(target.get_abi_size(&template.get_type()), 24);
+        assert_eq!(target.get_abi_size(&template.get_type()), 48);
         assert_eq!(target.offset_of_element(&template.get_type(), 2), Some(16));
         assert!(cg.module.get_global("rock.nominal.template").unwrap().is_constant());
         assert!(body.contains("erased.field"));

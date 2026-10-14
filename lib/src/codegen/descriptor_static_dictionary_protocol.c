@@ -7,8 +7,8 @@
 #include <string.h>
 
 _Static_assert(sizeof(RockDictionary) == 128, "dictionary header ABI1");
-_Static_assert(sizeof(RockDescriptor) == 136, "descriptor header ABI1");
-static const RockDescriptorTarget target = {1, 64, 1, INT64_MAX, sizeof(target_key), target_key};
+_Static_assert(sizeof(RockDescriptor) == 160, "descriptor header ABI2");
+static const RockDescriptorTarget target = {ROCK_DESCRIPTOR_ABI, 64, 1, INT64_MAX, sizeof(target_key), target_key};
 static atomic_uint calls;
 static void no_drop(void *out, const RockDescriptor *descriptor) { (void)out; (void)descriptor; }
 /* Three declared logical arguments; the last is seed storage, never Self. */
@@ -25,7 +25,7 @@ static void selected_entry(void *out, const RockDictionary *environment, void *s
 static RockDictionaryEntry native_entries[] = {make_entry};
 static const RockDictionaryEntry selected_entries[] = {selected_entry};
 static const RockDictionaryTemplate selected = {1, sizeof(template_key), template_key, 1, selected_entries};
-#define DESCRIPTOR(label) { .size = 8, .alignment = 8, .drop = no_drop, .abi = 1, .kind = 1, .state = 2, \
+#define DESCRIPTOR(label) { .size = 8, .alignment = 8, .drop = no_drop, .abi = ROCK_DESCRIPTOR_ABI, .kind = 1, .state = 2, \
     .key_size = sizeof(type_##label##_key), .key = type_##label##_key, \
     .drop_key_size = sizeof(type_##label##_drop), .drop_key = type_##label##_drop, \
     .target_key_size = sizeof(target_key), .target_key = target_key, .index_limit = INT64_MAX }

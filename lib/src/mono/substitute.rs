@@ -151,6 +151,17 @@ impl Monomorphizer {
         let ty = self.substitute_type_with_map(&expr.ty, substitution);
 
         let kind = match &expr.kind {
+            HirExprKind::Open { source, binding, body } => {
+                let mut binding = binding.clone();
+                binding.visit_types_mut(&mut |ty| {
+                    *ty = self.substitute_type_with_map(ty, substitution)
+                });
+                HirExprKind::Open {
+                    source: Box::new(self.substitute_expr(source, substitution)),
+                    binding,
+                    body: self.substitute_block(body, substitution),
+                }
+            }
             HirExprKind::PackagePack { payload, proof } => {
                 let mut proof = proof.clone();
                 proof.visit_types_mut(&mut |ty| {

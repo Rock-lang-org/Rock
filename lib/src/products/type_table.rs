@@ -3964,8 +3964,7 @@ pub(super) enum ProductTypeRow {
         index: u32,
         kind: Kind,
     },
-    // Append-only tag: existing schema-59 rows and frozen artifacts retain
-    // their encodings. Checked native result signatures publish this row,
+    // Checked native result signatures publish this row,
     // independently of borrowing/effect certificates.
     StructRepresentation {
         id: ProductDefId,

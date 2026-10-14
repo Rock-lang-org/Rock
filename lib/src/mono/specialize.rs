@@ -674,7 +674,19 @@ impl Monomorphizer {
         self.var_types.clear();
         let mut params_for_body = signature.params.clone();
         self.process_params(Some(generic_func.id), &mut params_for_body);
-        self.process_block(&mut body);
+        signature.params = params_for_body;
+        signature.body = body;
+        match self.lower_scoped_function(&mut signature) {
+            Ok(true) => {}
+            Ok(false) => self.process_block(&mut signature.body),
+            Err((span, message)) => {
+                self.diagnostics.push(
+                    crate::diagnostic::Diagnostic::new(message, span)
+                        .with_code(crate::diagnostic::DiagnosticCode::Mono),
+                );
+            }
+        }
+        body = signature.body;
         self.var_types = old_var_types;
         if let Some(actual) = self.agree_return_storage(
             &signature.ret_type,

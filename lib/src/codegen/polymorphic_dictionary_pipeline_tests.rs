@@ -20,7 +20,7 @@ fn polymorphic_dictionary_adapter_passes_local_evidence_to_one_genuine_erased_me
     let target = TargetData::create(cg.module.get_data_layout().as_str().to_str().unwrap());
     assert_eq!(target.get_abi_size(&cg.erased_dictionary_type()), 128);
     assert_eq!(target.offset_of_element(&cg.erased_dictionary_type(), 10), Some(80));
-    assert_eq!(target.get_abi_size(&cg.erased_descriptor_type()), 136);
+    assert_eq!(target.get_abi_size(&cg.erased_descriptor_type()), 160);
     assert_eq!(target.offset_of_element(&cg.erased_descriptor_type(), 13), Some(104));
 }
 

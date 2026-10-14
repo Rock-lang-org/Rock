@@ -6,7 +6,7 @@
 
 _Static_assert(sizeof(void *) == 8 && sizeof(size_t) == 8, "Rock metadata requires a native 64-bit target");
 _Static_assert(_Alignof(uint64_t) == 8 && _Alignof(void *) == 8, "Rock metadata requires 8-byte native word/pointer alignment");
-_Static_assert(sizeof(RockDrop) == 8 && sizeof(RockDescriptor) == 136, "descriptor ABI mismatch");
+_Static_assert(sizeof(RockDrop) == 8 && sizeof(RockDescriptor) == 160, "descriptor ABI mismatch");
 _Static_assert(offsetof(RockDescriptor, key) == 72 && offsetof(RockDescriptor, children) == 104,
     "descriptor ABI offsets mismatch");
 #define DEPTH_LIMIT 128u
@@ -64,6 +64,7 @@ static int valid_definition(const unsigned char *p, uint64_t left) {
     return left == 4; /* defining item ordinal, never importer crate ID */
 }
 static int valid_nominal_template(const unsigned char *, uint64_t);
+static int valid_nominal_drop(const unsigned char *, uint64_t, uint64_t);
 static int valid_key(const unsigned char *p, uint64_t left, const char *magic, unsigned depth) {
     if (!p || left < 21 || left > KEY_LIMIT || depth >= DEPTH_LIMIT || memcmp(p, magic, 4)) return 0;
     unsigned char tag = p[4]; p += 5; left -= 5;
@@ -86,14 +87,21 @@ static int valid_key(const unsigned char *p, uint64_t left, const char *magic, u
         default: return 0;
         }
     } else {
-        if (tag != 't' && tag != 'n' && tag != 'f' && tag != 'a' && tag != 'g') return 0;
+        if (tag != 't' && tag != 'n' && tag != 'f' && tag != 'a' && tag != 'g' && tag != 'h') return 0;
         if ((tag == 't' && payload_len) || (tag == 'n' && count) || (tag == 'a' && count != 1)) return 0;
         if (tag != 't') {
             /* Actual drop-plan payload includes a framed semantic identity.
              * Callable definition/signature data is compiler-validated; no
              * address or runtime impl selection participates in this key. */
             const unsigned char *q = payload, *semantic; uint64_t remaining = payload_len, n;
-            if (!take_frame(&q, &remaining, &semantic, &n) || !valid_key(semantic, n, "RK01", depth + 1) || !remaining || *q > 1) return 0;
+            if (!take_frame(&q, &remaining, &semantic, &n) || !valid_key(semantic, n, "RK01", depth + 1)) return 0;
+            if (tag == 'h') {
+                const unsigned char *template_key, *drop; uint64_t template_len, drop_len;
+                if (!take_frame(&q, &remaining, &template_key, &template_len) || !valid_nominal_template(template_key, template_len) ||
+                    !take_frame(&q, &remaining, &drop, &drop_len) || !valid_nominal_drop(drop, drop_len, KEY_LIMIT / 8) || remaining) return 0;
+                goto drop_children;
+            }
+            if (!remaining || *q > 1) return 0;
             unsigned user = *q++; --remaining;
             if (user) {
                 const unsigned char *def; uint64_t def_len, params;
@@ -113,6 +121,7 @@ static int valid_key(const unsigned char *p, uint64_t left, const char *magic, u
             if (remaining != (tag == 'a' ? 8u : 0u)) return 0;
         }
     }
+drop_children:
     for (uint64_t i = 0; i < count; ++i)
         if (!take_frame(&p, &left, &child, &child_len) || !valid_key(child, child_len, magic, depth + 1)) return 0;
     return left == 0;
@@ -151,11 +160,22 @@ static int valid_field_expression(const unsigned char *p, uint64_t left, uint64_
         case 'v': if (n != 8 || count || read_word(payload) >= arguments) return 0; break;
         case 'c': if (count || !valid_key(payload, n, "RK01", depth + 1)) return 0; break;
         case 't': if (n) return 0; break;
+        case 'p': case 'r': case 'R': if (n || count != 1) return 0; break;
         case 'S': if (!valid_definition(payload, n)) return 0; break;
         default: return 0;
     }
     for (uint64_t i = 0; i < count; ++i)
         if (!take_frame(&p, &left, &child, &child_len) || !valid_field_expression(child, child_len, arguments, depth + 1)) return 0;
+    return left == 0;
+}
+static int valid_nominal_drop(const unsigned char *p, uint64_t left, uint64_t arguments) {
+    const unsigned char *definition, *expression; uint64_t n, count;
+    if (!p || left < 20 || left > KEY_LIMIT || memcmp(p, "RU01", 4)) return 0;
+    p += 4; left -= 4;
+    if (!take_frame(&p, &left, &definition, &n) || !valid_definition(definition, n) ||
+        !take_word(&p, &left, &count) || count > left / 8) return 0;
+    for (uint64_t i = 0; i < count; ++i)
+        if (!take_frame(&p, &left, &expression, &n) || !valid_field_expression(expression, n, arguments, 0)) return 0;
     return left == 0;
 }
 static int valid_nominal_template(const unsigned char *p, uint64_t left) {
@@ -227,7 +247,12 @@ static int nominal_binding(const RockDescriptor *d, const unsigned char *templat
     KeyView *keys = calloc((size_t)(arguments ? arguments : 1), sizeof(*keys));
     if (!keys) return 0;
     int valid = 1;
-    for (uint64_t i = 0; i < arguments; ++i) if (!take_frame(&p, &left, &keys[i].bytes, &keys[i].size)) valid = 0;
+    if (d->user_drop && (d->argument_count != arguments || (arguments && !d->arguments))) valid = 0;
+    for (uint64_t i = 0; i < arguments; ++i) {
+        if (!take_frame(&p, &left, &keys[i].bytes, &keys[i].size)) valid = 0;
+        if (valid && d->user_drop && (!d->arguments[i] ||
+            !equal_bytes(keys[i].size, keys[i].bytes, d->arguments[i]->key_size, d->arguments[i]->key))) valid = 0;
+    }
     uint64_t expected_arguments; p = template_key; left = template_len;
     if (!template_header(&p, &left, &origin, &expected_arguments, &fields) || expected_arguments != arguments || fields != d->child_count ||
         !equal_bytes(origin.size, origin.bytes, semantic_origin.size, semantic_origin.bytes)) valid = 0;
@@ -241,6 +266,8 @@ static int nominal_binding(const RockDescriptor *d, const unsigned char *templat
     free(keys); return valid;
 }
 static int drop_binding(const RockDescriptor *d) {
+    if (!d->user_drop && (d->argument_count || d->arguments)) return 0;
+    if (d->user_drop && (d->drop_key[4] != 'h' || d->argument_count > KEY_LIMIT / 8 || (d->argument_count && !d->arguments))) return 0;
     if (d->key[4] == 't') return d->kind == ROCK_DESCRIPTOR_TUPLE && d->drop_key[4] == 't' &&
         read_word(d->key + 13) == d->child_count && read_word(d->drop_key + 13) == d->child_count;
     if (d->kind != ROCK_DESCRIPTOR_NATIVE || d->drop_key[4] == 't') return 0;
@@ -249,6 +276,13 @@ static int drop_binding(const RockDescriptor *d) {
     if (!take_frame(&p, &left, &payload, &payload_len) || !take_word(&p, &left, &count)) return 0;
     const unsigned char *q = payload; uint64_t remaining = payload_len;
     if (!take_frame(&q, &remaining, &semantic, &n) || !equal_bytes(n, semantic, d->key_size, d->key)) return 0;
+    if (d->drop_key[4] == 'h') {
+        const unsigned char *template_key, *drop; uint64_t template_len, drop_len;
+        if (!d->user_drop || !take_frame(&q, &remaining, &template_key, &template_len) ||
+            !take_frame(&q, &remaining, &drop, &drop_len) || remaining ||
+            !valid_nominal_drop(drop, drop_len, d->argument_count) ||
+            !nominal_binding(d, template_key, template_len)) return 0;
+    } else if (d->user_drop || d->argument_count || d->arguments) return 0;
     if (d->drop_key[4] == 'g') {
         const unsigned char *template_key; uint64_t template_len;
         if (!remaining || *q++ != 0) return 0;
@@ -256,7 +290,7 @@ static int drop_binding(const RockDescriptor *d) {
         if (!take_frame(&q, &remaining, &template_key, &template_len) || remaining ||
             !nominal_binding(d, template_key, template_len)) return 0;
     }
-    if (d->drop_key[4] == 'f' || d->drop_key[4] == 'g') {
+    if (d->drop_key[4] == 'f' || d->drop_key[4] == 'g' || d->drop_key[4] == 'h') {
         if (count != d->child_count) return 0;
         for (uint64_t i = 0; i < count; ++i) {
             if (!d->children[i] || !take_frame(&p, &left, &child, &n) ||
@@ -298,15 +332,19 @@ static RockMetadataStatus compose_key(const char *magic, uint64_t count,
 static void release_candidate(RockDescriptor *d) {
     free((void *)d->key); free((void *)d->drop_key); free((void *)d->offsets);
     free((void *)d->children); free((void *)d->target_key);
+    free((void *)d->arguments);
 }
 static int same_descriptor(const RockDescriptor *a, const RockDescriptor *b) {
     if (a->size != b->size || a->alignment != b->alignment || a->kind != b->kind ||
-        a->field_count != b->field_count || a->child_count != b->child_count || a->index_limit != b->index_limit ||
+        a->field_count != b->field_count || a->child_count != b->child_count || a->argument_count != b->argument_count || a->index_limit != b->index_limit ||
         !equal_bytes(a->drop_key_size, a->drop_key, b->drop_key_size, b->drop_key) ||
         !equal_bytes(a->target_key_size, a->target_key, b->target_key_size, b->target_key)) return 0;
     for (uint64_t i = 0; i < a->field_count; ++i) if (a->offsets[i] != b->offsets[i]) return 0;
     for (uint64_t i = 0; i < a->child_count; ++i)
         if (!equal_bytes(a->children[i]->key_size, a->children[i]->key, b->children[i]->key_size, b->children[i]->key)) return 0;
+    for (uint64_t i = 0; i < a->argument_count; ++i)
+        if (!equal_bytes(a->arguments[i]->key_size, a->arguments[i]->key, b->arguments[i]->key_size, b->arguments[i]->key) ||
+            !equal_bytes(a->arguments[i]->drop_key_size, a->arguments[i]->drop_key, b->arguments[i]->drop_key_size, b->arguments[i]->drop_key)) return 0;
     return 1;
 }
 static RockMetadataStatus publish(RockDescriptor *candidate, const RockDescriptor **result) {
@@ -358,10 +396,21 @@ static RockMetadataStatus freeze(const RockDescriptorTarget *target, const RockD
     uint64_t *offsets = calloc((size_t)(input->field_count ? input->field_count : 1), sizeof(*offsets));
     const RockDescriptor **children = calloc((size_t)(input->child_count ? input->child_count : 1), sizeof(*children));
     d.offsets = offsets; d.children = children;
-    if (!d.key || !d.drop_key || !d.target_key || !offsets || !children) { release_candidate(&d); return ROCK_METADATA_NOMEM; }
+    d.arguments = NULL;
+    if (input->argument_count > KEY_LIMIT / 8 || (input->argument_count && !input->arguments)) { release_candidate(&d); return ROCK_METADATA_INVALID; }
+    const RockDescriptor **arguments = NULL;
+    if (input->user_drop) {
+        arguments = calloc((size_t)(input->argument_count ? input->argument_count : 1), sizeof(*arguments));
+        d.arguments = arguments;
+    }
+    if (!d.key || !d.drop_key || !d.target_key || !offsets || !children || (input->user_drop && !arguments)) { release_candidate(&d); return ROCK_METADATA_NOMEM; }
     active[depth] = input;
     RockMetadataStatus status = ROCK_METADATA_OK;
-    for (uint64_t i = 0; i < input->child_count; ++i) {
+    for (uint64_t i = 0; i < input->argument_count; ++i) {
+        status = freeze(target, input->arguments[i], active, depth + 1, &arguments[i]);
+        if (status != ROCK_METADATA_OK) break;
+    }
+    for (uint64_t i = 0; status == ROCK_METADATA_OK && i < input->child_count; ++i) {
         status = freeze(target, input->children[i], active, depth + 1, &children[i]);
         if (status != ROCK_METADATA_OK) break;
         offsets[i] = input->offsets[i];
@@ -374,7 +423,7 @@ static RockMetadataStatus freeze(const RockDescriptorTarget *target, const RockD
         if (status == ROCK_METADATA_OK && (!equal_bytes(n, key, d.key_size, d.key) || !equal_bytes(dn, drop_key, d.drop_key_size, d.drop_key))) status = ROCK_METADATA_INVALID;
         free(key); free(drop_key);
     }
-    if (status == ROCK_METADATA_OK && (input->kind == ROCK_DESCRIPTOR_TUPLE || input->drop_key[4] == 'g')) {
+    if (status == ROCK_METADATA_OK && (input->kind == ROCK_DESCRIPTOR_TUPLE || input->drop_key[4] == 'g' || input->drop_key[4] == 'h')) {
             uint64_t size = 0, align = 0;
             uint64_t *expected = calloc((size_t)(d.child_count ? d.child_count : 1), sizeof(*expected));
             if (!expected) status = ROCK_METADATA_NOMEM;
@@ -394,6 +443,10 @@ void rock_descriptor_tuple_drop(void *payload, const RockDescriptor *descriptor)
         child->drop((unsigned char *)payload + descriptor->offsets[i - 1], child);
     }
 }
+static void nominal_user_drop(void *payload, const RockDescriptor *descriptor) {
+    descriptor->user_drop(payload, descriptor);
+    rock_descriptor_tuple_drop(payload, descriptor);
+}
 static RockMetadataStatus record_factory(const RockDescriptorTarget *target, const RockNominalTemplate *template,
     uint64_t count, const RockDescriptor *const *arguments, const RockDescriptor *const *inputs, const RockDescriptor **result) {
     if (!result) return ROCK_METADATA_INVALID;
@@ -405,17 +458,25 @@ static RockMetadataStatus record_factory(const RockDescriptorTarget *target, con
         const unsigned char *p = template->key; uint64_t left = template->key_size;
         if (template->abi != ROCK_DESCRIPTOR_ABI || !valid_nominal_template(p, left) ||
             !template_header(&p, &left, &origin, &argument_count, &count) || (argument_count && !arguments)) return ROCK_METADATA_INVALID;
+        if ((template->user_drop != NULL) != (template->drop_key_size != 0) ||
+            (template->user_drop && !valid_nominal_drop(template->drop_key, template->drop_key_size, argument_count))) return ROCK_METADATA_INVALID;
     }
     if ((count && !inputs) || count > SIZE_MAX / sizeof(void *) || count > KEY_LIMIT / 8) return ROCK_METADATA_INVALID;
     RockDescriptor d = {0}; d.abi = ROCK_DESCRIPTOR_ABI; d.kind = template ? ROCK_DESCRIPTOR_NATIVE : ROCK_DESCRIPTOR_TUPLE;
     d.state = ROCK_METADATA_READY; d.field_count = d.child_count = count;
     d.drop = rock_descriptor_tuple_drop; d.index_limit = target->index_limit; d.target_key_size = target->key_size;
+    if (template && template->user_drop) { d.user_drop = template->user_drop; d.drop = nominal_user_drop; d.argument_count = argument_count; }
     d.target_key = copy_bytes(target->key, target->key_size);
     uint64_t *offsets = calloc((size_t)(count ? count : 1), sizeof(*offsets));
     const RockDescriptor **children = calloc((size_t)(count ? count : 1), sizeof(*children));
     KeyView *argument_keys = calloc((size_t)(argument_count ? argument_count : 1), sizeof(*argument_keys));
     d.offsets = offsets; d.children = children;
-    if (!offsets || !children || !d.target_key || !argument_keys) { free(argument_keys); release_candidate(&d); return ROCK_METADATA_NOMEM; }
+    const RockDescriptor **drop_arguments = NULL;
+    if (d.user_drop) {
+        drop_arguments = calloc((size_t)(argument_count ? argument_count : 1), sizeof(*drop_arguments));
+        d.arguments = drop_arguments;
+    }
+    if (!offsets || !children || !d.target_key || !argument_keys || (d.user_drop && !drop_arguments)) { free(argument_keys); release_candidate(&d); return ROCK_METADATA_NOMEM; }
     if (pthread_mutex_lock(&metadata_mutex)) { free(argument_keys); release_candidate(&d); return ROCK_METADATA_INVALID; }
     const RockDescriptor *active[DEPTH_LIMIT];
     for (uint64_t i = 0; i < argument_count; ++i) {
@@ -423,6 +484,7 @@ static RockMetadataStatus record_factory(const RockDescriptorTarget *target, con
         status = freeze(target, arguments[i], active, 0, &argument);
         if (status != ROCK_METADATA_OK) break;
         argument_keys[i] = (KeyView){argument->key, argument->key_size};
+        if (drop_arguments) drop_arguments[i] = argument;
     }
     for (uint64_t i = 0; status == ROCK_METADATA_OK && i < count; ++i) {
         status = freeze(target, inputs[i], active, 0, &children[i]);
@@ -437,16 +499,24 @@ static RockMetadataStatus record_factory(const RockDescriptorTarget *target, con
     if (status == ROCK_METADATA_OK && template) {
         if (d.key_size > KEY_LIMIT - 17 || template->key_size > KEY_LIMIT - 17 - d.key_size) status = ROCK_METADATA_OVERFLOW;
         else {
-            uint64_t n = 17 + d.key_size + template->key_size;
+            uint64_t n = (d.user_drop ? 24 : 17) + d.key_size + template->key_size + (d.user_drop ? template->drop_key_size : 0);
+            if (n > KEY_LIMIT) { free(argument_keys); release_candidate(&d); pthread_mutex_unlock(&metadata_mutex); return ROCK_METADATA_OVERFLOW; }
             unsigned char *payload = malloc((size_t)n);
             KeyView *drops = calloc((size_t)(count ? count : 1), sizeof(*drops));
             if (!payload || !drops) status = ROCK_METADATA_NOMEM;
             else {
                 write_word(payload, d.key_size); memcpy(payload + 8, d.key, (size_t)d.key_size);
-                payload[8 + d.key_size] = 0; write_word(payload + 9 + d.key_size, template->key_size);
-                memcpy(payload + 17 + d.key_size, template->key, (size_t)template->key_size);
+                if (d.user_drop) {
+                    write_word(payload + 8 + d.key_size, template->key_size);
+                    memcpy(payload + 16 + d.key_size, template->key, (size_t)template->key_size);
+                    write_word(payload + 16 + d.key_size + template->key_size, template->drop_key_size);
+                    memcpy(payload + 24 + d.key_size + template->key_size, template->drop_key, (size_t)template->drop_key_size);
+                } else {
+                    payload[8 + d.key_size] = 0; write_word(payload + 9 + d.key_size, template->key_size);
+                    memcpy(payload + 17 + d.key_size, template->key, (size_t)template->key_size);
+                }
                 for (uint64_t i = 0; i < count; ++i) drops[i] = (KeyView){children[i]->drop_key, children[i]->drop_key_size};
-                status = encode_record("RD01", 'g', (KeyView){payload, n}, count, drops, &drop_key, &d.drop_key_size);
+                status = encode_record("RD01", d.user_drop ? 'h' : 'g', (KeyView){payload, n}, count, drops, &drop_key, &d.drop_key_size);
             }
             free(payload); free(drops);
         }

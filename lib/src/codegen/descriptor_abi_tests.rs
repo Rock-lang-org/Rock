@@ -23,9 +23,9 @@ fn native_and_uniform_descriptor_suffixes_match_the_native_c_abi() {
     cg.set_type_context(tc);
     cg.emit_erased_program(&contract).unwrap();
     let descriptor_ty = cg.erased_descriptor_type();
-    assert_eq!(descriptor_ty.count_fields(), 17);
+    assert_eq!(descriptor_ty.count_fields(), 20);
     let data = TargetData::create(cg.module.get_data_layout().as_str().to_str().unwrap());
-    assert_eq!(data.get_abi_size(&descriptor_ty), 136);
+    assert_eq!(data.get_abi_size(&descriptor_ty), 160);
     assert_eq!(data.offset_of_element(&descriptor_ty, 9), Some(72));
     assert_eq!(data.offset_of_element(&descriptor_ty, 13), Some(104));
     cg.emit_uniform_descriptor(&MirUniformLayout::Tuple(Vec::new()), "shape_only").unwrap();

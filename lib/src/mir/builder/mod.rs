@@ -37,7 +37,8 @@ type HirExpr = crate::hir::HirExprFor<AcceptedHir>;
 type HirExprKind = crate::hir::HirExprKindFor<AcceptedHir>;
 
 pub struct MirBuilder<'a> {
-    scoped_entries: std::collections::BTreeMap<DefId, super::MirErasedKey>,
+    scoped_entries: std::collections::BTreeMap<super::MirScopedEntryKey, super::MirErasedKey>,
+    scoped_callable_sources: HashMap<InstanceId, DefId>,
     erased_invocations:
         std::collections::BTreeMap<super::MirErasedInvocationKey, super::MirErasedCall>,
     owned_object_calls:
@@ -229,6 +230,7 @@ impl<'a> MirBuilder<'a> {
     pub fn new(program: &'a HirProgram, type_context: &'a RefCell<TypeContext>) -> Self {
         Self {
             scoped_entries: Default::default(),
+            scoped_callable_sources: Default::default(),
             erased_invocations: Default::default(),
             owned_object_calls: Default::default(),
             object_schemas: Default::default(),
@@ -346,6 +348,11 @@ impl<'a> MirBuilder<'a> {
             &program.pre_mir_instance_bodies,
         );
         let direct_drop_types = Self::direct_drop_types_for_program(program);
+        let scoped_callable_sources = program.instances.values().filter_map(|record| {
+            let definition = Self::instance_origin_callable_def_id(&record.origin);
+            program.erased.scoped_entries.keys().any(|key| key.definition == definition)
+                .then_some((record.id, definition))
+        }).collect::<HashMap<_, _>>();
         let mut bodies = MirInstanceBodies::new();
         for instance_id in Self::drop_glue_instance_roots(program) {
             bodies.insert_runtime_instance_root(instance_id);
@@ -370,6 +377,7 @@ impl<'a> MirBuilder<'a> {
             builder.vtables = program.vtables.clone();
             builder.erased_invocations = program.erased_invocations.clone();
             builder.scoped_entries = program.erased.scoped_entries.clone();
+            builder.scoped_callable_sources = scoped_callable_sources.clone();
             builder.owned_object_calls = program.owned_object_calls.clone();
             builder.callable_instances_by_def_id = callable_instances_by_def_id.clone();
             if let Some(definition) = program
@@ -1302,7 +1310,20 @@ impl<'a> MirBuilder<'a> {
             contract.nominal_drop_authority.insert(
                 id,
                 if user_drop {
-                    super::MirNominalDropAuthority::UnsupportedUserDrop
+                    let selected = contract.erased.nominal_drop_entries.get(&id).filter(|selection| {
+                        let Some(drop) = &program.language_items.drop else { return false; };
+                        let Some(implementation) = program.impls.get(&selection.implementation) else { return false; };
+                        let Some(method) = implementation.methods.values().find(|method| method.id == selection.entry.definition) else { return false; };
+                        implementation.trait_id == Some(drop.trait_id)
+                            && selection.member == drop.method_id
+                            && program.indexes.effective_trait_methods.get(&(implementation.id, selection.member)) == Some(&method.id)
+                            && method.self_receiver == Some(crate::types::ReceiverMode::Move)
+                            && !method.is_unsafe && method.params.len() == 1
+                            && method.ret_type == Type::Unit
+                            && selection.entry.static_args.is_empty()
+                    });
+                    selected.cloned().map(super::MirNominalDropAuthority::Selected)
+                        .unwrap_or(super::MirNominalDropAuthority::UnsupportedUserDrop)
                 } else {
                     super::MirNominalDropAuthority::FieldsOnly
                 },
@@ -1891,6 +1912,7 @@ impl<'a> MirBuilder<'a> {
         builder.owned_object_calls = self.owned_object_calls.clone();
         builder.erased_invocations = self.erased_invocations.clone();
         builder.scoped_entries = self.scoped_entries.clone();
+        builder.scoped_callable_sources = self.scoped_callable_sources.clone();
         builder.pending_closure_body_captures = captures;
         let function_id = MirFunctionId::Closure(Box::new(closure_id));
         let mir_func = builder.build_function(

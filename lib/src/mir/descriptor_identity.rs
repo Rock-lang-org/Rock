@@ -5,10 +5,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ids::{CrateId, DefId, TypeId};
 use crate::products::ProductCrateIdentity;
 use crate::type_context::{Ty, TypeContext};
+use crate::types::Type;
 
 use super::{MirBackendContract, MirPayloadDropChildren, MirPayloadDropPlan};
 
-pub const DESCRIPTOR_ABI: u64 = 1;
+pub const DESCRIPTOR_ABI: u64 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirDescriptorIdentity {
@@ -159,6 +160,28 @@ pub fn descriptor_identity(
         plan: &MirPayloadDropPlan,
     ) -> Option<Vec<u8>> {
         let semantic = semantic_identity(contract, tc, plan.ty)?;
+        if let (Some(Ty::Struct { id, .. }), Some(callable)) = (tc.try_ty(plan.ty), &plan.user_drop) {
+            if let Some(super::MirNominalDropAuthority::Selected(selection)) = contract.nominal_drop_authority.get(id) {
+                let declaration = contract.callables.get(callable)?;
+                let unit = tc.id_for_type(&Type::Unit)?;
+                if declaration.source_def_id != Some(selection.entry.definition)
+                    || declaration.signature != super::MirCallableSignature::from_instance_type_ids(&[plan.ty], unit, true, tc)
+                { return None; }
+                let (template, templates) = super::nominal_template(contract, tc, *id).ok()?;
+                let fields = match &plan.children {
+                    MirPayloadDropChildren::Fields(fields) => fields.as_slice(),
+                    MirPayloadDropChildren::None if templates.is_empty() => &[],
+                    _ => return None,
+                };
+                if fields.len() != templates.len() { return None; }
+                let mut payload = Vec::new();
+                frame(&mut payload, &semantic);
+                frame(&mut payload, &template);
+                frame(&mut payload, &super::nominal_factory::nominal_drop_template_key(contract, tc, selection).ok()?);
+                return Some(key(b"RD01", b'h', &payload, &fields.iter()
+                    .map(|field| drop_key(contract, tc, field)).collect::<Option<Vec<_>>>()?));
+            }
+        }
         if plan.user_drop.is_none() {
             if let Some(Ty::Struct { id, .. }) = tc.try_ty(plan.ty) {
                 if let Ok((template, templates)) = super::nominal_template(contract, tc, *id) {

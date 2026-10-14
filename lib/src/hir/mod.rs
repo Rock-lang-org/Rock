@@ -3771,7 +3771,7 @@ pub struct HirOpenOwner {
 
 impl HirOpenBinding {
     pub(crate) fn matches_owner(&self, ty: &Type) -> bool {
-        matches!(ty, Type::Struct { args, .. } if args.as_slice() == [Type::Witness(self.witness)])
+        self.owner.is_some() && ty == &self.value.ty
     }
 
     pub fn visit_types(&self, visit: &mut impl FnMut(&Type)) {

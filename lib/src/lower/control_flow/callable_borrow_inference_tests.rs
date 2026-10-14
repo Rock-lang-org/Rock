@@ -298,9 +298,9 @@ fn deferred_member_array_argument_exact_sink_wrapper_and_unknown_receiver() {
     config.no_std = false;
     config.no_prelude = false;
     config.source_providers = vec![SourceProvider::Virtual { path: config.entry_file.clone(), text: source.to_string() }];
-    let artifact = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.agent-work/artifacts/stdlib59/contracts-2/stdlib.rkca");
+    let artifact = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.agent-work/artifacts/stdlib60/contracts-2/stdlib.rkca");
     let artifact_bytes = std::fs::read(&artifact).expect("existing explicit stdlib artifact, no source build");
-    assert_eq!(artifact_bytes.len(), 966970);
+    assert_eq!(artifact_bytes.len(), 967266);
     config.extern_artifacts = vec![("stdlib".into(), artifact.clone())];
     let analysis = crate::analyze(&config).expect("exact original signatureless Sink source must discharge argument constraints");
     let program = &analysis.hir.program;

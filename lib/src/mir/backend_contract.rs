@@ -184,6 +184,8 @@ pub struct MirBackendContract {
     pub descriptor_identities: BTreeMap<TypeId, super::descriptor_identity::MirDescriptorIdentity>,
     pub packages: BTreeMap<TypeId, super::MirPackageSchema>,
     pub owned_object_calls: BTreeMap<super::MirOwnedObjectKey, super::MirOwnedObjectPlan>,
+    pub owner_protocol: Option<super::MirOwnerProtocolAuthority>,
+    pub owner_constructor_patterns: BTreeMap<DefId, crate::hir::HirImplReceiverPattern>,
     pub erased: super::MirErasedContract,
     pub object_schemas: BTreeMap<TypeId, super::MirObjectSchema>,
     pub vtables: BTreeMap<super::MirVtableId, super::MirVtable>,
@@ -452,6 +454,26 @@ pub fn runtime_requirements_for_backend<'a>(
 ) -> BTreeSet<MirRuntimeHelper> {
     let functions = functions.into_iter().collect::<Vec<_>>();
     let mut requirements = runtime_requirements_for_functions(functions.iter().copied());
+    if contract.erased.thin_handle_factories.iter().any(|(key, handles)| {
+        !handles.is_empty() && contract.erased.functions.get(key).is_some_and(|entry| entry.body.is_some())
+    }) || contract.erased.scoped_factories.iter().any(|(key, scopes)| {
+        scopes.values().flatten().any(|requirement| matches!(requirement, super::MirBodyFactoryRequirement::ThinHandle(_)))
+            && contract.erased.functions.get(key).is_some_and(|entry| entry.body.is_some())
+    }) {
+        // The existing tuple interner freezes the exact handle as its sole
+        // child; no new runtime symbol, wire tag, or descriptor ABI is needed.
+        requirements.extend([MirRuntimeHelper::TupleDescriptorFactory, MirRuntimeHelper::HeapAlloc, MirRuntimeHelper::HeapFree]);
+    }
+    for (key, scopes) in &contract.erased.scoped_factories {
+        if !contract.erased.functions.get(key).is_some_and(|entry| entry.body.is_some()) { continue; }
+        for requirement in scopes.values().flatten() {
+            match requirement {
+                super::MirBodyFactoryRequirement::Tuple(_) => { requirements.insert(MirRuntimeHelper::TupleDescriptorFactory); },
+                super::MirBodyFactoryRequirement::Nominal(_) => { requirements.insert(MirRuntimeHelper::NominalDescriptorFactory); },
+                super::MirBodyFactoryRequirement::ThinHandle(_) => {},
+            }
+        }
+    }
     if contract.erased.imported_runtime_support.iter().any(|r| {
         matches!(
             r,

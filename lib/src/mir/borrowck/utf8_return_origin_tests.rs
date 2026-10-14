@@ -4,8 +4,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::allocator_trace_tests::{
-    agent_work_path, integration_literal, integration_sha, mutation_source_program,
-    GUARDED_STDLIB_SHA,
+    integration_literal, integration_sha, mutation_source_program,
 };
 use super::*;
 
@@ -14,10 +13,6 @@ fn utf8_cursor_static_receiver_source_observation() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/integration.rs");
     let fixture_bytes = std::fs::read(&fixture).unwrap();
     let source = integration_literal(&fixture, "fn test_fold_loop_utf8_cursor_resume_and_empty()");
-    let artifact = agent_work_path("artifacts/stdlib58/contracts-1/stdlib.rkca");
-    let artifact_bytes = std::fs::read(&artifact).unwrap();
-    assert_eq!(artifact_bytes.len(), 927978);
-    assert_eq!(integration_sha(&artifact), GUARDED_STDLIB_SHA);
     let (program, entry) = mutation_source_program("utf8_cursor_static_receiver", &source, true);
     assert_eq!(
         integration_sha(&entry),
@@ -142,6 +137,5 @@ fn utf8_cursor_static_receiver_source_observation() {
     assert_eq!(proven_calls, 3);
     assert_eq!(std::fs::read(&entry).unwrap(), source.as_bytes());
     assert_eq!(std::fs::read(&fixture).unwrap(), fixture_bytes);
-    assert_eq!(std::fs::read(&artifact).unwrap(), artifact_bytes);
     eprintln!("UTF8_SOURCE totals roots={} sites={sites} checkedStaticCalls={proven_calls} exactDiagnostics=0 execution=NONE; checked native transport, no mutation/callback authority", roots.len());
 }

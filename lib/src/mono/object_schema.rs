@@ -367,6 +367,28 @@ pub(crate) fn applied_static_forwarder<'a, P: HirPhase>(
     args: &[crate::hir::HirExprFor<P>],
     result: &Type,
 ) -> Result<Option<&'a crate::hir::HirExprFor<P>>, String> {
+    checked_static_forwarder(callee, args, result, true)
+}
+
+/// A native application still checks the complete forwarding protocol; unlike
+/// a constructor dictionary member, its result need not be the static owner.
+pub(crate) fn applied_native_static_forwarder<'a, P: HirPhase>(
+    callee: &'a crate::hir::HirExprFor<P>,
+    args: &[crate::hir::HirExprFor<P>],
+    result: &Type,
+) -> Result<Option<&'a crate::hir::HirExprFor<P>>, String> {
+    if !crate::type_services::facts::TypeFacts::is_codegen_concrete(result)
+        || args.iter().any(|arg| !crate::type_services::facts::TypeFacts::is_codegen_concrete(&arg.ty))
+    { return Ok(None); }
+    checked_static_forwarder(callee, args, result, false)
+}
+
+fn checked_static_forwarder<'a, P: HirPhase>(
+    callee: &'a crate::hir::HirExprFor<P>,
+    args: &[crate::hir::HirExprFor<P>],
+    result: &Type,
+    require_owner_result: bool,
+) -> Result<Option<&'a crate::hir::HirExprFor<P>>, String> {
     use crate::hir::{HirCallTarget, HirExprKindFor, HirStmtFor, HirVarTarget};
     let HirExprKindFor::Lambda {
         params,
@@ -384,6 +406,9 @@ pub(crate) fn applied_static_forwarder<'a, P: HirPhase>(
     else {
         return Ok(None);
     };
+    if !require_owner_result && !crate::type_services::facts::TypeFacts::is_codegen_concrete(&target.owner_ty) {
+        return Ok(None);
+    }
     let Type::Function {
         params: types,
         ret,
@@ -409,7 +434,10 @@ pub(crate) fn applied_static_forwarder<'a, P: HirPhase>(
     if !captures.is_empty()
         || !type_captures.is_empty()
         || !source_captures.is_empty()
-        || !safety.permits_call_without_unsafe()
+        // Accepted HIR already authorized immediate unsafe native calls. Keep
+        // both callable safety types identical; constructor dictionaries remain
+        // safe-only. Artifact blocks intentionally omit lexical unsafe markers.
+        || (require_owner_result && !safety.permits_call_without_unsafe())
         || safety != source_safety
         || callable_kind != source_kind
         || params.len() != args.len()
@@ -420,7 +448,7 @@ pub(crate) fn applied_static_forwarder<'a, P: HirPhase>(
         || ret.as_ref() != result
         || body.ty != *result
         || inner.ty != *result
-        || target.owner_ty != *result
+        || (require_owner_result && target.owner_ty != *result)
         || params
             .iter()
             .map(|param| param.local_id)
@@ -657,6 +685,47 @@ mod tests {
     use crate::mir::MirErasedType;
     use crate::mono::Monomorphizer;
     use crate::types::GenericParamDecl;
+
+    #[test]
+    fn unsafe_native_static_application_preserves_exact_callable_safety_and_arguments() {
+        use crate::hir::{HirExprKindFor as Expr, HirStmtFor as Stmt};
+        let source = r#"
+struct Pool
+impl Pool
+    unsafe release: *U8 -> I64
+    unsafe release = _ -> 42
+allowed: *U8 -> I64
+allowed = pointer -> unsafe Pool::release pointer
+"#;
+        let path = std::path::PathBuf::from("/virtual/unsafe_static/main.rk");
+        let frontend = crate::compile_frontend(&crate::Config {
+            entry_file: path.clone(), no_std: true, no_prelude: true,
+            source_providers: vec![crate::SourceProvider::Virtual { path, text: source.into() }],
+            ..Default::default()
+        }).unwrap();
+        let function = frontend.analysis.hir.program.functions.values().find(|function| function.name == "allowed").unwrap();
+        let Stmt::Expr(expression) = function.body.stmts.last().unwrap() else { panic!("function expression"); };
+        let Expr::Block(block) = &expression.kind else { panic!("accepted unsafe block"); };
+        let Stmt::Expr(expression) = block.stmts.last().unwrap() else { panic!("unsafe expression"); };
+        let Expr::Call(callee, args, None) = &expression.kind else { panic!("applied static forwarder"); };
+        assert!(applied_native_static_forwarder(callee, args, &Type::I64).unwrap().is_some());
+        assert!(applied_static_forwarder(callee, args, &Type::I64).is_err());
+        let mut safe = callee.as_ref().clone();
+        let Type::Function { safety, .. } = &mut safe.ty else { unreachable!() };
+        *safety = crate::types::FunctionSafety::Safe;
+        assert!(applied_native_static_forwarder(&safe, args, &Type::I64).is_err());
+        let mut different = args.clone();
+        different[0].ty = Type::I64;
+        assert!(applied_native_static_forwarder(callee, &different, &Type::I64).is_err());
+        let path = std::path::PathBuf::from("/virtual/unsafe_static/rejected.rk");
+        assert!(crate::compile_frontend(&crate::Config {
+            entry_file: path.clone(), no_std: true, no_prelude: true,
+            source_providers: vec![crate::SourceProvider::Virtual {
+                path, text: source.replace("pointer -> unsafe Pool", "pointer -> Pool"),
+            }],
+            ..Default::default()
+        }).is_err());
+    }
 
     #[test]
     fn nongeneric_self_input_uses_erased_schema_and_preserves_native_abi_guard() {

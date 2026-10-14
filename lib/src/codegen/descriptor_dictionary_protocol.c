@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const RockDescriptorTarget target = {1, 64, 1, INT64_MAX, sizeof(target_key), target_key};
+static const RockDescriptorTarget target = {ROCK_DESCRIPTOR_ABI, 64, 1, INT64_MAX, sizeof(target_key), target_key};
 static atomic_uint calls;
 static void no_drop(void *payload, const RockDescriptor *descriptor) { (void)payload; (void)descriptor; }
 static void read_entry(void *out, const RockDictionary *environment, void *receiver) {
@@ -24,12 +24,12 @@ static const RockDictionaryEntry selected_entries[] = {relay_entry};
 static RockDictionaryEntry native_entries[] = {read_entry};
 static const RockDictionaryTemplate selected = {1, sizeof(template_key), template_key, 1, selected_entries};
 static RockDescriptor type_a = {
-    .size = 8, .alignment = 8, .drop = no_drop, .abi = 1, .kind = 1, .state = 2,
+    .size = 8, .alignment = 8, .drop = no_drop, .abi = ROCK_DESCRIPTOR_ABI, .kind = 1, .state = 2,
     .key_size = sizeof(type_a_key), .key = type_a_key, .drop_key_size = sizeof(type_a_drop), .drop_key = type_a_drop,
     .target_key_size = sizeof(target_key), .target_key = target_key, .index_limit = INT64_MAX
 };
 static RockDescriptor type_b = {
-    .size = 8, .alignment = 8, .drop = no_drop, .abi = 1, .kind = 1, .state = 2,
+    .size = 8, .alignment = 8, .drop = no_drop, .abi = ROCK_DESCRIPTOR_ABI, .kind = 1, .state = 2,
     .key_size = sizeof(type_b_key), .key = type_b_key, .drop_key_size = sizeof(type_b_drop), .drop_key = type_b_drop,
     .target_key_size = sizeof(target_key), .target_key = target_key, .index_limit = INT64_MAX
 };

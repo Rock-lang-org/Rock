@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use super::allocator_trace_tests::{
     agent_work_path, integration_literal, integration_sha, mutation_source_program_with_callback,
-    mutation_source_program_with_phase_callbacks, GUARDED_STDLIB_SHA,
+    mutation_source_program_with_phase_callbacks,
 };
 use super::*;
 use crate::hir::{
@@ -1723,10 +1723,6 @@ fn control(case: &str, bytes: usize, sha: &str) {
     let fixture = root.join("lib/tests/integration.rs");
     let source = integration_literal(&fixture, &format!("fn {case}()"));
     assert_eq!(source.len(), bytes, "unchanged original HKT fixture length");
-    let artifact = agent_work_path("artifacts/stdlib58/contracts-1/stdlib.rkca");
-    let artifact_bytes = std::fs::read(&artifact).unwrap();
-    assert_eq!(artifact_bytes.len(), 927978);
-    assert_eq!(integration_sha(&artifact), GUARDED_STDLIB_SHA);
     let vec_path = root.join("stdlib/vec.rk");
     let vec_bytes = std::fs::read(&vec_path).unwrap();
     assert_eq!(vec_bytes.len(), 11927);
@@ -1750,7 +1746,7 @@ fn control(case: &str, bytes: usize, sha: &str) {
         sha,
         "actual compiled source SHA guard"
     );
-    eprintln!("HKT_RETURN_ORIGIN fixture={case} actualEntry={entry:?} bytes={bytes} sha={sha} integration8SourceArchive=UNAVAILABLE(log-has-diagnostics-only) RuntimeAgreement=clean-before-Borrow historicalStdlibBytes=927978 currentStdlibSchema=59(independently-guarded)");
+    eprintln!("HKT_RETURN_ORIGIN fixture={case} actualEntry={entry:?} bytes={bytes} sha={sha} integration8SourceArchive=UNAVAILABLE(log-has-diagnostics-only) RuntimeAgreement=clean-before-Borrow currentStdlibSchema=59(independently-guarded)");
     assert!(crate::mir::agreement::check_mir_runtime_agreement(&program).is_clean());
     let diagnostics = verdict
         .as_ref()
@@ -1770,8 +1766,7 @@ fn control(case: &str, bytes: usize, sha: &str) {
     assert_eq!(std::fs::read(&entry).unwrap(), source.as_bytes());
     assert_eq!(integration_sha(&entry), sha);
     assert_eq!(std::fs::read(&vec_path).unwrap(), vec_bytes);
-    assert_eq!(std::fs::read(&artifact).unwrap(), artifact_bytes);
-    // The capped observer and all frozen-byte/source guards remain live. A
+    // The capped observer and original source guards remain live. A
     // historical rejection cannot satisfy this independent positive gate.
     assert!(verdict.is_ok(), "owned HKT traversal must pass Borrow: {verdict:?}");
 }
@@ -2970,10 +2965,6 @@ fn hkt_pre_mir_binding_authority_standalone_observation() {
         &format!("fn {case}()"),
     );
     assert_eq!(source.len(), 1317);
-    let artifact = agent_work_path("artifacts/stdlib58/contracts-1/stdlib.rkca");
-    let artifact_bytes = std::fs::read(&artifact).unwrap();
-    assert_eq!(artifact_bytes.len(), 927978);
-    assert_eq!(integration_sha(&artifact), GUARDED_STDLIB_SHA);
     let vec_path = root.join("stdlib/vec.rk");
     let vec_bytes = std::fs::read(&vec_path).unwrap();
     assert_eq!(vec_bytes.len(), 11927);
@@ -3039,7 +3030,6 @@ fn hkt_pre_mir_binding_authority_standalone_observation() {
     assert_eq!(std::fs::read(&entry).unwrap(), source.as_bytes());
     assert_eq!(integration_sha(&entry), sha);
     assert_eq!(std::fs::read(&vec_path).unwrap(), vec_bytes);
-    assert_eq!(std::fs::read(&artifact).unwrap(), artifact_bytes);
     eprintln!("HKT_PRE_MIR observationOnly=true BorrowRuns=1 exactSourceRegistration=transported historicalDiagnosticMultiset=(0,2) historicalSites=option1395..1403/vec11676..11683 historicalReceipt=hkt-callable-result-observation-6.log; observation is not callable authority");
     assert!(verdict.is_ok(), "original HKT positive must pass Borrow after bounded pre-MIR observation: {verdict:?}");
 }

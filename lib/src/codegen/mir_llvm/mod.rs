@@ -10,6 +10,8 @@ mod package;
 mod place;
 mod rvalue;
 mod terminator;
+mod thin_handle;
+mod nominal_drop;
 
 use inkwell::values::{FunctionValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};

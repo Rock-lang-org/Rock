@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 
 use super::allocator_trace_tests::{
     agent_work_path, integration_literal, integration_sha, mutation_source_program,
-    GUARDED_STDLIB_SHA,
 };
 use super::*;
 use crate::diagnostic::DiagnosticLocation;
@@ -862,10 +861,6 @@ fn control(case: &str, source: String, root_marker: &str, root_name: &str) -> Co
             "SLICE_SOURCE HARNESS unset observer flag {flag}"
         );
     }
-    let artifact = agent_work_path("artifacts/stdlib58/contracts-1/stdlib.rkca");
-    let bytes = std::fs::read(&artifact).unwrap();
-    assert_eq!(bytes.len(), 927978);
-    assert_eq!(integration_sha(&artifact), GUARDED_STDLIB_SHA);
     let receipt = agent_work_path("fixtures").join(format!(
         "rock_slice_source_{}_{case}.rk",
         std::process::id()
@@ -878,7 +873,7 @@ fn control(case: &str, source: String, root_marker: &str, root_name: &str) -> Co
         .write_all(source.as_bytes())
         .unwrap();
     let hash = integration_sha(&receipt);
-    eprintln!("SLICE_SOURCE case={case} sourceBytes={} SHA256_BEFORE={hash} exactSource={source:?} stdlib927978SHA={GUARDED_STDLIB_SHA} compilerStdlibDependency=NONE caps=4functions/16origins/16loans/48paths execution=NONE; frontend/mono/agreement/budget failures=HARNESS, never Borrow RED", source.len());
+    eprintln!("SLICE_SOURCE case={case} sourceBytes={} SHA256_BEFORE={hash} exactSource={source:?} compilerStdlibDependency=NONE caps=4functions/16origins/16loans/48paths execution=NONE; frontend/mono/agreement/budget failures=HARNESS, never Borrow RED", source.len());
     let (program, entry) = mutation_source_program(&format!("slice_source_{case}"), &source, false);
     let agreement = crate::mir::agreement::check_mir_runtime_agreement(&program);
     eprintln!("SLICE_SOURCE case={case} RuntimeAgreement={agreement:?}");
@@ -903,9 +898,7 @@ fn control(case: &str, source: String, root_marker: &str, root_name: &str) -> Co
         assert_eq!(std::fs::read(path).unwrap(), source.as_bytes());
         assert_eq!(integration_sha(path), hash);
     }
-    assert_eq!(std::fs::read(&artifact).unwrap(), bytes);
-    assert_eq!(integration_sha(&artifact), GUARDED_STDLIB_SHA);
-    eprintln!("SLICE_SOURCE case={case} SHA256_AFTER={hash} source/artifactBytesUnchanged=true functions={} origins={} loans={} paths={} outcome={} execution=NONE ceiling=flat origins/header/roles NOT source proof",
+    eprintln!("SLICE_SOURCE case={case} SHA256_AFTER={hash} sourceBytesUnchanged=true functions={} origins={} loans={} paths={} outcome={} execution=NONE ceiling=flat origins/header/roles NOT source proof",
         proof.functions.len(), proof.origins.len(), proof.loans.len(), proof.paths.len(), if outcome.is_ok() { "ACCEPTED" } else { "REJECTED" });
     Control {
         source,

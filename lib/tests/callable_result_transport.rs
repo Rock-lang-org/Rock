@@ -1014,7 +1014,7 @@ fn source_free_scalar_opaque_dependencies_require_measured_native_evidence_at_o0
     incompatible[8..12].copy_from_slice(&58u32.to_le_bytes());
     assert_eq!(
         CompilerProducts::from_artifact_bytes(&incompatible).unwrap_err(),
-        "Unsupported product artifact format 58 (expected 59)",
+        "Unsupported product artifact format 58 (expected 60)",
         "schema disagreement must reject before decoding producer evidence"
     );
     assert_eq!(

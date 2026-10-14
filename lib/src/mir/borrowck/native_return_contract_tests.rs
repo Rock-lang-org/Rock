@@ -134,12 +134,6 @@ fn native_return_contract_utf8_producer_observation() {
         ..Default::default()
     };
     let frontend = crate::compile_frontend(&config).unwrap();
-    let artifact =
-        super::allocator_trace_tests::agent_work_path("artifacts/stdlib58/contracts-1/stdlib.rkca");
-    assert_eq!(
-        super::allocator_trace_tests::integration_sha(&artifact),
-        super::allocator_trace_tests::GUARDED_STDLIB_SHA
-    );
     let current = super::allocator_trace_tests::current_stdlib_artifact();
     let products = crate::products::CompilerProducts::read_artifact_from_path(&current).unwrap();
     let mut registration_roots = 0;

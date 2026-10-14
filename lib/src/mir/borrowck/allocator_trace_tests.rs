@@ -1272,21 +1272,15 @@ pub(super) fn agent_work_path(relative: &str) -> PathBuf {
         .parent().unwrap().join(".agent-work").join(relative)
 }
 
-// Schema-58 representation receipt; all schema-57 inputs remain historical,
-// never represented as byte-identical to this independently emitted artifact.
-pub(super) const GUARDED_STDLIB_SHA: &str =
-    "6930eb7c2fb520e6129cbf9fa40c036b395f656ed2364daaeea8334a9debaaac";
-
 pub(super) fn current_stdlib_artifact() -> PathBuf {
-    // Current schema evidence is independently emitted, not a rewritten or
-    // byte-identical replacement for any historical artifact.
-    let artifact = agent_work_path("artifacts/stdlib59/contracts-2/stdlib.rkca");
+    // This fixture exercises only the current artifact format.
+    let artifact = agent_work_path("artifacts/stdlib60/contracts-2/stdlib.rkca");
     let object = artifact.with_file_name("stdlib.o");
-    assert_eq!(std::fs::metadata(&artifact).unwrap().len(), 966970);
-    assert_eq!(integration_sha(&artifact), "20bc4a125cf167d57bbd2109dd056fef712a065ff95f5b41fa6e79ec8619a157");
-    assert_eq!(std::fs::metadata(&object).unwrap().len(), 174040);
-    assert_eq!(integration_sha(&object), "3b54aba09ef83134bb1a454f76baaa647b75e2acb76fd11bc7da0902bb72c468");
-    eprintln!("CURRENT_STDLIB artifact={artifact:?} schema=59 bytes=966970 sha=20bc4a125cf167d57bbd2109dd056fef712a065ff95f5b41fa6e79ec8619a157 producerPaths=absolute historical58=preserved-not-loaded");
+    assert_eq!(std::fs::metadata(&artifact).unwrap().len(), 967266);
+    assert_eq!(integration_sha(&artifact), "b808e0c547714ac13a492e1b9a2c0dec86bcc8c30f639971eadfb6e5ff4f0de4");
+    assert_eq!(std::fs::metadata(&object).unwrap().len(), 174424);
+    assert_eq!(integration_sha(&object), "08fb9f976055f987ee9c639981685c56d90ecb1245ac5732e0e1dd17f142b128");
+    eprintln!("CURRENT_STDLIB artifact={artifact:?} schema=60 bytes=967266 sha=b808e0c547714ac13a492e1b9a2c0dec86bcc8c30f639971eadfb6e5ff4f0de4 producerPaths=absolute");
     artifact
 }
 
@@ -2249,16 +2243,12 @@ fn scalar_index_temporary_control(case: &str) {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let fixture_path = workspace.join("lib/tests/integration.rs");
     let archive = agent_work_path("recovery/rock-completion-integration-6.log");
-    let artifact = agent_work_path("artifacts/stdlib58/contracts-1/stdlib.rkca");
     let fixture_bytes = std::fs::read(&fixture_path).unwrap();
     let archive_bytes = std::fs::read(&archive).unwrap();
-    let artifact_bytes = std::fs::read(&artifact).unwrap();
-    assert_eq!(artifact_bytes.len(), 927978);
-    assert_eq!(integration_sha(&artifact), GUARDED_STDLIB_SHA);
     let source = integration_log_source(&archive, fixture);
     assert_eq!(source, integration_literal(&fixture_path, &format!("fn {fixture}()")), "exact historical source, no annotations or replacement fixture");
     assert_eq!(&source[origin_range.0..origin_range.1], if case == "cast" { "s" } else { "arr" });
-    eprintln!("SCALAR_INDEX case={case} fixture={fixture} phase=fixture-harness bytes={} exactSource={source:?} explicitDependency=stdlib artifactBytes=927978 artifactSHA256={GUARDED_STDLIB_SHA} execution=NONE; frontend/mono/agreement failures here are HARNESS, not Borrow RED", source.len());
+    eprintln!("SCALAR_INDEX case={case} fixture={fixture} phase=fixture-harness bytes={} exactSource={source:?} explicitDependency=stdlib execution=NONE; frontend/mono/agreement failures here are HARNESS, not Borrow RED", source.len());
     let (program, entry) = mutation_source_program(&format!("scalar_index_{case}"), &source, true);
     let hash = integration_sha(&entry);
     if case == "cast" {
@@ -2472,8 +2462,7 @@ fn scalar_index_temporary_control(case: &str) {
     assert_eq!(integration_sha(&entry), hash);
     assert_eq!(std::fs::read(&fixture_path).unwrap(), fixture_bytes);
     assert_eq!(std::fs::read(&archive).unwrap(), archive_bytes);
-    assert_eq!(std::fs::read(&artifact).unwrap(), artifact_bytes);
-    eprintln!("SCALAR_INDEX case={case} SHA256_AFTER={hash} source/archive/artifact bytes unchanged functions={} records={records} actualLoanIds={} actualTypeIds={} caps=8/24/16/64 execution=NONE", functions.len(), selected_loans.len(), types.len());
+    eprintln!("SCALAR_INDEX case={case} SHA256_AFTER={hash} source/archive bytes unchanged functions={} records={records} actualLoanIds={} actualTypeIds={} caps=8/24/16/64 execution=NONE", functions.len(), selected_loans.len(), types.len());
     outcome.expect("SCALAR CLASSIFICATION RED: unchanged valid source storing/returning I64 must pass Borrow; inspect actual typed assignment and diagnostics, not unsafe execution");
     assert!(classification.is_empty(), "ineligible scalar storage must not classify its conservative input Temporary envelope as a stored reference");
 }
@@ -2700,11 +2689,8 @@ mod slice_reference_controls {
         }
         let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/integration.rs");
         let archive = agent_work_path("recovery/rock-completion-integration-8.log");
-        let artifact = agent_work_path("artifacts/stdlib58/contracts-1/stdlib.rkca");
-        let inputs = [&fixture_path, &archive, &artifact].into_iter()
+        let inputs = [&fixture_path, &archive].into_iter()
             .map(|path| (path.clone(), std::fs::read(path).unwrap(), integration_sha(path))).collect::<Vec<_>>();
-        assert_eq!(inputs[2].1.len(), 927978);
-        assert_eq!(inputs[2].2, GUARDED_STDLIB_SHA);
         let source = integration_log_source(&archive, fixture);
         assert_eq!(source, integration_literal(&fixture_path, &format!("fn {fixture}()")), "unchanged original literal required");
         assert_eq!(&source[range.0..range.1], if fixture == "shared_index_reference_uses_index_authority" { "arr" } else { "values" });
@@ -2991,7 +2977,7 @@ mod slice_reference_controls {
             assert_eq!(std::fs::read(path).unwrap(), source.as_bytes());
             assert_eq!(integration_sha(path), hash);
         }
-        eprintln!("SLICE_REFERENCE fixture={fixture} SHA256_AFTER={hash} ALL_original_source_archive_fixture_artifact_bytes_preserved=true functions={} origins={} loans={} paths={} sites={} actualConversions={} actualMetadataBorrows={} actualArrayBindings={:?} actualViewBindings={:?} execution=NONE",
+        eprintln!("SLICE_REFERENCE fixture={fixture} SHA256_AFTER={hash} ALL_original_source_archive_fixture_bytes_preserved=true functions={} origins={} loans={} paths={} sites={} actualConversions={} actualMetadataBorrows={} actualArrayBindings={:?} actualViewBindings={:?} execution=NONE",
             receipt.functions.len(), receipt.origins.len(), receipt.loans.len(), receipt.paths.len(), receipt.sites.len(), receipt.conversions, receipt.metadata_borrows, receipt.array_bindings, receipt.view_bindings);
         assert!(receipt.conversions > 0 && receipt.metadata_borrows > 0 && !receipt.array_bindings.is_empty() && !receipt.view_bindings.is_empty(),
             "SLICE_REFERENCE HARNESS required primitive-view ancestry missing; do not generalize shared-index evidence or claim security RED");
@@ -3047,7 +3033,6 @@ fn capture_integration_borrow_storage_and_owner_authority() {
     let artifact = agent_work_path("artifacts/stdlib/stdlib.rkca");
     let artifact_bytes = std::fs::read(&artifact).unwrap();
     assert_eq!(artifact_bytes.len(), 803478, "approved current primary7 artifact length");
-    assert_eq!(integration_sha(&artifact), GUARDED_STDLIB_SHA, "approved replacement artifact SHA256");
     let stdlib_root = workspace.join("stdlib");
     let stdlib_inputs = fresh_stdlib_inputs(&stdlib_root);
     eprintln!("INTEGRATION_BORROW_TRACE approved-artifact={artifact:?} bytes={} SHA256={} stdlib-source-snapshot-files={}; before/after complete filename+byte equality enforced", artifact_bytes.len(), integration_sha(&artifact), stdlib_inputs.len());

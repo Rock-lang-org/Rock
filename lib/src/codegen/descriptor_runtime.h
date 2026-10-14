@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ROCK_DESCRIPTOR_ABI 1u
+#define ROCK_DESCRIPTOR_ABI 2u
 #define ROCK_DESCRIPTOR_SHAPE 0u
 #define ROCK_DESCRIPTOR_NATIVE 1u
 #define ROCK_DESCRIPTOR_TUPLE 2u
@@ -29,6 +29,9 @@ struct RockDescriptor {
     uint64_t target_key_size;
     const unsigned char *target_key;
     uint64_t index_limit;
+    RockDrop user_drop;
+    uint64_t argument_count;
+    const RockDescriptor *const *arguments;
 };
 
 typedef struct {
@@ -40,6 +43,9 @@ typedef struct {
 typedef struct {
     uint64_t abi, key_size;
     const unsigned char *key; /* complete immutable RN01 selected template */
+    uint64_t drop_key_size;
+    const unsigned char *drop_key;
+    RockDrop user_drop;
 } RockNominalTemplate;
 
 typedef enum {

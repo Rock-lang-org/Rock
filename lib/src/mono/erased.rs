@@ -36,9 +36,14 @@ impl Monomorphizer {
                 "scoped concrete wrapper has a nonconcrete public signature".into(),
             ));
         }
+        let scoped_key = MirScopedEntryKey {
+            definition: function.id,
+            params: function.params.iter().map(|parameter| self.intern_type(&parameter.ty)).collect(),
+            ret: self.intern_type(&function.ret_type),
+        };
         let key = MirErasedKey {
             definition: function.id,
-            static_args: Vec::new(),
+            static_args: scoped_key.params.iter().copied().chain(std::iter::once(scoped_key.ret)).collect(),
         };
         let params = function
             .params
@@ -55,7 +60,7 @@ impl Monomorphizer {
         };
         let symbol = format!(
             "rock.scoped.{}",
-            self.backend_symbol_for_origin(&super::InstanceOrigin::Function(function.id), &[])
+            self.backend_symbol_for_origin(&super::InstanceOrigin::Function(function.id), &key.static_args)
         );
         self.erased.functions.insert(
             key.clone(),
@@ -68,14 +73,14 @@ impl Monomorphizer {
             },
         );
         let body = ErasedBodyBuilder::new(self, signature, BTreeMap::new(), function)
-            .and_then(|builder| builder.block(&function.body))
+            .and_then(|builder| builder.for_entry(key.clone()).block(&function.body))
             .map_err(|error| (span.clone(), error))?;
         self.erased
             .functions
             .get_mut(&key)
             .ok_or_else(|| (span.clone(), "scoped entry declaration disappeared".into()))?
             .body = Some(body);
-        self.erased.scoped_entries.insert(function.id, key);
+        self.erased.scoped_entries.insert(scoped_key, key);
         // The concrete wrapper transports arguments only; witnesses stay exclusively in the erased body.
         let arguments = function
             .params
@@ -1668,7 +1673,66 @@ impl Monomorphizer {
         Ok(template)
     }
 
+    fn materialize_nominal_drop(&mut self, owner: DefId) -> Result<(), String> {
+        if self.erased.nominal_drop_entries.contains_key(&owner) { return Ok(()); }
+        let Some(trait_id) = self.drop_trait_id() else { return Ok(()); };
+        let Some(member) = self.drop_method_id else { return Ok(()); };
+        let parameters = self.nominal_generic_params.get(&owner).ok_or("nominal declaration binders missing")?.clone();
+        let subject = Type::Struct { id: owner, args: parameters.iter().copied().map(Type::Generic).collect() };
+        let mut candidates = self.trait_impls.get(&trait_id).into_iter().flatten()
+            .filter(|implementation| self.drop_receiver_matches(implementation, &subject))
+            .cloned().collect::<Vec<_>>();
+        candidates.sort_by_key(|implementation| implementation.id);
+        candidates.dedup_by(|duplicate, canonical| {
+            if duplicate.id != canonical.id || duplicate.receiver_pattern != canonical.receiver_pattern
+                || duplicate.trait_arg_types != canonical.trait_arg_types
+                || self.impl_owner_identity(duplicate) != self.impl_owner_identity(canonical)
+            { return false; }
+            if let Some(method) = self.effective_trait_methods.get(&(canonical.id, member)) {
+                let has_body = |implementation: &super::hir_types::HirImpl| {
+                    implementation.methods.values().find(|candidate| candidate.id == *method)
+                        .is_some_and(|candidate| !candidate.body.stmts.is_empty())
+                };
+                if has_body(duplicate) && !has_body(canonical) { std::mem::swap(duplicate, canonical); }
+            }
+            true
+        });
+        if candidates.is_empty() { return Ok(()); }
+        let [implementation] = candidates.as_slice() else { return Err("ambiguous descriptor-backed nominal Drop implementation".into()); };
+        let method_id = *self.effective_trait_methods.get(&(implementation.id, member)).ok_or("selected nominal Drop member missing")?;
+        let mut method = implementation.methods.values().find(|method| method.id == method_id)
+            .ok_or("selected nominal Drop body missing")?.clone();
+        if method.self_receiver != Some(ReceiverMode::Move) || method.is_unsafe
+            || method.params.len() != 1 || method.ret_type != Type::Unit
+            || method.generic_params.iter().any(|p| !implementation.type_generics.iter().any(|q| p.id == q.id))
+        { return Err("descriptor-backed nominal Drop requires its exact consuming declaration".into()); }
+        method.generic_params = implementation.type_generics.clone();
+        method.generic_bounds = nominal_drop_bounds(&implementation.bounds, &method.generic_bounds)?;
+        let substitution = crate::selection::impl_receiver_pattern_substitution(implementation, &subject, self.trait_impls.values().flatten())
+            .ok_or("nominal Drop receiver substitution missing")?;
+        let indices = parameters.iter().enumerate().map(|(i, p)| (*p, i as u32)).collect();
+        let arguments = method.generic_params.iter().map(|p| {
+            let ty = substitution.get(&p.id).ok_or("nominal Drop substitution incomplete")?;
+            MirErasedType::from_type(ty, &indices, None, &mut self.type_context, &self.normalization_env).map_err(|e| format!("{e:?}"))
+        }).collect::<Result<Vec<_>, String>>()?;
+        let entry = MirErasedKey { definition: method.id, static_args: vec![] };
+        self.erased.nominal_drop_entries.insert(owner, MirNominalDropSelection {
+            implementation: implementation.id, member, entry: entry.clone(), arguments,
+        });
+        self.materialize_erased_definition(method, true)?;
+        if !self.erased.functions[&entry].signature.dictionaries.is_empty() {
+            return Err("descriptor-backed nominal Drop dictionary environment is not admitted".into());
+        }
+        Ok(())
+    }
+
     fn materialize_erased_function(&mut self, id: DefId) -> Result<MirErasedKey, String> {
+        let (_, function) = self.generic_function_by_id(id).ok_or("erased generic function body provider missing")?;
+        self.materialize_erased_definition(function, false)
+    }
+
+    fn materialize_erased_definition(&mut self, function: HirFunction, layout_sized_bounds: bool) -> Result<MirErasedKey, String> {
+        let id = function.id;
         let key = MirErasedKey {
             definition: id,
             static_args: vec![],
@@ -1676,9 +1740,6 @@ impl Monomorphizer {
         if self.erased.functions.contains_key(&key) {
             return Ok(key);
         }
-        let (_, function) = self
-            .generic_function_by_id(id)
-            .ok_or("erased generic function body provider missing")?;
         let parameters = function
             .generic_params
             .iter()
@@ -1714,7 +1775,7 @@ impl Monomorphizer {
             &self.normalization_env,
         )
         .map_err(|e| format!("{e:?}"))?;
-        let dictionaries = super::object_schema::erased_bound_schemas(
+        let mut dictionaries = super::object_schema::erased_bound_schemas(
             &parameters,
             &function.generic_bounds,
             &HashMap::new(),
@@ -1724,6 +1785,20 @@ impl Monomorphizer {
             &mut self.type_context,
             false,
         )?;
+        if layout_sized_bounds {
+            // Selected destruction/owner transport already receives a checked
+            // sized descriptor for each Type binder. The language Sized marker
+            // has no methods; it is not an extra callable dictionary capability.
+            // All other bounds retain their ordinary dictionary requirements.
+            if let Some(sized) = &self.language_items.sized {
+                dictionaries.retain(|dictionary| {
+                    let MirErasedType::Parameter(index) = dictionary.subject else { return true; };
+                    dictionary.trait_id != sized.trait_id || !dictionary.trait_args.is_empty()
+                        || !dictionary.members.is_empty()
+                        || parameters.get(index as usize).is_none_or(|parameter| parameter.kind != crate::type_services::kind::Kind::Type)
+                });
+            }
+        }
         let mut layouts = parameters
             .iter()
             .enumerate()
@@ -1851,9 +1926,94 @@ struct ErasedBodyBuilder<'a> {
     terminated: bool,
     scopes: Vec<MirErasedScope>,
     witnesses: BTreeMap<crate::types::WitnessId, u32>,
+    current_span: Option<Span>,
 }
 
 impl<'a> ErasedBodyBuilder<'a> {
+    fn owner_operation(
+        &mut self,
+        selected: &crate::hir::HirStaticMethodTarget,
+        params: &[Type],
+        ret: &Type,
+        native: bool,
+    ) -> Result<MirErasedOwnerOperation, String> {
+        let span = self.current_span.clone().ok_or("scoped owner operation has no source span")?;
+        let HirSelectedMethodTarget::ImplMethod {
+            impl_id, method_id, selected_trait: Some(member),
+        } = &selected.method.target else {
+            return Err("scoped owner transport requires an exact selected implementation".into());
+        };
+        if self.mono.effective_trait_methods.get(&(*impl_id, member.member_id)) != Some(method_id) {
+            return Err("scoped owner protocol member disagrees with its selected implementation".into());
+        }
+        let constructor = self.mono.intern_type(&selected.owner_ty);
+        let target = if native {
+            if !params.iter().chain(std::iter::once(ret)).all(crate::type_services::facts::TypeFacts::is_codegen_concrete) {
+                return Err("closed owner split requires concrete owner and State transport".into());
+            }
+            let arguments = params.iter().map(|ty| HirExpr {
+                kind: HirExprKind::Unit, ty: ty.clone(),
+                span: span.clone(),
+            }).collect::<Vec<_>>();
+            let (_, target, _) = self.mono.monomorphize_static_method_call(
+                &selected.owner_ty, &selected.method, &arguments,
+                span,
+            ).map_err(|error| format!("scoped owner split specialization: {:?}", error.kind))?;
+            let crate::hir::HirCallTarget::Instance(instance) = target else {
+                return Err("scoped owner split lacks its exact native instance".into());
+            };
+            MirErasedOwnerTarget::Native(MirCallableKey::Instance(instance))
+        } else {
+            let implementation = self.mono.trait_impls.get(&member.trait_id)
+                .and_then(|impls| impls.iter().find(|implementation| implementation.id == *impl_id))
+                .ok_or("scoped owner protocol implementation missing")?.clone();
+            let mut method = implementation.methods.values().find(|method| method.id == *method_id)
+                .ok_or("scoped owner protocol body provider missing")?.clone();
+            if method.self_receiver.is_some() || !method.is_unsafe {
+                return Err("scoped owner protocol requires its declared unsafe static operation".into());
+            }
+            let mut parameters = implementation.type_generics.clone();
+            parameters.extend(method.generic_params.iter().filter(|parameter| {
+                !implementation.type_generics.iter().any(|parent| parent.id == parameter.id)
+            }).cloned());
+            method.generic_params = parameters;
+            method.generic_bounds = nominal_drop_bounds(&implementation.bounds, &method.generic_bounds)?;
+            let bindings = selected.method.owner_substitution.iter().chain(&selected.method.method_substitution)
+                .map(|binding| (binding.param, binding.ty.clone())).collect::<HashMap<_, _>>();
+            if bindings.len() != selected.method.owner_substitution.len() + selected.method.method_substitution.len() {
+                return Err("scoped owner protocol substitution is duplicated".into());
+            }
+            let type_args = method.generic_params.iter().map(|parameter| {
+                self.ty(bindings.get(&parameter.id).ok_or("scoped owner protocol substitution missing")?)
+            }).collect::<Result<Vec<_>, String>>()?;
+            let key = self.mono.materialize_erased_definition(method, true)?;
+            if self.mono.language_items.object_owner.as_ref().is_some_and(|protocol| {
+                protocol.trait_id == member.trait_id && protocol.from_parts_id == member.member_id
+            }) {
+                self.mono.erased.owner_rebuild_entries.insert(key.clone(), (*impl_id, member.member_id));
+            }
+            let signature = self.mono.erased.functions[&key].signature.clone();
+            if !signature.dictionaries.is_empty() {
+                return Err("scoped owner protocol dictionary environments are not admitted".into());
+            }
+            let actual_params = params.iter().map(|ty| self.ty(ty)).collect::<Result<Vec<_>, _>>()?;
+            let actual_ret = self.ty(ret)?;
+            if signature.params.len() != actual_params.len()
+                || !signature.params.iter().zip(&actual_params).all(|(expected, actual)| {
+                    expected.substitute(&type_args).is_ok_and(|expected| erased_types_agree(&expected, actual, &self.mono.type_context))
+                })
+                || !erased_types_agree(&signature.ret.substitute(&type_args).map_err(|error| format!("{error:?}"))?, &actual_ret, &self.mono.type_context)
+            {
+                return Err("scoped owner protocol signature disagrees with canonical transport".into());
+            }
+            MirErasedOwnerTarget::Erased { key, type_args }
+        };
+        Ok(MirErasedOwnerOperation {
+            constructor, implementation: *impl_id, trait_id: member.trait_id,
+            member: member.member_id, definition: *method_id, target,
+        })
+    }
+
     fn new(
         mono: &'a mut Monomorphizer,
         signature: MirErasedSignature,
@@ -1871,8 +2031,9 @@ impl<'a> ErasedBodyBuilder<'a> {
             .collect();
         let locals = signature.params.clone();
         let mut cleanup = crate::mir::cleanup::CleanupScopes::default();
+        let drop_receiver = mono.erased.nominal_drop_entries.values().any(|selection| selection.entry.definition == function.id);
         cleanup.enter(
-            (0..locals.len())
+            (usize::from(drop_receiver)..locals.len())
                 .map(|index| MirErasedLocal(index as u32))
                 .collect(),
         );
@@ -1905,10 +2066,11 @@ impl<'a> ErasedBodyBuilder<'a> {
             terminated: false,
             scopes: Vec::new(),
             witnesses: BTreeMap::new(),
+            current_span: None,
         })
     }
     fn ty(&mut self, ty: &Type) -> Result<MirErasedType, String> {
-        MirErasedType::from_type_scoped(
+        let result = MirErasedType::from_type_scoped(
             ty,
             &self.variables,
             None,
@@ -1916,7 +2078,18 @@ impl<'a> ErasedBodyBuilder<'a> {
             &mut self.mono.type_context,
             &self.mono.normalization_env,
         )
-        .map_err(|e| format!("erased type: {e:?}; actual typed input: {ty:?}"))
+        .map_err(|e| format!("erased type: {e:?}; actual typed input: {ty:?}"))?;
+        if let MirErasedType::Nominal { id, flavor: crate::types::NominalTypeKind::Struct, .. } = &result {
+            // A package carries its exact destructor environment already; only
+            // newly constructed nominal metadata needs a selected erased body.
+            let carried = self.scopes.iter().enumerate().any(|(index, scope)| {
+                let MirErasedScopeSource::Package { package } = scope.source else { return false; };
+                scoped_package_payload(package, index as u32, scope.witness, &mut self.mono.type_context.clone())
+                    .is_ok_and(|payload| payload == result)
+            });
+            if !carried { self.mono.materialize_nominal_drop(*id)?; }
+        }
+        Ok(result)
     }
     fn for_entry(mut self, entry: MirErasedKey) -> Self {
         self.entry = entry;
@@ -2075,6 +2248,11 @@ impl<'a> ErasedBodyBuilder<'a> {
         destination
     }
     fn assign(&mut self, destination: MirErasedLocal, value: MirErasedRvalue) {
+        if let Some(span) = &self.current_span {
+            let index = self.blocks[self.current.0 as usize].statements.len();
+            self.mono.erased.statement_origins.entry(self.entry.clone()).or_default()
+                .insert((self.current, index), span.clone());
+        }
         self.blocks[self.current.0 as usize]
             .statements
             .push(MirErasedAssignment { destination, value });
@@ -2111,6 +2289,11 @@ impl<'a> ErasedBodyBuilder<'a> {
         block
     }
     fn terminate(&mut self, terminator: MirErasedTerminator) {
+        if let Some(span) = &self.current_span {
+            let index = self.blocks[self.current.0 as usize].statements.len();
+            self.mono.erased.statement_origins.entry(self.entry.clone()).or_default()
+                .insert((self.current, index), span.clone());
+        }
         self.blocks[self.current.0 as usize].terminator = terminator;
         self.terminated = true;
     }
@@ -2127,8 +2310,88 @@ impl<'a> ErasedBodyBuilder<'a> {
         }
     }
     fn expression(&mut self, expr: &HirExpr) -> Result<Option<MirErasedPlace>, String> {
+        let previous = self.current_span.replace(expr.span.clone());
+        let result = self.expression_inner(expr);
+        self.current_span = previous;
+        result
+    }
+
+    fn expression_inner(&mut self, expr: &HirExpr) -> Result<Option<MirErasedPlace>, String> {
         let ty = self.ty(&expr.ty)?;
         Ok(Some(match &expr.kind {
+            HirExprKind::OwnedObjectCall { owner, args, call } => {
+                if expr.ty == Type::Never {
+                    return Err("opened consuming calls require a returning result entry".into());
+                }
+                let HirSelectedMethodTarget::TraitMethod {
+                    dispatch: HirTraitDispatchKind::Opened(witness), ..
+                } = &call.method.target else {
+                    return Err("scoped consuming calls require a dominating owning Open".into());
+                };
+                let scope = *self.witnesses.get(witness).ok_or("opened owner has no dominating witness")?;
+                let MirErasedScopeSource::Owner { opening } = &self.scopes[scope as usize].source else {
+                    return Err("opened consumption requires owning transport authority".into());
+                };
+                let opening = opening.clone();
+                let Some(place) = self.expression(owner)? else { return Ok(None); };
+                let owner_ty = self.ty(&owner.ty)?;
+                if !erased_types_agree(&owner_ty, &opening.opened, &self.mono.type_context) {
+                    return Err("opened consumption changed the owner constructor".into());
+                }
+                let split = self.owner_operation(&call.into_parts, std::slice::from_ref(&owner.ty), &Type::Tuple(vec![
+                    Type::Pointer(Box::new(Type::Witness(*witness))), call.state.clone(),
+                ]), false)?;
+                let release = self.owner_operation(&call.release, &[
+                    Type::Pointer(Box::new(Type::U8)), call.state.clone(),
+                ], &Type::Unit, false)?;
+                let object = self.scopes[scope as usize].object;
+                let schema = self.mono.object_schemas[&object].clone();
+                let matches = |trait_id, member_id, arguments: &[TypeId]| {
+                    Some(trait_id) == call.method.trait_id() && Some(member_id) == call.method.method_id()
+                        && arguments.len() == call.method.trait_args().len()
+                        && arguments.iter().zip(call.method.trait_args()).all(|(declared, actual)| {
+                            self.mono.open_object_component(&self.mono.type_for(*declared), &Type::Witness(*witness))
+                                .is_ok_and(|expected| expected == *actual)
+                        })
+                };
+                let slot = if let Some(index) = schema.slots.iter().position(|slot| matches(slot.trait_id, slot.member_id, &slot.trait_args)) {
+                    if schema.slots[index].receiver != ReceiverMode::Move || schema.slots[index].result != MirObjectResult::Direct {
+                        return Err("opened consumption requires a consuming direct-result entry".into());
+                    }
+                    MirErasedOwnedSlot::Concrete(index as u32)
+                } else {
+                    let index = schema.erased_slots.iter().position(|slot| matches(slot.trait_id, slot.member_id, &slot.trait_args))
+                        .ok_or("opened consuming member is absent from its producer schema")?;
+                    let slot = &schema.erased_slots[index];
+                    if slot.receiver != ReceiverMode::Move || slot.result != MirObjectResult::Direct {
+                        return Err("opened erased consumption requires a consuming direct-result entry".into());
+                    }
+                    let mut type_args = vec![MirErasedType::Scoped(scope)];
+                    for parameter in slot.signature.parameters.iter().skip(1) {
+                        let binding = call.method.method_substitution.iter().chain(&call.method.owner_substitution)
+                            .find(|binding| binding.param == parameter.source).ok_or("opened consuming method substitution missing")?;
+                        type_args.push(self.ty(&binding.ty)?);
+                    }
+                    let mut dictionaries = Vec::new();
+                    for required in &slot.signature.dictionaries {
+                        let required = required.substitute(&type_args, &self.mono.type_context).map_err(|error| format!("{error:?}"))?;
+                        dictionaries.push(self.dictionary(&required, &expr.span)?);
+                    }
+                    MirErasedOwnedSlot::Erased { slot: index as u32, type_args, dictionaries }
+                };
+                let mut operands = Vec::new();
+                for argument in args {
+                    let Some(place) = self.expression(argument)? else { return Ok(None); };
+                    let argument_ty = self.ty(&argument.ty)?;
+                    operands.push(self.operand(place, &argument_ty));
+                }
+                let previous_span = self.current_span.replace(owner.span.clone());
+                let result = self.temp(ty, MirErasedRvalue::OwnerCall {
+                    scope, owner: MirErasedOperand::Move(place), split, release, slot, args: operands,
+                });
+                self.current_span = previous_span;
+                result
+            }
             HirExprKind::PackageOpen {
                 source,
                 binding,
@@ -2263,9 +2526,6 @@ impl<'a> ErasedBodyBuilder<'a> {
                 binding,
                 body,
             } => {
-                if binding.owner.is_some() {
-                    return Err("owning Open requires canonical split/rebuild execution in the scoped environment".into());
-                }
                 let Some(source_place) = self.expression(source)? else {
                     return Ok(None);
                 };
@@ -2274,28 +2534,51 @@ impl<'a> ErasedBodyBuilder<'a> {
                 let object = self
                     .mono
                     .ensure_object_schema(&Type::Object(Box::new(binding.object.clone())))?;
-                let Type::Reference { mutable, .. } = &binding.source_ty else {
-                    return Err("borrowed scoped Open requires an object reference".into());
-                };
                 let scope = self.scopes.len() as u32;
+                let source_kind = if binding.owner.is_some() {
+                    // Register the binder before lowering the selected rebuild's
+                    // runtime type arguments, never specialize that witness.
+                    if self.witnesses.insert(binding.witness, scope).is_some() {
+                        return Err("scoped witness binder was reused".into());
+                    }
+                    let owner = binding.owner.as_ref().ok_or("owning Open proof missing")?;
+                    let state = self.ty(&owner.state_ty)?;
+                    let split_result = Type::Tuple(vec![
+                        Type::Pointer(Box::new(Type::Object(Box::new(binding.object.clone())))),
+                        owner.state_ty.clone(),
+                    ]);
+                    let split = self.owner_operation(&owner.into_parts, std::slice::from_ref(&source.ty), &split_result, true)?;
+                    let rebuild = self.owner_operation(&owner.from_parts, &[
+                        Type::Pointer(Box::new(Type::Witness(binding.witness))), owner.state_ty.clone(),
+                    ], &binding.value.ty, false)?;
+                    MirErasedScopeSource::Owner { opening: MirErasedOwnerOpening {
+                        closed: self.mono.intern_type(&source.ty),
+                        opened: self.ty(&binding.value.ty)?, state, split, rebuild,
+                    } }
+                } else {
+                    let Type::Reference { mutable, .. } = &binding.source_ty else {
+                        return Err("borrowed scoped Open requires an object reference".into());
+                    };
+                    MirErasedScopeSource::Object { mutable: *mutable }
+                };
                 self.scopes.push(MirErasedScope {
                     witness: binding.witness,
                     object,
-                    source: MirErasedScopeSource::Object { mutable: *mutable },
+                    source: source_kind.clone(),
                 });
-                if self.witnesses.insert(binding.witness, scope).is_some() {
+                if binding.owner.is_none() && self.witnesses.insert(binding.witness, scope).is_some() {
                     return Err("scoped witness binder was reused".into());
                 }
                 let value_ty = self.ty(&binding.value.ty)?;
-                let value = self.temp(
-                    value_ty,
-                    MirErasedRvalue::Open {
-                        scope,
-                        source: source_operand,
-                    },
-                );
+                if binding.owner.is_some() { self.cleanup.enter(Vec::new()); }
+                let opening = match source_kind {
+                    MirErasedScopeSource::Owner { opening } => MirErasedRvalue::OwnerOpen { scope, source: source_operand, plan: opening },
+                    _ => MirErasedRvalue::Open { scope, source: source_operand },
+                };
+                let value = self.temp(value_ty, opening);
                 let previous = self.bindings.insert(binding.value.local_id, value.local);
                 let result = self.lower_block(body)?;
+                let owner_locals = if binding.owner.is_some() { self.cleanup.leave() } else { Vec::new() };
                 self.witnesses.remove(&binding.witness);
                 if let Some(previous) = previous {
                     self.bindings.insert(binding.value.local_id, previous);
@@ -2305,7 +2588,10 @@ impl<'a> ErasedBodyBuilder<'a> {
                 let Some(result) = result else {
                     return Ok(None);
                 };
-                self.temp(ty, MirErasedRvalue::Use(result))
+                // Move the outward result before destroying the opened owner.
+                let outward = self.temp(ty, MirErasedRvalue::Use(result));
+                self.finish_scope_locals(owner_locals);
+                outward
             }
             HirExprKind::ObjectCoercion(value, coercion) => {
                 let Some(crate::hir::HirObjectEvidence::Concrete {
@@ -2339,7 +2625,8 @@ impl<'a> ErasedBodyBuilder<'a> {
                 )
             }
             HirExprKind::Block(block) | HirExprKind::UnsafeBlock(block) => {
-                let Some(operand) = self.lower_block(block)? else {
+                let result = self.lower_block(block)?;
+                let Some(operand) = result else {
                     return Ok(None);
                 };
                 self.temp(ty, MirErasedRvalue::Use(operand))
@@ -2438,6 +2725,19 @@ impl<'a> ErasedBodyBuilder<'a> {
                 self.temp(ty, MirErasedRvalue::Literal(MirErasedLiteral::Bool(*value)))
             }
             HirExprKind::Unit => self.temp(ty, MirErasedRvalue::Literal(MirErasedLiteral::Unit)),
+            HirExprKind::Intrinsic { name, args } if args.len() == 1 && matches!(name.as_str(), "Forget" | "DropInPlace") => {
+                let argument = &args[0];
+                let Some(place) = self.expression(argument)? else { return Ok(None); };
+                let argument_ty = self.ty(&argument.ty)?;
+                let operand = self.operand(place, &argument_ty);
+                let value = if name == "Forget" {
+                    MirErasedRvalue::Forget(operand)
+                } else {
+                    let Type::Pointer(inner) = &argument.ty else { return Err("DropInPlace requires its exact raw pointer".into()); };
+                    MirErasedRvalue::DropInPlace { pointer: operand, pointee: self.ty(inner)? }
+                };
+                self.temp(ty, value)
+            }
             HirExprKind::TupleLiteral(values) => {
                 let mut operands = Vec::new();
                 for value in values {
@@ -3011,9 +3311,12 @@ impl<'a> ErasedBodyBuilder<'a> {
             }
             HirExprKind::Call(callee, args, target) => {
                 if target.is_none() {
-                    if let Some(inner) =
-                        super::object_schema::applied_static_forwarder(callee, args, &expr.ty)?
-                    {
+                    let native = super::object_schema::applied_native_static_forwarder(callee, args, &expr.ty)?;
+                    let forwarded = match native {
+                        Some(inner) => Some(inner),
+                        None => super::object_schema::applied_static_forwarder(callee, args, &expr.ty)?,
+                    };
+                    if let Some(inner) = forwarded {
                         let HirExprKind::Call(source, _, authority) = &inner.kind else {
                             return Err("checked static forwarder lost its call authority".into());
                         };
@@ -3030,6 +3333,24 @@ impl<'a> ErasedBodyBuilder<'a> {
                     }
                 }
                 if let Some(crate::hir::HirCallTarget::StaticMethod(selected)) = target {
+                    if args.iter().all(|arg| crate::type_services::facts::TypeFacts::is_codegen_concrete(&arg.ty))
+                        && crate::type_services::facts::TypeFacts::is_codegen_concrete(&expr.ty)
+                        && crate::type_services::facts::TypeFacts::is_codegen_concrete(&selected.owner_ty)
+                    {
+                        let (_, native, _) = self.mono.monomorphize_static_method_call(
+                            &selected.owner_ty, &selected.method, args, expr.span.clone(),
+                        ).map_err(|error| format!("erased native static application: {:?}", error.kind))?;
+                        let crate::hir::HirCallTarget::Instance(instance) = native else {
+                            return Err("erased native static application lacks canonical instance authority".into());
+                        };
+                        let mut operands = Vec::new();
+                        for arg in args {
+                            let Some(place) = self.expression(arg)? else { return Ok(None); };
+                            let arg_ty = self.ty(&arg.ty)?;
+                            operands.push(self.operand(place, &arg_ty));
+                        }
+                        return Ok(Some(self.temp(ty, MirErasedRvalue::NativeApply { target: MirCallableKey::Instance(instance), args: operands })));
+                    }
                     let trait_id = selected
                         .method
                         .trait_id()
@@ -3404,6 +3725,12 @@ impl<'a> ErasedBodyBuilder<'a> {
             if self.terminated {
                 break;
             }
+            let previous_span = self.current_span.clone();
+            if let HirStmt::Let { value, .. } | HirStmt::Expr(value)
+                | HirStmt::Return(Some(value)) = statement
+            {
+                self.current_span = Some(value.span.clone());
+            }
             match statement {
                 HirStmt::Let {
                     local_id,
@@ -3471,6 +3798,7 @@ impl<'a> ErasedBodyBuilder<'a> {
                     )
                 }
             }
+            self.current_span = previous_span;
         }
         self.bindings = outer_bindings;
         if !self.terminated && result.is_none() {
@@ -3492,6 +3820,9 @@ impl<'a> ErasedBodyBuilder<'a> {
     fn block(mut self, block: &HirBlock) -> Result<MirErasedBody, String> {
         let result = self.lower_block(block)?;
         if let Some(result) = result {
+            if let Some(HirStmt::Expr(value)) = block.stmts.last() {
+                self.current_span = Some(value.span.clone());
+            }
             self.return_value(result);
         }
         if !self.dictionary_factories.is_empty() {
@@ -3507,6 +3838,24 @@ impl<'a> ErasedBodyBuilder<'a> {
             blocks: self.blocks,
         })
     }
+}
+
+fn nominal_drop_bounds(
+    implementation: &crate::hir::HirGenericBounds,
+    method: &crate::hir::HirGenericBounds,
+) -> Result<crate::hir::HirGenericBounds, String> {
+    if !implementation.predicates.is_empty() || !method.predicates.is_empty() {
+        return Err("descriptor-backed nominal Drop typed predicates are not admitted".into());
+    }
+    let mut bounds = method.clone();
+    bounds.relaxed_sized.extend(&implementation.relaxed_sized);
+    for (parameter, roots) in implementation.iter() {
+        let merged = bounds.entry(*parameter).or_default();
+        for root in roots {
+            if !merged.contains(root) { merged.push(root.clone()); }
+        }
+    }
+    Ok(bounds)
 }
 
 fn infer_erased_arguments(
@@ -3533,6 +3882,16 @@ fn infer_erased_arguments(
                 mutable: b,
             },
         ) if a == b => infer_erased_arguments(expected, actual, result)?,
+        (MirErasedType::Pointer(expected), MirErasedType::Pointer(actual)) =>
+            infer_erased_arguments(expected, actual, result)?,
+        (
+            MirErasedType::Nominal { id: expected_id, flavor: expected_flavor, args: expected },
+            MirErasedType::Nominal { id: actual_id, flavor: actual_flavor, args: actual },
+        ) if expected_id == actual_id && expected_flavor == actual_flavor && expected.len() == actual.len() => {
+            for (expected, actual) in expected.iter().zip(actual) {
+                infer_erased_arguments(expected, actual, result)?;
+            }
+        }
         (MirErasedType::Tuple(expected), MirErasedType::Tuple(actual))
             if expected.len() == actual.len() =>
         {
@@ -3595,6 +3954,35 @@ pub(crate) fn bind_erased_parameters(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nominal_drop_retains_method_bounds_and_rejects_unrepresented_predicates() {
+        let id = |local| DefId::new(crate::ids::CrateId(0), crate::ids::LocalDefId(local));
+        let parameter = GenericParamId { owner: id(1), index: 0 };
+        let parent = crate::types::TraitBound { trait_id: id(2), type_args: vec![] };
+        let child = crate::types::TraitBound { trait_id: id(3), type_args: vec![] };
+        let mut implementation = crate::hir::HirGenericBounds::from_bounds(
+            [(parameter, vec![parent.clone()])].into_iter().collect(),
+        );
+        implementation.relaxed_sized.insert(parameter);
+        let method = crate::hir::HirGenericBounds::from_bounds(
+            [(parameter, vec![child.clone(), parent.clone()])].into_iter().collect(),
+        );
+        let merged = nominal_drop_bounds(&implementation, &method).unwrap();
+        assert_eq!(merged[&parameter], vec![child, parent]);
+        assert!(merged.relaxed_sized.contains(&parameter));
+        assert_eq!(method[&parameter].len(), 2);
+        assert!(method.relaxed_sized.is_empty());
+        for side in 0..2 {
+            let mut implementation = implementation.clone();
+            let mut method = method.clone();
+            let bounds = if side == 0 { &mut implementation } else { &mut method };
+            bounds.predicates.push(crate::types::Predicate::Trait {
+                subject: Type::Generic(parameter), trait_id: id(3), args: vec![],
+            });
+            assert!(nominal_drop_bounds(&implementation, &method).is_err());
+        }
+    }
 
     // Use the same accepted-HIR -> mono -> authoritative MIR path as the
     // existing scoped-wrapper regression, without LLVM or source execution.
@@ -4427,7 +4815,7 @@ main = -> 0
         else {
             panic!("expected the source function's canonical instance");
         };
-        let key = mono.erased.scoped_entries[&definition].clone();
+        let key = mono.erased.scoped_entries.iter().find(|(source, _)| source.definition == definition).unwrap().1.clone();
         let wrapper_body = mono.pre_mir_instance_bodies.get(wrapper).unwrap();
         assert!(
             matches!(

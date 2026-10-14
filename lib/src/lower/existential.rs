@@ -193,24 +193,14 @@ impl Lowerer {
                     None,
                 ))
             }
-            Type::Struct { id, args } => {
-                let [Type::Object(object)] = args.as_slice() else {
-                    return Err(
-                        "open requires a borrowed object or a protocol-backed object owner".into(),
-                    );
-                };
-                let value_ty = Type::Struct {
-                    id: *id,
-                    args: vec![Type::Witness(witness)],
-                };
-                let owner = crate::hir::existential::prove_open_owner(
+            Type::Struct { .. } => {
+                let (object, value_ty, owner) = crate::hir::existential::open_owner_handle(
                     source,
-                    &value_ty,
                     witness,
                     &self.selection_service(),
                     &self.language_items,
                 )?;
-                Ok((object.as_ref().clone(), value_ty, Some(owner)))
+                Ok((object, value_ty, Some(owner)))
             }
             _ => Err("open requires a borrowed object or a protocol-backed object owner".into()),
         }
