@@ -315,6 +315,40 @@ main = !->
 
 The output is `5`, `4`, and `5`. `point` is moved into `boxed`; `as_mut!` changes the owned value through an exclusive borrow, `as_ref!` creates a shared view, and `*boxed` uses `Deref`. The box drops its value and allocation when `boxed` leaves scope.
 
+## Querying a value's size
+
+`sizeof` borrows a value and returns the byte size of its type as an `I64`. It does not move or drop the value, and the result includes any padding required by the target's layout. The type must implement `Sized`.
+
+```rock
+struct Point
+    < x: I64
+    < y: I64
+
+main = !->
+    point = Point
+        x: 3
+        y: 4
+    (sizeof &point).println!
+    point.x.println!
+    point.y.println!
+```
+
+On a 64-bit target, the output is `16`, `3`, and `4`. The shared borrow leaves `point` available for later use. `sizeof` measures the value's representation, not any separately allocated memory it owns; for example, measuring a vector does not include its element buffer.
+
+When allocating storage before a value exists, use `sizeof_pointee` with a typed raw pointer. The pointer supplies the type; the function does not read memory, so a null pointer is sufficient:
+
+```rock
+struct Point
+    < x: I64
+    < y: I64
+
+main = !->
+    pointer = 0 as *Point
+    (sizeof_pointee pointer).println!
+```
+
+This prints `16` on a 64-bit target without dereferencing `pointer`. To measure the pointer itself instead, use `sizeof &pointer`. Both functions are available through the prelude and through `std::mem`.
+
 ## `Arc T`
 
 `Arc::new` creates atomic shared ownership. `clone!` increments the reference count, but `Arc` does not make the contained value mutable. Combine it with `Mutex T` when multiple owners must update shared state.

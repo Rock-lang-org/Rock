@@ -2,7 +2,7 @@
 //
 // This is an auto-trait: the compiler automatically implements Sized
 // for all structs, enums, and primitive types.
-// Use the free function `size_of` from std::mem to get the byte size of a value.
+// Use `sizeof &value` from std::mem to get a value's byte size without moving it.
 
 lang sized
 < trait Sized

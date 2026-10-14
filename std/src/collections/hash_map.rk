@@ -4,6 +4,7 @@
 > std::mem::alloc::require_non_zero_size
 > std::mem::alloc::checked_add_i64
 > std::mem::alloc::checked_mul_i64
+> std::mem::utils::sizeof
 > std::hash::Hash
 > std::cmp::eq::Eq
 > std::num::arithmetic::Add
@@ -48,8 +49,8 @@ impl HashMap K, V where K: Hash, K: Eq
         else
             checked_mul_i64 old_cap, 2
 
-        new_hashes: RawBuffer I64 = unsafe RawBuffer::with_capacity (std::mem::utils::size_of 0), new_cap
-        new_occupied: RawBuffer Bool = unsafe RawBuffer::with_capacity (std::mem::utils::size_of true), new_cap
+        new_hashes: RawBuffer I64 = unsafe RawBuffer::with_capacity (sizeof &0), new_cap
+        new_occupied: RawBuffer Bool = unsafe RawBuffer::with_capacity (sizeof &true), new_cap
         new_keys: RawBuffer K = unsafe RawBuffer::with_capacity key_size, new_cap
         new_values: RawBuffer V = unsafe RawBuffer::with_capacity value_size, new_cap
         mut new_hashes_ptr = new_hashes.ptr!
@@ -99,8 +100,8 @@ impl HashMap K, V where K: Hash, K: Eq
     ^@insert = key, value ->
         next_len = checked_add_i64 self.raw_len, 1
         if self.raw_cap == 0 || (checked_mul_i64 next_len, 4) > (checked_mul_i64 self.raw_cap, 3)
-            key_size = ~SizeOf key
-            value_size = ~SizeOf value
+            key_size = sizeof &key
+            value_size = sizeof &value
             require_non_zero_size key_size
             require_non_zero_size value_size
 
@@ -115,8 +116,8 @@ impl HashMap K, V where K: Hash, K: Eq
             else
                 checked_mul_i64 old_cap, 2
 
-            new_hashes: RawBuffer I64 = unsafe RawBuffer::with_capacity (std::mem::utils::size_of 0), new_cap
-            new_occupied: RawBuffer Bool = unsafe RawBuffer::with_capacity (std::mem::utils::size_of true), new_cap
+            new_hashes: RawBuffer I64 = unsafe RawBuffer::with_capacity (sizeof &0), new_cap
+            new_occupied: RawBuffer Bool = unsafe RawBuffer::with_capacity (sizeof &true), new_cap
             new_keys: RawBuffer K = unsafe RawBuffer::with_capacity key_size, new_cap
             new_values: RawBuffer V = unsafe RawBuffer::with_capacity value_size, new_cap
             mut new_hashes_ptr = new_hashes.ptr!

@@ -16,6 +16,8 @@
 > std::ffi::libc::sched_yield
 > std::ffi::libc::usleep
 > std::mem::utils::forget
+> std::mem::utils::sizeof
+> std::mem::utils::sizeof_pointee
 > std::control::result::Result
 > std::concurrency::thread_safety::Send
 
@@ -79,7 +81,7 @@ free_env = env, bytes ->
 thread_state_new: *T -> I64 -> *ThreadState T
 thread_state_new = result, result_bytes ->
     null = 0 as *ThreadState T
-    state_bytes = ~SizeOf (unsafe *null)
+    state_bytes = sizeof_pointee null
     layout = Layout
         size: state_bytes
         align: 1
@@ -104,7 +106,7 @@ thread_state_cleanup = state, drop_result ->
     result_bytes = unsafe (*state).result_bytes
     env = unsafe (*state).env
     env_bytes = unsafe (*state).env_bytes
-    state_bytes = ~SizeOf (unsafe *state)
+    state_bytes = sizeof_pointee state
     if drop_result
         unsafe drop_in_place result
     unsafe drop_in_place state
@@ -131,7 +133,7 @@ thread_state_release_joined = state ->
 spawn: F -> Result (JoinHandle T), ThreadError where F: Send, T: Send, F: FnOnce (), T
 < spawn = task ->
     null_result = 0 as *T
-    result_size = ~SizeOf (unsafe *null_result)
+    result_size = sizeof_pointee null_result
     result_bytes = if result_size == 0
         1
     else
@@ -143,7 +145,7 @@ spawn: F -> Result (JoinHandle T), ThreadError where F: Send, T: Send, F: FnOnce
     state = thread_state_new result, result_bytes
 
     packet = ThreadPacket::new task, state
-    env_bytes = ~SizeOf packet
+    env_bytes = sizeof &packet
     runner = -> packet.run!
     code_word = unsafe callable_word (&runner), 0
     env_word = unsafe callable_word (&runner), 1

@@ -1,6 +1,7 @@
 > std::mem::alloc::Global
 > std::mem::alloc::Layout
 > std::mem::alloc::checked_alloc
+> std::mem::utils::sizeof
 > std::ops::deref::Deref
 > std::mem::drop::Drop
 > std::mem::drop::drop_in_place
@@ -18,7 +19,7 @@ unsafe box_ptr_as_mut = ptr -> unsafe &mut *ptr
 impl Box T
     new: T -> Box T
     new = value ->
-        bytes = ~SizeOf value
+        bytes = sizeof &value
         layout = Layout
             size: bytes
             align: 1

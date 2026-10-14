@@ -142,6 +142,110 @@ main = !->
 }
 
 #[test]
+fn test_std_sizeof_borrows_values_and_queries_pointees() {
+    let source = r#"
+> std::mem::sizeof
+> std::mem::sizeof_pointee
+> std::mem::Sized
+> std::mem::Box
+> std::mem::Drop
+> std::show::Show
+
+inspect: &T -> I64 where T: Sized
+inspect = value -> sizeof value
+
+slice_view: &[I64] -> &[I64]
+slice_view = values -> values
+
+struct Empty
+
+struct Pair
+    < small: U8
+    < large: I64
+
+struct Tracked
+    < value: I64
+
+impl Drop for Tracked
+    ~@drop = !-> self.value.println!
+
+main = !->
+    (sizeof &(0 as U8)).println!
+    (sizeof &(0 as U16)).println!
+    (sizeof &(0 as U32)).println!
+    (sizeof &(0 as I64)).println!
+    (sizeof &true).println!
+    (sizeof &'🦀').println!
+    (sizeof &Empty).println!
+    values = [1, 2, 3]
+    (inspect &values).println!
+    view = slice_view &values
+    (sizeof &view).println!
+    pair = Pair
+        small: 1 as U8
+        large: 2
+    (sizeof &pair).println!
+    null_pair = 0 as *Pair
+    (sizeof_pointee null_pair).println!
+    null_empty = 0 as *Empty
+    (sizeof_pointee null_empty).println!
+    null_integer = 0 as *I64
+    (sizeof &null_integer).println!
+    (sizeof_pointee null_integer).println!
+    value = Tracked
+        value: 73
+    (inspect &value).println!
+    value.value.println!
+    boxed = Box::new value
+    (sizeof boxed.as_ref!).println!
+    "end".println!
+"#;
+    for opt_level in [0, 3] {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = test_temp_dir(id);
+        fs::create_dir_all(&dir).unwrap();
+        let _cleanup = TestDirCleanup(dir.clone());
+        let entry = dir.join("sizeof.rk");
+        fs::write(&entry, source).unwrap();
+        let mut config = test_config(entry, dir.clone());
+        config.opt_level = opt_level;
+        config.no_prelude = true;
+        rock_lib::compile(&config).unwrap();
+        let output = run_test_command(&mut Command::new(dir.join("sizeof")));
+        assert_eq!(output.status.code(), Some(0), "optimization level {opt_level}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "1\n2\n4\n8\n1\n4\n0\n24\n16\n16\n16\n0\n8\n8\n8\n73\n8\nend\n73\n",
+            "optimization level {opt_level}",
+        );
+    }
+}
+
+#[test]
+fn test_std_sizeof_rejects_unsized_pointees() {
+    for source in [
+        r#"
+main = !->
+    values = [1, 2, 3]
+    slice = &values[..]
+    sizeof slice
+"#,
+        r#"
+main = !->
+    sizeof "hello"
+"#,
+        r#"
+main = !->
+    values = [1, 2, 3]
+    slice = &values[..]
+    sizeof_pointee (slice as *[I64])
+"#,
+    ] {
+        compile_should_fail(source, "Sized");
+    }
+}
+
+#[test]
 fn test_std_domain_facades_without_prelude() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
@@ -155,7 +259,7 @@ fn test_std_domain_facades_without_prelude() {
 > std::control::Result
 > std::control::ControlFlow
 > std::mem::Box
-> std::mem::size_of
+> std::mem::sizeof
 > std::string::String
 > std::functional::Functor
 > std::functional::fmap
@@ -15688,7 +15792,7 @@ main = ->
     empty: RawBuffer I64 = RawBuffer::new!
     empty.cap!.println!
 
-    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (std::mem::size_of 0), 2
+    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (std::mem::sizeof &0), 2
     buf.cap!.println!
     ptr = buf.ptr!
     unsafe *ptr = 41
@@ -15711,7 +15815,7 @@ fn test_std_raw_buffer_with_capacity_requires_unsafe() {
 > std::mem::raw_buffer::RawBuffer
 
 main = ->
-    buf = RawBuffer::with_capacity (std::mem::size_of 0), 2
+    buf = RawBuffer::with_capacity (std::mem::sizeof &0), 2
     0
 "#,
         "requires an unsafe block",
@@ -15759,7 +15863,7 @@ fn test_std_raw_buffer_zero_capacity_as_slice_uses_non_null_buffer() {
 > std::mem::raw_buffer::RawBuffer
 
 main = ->
-    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (std::mem::size_of 0), 0
+    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (std::mem::sizeof &0), 0
     slice = unsafe buf.as_slice 0
     ((~ArrPtr (*slice)) as I64) != 0 .println!
     0
@@ -17221,7 +17325,7 @@ main = !->
     map.insert 15, 150
     map.insert 23, 230
     map.insert (-1), 10
-    map.grow (size_of 0), (size_of 0)
+    map.grow (sizeof &0), (sizeof &0)
     map.len!.println!
     show_entry &map, 7
     show_entry &map, 15

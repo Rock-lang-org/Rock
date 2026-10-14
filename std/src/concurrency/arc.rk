@@ -3,6 +3,7 @@
 > std::mem::alloc::Global
 > std::mem::alloc::Layout
 > std::mem::alloc::checked_alloc
+> std::mem::utils::sizeof_pointee
 > std::concurrency::atomic::AtomicU64
 > std::clone::Clone
 > std::cmp::eq::Eq
@@ -23,7 +24,7 @@ impl Arc T
     new: T -> Arc T
     new = value ->
         null = 0 as *ArcInner T
-        bytes = ~SizeOf (unsafe *null)
+        bytes = sizeof_pointee null
         layout = Layout
             size: bytes
             align: 1
@@ -54,7 +55,7 @@ impl Drop for Arc T
         if previous == (1 as U64)
             unsafe drop_in_place self.inner
             layout = Layout
-                size: ~SizeOf (unsafe *self.inner)
+                size: sizeof_pointee self.inner
                 align: 1
             unsafe Global::dealloc (self.inner as *U8), layout
         return

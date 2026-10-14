@@ -5,6 +5,7 @@
 > std::mem::alloc::require_non_zero_size
 > std::mem::alloc::checked_add_i64
 > std::mem::alloc::checked_grow_capacity
+> std::mem::utils::sizeof
 > std::mem::drop::Drop
 > std::mem::drop::drop_in_place
 > std::ops::index::Index
@@ -73,7 +74,7 @@ impl Vec T
         if new_len > self.raw.cap!
             old_ptr = self.raw.ptr!
             old_cap = self.raw.cap!
-            elem_size = ~SizeOf elem
+            elem_size = sizeof &elem
             require_non_zero_size elem_size
             new_cap = checked_grow_capacity old_cap
             new_raw = unsafe RawBuffer::with_capacity elem_size, new_cap

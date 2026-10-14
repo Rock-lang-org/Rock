@@ -3,6 +3,7 @@
 > std::mem::alloc::Global
 > std::mem::alloc::Layout
 > std::mem::alloc::checked_alloc
+> std::mem::utils::sizeof_pointee
 > std::concurrency::atomic::AtomicU64
 > std::cmp::eq::Eq
 > std::ops::deref::Deref
@@ -30,7 +31,7 @@ mutex_release_inner = inner ->
     if previous == (1 as U64)
         unsafe drop_in_place inner
         layout = Layout
-            size: ~SizeOf (unsafe *inner)
+            size: sizeof_pointee inner
             align: 1
         unsafe Global::dealloc (inner as *U8), layout
     return
@@ -39,7 +40,7 @@ impl Mutex T
     new: T -> Mutex T
     new = value ->
         null = 0 as *MutexInner T
-        bytes = ~SizeOf (unsafe *null)
+        bytes = sizeof_pointee null
         layout = Layout
             size: bytes
             align: 1
