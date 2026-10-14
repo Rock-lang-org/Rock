@@ -13,6 +13,7 @@ use crate::{
     },
     deps::resolve_dependency_root,
     package::{BuildProfile, Package},
+    progress,
     rockc::{
         build_dependency_artifact_invocation, resolve_rockc_path, run_invocation, ExternArtifact,
     },
@@ -22,13 +23,24 @@ use crate::{
 pub(crate) struct ArtifactBuildState {
     profile: BuildProfile,
     artifacts: HashMap<PathBuf, PathBuf>,
+    artifact_dependencies: HashMap<PathBuf, Vec<(String, PathBuf)>>,
     uses_std: HashMap<PathBuf, bool>,
     stack: Vec<PathBuf>,
+    pub(crate) progress: progress::BuildProgress,
 }
 
 impl ArtifactBuildState {
     pub(crate) fn new(profile: BuildProfile) -> Self {
         Self { profile, ..Self::default() }
+    }
+
+    pub(crate) fn for_package(package: &Package) -> Result<Self, String> {
+        let mut roots = HashSet::new();
+        collect_package_roots(package, &mut roots)?;
+        Ok(Self {
+            progress: progress::BuildProgress::new(roots.len()),
+            ..Self::new(package.profile)
+        })
     }
 
     pub(crate) fn dependency_artifacts_use_std(
@@ -44,6 +56,19 @@ impl ArtifactBuildState {
                     .unwrap_or(false)
         })
     }
+}
+
+fn collect_package_roots(package: &Package, roots: &mut HashSet<PathBuf>) -> Result<(), String> {
+    roots.insert(package.root_dir.clone());
+    if let Some(dependencies) = &package.manifest.dependencies {
+        for (name, dependency) in dependencies {
+            let root = resolve_dependency_root(&package.root_dir, name, dependency)?;
+            if !roots.contains(&root) {
+                collect_package_roots(&Package::load(root)?, roots)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn collect_dependency_artifacts(
@@ -166,9 +191,16 @@ pub(crate) fn ensure_artifact(
                     dependencies_use_std |=
                         state.uses_std.get(&artifact).copied().unwrap_or(false);
                 }
+                // Loaded dependencies also require their complete artifact closure.
+                // Retain it in the build state so cached sources need not be re-read.
+                if let Some(transitive) = state.artifact_dependencies.get(&artifact) {
+                    dependency_artifacts.extend(transitive.iter().cloned());
+                }
                 dependency_artifacts.push((dep_name.clone(), artifact));
             }
         }
+        dependency_artifacts.sort();
+        dependency_artifacts.dedup();
 
         if dependencies_use_std {
             let std_artifact = ensure_sysroot_std_available()?.std_artifact;
@@ -217,8 +249,11 @@ pub(crate) fn ensure_artifact(
             }));
             let invocation =
                 build_dependency_artifact_invocation(resolve_rockc_path()?, &package, &artifacts);
+            progress::compiling(&package);
             run_invocation(
                 invocation,
+                &package,
+                Some(&state.progress),
                 &format!(
                     "dependency artifact for crate '{}'",
                     package.manifest.crate_.name
@@ -229,10 +264,12 @@ pub(crate) fn ensure_artifact(
         state
             .artifacts
             .insert(canonical_root.clone(), artifact_path.clone());
+        state.artifact_dependencies.insert(artifact_path.clone(), dependency_artifacts);
         state.uses_std.insert(
             artifact_path.clone(),
             package_requires_sysroot_std(&package) || dependencies_use_std,
         );
+        state.progress.complete();
         Ok(artifact_path)
     })();
 

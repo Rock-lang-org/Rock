@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Instant};
 
 use clap::{Args, Parser, Subcommand};
 
@@ -6,7 +6,8 @@ use crate::{
     artifact::{ensure_artifact, ArtifactBuildState},
     build::{build_project, run_project},
     commands::{expand_project, format_project, new_project},
-    package::BuildProfile,
+    package::{BuildProfile, Package},
+    progress,
 };
 
 pub fn run() -> Result<CliOutcome, String> {
@@ -28,8 +29,12 @@ pub fn run() -> Result<CliOutcome, String> {
         Command::Run { profile, args } => run_project(&current_project_root()?, profile.selected(), &args).map(CliOutcome::Exit),
         Command::Expand => expand_project().map(|_| CliOutcome::Success),
         Command::Artifact { profile } => {
-            let mut state = ArtifactBuildState::new(profile.selected());
-            let artifact = ensure_artifact(&current_project_root()?, &mut state)?;
+            let started = Instant::now();
+            let mut package = Package::load(current_project_root()?)?;
+            package.profile = profile.selected();
+            let mut state = ArtifactBuildState::for_package(&package)?;
+            let artifact = ensure_artifact(&package.root_dir, &mut state)?;
+            progress::finished(profile.selected(), started.elapsed(), &state.progress);
             println!("{}", artifact.display());
             Ok(CliOutcome::Success)
         }

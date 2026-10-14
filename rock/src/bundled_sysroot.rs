@@ -207,6 +207,9 @@ fn package_sysroot_std_with_rockup(
         .arg(&rockc)
         .arg("--copy-source");
 
+    let package = Package::load(std_root.to_path_buf())?;
+    crate::progress::compiling(&package);
+
     #[cfg(test)]
     let status = command.output().map(|output| output.status).map_err(|e| {
         format!(
@@ -216,7 +219,7 @@ fn package_sysroot_std_with_rockup(
     })?;
 
     #[cfg(not(test))]
-    let status = command.status().map_err(|e| {
+    let status = crate::progress::run_command(&mut command, &package, None).map_err(|e| {
         format!(
             "Failed to spawn rockup for dev sysroot std packaging: {}",
             e

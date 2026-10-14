@@ -165,11 +165,17 @@ pub(crate) fn build_root_invocation(
     invocation
 }
 
-pub(crate) fn run_invocation(invocation: RockcInvocation, context: &str) -> Result<(), String> {
+pub(crate) fn run_invocation(
+    invocation: RockcInvocation,
+    package: &Package,
+    progress: Option<&crate::progress::BuildProgress>,
+    context: &str,
+) -> Result<(), String> {
     let executable = invocation.executable.clone();
 
     #[cfg(test)]
     {
+        let _ = (package, progress);
         let output = invocation.into_command().output().map_err(|e| {
             format!(
                 "Failed to spawn rockc for {} using {}: {}",
@@ -194,7 +200,7 @@ pub(crate) fn run_invocation(invocation: RockcInvocation, context: &str) -> Resu
 
     #[cfg(not(test))]
     {
-        let status = invocation.into_command().status().map_err(|e| {
+        let status = crate::progress::run_command(&mut invocation.into_command(), package, progress).map_err(|e| {
             format!(
                 "Failed to spawn rockc for {} using {}: {}",
                 context,
