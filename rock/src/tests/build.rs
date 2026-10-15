@@ -4,7 +4,7 @@ use crate::build::{build_project, run_project};
 use crate::package::BuildProfile;
 
 use super::support::{
-    assert_executable_exit_code, load_dependency_package, sysroot_env_lock, temp_test_dir, write_package,
+    assert_executable_exit_code, load_dependency_package, run_isolated_test, temp_test_dir, write_package,
     write_package_with_options,
 };
 
@@ -18,9 +18,6 @@ fn test_rock_cargo_toml_does_not_depend_on_rock_lib() {
 
 #[test]
 fn test_debug_and_release_builds_keep_transitive_dependency_caches_separate() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("build_profile_caches");
     let dep_a = temp_dir.join("dep_a");
     let dep_b = temp_dir.join("dep_b");
@@ -62,9 +59,6 @@ fn test_debug_and_release_builds_keep_transitive_dependency_caches_separate() {
 
 #[test]
 fn test_build_project_with_transitive_artifacts() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("transitive_artifacts");
     let dep_a = temp_dir.join("dep_a");
     let dep_b = temp_dir.join("dep_b");
@@ -110,9 +104,6 @@ fn test_build_project_with_transitive_artifacts() {
 
 #[test]
 fn test_build_project_no_std_disables_implicit_std() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("no_std_opt_out");
     write_package_with_options(
         &temp_dir,
@@ -131,9 +122,6 @@ fn test_build_project_no_std_disables_implicit_std() {
 
 #[test]
 fn test_no_std_root_with_std_using_dependency_does_not_get_prelude() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("no_std_with_std_dep_no_prelude");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -162,14 +150,10 @@ fn test_no_std_root_with_std_using_dependency_does_not_get_prelude() {
 
 #[test]
 fn test_no_std_root_with_no_std_dependency_does_not_load_explicit_empty_sysroot() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("no_std_dep_empty_sysroot");
     let explicit_sysroot = temp_dir.join("empty-sysroot");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
-    let previous = std::env::var_os("ROCK_SYSROOT");
 
     fs::create_dir_all(&explicit_sysroot).unwrap();
     write_package_with_options(
@@ -189,13 +173,14 @@ fn test_no_std_root_with_no_std_dependency_does_not_load_explicit_empty_sysroot(
         true,
     );
 
-    std::env::set_var("ROCK_SYSROOT", &explicit_sysroot);
-    let executable = build_project(&app, BuildProfile::Debug);
-
-    match previous {
-        Some(value) => std::env::set_var("ROCK_SYSROOT", value),
-        None => std::env::remove_var("ROCK_SYSROOT"),
+    if run_isolated_test(
+        "tests::build::test_no_std_root_with_no_std_dependency_does_not_load_explicit_empty_sysroot",
+        &[("ROCK_SYSROOT", explicit_sysroot.as_os_str())],
+    ) {
+        fs::remove_dir_all(temp_dir).unwrap();
+        return;
     }
+    let executable = build_project(&app, BuildProfile::Debug);
 
     assert_executable_exit_code(&executable.unwrap(), 11);
 
@@ -204,9 +189,6 @@ fn test_no_std_root_with_no_std_dependency_does_not_load_explicit_empty_sysroot(
 
 #[test]
 fn test_build_project_reports_missing_rockc_override() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("missing_rockc_override");
     write_package(
         &temp_dir,
@@ -215,15 +197,14 @@ fn test_build_project_reports_missing_rockc_override() {
         &[],
         "main = -> 0\n",
     );
-    let previous = std::env::var_os("ROCKC");
-
-    std::env::set_var("ROCKC", temp_dir.join("does-not-exist-rockc"));
-    let result = build_project(&temp_dir, BuildProfile::Debug);
-
-    match previous {
-        Some(value) => std::env::set_var("ROCKC", value),
-        None => std::env::remove_var("ROCKC"),
+    if run_isolated_test(
+        "tests::build::test_build_project_reports_missing_rockc_override",
+        &[("ROCKC", temp_dir.join("does-not-exist-rockc").as_os_str())],
+    ) {
+        fs::remove_dir_all(temp_dir).unwrap();
+        return;
     }
+    let result = build_project(&temp_dir, BuildProfile::Debug);
 
     let error = result.unwrap_err();
     assert!(error.contains("Failed to spawn rockc"));
@@ -234,9 +215,6 @@ fn test_build_project_reports_missing_rockc_override() {
 
 #[test]
 fn test_rock_run_propagates_exit_code() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("run_exit_code");
     write_package(&temp_dir, "run_app", "src/main.rk", &[], "main = -> 7\n");
 
@@ -248,9 +226,6 @@ fn test_rock_run_propagates_exit_code() {
 
 #[test]
 fn test_rock_run_forwards_args_to_binary() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("run_args");
     write_package(
         &temp_dir,
@@ -271,7 +246,6 @@ fn test_rock_run_forwards_args_to_binary() {
 fn test_shared_build_does_not_write_to_dependency_sources() {
     use std::os::unix::fs::PermissionsExt;
 
-    let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = temp_test_dir("readonly_dependency");
     let dep = root.join("dep");
     let app = root.join("app");
@@ -293,7 +267,6 @@ fn test_shared_build_does_not_write_to_dependency_sources() {
 
 #[test]
 fn test_shared_build_cache_distinguishes_same_name_and_version_at_different_paths() {
-    let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = temp_test_dir("dependency_path_identity");
     let first = root.join("first");
     let second = root.join("second");

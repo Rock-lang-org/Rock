@@ -72,10 +72,13 @@ pub(crate) fn ensure_dev_binary_built(package: &str) -> Result<(), String> {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("Failed to resolve workspace root for dev binary build")?;
-    let output = Command::new("cargo")
-        .current_dir(workspace_root)
-        .args(["build", "-p", package])
-        .output()
+    let binary = process::dev_target_binary_from_current_exe(package)?;
+    let mut command = Command::new("cargo");
+    command.current_dir(workspace_root).args(["build", "-p", package]);
+    if binary.parent().and_then(|dir| dir.file_name()) == Some(std::ffi::OsStr::new("release")) {
+        command.arg("--release");
+    }
+    let output = command.output()
         .map_err(|e| format!("Failed to spawn cargo build for {}: {}", package, e))?;
     if !output.status.success() {
         return Err(format!(

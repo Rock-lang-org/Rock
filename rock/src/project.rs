@@ -52,7 +52,7 @@ pub fn resolve_analysis_project(project_root: &Path) -> Result<AnalysisProject, 
 mod tests {
     use std::fs;
 
-    use crate::tests::support::{sysroot_env_lock, temp_test_dir, write_package, write_package_with_options};
+    use crate::tests::support::{temp_test_dir, write_package, write_package_with_options};
 
     use super::{find_project_root, resolve_analysis_project};
 
@@ -87,9 +87,6 @@ mod tests {
 
     #[test]
     fn resolves_toolchain_std_for_project_analysis() {
-        let _guard = sysroot_env_lock()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = temp_test_dir("analysis_std");
         write_package(&root, "app", "src/main.rk", &[], "main = -> 42.println!\n");
 
@@ -109,7 +106,6 @@ mod tests {
 
     #[test]
     fn project_analysis_uses_the_project_dependency_cache() {
-        let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = temp_test_dir("analysis_dependency_cache");
         let dep = root.join("dep");
         let app = root.join("app");

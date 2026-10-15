@@ -206,37 +206,8 @@ impl<'a> SelectionService<'a> {
                     .into_iter()
                     .filter_map(|id| self.impls.get(&id))
                     .filter_map(|imp| {
-                        if !self.impl_matches_receiver_type(imp, &candidate_ty) {
-                            return None;
-                        }
-                        if !function_has_receiver(&self.impl_method(imp, method_name)?) {
-                            return None;
-                        }
-                        let subst =
-                            self.impl_receiver_substitution(imp, method_name, &candidate_ty)?;
-                        if self.impl_bound_obligations(imp, &subst).is_none() {
-                            return None;
-                        }
-                        let receiver_adjustment = self.impl_method_self_type_adjustment(
-                            imp,
-                            method_name,
-                            &candidate_ty,
-                            candidate.can_autoref_mut,
-                        )?;
-                        let receiver_adjustment = if receiver_adjustment == ReceiverAdjustment::None
-                        {
-                            candidate.adjustment
-                        } else {
-                            receiver_adjustment
-                        };
-                        self.instantiate_impl_method(
-                            imp,
-                            &candidate.expr,
-                            &candidate_ty,
-                            method_name,
-                            receiver_adjustment,
-                        )
-                        .map(|selected| (imp.id, selected))
+                        self.select_impl_method_candidate(imp, candidate, &candidate_ty, method_name)
+                            .map(|selected| (imp.id, selected))
                     })
                     .collect::<Vec<_>>();
                 candidates.sort_by_key(|candidate| candidate.0);
@@ -245,6 +216,41 @@ impl<'a> SelectionService<'a> {
 
                 found
             })
+    }
+
+    fn select_impl_method_candidate(
+        &self,
+        imp: &HirImpl,
+        candidate: &ReceiverCandidate,
+        candidate_ty: &Type,
+        method_name: &str,
+    ) -> Option<SelectedMethod> {
+        if !function_has_receiver(&self.impl_method(imp, method_name)?) {
+            return None;
+        }
+        if !self.impl_matches_receiver_type(imp, candidate_ty) {
+            return None;
+        }
+        let subst = self.impl_receiver_substitution(imp, method_name, candidate_ty)?;
+        self.impl_bound_obligations(imp, &subst)?;
+        let receiver_adjustment = self.impl_method_self_type_adjustment(
+            imp,
+            method_name,
+            candidate_ty,
+            candidate.can_autoref_mut,
+        )?;
+        let receiver_adjustment = if receiver_adjustment == ReceiverAdjustment::None {
+            candidate.adjustment
+        } else {
+            receiver_adjustment
+        };
+        self.instantiate_impl_method(
+            imp,
+            &candidate.expr,
+            candidate_ty,
+            method_name,
+            receiver_adjustment,
+        )
     }
 
     /// Select a method for a receiver whose nominal head is still unknown.
@@ -264,6 +270,9 @@ impl<'a> SelectionService<'a> {
         self.impl_ids_in_order()
             .filter_map(|id| self.impls.get(&id))
             .filter_map(|imp| {
+                if !function_has_receiver(&self.impl_method(imp, method_name)?) {
+                    return None;
+                }
                 let receiver_ty = inferred_rigid_receiver_type(&imp.receiver_pattern)?;
                 let synthetic_receiver = HirExpr {
                     ty: receiver_ty,
@@ -275,21 +284,9 @@ impl<'a> SelectionService<'a> {
                     adjustment: ReceiverAdjustment::None,
                     can_autoref_mut: false,
                 };
-                self.select_concrete_method_candidates(
-                    std::slice::from_ref(&candidate),
-                    method_name,
-                    |ty| normalize(ty),
-                )
-                .into_iter()
-                .filter(|selected| selected.target.impl_id() == Some(imp.id))
-                .into_iter()
-                .filter(|selected| selected.pending_impl_bounds.is_empty())
-                .map(|mut selected| {
-                    selected.receiver.kind = receiver.kind.clone();
-                    selected.receiver.span = receiver.span.clone();
-                    selected
-                })
-                .next()
+                let candidate_ty = normalize(&candidate.expr.ty);
+                let selected = self.select_impl_method_candidate(imp, &candidate, &candidate_ty, method_name)?;
+                selected.pending_impl_bounds.is_empty().then_some(selected)
             })
             .collect()
     }
@@ -3531,6 +3528,74 @@ mod tests {
         assert_eq!(selected.target.impl_id(), Some(impl_id));
         assert_eq!(selected.target.method_id(), Some(method_id));
         assert_eq!(selected.return_type, Type::I64);
+    }
+
+    #[test]
+    fn inferred_candidates_only_normalize_eligible_impls_in_identity_order() {
+        let owner = def_id(10);
+        let mut impls = HashMap::new();
+        for index in (20..52).rev() {
+            let mut function = method(def_id(index + 100), owner);
+            if index == 22 {
+                function.self_receiver = None;
+                function.is_method = false;
+                function.params.clear();
+            }
+            let methods = if index <= 22 {
+                HashMap::from([("value".to_string(), function)])
+            } else {
+                HashMap::new()
+            };
+            let imp = HirImpl {
+                id: def_id(index),
+                owner: HirImplOwner::Named("Owner".to_string()),
+                type_name: "Owner".to_string(),
+                type_generics: Vec::new(),
+                receiver_pattern: HirImplReceiverPattern::Exact(Type::Struct {
+                    id: owner,
+                    args: Vec::new(),
+                }),
+                trait_name: None,
+                trait_id: None,
+                trait_generics: Vec::new(),
+                trait_arg_types: Vec::new(),
+                associated_types: Vec::new(),
+                bounds: HirGenericBounds::new(),
+                methods,
+            };
+            impls.insert(imp.id, imp);
+        }
+        let traits = HashMap::new();
+        let bounds = HirGenericBounds::new();
+        let service = SelectionService::new(&traits, &impls, None, None, &bounds);
+        let receiver = HirExpr {
+            kind: HirExprKind::Var("unresolved".to_string()),
+            ty: Type::TypeVar(TypeVarId(0)),
+            span: Span::test(),
+        };
+        let mut normalizations = 0;
+        let inferred = service.select_inferred_method_candidates(&receiver, "value", |ty| {
+            normalizations += 1;
+            ty.clone()
+        });
+        assert_eq!(normalizations, 2, "irrelevant impls must not start candidate searches");
+        assert_eq!(
+            inferred.iter().map(|selected| selected.target.impl_id().unwrap()).collect::<Vec<_>>(),
+            vec![def_id(20), def_id(21)],
+        );
+        let mut concrete_receiver = receiver.clone();
+        concrete_receiver.ty = Type::Struct { id: owner, args: Vec::new() };
+        let candidates = [receiver_candidate(concrete_receiver)];
+        let concrete = service.select_concrete_method_candidates(&candidates, "value", |ty| ty.clone());
+        assert_eq!(
+            inferred.iter().map(SelectedMethod::authority).collect::<Vec<_>>(),
+            concrete.iter().map(SelectedMethod::authority).collect::<Vec<_>>(),
+        );
+        assert!(matches!(
+            service.select_concrete_method(&candidates, "value", |ty| ty.clone()),
+            Err(SelectionDiagnostic::AmbiguousCandidates { candidates, .. })
+                if candidates == vec![def_id(20), def_id(21)]
+        ));
     }
 
     #[test]

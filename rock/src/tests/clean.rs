@@ -6,7 +6,7 @@ use crate::{
     rockc::{ensure_dev_binary_built, resolve_rockc_path},
 };
 
-use super::support::{run_command_output, sysroot_env_lock, temp_test_dir, write_package_with_options};
+use super::support::{run_command_output, temp_test_dir, write_package_with_options};
 
 #[test]
 fn test_clean_command_accepts_no_build_profile_flags() {
@@ -78,7 +78,6 @@ fn test_clean_does_not_follow_build_symlinks() {
 
 #[test]
 fn test_cli_clean_removes_central_dependency_cache_and_rebuilds() {
-    let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = temp_test_dir("cli_clean_rebuild");
     let dep = root.join("dep");
     let app = root.join("app");

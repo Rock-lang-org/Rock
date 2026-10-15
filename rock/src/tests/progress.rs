@@ -2,7 +2,7 @@ use std::{fs, path::Path, process::Command};
 
 use crate::rockc::{ensure_dev_binary_built, resolve_rockc_path};
 
-use super::support::{run_command_output, sysroot_env_lock, temp_test_dir, write_package_with_options};
+use super::support::{run_command_output, temp_test_dir, write_package_with_options};
 
 fn run_rock(root: &Path, command: &str, profile: &str) -> std::process::Output {
     ensure_dev_binary_built("rock").unwrap();
@@ -46,7 +46,6 @@ fn write_progress_tree(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) 
 
 #[test]
 fn test_cli_progress_reports_rebuilds_in_dependency_order_on_stderr() {
-    let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = temp_test_dir("cli_build_progress");
     let (app, leaf) = write_progress_tree(&root);
 
@@ -93,7 +92,6 @@ fn test_cli_progress_reports_rebuilds_in_dependency_order_on_stderr() {
 #[cfg(target_os = "linux")]
 #[test]
 fn test_overall_terminal_progress_counts_shared_crates_cache_hits_and_failures() {
-    let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = temp_test_dir("cli_overall_progress");
     let (app, _) = write_progress_tree(&root);
     ensure_dev_binary_built("rock").unwrap();
@@ -139,7 +137,6 @@ fn test_overall_terminal_progress_counts_shared_crates_cache_hits_and_failures()
 
 #[test]
 fn test_cli_progress_for_artifact_cache_and_run_keeps_stdout_clean() {
-    let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = temp_test_dir("cli_artifact_run_progress");
     write_package_with_options(&root, "app", "src/main.rk", &[], "main = !-> ()\n", true);
 
@@ -168,7 +165,6 @@ fn test_cli_progress_for_artifact_cache_and_run_keeps_stdout_clean() {
 fn test_cli_live_progress_in_a_terminal_preserves_output_and_clears_on_failure() {
     use std::os::unix::fs::PermissionsExt;
 
-    let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = temp_test_dir("cli_live_progress");
     write_package_with_options(&root, "app", "src/main.rk", &[], "main = !-> ()\n", true);
     let compiler = root.join("mock-rockc");
@@ -238,7 +234,6 @@ fn test_cli_live_progress_in_a_terminal_preserves_output_and_clears_on_failure()
 #[cfg(target_os = "linux")]
 #[test]
 fn test_cli_live_progress_preserves_real_compiler_diagnostic_colors() {
-    let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let root = temp_test_dir("cli_diagnostic_colors");
     write_package_with_options(
         &root, "app", "src/main.rk", &[], "main = -> missing_color_probe\n", true,

@@ -2,7 +2,7 @@ use std::{fs, process::Command};
 
 use crate::{build::build_project, commands::new_project, package::{BuildProfile, Package}};
 
-use super::support::{run_command_output, sysroot_env_lock, temp_test_dir};
+use super::support::{run_command_output, temp_test_dir};
 
 #[test]
 fn test_new_project_scaffolds_manifest_and_source() {
@@ -66,9 +66,6 @@ fn test_new_project_preserves_existing_destinations() {
 
 #[test]
 fn test_new_project_hello_world_runs() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let parent = temp_test_dir("new_run");
     let root = new_project(&parent, "hello-rock").unwrap();
     let executable = build_project(&root, BuildProfile::Debug).unwrap();

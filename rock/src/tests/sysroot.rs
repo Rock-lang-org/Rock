@@ -6,15 +6,12 @@ use crate::bundled_sysroot::STD_CRATE_NAME;
 use crate::package::BuildProfile;
 
 use super::support::{
-    assert_executable_exit_code, assert_sysroot_std_files_exist, sysroot_env_lock,
+    assert_executable_exit_code, assert_sysroot_std_files_exist, run_isolated_test,
     temp_test_dir, write_answer_std, write_package,
 };
 
 #[test]
 fn test_build_project_uses_sysroot_std() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("auto_std_root");
     write_package(
         &temp_dir,
@@ -34,9 +31,6 @@ fn test_build_project_uses_sysroot_std() {
 
 #[test]
 fn test_build_project_uses_sysroot_std_for_dependencies() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("auto_std_dep");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -66,9 +60,6 @@ fn test_build_project_uses_sysroot_std_for_dependencies() {
 
 #[test]
 fn test_build_project_explicit_std_dependency_overrides_sysroot() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("explicit_std_override");
     let std = temp_dir.join("std");
     let app = temp_dir.join("app");
@@ -90,12 +81,8 @@ fn test_build_project_explicit_std_dependency_overrides_sysroot() {
 
 #[test]
 fn test_explicit_rock_sysroot_does_not_bootstrap_workspace_std() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("explicit_sysroot_override");
     let explicit_sysroot = temp_dir.join("dev-sysroot");
-    let previous = std::env::var_os("ROCK_SYSROOT");
 
     write_package(
         &temp_dir.join("app"),
@@ -105,13 +92,14 @@ fn test_explicit_rock_sysroot_does_not_bootstrap_workspace_std() {
         "main = -> 42.println!\n",
     );
 
-    std::env::set_var("ROCK_SYSROOT", &explicit_sysroot);
-    let error = build_project(&temp_dir.join("app"), BuildProfile::Debug).unwrap_err();
-
-    match previous {
-        Some(value) => std::env::set_var("ROCK_SYSROOT", value),
-        None => std::env::remove_var("ROCK_SYSROOT"),
+    if run_isolated_test(
+        "tests::sysroot::test_explicit_rock_sysroot_does_not_bootstrap_workspace_std",
+        &[("ROCK_SYSROOT", explicit_sysroot.as_os_str())],
+    ) {
+        fs::remove_dir_all(temp_dir).unwrap();
+        return;
     }
+    let error = build_project(&temp_dir.join("app"), BuildProfile::Debug).unwrap_err();
 
     assert!(error.contains("does not contain a valid bundled std"));
 

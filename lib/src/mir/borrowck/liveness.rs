@@ -140,46 +140,7 @@ pub fn compute_active_loan_entries_with_contract(
         loan_at_location,
         reference_liveness,
     );
-    compute_active_loan_entries_fixpoint(&analysis, func)
-}
-
-fn compute_active_loan_entries_fixpoint(
-    analysis: &ActiveLoanAnalysis<'_>,
-    func: &MirFunction,
-) -> Vec<LoanState> {
-    let predecessors = compute_predecessors(func);
-    let loan_count = analysis.table.len();
-    let mut entry_sets = vec![LoanState::new(loan_count); func.basic_blocks.len()];
-    let mut exit_sets = vec![LoanState::new(loan_count); func.basic_blocks.len()];
-
-    loop {
-        let mut changed = false;
-        for block_idx in 0..func.basic_blocks.len() {
-            let mut entry = LoanState::new(loan_count);
-            if block_idx == 0 {
-                entry = analysis.initial_state(func);
-            }
-            for &predecessor in &predecessors[block_idx] {
-                entry.join(&exit_sets[predecessor]);
-            }
-
-            let mut exit = entry.clone();
-            analysis.apply_block(&mut exit, func, BasicBlockId(block_idx));
-
-            if entry_sets[block_idx] != entry {
-                entry_sets[block_idx] = entry;
-                changed = true;
-            }
-            if exit_sets[block_idx] != exit {
-                exit_sets[block_idx] = exit;
-                changed = true;
-            }
-        }
-
-        if !changed {
-            return entry_sets;
-        }
-    }
+    crate::mir::dataflow::run_fixpoint(&analysis, func).entry_sets
 }
 
 pub(super) struct ActiveLoanAnalysis<'a> {
@@ -429,17 +390,6 @@ fn compute_successors(func: &MirFunction) -> Vec<Vec<usize>> {
     }
 
     successors
-}
-
-fn compute_predecessors(func: &MirFunction) -> Vec<Vec<usize>> {
-    let successors = compute_successors(func);
-    let mut predecessors = vec![Vec::new(); func.basic_blocks.len()];
-    for (block_idx, block_successors) in successors.iter().enumerate() {
-        for &successor in block_successors {
-            predecessors[successor].push(block_idx);
-        }
-    }
-    predecessors
 }
 
 fn reference_locals(
@@ -1258,6 +1208,89 @@ mod tests {
     ) -> Vec<LoanState> {
         let backend_contract = MirBackendContract::default();
         active_states_after_each_statement_with_contract(func, type_context, &backend_contract)
+    }
+
+    #[test]
+    fn active_loan_worklist_matches_sweep_for_branches_and_backedges() {
+        use crate::mir::dataflow::Analysis;
+
+        let mut type_context = TypeContext::new();
+        let simple = test_function(&mut type_context);
+        let (branch, _, _, _) = branch_merge_borrow_function(&mut type_context);
+        let mut cyclic = branch.clone();
+        cyclic.basic_blocks.last_mut().unwrap().terminator = Some(Terminator::Goto(BasicBlockId(0)));
+        for func in [simple, branch, cyclic] {
+            let borrows = crate::mir::borrowck::borrows::collect_function_borrows(&func);
+            let table = LoanTable::from_borrows(&borrows);
+            let by_location = LoanLocationIndex::for_function(&table, &func);
+            let liveness = compute_reference_liveness(&func, &type_context);
+            let contract = MirBackendContract::default();
+            let analysis = ActiveLoanAnalysis::new(&type_context, &contract, &table, &by_location, &liveness);
+            let successors = super::compute_successors(&func);
+            let mut predecessors = vec![Vec::new(); func.basic_blocks.len()];
+            for (block, targets) in successors.iter().enumerate() {
+                for &target in targets {
+                    predecessors[target].push(block);
+                }
+            }
+            // Independent whole-CFG reference solver for the original equations.
+            let mut entries = vec![LoanState::new(table.len()); func.basic_blocks.len()];
+            let mut exits = entries.clone();
+            let mut converged = false;
+            for _ in 0..100 {
+                let mut changed = false;
+                for block in 0..func.basic_blocks.len() {
+                    let mut entry = LoanState::new(table.len());
+                    for &predecessor in &predecessors[block] {
+                        entry.join(&exits[predecessor]);
+                    }
+                    let mut exit = entry.clone();
+                    analysis.apply_block(&mut exit, &func, BasicBlockId(block));
+                    changed |= entries[block] != entry || exits[block] != exit;
+                    entries[block] = entry;
+                    exits[block] = exit;
+                }
+                if !changed {
+                    converged = true;
+                    break;
+                }
+            }
+            assert!(converged);
+            assert_eq!(crate::mir::dataflow::run_fixpoint(&analysis, &func).entry_sets, entries);
+        }
+    }
+
+    #[test]
+    fn active_loan_worklist_does_not_propagate_from_unreachable_predecessors() {
+        let mut type_context = TypeContext::new();
+        let mut func = test_function(&mut type_context);
+        let mut unreachable = func.basic_blocks[0].clone();
+        unreachable.statements.truncate(2);
+        unreachable.terminator = Some(Terminator::Goto(BasicBlockId(2)));
+        func.basic_blocks = vec![
+            BasicBlock { statements: Vec::new(), terminator: Some(Terminator::Goto(BasicBlockId(2))) },
+            unreachable,
+            BasicBlock {
+                statements: vec![StatementData::assign(
+                    Place { local: Local(1), projection: vec![] },
+                    Rvalue::Use(Operand::Copy(Place { local: Local(2), projection: vec![crate::mir::Projection::Deref] })),
+                    None,
+                )],
+                terminator: Some(Terminator::Return),
+            },
+        ];
+        let table = LoanTable::from_borrows(&[BorrowData {
+            owner: Local(2),
+            place: Place { local: Local(1), projection: vec![] },
+            kind: AccessKind::BorrowShared,
+            created_at: Location::new(BasicBlockId(1), StatementIndex(1)),
+            origin_span: None,
+        }]);
+        assert_eq!(table.len(), 1);
+        let index = LoanLocationIndex::for_function(&table, &func);
+        let liveness = compute_reference_liveness(&func, &type_context);
+        let entries = compute_active_loan_entries(&func, &type_context, &table, &index, &liveness);
+        assert!(!entries[2].is_active(LoanId(0)), "unreachable loans must not reach a live join");
     }
 
     fn active_states_after_each_statement_with_contract(

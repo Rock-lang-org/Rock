@@ -84,11 +84,16 @@ pub fn constructor_target_substitution(
 /// Match a higher-kinded blanket receiver using its constructor bounds.
 /// For `F T where F _: Foldable`, the Foldable impl determines whether a
 /// concrete carrier belongs to `Vec`, `Option`, or a section such as `Result _, E`.
-pub fn impl_receiver_pattern_substitution<'a, P: crate::hir::HirPhase + 'a>(
+pub fn impl_receiver_pattern_substitution<'a, P, I>(
     imp: &crate::hir::HirImplFor<P>,
     actual: &Type,
-    impls: impl IntoIterator<Item = &'a crate::hir::HirImplFor<P>>,
-) -> Option<HashMap<GenericParamId, Type>> {
+    impls: I,
+) -> Option<HashMap<GenericParamId, Type>>
+where
+    P: crate::hir::HirPhase + 'a,
+    I: IntoIterator<Item = &'a crate::hir::HirImplFor<P>>,
+    I::IntoIter: Clone,
+{
     let pattern = P::impl_receiver_pattern(&imp.receiver_pattern)?;
     if let Some(subst) = receiver_pattern_substitution(pattern, actual) {
         return Some(subst);
@@ -96,16 +101,22 @@ pub fn impl_receiver_pattern_substitution<'a, P: crate::hir::HirPhase + 'a>(
     let HirImplReceiverPattern::Exact(expected) = pattern else {
         return None;
     };
-    let impls = impls.into_iter().collect::<Vec<_>>();
+    // Keep a repeatable borrowed view; only constructor-bound resolution needs
+    // to walk the registry, not ordinary receiver mismatches.
+    let impls = impls.into_iter();
     bounded_receiver_substitution(imp, expected, actual, &impls)
 }
 
-fn bounded_receiver_substitution<P: crate::hir::HirPhase>(
+fn bounded_receiver_substitution<'a, P, I>(
     imp: &crate::hir::HirImplFor<P>,
     expected: &Type,
     actual: &Type,
-    impls: &[&crate::hir::HirImplFor<P>],
-) -> Option<HashMap<GenericParamId, Type>> {
+    impls: &I,
+) -> Option<HashMap<GenericParamId, Type>>
+where
+    P: crate::hir::HirPhase + 'a,
+    I: Iterator<Item = &'a crate::hir::HirImplFor<P>> + Clone,
+{
     let mut subst = HashMap::new();
     if type_pattern_matches(expected, actual, &mut subst) {
         return Some(subst);
@@ -157,7 +168,7 @@ fn bounded_receiver_substitution<P: crate::hir::HirPhase>(
     };
     let bounds = imp.bounds.get(head)?;
     let mut candidates = Vec::new();
-    for constructor_impl in impls {
+    for constructor_impl in impls.clone() {
         for bound in bounds {
             if constructor_impl.trait_id != Some(bound.trait_id)
                 || constructor_impl.trait_arg_types.len() != bound.type_args.len()
@@ -825,6 +836,35 @@ mod tests {
                 Type::U8,
             )])),
         );
+    }
+
+    #[test]
+    fn ordinary_receiver_mismatches_do_not_visit_the_impl_registry() {
+        let nominal = |id, args| Type::Struct { id: def_id(id), args };
+        for (expected, actual) in [
+            (Type::I64, Type::Bool),
+            (nominal(70, vec![]), nominal(71, vec![])),
+            (nominal(70, vec![Type::I64]), nominal(70, vec![Type::Bool])),
+        ] {
+            let imp = HirImpl {
+                id: def_id(72),
+                owner: HirImplOwner::Named("test".to_string()),
+                type_name: "test".to_string(),
+                type_generics: Vec::new(),
+                receiver_pattern: HirImplReceiverPattern::Exact(expected),
+                trait_name: None,
+                trait_id: None,
+                trait_generics: Vec::new(),
+                trait_arg_types: Vec::new(),
+                associated_types: Vec::new(),
+                bounds: Default::default(),
+                methods: HashMap::new(),
+            };
+            let registry = std::iter::once(&imp).inspect(|_| {
+                panic!("ordinary mismatches must not enumerate impls");
+            });
+            assert!(impl_receiver_pattern_substitution(&imp, &actual, registry).is_none());
+        }
     }
 
     #[test]

@@ -5,15 +5,12 @@ use crate::build::build_project;
 use crate::package::BuildProfile;
 
 use super::support::{
-    assert_executable_exit_code, assert_sysroot_std_files_exist, load_dependency_package, load_package, sysroot_env_lock,
+    assert_executable_exit_code, assert_sysroot_std_files_exist, load_dependency_package, load_package,
     temp_test_dir, write_package, write_package_with_options,
 };
 
 #[test]
 fn test_rock_artifact_cache_reuse_and_invalidation() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_cache");
     let dep_a = temp_dir.join("dep_a");
     let dep_b = temp_dir.join("dep_b");
@@ -76,9 +73,6 @@ fn test_rock_artifact_cache_reuse_and_invalidation() {
 
 #[test]
 fn test_collect_dependency_artifacts_includes_transitive_dependencies() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("transitive_dependency_artifacts");
     let dep_a = temp_dir.join("dep_a");
     let dep_b = temp_dir.join("dep_b");
@@ -124,9 +118,6 @@ fn test_collect_dependency_artifacts_includes_transitive_dependencies() {
 
 #[test]
 fn test_rock_artifact_command_builds_cache_file() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_command");
     write_package(
         &temp_dir,
@@ -148,9 +139,6 @@ fn test_rock_artifact_command_builds_cache_file() {
 
 #[test]
 fn test_missing_dependency_object_triggers_rebuild() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("missing_object_rebuild");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -182,9 +170,6 @@ fn test_missing_dependency_object_triggers_rebuild() {
 
 #[test]
 fn test_missing_product_artifact_triggers_rebuild() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("missing_product_artifact_rebuild");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -216,9 +201,6 @@ fn test_missing_product_artifact_triggers_rebuild() {
 
 #[test]
 fn test_source_change_after_artifact_overwrite_triggers_rebuild() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_overwrite_source_rebuild");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -250,9 +232,6 @@ fn test_source_change_after_artifact_overwrite_triggers_rebuild() {
 
 #[test]
 fn test_corrupt_product_artifact_without_source_change_triggers_rebuild() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("corrupt_product_artifact_rebuild");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -283,9 +262,6 @@ fn test_corrupt_product_artifact_without_source_change_triggers_rebuild() {
 
 #[test]
 fn test_ensure_artifact_reuses_dependency_artifacts_after_dependency_sources_are_deleted() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_dependency_bootstrap");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -314,9 +290,6 @@ fn test_ensure_artifact_reuses_dependency_artifacts_after_dependency_sources_are
 
 #[test]
 fn test_ensure_artifact_loads_sysroot_std_for_no_std_root_with_std_using_dependency() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_dependency_sysroot_std");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -346,9 +319,6 @@ fn test_ensure_artifact_loads_sysroot_std_for_no_std_root_with_std_using_depende
 
 #[test]
 fn test_build_project_reuses_source_free_artifacts_without_dependency_sources() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("source_free_artifact_reuse");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -381,9 +351,6 @@ fn test_build_project_reuses_source_free_artifacts_without_dependency_sources() 
 
 #[test]
 fn test_artifact_consumer_calls_dependency_qualified_impl_owner() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_dependency_qualified_impl_owner");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -442,9 +409,6 @@ main = ->
 
 #[test]
 fn test_artifact_consumer_uses_generic_impl_inherited_default_method() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_generic_inherited_default");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -498,9 +462,6 @@ main = ->
 
 #[test]
 fn test_artifact_consumer_uses_concrete_object_backed_inherited_default() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_concrete_object_backed_default");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");

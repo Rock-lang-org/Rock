@@ -6,7 +6,7 @@ use crate::{
     package::{BuildProfile, Package},
 };
 
-use super::support::{sysroot_env_lock, temp_test_dir, write_package};
+use super::support::{run_isolated_test, temp_test_dir, write_package};
 
 #[test]
 fn test_new_command_requires_project_name() {
@@ -107,9 +107,9 @@ fn test_unimplemented_test_command_is_not_exposed() {
 
 #[test]
 fn test_format_project_formats_entry_file_with_rockc() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if run_isolated_test("tests::cli::test_format_project_formats_entry_file_with_rockc", &[]) {
+        return;
+    }
     let temp_dir = temp_test_dir("format_project");
     write_package(
         &temp_dir,
@@ -135,9 +135,9 @@ fn test_format_project_formats_entry_file_with_rockc() {
 
 #[test]
 fn test_expand_project_with_dependency_does_not_require_artifacts() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if run_isolated_test("tests::cli::test_expand_project_with_dependency_does_not_require_artifacts", &[]) {
+        return;
+    }
     let temp_dir = temp_test_dir("expand_project_dep");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
