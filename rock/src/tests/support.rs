@@ -34,7 +34,7 @@ pub(crate) fn write_package(
     write_package_with_options(root, name, lib_path, deps, source, false);
 }
 
-pub(super) fn write_package_with_options(
+pub(crate) fn write_package_with_options(
     root: &Path,
     name: &str,
     lib_path: &str,
@@ -98,6 +98,12 @@ pub(super) fn write_answer_std(root: &Path, answer: i32) {
 
 pub(crate) fn load_package(root: PathBuf) -> Package {
     Package::load(root).unwrap()
+}
+
+pub(crate) fn load_dependency_package(root: PathBuf, project_root: &Path) -> Package {
+    let mut package = load_package(root);
+    package.use_project_build(&project_root.canonicalize().unwrap());
+    package
 }
 
 pub(crate) fn run_command_output(command: &mut ProcessCommand) -> Output {

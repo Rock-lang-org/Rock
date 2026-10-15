@@ -19,9 +19,9 @@ use crate::{
     },
 };
 
-#[derive(Default)]
 pub(crate) struct ArtifactBuildState {
     profile: BuildProfile,
+    project_root: PathBuf,
     artifacts: HashMap<PathBuf, PathBuf>,
     artifact_dependencies: HashMap<PathBuf, Vec<(String, PathBuf)>>,
     uses_std: HashMap<PathBuf, bool>,
@@ -30,8 +30,16 @@ pub(crate) struct ArtifactBuildState {
 }
 
 impl ArtifactBuildState {
-    pub(crate) fn new(profile: BuildProfile) -> Self {
-        Self { profile, ..Self::default() }
+    pub(crate) fn new(package: &Package) -> Self {
+        Self {
+            profile: package.profile,
+            project_root: package.root_dir.clone(),
+            artifacts: HashMap::new(),
+            artifact_dependencies: HashMap::new(),
+            uses_std: HashMap::new(),
+            stack: Vec::new(),
+            progress: progress::BuildProgress::default(),
+        }
     }
 
     pub(crate) fn for_package(package: &Package) -> Result<Self, String> {
@@ -39,7 +47,7 @@ impl ArtifactBuildState {
         collect_package_roots(package, &mut roots)?;
         Ok(Self {
             progress: progress::BuildProgress::new(roots.len()),
-            ..Self::new(package.profile)
+            ..Self::new(package)
         })
     }
 
@@ -176,6 +184,7 @@ pub(crate) fn ensure_artifact(
     let result = (|| {
         let mut package = Package::load(canonical_root.clone())?;
         package.profile = state.profile;
+        package.use_project_build(&state.project_root);
         let mut implicit_artifact_inputs = if package_requires_sysroot_std(&package) {
             vec![ensure_sysroot_std_available()?.std_artifact.clone()]
         } else {

@@ -4,7 +4,7 @@ use crate::build::{build_project, run_project};
 use crate::package::BuildProfile;
 
 use super::support::{
-    assert_executable_exit_code, load_package, sysroot_env_lock, temp_test_dir, write_package,
+    assert_executable_exit_code, load_dependency_package, sysroot_env_lock, temp_test_dir, write_package,
     write_package_with_options,
 };
 
@@ -41,8 +41,10 @@ fn test_debug_and_release_builds_keep_transitive_dependency_caches_separate() {
         assert_eq!(executable, app.join("build").join(profile.directory()).join("main"));
         assert_executable_exit_code(&executable, 42);
         for root in [&dep_a, &dep_b] {
-            let mut package = load_package(root.clone());
+            let mut package = load_dependency_package(root.clone(), &app);
             package.profile = profile;
+            assert!(package.build_dir().starts_with(app.join("build").join(profile.directory()).join("deps")));
+            assert!(!root.join("build").exists());
             for path in [package.artifact_path(), package.object_path()] {
                 assert!(path.exists(), "missing {}", path.display());
                 cached_products.push((path.clone(), fs::metadata(path).unwrap().modified().unwrap()));
@@ -92,12 +94,14 @@ fn test_build_project_with_transitive_artifacts() {
 
     let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert!(executable.exists());
-    let dep_a_package = load_package(dep_a.clone());
-    let dep_b_package = load_package(dep_b.clone());
+    let dep_a_package = load_dependency_package(dep_a.clone(), &app);
+    let dep_b_package = load_dependency_package(dep_b.clone(), &app);
     assert!(dep_a_package.artifact_path().exists());
     assert!(dep_b_package.artifact_path().exists());
     assert!(dep_a_package.object_path().exists());
     assert!(dep_b_package.object_path().exists());
+    assert!(!dep_a.join("build").exists());
+    assert!(!dep_b.join("build").exists());
 
     assert_executable_exit_code(&executable, 42);
 
@@ -260,4 +264,57 @@ fn test_rock_run_forwards_args_to_binary() {
     assert_eq!(exit_code, 9);
 
     let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_shared_build_does_not_write_to_dependency_sources() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let root = temp_test_dir("readonly_dependency");
+    let dep = root.join("dep");
+    let app = root.join("app");
+    write_package_with_options(&dep, "dep", "lib.rk", &[], "< answer = -> 42\n", true);
+    write_package_with_options(
+        &app, "app", "src/main.rk", &[("dep", dep.display().to_string())],
+        "> dep::answer\nmain = -> answer!\n", true,
+    );
+    let permissions = fs::metadata(&dep).unwrap().permissions();
+    fs::set_permissions(&dep, fs::Permissions::from_mode(0o555)).unwrap();
+    let result = build_project(&app, BuildProfile::Debug);
+    fs::set_permissions(&dep, permissions).unwrap();
+    let executable = result.unwrap();
+    assert_executable_exit_code(&executable, 42);
+    assert!(!dep.join("build").exists());
+    assert!(load_dependency_package(dep, &app).artifact_path().exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_shared_build_cache_distinguishes_same_name_and_version_at_different_paths() {
+    let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let root = temp_test_dir("dependency_path_identity");
+    let first = root.join("first");
+    let second = root.join("second");
+    let app = root.join("app");
+    write_package_with_options(&first, "dep", "lib.rk", &[], "< answer = -> 42\n", true);
+    write_package_with_options(&second, "dep", "lib.rk", &[], "< answer = -> 43\n", true);
+    let mut products = Vec::new();
+    for (dep, expected) in [(&first, 42), (&second, 43), (&first, 42)] {
+        write_package_with_options(
+            &app, "app", "src/main.rk", &[("dep", dep.display().to_string())],
+            "> dep::answer\nmain = -> answer!\n", true,
+        );
+        let executable = build_project(&app, BuildProfile::Debug).unwrap();
+        assert_executable_exit_code(&executable, expected);
+        let package = load_dependency_package(dep.clone(), &app);
+        assert!(package.artifact_path().exists());
+        assert!(package.object_path().exists());
+        assert!(!dep.join("build").exists());
+        products.push(package.artifact_path());
+    }
+    assert_ne!(products[0], products[1]);
+    assert_eq!(products[0], products[2]);
+    fs::remove_dir_all(root).unwrap();
 }

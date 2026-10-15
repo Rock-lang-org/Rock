@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand};
 use crate::{
     artifact::{ensure_artifact, ArtifactBuildState},
     build::{build_project, run_project},
-    commands::{expand_project, format_project, new_project},
+    commands::{clean_project, expand_project, format_project, new_project},
     package::{BuildProfile, Package},
     progress,
 };
@@ -21,6 +21,10 @@ pub fn run() -> Result<CliOutcome, String> {
             Ok(CliOutcome::Success)
         }
         Command::Format => format_project().map(|_| CliOutcome::Success),
+        Command::Clean => {
+            progress::cleaned(clean_project(&current_project_root()?)?);
+            Ok(CliOutcome::Success)
+        }
         Command::Build { profile } => {
             let executable = build_project(&current_project_root()?, profile.selected())?;
             println!("{}", executable.display());
@@ -64,6 +68,8 @@ pub(crate) enum Command {
         project_name: String,
     },
     Format,
+    /// Remove this project's build directory, including dependency artifacts
+    Clean,
     Build {
         #[command(flatten)]
         profile: ProfileArgs,

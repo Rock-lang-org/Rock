@@ -114,6 +114,18 @@ Hello, Rock!
 
 Debug and release products are kept separately in `build/debug/` and `build/release/`. See the [build-profile reference](https://rock-lang-org.github.io/Rock/reference/tooling.html#debug-and-release-builds) for artifact and direct-compiler workflows.
 
+All dependency artifacts live inside the current project's `build/` directory,
+under each profile's `deps/` subdirectory; compiling a project does not create
+build directories in its dependency source trees. To remove both profiles and
+their dependency caches, run this from the project directory:
+
+```console
+$ rock clean
+```
+
+Cleaning preserves source files and the installed standard library. The next
+build recompiles the project's dependencies.
+
 **Trying the tour:** each Rock code block below is a complete replacement for `src/main.rk`, independent of earlier blocks. The modules section shows its complete two-file project separately. Standard prelude names such as `Option`, `Vec`, and `println` are available through the installed std; non-prelude imports are shown explicitly. In the examples, `|>` passes a result to the next function, and `(.println!)` is a lambda that prints its input.
 
 ## Everyday Syntax
@@ -824,6 +836,7 @@ Questions, small reproductions, and contributions are welcome through [GitHub is
 
 A few of the remaining important features which are planned but still missing:
 
+- Dependencies download
 - Better trait resolution
 - More complete std
 - Multiline imports like in rust

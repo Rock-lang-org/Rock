@@ -5,7 +5,7 @@ use crate::build::build_project;
 use crate::package::BuildProfile;
 
 use super::support::{
-    assert_executable_exit_code, assert_sysroot_std_files_exist, load_package, sysroot_env_lock,
+    assert_executable_exit_code, assert_sysroot_std_files_exist, load_dependency_package, load_package, sysroot_env_lock,
     temp_test_dir, write_package, write_package_with_options,
 };
 
@@ -42,7 +42,7 @@ fn test_rock_artifact_cache_reuse_and_invalidation() {
     );
 
     let executable = build_project(&app, BuildProfile::Debug).unwrap();
-    let dep_a_package = load_package(dep_a.clone());
+    let dep_a_package = load_dependency_package(dep_a.clone(), &app);
     let dep_a_artifact = dep_a_package.artifact_path();
     let dep_a_object = dep_a_package.object_path();
     let dep_a_mtime_before = fs::metadata(&dep_a_artifact).unwrap().modified().unwrap();
@@ -110,7 +110,7 @@ fn test_collect_dependency_artifacts_includes_transitive_dependencies() {
     );
 
     let package = load_package(app.clone());
-    let mut state = ArtifactBuildState::default();
+    let mut state = ArtifactBuildState::new(&package);
     let artifacts = collect_dependency_artifacts(&package, &mut state).unwrap();
     let artifact_names = artifacts
         .iter()
@@ -136,7 +136,7 @@ fn test_rock_artifact_command_builds_cache_file() {
         "identity = x -> x\n< identity\n",
     );
 
-    let mut state = ArtifactBuildState::default();
+    let mut state = ArtifactBuildState::new(&load_package(temp_dir.clone()));
     let artifact_path = ensure_artifact(&temp_dir, &mut state).unwrap();
 
     assert!(artifact_path.exists());
@@ -165,7 +165,7 @@ fn test_missing_dependency_object_triggers_rebuild() {
     );
 
     let executable = build_project(&app, BuildProfile::Debug).unwrap();
-    let dep_package = load_package(dep.clone());
+    let dep_package = load_dependency_package(dep.clone(), &app);
     let dep_object = dep_package.object_path();
     assert!(dep_object.exists());
     assert_executable_exit_code(&executable, 5);
@@ -199,7 +199,7 @@ fn test_missing_product_artifact_triggers_rebuild() {
     );
 
     let executable = build_project(&app, BuildProfile::Debug).unwrap();
-    let dep_package = load_package(dep.clone());
+    let dep_package = load_dependency_package(dep.clone(), &app);
     let dep_artifact = dep_package.artifact_path();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 6);
@@ -233,7 +233,7 @@ fn test_source_change_after_artifact_overwrite_triggers_rebuild() {
     );
 
     let executable = build_project(&app, BuildProfile::Debug).unwrap();
-    let dep_package = load_package(dep.clone());
+    let dep_package = load_dependency_package(dep.clone(), &app);
     let dep_artifact = dep_package.artifact_path();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 7);
@@ -267,7 +267,7 @@ fn test_corrupt_product_artifact_without_source_change_triggers_rebuild() {
     );
 
     let executable = build_project(&app, BuildProfile::Debug).unwrap();
-    let dep_package = load_package(dep.clone());
+    let dep_package = load_dependency_package(dep.clone(), &app);
     let dep_artifact = dep_package.artifact_path();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 7);
@@ -299,7 +299,7 @@ fn test_ensure_artifact_reuses_dependency_artifacts_after_dependency_sources_are
         "> dep::answer\n\nmain = -> answer!\n",
     );
 
-    let mut state = ArtifactBuildState::default();
+    let mut state = ArtifactBuildState::new(&load_package(app.clone()));
     let dep_artifact = ensure_artifact(&dep, &mut state).unwrap();
     assert!(dep_artifact.exists());
 
@@ -337,7 +337,7 @@ fn test_ensure_artifact_loads_sysroot_std_for_no_std_root_with_std_using_depende
         true,
     );
 
-    let mut state = ArtifactBuildState::default();
+    let mut state = ArtifactBuildState::new(&load_package(app.clone()));
     let artifact = ensure_artifact(&app, &mut state).unwrap();
     assert!(artifact.exists());
 
@@ -363,7 +363,7 @@ fn test_build_project_reuses_source_free_artifacts_without_dependency_sources() 
     );
 
     let executable = build_project(&app, BuildProfile::Debug).unwrap();
-    let dep_package = load_package(dep.clone());
+    let dep_package = load_dependency_package(dep.clone(), &app);
     assert!(dep_package.artifact_path().exists());
     assert!(dep_package.object_path().exists());
 
@@ -536,7 +536,7 @@ main = ->
     );
 
     let executable = build_project(&app, BuildProfile::Debug).unwrap();
-    let dep_package = load_package(dep.clone());
+    let dep_package = load_dependency_package(dep.clone(), &app);
     assert!(dep_package.artifact_path().exists());
     assert!(dep_package.object_path().exists());
     assert_executable_exit_code(&executable, 44);

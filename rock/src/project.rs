@@ -30,7 +30,7 @@ pub fn find_project_root(source_path: &Path) -> Option<PathBuf> {
 
 pub fn resolve_analysis_project(project_root: &Path) -> Result<AnalysisProject, String> {
     let package = Package::load(project_root.to_path_buf())?;
-    let mut state = ArtifactBuildState::default();
+    let mut state = ArtifactBuildState::new(&package);
     let artifacts = collect_root_artifacts(&package, &mut state)?;
     let crate_name = package.manifest.crate_.name.clone();
     let no_std = package.manifest.crate_.no_std;
@@ -52,7 +52,7 @@ pub fn resolve_analysis_project(project_root: &Path) -> Result<AnalysisProject, 
 mod tests {
     use std::fs;
 
-    use crate::tests::support::{sysroot_env_lock, temp_test_dir, write_package};
+    use crate::tests::support::{sysroot_env_lock, temp_test_dir, write_package, write_package_with_options};
 
     use super::{find_project_root, resolve_analysis_project};
 
@@ -104,6 +104,25 @@ mod tests {
             .expect("project analysis should include the toolchain std");
         assert!(std.1.is_file());
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_analysis_uses_the_project_dependency_cache() {
+        let _guard = sysroot_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = temp_test_dir("analysis_dependency_cache");
+        let dep = root.join("dep");
+        let app = root.join("app");
+        write_package_with_options(&dep, "dep", "lib.rk", &[], "< answer = -> 42\n", true);
+        write_package_with_options(
+            &app, "app", "src/main.rk", &[("dep", dep.display().to_string())],
+            "> dep::answer\nmain = -> answer!\n", true,
+        );
+        let project = resolve_analysis_project(&app).unwrap();
+        assert_eq!(project.extern_artifacts.len(), 1);
+        assert!(project.extern_artifacts[0].1.starts_with(app.join("build/debug/deps")));
+        assert!(project.extern_artifacts[0].1.exists());
+        assert!(!dep.join("build").exists());
         fs::remove_dir_all(root).unwrap();
     }
 }

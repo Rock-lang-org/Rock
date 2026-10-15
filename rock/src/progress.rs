@@ -51,6 +51,10 @@ pub(crate) fn compiling(package: &Package) {
     );
 }
 
+pub(crate) fn cleaned(removed: bool) {
+    status("✓", "clean", "build", format_args!("· {}", if removed { "removed" } else { "already clean" }));
+}
+
 pub(crate) fn finished(profile: BuildProfile, elapsed: Duration, progress: &BuildProgress) {
     let description = match profile {
         BuildProfile::Debug => "unoptimized",

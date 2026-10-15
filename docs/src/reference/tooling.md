@@ -32,6 +32,7 @@ $ rock build
 $ rock run -- 7
 $ rock expand
 $ rock artifact
+$ rock clean
 ```
 
 `format` rewrites the configured source. Inspect formatter changes before committing them, then compile again.
@@ -60,6 +61,11 @@ $ rock artifact --release
 
 Debug outputs live in `build/debug/`, and release outputs live in `build/release/`. Each profile has its own dependency artifacts and objects, so switching profiles does not reuse products built with different optimization settings. The toolchain's precompiled standard library is shared between profiles. `--debug` and `--release` cannot be combined.
 
+Source-built dependencies use `build/<profile>/deps/` inside the current project,
+not build directories beside dependency sources. Each dependency gets a directory
+identified by its name, version, and source-path hash, so object files with the
+same entry filename do not overwrite one another.
+
 For compiler contributors and artifact-level workflows, `rockc` accepts the same flags. Unlike `rock`, it takes an entry file and explicit dependency artifacts rather than resolving `rock.toml`:
 
 ```console
@@ -68,6 +74,25 @@ $ rockc --entry-file main.rk --extern-artifact std=build/std.rkca --release
 ```
 
 `rockc` writes to its configured `--output-dir` (default: `build/`); `rock` chooses the profile-specific directories. `cargo build --release` optimizes the Rust compiler executable itself; use `rock build --release`, `rock run --release`, or `rockc --release` to optimize the Rock program being compiled.
+
+## Cleaning build output
+
+Run this from the directory containing the project's `rock.toml`:
+
+```console
+$ rock clean
+```
+
+`clean` removes the whole project `build/` directory, including debug and release
+products and their dependency caches. It preserves source files, other projects'
+build directories, and the installed standard library. The next build recompiles
+source-built dependencies. Cleaning an already-clean project succeeds without
+doing anything; a symlink or regular file named `build` is rejected rather than
+followed or removed.
+
+Build directories left in dependency trees by earlier builds are not deleted
+automatically. To remove one explicitly, run `rock clean` from that dependency's
+project directory.
 
 ## Standard library selection
 
