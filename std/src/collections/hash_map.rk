@@ -7,9 +7,10 @@
 > std::mem::utils::sizeof
 > std::hash::Hash
 > std::cmp::eq::Eq
+> std::cmp::eq::PartialEq
 > std::num::arithmetic::Add
 > std::num::arithmetic::Mod
-> std::cmp::ord::Ord
+> std::cmp::ord::PartialOrd
 > std::mem::drop::Drop
 > std::mem::drop::drop_in_place
 > std::mem::raw_buffer::RawBuffer

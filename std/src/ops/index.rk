@@ -2,6 +2,8 @@
 > std::ffi::libc::puts
 > std::mem::sized::Sized
 > std::ops::range::Range
+> std::collections::slice::slice_from_raw_parts
+> std::collections::slice::slice_from_raw_parts_mut
 
 lang index
 < trait Index Idx
@@ -47,15 +49,16 @@ range_bounds_check: Range -> I64 -> (I64, I64)
         exit (1 as I32)
     bounds
 
-borrow_slice_range: *T -> I64 -> I64 -> &[T]
-< borrow_slice_range = ptr, start, len ->
+// The caller validates bounds and the allocation/borrow contract of the range.
+unsafe borrow_slice_range: *T -> I64 -> I64 -> &[T]
+< unsafe borrow_slice_range = ptr, start, len ->
     offset: *T = unsafe ptr + start
-    unsafe ~BorrowSlice offset, len
+    unsafe slice_from_raw_parts offset, len
 
-borrow_slice_range_mut: *T -> I64 -> I64 -> &mut [T]
-< borrow_slice_range_mut = ptr, start, len ->
+unsafe borrow_slice_range_mut: *T -> I64 -> I64 -> &mut [T]
+< unsafe borrow_slice_range_mut = ptr, start, len ->
     offset: *T = unsafe ptr + start
-    unsafe ~BorrowSliceMut offset, len
+    unsafe slice_from_raw_parts_mut offset, len
 
 impl Index I64 for &[T]
     type Output = T
@@ -79,7 +82,7 @@ impl Index Range for &[T]
         slice = *self
         bounds = range_bounds_check range, slice.len!
         slice_ptr: *T = slice.as_ptr!
-        borrow_slice_range slice_ptr, bounds.0, (bounds.1 - bounds.0)
+        unsafe borrow_slice_range slice_ptr, bounds.0, (bounds.1 - bounds.0)
 
 impl IndexMut Range for &mut [T]
     type Output = [T]
@@ -87,7 +90,7 @@ impl IndexMut Range for &mut [T]
         slice = &mut *self
         bounds = range_bounds_check range, slice.len!
         slice_ptr: *T = slice.as_mut_ptr!
-        borrow_slice_range_mut slice_ptr, bounds.0, (bounds.1 - bounds.0)
+        unsafe borrow_slice_range_mut slice_ptr, bounds.0, (bounds.1 - bounds.0)
 
 impl Index I64 for *T where T: Sized
     type Output = T

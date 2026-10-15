@@ -737,6 +737,7 @@ mod tests {
             source_providers: Vec::new(),
             current_crate_name: Some("test".to_string()),
             opt_level: 0,
+            overflow_checks: None,
             emit_llvm: false,
             no_link: true,
             emit_object: None,

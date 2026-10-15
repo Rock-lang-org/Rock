@@ -2,6 +2,7 @@
 //! into a fully-typed HirProgram.
 
 mod authority;
+pub(crate) mod constants;
 pub mod constraints;
 mod engine;
 mod finalize;
@@ -455,7 +456,25 @@ fn hir_program_from_partial(
 
 /// Finalize types: apply inference substitutions and generalize.
 /// Consumes PartialHir and produces a fully-typed HirProgram.
-pub fn finalize(mut hir: PartialHir) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
+pub fn finalize(hir: PartialHir) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
+    finalize_with_constant_methods(hir, HashMap::new())
+}
+
+pub(crate) fn finalize_with_crates(hir: PartialHir, ctx: &crate::crate_system::CrateContext) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
+    let mut summaries = HashMap::new();
+    for dependency in ctx.extern_crates() {
+        for imp in dependency.metadata().interface().impls.values() {
+            for method in imp.methods.values() {
+                if let Some(summary) = &method.constant_arithmetic {
+                    summaries.insert(method.id, summary.clone());
+                }
+            }
+        }
+    }
+    finalize_with_constant_methods(hir, summaries)
+}
+
+fn finalize_with_constant_methods(mut hir: PartialHir, summaries: HashMap<DefId, constants::ArithmeticSummary>) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
     hir.validate_item_ids()?;
     validate_method_ids(&hir)?;
     drive_inference_to_quiescence(&mut hir)?;
@@ -480,6 +499,10 @@ pub fn finalize(mut hir: PartialHir) -> Result<ResolvedHirProgram, Vec<ResolveEr
             .into_iter()
             .map(ResolveError::non_source)
             .collect());
+    }
+    let constant_errors = constants::validate(&program, &current_def_ids, &summaries);
+    if !constant_errors.is_empty() {
+        return Err(constant_errors);
     }
     let program = AcceptedHirProgram::try_from(program).map_err(|errors| {
         errors

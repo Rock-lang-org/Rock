@@ -6,11 +6,19 @@
 
 impl Neg for I64
     type Output = I64
-    @- = -> ~I64Neg *self
+    @- = -> if ~OverflowChecks! then ~IntCheckedNeg *self else ~IntWrappingNeg *self
 
 impl Neg for I32
     type Output = I32
-    @- = -> ~I32Neg *self
+    @- = -> if ~OverflowChecks! then ~IntCheckedNeg *self else ~IntWrappingNeg *self
+
+impl Neg for I16
+    type Output = I16
+    @- = -> if ~OverflowChecks! then ~IntCheckedNeg *self else ~IntWrappingNeg *self
+
+impl Neg for I8
+    type Output = I8
+    @- = -> if ~OverflowChecks! then ~IntCheckedNeg *self else ~IntWrappingNeg *self
 
 impl Neg for F64
     type Output = F64

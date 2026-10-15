@@ -167,6 +167,9 @@ pub struct Config {
     /// Build with full optimization
     #[arg(long, conflicts_with = "debug")]
     release: bool,
+    /// Override integer overflow checks (true/false), independently of optimization.
+    #[arg(long, action = clap::ArgAction::Set)]
+    overflow_checks: Option<bool>,
     /// Emit LLVM IR file
     #[arg(long)]
     emit_llvm: bool,
@@ -227,6 +230,7 @@ impl Config {
             source_providers: Vec::new(),
             current_crate_name: config.crate_name,
             opt_level: if config.release { 3 } else { 0 },
+            overflow_checks: config.overflow_checks,
             emit_llvm: config.emit_llvm,
             no_link: config.no_link,
             emit_object: config.emit_object,
@@ -1240,6 +1244,20 @@ mod tests {
             args.extend(flags);
             assert!(Config::try_parse_from(args).is_err());
         }
+    }
+
+    #[test]
+    fn test_overflow_checks_are_independent_of_build_profile() {
+        for (profile, expected_opt) in [("--debug", 0), ("--release", 3)] {
+            for (flag, expected) in [("true", true), ("false", false)] {
+                let config = Config::try_parse_from([
+                    "rockc", "--entry-file", "main.rk", profile, "--overflow-checks", flag,
+                ]).unwrap().into_compiler_config().unwrap();
+                assert_eq!(config.opt_level, expected_opt);
+                assert_eq!(config.overflow_checks, Some(expected));
+            }
+        }
+        assert!(Config::try_parse_from(["rockc", "--overflow-checks", "invalid"]).is_err());
     }
 
     #[test]

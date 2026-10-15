@@ -5,7 +5,7 @@ use crate::mir::borrowck::location::{Location, StatementIndex};
 use crate::mir::BasicBlockId;
 use crate::mir::{
     Constant, Local, MirBackendContract, MirCallable, MirCallableKey, MirFunction, MirFunctionId,
-    MirIntrinsicId, Operand, Place, Projection, ReferenceOrigin, Rvalue, StatementData,
+    Operand, Place, Projection, ReferenceOrigin, Rvalue, StatementData,
     StatementKind, Terminator,
 };
 use crate::type_context::{Ty, TypeContext, TypeView};
@@ -64,23 +64,86 @@ pub fn collect_function_borrows_with_contract(
     return_summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
 ) -> Vec<BorrowData> {
     let mut borrows = Vec::new();
+    use crate::mir::dataflow::{run_fixpoint, Analysis};
+    let origins = super::ReferenceEscapeAnalysis::new(
+        func, type_context, backend_contract, return_summaries, super::MissingSummaryMode::Conservative,
+    );
+    let needs_raw_roots = func.local_decls.iter().any(|decl|
+        matches!(TypeView::new(type_context).ty(decl.ty), Ty::Pointer(_))
+    );
+    let entries = needs_raw_roots.then(|| run_fixpoint(&origins, func));
 
     for (block_idx, block) in func.basic_blocks.iter().enumerate() {
+        let mut state = entries.as_ref().map(|entries| entries.entry_sets[block_idx].clone())
+            .unwrap_or_default();
         for (stmt_idx, stmt) in block.statements.iter().enumerate() {
-            borrows.extend(collect_statement_borrows(
+            let mut statement_borrows = collect_statement_borrows(
                 stmt,
                 Location::new(BasicBlockId(block_idx), StatementIndex(stmt_idx)),
-            ));
+            );
+            if let StatementKind::Assign(_, Rvalue::Ref(_, place)) = &stmt.kind {
+                if matches!(place.projection.first(), Some(Projection::Deref))
+                    && origins.local_type_is_pointer(place.local)
+                {
+                    let source = Place { local: place.local, projection: Vec::new() };
+                    let source_origins = origins.origins_for_place(&state, &source);
+                    if let Some(template) = statement_borrows.first().cloned() {
+                        let replacements = source_origins.into_iter().filter_map(|origin| {
+                            let (local, deref) = match origin {
+                                ReferenceOrigin::Local(local) | ReferenceOrigin::Temporary(local) => (local, false),
+                                ReferenceOrigin::Param(local) => (local, true),
+                                _ => return None,
+                            };
+                            let mut borrow = template.clone();
+                            borrow.place = Place { local, projection: if deref { vec![Projection::Deref] } else { Vec::new() } };
+                            Some(borrow)
+                        }).collect::<Vec<_>>();
+                        if !replacements.is_empty() {
+                            statement_borrows = replacements;
+                        }
+                    }
+                }
+            }
+            borrows.extend(statement_borrows);
+            if needs_raw_roots {
+                origins.apply_statement(&mut state, stmt);
+            }
         }
         if let Some(term) = &block.terminator {
-            borrows.extend(collect_terminator_borrows_with_context(
+            let mut call_borrows = collect_terminator_borrows_with_context(
                 term,
                 Location::new(
                     BasicBlockId(block_idx),
                     StatementIndex(block.statements.len()),
                 ),
                 Some((func, type_context, backend_contract, return_summaries)),
-            ));
+            );
+            if let Terminator::Call { func: callee, args, destination, span, .. } = term {
+                if call_borrows.is_empty() && args.iter().any(|arg| match arg {
+                    Operand::Copy(place) | Operand::Move(place) => origins.local_type_is_pointer(place.local),
+                    _ => false,
+                }) {
+                    if let Some(decl) = func.local_decls.get(destination.local.0) {
+                        if let Ty::Reference { mutable, .. } = TypeView::new(type_context).ty(decl.ty) {
+                            for origin in origins.call_return_origins(&state, callee, args, destination) {
+                                let (local, deref) = match origin {
+                                    ReferenceOrigin::Local(local) | ReferenceOrigin::Temporary(local) => (local, false),
+                                    ReferenceOrigin::Param(local) => (local, true),
+                                    _ => continue,
+                                };
+                                call_borrows.push(BorrowData {
+                                    owner: destination.local,
+                                    place: Place { local, projection: if deref { vec![Projection::Deref] } else { Vec::new() } },
+                                    kind: if *mutable { AccessKind::BorrowMut } else { AccessKind::BorrowShared },
+                                    created_at: Location::new(BasicBlockId(block_idx), StatementIndex(block.statements.len())),
+                                    origin_span: span.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            borrows.extend(call_borrows);
         }
     }
 
@@ -113,16 +176,7 @@ fn collect_terminator_borrows_with_context(
     let Operand::Constant(Constant::Callable(callable)) = func else {
         return Vec::new();
     };
-    let borrow_slice = match callable {
-        MirCallable::Resolved(MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSlice)) => {
-            Some(AccessKind::BorrowShared)
-        }
-        MirCallable::Resolved(MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSliceMut)) => {
-            Some(AccessKind::BorrowMut)
-        }
-        _ => None,
-    };
-    if borrow_slice.is_none() {
+    {
         if let Some((mir_func, type_context, backend_contract, return_summaries)) = context {
             let Some(destination_decl) = mir_func.local_decls.get(destination.local.0) else {
                 return Vec::new();
@@ -187,19 +241,6 @@ fn collect_terminator_borrows_with_context(
         return Vec::new();
     }
 
-    let Some(Operand::Copy(source) | Operand::Move(source)) = args.first() else {
-        return Vec::new();
-    };
-
-    let mut root = source.clone();
-    root.projection.clear();
-    vec![BorrowData {
-        owner: destination.local,
-        place: root,
-        kind: borrow_slice.unwrap(),
-        created_at,
-        origin_span: term_span,
-    }]
 }
 
 fn borrow_from_reference_argument(
@@ -336,10 +377,10 @@ mod tests {
     }
 
     #[test]
-    fn collect_terminator_borrows_dispatches_borrow_slice_by_typed_intrinsic() {
+    fn raw_wide_pointer_construction_does_not_create_a_loan() {
         let terminator = Terminator::Call {
             func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
-                MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSlice),
+                MirCallableKey::Intrinsic(MirIntrinsicId::PtrFromParts),
             ))),
             args: vec![Operand::Copy(Place {
                 local: Local(1),
@@ -358,9 +399,6 @@ mod tests {
             Location::new(BasicBlockId(0), StatementIndex(0)),
         );
 
-        assert_eq!(borrows.len(), 1);
-        assert_eq!(borrows[0].owner, Local(2));
-        assert_eq!(borrows[0].place.local, Local(1));
-        assert_eq!(borrows[0].kind, AccessKind::BorrowShared);
+        assert!(borrows.is_empty(), "raw pointer construction must not establish a loan");
     }
 }

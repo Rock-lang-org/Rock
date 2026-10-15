@@ -159,7 +159,7 @@ A generic function can use a trait method or operator when its signature names t
 struct Box T
     < value: T
 
-same_box: Box T -> Box T -> Bool where T: Eq
+same_box: Box T -> Box T -> Bool where T: PartialEq
 same_box = left, right -> left.value == right.value
 
 main = !->
@@ -170,7 +170,7 @@ main = !->
     same_box first, second .println!
 ```
 
-The call specializes `T` to `I64`, and the `Eq` implementation for `I64` supplies `==`. The output is `true`. A bound is checked at the call site as well as in the generic body.
+The call specializes `T` to `I64`, and the `PartialEq` implementation for `I64` supplies `==`. The output is `true`. A bound is checked at the call site as well as in the generic body. `Eq` extends `PartialEq` with the guarantee that a value equals itself; floating-point types implement only `PartialEq` because NaN is not equal to itself.
 
 ## Focused Standard Traits
 

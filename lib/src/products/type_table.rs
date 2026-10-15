@@ -127,6 +127,7 @@ pub(super) struct SerializedProductFunctionInterface {
     pub is_method: bool,
     pub self_receiver: Option<crate::types::ReceiverMode>,
     pub is_unsafe: bool,
+    pub constant_arithmetic: Option<crate::products::ArithmeticSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1392,6 +1393,9 @@ impl SerializedProductFunctionInterface {
         value: &ProductFunctionInterface,
         encoder: &mut ProductTypeEncoder,
     ) -> Result<Self, String> {
+        if let Some(summary) = &value.constant_arithmetic {
+            summary.validate(value.params.len())?;
+        }
         Ok(Self {
             id: value.id,
             name: value.name.clone(),
@@ -1403,6 +1407,7 @@ impl SerializedProductFunctionInterface {
             is_method: value.is_method,
             self_receiver: value.self_receiver,
             is_unsafe: value.is_unsafe,
+            constant_arithmetic: value.constant_arithmetic.clone(),
         })
     }
 
@@ -1410,6 +1415,9 @@ impl SerializedProductFunctionInterface {
         self,
         decoder: &mut ProductTypeDecoder<'_>,
     ) -> Result<ProductFunctionInterface, String> {
+        if let Some(summary) = &self.constant_arithmetic {
+            summary.validate(self.params.len())?;
+        }
         Ok(ProductFunctionInterface {
             id: self.id,
             name: self.name,
@@ -1421,6 +1429,7 @@ impl SerializedProductFunctionInterface {
             is_method: self.is_method,
             self_receiver: self.self_receiver,
             is_unsafe: self.is_unsafe,
+            constant_arithmetic: self.constant_arithmetic,
         })
     }
 }
@@ -3958,6 +3967,7 @@ mod tests {
                 is_method: false,
                 self_receiver: None,
                 is_unsafe: false,
+                constant_arithmetic: None,
             },
         );
         let products = crate::products::CompilerProducts {

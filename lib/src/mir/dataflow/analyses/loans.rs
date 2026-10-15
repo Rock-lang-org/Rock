@@ -291,6 +291,18 @@ impl LoanAnalysis {
         table: &LoanTable,
         active_loans: &LoanState,
     ) -> Result<(), LoanId> {
+        Self::check_aliasing_through(place, kind, place, table, active_loans)
+    }
+
+    /// Check a recovered storage root while retaining the reborrow authority of
+    /// the pointer/reference used to reach it; sibling loans still conflict.
+    pub fn check_aliasing_through(
+        place: &Place,
+        kind: LoanKind,
+        through: &Place,
+        table: &LoanTable,
+        active_loans: &LoanState,
+    ) -> Result<(), LoanId> {
         let original_place = place.clone();
         let place = crate::mir::borrowck::provenance::resolve_place(place, table, active_loans);
         let access_path = crate::mir::borrowck::provenance::resolve_place_path(
@@ -303,7 +315,7 @@ impl LoanAnalysis {
             let Some(loan) = table.get(loan_id) else {
                 continue;
             };
-            if Self::access_through_mutable_loan_owner(&original_place, loan_id, loan, active_loans)
+            if Self::access_through_mutable_loan_owner(through, loan_id, loan, active_loans)
             {
                 continue;
             }

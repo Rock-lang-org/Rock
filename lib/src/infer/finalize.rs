@@ -379,6 +379,57 @@ fn finalize_expr(ctx: &mut FinalizeCtx<'_>, expr: &mut HirExpr) {
                 finalize_expr(ctx, &mut field.value);
             }
         }
+        HirExprKind::Intrinsic { name, args }
+            if crate::mir::integer::IntegerIntrinsic::from_name(name).is_some() =>
+        {
+            use crate::mir::integer::{IntegerIntrinsic, IntegerOp};
+            for arg in args.iter_mut() {
+                finalize_expr(ctx, arg);
+            }
+            let intrinsic = IntegerIntrinsic::from_name(name).unwrap();
+            let operand = args.first().map(|arg| &arg.ty);
+            let integer = matches!(operand, Some(Type::I8 | Type::I16 | Type::I32 | Type::I64
+                | Type::U8 | Type::U16 | Type::U32 | Type::U64));
+            let valid = integer && args.len() == intrinsic.arity()
+                && (intrinsic.arity() == 1 || if matches!(intrinsic.op, IntegerOp::Shl | IntegerOp::Shr) {
+                    matches!(args[1].ty, Type::I8 | Type::I16 | Type::I32 | Type::I64
+                        | Type::U8 | Type::U16 | Type::U32 | Type::U64)
+                } else {
+                    args[0].ty == args[1].ty
+                });
+            if !valid {
+                ctx.errors.push(InferenceError {
+                    error: UnifyError::Message(format!(
+                        "{name} requires integer operands of the same type (shift counts must be integers)"
+                    )),
+                    span: Some(expr.span.clone()),
+                });
+            }
+        }
+        HirExprKind::Intrinsic { name, args } if name == "PtrFromParts" => {
+            for arg in args.iter_mut() {
+                finalize_expr(ctx, arg);
+            }
+            let valid = match (&expr.ty, args.as_slice()) {
+                (Type::Pointer(target), [data, length]) if length.ty == Type::I64 => {
+                    match (target.as_ref(), &data.ty) {
+                        (Type::Slice(element), Type::Pointer(source)) => element == source
+                            && !matches!(element.as_ref(), Type::Slice(_) | Type::Str),
+                        (Type::Str, Type::Pointer(source)) => source.as_ref() == &Type::U8,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+            if !valid {
+                ctx.errors.push(InferenceError {
+                    error: UnifyError::Message(
+                        "PtrFromParts requires an unambiguous *[T] result from *T or *Str from *U8, and an I64 length".to_string(),
+                    ),
+                    span: Some(expr.span.clone()),
+                });
+            }
+        }
         HirExprKind::EnumVariant(_, _, args, _) | HirExprKind::Intrinsic { args, .. } => {
             for arg in args {
                 finalize_expr(ctx, arg);

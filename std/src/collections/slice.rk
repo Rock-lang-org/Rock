@@ -1,5 +1,30 @@
 // Safe borrowed-slice operations.
 
+> std::ffi::libc::exit
+
+// The caller guarantees non-null aligned storage, initialized elements in one
+// live allocation, and a valid borrow duration (exclusive for the mutable form).
+// Empty slices still require a non-null aligned pointer; ZSTs have zero extent.
+unsafe slice_from_raw_parts: *T -> I64 -> &[T]
+< unsafe slice_from_raw_parts = data, len ->
+    size = ~SizeOf data
+    if len < 0 || (data as I64) == 0
+        exit (1 as I32)
+    if size > 0 && len > 9223372036854775807 / size
+        exit (1 as I32)
+    raw: *[T] = ~PtrFromParts data, len
+    unsafe &*raw
+
+unsafe slice_from_raw_parts_mut: *T -> I64 -> &mut [T]
+< unsafe slice_from_raw_parts_mut = data, len ->
+    size = ~SizeOf data
+    if len < 0 || (data as I64) == 0
+        exit (1 as I32)
+    if size > 0 && len > 9223372036854775807 / size
+        exit (1 as I32)
+    raw: *[T] = ~PtrFromParts data, len
+    unsafe &mut *raw
+
 impl &[T]
     @len: I64
     @len = -> ~ArrayLen *self

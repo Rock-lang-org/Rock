@@ -39,6 +39,7 @@ pub enum MirRuntimeHelper {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MirIntrinsicId {
+    Integer(super::integer::IntegerIntrinsic),
     I8Add,
     I16Add,
     I32Add,
@@ -212,10 +213,7 @@ pub enum MirIntrinsicId {
     ArrayRefToSlice,
     ArrayLen,
     PtrOffset,
-    MakeArr,
-    BorrowSlice,
-    BorrowSliceMut,
-    BorrowStr,
+    PtrFromParts,
     ArrPtr,
     SizeOf,
     DropInPlace,
@@ -230,6 +228,9 @@ pub enum MirIntrinsicId {
 
 impl MirIntrinsicId {
     pub fn from_name(name: &str) -> Option<Self> {
+        if let Some(integer) = super::integer::IntegerIntrinsic::from_name(name) {
+            return Some(Self::Integer(integer));
+        }
         Some(match name {
             "I8Add" => Self::I8Add,
             "I16Add" => Self::I16Add,
@@ -404,10 +405,7 @@ impl MirIntrinsicId {
             "ArrayRefToSlice" => Self::ArrayRefToSlice,
             "ArrayLen" => Self::ArrayLen,
             "PtrOffset" => Self::PtrOffset,
-            "MakeArr" => Self::MakeArr,
-            "BorrowSlice" => Self::BorrowSlice,
-            "BorrowSliceMut" => Self::BorrowSliceMut,
-            "BorrowStr" => Self::BorrowStr,
+            "PtrFromParts" => Self::PtrFromParts,
             "ArrPtr" => Self::ArrPtr,
             "SizeOf" => Self::SizeOf,
             "DropInPlace" => Self::DropInPlace,
@@ -422,6 +420,7 @@ impl MirIntrinsicId {
 
     pub fn as_str(&self) -> &str {
         match self {
+            Self::Integer(integer) => integer.as_str(),
             Self::I8Add => "I8Add",
             Self::I16Add => "I16Add",
             Self::I32Add => "I32Add",
@@ -595,10 +594,7 @@ impl MirIntrinsicId {
             Self::ArrayRefToSlice => "ArrayRefToSlice",
             Self::ArrayLen => "ArrayLen",
             Self::PtrOffset => "PtrOffset",
-            Self::MakeArr => "MakeArr",
-            Self::BorrowSlice => "BorrowSlice",
-            Self::BorrowSliceMut => "BorrowSliceMut",
-            Self::BorrowStr => "BorrowStr",
+            Self::PtrFromParts => "PtrFromParts",
             Self::ArrPtr => "ArrPtr",
             Self::SizeOf => "SizeOf",
             Self::DropInPlace => "DropInPlace",
@@ -785,10 +781,7 @@ impl MirIntrinsicId {
                 | Self::BoolOr
                 | Self::BoolXor
                 | Self::BoolNot
-                | Self::MakeArr
-                | Self::BorrowSlice
-                | Self::BorrowSliceMut
-                | Self::BorrowStr
+                | Self::PtrFromParts
                 | Self::AtomicU64Exchange
                 | Self::AtomicU64FetchAdd
                 | Self::AtomicU64FetchSub
@@ -982,8 +975,8 @@ mod tests {
         }
 
         assert_eq!(
-            intrinsic_callable(MirIntrinsicId::BorrowSlice),
-            MirCallable::Resolved(MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSlice))
+            intrinsic_callable(MirIntrinsicId::PtrFromParts),
+            MirCallable::Resolved(MirCallableKey::Intrinsic(MirIntrinsicId::PtrFromParts))
         );
     }
 
@@ -995,6 +988,14 @@ mod tests {
     #[test]
     fn intrinsic_from_name_rejects_unknown_source_name() {
         assert!(MirIntrinsicId::from_name("NotARealIntrinsic").is_none());
+    }
+
+    #[test]
+    fn removed_make_arr_has_no_intrinsic_identity() {
+        for name in ["MakeArr", "BorrowSlice", "BorrowSliceMut", "BorrowStr"] {
+            assert!(MirIntrinsicId::from_name(name).is_none());
+            assert!(!crate::lower::intrinsics::is_intrinsic_name(name));
+        }
     }
 
     #[test]

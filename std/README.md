@@ -19,6 +19,34 @@ children and re-exports its public API.
 | `ffi` | C library declarations |
 
 `clone`, `convert`, `show`, `hash`, and `env` remain standalone modules.
+
+## Integer arithmetic and comparisons
+
+Integer types provide `checked_*`, `wrapping_*`, `saturating_*`, and
+`overflowing_*` methods through `Integer`. Checked methods return `Option`;
+overflowing methods return a wrapped value and an overflow flag. Explicit
+methods do not depend on the build profile.
+
+```rock
+main = !->
+    largest = 255 as U8
+    (largest.wrapping_add (1 as U8)).println!
+    (largest.saturating_add (1 as U8)).println!
+    match largest.checked_add (1 as U8)
+        Option::Some value => value.println!
+        Option::None => "overflow".println!
+```
+
+This prints `0`, `255`, and `overflow`. Ordinary integer addition, subtraction,
+multiplication, negation, and shifts check overflow in development builds and
+wrap in release builds; division by zero and signed minimum divided or
+remaindered by `-1` always fail. A prebuilt dependency retains the policy with
+which it was compiled, so rebuild std when selecting a different policy.
+
+`PartialEq` and `PartialOrd` provide ordinary comparisons. `Eq` additionally
+promises reflexive equality; `Ord` promises a total ordering. Floats implement
+only the partial traits: comparisons with NaN are unordered, `NaN == NaN` is
+false, and `NaN != NaN` is true.
 Operator precedence declarations stay in `src/lib.rk`. The prelude stays in
 `src/prelude.rk`, preserving the existing automatically imported vocabulary.
 

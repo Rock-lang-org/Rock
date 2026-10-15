@@ -4888,19 +4888,19 @@ mod tests {
         let unit_id = type_context.intern_type(&Type::Unit);
         let ptr_id = type_context.intern_type(&Type::Pointer(Box::new(Type::U8)));
         let len_id = type_context.intern_type(&Type::I64);
-        let slice_id = type_context.intern_type(&Type::Slice(Box::new(Type::U8)));
+        let slice_id = type_context.intern_type(&Type::Pointer(Box::new(Type::Slice(Box::new(Type::U8)))));
         let struct_id_ty = type_context.intern_type(&Type::Struct {
             id: struct_id,
             args: vec![],
         });
         let function = MirFunction {
             id: function_id.clone(),
-            name: "uses_borrow_slice".to_string(),
+            name: "uses_raw_wide_pointer".to_string(),
             basic_blocks: vec![BasicBlock {
                 statements: vec![],
                 terminator: Some(Terminator::Call {
                     func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
-                        crate::mir::MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSlice),
+                        crate::mir::MirCallableKey::Intrinsic(MirIntrinsicId::PtrFromParts),
                     ))),
                     args: vec![
                         Operand::Copy(Place {
@@ -4977,9 +4977,9 @@ mod tests {
 
         let declaration = contract
             .callable(&crate::mir::MirCallableKey::Intrinsic(
-                MirIntrinsicId::BorrowSlice,
+                MirIntrinsicId::PtrFromParts,
             ))
-            .expect("BorrowSlice intrinsic callable should be registered");
+            .expect("PtrFromParts intrinsic callable should be registered");
         assert_eq!(declaration.signature.params[0].semantic_ty, ptr_id);
         assert_eq!(declaration.signature.params[1].semantic_ty, len_id);
         assert_eq!(declaration.signature.ret.semantic_ty, slice_id);
@@ -4996,7 +4996,7 @@ mod tests {
         let base_id = type_context.intern_type(&Type::I64);
         let ptr_id = type_context.intern_type(&Type::Pointer(Box::new(Type::U8)));
         let len_id = type_context.intern_type(&Type::I64);
-        let slice_id = type_context.intern_type(&Type::Slice(Box::new(Type::U8)));
+        let slice_id = type_context.intern_type(&Type::Pointer(Box::new(Type::Slice(Box::new(Type::U8)))));
         let struct_ty = Type::Struct {
             id: struct_id,
             args: vec![],
@@ -5018,7 +5018,7 @@ mod tests {
                 statements: vec![],
                 terminator: Some(Terminator::Call {
                     func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
-                        crate::mir::MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSlice),
+                        crate::mir::MirCallableKey::Intrinsic(MirIntrinsicId::PtrFromParts),
                     ))),
                     args: vec![
                         Operand::Copy(Place {
@@ -5104,9 +5104,9 @@ mod tests {
 
         let declaration = contract
             .callable(&crate::mir::MirCallableKey::Intrinsic(
-                MirIntrinsicId::BorrowSlice,
+                MirIntrinsicId::PtrFromParts,
             ))
-            .expect("BorrowSlice intrinsic callable should be registered for projected field");
+            .expect("PtrFromParts intrinsic callable should be registered for projected field");
         assert_eq!(declaration.signature.params[0].semantic_ty, ptr_id);
         assert_eq!(declaration.signature.params[1].semantic_ty, len_id);
         assert_eq!(declaration.signature.ret.semantic_ty, slice_id);

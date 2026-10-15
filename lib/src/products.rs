@@ -23,6 +23,8 @@ use crate::types::{GenericParamDecl, Type};
 
 mod type_table;
 
+pub use crate::infer::constants::{ArithmeticSummary, ArithmeticType};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ProductCrateId(pub u32);
 
@@ -58,7 +60,7 @@ impl From<DefId> for ProductDefId {
     }
 }
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 47;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 49;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;
@@ -303,6 +305,7 @@ pub struct ProductFunctionInterface {
     pub is_method: bool,
     pub self_receiver: Option<crate::types::ReceiverMode>,
     pub is_unsafe: bool,
+    pub constant_arithmetic: Option<ArithmeticSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,6 +344,7 @@ impl<P: HirPhase> From<&HirFunctionFor<P>> for ProductFunctionInterface {
             is_method: function.is_method,
             self_receiver: function.self_receiver,
             is_unsafe: function.is_unsafe,
+            constant_arithmetic: ArithmeticSummary::from_function(function),
         }
     }
 }
@@ -3820,6 +3824,7 @@ mod tests {
                     is_method: receiver.is_some(),
                     self_receiver: receiver,
                     is_unsafe: false,
+                    constant_arithmetic: None,
                 },
             );
         }
@@ -5116,6 +5121,29 @@ mod tests {
             decoded.identity_table.prelude_export_names.get("plain"),
             Some(&plain_id)
         );
+    }
+
+    #[test]
+    fn compiler_products_roundtrip_and_validate_constant_arithmetic_summaries() {
+        use super::{ArithmeticSummary, ArithmeticType};
+        let mut products = products_from_hir(&resolved_hir_for_products()).unwrap();
+        let id = *products.interface.functions.keys().next().unwrap();
+        products.interface.functions.get_mut(&id).unwrap().constant_arithmetic =
+            Some(ArithmeticSummary::Integer(42));
+        let bytes = products.to_artifact_bytes().unwrap();
+        let decoded = CompilerProducts::from_artifact_bytes(&bytes).unwrap();
+        assert!(matches!(decoded.interface.functions[&id].constant_arithmetic,
+            Some(ArithmeticSummary::Integer(42))));
+
+        for invalid in [
+            ArithmeticSummary::Argument(usize::MAX),
+            ArithmeticSummary::Integer(i128::MIN),
+            ArithmeticSummary::Cast(Box::new(ArithmeticSummary::Integer(0)), ArithmeticType::Bool),
+            ArithmeticSummary::Intrinsic("IntCheckedAdd".to_string(), ArithmeticType::I8, Vec::new()),
+        ] {
+            products.interface.functions.get_mut(&id).unwrap().constant_arithmetic = Some(invalid);
+            assert!(products.to_artifact_bytes().unwrap_err().contains("constant arithmetic summary"));
+        }
     }
 
     #[test]
@@ -7090,7 +7118,7 @@ mod tests {
 
     #[test]
     fn product_artifact_format_version_matches_shared_contract() {
-        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 47);
+        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 49);
         assert_eq!(
             PRODUCT_ARTIFACT_FORMAT_VERSION,
             rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION

@@ -53,6 +53,7 @@ use crate::types::{GenericParamId, Type};
 
 /// The main lowering context
 pub struct Lowerer {
+    pub(crate) overflow_checks: bool,
     pub(crate) engine: LowerInferenceService,
     pub(crate) scope: LowerScopeService,
     pub(crate) items: LowerItemService,
@@ -206,6 +207,7 @@ impl Lowerer {
 
     pub(crate) fn from_services(services: LowererServices) -> Self {
         Self {
+            overflow_checks: true,
             engine: services.engine,
             scope: services.scope,
             items: services.items,

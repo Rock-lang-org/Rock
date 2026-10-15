@@ -2,14 +2,15 @@
 //
 // These functions provide common integer utility operations.
 
-> std::cmp::ord::Ord
-> std::ops::neg::Neg
+> std::cmp::ord::PartialOrd
+> std::num::integer::Integer
 
 // Absolute value of an integer
 abs: I64 -> I64
 < abs = x ->
     if x < 0
-        -x
+        // Preserve this utility's historical wrapping contract at I64::MIN.
+        x.wrapping_neg!
     else
         x
 

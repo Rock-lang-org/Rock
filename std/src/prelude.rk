@@ -32,6 +32,8 @@
 < std::string::operations::*
 < std::convert::*
 < std::num::utils::*
+< std::num::integer::*
+< std::collections::slice::*
 < std::mem::utils::*
 < std::functional::pipe::|>
 < std::io::traits::|>>

@@ -5,7 +5,7 @@
 > std::mem::alloc::checked_alloc
 > std::mem::utils::sizeof_pointee
 > std::concurrency::atomic::AtomicU64
-> std::cmp::eq::Eq
+> std::cmp::eq::PartialEq
 > std::ops::deref::Deref
 > std::ops::deref::DerefMut
 > std::mem::drop::Drop

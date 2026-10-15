@@ -14,6 +14,7 @@ pub(crate) struct LoweringPipeline<'a> {
     program: &'a ast::Program,
     crate_ctx: &'a CrateContext,
     current_crate_name: Option<&'a str>,
+    overflow_checks: bool,
 }
 
 impl<'a> LoweringPipeline<'a> {
@@ -26,7 +27,13 @@ impl<'a> LoweringPipeline<'a> {
             program,
             crate_ctx,
             current_crate_name,
+            overflow_checks: true,
         }
+    }
+
+    pub(crate) fn with_overflow_checks(mut self, enabled: bool) -> Self {
+        self.overflow_checks = enabled;
+        self
     }
 
     pub(crate) fn lower_from_declarations(
@@ -34,6 +41,7 @@ impl<'a> LoweringPipeline<'a> {
         decls: Declarations,
     ) -> Result<PartialHir, Vec<ResolveError>> {
         let mut lowerer = Lowerer::from_declarations(decls)?;
+        lowerer.overflow_checks = self.overflow_checks;
         let session = LoweringSessionServices::new(
             self.crate_ctx,
             self.current_crate_name,

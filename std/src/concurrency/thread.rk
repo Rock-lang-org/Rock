@@ -4,8 +4,8 @@
 > std::mem::alloc::Layout
 > std::mem::alloc::checked_alloc
 > std::concurrency::atomic::AtomicU64
-> std::cmp::eq::Eq
-> std::cmp::ord::Ord
+> std::cmp::eq::PartialEq
+> std::cmp::ord::PartialOrd
 > std::functional::callable::FnOnce
 > std::mem::drop::Drop
 > std::mem::drop::drop_in_place

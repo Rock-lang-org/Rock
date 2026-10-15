@@ -6,7 +6,7 @@
 > std::mem::utils::sizeof_pointee
 > std::concurrency::atomic::AtomicU64
 > std::clone::Clone
-> std::cmp::eq::Eq
+> std::cmp::eq::PartialEq
 > std::ops::not::Not
 > std::ops::deref::Deref
 > std::mem::drop::Drop

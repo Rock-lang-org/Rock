@@ -866,10 +866,7 @@ impl<'a> MirBuilder<'a> {
                         continue;
                     }
 
-                    if matches!(
-                        intrinsic,
-                        MirIntrinsicId::BorrowSlice | MirIntrinsicId::BorrowSliceMut
-                    ) && index == 0
+                    if intrinsic == MirIntrinsicId::PtrFromParts && index == 0
                     {
                         if let Some(place) = self.lower_place(arg) {
                             arg_operands.push(Operand::Copy(place));

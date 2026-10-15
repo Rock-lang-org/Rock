@@ -5,6 +5,9 @@ use crate::types::Type;
 
 /// Check if a name refers to an intrinsic function
 pub fn is_intrinsic_name(name: &str) -> bool {
+    if name == "OverflowChecks" || crate::mir::integer::IntegerIntrinsic::from_name(name).is_some() {
+        return true;
+    }
     matches!(
         name,
         // Arithmetic: all numeric types (no Bool)
@@ -62,7 +65,7 @@ pub fn is_intrinsic_name(name: &str) -> bool {
         | "BoolAnd" | "BoolOr" | "BoolXor" | "BoolNot"
         // Array / memory
         | "ArrayLen"
-        | "PtrOffset" | "MakeArr" | "BorrowSlice" | "BorrowSliceMut" | "BorrowStr" | "ArrPtr" | "SizeOf"
+        | "PtrOffset" | "PtrFromParts" | "ArrPtr" | "SizeOf"
         | "DropInPlace" | "Forget"
         | "AtomicU64Exchange" | "AtomicU64FetchAdd" | "AtomicU64FetchSub" | "AtomicU64Store"
     )
@@ -70,6 +73,14 @@ pub fn is_intrinsic_name(name: &str) -> bool {
 
 /// Infer the return type of an intrinsic based on its name and arguments
 pub fn infer_intrinsic_return_type(name: &str, args: &[HirExpr]) -> Type {
+    if let Some(integer) = crate::mir::integer::IntegerIntrinsic::from_name(name) {
+        let operand = args.first().map(|arg| arg.ty.clone()).unwrap_or(Type::Error);
+        return if integer.mode == crate::mir::integer::IntegerMode::Overflowing {
+            Type::Tuple(vec![operand, Type::Bool])
+        } else {
+            operand
+        };
+    }
     // Comparison operators return Bool
     if name.ends_with("Lt")
         || name.ends_with("Le")
@@ -107,40 +118,6 @@ pub fn infer_intrinsic_return_type(name: &str, args: &[HirExpr]) -> Type {
             }
             return Type::Pointer(Box::new(Type::U8));
         }
-        // MakeArr: returns a slice matching the pointed-to element type.
-        "MakeArr" => {
-            if let Some(HirExpr {
-                ty: Type::Pointer(inner),
-                ..
-            }) = args.first()
-            {
-                return Type::Slice(inner.clone());
-            }
-            return Type::Slice(Box::new(Type::U8));
-        }
-        // BorrowSlice: returns a borrowed slice matching the pointed-to element type.
-        "BorrowSlice" | "BorrowSliceMut" => {
-            let elem_ty = if let Some(HirExpr {
-                ty: Type::Pointer(inner),
-                ..
-            }) = args.first()
-            {
-                inner.clone()
-            } else {
-                Box::new(Type::U8)
-            };
-
-            return Type::Reference {
-                mutable: name == "BorrowSliceMut",
-                inner: Box::new(Type::Slice(elem_ty)),
-            };
-        }
-        "BorrowStr" => {
-            return Type::Reference {
-                mutable: false,
-                inner: Box::new(Type::Str),
-            };
-        }
         // ArrPtr: returns *T where T is the element type of the slice argument.
         // The actual element type is resolved in control_flow.rs during unification;
         // this fallback is only hit if called outside that context.
@@ -149,7 +126,7 @@ pub fn infer_intrinsic_return_type(name: &str, args: &[HirExpr]) -> Type {
                 match &args[0].ty {
                     Type::Slice(elem_ty) => return Type::Pointer(elem_ty.clone()),
                     Type::Reference { inner, .. } => match inner.as_ref() {
-                        Type::Slice(elem_ty) => return Type::Pointer(elem_ty.clone()),
+                        Type::Slice(elem_ty) | Type::Array(elem_ty, _) => return Type::Pointer(elem_ty.clone()),
                         Type::Str => return Type::Pointer(Box::new(Type::U8)),
                         _ => {}
                     },
@@ -231,7 +208,6 @@ pub fn infer_intrinsic_arg_types(name: &str) -> Vec<Type> {
         "AtomicU64Exchange" | "AtomicU64FetchAdd" | "AtomicU64FetchSub" | "AtomicU64Store" => {
             return vec![Type::Pointer(Box::new(Type::U64)), Type::U64]
         }
-        "BorrowStr" => return vec![Type::Pointer(Box::new(Type::U8)), Type::I64],
         "SizeOf" => return vec![],
         _ => {}
     }

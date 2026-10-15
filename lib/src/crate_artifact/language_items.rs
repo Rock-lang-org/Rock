@@ -1536,6 +1536,7 @@ mod tests {
                     ReceiverMode::Shared
                 }),
                 is_unsafe: false,
+                constant_arithmetic: None,
             },
         );
         products.interface.impls.insert(impl_id, imp);
@@ -1747,6 +1748,7 @@ mod tests {
                         is_method: true,
                         self_receiver: Some(ReceiverMode::Mut),
                         is_unsafe: false,
+                        constant_arithmetic: None,
                     },
                 )]),
             },
@@ -1942,6 +1944,7 @@ mod tests {
                 is_method: false,
                 self_receiver: None,
                 is_unsafe: false,
+                constant_arithmetic: None,
             },
         );
 
@@ -2381,6 +2384,7 @@ mod tests {
                 is_method: false,
                 self_receiver: None,
                 is_unsafe: false,
+                constant_arithmetic: None,
             },
         );
         products

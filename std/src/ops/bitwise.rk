@@ -1,64 +1,193 @@
-// Bitwise trait - provides bitwise operations for integer types
+// Independent bitwise and shift protocols, matching arithmetic operators.
 
-< trait Bitwise
-    @|: Self -> Self
-    @^: Self -> Self
-    @&: Self -> Self
-    @<<: Self -> Self
-    @>>: Self -> Self
+< trait BitOr Rhs
+    type Output
+    @|: Rhs -> Self::Output
 
-impl Bitwise for I64
+< trait BitXor Rhs
+    type Output
+    @^: Rhs -> Self::Output
+
+< trait BitAnd Rhs
+    type Output
+    @&: Rhs -> Self::Output
+
+< trait Shl Rhs
+    type Output
+    @<<: Rhs -> Self::Output
+
+< trait Shr Rhs
+    type Output
+    @>>: Rhs -> Self::Output
+
+impl BitOr I64 for I64
+    type Output = I64
     @| = other -> ~I64Or *self, other
+
+impl BitXor I64 for I64
+    type Output = I64
     @^ = other -> ~I64Xor *self, other
+
+impl BitAnd I64 for I64
+    type Output = I64
     @& = other -> ~I64And *self, other
-    @<< = other -> ~I64Shl *self, other
-    @>> = other -> ~I64Shr *self, other
 
-impl Bitwise for I32
+impl Shl I64 for I64
+    type Output = I64
+    @<< = other -> if ~OverflowChecks! then ~IntCheckedShl *self, other else ~IntWrappingShl *self, other
+
+impl Shr I64 for I64
+    type Output = I64
+    @>> = other -> if ~OverflowChecks! then ~IntCheckedShr *self, other else ~IntWrappingShr *self, other
+
+impl BitOr I32 for I32
+    type Output = I32
     @| = other -> ~I32Or *self, other
+
+impl BitXor I32 for I32
+    type Output = I32
     @^ = other -> ~I32Xor *self, other
+
+impl BitAnd I32 for I32
+    type Output = I32
     @& = other -> ~I32And *self, other
-    @<< = other -> ~I32Shl *self, other
-    @>> = other -> ~I32Shr *self, other
 
-impl Bitwise for I16
+impl Shl I32 for I32
+    type Output = I32
+    @<< = other -> if ~OverflowChecks! then ~IntCheckedShl *self, other else ~IntWrappingShl *self, other
+
+impl Shr I32 for I32
+    type Output = I32
+    @>> = other -> if ~OverflowChecks! then ~IntCheckedShr *self, other else ~IntWrappingShr *self, other
+
+impl BitOr I16 for I16
+    type Output = I16
     @| = other -> ~I16Or *self, other
+
+impl BitXor I16 for I16
+    type Output = I16
     @^ = other -> ~I16Xor *self, other
+
+impl BitAnd I16 for I16
+    type Output = I16
     @& = other -> ~I16And *self, other
-    @<< = other -> ~I16Shl *self, other
-    @>> = other -> ~I16Shr *self, other
 
-impl Bitwise for I8
+impl Shl I16 for I16
+    type Output = I16
+    @<< = other -> if ~OverflowChecks! then ~IntCheckedShl *self, other else ~IntWrappingShl *self, other
+
+impl Shr I16 for I16
+    type Output = I16
+    @>> = other -> if ~OverflowChecks! then ~IntCheckedShr *self, other else ~IntWrappingShr *self, other
+
+impl BitOr I8 for I8
+    type Output = I8
     @| = other -> ~I8Or *self, other
+
+impl BitXor I8 for I8
+    type Output = I8
     @^ = other -> ~I8Xor *self, other
+
+impl BitAnd I8 for I8
+    type Output = I8
     @& = other -> ~I8And *self, other
-    @<< = other -> ~I8Shl *self, other
-    @>> = other -> ~I8Shr *self, other
 
-impl Bitwise for U64
+impl Shl I8 for I8
+    type Output = I8
+    @<< = other -> if ~OverflowChecks! then ~IntCheckedShl *self, other else ~IntWrappingShl *self, other
+
+impl Shr I8 for I8
+    type Output = I8
+    @>> = other -> if ~OverflowChecks! then ~IntCheckedShr *self, other else ~IntWrappingShr *self, other
+
+impl BitOr U64 for U64
+    type Output = U64
     @| = other -> ~U64Or *self, other
+
+impl BitXor U64 for U64
+    type Output = U64
     @^ = other -> ~U64Xor *self, other
+
+impl BitAnd U64 for U64
+    type Output = U64
     @& = other -> ~U64And *self, other
-    @<< = other -> ~U64Shl *self, other
-    @>> = other -> ~U64Shr *self, other
 
-impl Bitwise for U32
+impl Shl U64 for U64
+    type Output = U64
+    @<< = other -> if ~OverflowChecks! then ~IntCheckedShl *self, other else ~IntWrappingShl *self, other
+
+impl Shr U64 for U64
+    type Output = U64
+    @>> = other -> if ~OverflowChecks! then ~IntCheckedShr *self, other else ~IntWrappingShr *self, other
+
+impl BitOr U32 for U32
+    type Output = U32
     @| = other -> ~U32Or *self, other
+
+impl BitXor U32 for U32
+    type Output = U32
     @^ = other -> ~U32Xor *self, other
+
+impl BitAnd U32 for U32
+    type Output = U32
     @& = other -> ~U32And *self, other
-    @<< = other -> ~U32Shl *self, other
-    @>> = other -> ~U32Shr *self, other
 
-impl Bitwise for U16
+impl Shl U32 for U32
+    type Output = U32
+    @<< = other -> if ~OverflowChecks! then ~IntCheckedShl *self, other else ~IntWrappingShl *self, other
+
+impl Shr U32 for U32
+    type Output = U32
+    @>> = other -> if ~OverflowChecks! then ~IntCheckedShr *self, other else ~IntWrappingShr *self, other
+
+impl BitOr U16 for U16
+    type Output = U16
     @| = other -> ~U16Or *self, other
-    @^ = other -> ~U16Xor *self, other
-    @& = other -> ~U16And *self, other
-    @<< = other -> ~U16Shl *self, other
-    @>> = other -> ~U16Shr *self, other
 
-impl Bitwise for U8
+impl BitXor U16 for U16
+    type Output = U16
+    @^ = other -> ~U16Xor *self, other
+
+impl BitAnd U16 for U16
+    type Output = U16
+    @& = other -> ~U16And *self, other
+
+impl Shl U16 for U16
+    type Output = U16
+    @<< = other -> if ~OverflowChecks! then ~IntCheckedShl *self, other else ~IntWrappingShl *self, other
+
+impl Shr U16 for U16
+    type Output = U16
+    @>> = other -> if ~OverflowChecks! then ~IntCheckedShr *self, other else ~IntWrappingShr *self, other
+
+impl BitOr U8 for U8
+    type Output = U8
     @| = other -> ~U8Or *self, other
+
+impl BitXor U8 for U8
+    type Output = U8
     @^ = other -> ~U8Xor *self, other
+
+impl BitAnd U8 for U8
+    type Output = U8
     @& = other -> ~U8And *self, other
-    @<< = other -> ~U8Shl *self, other
-    @>> = other -> ~U8Shr *self, other
+
+impl Shl U8 for U8
+    type Output = U8
+    @<< = other -> if ~OverflowChecks! then ~IntCheckedShl *self, other else ~IntWrappingShl *self, other
+
+impl Shr U8 for U8
+    type Output = U8
+    @>> = other -> if ~OverflowChecks! then ~IntCheckedShr *self, other else ~IntWrappingShr *self, other
+
+impl BitOr Bool for Bool
+    type Output = Bool
+    @| = other -> ~BoolOr *self, other
+
+impl BitXor Bool for Bool
+    type Output = Bool
+    @^ = other -> ~BoolXor *self, other
+
+impl BitAnd Bool for Bool
+    type Output = Bool
+    @& = other -> ~BoolAnd *self, other

@@ -2108,8 +2108,14 @@ impl Lowerer {
                 }
             }
             ast::Operand::NativeOperator(op) => {
-                // Native operator reference
-                let ty = self.engine.fresh_type_var_at(op.span.clone());
+                let ty = if super::intrinsics::is_intrinsic_name(&op.name) {
+                    self.engine.fresh_type_var_at(op.span.clone())
+                } else {
+                    self.diagnostics.push_type_with_span(
+                        format!("Unknown intrinsic '~{}'", op.name), op.span.clone(),
+                    );
+                    Type::Error
+                };
                 HirExpr {
                     ty,
                     kind: HirExprKind::Var(op.name.clone()),

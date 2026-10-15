@@ -53,7 +53,7 @@ A generic body may only use operations promised by its bounds. Put bounds in a `
 struct Box T
     < value: T
 
-same_box: Box T -> Box T -> Bool where T: Eq
+same_box: Box T -> Box T -> Bool where T: PartialEq
 same_box = left, right -> left.value == right.value
 
 main = !->
@@ -69,7 +69,7 @@ main = !->
     same_box left_again, different .println!
 ```
 
-The body uses `==`, so `T: Eq` is required. In both calls inference chooses `T = I64`; the output is `true` and `false`. Without the bound, the generic body would have no promise that `==` exists.
+The body uses `==`, so it requires `T: PartialEq`. In both calls inference chooses `T = I64`; the output is `true` and `false`. Without the bound, the generic body would have no promise that `==` exists.
 
 The same rule applies to named methods. Here `T: Show` supplies `show!`, and the concrete argument type must implement that capability.
 

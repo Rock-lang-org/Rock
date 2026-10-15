@@ -14,6 +14,20 @@
 > std::ffi::libc::exit
 > std::functional::foldable::FoldableValue
 > std::control::control_flow::ControlFlow
+> std::collections::slice::slice_from_raw_parts
+
+// The byte slice must contain valid UTF-8; its existing borrow is retained.
+unsafe str_from_utf8_unchecked: &[U8] -> &Str
+< unsafe str_from_utf8_unchecked = bytes ->
+    raw: *Str = ~PtrFromParts bytes.as_ptr!, bytes.len!
+    unsafe &*raw
+
+str_from_utf8: &[U8] -> Option &Str
+< str_from_utf8 = bytes ->
+    if is_utf8 bytes
+        Option::Some (unsafe str_from_utf8_unchecked bytes)
+    else
+        Option::None
 
 impl &Str
     // UTF-8 length is measured in bytes, not Unicode scalars.
@@ -27,7 +41,7 @@ impl &Str
     @as_ptr = -> ~ArrPtr *self
 
     @as_bytes: &[U8]
-    @as_bytes = -> unsafe ~BorrowSlice self.as_ptr!, self.len!
+    @as_bytes = -> unsafe slice_from_raw_parts self.as_ptr!, self.len!
 
 // Borrowed UTF-8 cursors. Offsets always point to a scalar boundary.
 < struct Chars
@@ -209,7 +223,8 @@ str_slice: &Str -> Range -> &Str
         exit (1 as I32)
     base: *U8 = text.as_ptr!
     ptr: *U8 = unsafe base + bounds.0
-    unsafe ~BorrowStr ptr, (bounds.1 - bounds.0)
+    bytes = unsafe slice_from_raw_parts ptr, (bounds.1 - bounds.0)
+    unsafe str_from_utf8_unchecked bytes
 
 impl Index Range for &Str
     type Output = Str

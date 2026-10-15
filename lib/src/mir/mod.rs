@@ -9,6 +9,7 @@ pub mod borrowck;
 pub mod builder;
 pub mod dataflow;
 pub mod identity;
+pub mod integer;
 
 use crate::ids::{DefId, InstanceId, TypeId, VariantId};
 use crate::lexer::Span;

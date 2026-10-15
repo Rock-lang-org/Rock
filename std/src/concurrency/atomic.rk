@@ -1,4 +1,6 @@
 // Internal aligned atomic storage used by synchronization primitives.
+// Operations use LLVM atomics with sequentially consistent ordering; target
+// support determines whether an operation can be lowered without a runtime call.
 
 > std::mem::alloc::Global
 > std::mem::alloc::Layout

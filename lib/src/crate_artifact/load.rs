@@ -2170,6 +2170,9 @@ fn remap_function_interface_id(
     remap: &ProductIdentityRemap,
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductFunctionInterface, String> {
+    if let Some(summary) = &function.constant_arithmetic {
+        summary.validate(function.params.len())?;
+    }
     function.id = remap.def_id(id)?;
     remap_generic_param_decls(&mut function.generic_params, remap)?;
     remap_generic_bounds(&mut function.generic_bounds, remap, type_validator)?;

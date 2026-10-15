@@ -301,13 +301,13 @@ impl Index Range for Vec T
     type Output = [T]
     @index = range ->
         bounds = range_bounds_check range, self.raw_len
-        borrow_slice_range self.raw.ptr!, bounds.0, (bounds.1 - bounds.0)
+        unsafe borrow_slice_range self.raw.ptr!, bounds.0, (bounds.1 - bounds.0)
 
 impl IndexMut Range for Vec T
     type Output = [T]
     ^@index_mut = range ->
         bounds = range_bounds_check range, self.raw_len
-        borrow_slice_range_mut self.raw.ptr!, bounds.0, (bounds.1 - bounds.0)
+        unsafe borrow_slice_range_mut self.raw.ptr!, bounds.0, (bounds.1 - bounds.0)
 
 impl Functor for Vec
     fmap = mut mapper, mut value ->

@@ -87,6 +87,8 @@ pub struct Config {
     pub source_providers: Vec<SourceProvider>, // Explicit non-filesystem source inputs
     pub current_crate_name: Option<String>,
     pub opt_level: u8, // 0-3
+    /// None selects development checks / release wrapping.
+    pub overflow_checks: Option<bool>,
     pub emit_llvm: bool,
     pub no_link: bool,
     pub emit_object: Option<PathBuf>,
@@ -217,14 +219,15 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
     let loaded_prelude_export_ids = declarations.loaded_prelude_export_ids.clone();
     let infix_precedence = declarations.infix_precedence.clone();
     let fingerprint_source_files = source_graph.loaded_files().to_vec();
-    let partial_hir = lower::program::lower_from_declarations(
+    let partial_hir = lower::pipeline::LoweringPipeline::new(
         &ast,
-        declarations,
         &ctx,
         config.current_crate_name.as_deref(),
     )
+    .with_overflow_checks(config.overflow_checks.unwrap_or(config.opt_level == 0))
+    .lower_from_declarations(declarations)
     .map_err(|errors| Diagnostics::from_resolve_errors(errors).with_sources(&diagnostic_sources))?;
-    let hir = infer::finalize(partial_hir).map_err(|errors| {
+    let hir = infer::finalize_with_crates(partial_hir, &ctx).map_err(|errors| {
         Diagnostics::from_resolve_errors(errors).with_sources(&diagnostic_sources)
     })?;
 

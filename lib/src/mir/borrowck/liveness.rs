@@ -300,7 +300,7 @@ pub(super) fn apply_active_loan_statement_transfer(
             if matches!(
                 place.projection.first(),
                 Some(crate::mir::Projection::Deref)
-            ) && local_is_reference(func, type_context, place.local) =>
+            ) && tracks_local_reference_liveness(func, type_context, backend_contract, place.local) =>
         {
             state.copy_owner(place.local, dest.local);
         }
@@ -349,46 +349,34 @@ fn apply_active_loan_terminator_transfer(
     term: &Terminator,
 ) {
     let Terminator::Call {
-        args, destination, ..
+        func: callee, args, destination, ..
     } = term
     else {
         return;
     };
 
-    if !local_contains_reference(func, type_context, backend_contract, destination.local) {
+    let raw_forward = matches!(callee,
+        Operand::Constant(crate::mir::Constant::Callable(crate::mir::MirCallable::Resolved(
+            crate::mir::MirCallableKey::Intrinsic(crate::mir::MirIntrinsicId::PtrFromParts | crate::mir::MirIntrinsicId::PtrOffset)
+        )))
+    );
+    let destination_contains_reference = func.local_decls.get(destination.local.0).is_some_and(|decl|
+        type_id_contains_reference_with_contract(TypeView::new(type_context), backend_contract, decl.ty)
+    );
+    if !destination_contains_reference && !raw_forward {
         return;
     }
 
     let Some(Operand::Copy(source) | Operand::Move(source)) = args.first() else {
         return;
     };
-    if !source.projection.is_empty() || !local_is_reference(func, type_context, source.local) {
+    if !source.projection.is_empty()
+        || !tracks_local_reference_liveness(func, type_context, backend_contract, source.local)
+    {
         return;
     }
 
     state.copy_owner(source.local, destination.local);
-}
-
-fn local_contains_reference(
-    func: &MirFunction,
-    type_context: &TypeContext,
-    backend_contract: &MirBackendContract,
-    local: Local,
-) -> bool {
-    let type_view = TypeView::new(type_context);
-    func.local_decls.get(local.0).is_some_and(|decl| {
-        type_id_contains_reference_with_contract(type_view, backend_contract, decl.ty)
-    })
-}
-
-fn local_is_reference(func: &MirFunction, type_context: &TypeContext, local: Local) -> bool {
-    let type_view = TypeView::new(type_context);
-    matches!(
-        func.local_decls
-            .get(local.0)
-            .map(|decl| type_view.ty(decl.ty)),
-        Some(Ty::Reference { .. })
-    )
 }
 
 fn local_is_mutable_reference(

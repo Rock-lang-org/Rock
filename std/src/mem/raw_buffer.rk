@@ -4,6 +4,7 @@
 > std::mem::alloc::checked_mul_i64
 > std::ffi::libc::exit
 > std::mem::drop::Drop
+> std::collections::slice::slice_from_raw_parts
 
 < struct RawBuffer T
     raw_ptr: *T
@@ -50,7 +51,7 @@ impl RawBuffer T
     unsafe @as_slice = len ->
         if len < 0 || len > self.raw_cap
             exit (1 as I32)
-        unsafe ~BorrowSlice self.raw_ptr, len
+        unsafe slice_from_raw_parts self.raw_ptr, len
 
 impl Drop for RawBuffer T
     ~@drop = ->

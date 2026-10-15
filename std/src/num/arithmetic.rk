@@ -1,6 +1,7 @@
 // Dedicated arithmetic operator traits.
 
 > std::mem::sized::Sized
+> std::num::integer::Integer
 
 < trait Add Rhs
     type Output
@@ -30,47 +31,167 @@ impl Add I64 for *T where T: Sized
 impl Sub I64 for *T where T: Sized
     type Output = *T
 
-    unsafe @- = offset -> *self + (~I64Sub 0, offset)
+    unsafe @- = offset -> *self + offset.wrapping_neg!
 
 impl Add I64 for I64
     type Output = I64
-    @+ = other -> ~I64Add *self, other
+    @+ = other -> if ~OverflowChecks! then ~IntCheckedAdd *self, other else ~IntWrappingAdd *self, other
 
 impl Sub I64 for I64
     type Output = I64
-    @- = other -> ~I64Sub *self, other
+    @- = other -> if ~OverflowChecks! then ~IntCheckedSub *self, other else ~IntWrappingSub *self, other
 
 impl Mul I64 for I64
     type Output = I64
-    @* = other -> ~I64Mul *self, other
+    @* = other -> if ~OverflowChecks! then ~IntCheckedMul *self, other else ~IntWrappingMul *self, other
 
 impl Div I64 for I64
     type Output = I64
-    @/ = other -> ~I64Div *self, other
+    @/ = other -> ~IntCheckedDiv *self, other
 
 impl Mod I64 for I64
     type Output = I64
-    @% = other -> ~I64Mod *self, other
+    @% = other -> ~IntCheckedRem *self, other
 
 impl Add I32 for I32
     type Output = I32
-    @+ = other -> ~I32Add *self, other
+    @+ = other -> if ~OverflowChecks! then ~IntCheckedAdd *self, other else ~IntWrappingAdd *self, other
 
 impl Sub I32 for I32
     type Output = I32
-    @- = other -> ~I32Sub *self, other
+    @- = other -> if ~OverflowChecks! then ~IntCheckedSub *self, other else ~IntWrappingSub *self, other
 
 impl Mul I32 for I32
     type Output = I32
-    @* = other -> ~I32Mul *self, other
+    @* = other -> if ~OverflowChecks! then ~IntCheckedMul *self, other else ~IntWrappingMul *self, other
 
 impl Div I32 for I32
     type Output = I32
-    @/ = other -> ~I32Div *self, other
+    @/ = other -> ~IntCheckedDiv *self, other
 
 impl Mod I32 for I32
     type Output = I32
-    @% = other -> ~I32Mod *self, other
+    @% = other -> ~IntCheckedRem *self, other
+
+impl Add I16 for I16
+    type Output = I16
+    @+ = other -> if ~OverflowChecks! then ~IntCheckedAdd *self, other else ~IntWrappingAdd *self, other
+
+impl Sub I16 for I16
+    type Output = I16
+    @- = other -> if ~OverflowChecks! then ~IntCheckedSub *self, other else ~IntWrappingSub *self, other
+
+impl Mul I16 for I16
+    type Output = I16
+    @* = other -> if ~OverflowChecks! then ~IntCheckedMul *self, other else ~IntWrappingMul *self, other
+
+impl Div I16 for I16
+    type Output = I16
+    @/ = other -> ~IntCheckedDiv *self, other
+
+impl Mod I16 for I16
+    type Output = I16
+    @% = other -> ~IntCheckedRem *self, other
+
+impl Add I8 for I8
+    type Output = I8
+    @+ = other -> if ~OverflowChecks! then ~IntCheckedAdd *self, other else ~IntWrappingAdd *self, other
+
+impl Sub I8 for I8
+    type Output = I8
+    @- = other -> if ~OverflowChecks! then ~IntCheckedSub *self, other else ~IntWrappingSub *self, other
+
+impl Mul I8 for I8
+    type Output = I8
+    @* = other -> if ~OverflowChecks! then ~IntCheckedMul *self, other else ~IntWrappingMul *self, other
+
+impl Div I8 for I8
+    type Output = I8
+    @/ = other -> ~IntCheckedDiv *self, other
+
+impl Mod I8 for I8
+    type Output = I8
+    @% = other -> ~IntCheckedRem *self, other
+
+impl Add U64 for U64
+    type Output = U64
+    @+ = other -> if ~OverflowChecks! then ~IntCheckedAdd *self, other else ~IntWrappingAdd *self, other
+
+impl Sub U64 for U64
+    type Output = U64
+    @- = other -> if ~OverflowChecks! then ~IntCheckedSub *self, other else ~IntWrappingSub *self, other
+
+impl Mul U64 for U64
+    type Output = U64
+    @* = other -> if ~OverflowChecks! then ~IntCheckedMul *self, other else ~IntWrappingMul *self, other
+
+impl Div U64 for U64
+    type Output = U64
+    @/ = other -> ~IntCheckedDiv *self, other
+
+impl Mod U64 for U64
+    type Output = U64
+    @% = other -> ~IntCheckedRem *self, other
+
+impl Add U32 for U32
+    type Output = U32
+    @+ = other -> if ~OverflowChecks! then ~IntCheckedAdd *self, other else ~IntWrappingAdd *self, other
+
+impl Sub U32 for U32
+    type Output = U32
+    @- = other -> if ~OverflowChecks! then ~IntCheckedSub *self, other else ~IntWrappingSub *self, other
+
+impl Mul U32 for U32
+    type Output = U32
+    @* = other -> if ~OverflowChecks! then ~IntCheckedMul *self, other else ~IntWrappingMul *self, other
+
+impl Div U32 for U32
+    type Output = U32
+    @/ = other -> ~IntCheckedDiv *self, other
+
+impl Mod U32 for U32
+    type Output = U32
+    @% = other -> ~IntCheckedRem *self, other
+
+impl Add U16 for U16
+    type Output = U16
+    @+ = other -> if ~OverflowChecks! then ~IntCheckedAdd *self, other else ~IntWrappingAdd *self, other
+
+impl Sub U16 for U16
+    type Output = U16
+    @- = other -> if ~OverflowChecks! then ~IntCheckedSub *self, other else ~IntWrappingSub *self, other
+
+impl Mul U16 for U16
+    type Output = U16
+    @* = other -> if ~OverflowChecks! then ~IntCheckedMul *self, other else ~IntWrappingMul *self, other
+
+impl Div U16 for U16
+    type Output = U16
+    @/ = other -> ~IntCheckedDiv *self, other
+
+impl Mod U16 for U16
+    type Output = U16
+    @% = other -> ~IntCheckedRem *self, other
+
+impl Add U8 for U8
+    type Output = U8
+    @+ = other -> if ~OverflowChecks! then ~IntCheckedAdd *self, other else ~IntWrappingAdd *self, other
+
+impl Sub U8 for U8
+    type Output = U8
+    @- = other -> if ~OverflowChecks! then ~IntCheckedSub *self, other else ~IntWrappingSub *self, other
+
+impl Mul U8 for U8
+    type Output = U8
+    @* = other -> if ~OverflowChecks! then ~IntCheckedMul *self, other else ~IntWrappingMul *self, other
+
+impl Div U8 for U8
+    type Output = U8
+    @/ = other -> ~IntCheckedDiv *self, other
+
+impl Mod U8 for U8
+    type Output = U8
+    @% = other -> ~IntCheckedRem *self, other
 
 impl Add F64 for F64
     type Output = F64

@@ -283,6 +283,14 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
 
     fn origins_for_borrowed_place(&self, state: &ReferenceOriginState, place: &Place) -> OriginSet {
         let normalized = Self::normalized_place(place.clone());
+        if self.local_decl(place.local).is_some_and(|decl|
+            matches!(TypeView::new(self.type_context).ty(decl.ty), Ty::Slice(_) | Ty::Str)
+        ) {
+            let origins = self.origins_for_place(state, place);
+            if !origins.is_empty() {
+                return origins;
+            }
+        }
         if normalized.projection.is_empty()
             && !self.local_type_is_reference(normalized.local)
             && !self.local_type_is_pointer(normalized.local)
@@ -457,10 +465,19 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
         };
 
         match callable {
+            MirCallable::Resolved(MirCallableKey::Intrinsic(MirIntrinsicId::ArrPtr)) => {
+                return match args.first() {
+                    Some(Operand::Copy(place) | Operand::Move(place)) => {
+                        self.origins_for_borrowed_place(state, place)
+                    }
+                    _ => args.first().map(|arg| self.origins_for_operand(state, arg))
+                        .unwrap_or_default(),
+                };
+            }
             MirCallable::Resolved(MirCallableKey::Intrinsic(intrinsic))
                 if matches!(
                     intrinsic,
-                    MirIntrinsicId::BorrowSlice | MirIntrinsicId::BorrowSliceMut
+                    MirIntrinsicId::PtrFromParts | MirIntrinsicId::PtrOffset
                 ) =>
             {
                 return args
@@ -911,7 +928,9 @@ fn type_id_tracks_origin_inner(
         Ty::Tuple(elems) => elems.iter().any(|elem| {
             type_id_tracks_origin_inner(view, backend_contract, *elem, include_pointers, seen)
         }),
-        Ty::Array { inner, .. } | Ty::Slice(inner) => {
+        // Bare slice/string MIR values still carry borrowed storage metadata.
+        Ty::Slice(_) | Ty::Str => true,
+        Ty::Array { inner, .. } => {
             type_id_tracks_origin_inner(view, backend_contract, *inner, include_pointers, seen)
         }
         Ty::Function {
@@ -1059,7 +1078,6 @@ fn type_id_tracks_origin_inner(
         | Ty::F64
         | Ty::Bool
         | Ty::Char
-        | Ty::Str
         | Ty::Unit
         | Ty::Never
         | Ty::Pointer(_)
@@ -1096,7 +1114,8 @@ fn type_id_tracks_origin_for_structural_type(
                 seen,
             )
         }),
-        Type::Array(inner, _) | Type::Slice(inner) => type_id_tracks_origin_for_structural_type(
+        Type::Slice(_) | Type::Str => true,
+        Type::Array(inner, _) => type_id_tracks_origin_for_structural_type(
             view,
             backend_contract,
             inner,
@@ -1290,7 +1309,6 @@ fn type_id_tracks_origin_for_structural_type(
         | Type::F32
         | Type::F64
         | Type::Bool
-        | Type::Str
         | Type::Char
         | Type::Unit
         | Type::Never
@@ -1556,6 +1574,28 @@ impl BorrowChecker {
                     live_loans.retain_owners(|owner| live_locals.contains(owner));
                 }
 
+                // Raw-pointer construction itself establishes no loan. At the
+                // later reference formation, check the recovered storage root.
+                if let StatementKind::Assign(_, Rvalue::Ref(_, place)) = &stmt.kind {
+                    if func.local_decls.get(place.local.0).is_some_and(|decl|
+                        type_id_is_pointer(type_view, decl.ty)
+                    ) {
+                        let location = crate::mir::borrowck::location::Location::new(
+                            crate::mir::BasicBlockId(block_idx),
+                            crate::mir::borrowck::location::StatementIndex(stmt_idx),
+                        );
+                        for loan_id in loans_by_location.loan_ids_at(location) {
+                            if let Some(loan) = loan_table.get(loan_id) {
+                                if loan.diagnostic_place != *place {
+                                    Self::check_place_loan_access_through(
+                                        &loan.diagnostic_place, loan.kind, place, &loan_table, &live_loans,
+                                        func, &mut diagnostics, stmt.span.clone(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 Self::check_statement_loans(
                     stmt,
                     type_context,
@@ -1628,6 +1668,32 @@ impl BorrowChecker {
             }
 
             if let Some(term) = &block.terminator {
+                if let Terminator::Call { args, span, .. } = term {
+                    if args.iter().any(|arg| match arg {
+                        Operand::Copy(place) | Operand::Move(place) => func.local_decls.get(place.local.0)
+                            .is_some_and(|decl| type_id_is_pointer(type_view, decl.ty)),
+                        _ => false,
+                    }) {
+                        let location = crate::mir::borrowck::location::Location::new(
+                            crate::mir::BasicBlockId(block_idx),
+                            crate::mir::borrowck::location::StatementIndex(block.statements.len()),
+                        );
+                        for loan_id in loans_by_location.loan_ids_at(location) {
+                            if let Some(loan) = loan_table.get(loan_id) {
+                                let mut through = args.iter().find_map(|arg| match arg {
+                                    Operand::Copy(place) | Operand::Move(place) => func.local_decls.get(place.local.0)
+                                        .filter(|decl| type_id_is_pointer(type_view, decl.ty)).map(|_| place.clone()),
+                                    _ => None,
+                                }).unwrap_or_else(|| loan.diagnostic_place.clone());
+                                through.projection.push(Projection::Deref);
+                                Self::check_place_loan_access_through(
+                                    &loan.diagnostic_place, loan.kind, &through, &loan_table, &active_loans,
+                                    func, &mut diagnostics, span.clone(),
+                                );
+                            }
+                        }
+                    }
+                }
                 Self::check_terminator(
                     term,
                     &init_analysis,
@@ -2149,12 +2215,25 @@ impl BorrowChecker {
         kind: LoanKind,
         table: &LoanTable,
         active_loans: &LoanState,
+        func: &MirFunction,
+        diagnostics: &mut Diagnostics,
+        stmt_span: Option<Span>,
+    ) {
+        Self::check_place_loan_access_through(place, kind, place, table, active_loans, func, diagnostics, stmt_span);
+    }
+
+    fn check_place_loan_access_through(
+        place: &crate::mir::Place,
+        kind: LoanKind,
+        through: &crate::mir::Place,
+        table: &LoanTable,
+        active_loans: &LoanState,
         _func: &MirFunction,
         diagnostics: &mut Diagnostics,
         stmt_span: Option<Span>,
     ) {
         if let Err(conflicting_loan_id) =
-            LoanAnalysis::check_aliasing(place, kind, table, active_loans)
+            LoanAnalysis::check_aliasing_through(place, kind, through, table, active_loans)
         {
             let use_span = stmt_span;
             let borrow_span = table
