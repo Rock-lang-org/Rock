@@ -43,8 +43,11 @@ wrap in release builds; division by zero and signed minimum divided or
 remaindered by `-1` always fail. A prebuilt dependency retains the policy with
 which it was compiled, so rebuild std when selecting a different policy.
 
-`PartialEq` and `PartialOrd` provide ordinary comparisons. `Eq` additionally
-promises reflexive equality; `Ord` promises a total ordering. Floats implement
+`PartialEq Rhs` provides equality with an explicit right-hand operand type;
+same-type bounds use `T: PartialEq T`. `String` and `&Str` support equality in
+both directions. `PartialOrd` provides ordinary ordering comparisons. `Eq`
+requires `PartialEq Self` and promises reflexive equality; `Ord` promises a
+total ordering. Floats implement
 only the partial traits: comparisons with NaN are unordered, `NaN == NaN` is
 false, and `NaN != NaN` is true.
 Operator precedence declarations stay in `src/lib.rk`. The prelude stays in

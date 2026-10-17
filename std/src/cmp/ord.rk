@@ -17,12 +17,12 @@ impl Ordering
             Ordering::Equal => 1
             Ordering::Greater => 2
 
-impl PartialEq for Ordering
+impl PartialEq Ordering for Ordering
     @== = other -> self.rank! == other.rank!
 
 impl Eq for Ordering
 
-< trait PartialOrd where Self: PartialEq
+< trait PartialOrd where Self: PartialEq Self
     @partial_cmp: &Self -> Option Ordering
     @<: &Self -> Bool
     @< = other ->

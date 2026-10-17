@@ -159,7 +159,7 @@ A generic function can use a trait method or operator when its signature names t
 struct Box T
     < value: T
 
-same_box: Box T -> Box T -> Bool where T: PartialEq
+same_box: Box T -> Box T -> Bool where T: PartialEq T
 same_box = left, right -> left.value == right.value
 
 main = !->
@@ -170,7 +170,44 @@ main = !->
     same_box first, second .println!
 ```
 
-The call specializes `T` to `I64`, and the `PartialEq` implementation for `I64` supplies `==`. The output is `true`. A bound is checked at the call site as well as in the generic body. `Eq` extends `PartialEq` with the guarantee that a value equals itself; floating-point types implement only `PartialEq` because NaN is not equal to itself.
+The call specializes `T` to `I64`, and `PartialEq I64 for I64` supplies `==`. The output is `true`. A bound is checked at the call site as well as in the generic body. `Eq` requires `PartialEq Self` and additionally promises that a value equals itself; floating-point types implement only partial equality because NaN is not equal to itself.
+
+### Comparing Different Types
+
+`PartialEq Rhs` names the type accepted on the right of `==` and `!=`. The standard library provides both directions of comparison between `String` and `&Str`, borrowing their contents rather than consuming either string.
+
+```rock
+same: T -> U -> Bool where T: PartialEq U
+same = left, right -> left == right
+
+main = !->
+    owned = String::from "Rock"
+    (owned == "Rock").println!
+    ("Rock" != owned).println!
+    owned.println!
+    same owned, "Rock" .println!
+```
+
+The output is `true`, `false`, `Rock`, and `true`. The direct comparisons borrow `owned`; the generic function takes its arguments by value, so the call to `same` consumes it. `PartialEq U for T` does not automatically provide `PartialEq T for U`: the reverse direction needs its own implementation. Implementing `==` also supplies the default `!=`, which negates the selected equality result. Write the right-hand type explicitly, including for same-type bounds such as `T: PartialEq T`; default type arguments are not supported yet. Cross-type equality does not introduce implicit numeric conversions.
+
+For a user-defined type, implement equality for each supported right-hand type. The right-hand parameter is borrowed, just like the receiver.
+
+```rock
+struct Key
+    < value: I64
+
+impl PartialEq I64 for Key
+    @== = other -> self.value == *other
+
+main = !->
+    key = Key
+        value: 7
+    (key == 7).println!
+    (key != 8).println!
+    key.value.println!
+```
+
+This prints `true`, `true`, and `7`. The implementation inherits `!=` without defining another method. It does not support `7 == key`, and it does not qualify `Key` for `Eq`, which requires a same-type `PartialEq Key` implementation.
 
 ## Focused Standard Traits
 

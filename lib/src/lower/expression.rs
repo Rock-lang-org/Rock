@@ -6,7 +6,7 @@ use crate::ast;
 use crate::hir::*;
 use crate::ids::TypeVarId;
 use crate::lexer::Span;
-use crate::selection::{ReceiverCandidate, SelectedMethod, SelectionDiagnostic};
+use crate::selection::{ReceiverCandidate, SelectedMethod, SelectedOrigin, SelectionDiagnostic};
 use crate::types::{GenericParamId, Type};
 
 use crate::lower::Lowerer;
@@ -368,10 +368,12 @@ impl Lowerer {
             return false;
         }
 
-        if selected
-            .substituted_params
-            .iter()
-            .any(|param| Self::type_has_unresolved_parameter(&param.ty))
+        // Bound arguments belong to the caller: U and V are distinct rigid
+        // types even when both instantiate the same trait member.
+        let rigid_generics = matches!(selected.origin, SelectedOrigin::TraitBound { .. });
+        if !rigid_generics
+            && selected.substituted_params.iter()
+                .any(|param| Self::type_has_unresolved_parameter(&param.ty))
         {
             return true;
         }
@@ -384,7 +386,9 @@ impl Lowerer {
             .all(|(param, arg)| {
                 let expected = self.resolve_projection_type(&param.ty);
                 let actual = self.resolve_projection_type(&self.engine.resolve(&arg.ty));
-                if crate::selection::type_pattern_matches(&expected, &actual, &mut subst) {
+                if !rigid_generics
+                    && crate::selection::type_pattern_matches(&expected, &actual, &mut subst)
+                {
                     return true;
                 }
                 if Self::type_accepts_inference_vars(&expected, &actual) {
@@ -395,7 +399,8 @@ impl Lowerer {
                     mutable: false,
                 } = expected
                 {
-                    return crate::selection::type_pattern_matches(&inner, &actual, &mut subst)
+                    return (!rigid_generics
+                        && crate::selection::type_pattern_matches(&inner, &actual, &mut subst))
                         || Self::type_accepts_inference_vars(&inner, &actual);
                 }
                 false
@@ -1083,12 +1088,13 @@ impl Lowerer {
 
             let result = self
                 .selection_service()
-                .select_bound_method_preferring_non_ref_receiver(
+                .select_bound_method_matching(
                     &receiver_candidates,
                     &bounds,
                     op_str,
                     resolved_ty.clone(),
                     matches!(&left.kind, HirExprKind::Call(_, _, _)),
+                    |selected| self.operator_method_accepts_args(selected, std::slice::from_ref(&right)),
                 );
             let span = left.span.clone();
             if let Some(selected) = self.handle_optional_selection(result, span) {
@@ -1127,12 +1133,13 @@ impl Lowerer {
             let receiver_candidates = self.receiver_adjustment_candidates(left.clone());
             let result = self
                 .selection_service()
-                .select_bound_method_preferring_non_ref_receiver(
+                .select_bound_method_matching(
                     &receiver_candidates,
                     &bounds,
                     op_str,
                     resolved_ty.clone(),
                     matches!(&left.kind, HirExprKind::Call(_, _, _)),
+                    |selected| self.operator_method_accepts_args(selected, std::slice::from_ref(&right)),
                 );
             let span = left.span.clone();
             if let Some(selected) = self.handle_optional_selection(result, span) {

@@ -2027,6 +2027,50 @@ fn test_compile_trait_default_method_from_product_artifact() {
 }
 
 #[test]
+fn test_parameterized_equality_survives_deleted_source_product_artifact() {
+    let temp_dir = temp_test_dir("parameterized_equality_artifact");
+    let _cleanup = TestDirCleanup(temp_dir.clone());
+    let dep_dir = temp_dir.join("dep");
+    let artifact_path = temp_dir.join("dep.rkca");
+    let std_artifact = shared_std_product_artifact();
+    write_crate(&dep_dir, "dep", "", r#"
+< struct Tag
+    < id: I64
+
+impl PartialEq I64 for Tag
+    @== = other -> self.id == *other
+
+impl PartialEq Bool for Tag
+    @== = other -> (self.id != 0) == *other
+
+both: T -> U -> V -> Bool where T: PartialEq U, T: PartialEq V
+< both = left, first, second -> left == first && left != second
+"#);
+    build_product_artifact_with_extern_artifacts(
+        &dep_dir,
+        "dep",
+        &artifact_path,
+        false,
+        false,
+        vec![("std".to_string(), std_artifact.clone())],
+    );
+    delete_crate_source_files(&dep_dir);
+    let exit_code = write_and_run_artifact_app(r#"
+> dep::Tag
+> dep::both
+
+main = ->
+    tag = Tag
+        id: 7
+    if tag == 7 && tag != false && both tag, 7, false
+        0
+    else
+        1
+"#, vec![("std".to_string(), std_artifact), ("dep".to_string(), artifact_path)]);
+    assert_eq!(exit_code, 0);
+}
+
+#[test]
 fn test_compile_trait_generic_default_for_downstream_impl_from_product_artifact() {
     let temp_dir = temp_test_dir("product_trait_generic_default_downstream_impl");
     let dep_dir = temp_dir.join("dep");

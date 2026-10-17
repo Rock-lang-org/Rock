@@ -10163,7 +10163,7 @@ struct Empty
 
 impl Eq for Empty
 
-impl PartialEq for Empty
+impl PartialEq Empty for Empty
     @== = other -> true
     @!= = other -> false
 
@@ -10218,7 +10218,7 @@ struct Tracked
 
 impl Eq for Tracked
 
-impl PartialEq for Tracked
+impl PartialEq Tracked for Tracked
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -10254,7 +10254,7 @@ struct Tracked
 
 impl Eq for Tracked
 
-impl PartialEq for Tracked
+impl PartialEq Tracked for Tracked
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -10394,7 +10394,7 @@ struct BadKey
 
 impl Eq for BadKey
 
-impl PartialEq for BadKey
+impl PartialEq BadKey for BadKey
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -10481,7 +10481,7 @@ struct TrackedKey
 
 impl Eq for TrackedKey
 
-impl PartialEq for TrackedKey
+impl PartialEq TrackedKey for TrackedKey
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -10534,7 +10534,7 @@ struct TrackedKey
 
 impl Eq for TrackedKey
 
-impl PartialEq for TrackedKey
+impl PartialEq TrackedKey for TrackedKey
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -10586,7 +10586,7 @@ struct TrackedKey
 
 impl Eq for TrackedKey
 
-impl PartialEq for TrackedKey
+impl PartialEq TrackedKey for TrackedKey
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -10664,7 +10664,7 @@ struct TrackedKey
 
 impl Eq for TrackedKey
 
-impl PartialEq for TrackedKey
+impl PartialEq TrackedKey for TrackedKey
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -11264,12 +11264,142 @@ main = ->
 }
 
 #[test]
+fn test_parameterized_equality_selects_rhs_and_inherits_not_equal() {
+    let output = compile_and_run(r#"
+struct Tag
+    < id: I64
+
+impl PartialEq Tag for Tag
+    @== = other -> self.id == other.id
+
+impl PartialEq I64 for Tag
+    @== = other -> self.id == *other
+
+impl PartialEq Bool for Tag
+    @== = other -> (self.id != 0) == *other
+
+compare_both: T -> U -> V -> Bool where T: PartialEq U, T: PartialEq V
+compare_both = left, first, second -> left == first && left != second
+
+main = !->
+    tag = Tag
+        id: 7
+    same = Tag
+        id: 7
+    (tag == same).println!
+    (tag != same).println!
+    (tag == 7).println!
+    (tag != 8).println!
+    (tag == true).println!
+    (tag != false).println!
+    tag.id.println!
+    same.id.println!
+    compare_both tag, 7, false .println!
+    compare_both same, true, 8 .println!
+"#);
+    assert_eq!(output, "true\nfalse\ntrue\ntrue\ntrue\ntrue\n7\n7\ntrue\ntrue\n");
+}
+
+#[test]
+fn test_parameterized_equality_borrows_owned_strings_in_both_directions() {
+    let output = compile_and_run(r#"
+same_then_use_right: T -> U -> U where T: PartialEq U
+same_then_use_right = left, right ->
+    (left == right).println!
+    (left != right).println!
+    right
+
+main = !->
+    owned = String::from "Rock"
+    same = String::from "Rock"
+    (owned == same).println!
+    (owned != same).println!
+    (owned == "Rock").println!
+    (owned != "Rock!").println!
+    ("Rock" == owned).println!
+    ("rock" != owned).println!
+    (String::new! == "").println!
+    (String::from "é" == "é").println!
+    same_then_use_right "Rock", owned .println!
+    same.println!
+"#);
+    assert_eq!(output, "true\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\nRock\nRock\n");
+}
+
+#[test]
+fn test_parameterized_equality_generic_impl_preserves_rhs_substitution() {
+    let output = compile_and_run(r#"
+struct Wrapper T
+    < value: T
+
+impl PartialEq (Wrapper U) for Wrapper T where T: PartialEq U
+    @== = other -> self.value == other.value
+
+main = !->
+    left = Wrapper
+        value: String::from "Rock"
+    right = Wrapper
+        value: "Rock"
+    (left == right).println!
+    (left != right).println!
+    left.value.println!
+    right.value.println!
+"#);
+    assert_eq!(output, "true\nfalse\nRock\nRock\n");
+}
+
+#[test]
+fn test_parameterized_equality_infers_signatureless_operands() {
+    let output = compile_and_run(r#"
+same = left, right -> left == right
+different = left, right -> left != right
+
+main = !->
+    owned = String::from "Rock"
+    same owned, "Rock" .println!
+    different "Rock", (String::from "rock") .println!
+"#);
+    assert_eq!(output, "true\ntrue\n");
+}
+
+#[test]
+fn test_parameterized_equality_does_not_imply_reverse_impl() {
+    compile_should_fail(r#"
+struct Tag
+    < id: I64
+
+impl PartialEq I64 for Tag
+    @== = other -> self.id == *other
+
+main = !->
+    tag = Tag
+        id: 7
+    (7 == tag).println!
+"#, "No implementation found");
+}
+
+#[test]
+fn test_parameterized_equality_cross_type_impl_does_not_satisfy_eq() {
+    compile_should_fail(r#"
+struct Tag
+    < id: I64
+
+impl PartialEq I64 for Tag
+    @== = other -> self.id == *other
+
+impl Eq for Tag
+
+main = !-> return
+"#, "supertrait obligation");
+}
+
+#[test]
 fn test_std_eq_default_not_equal() {
     let src = r#"
 struct Tag
     < value: I64
 
-impl PartialEq for Tag
+impl PartialEq Tag for Tag
     @== = other -> self.value == other.value
 
 main = ->

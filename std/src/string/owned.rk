@@ -9,6 +9,8 @@
 > std::ffi::libc::puts
 > std::ffi::libc::exit
 > std::clone::Clone
+> std::cmp::eq::PartialEq
+> std::cmp::eq::Eq
 > std::convert::From
 > std::mem::drop::Drop
 > std::num::arithmetic::Add
@@ -200,6 +202,17 @@ impl String
         String
             raw: raw
             raw_len: new_len
+
+impl PartialEq String for String
+    @== = other -> self.as_str! == other.as_str!
+
+impl PartialEq &Str for String
+    @== = other -> self.as_str! == *other
+
+impl PartialEq String for &Str
+    @== = other -> *self == other.as_str!
+
+impl Eq for String
 
 impl Add String for String
     type Output = String

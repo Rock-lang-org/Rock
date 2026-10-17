@@ -1434,6 +1434,35 @@ impl<'a> SelectionService<'a> {
         )
     }
 
+    pub fn select_bound_method_matching<M>(
+        &self,
+        receiver_candidates: &[ReceiverCandidate],
+        bounds: &[crate::types::TraitBound],
+        method_name: &str,
+        self_param_ty: Type,
+        receiver_is_call: bool,
+        mut matches: M,
+    ) -> Result<SelectedMethod, SelectionDiagnostic>
+    where
+        M: FnMut(&SelectedMethod) -> bool,
+    {
+        let candidates = self.select_bound_method_candidates(
+            receiver_candidates,
+            bounds,
+            method_name,
+            self_param_ty.clone(),
+        );
+        let matching = candidates.iter().filter(|candidate| matches(candidate)).cloned().collect::<Vec<_>>();
+        // Keep a unique declared candidate on mismatch so argument checking can
+        // report its expected type rather than hiding an available trait bound.
+        Self::prefer_non_ref_receiver_candidate(
+            if matching.is_empty() { candidates } else { matching },
+            receiver_is_call,
+            method_name,
+            &self_param_ty,
+        )
+    }
+
     pub fn prefer_non_ref_receiver_candidate(
         mut candidates: Vec<SelectedMethod>,
         receiver_is_call: bool,
@@ -1460,7 +1489,11 @@ impl<'a> SelectionService<'a> {
         let target_ids = candidates
             .iter()
             .filter_map(|candidate| {
-                Some((candidate.target.trait_id()?, candidate.target.method_id()?))
+                Some((
+                    candidate.target.trait_id()?,
+                    candidate.target.method_id()?,
+                    candidate.target.trait_args().to_vec(),
+                ))
             })
             .collect::<std::collections::HashSet<_>>();
         if target_ids.len() != 1 {
@@ -1472,9 +1505,10 @@ impl<'a> SelectionService<'a> {
             } else {
                 let mut candidate_ids = target_ids
                     .into_iter()
-                    .map(|(_, method_id)| method_id)
+                    .map(|(_, method_id, _)| method_id)
                     .collect::<Vec<_>>();
                 candidate_ids.sort();
+                candidate_ids.dedup();
                 SelectionDiagnostic::AmbiguousCandidates {
                     operation: method_name.to_string(),
                     receiver: receiver_ty.clone(),
@@ -3709,6 +3743,67 @@ mod tests {
         assert_eq!(function.params[1].ty, Type::I64);
         assert_eq!(selected.substituted_params.len(), 1);
         assert_eq!(selected.substituted_params[0].ty, Type::I64);
+    }
+
+    #[test]
+    fn bound_method_selection_preserves_distinct_trait_arguments() {
+        let trait_id = def_id(10);
+        let method_id = def_id(11);
+        let rhs_param = GenericParamId { owner: trait_id, index: 0 };
+        let self_param = GenericParamId { owner: trait_id, index: 1 };
+        let mut compare = operator_method(method_id, trait_id, Type::Bool);
+        compare.name = "compare".to_string();
+        compare.params[0].ty = Type::Reference {
+            mutable: false,
+            inner: Box::new(Type::Generic(self_param)),
+        };
+        compare.params[1].ty = Type::Reference {
+            mutable: false,
+            inner: Box::new(Type::Generic(rhs_param)),
+        };
+        let traits = HashMap::from([(
+            trait_id,
+            HirTrait {
+                id: trait_id,
+                name: "Compare".to_string(),
+                generic_params: vec![GenericParamDecl::type_param(rhs_param, "Rhs")],
+                target: None,
+                predicates: Vec::new(),
+                associated_types: Vec::new(),
+                methods: HashMap::from([("compare".to_string(), compare)]),
+                signatures: HashMap::new(),
+            },
+        )]);
+        let impls = HashMap::new();
+        let current_impl_bounds = HirGenericBounds::new();
+        let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
+        let receiver_ty = Type::Generic(GenericParamId { owner: def_id(20), index: 0 });
+        let receivers = [receiver_candidate(HirExpr {
+            kind: HirExprKind::Var("left".to_string()),
+            ty: receiver_ty.clone(),
+            span: Span::test(),
+        })];
+        let bounds = [Type::I64, Type::Bool].map(|rhs| TraitBound {
+            trait_id,
+            type_args: vec![rhs],
+        });
+        assert!(matches!(
+            service.select_bound_method(&receivers, &bounds, "compare", receiver_ty.clone()),
+            Err(SelectionDiagnostic::AmbiguousCandidates { .. }),
+        ));
+        for rhs in [Type::I64, Type::Bool] {
+            let expected = Type::Reference { mutable: false, inner: Box::new(rhs.clone()) };
+            let selected = service.select_bound_method_matching(
+                &receivers,
+                &bounds,
+                "compare",
+                receiver_ty.clone(),
+                false,
+                |candidate| candidate.substituted_params[0].ty == expected,
+            ).expect("right-hand argument should select its exact trait instantiation");
+            assert_eq!(selected.target.method_id(), Some(method_id));
+            assert_eq!(selected.target.trait_args(), &[rhs]);
+        }
     }
 
     #[test]
