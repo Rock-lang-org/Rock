@@ -344,7 +344,7 @@ impl<P: HirPhase> From<&HirFunctionFor<P>> for ProductFunctionInterface {
             is_method: function.is_method,
             self_receiver: function.self_receiver,
             is_unsafe: function.is_unsafe,
-            constant_arithmetic: ArithmeticSummary::from_function(function),
+            constant_arithmetic: None,
         }
     }
 }
@@ -1352,6 +1352,15 @@ impl CompilerProducts {
         }
 
         remap_product_type_def_ids(&mut interface, &mut bodies, &id_remap);
+        let summaries = hir.constant_arithmetic.iter().flat_map(|(id, summary)| {
+            let product_id = ProductDefId::from(*id);
+            id_remap.get(&product_id).into_iter().flatten().map(move |id| (*id, summary))
+        }).collect::<BTreeMap<_, _>>();
+        for function in interface.functions.values_mut()
+            .chain(interface.impls.values_mut().flat_map(|imp| imp.methods.values_mut()))
+            .chain(interface.traits.values_mut().flat_map(|trt| trt.methods.values_mut())) {
+            function.constant_arithmetic = summaries.get(&ProductDefId::from(function.id)).map(|summary| (*summary).clone());
+        }
         interface.language_items =
             product_language_items_from_program(&hir.program, &hir.current_def_ids, &id_remap)?;
         record_product_aliases(

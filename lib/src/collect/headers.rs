@@ -499,6 +499,11 @@ pub(crate) fn build_struct_with_id(
         &generic_spans,
     );
     crate::type_lowering::lower_param_defaults(context, &mut generic_params, &sd.generic_params, None);
+    // Recursive field types must see completed descriptors through every alias
+    // of the predeclared identity, including qualified module names.
+    for declaration in context.structs.values_mut().filter(|item| item.id == id) {
+        declaration.generic_params.clone_from(&generic_params);
+    }
     let fields = sd
         .fields
         .iter()
@@ -620,6 +625,9 @@ pub(crate) fn build_enum_with_id(
         &generic_spans,
     );
     crate::type_lowering::lower_param_defaults(context, &mut generic_params, &ed.generic_params, None);
+    for declaration in context.enums.values_mut().filter(|item| item.id == id) {
+        declaration.generic_params.clone_from(&generic_params);
+    }
     let mut next_field_id = 0;
     let variants = ed
         .variants

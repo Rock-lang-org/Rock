@@ -41,6 +41,7 @@ pub struct ResolvedHirProgram {
     pub type_ids: HirTypeIds,
     pub source_map: crate::source_map::SemanticSourceMap,
     pub(crate) normalization_env: TypeNormalizationEnv,
+    pub(crate) constant_arithmetic: HashMap<DefId, constants::ArithmeticSummary>,
 }
 
 impl ResolvedHirProgram {
@@ -70,6 +71,7 @@ impl ResolvedHirProgram {
         root_crate_id: crate::ids::CrateId,
         local_def_ids: IdGen<LocalDefId>,
     ) -> Self {
+        let summaries = constants::method_summaries(program.program(), HashMap::new());
         Self::from_accepted_with_normalization_env(
             program,
             resolver,
@@ -78,6 +80,7 @@ impl ResolvedHirProgram {
             local_def_ids,
             TypeNormalizationEnv::new(),
             crate::source_map::SemanticSourceMap::default(),
+            summaries,
         )
     }
 
@@ -89,6 +92,7 @@ impl ResolvedHirProgram {
         local_def_ids: IdGen<LocalDefId>,
         normalization_env: TypeNormalizationEnv,
         source_map: crate::source_map::SemanticSourceMap,
+        constant_arithmetic: HashMap<DefId, constants::ArithmeticSummary>,
     ) -> Self {
         let mut type_context = TypeContext::with_normalization_env(normalization_env.clone());
         let type_ids = collect_hir_type_ids(program.program(), &mut type_context);
@@ -102,6 +106,7 @@ impl ResolvedHirProgram {
             type_ids,
             source_map,
             normalization_env,
+            constant_arithmetic,
         }
     }
 
@@ -500,6 +505,7 @@ fn finalize_with_constant_methods(mut hir: PartialHir, summaries: HashMap<DefId,
             .map(ResolveError::non_source)
             .collect());
     }
+    let summaries = constants::method_summaries(&program, summaries);
     let constant_errors = constants::validate(&program, &current_def_ids, &summaries);
     if !constant_errors.is_empty() {
         return Err(constant_errors);
@@ -518,6 +524,7 @@ fn finalize_with_constant_methods(mut hir: PartialHir, summaries: HashMap<DefId,
         local_def_ids,
         normalization_env,
         source_map,
+        summaries,
     ))
 }
 

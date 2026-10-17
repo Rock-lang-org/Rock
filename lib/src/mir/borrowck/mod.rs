@@ -140,6 +140,38 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
         })
     }
 
+    fn place_type_is_pointer(&self, place: &Place) -> bool {
+        self.backend_contract.place_type_id(self.type_context, self.func, place)
+            .is_some_and(|ty| type_id_is_pointer(TypeView::new(self.type_context), ty))
+    }
+
+    fn raw_pointer_source(&self, place: &Place) -> Option<Place> {
+        let mut source = Place { local: place.local, projection: Vec::new() };
+        for projection in &place.projection {
+            if matches!(projection, Projection::Deref) && self.place_type_is_pointer(&source) {
+                return Some(source);
+            }
+            source.projection.push(projection.clone());
+        }
+        None
+    }
+
+    fn call_return_argument_indices(&self, callee: &Operand, args: &[Operand]) -> Vec<usize> {
+        let summary = match callee {
+            Operand::Constant(Constant::Callable(callable)) => callable.function_id()
+                .and_then(|id| self.return_summaries.get(&id)),
+            _ => None,
+        };
+        let Some(summary) = summary else { return (0..args.len()).collect(); };
+        let mut indices = summary.iter().filter_map(|origin| match origin {
+            ReferenceOrigin::Param(local) => local.0.checked_sub(1),
+            _ => None,
+        }).collect::<Vec<_>>();
+        indices.sort_unstable();
+        indices.dedup();
+        indices
+    }
+
     fn local_is_argument(&self, local: Local) -> bool {
         self.local_decl(local)
             .is_some_and(|decl| decl.source == LocalSource::Argument)
@@ -170,7 +202,7 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
             LocalSource::Argument => {
                 if self.local_type_is_reference(local)
                     || self.local_type_is_pointer(local)
-                    || self.local_type_contains_reference(local)
+                    || self.local_type_tracks_origin(local)
                 {
                     ReferenceOrigin::Param(local)
                 } else {
@@ -282,6 +314,9 @@ impl<'a> ReferenceEscapeAnalysis<'a> {
     }
 
     fn origins_for_borrowed_place(&self, state: &ReferenceOriginState, place: &Place) -> OriginSet {
+        if let Some(source) = self.raw_pointer_source(place) {
+            return self.origins_for_place(state, &source);
+        }
         let normalized = Self::normalized_place(place.clone());
         if self.local_decl(place.local).is_some_and(|decl|
             matches!(TypeView::new(self.type_context).ty(decl.ty), Ty::Slice(_) | Ty::Str)
@@ -1531,7 +1566,6 @@ impl BorrowChecker {
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
     ) -> Diagnostics {
         let mut diagnostics = Diagnostics::default();
-        let type_view = TypeView::new(type_context);
         let mut move_validation = MoveValidationContext::new(type_context, backend_contract);
 
         let init_analysis = InitializationAnalysis::new(func, type_context);
@@ -1574,28 +1608,14 @@ impl BorrowChecker {
                     live_loans.retain_owners(|owner| live_locals.contains(owner));
                 }
 
-                // Raw-pointer construction itself establishes no loan. At the
-                // later reference formation, check the recovered storage root.
-                if let StatementKind::Assign(_, Rvalue::Ref(_, place)) = &stmt.kind {
-                    if func.local_decls.get(place.local.0).is_some_and(|decl|
-                        type_id_is_pointer(type_view, decl.ty)
-                    ) {
-                        let location = crate::mir::borrowck::location::Location::new(
-                            crate::mir::BasicBlockId(block_idx),
-                            crate::mir::borrowck::location::StatementIndex(stmt_idx),
-                        );
-                        for loan_id in loans_by_location.loan_ids_at(location) {
-                            if let Some(loan) = loan_table.get(loan_id) {
-                                if loan.diagnostic_place != *place {
-                                    Self::check_place_loan_access_through(
-                                        &loan.diagnostic_place, loan.kind, place, &loan_table, &live_loans,
-                                        func, &mut diagnostics, stmt.span.clone(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
+                let location = crate::mir::borrowck::location::Location::new(
+                    crate::mir::BasicBlockId(block_idx),
+                    crate::mir::borrowck::location::StatementIndex(stmt_idx),
+                );
+                Self::check_created_reborrows(
+                    location, &loans_by_location, &loan_table, &live_loans,
+                    func, &mut diagnostics, stmt.span.clone(),
+                );
                 Self::check_statement_loans(
                     stmt,
                     type_context,
@@ -1615,36 +1635,9 @@ impl BorrowChecker {
 
                 init_analysis.apply_statement(&mut state, stmt);
 
-                if let StatementKind::Assign(dest, Rvalue::Use(Operand::Move(src))) = &stmt.kind {
-                    active_loans.transfer_owner(src.local, dest.local);
-                }
-
-                if let StatementKind::Assign(dest, Rvalue::Use(Operand::Copy(src))) = &stmt.kind {
-                    active_loans.copy_owner(src.local, dest.local);
-                }
-
-                if let StatementKind::Assign(dest, Rvalue::Cast(op, target)) = &stmt.kind {
-                    if let Operand::Copy(place) | Operand::Move(place) = op {
-                        if func
-                            .local_decls
-                            .get(place.local.0)
-                            .is_some_and(|decl| type_id_is_mut_reference(type_view, decl.ty))
-                            && type_id_is_pointer(type_view, *target)
-                        {
-                            active_loans.transfer_owner(place.local, dest.local);
-                        }
-                    }
-                }
-
-                if matches!(stmt.kind, StatementKind::Assign(_, Rvalue::Aggregate(_, _))) {
-                    apply_active_loan_statement_transfer(
-                        &mut active_loans,
-                        func,
-                        type_context,
-                        backend_contract,
-                        stmt,
-                    );
-                }
+                apply_active_loan_statement_transfer(
+                    &mut active_loans, func, type_context, backend_contract, stmt,
+                );
 
                 let location = crate::mir::borrowck::location::Location::new(
                     crate::mir::BasicBlockId(block_idx),
@@ -1668,32 +1661,14 @@ impl BorrowChecker {
             }
 
             if let Some(term) = &block.terminator {
-                if let Terminator::Call { args, span, .. } = term {
-                    if args.iter().any(|arg| match arg {
-                        Operand::Copy(place) | Operand::Move(place) => func.local_decls.get(place.local.0)
-                            .is_some_and(|decl| type_id_is_pointer(type_view, decl.ty)),
-                        _ => false,
-                    }) {
-                        let location = crate::mir::borrowck::location::Location::new(
-                            crate::mir::BasicBlockId(block_idx),
-                            crate::mir::borrowck::location::StatementIndex(block.statements.len()),
-                        );
-                        for loan_id in loans_by_location.loan_ids_at(location) {
-                            if let Some(loan) = loan_table.get(loan_id) {
-                                let mut through = args.iter().find_map(|arg| match arg {
-                                    Operand::Copy(place) | Operand::Move(place) => func.local_decls.get(place.local.0)
-                                        .filter(|decl| type_id_is_pointer(type_view, decl.ty)).map(|_| place.clone()),
-                                    _ => None,
-                                }).unwrap_or_else(|| loan.diagnostic_place.clone());
-                                through.projection.push(Projection::Deref);
-                                Self::check_place_loan_access_through(
-                                    &loan.diagnostic_place, loan.kind, &through, &loan_table, &active_loans,
-                                    func, &mut diagnostics, span.clone(),
-                                );
-                            }
-                        }
-                    }
-                }
+                let location = crate::mir::borrowck::location::Location::new(
+                    crate::mir::BasicBlockId(block_idx),
+                    crate::mir::borrowck::location::StatementIndex(block.statements.len()),
+                );
+                Self::check_created_reborrows(
+                    location, &loans_by_location, &loan_table, &active_loans,
+                    func, &mut diagnostics, func.terminator_origin(term).source_span().cloned(),
+                );
                 Self::check_terminator(
                     term,
                     &init_analysis,
@@ -1707,6 +1682,26 @@ impl BorrowChecker {
         }
 
         diagnostics
+    }
+
+    fn check_created_reborrows(
+        location: crate::mir::borrowck::location::Location,
+        locations: &LoanLocationIndex,
+        table: &LoanTable,
+        active: &LoanState,
+        func: &MirFunction,
+        diagnostics: &mut Diagnostics,
+        span: Option<Span>,
+    ) {
+        for id in locations.loan_ids_at(location) {
+            let Some(loan) = table.get(id) else { continue; };
+            if let Some(through) = &loan.reborrow_source {
+                Self::check_place_loan_access_through(
+                    &loan.diagnostic_place, loan.kind, through, table, active,
+                    func, diagnostics, span.clone(),
+                );
+            }
+        }
     }
 
     fn validate_reference_escapes(

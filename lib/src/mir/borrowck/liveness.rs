@@ -258,10 +258,8 @@ pub(super) fn apply_active_loan_statement_transfer(
             }
         }
         StatementKind::Assign(dest, Rvalue::Ref(_, place))
-            if matches!(
-                place.projection.first(),
-                Some(crate::mir::Projection::Deref)
-            ) && tracks_local_reference_liveness(func, type_context, backend_contract, place.local) =>
+            if place.projection.contains(&crate::mir::Projection::Deref)
+                && tracks_local_reference_liveness(func, type_context, backend_contract, place.local) =>
         {
             state.copy_owner(place.local, dest.local);
         }
@@ -331,6 +329,13 @@ fn apply_active_loan_terminator_transfer(
     let Some(Operand::Copy(source) | Operand::Move(source)) = args.first() else {
         return;
     };
+    // Raw-reference results inherit authority from each recovered loan's source,
+    // never from an arbitrary pointer argument. Raw intrinsics still forward it.
+    if !raw_forward && !func.local_decls.get(source.local.0).is_some_and(|decl|
+        type_id_contains_reference_with_contract(TypeView::new(type_context), backend_contract, decl.ty)
+    ) {
+        return;
+    }
     if !source.projection.is_empty()
         || !tracks_local_reference_liveness(func, type_context, backend_contract, source.local)
     {
@@ -1281,6 +1286,7 @@ mod tests {
         ];
         let table = LoanTable::from_borrows(&[BorrowData {
             owner: Local(2),
+            reborrow_source: None,
             place: Place { local: Local(1), projection: vec![] },
             kind: AccessKind::BorrowShared,
             created_at: Location::new(BasicBlockId(1), StatementIndex(1)),
@@ -1723,6 +1729,7 @@ mod tests {
         let reference_liveness = compute_reference_liveness(&func, &type_context);
         let borrows = vec![BorrowData {
             owner: Local(2),
+            reborrow_source: None,
             place: Place {
                 local: Local(1),
                 projection: vec![],
@@ -2508,6 +2515,7 @@ mod tests {
         let created_at = Location::new(BasicBlockId(0), StatementIndex(1));
         let first = table.push(crate::mir::dataflow::analyses::LoanData {
             id: LoanId(99),
+            reborrow_source: None,
             diagnostic_place: Place {
                 local: Local(1),
                 projection: vec![],
@@ -2520,6 +2528,7 @@ mod tests {
         });
         let second = table.push(crate::mir::dataflow::analyses::LoanData {
             id: LoanId(99),
+            reborrow_source: None,
             diagnostic_place: Place {
                 local: Local(3),
                 projection: vec![],

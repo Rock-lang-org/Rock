@@ -1310,7 +1310,7 @@ impl LocalCollector {
             }
         }
 
-        for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
+        for (top_level_index, top_level) in ordered_headers(module) {
             match top_level {
                 ast::TopLevel::FunctionSig(sig) => {
                     let qualified_name = format!("{}::{}", prefix, sig.name.name);

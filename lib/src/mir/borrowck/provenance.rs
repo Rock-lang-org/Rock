@@ -132,6 +132,7 @@ mod tests {
                 projection: vec![],
             },
             place_path: crate::ids::PlacePathId(0),
+            reborrow_source: None,
             initial_owner: Local(2),
             kind: LoanKind::Shared,
             origin_span: None,
@@ -179,6 +180,7 @@ mod tests {
         let id = table.push(LoanData {
             id: LoanId(99),
             diagnostic_place,
+            reborrow_source: None,
             place_path: semantic_path,
             initial_owner: Local(2),
             kind: LoanKind::Shared,

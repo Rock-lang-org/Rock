@@ -148,6 +148,87 @@ main = !->
 }
 
 #[test]
+fn test_constant_arithmetic_composes_selected_methods_across_artifacts() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let library = r#"
+< trait Divide
+    @divide: I8 -> I8
+    @wrapped: I8 -> I8
+    @discarded: I8 -> I8
+    @ignore: I8 -> I8
+    @ignored: I8 -> I8
+impl Divide for I8
+    @wrapped = other -> self.divide other
+    @divide = other -> ~IntCheckedDiv *self, other
+    @discarded = other ->
+        self.wrapped other
+        1 as I8
+    @ignore = other -> 1 as I8
+    @ignored = other -> self.ignore (self.wrapped other)
+"#;
+    let entry = dir.join("library.rk");
+    fs::write(&entry, library).unwrap();
+    let config = rock_lib::Config {
+        entry_file: entry.clone(), output_dir: dir.clone(),
+        current_crate_name: Some("arithmetic".to_string()),
+        no_std: true, no_prelude: true, no_link: true,
+        ..Default::default()
+    };
+    let artifact = dir.join("arithmetic.rkca");
+    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+        .write_artifact_to_path(&artifact).unwrap();
+    fs::remove_file(entry).unwrap();
+    for imported in [false, true] {
+        for (expression, invalid) in [
+            ("(1 as I8).wrapped (0 as I8)", true),
+            ("(1 as I8).discarded (0 as I8)", true),
+            ("(1 as I8).ignored (0 as I8)", true),
+            ("(6 as I8).wrapped (2 as I8)", false),
+        ] {
+            let entry = dir.join("consumer.rk");
+            let prefix = if imported { "> arithmetic::Divide" } else { library };
+            fs::write(&entry, format!("{prefix}\nmain = !->\n    {expression}\n")).unwrap();
+            let result = rock_lib::compile(&rock_lib::Config {
+                entry_file: entry, current_crate_name: None,
+                extern_artifacts: if imported { vec![("arithmetic".to_string(), artifact.clone())] } else { Vec::new() },
+                ..config.clone()
+            });
+            assert_eq!(result.is_err(), invalid, "imported={imported}, {expression}: {result:?}");
+            if let Err(errors) = result {
+                assert!(errors.0.iter().any(|error| error.message.contains("invalid constant integer arithmetic")), "{errors:?}");
+            }
+        }
+    }
+    let bridge = dir.join("bridge.rk");
+    fs::write(&bridge, r#"
+> arithmetic::Divide
+< trait Relay
+    @relay: I8 -> I8
+impl Relay for I8
+    @relay = other -> self.wrapped other
+"#).unwrap();
+    let bridge_artifact = dir.join("bridge.rkca");
+    rock_lib::compile_with_products(&rock_lib::Config {
+        entry_file: bridge.clone(), current_crate_name: Some("bridge".to_string()),
+        extern_artifacts: vec![("arithmetic".to_string(), artifact.clone())],
+        ..config.clone()
+    }).unwrap().products.unwrap().write_artifact_to_path(&bridge_artifact).unwrap();
+    fs::remove_file(bridge).unwrap();
+    let entry = dir.join("consumer.rk");
+    fs::write(&entry, "> bridge::Relay\nmain = !->\n    (1 as I8).relay (0 as I8)\n").unwrap();
+    let errors = rock_lib::compile(&rock_lib::Config {
+        entry_file: entry, current_crate_name: None,
+        extern_artifacts: vec![("arithmetic".to_string(), artifact), ("bridge".to_string(), bridge_artifact)],
+        ..config
+    }).unwrap_err();
+    assert!(errors.0.iter().any(|error| error.message.contains("invalid constant integer arithmetic")), "{errors:?}");
+    compile_should_fail("main = !->\n    (1 as I8).wrapping_div (0 as I8)\n", "invalid constant integer arithmetic");
+}
+
+#[test]
 fn test_overflow_policy_is_independent_of_optimization_and_survives_artifacts() {
     for opt_level in [0, 3] {
         for override_checks in [None, Some(false), Some(true)] {
@@ -613,6 +694,128 @@ main = !->
     view.len!.println!
 "#);
     assert_eq!(output, "9223372036854775807\n");
+}
+
+#[test]
+fn test_raw_pointer_projected_borrows_retain_storage_loans() {
+    for pointer in ["holder.ptr", "pair.0"] {
+        let source = format!(r#"
+struct Holder
+    < ptr: *[I64]
+
+main = ->
+    mut values = [1, 2]
+    raw: *[I64] = ~PtrFromParts (~ArrPtr (&mut values)), 2
+    holder = Holder
+        ptr: raw
+    pair = (raw, 0)
+    view = unsafe &*{pointer}
+    values[0] = 9
+    view[0]
+"#);
+        compile_should_fail(&source, "borrow conflict");
+        assert_eq!(compile_and_run(&source.replace("    values[0] = 9\n", "")
+            .replace("    view[0]\n", "    view[0].println!\n    0\n")), "1\n");
+    }
+}
+
+#[test]
+fn test_raw_pointer_mixed_return_arguments_retain_all_loans() {
+    compile_should_fail(r#"
+unsafe choose: &I64 -> *I64 -> Bool -> &I64
+unsafe choose = first, second, flag ->
+    if flag then first else unsafe &*second
+
+main = ->
+    mut a = 1
+    mut b = 2
+    data = &mut b as *I64
+    view = unsafe choose &a, data, false
+    b = 9
+    *view
+"#, "borrow conflict");
+}
+
+#[test]
+fn test_raw_pointer_return_reborrow_uses_selected_argument() {
+    for selected in ["first", "second"] {
+        let source = format!(r#"
+unsafe choose: *I64 -> *I64 -> &mut I64
+unsafe choose = first, second -> unsafe &mut *{selected}
+
+main = !->
+    mut a = 1
+    mut b = 2
+    first_ptr = &mut a as *I64
+    second_ptr = &mut b as *I64
+    view = unsafe choose first_ptr, second_ptr
+    {unselected} = 7
+    *view = 9
+    (*view).println!
+    unsafe (*{selected}_ptr).println!
+"#, unselected = if selected == "first" { "b" } else { "a" });
+        assert_eq!(compile_and_run(&source), "9\n9\n");
+        let conflicting = source.replace("    *view = 9", &format!("    {} = 9", if selected == "first" { "a" } else { "b" }));
+        compile_should_fail(&conflicting, "borrow conflict");
+    }
+}
+
+#[test]
+fn test_raw_pointer_return_loans_survive_deleted_source_artifacts() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let dependency = dir.join("loans.rk");
+    fs::write(&dependency, r#"
+unsafe choose: &I64 -> *I64 -> Bool -> &I64
+< unsafe choose = first, second, flag ->
+    if flag then first else unsafe &*second
+
+unsafe second: *I64 -> *I64 -> &mut I64
+< unsafe second = first, second -> unsafe &mut *second
+"#).unwrap();
+    let config = rock_lib::Config {
+        entry_file: dependency.clone(), output_dir: dir.clone(),
+        current_crate_name: Some("loans".to_string()),
+        no_std: true, no_prelude: true, no_link: true,
+        ..Default::default()
+    };
+    let artifact = dir.join("loans.rkca");
+    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+        .write_artifact_to_path(&artifact).unwrap();
+    fs::remove_file(dependency).unwrap();
+    for (call, mutation, invalid) in [
+        ("choose &a, holder.ptr, false", "b = 9", true),
+        ("choose &a, holder.ptr, false", "*view", false),
+        ("second (&mut a as *I64), (holder.ptr)", "*view = 9", false),
+        ("second (&mut a as *I64), (holder.ptr)", "b = 9", true),
+    ] {
+        let entry = dir.join("consumer.rk");
+        fs::write(&entry, format!(r#"
+> loans::choose
+> loans::second
+struct Holder
+    < ptr: *I64
+main = ->
+    mut a = 1
+    mut b = 2
+    holder = Holder
+        ptr: &mut b as *I64
+    view = unsafe {call}
+    {mutation}
+    *view
+"#)).unwrap();
+        let result = rock_lib::compile(&rock_lib::Config {
+            entry_file: entry, current_crate_name: None,
+            extern_artifacts: vec![("loans".to_string(), artifact.clone())],
+            ..config.clone()
+        });
+        assert_eq!(result.is_err(), invalid, "{call}, {mutation}: {result:?}");
+        if let Err(errors) = result {
+            assert!(errors.0.iter().any(|error| error.message.contains("borrow conflict")), "{errors:?}");
+        }
+    }
 }
 
 #[test]
@@ -10396,6 +10599,66 @@ main = !->
     (true.same &4).println!
 "#);
     assert_eq!(output.trim(), "true\ntrue");
+}
+
+#[test]
+fn test_default_type_arguments_recursive_nominal_fields() {
+    compile_should_pass(r#"
+struct Node {T = I64}
+    value: T
+    next: *Node
+
+enum Chain {T = I64}
+    End
+    Link T, *Chain
+
+main = !-> return
+"#);
+}
+
+#[test]
+fn test_default_type_arguments_static_factory_fallback_and_inference() {
+    assert_eq!(compile_and_run(r#"
+struct Phantom {T = I64}
+
+impl Phantom T
+    new: () -> Phantom T
+    new = -> Phantom
+
+struct Value {T = Bool}
+    < value: T
+
+impl Value T
+    new: T -> Value T
+    new = value -> Value
+        value: value
+
+main = !->
+    phantom = Phantom::new!
+    explicit: Phantom Bool = Phantom::new!
+    value = Value::new 42
+    value.value.println!
+"#), "42\n");
+}
+
+#[test]
+fn test_default_type_arguments_forward_declarations_in_file_modules() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    fs::write(dir.join("models.rk"), r#"
+read: Outer -> I64
+< read = value -> value.value.value
+
+< struct Outer {T = Inner}
+    < value: T
+
+< struct Inner {T = I64}
+    < value: T
+"#).unwrap();
+    fs::write(dir.join("test.rk"), "mod models\nmain = !-> return\n").unwrap();
+    rock_lib::compile(&test_config(dir.join("test.rk"), dir.clone())).expect("Compilation failed");
 }
 
 #[test]

@@ -673,6 +673,26 @@ impl Lowerer {
         }
     }
 
+    fn register_static_owner_defaults(&mut self, owner_ty: &Type, signature: &Type) {
+        let owner = match owner_ty {
+            Type::Constructor { id, .. } | Type::Struct { id, .. } | Type::Enum { id, .. } => *id,
+            _ => return,
+        };
+        let Some(params) = crate::type_lowering::TypeLoweringContext::constructor_params(self, owner) else { return; };
+        let mut arguments = match owner_ty {
+            Type::Struct { args, .. } | Type::Enum { args, .. } => Some(args.clone()),
+            _ => None,
+        };
+        crate::type_services::visit::visit_type(signature, &mut |nested: &Type| {
+            if let Type::Struct { id, args } | Type::Enum { id, args } = nested {
+                if *id == owner && arguments.is_none() { arguments = Some(args.clone()); }
+            }
+        });
+        if let Some(arguments) = arguments {
+            self.engine.register_generic_defaults(&params, &arguments);
+        }
+    }
+
     fn instantiate_selected_constructor_member(
         &mut self,
         target_ty: Type,
@@ -691,19 +711,7 @@ impl Lowerer {
             crate::types::FunctionSafety::from_is_unsafe(selected.function.is_unsafe),
         );
         let ty = self.instantiate_function_type(&selected.function, span.clone());
-        if let Type::Constructor { id: owner, .. } = &target_ty {
-            if let Some(params) = crate::type_lowering::TypeLoweringContext::constructor_params(self, *owner) {
-                let mut arguments = None;
-                crate::type_services::visit::visit_type(&ty, &mut |nested: &Type| {
-                    if let Type::Struct { id, args } | Type::Enum { id, args } = nested {
-                        if id == owner && arguments.is_none() { arguments = Some(args.clone()); }
-                    }
-                });
-                if let Some(arguments) = arguments {
-                    self.engine.register_generic_defaults(&params, &arguments);
-                }
-            }
-        }
+        self.register_static_owner_defaults(&target_ty, &ty);
         let mut substitution = HashMap::new();
         Self::infer_generic_subst_from_types(&raw_ty, &ty, &mut substitution);
         let owner_params = selected
@@ -1136,6 +1144,7 @@ impl Lowerer {
                 Type::Slice(Box::new(element.substitute_generics(&owner_substitution)))
             }
         };
+        self.register_static_owner_defaults(&owner_ty, &ty);
         let function_id = match resolved.value.target {
             Some(HirVarTarget::Function(function_id)) => function_id,
             _ => {
