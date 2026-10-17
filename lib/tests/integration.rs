@@ -11266,16 +11266,32 @@ main = ->
 #[test]
 fn test_std_eq_default_not_equal() {
     let src = r#"
+struct Tag
+    < value: I64
+
+impl PartialEq for Tag
+    @== = other -> self.value == other.value
+
 main = ->
     1 != 2 .println!
     1 != 1 .println!
     "abc" != "abd" .println!
     "abc" != "abc" .println!
+    true != false .println!
+    true != true .println!
+    first = Tag
+        value: 1
+    same = Tag
+        value: 1
+    different = Tag
+        value: 2
+    first != different .println!
+    first != same .println!
     0
 "#;
 
     let output = compile_and_run(src);
-    assert_eq!(output, "true\nfalse\ntrue\nfalse\n");
+    assert_eq!(output, "true\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\n");
 }
 
 #[test]

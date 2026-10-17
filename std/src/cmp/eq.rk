@@ -3,11 +3,7 @@
 < trait PartialEq
     @==: &Self -> Bool
     @!=: &Self -> Bool
-    @!= = other ->
-        if *self == *other
-            false
-        else
-            true
+    @!= = other -> !(*self == *other)
 
 < trait Eq where Self: PartialEq
 
