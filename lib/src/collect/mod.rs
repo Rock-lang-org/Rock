@@ -1492,6 +1492,7 @@ mod tests {
 
     fn generic_param_decl(name: &str) -> crate::ast::GenericParamDecl {
         crate::ast::GenericParamDecl {
+            default: None,
             name: ident(name),
             kind: None,
             span: crate::lexer::Span::test(),
@@ -1542,7 +1543,8 @@ mod tests {
                         exported: false,
                     }),
                     TopLevel::EnumDecl(crate::ast::EnumDecl {
-                        name: generic_type_inner("Choice", vec![generic_t()]),
+                        name: generic_type_inner("Choice", vec![]),
+                        generic_params: vec![generic_param_decl("T")],
                         variants: vec![crate::ast::EnumVariant {
                             name: type_inner("Some"),
                             fields: crate::ast::NamedFieldsOrTypesList::TypesList(vec![inner_t()]),
@@ -2141,6 +2143,7 @@ mod tests {
                         exported: false,
                     }),
                     TopLevel::EnumDecl(crate::ast::EnumDecl {
+                        generic_params: Vec::new(),
                         name: type_inner("Maybe"),
                         variants: vec![crate::ast::EnumVariant {
                             name: type_inner("None"),
@@ -4047,6 +4050,7 @@ mod tests {
                         exported: false,
                     }),
                     TopLevel::EnumDecl(crate::ast::EnumDecl {
+                        generic_params: Vec::new(),
                         name: type_inner("Color"),
                         variants: vec![],
                         exported: false,

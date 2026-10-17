@@ -60,7 +60,7 @@ impl From<DefId> for ProductDefId {
     }
 }
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 49;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 50;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;
@@ -1746,6 +1746,9 @@ fn assert_valid_product_type_ids(ty: &crate::types::Type) {
 fn assert_valid_product_generic_param_decls(decls: &[GenericParamDecl]) {
     for decl in decls {
         assert_valid_product_input_def_id(decl.id.owner);
+        if let Some(default) = &decl.default {
+            assert_valid_product_type_ids(default);
+        }
     }
 }
 
@@ -2271,6 +2274,10 @@ fn remap_generic_param_decls_product_ids(
             unambiguous_product_id(ProductDefId::from(generic_decl.id.owner), id_remap)
         {
             generic_decl.id.owner = product_def_id_to_def_id(product_id);
+        }
+        if let Some(default) = &mut generic_decl.default {
+            default.remap_def_ids(&mut |id| unambiguous_product_id(ProductDefId::from(id), id_remap)
+                .map(product_def_id_to_def_id).unwrap_or(id));
         }
     }
 }
@@ -3164,6 +3171,9 @@ fn remap_generic_param_decls_owned_owner(
     for generic_decl in generic_param_decls {
         if generic_decl.id.owner == old_id {
             generic_decl.id.owner = new_id;
+        }
+        if let Some(default) = &mut generic_decl.default {
+            remap_type_owned_generic_owner(default, old_id, new_id);
         }
     }
 }
@@ -7118,7 +7128,7 @@ mod tests {
 
     #[test]
     fn product_artifact_format_version_matches_shared_contract() {
-        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 49);
+        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 50);
         assert_eq!(
             PRODUCT_ARTIFACT_FORMAT_VERSION,
             rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION

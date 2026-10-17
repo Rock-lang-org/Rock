@@ -182,11 +182,10 @@ impl SemanticSourceMap {
                 }
                 ast::TopLevel::EnumDecl(enumeration) => {
                     if let Some(enum_decl) = items.enumeration(item.def_id) {
-                        self.record_generic_decls(&enum_decl.generic_params, &[], enum_decl.id);
-                        self.record_generic_spans(
-                            enum_decl.id,
+                        self.record_generic_decls(
                             &enum_decl.generic_params,
-                            &enumeration.name.generics,
+                            &enumeration.generic_params,
+                            enum_decl.id,
                         );
                         for (variant, source_variant) in
                             enum_decl.variants.iter().zip(&enumeration.variants)
@@ -210,6 +209,11 @@ impl SemanticSourceMap {
                                 }
                             }
                         }
+                    }
+                }
+                ast::TopLevel::NewType(_, params, _) => {
+                    if let Some(alias) = items.type_alias(item.def_id) {
+                        self.record_generic_decls(&alias.generic_params, params, alias.id);
                     }
                 }
                 ast::TopLevel::TraitDecl(trait_decl) => {
@@ -300,6 +304,9 @@ impl SemanticSourceMap {
             ast::TopLevel::EnumDecl(_) => items
                 .enumeration(owner)
                 .map(|item| item.generic_params.as_slice()),
+            ast::TopLevel::NewType(_, _, _) => items
+                .type_alias(owner)
+                .map(|item| item.generic_params.as_slice()),
             ast::TopLevel::FunctionSig(_) => items
                 .function_sig(owner)
                 .map(|item| item.generic_params.as_slice()),
@@ -334,7 +341,22 @@ impl SemanticSourceMap {
             }
             _ => {}
         }
+        let params = match top_level {
+            ast::TopLevel::StructDecl(item) => item.generic_params.as_slice(),
+            ast::TopLevel::EnumDecl(item) => item.generic_params.as_slice(),
+            ast::TopLevel::TraitDecl(item) => item.generic_params.as_slice(),
+            ast::TopLevel::NewType(_, params, _) => params.as_slice(),
+            _ => &[],
+        };
+        for param in params {
+            if let Some(default) = &param.default {
+                record_type_references(default, &generic_ids, resolver, self);
+            }
+        }
         match top_level {
+            ast::TopLevel::NewType(_, _, target) => {
+                record_type_references(target, &generic_ids, resolver, self);
+            }
             ast::TopLevel::StructDecl(structure) => {
                 for field in &structure.fields {
                     record_type_references(&field.ty, &generic_ids, resolver, self);
@@ -644,23 +666,6 @@ impl SemanticSourceMap {
     ) {
         let mut spans = HashMap::new();
         collect_parse_type_name_spans(source, &mut spans);
-        for generic in generic_params {
-            if let Some(span) = spans.get(&generic.name) {
-                self.insert_generic(generic.id, span.clone(), owner);
-            }
-        }
-    }
-
-    fn record_generic_spans(
-        &mut self,
-        owner: DefId,
-        generic_params: &[crate::types::GenericParamDecl],
-        sources: &[ast::ParseType],
-    ) {
-        let mut spans = HashMap::new();
-        for source in sources {
-            collect_parse_type_name_spans(source, &mut spans);
-        }
         for generic in generic_params {
             if let Some(span) = spans.get(&generic.name) {
                 self.insert_generic(generic.id, span.clone(), owner);
@@ -1461,6 +1466,32 @@ mod tests {
         assert!(sources.references().iter().any(|reference| {
             reference.target == SourceSymbol::Generic(generic)
                 && &text[reference.span.start..reference.span.end] == "T"
+        }));
+    }
+
+    #[test]
+    fn semantic_source_map_records_enum_and_alias_default_parameters() {
+        let path = PathBuf::from("/virtual/defaults.rk");
+        let text = "enum Choice A, {B = A}\n    First A\n    Second B\ntype Selected {T = I64} = Choice T\nmain = -> 0\n";
+        let module = crate::parser::parse_source(path, text, &crate::Config::default()).unwrap();
+        let declarations = crate::collect::collect(
+            &crate::ast::Program { module },
+            &crate::crate_system::CrateContext::new(),
+            false,
+            None,
+        ).unwrap();
+        let choice = declarations.item_index.defs_named("Choice")[0];
+        let selected = declarations.item_index.defs_named("Selected")[0];
+        let enumeration = declarations.items.enumeration(choice).unwrap();
+        let alias = declarations.items.type_alias(selected).unwrap();
+        for param in enumeration.generic_params.iter().chain(&alias.generic_params) {
+            let symbol = declarations.source_map.symbol(&SourceSymbol::Generic(param.id)).unwrap();
+            assert_eq!(&text[symbol.name_span.start..symbol.name_span.end], param.name);
+        }
+        let default_offset = text.find("= A").unwrap() + 2;
+        assert!(declarations.source_map.references.iter().any(|reference| {
+            reference.span.start == default_offset
+                && reference.target == SourceSymbol::Generic(enumeration.generic_params[0].id)
         }));
     }
 

@@ -803,9 +803,9 @@ impl<'a> MirBuilder<'a> {
                         function
                             .params
                             .iter()
-                            .map(|param| type_context.intern_type(&param.ty))
+                        .map(|param| type_context.intern_canonical_type(&param.ty))
                             .collect(),
-                        type_context.intern_type(&function.ret_type),
+                    type_context.intern_canonical_type(&function.ret_type),
                         function.is_method,
                     )
                 } else {
@@ -951,7 +951,7 @@ impl<'a> MirBuilder<'a> {
                                 .fields
                                 .iter()
                                 .map(|field| {
-                                    (field.name.clone(), type_context.intern_type(&field.ty))
+                                    (field.name.clone(), type_context.intern_canonical_type(&field.ty))
                                 })
                                 .collect(),
                             generic_params: Self::mir_generic_param_ids(&structure.generic_params),
@@ -1195,14 +1195,14 @@ impl<'a> MirBuilder<'a> {
                         super::MirVariantLayoutFields::Positional(
                             fields
                                 .iter()
-                                .map(|ty| type_context.intern_type(ty))
+                        .map(|ty| type_context.intern_canonical_type(ty))
                                 .collect(),
                         )
                     }
                     HirVariantFields::Named(fields) => super::MirVariantLayoutFields::Named(
                         fields
                             .iter()
-                            .map(|field| (field.name.clone(), type_context.intern_type(&field.ty)))
+                        .map(|field| (field.name.clone(), type_context.intern_canonical_type(&field.ty)))
                             .collect(),
                     ),
                 },
@@ -1255,7 +1255,8 @@ impl<'a> MirBuilder<'a> {
     }
 
     fn type_id_for(&self, ty: &Type) -> TypeId {
-        self.type_context.borrow_mut().intern_type(ty)
+        // Accepted HIR is canonical, including constructor-valued nominal args.
+        self.type_context.borrow_mut().intern_canonical_type(ty)
     }
 
     fn new_local(&mut self, ty: TypeId, mutability: Mutability, name: Option<String>) -> Local {

@@ -534,7 +534,7 @@ fn enum_with_payload() {
 
     let p = parse(input);
     let e = find_enum(&p, "Result");
-    assert_eq!(e.name.generics.len(), 2);
+    assert_eq!(e.generic_params.len(), 2);
     assert_eq!(e.variants.len(), 2);
 
     // Each variant should have a type payload

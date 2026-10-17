@@ -38,6 +38,7 @@ pub struct GenericParamDecl {
     pub id: GenericParamId,
     pub name: String,
     pub kind: Kind,
+    pub default: Option<Type>,
 }
 
 impl GenericParamDecl {
@@ -46,6 +47,7 @@ impl GenericParamDecl {
             id,
             name: name.into(),
             kind,
+            default: None,
         }
     }
 
@@ -85,6 +87,9 @@ impl GenericParamDecl {
         F: FnMut(DefId) -> DefId,
     {
         self.id.remap_def_ids(remap);
+        if let Some(default) = &mut self.default {
+            default.remap_def_ids(remap);
+        }
     }
 }
 

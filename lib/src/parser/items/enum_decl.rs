@@ -6,17 +6,19 @@ use crate::{
 };
 
 use super::{
-    empty_lines_permissive, indent, language_item_marker, parse_type_inner, struct_decl_field,
+    empty_lines_permissive, indent, language_item_marker, parse_generic_param_list,
+    parse_type_name, parse_type_inner, struct_decl_field,
 };
 
 pub fn enum_decl(stream: Input) -> IResult<EnumDecl> {
     (
         TokenType::Keyword("enum".to_string()),
-        parse_type_inner,
+        parse_type_name,
+        parse_generic_param_list,
         TokenType::Eol.followed_by(empty_lines_permissive),
         indented(many(enum_item)),
     )
-        .map(|(_, name, _, items)| {
+        .map(|(_, name, generic_params, _, items)| {
             let mut language_items = crate::ast::LanguageItemAnnotations::default();
             let variants = items
                 .into_iter()
@@ -33,7 +35,8 @@ pub fn enum_decl(stream: Input) -> IResult<EnumDecl> {
                 .collect();
 
             EnumDecl {
-                name,
+                name: ParseTypeInner { name: name.name, span: name.span, generics: Vec::new() },
+                generic_params,
                 variants,
                 exported: false,
                 language_items,

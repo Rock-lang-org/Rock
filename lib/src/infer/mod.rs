@@ -759,6 +759,20 @@ fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), Vec<Resolve
         }
     }
 
+    // A value determined by a function parameter is inferred generically, not
+    // an unconstrained construction site eligible for a declaration fallback.
+    let mut parameter_vars = HashSet::new();
+    for function in hir.functions.values().chain(hir.impls.values().flat_map(|item| item.methods.values()))
+        .chain(hir.traits.values().flat_map(|item| item.methods.values())) {
+        for param in &function.params {
+            crate::type_services::visit::visit_type(&hir.engine.resolve(&param.ty), &mut |ty: &Type| {
+                if let Type::TypeVar(id) = ty { parameter_vars.insert(*id); }
+            });
+        }
+    }
+    hir.engine.apply_generic_defaults(&parameter_vars).map_err(|error| vec![ResolveError::from_optional_span_code(
+        error.error.render(&hir.engine), error.span, crate::diagnostic::DiagnosticCode::Type,
+    )])?;
     for (_, owners, authority_obligations) in &mut component_work {
         solve_component_worklist(hir, &owners, authority_obligations, true)?;
         if authority_obligations.iter().any(|obligation| {

@@ -13,6 +13,7 @@ use crate::products::{
     ProductEnumInterface, ProductExternInterface, ProductFunctionInterface, ProductImplInterface,
     ProductLocalDefId, ProductStructInterface, ProductTraitInterface, ProductTypeAliasInterface,
 };
+use crate::type_services::kind::Kind;
 use crate::type_services::normalize::{TypeNormalizationEnv, TypeNormalizer};
 use crate::types::{GenericParamDecl, GenericParamId, NominalTypeKind, Type};
 
@@ -2174,7 +2175,7 @@ fn remap_function_interface_id(
         summary.validate(function.params.len())?;
     }
     function.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut function.generic_params, remap)?;
+    remap_generic_param_decls(&mut function.generic_params, remap, type_validator)?;
     remap_generic_bounds(&mut function.generic_bounds, remap, type_validator)?;
     for param in &mut function.params {
         remap_type_def_ids(param, remap, type_validator)?;
@@ -2190,7 +2191,7 @@ fn remap_struct_interface_id(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductStructInterface, String> {
     strukt.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut strukt.generic_params, remap)?;
+    remap_generic_param_decls(&mut strukt.generic_params, remap, type_validator)?;
     for field in &mut strukt.fields {
         remap_type_def_ids(&mut field.ty, remap, type_validator)?;
     }
@@ -2204,7 +2205,7 @@ fn remap_type_alias_interface_id(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductTypeAliasInterface, String> {
     alias.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut alias.generic_params, remap)?;
+    remap_generic_param_decls(&mut alias.generic_params, remap, type_validator)?;
     remap_type_def_ids(&mut alias.ty, remap, type_validator)?;
     Ok(alias)
 }
@@ -2216,7 +2217,7 @@ fn remap_enum_interface_id(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductEnumInterface, String> {
     enm.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut enm.generic_params, remap)?;
+    remap_generic_param_decls(&mut enm.generic_params, remap, type_validator)?;
     for variant in &mut enm.variants {
         remap_variant_fields_def_ids(&mut variant.fields, remap, type_validator)?;
     }
@@ -2251,9 +2252,9 @@ fn remap_trait_interface_ids(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductTraitInterface, String> {
     trait_def.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut trait_def.generic_params, remap)?;
+    remap_generic_param_decls(&mut trait_def.generic_params, remap, type_validator)?;
     if let Some(target) = &mut trait_def.target {
-        remap_generic_param_decls(std::slice::from_mut(target), remap)?;
+        remap_generic_param_decls(std::slice::from_mut(target), remap, type_validator)?;
     }
     remap_predicates(&mut trait_def.predicates, remap, type_validator)?;
     for method in trait_def.methods.values_mut() {
@@ -2262,7 +2263,7 @@ fn remap_trait_interface_ids(
     }
     for sig in trait_def.signatures.values_mut() {
         sig.id = remap.def_id(ProductDefId::from(sig.id))?;
-        remap_generic_param_decls(&mut sig.generic_params, remap)?;
+        remap_generic_param_decls(&mut sig.generic_params, remap, type_validator)?;
         remap_generic_bounds(&mut sig.generic_bounds, remap, type_validator)?;
         for param in &mut sig.params {
             remap_type_def_ids(param, remap, type_validator)?;
@@ -2279,8 +2280,8 @@ fn remap_impl_interface_ids(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductImplInterface, String> {
     imp.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut imp.type_generics, remap)?;
-    remap_generic_param_decls(&mut imp.trait_generics, remap)?;
+    remap_generic_param_decls(&mut imp.type_generics, remap, type_validator)?;
+    remap_generic_param_decls(&mut imp.trait_generics, remap, type_validator)?;
     if let Some(trait_id) = &mut imp.trait_id {
         *trait_id = remap.def_id(ProductDefId::from(*trait_id))?;
     }
@@ -2486,7 +2487,7 @@ fn remap_function_child_locations<P: crate::hir::HirPhase>(
         local_scope.insert(param.local_id);
     }
 
-    remap_generic_param_decls(&mut function.generic_params, remap)?;
+    remap_generic_param_decls(&mut function.generic_params, remap, type_validator)?;
     remap_generic_bounds(&mut function.generic_bounds, remap, type_validator)?;
     for param in &mut function.params {
         remap_type_def_ids(&mut param.ty, remap, type_validator)?;
@@ -2574,8 +2575,54 @@ fn remap_predicates(
 fn remap_generic_param_decls(
     decls: &mut [crate::types::GenericParamDecl],
     remap: &ProductIdentityRemap,
+    validator: &ProductNominalTypeValidator,
 ) -> Result<(), String> {
+    let mut env = validator.normalization_env.clone();
+    for decl in decls.iter() {
+        env.register_generic_kind(decl.id, decl.kind.clone());
+    }
+    let mut default_seen = false;
     for decl in decls {
+        if let Some(default) = &mut decl.default {
+            default_seen = true;
+            let owner = ProductDefId::from(decl.id.owner);
+            let subject_index = validator.trait_generic_counts.get(&owner).copied();
+            if let Some(index) = subject_index {
+                let subject = GenericParamId { owner: decl.id.owner, index: index as u32 };
+                if TypeNormalizer::new(&env).kind_of(&Type::Generic(subject)).is_err() {
+                    env.register_generic_kind(subject, crate::type_services::kind::Kind::Type);
+                }
+            }
+            let mut invalid_generic = false;
+            crate::type_services::visit::visit_type(default, &mut |ty: &Type| {
+                if let Type::Generic(param) = ty {
+                    if param.owner != decl.id.owner || (param.index >= decl.id.index && Some(param.index as usize) != subject_index) {
+                        invalid_generic = true;
+                    }
+                }
+            });
+            if invalid_generic { return Err("Product artifact generic default references an out-of-scope parameter".into()); }
+            struct BoundScope { groups: Vec<Vec<Kind>>, valid: bool }
+            impl crate::type_services::visit::TypeVisitor for BoundScope {
+                fn enter_binders(&mut self, params: &[Kind]) { self.groups.push(params.to_vec()); }
+                fn exit_binders(&mut self) { self.groups.pop(); }
+                fn visit_type(&mut self, ty: &Type) {
+                    if let Type::BoundVar { depth, index, kind } = ty {
+                        self.valid &= self.groups.iter().rev().nth(*depth as usize)
+                            .and_then(|group| group.get(*index as usize)) == Some(kind);
+                    }
+                    crate::type_services::visit::visit_type_children(ty, self);
+                }
+            }
+            let mut scope = BoundScope { groups: Vec::new(), valid: true };
+            crate::type_services::visit::visit_type(default, &mut scope);
+            if !scope.valid { return Err("Product artifact generic default contains an escaping type binder".into()); }
+            let kind = TypeNormalizer::new(&env).kind_of(default).map_err(|error| error.to_string())?;
+            if kind != decl.kind { return Err(format!("Product artifact generic default has kind {kind}, expected {}", decl.kind)); }
+            remap_type_def_ids(default, remap, validator)?;
+        } else if default_seen {
+            return Err("Product artifact required parameter follows a defaulted parameter".into());
+        }
         decl.id.owner = remap.def_id(ProductDefId::from(decl.id.owner))?;
     }
     Ok(())
@@ -3441,14 +3488,14 @@ fn remap_trait_ids(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<crate::hir::AcceptedHirTrait, String> {
     value.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut value.generic_params, remap)?;
+    remap_generic_param_decls(&mut value.generic_params, remap, type_validator)?;
     if let Some(target) = &mut value.target {
-        remap_generic_param_decls(std::slice::from_mut(target), remap)?;
+        remap_generic_param_decls(std::slice::from_mut(target), remap, type_validator)?;
     }
     remap_predicates(&mut value.predicates, remap, type_validator)?;
     for signature in value.signatures.values_mut() {
         signature.id = remap.def_id(ProductDefId::from(signature.id))?;
-        remap_generic_param_decls(&mut signature.generic_params, remap)?;
+        remap_generic_param_decls(&mut signature.generic_params, remap, type_validator)?;
         remap_generic_bounds(&mut signature.generic_bounds, remap, type_validator)?;
         for param in &mut signature.params {
             remap_type_def_ids(param, remap, type_validator)?;
@@ -3471,8 +3518,8 @@ fn remap_impl_ids(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<crate::hir::AcceptedHirImpl, String> {
     value.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut value.type_generics, remap)?;
-    remap_generic_param_decls(&mut value.trait_generics, remap)?;
+    remap_generic_param_decls(&mut value.type_generics, remap, type_validator)?;
+    remap_generic_param_decls(&mut value.trait_generics, remap, type_validator)?;
     if let crate::hir::HirImplOwner::Named(owner) = &mut value.owner {
         *owner = qualify_product_name(crate_name, owner);
     }
@@ -6581,6 +6628,32 @@ mod product_tests {
             error.contains("unresolved type"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn product_artifact_rejects_invalid_generic_defaults() {
+        let id = product_def_id(0, 7);
+        let owner = product_hir_def_id(id);
+        for default in [
+            Type::Error,
+            Type::TypeVar(crate::ids::TypeVarId(0)),
+            Type::Generic(GenericParamId { owner, index: 0 }),
+            Type::Generic(GenericParamId { owner: product_hir_def_id(product_def_id(0, 0)), index: 0 }),
+            Type::Lambda { params: vec![Kind::Type], body: Box::new(Type::I64) },
+            Type::BoundVar { depth: 0, index: 0, kind: Kind::Type },
+        ] {
+            let mut products = product_with_function("dep", ProductCrateId(0), 0, PathBuf::from("dep.o"));
+            let mut param = GenericParamDecl::type_param(GenericParamId { owner, index: 0 }, "T");
+            param.default = Some(default);
+            products.interface.structs.insert(id, ProductStructInterface {
+                id: owner, name: "dep::Private".into(), generic_params: vec![param], fields: vec![],
+            });
+            let remap = super::ProductIdentityRemap {
+                local_crate: ProductCrateId(0),
+                crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
+            };
+            assert!(super::validate_product_type_fields(&products, &remap, &CrateContext::new()).is_err());
+        }
     }
 
     #[test]

@@ -159,7 +159,7 @@ A generic function can use a trait method or operator when its signature names t
 struct Box T
     < value: T
 
-same_box: Box T -> Box T -> Bool where T: PartialEq T
+same_box: Box T -> Box T -> Bool where T: PartialEq
 same_box = left, right -> left.value == right.value
 
 main = !->
@@ -170,7 +170,7 @@ main = !->
     same_box first, second .println!
 ```
 
-The call specializes `T` to `I64`, and `PartialEq I64 for I64` supplies `==`. The output is `true`. A bound is checked at the call site as well as in the generic body. `Eq` requires `PartialEq Self` and additionally promises that a value equals itself; floating-point types implement only partial equality because NaN is not equal to itself.
+The call specializes `T` to `I64`, and `impl PartialEq for I64` supplies `==`. The default right-hand type is `Self`, so `T: PartialEq` means `T: PartialEq T`. The output is `true`. A bound is checked at the call site as well as in the generic body. `Eq` requires same-type `PartialEq` and additionally promises that a value equals itself; floating-point types implement only partial equality because NaN is not equal to itself.
 
 ### Comparing Different Types
 
@@ -188,7 +188,7 @@ main = !->
     same owned, "Rock" .println!
 ```
 
-The output is `true`, `false`, `Rock`, and `true`. The direct comparisons borrow `owned`; the generic function takes its arguments by value, so the call to `same` consumes it. `PartialEq U for T` does not automatically provide `PartialEq T for U`: the reverse direction needs its own implementation. Implementing `==` also supplies the default `!=`, which negates the selected equality result. Write the right-hand type explicitly, including for same-type bounds such as `T: PartialEq T`; default type arguments are not supported yet. Cross-type equality does not introduce implicit numeric conversions.
+The output is `true`, `false`, `Rock`, and `true`. The direct comparisons borrow `owned`; the generic function takes its arguments by value, so the call to `same` consumes it. `PartialEq U for T` does not automatically provide `PartialEq T for U`: the reverse direction needs its own implementation. Implementing `==` also supplies the default `!=`, which negates the selected equality result. Omit the right-hand argument for same-type equality, or write it explicitly for cross-type equality. Cross-type equality does not introduce implicit numeric conversions.
 
 For a user-defined type, implement equality for each supported right-hand type. The right-hand parameter is borrowed, just like the receiver.
 

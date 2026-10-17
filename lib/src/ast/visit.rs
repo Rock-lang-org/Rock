@@ -158,8 +158,9 @@ pub fn walk_top_level<'a, V: Visitor<'a>>(visitor: &mut V, top_level: &'a TopLev
         TopLevel::TraitDecl(t) => visitor.visit_trait_decl(t),
         TopLevel::EnumDecl(e) => visitor.visit_enum_decl(e),
         TopLevel::Impl(i) => visitor.visit_impl(i),
-        TopLevel::NewType(inner, ty) => {
+        TopLevel::NewType(inner, params, ty) => {
             visitor.visit_parse_type_inner(inner);
+            walk_list!(visitor, visit_generic_param_decl, params);
             visitor.visit_parse_type(ty);
         }
     };
@@ -539,6 +540,9 @@ pub fn walk_parse_type_inner<'a, V: Visitor<'a>>(visitor: &mut V, ty: &'a ParseT
 
 pub fn walk_generic_param_decl<'a, V: Visitor<'a>>(visitor: &mut V, param: &'a GenericParamDecl) {
     visitor.visit_ident(&param.name);
+    if let Some(default) = &param.default {
+        visitor.visit_parse_type(default);
+    }
     if let Some(kind) = &param.kind {
         walk_list!(visitor, visit_parse_type, &kind.args);
     }
@@ -588,6 +592,7 @@ pub fn walk_lambda_decl<'a, V: Visitor<'a>>(visitor: &mut V, lambda: &'a LambdaD
 
 pub fn walk_enum_decl<'a, V: Visitor<'a>>(visitor: &mut V, e: &'a EnumDecl) {
     visitor.visit_parse_type_inner(&e.name);
+    walk_list!(visitor, visit_generic_param_decl, &e.generic_params);
     walk_list!(visitor, visit_enum_variant, &e.variants);
 }
 

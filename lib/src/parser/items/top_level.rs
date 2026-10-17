@@ -13,7 +13,7 @@ use crate::{
 
 use super::{
     enum_decl, function_decl, function_sig, macro_decl, macro_invoc, module, operator, parse_type,
-    parse_type_inner, path, primitives, r#impl, r#trait, struct_decl,
+    path, primitives, r#impl, r#trait, struct_decl,
 };
 
 fn path_segments(path: &crate::ast::Path) -> Vec<String> {
@@ -241,12 +241,17 @@ pub fn top_level(stream: Input) -> IResult<TopLevel> {
             .or(module.map(ModuleDecl).map(TopLevel::Module))
             .or((
                 TokenType::Keyword("type".to_string()),
-                parse_type_inner,
+                super::parse_type_name,
+                super::parse_generic_param_list,
                 TokenType::Equal,
                 parse_type,
                 TokenType::Eol,
             )
-                .map(|(_, name, _, ty, _)| TopLevel::NewType(name, ty)))
+                .map(|(_, name, params, _, ty, _)| TopLevel::NewType(
+                    crate::ast::ParseTypeInner { name: name.name, span: name.span, generics: Vec::new() },
+                    params,
+                    ty,
+                )))
             .or(preceded(
                 TokenType::Operator(">".to_string()),
                 followed(path, TokenType::Eol),

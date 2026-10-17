@@ -175,7 +175,9 @@ fn trait_generic_params(mut stream: Input) -> IResult<Vec<crate::ast::GenericPar
         TokenType::Keyword(ref keyword) if keyword == "for" || keyword == "where"
     ) && !matches!(stream.seek()?.token_type, TokenType::Eol)
     {
-        let parser = if matches!(stream.seek()?.token_type, TokenType::OpenParen) {
+        let parser = if matches!(stream.seek()?.token_type, TokenType::OpenBrace) {
+            super::parse_type::parse_default_generic_param
+        } else if matches!(stream.seek()?.token_type, TokenType::OpenParen) {
             parse_parenthesized_constructor_param
         } else if matches!(
             stream.tokens.get(1).map(|token| &token.token_type),

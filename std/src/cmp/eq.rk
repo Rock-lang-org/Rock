@@ -1,50 +1,50 @@
 // Partial equality owns the operators; Eq additionally promises reflexivity.
 
-< trait PartialEq Rhs
+< trait PartialEq {Rhs = Self}
     @==: &Rhs -> Bool
     @!=: &Rhs -> Bool
     @!= = other -> !(*self == *other)
 
-< trait Eq where Self: PartialEq Self
+< trait Eq where Self: PartialEq
 
-impl PartialEq I64 for I64
+impl PartialEq for I64
     @== = other -> ~I64Eq *self, *other
 
-impl PartialEq I32 for I32
+impl PartialEq for I32
     @== = other -> ~I32Eq *self, *other
 
-impl PartialEq I16 for I16
+impl PartialEq for I16
     @== = other -> ~I16Eq *self, *other
 
-impl PartialEq I8 for I8
+impl PartialEq for I8
     @== = other -> ~I8Eq *self, *other
 
-impl PartialEq U64 for U64
+impl PartialEq for U64
     @== = other -> ~U64Eq *self, *other
 
-impl PartialEq U32 for U32
+impl PartialEq for U32
     @== = other -> ~U32Eq *self, *other
 
-impl PartialEq U16 for U16
+impl PartialEq for U16
     @== = other -> ~U16Eq *self, *other
 
-impl PartialEq U8 for U8
+impl PartialEq for U8
     @== = other -> ~U8Eq *self, *other
 
-impl PartialEq Char for Char
+impl PartialEq for Char
     @== = other -> (*self as U32) == (*other as U32)
 
-impl PartialEq F64 for F64
+impl PartialEq for F64
     @== = other -> ~F64Eq *self, *other
 
-impl PartialEq F32 for F32
+impl PartialEq for F32
     @== = other -> ~F32Eq *self, *other
 
-impl PartialEq Bool for Bool
+impl PartialEq for Bool
     @== = other -> ~BoolEq *self, *other
 
 // &Str implementation for UTF-8 string slices / static string literals.
-impl PartialEq &Str for &Str
+impl PartialEq for &Str
     @== = other ->
         lhs_str = *self
         rhs_str = *other
@@ -65,7 +65,7 @@ impl PartialEq &Str for &Str
                 i = i + 1
             equal
 
-impl PartialEq () for ()
+impl PartialEq for ()
     @== = other -> true
 
 impl Eq for I64

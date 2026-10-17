@@ -4197,7 +4197,13 @@ impl MethodAuthorityContext<'_> {
             return;
         };
         self.materialize_expr(receiver, errors);
-        receiver.ty = self.engine.borrow().resolve(&receiver.ty);
+        receiver.ty = match self.engine.borrow().normalize_resolved_type(&receiver.ty) {
+            Ok(ty) => ty,
+            Err(message) => {
+                errors.push(ResolveError::with_span(message, receiver.span.clone()));
+                return;
+            }
+        };
         if let Type::Reference { inner, .. } = &receiver.ty {
             let dereferenced = HirExpr {
                 ty: inner.as_ref().clone(),

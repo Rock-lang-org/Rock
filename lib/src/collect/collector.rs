@@ -11,6 +11,63 @@ use crate::hir::{HirAssociatedTypeDecl, HirEnum, HirStruct, HirTrait, HirTypeAli
 use crate::ids::{AssocTypeId, DefId, ModuleId};
 use crate::types::Type;
 
+/// Header dependencies are resolved before uses, without changing source IDs.
+/// Recursive nominal references remain legal; default expansion is checked by
+/// type lowering rather than treating every declaration cycle as an error.
+fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLevel)> {
+    use crate::ast::visit::Visitor;
+    struct Names(Vec<String>);
+    impl<'a> Visitor<'a> for Names {
+        fn visit_parse_type_inner(&mut self, inner: &'a ast::ParseTypeInner) {
+            self.0.push(inner.name.clone());
+            crate::ast::visit::walk_parse_type_inner(self, inner);
+        }
+    }
+    let owners = module.top_levels.iter().enumerate().filter_map(|(index, item)| {
+        match item {
+            ast::TopLevel::StructDecl(_) | ast::TopLevel::EnumDecl(_)
+            | ast::TopLevel::TraitDecl(_) | ast::TopLevel::NewType(_, _, _)
+                => item.get_ident().map(|name| (name.clone(), index)),
+            ast::TopLevel::Module(declaration) => declaration.0.name.as_ref().map(|name| (name.name.clone(), index)),
+            ast::TopLevel::Mod(name, _) => Some((name.name.clone(), index)),
+            ast::TopLevel::Import(path) => {
+                let segments = match path { ast::Path::Ident(path) => &path.path, ast::Path::Type(path) => &path.path };
+                path_names(segments).last().filter(|name| name.starts_with(char::is_uppercase)).cloned().map(|name| (name, index))
+            }
+            _ => None,
+        }
+    }).collect::<HashMap<_, _>>();
+    let dependencies = module.top_levels.iter().map(|item| {
+        let mut names = Names(Vec::new());
+        names.visit_top_level(item);
+        match item {
+            ast::TopLevel::Import(path) => {
+                let segments = match path { ast::Path::Ident(path) => &path.path, ast::Path::Type(path) => &path.path };
+                names.0.push(path_names(segments).join("::"));
+            }
+            ast::TopLevel::GlobImport(path) => names.0.push(path.join("::")),
+            _ => {}
+        }
+        names.0.into_iter().filter_map(|name| {
+            owners.get(&name).or_else(|| name.split_once("::").and_then(|(module, _)| owners.get(module))).copied()
+        }).collect::<Vec<_>>()
+    }).collect::<Vec<_>>();
+    fn visit(index: usize, deps: &[Vec<usize>], state: &mut [u8], order: &mut Vec<usize>) {
+        if state[index] != 0 { return; }
+        state[index] = 1;
+        for dependency in &deps[index] { visit(*dependency, deps, state, order); }
+        state[index] = 2;
+        order.push(index);
+    }
+    let mut order = Vec::new();
+    let mut state = vec![0; module.top_levels.len()];
+    let mut types = owners.values().copied().collect::<Vec<_>>();
+    types.sort_unstable();
+    for index in types { visit(index, &dependencies, &mut state, &mut order); }
+    for index in 0..module.top_levels.len() { visit(index, &dependencies, &mut state, &mut order); }
+    order.into_iter().map(|index| (index, &module.top_levels[index])).collect()
+}
+
 pub(crate) struct LocalCollector {
     context: CollectContext,
     id_environment: CollectedIdEnvironment,
@@ -66,7 +123,7 @@ impl LocalCollector {
         );
 
         for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
-            let ast::TopLevel::NewType(name, _) = top_level else {
+            let ast::TopLevel::NewType(name, params, _) = top_level else {
                 continue;
             };
             let Some(id) =
@@ -77,9 +134,9 @@ impl LocalCollector {
             let alias = HirTypeAlias {
                 id,
                 name: name.name.clone(),
-                generic_params: crate::type_lowering::lower_parse_generic_param_decls(
+                generic_params: crate::type_lowering::lower_generic_param_decls(
                     id,
-                    &name.generics,
+                    params,
                 ),
                 ty: Type::Error,
             };
@@ -91,7 +148,7 @@ impl LocalCollector {
                 .insert(format!("{}::{}", crate_name, name.name), alias);
         }
 
-        for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
+        for (top_level_index, top_level) in ordered_headers(module) {
             match top_level {
                 ast::TopLevel::FunctionSig(sig) => {
                     let qualified_name = format!("{}::{}", crate_name, sig.name.name);
@@ -163,7 +220,7 @@ impl LocalCollector {
                         .insert(ed.name.name.clone(), enum_.clone());
                     self.context.enums.insert(qualified_name, enum_);
                 }
-                ast::TopLevel::NewType(name, target) => {
+                ast::TopLevel::NewType(name, params, target) => {
                     let qualified_name = format!("{}::{}", crate_name, name.name);
                     let Some(id) = self.item_id_at_source(
                         root_module_id,
@@ -174,7 +231,7 @@ impl LocalCollector {
                         continue;
                     };
                     let alias =
-                        headers::build_type_alias_with_id(&mut self.context, name, target, id);
+                        headers::build_type_alias_with_id(&mut self.context, name, params, target, id);
                     self.context
                         .type_aliases
                         .insert(name.name.clone(), alias.clone());
@@ -328,8 +385,8 @@ impl LocalCollector {
                     self.context.enums.insert(name, HirEnum {
                         id,
                         name: ed.name.name.clone(),
-                        generic_params: crate::type_lowering::lower_parse_generic_param_decls(
-                            id, &ed.name.generics,
+                        generic_params: crate::type_lowering::lower_generic_param_decls(
+                            id, &ed.generic_params,
                         ),
                         variants: Vec::new(),
                     });
@@ -394,7 +451,7 @@ impl LocalCollector {
         reference_exports: &HashMap<String, Option<String>>,
     ) {
         for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
-            let ast::TopLevel::NewType(name, _) = top_level else {
+            let ast::TopLevel::NewType(name, params, _) = top_level else {
                 continue;
             };
             let Some(id) =
@@ -405,9 +462,9 @@ impl LocalCollector {
             let alias = HirTypeAlias {
                 id,
                 name: name.name.clone(),
-                generic_params: crate::type_lowering::lower_parse_generic_param_decls(
+                generic_params: crate::type_lowering::lower_generic_param_decls(
                     id,
-                    &name.generics,
+                    params,
                 ),
                 ty: Type::Error,
             };
@@ -419,7 +476,7 @@ impl LocalCollector {
                 .type_aliases
                 .insert(local_item_lookup_name(local_prefix, &name.name), alias);
         }
-        for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
+        for (top_level_index, top_level) in ordered_headers(module) {
             match top_level {
                 ast::TopLevel::StructDecl(sd) => {
                     let Some(id) = self.item_id_at_source(
@@ -461,14 +518,14 @@ impl LocalCollector {
                         .enums
                         .insert(local_item_lookup_name(local_prefix, &ed.name.name), enum_);
                 }
-                ast::TopLevel::NewType(name, target) => {
+                ast::TopLevel::NewType(name, params, target) => {
                     let Some(id) =
                         self.item_id_at_source(module_id, top_level_index, top_level, &name.span)
                     else {
                         continue;
                     };
                     let alias =
-                        headers::build_type_alias_with_id(&mut self.context, name, target, id);
+                        headers::build_type_alias_with_id(&mut self.context, name, params, target, id);
                     if local_prefix.is_some() {
                         self.context
                             .type_aliases
@@ -744,7 +801,7 @@ impl LocalCollector {
         module_id: ModuleId,
         prefix: &str,
     ) {
-        for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
+        for (top_level_index, top_level) in ordered_headers(module) {
             match top_level {
                 ast::TopLevel::FunctionSig(sig) => {
                     let qualified_name = format!("{}::{}", prefix, sig.name.name);
@@ -1228,7 +1285,7 @@ impl LocalCollector {
         }
 
         for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
-            let ast::TopLevel::NewType(name, _) = top_level else {
+            let ast::TopLevel::NewType(name, params, _) = top_level else {
                 continue;
             };
             let Some(id) =
@@ -1239,9 +1296,9 @@ impl LocalCollector {
             let alias = HirTypeAlias {
                 id,
                 name: name.name.clone(),
-                generic_params: crate::type_lowering::lower_parse_generic_param_decls(
+                generic_params: crate::type_lowering::lower_generic_param_decls(
                     id,
-                    &name.generics,
+                    params,
                 ),
                 ty: Type::Error,
             };
@@ -1327,7 +1384,7 @@ impl LocalCollector {
                         self.context.enums.insert(short_name, enum_);
                     }
                 }
-                ast::TopLevel::NewType(name, target) => {
+                ast::TopLevel::NewType(name, params, target) => {
                     let short_name = name.name.clone();
                     let qualified_name = format!("{}::{}", prefix, short_name);
                     let Some(id) =
@@ -1336,7 +1393,7 @@ impl LocalCollector {
                         continue;
                     };
                     let alias =
-                        headers::build_type_alias_with_id(&mut self.context, name, target, id);
+                        headers::build_type_alias_with_id(&mut self.context, name, params, target, id);
                     self.context
                         .type_aliases
                         .insert(qualified_name, alias.clone());

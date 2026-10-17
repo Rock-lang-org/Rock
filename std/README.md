@@ -43,8 +43,8 @@ wrap in release builds; division by zero and signed minimum divided or
 remaindered by `-1` always fail. A prebuilt dependency retains the policy with
 which it was compiled, so rebuild std when selecting a different policy.
 
-`PartialEq Rhs` provides equality with an explicit right-hand operand type;
-same-type bounds use `T: PartialEq T`. `String` and `&Str` support equality in
+`PartialEq {Rhs = Self}` provides equality with a default right-hand operand type;
+same-type bounds use `T: PartialEq`, while cross-type bounds use `T: PartialEq U`. `String` and `&Str` support equality in
 both directions. `PartialOrd` provides ordinary ordering comparisons. `Eq`
 requires `PartialEq Self` and promises reflexive equality; `Ord` promises a
 total ordering. Floats implement

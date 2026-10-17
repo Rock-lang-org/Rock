@@ -342,6 +342,11 @@ pub(crate) struct LocalCollection {
 }
 
 impl TypeLoweringContext for CollectContext {
+    fn constructor_params(&self, id: DefId) -> Option<Vec<crate::types::GenericParamDecl>> {
+        self.structs.values().find(|item| item.id == id).map(|item| item.generic_params.clone())
+            .or_else(|| self.enums.values().find(|item| item.id == id).map(|item| item.generic_params.clone()))
+            .or_else(|| self.type_aliases.values().find(|item| item.id == id).map(|item| item.generic_params.clone()))
+    }
     fn push_type_error(&mut self, message: String, span: Span) {
         self.push_error_with_span(message, span);
     }
@@ -1127,7 +1132,7 @@ impl CollectContext {
             return;
         }
 
-        if self.structs.contains_key(&canonical_source) {
+        if self.structs.contains_key(&canonical_source) || self.type_aliases.contains_key(&canonical_source) {
             self.import_aliases
                 .insert(short_name.clone(), canonical_source.clone());
             if is_explicit && record_canonical_aliases {

@@ -2094,6 +2094,102 @@ fn test_compile_trait_generic_default_for_downstream_impl_from_product_artifact(
 }
 
 #[test]
+fn test_default_type_arguments_survive_deleted_source_product_artifact() {
+    let temp_dir = temp_test_dir("default_type_arguments_artifact");
+    let _cleanup = TestDirCleanup(temp_dir.clone());
+    let dep_dir = temp_dir.join("dep");
+    let artifact_path = temp_dir.join("dep.rkca");
+    write_crate(&dep_dir, "dep", "", r#"
+< struct Pair A, {B = A}
+    < first: A
+    < second: B
+
+type Chosen {T = I64} = Pair T
+< Chosen
+
+struct Seed
+    < value: I64
+
+< struct Envelope {T = Seed}
+    < value: T
+
+< enum Choice {T = I64}
+    Empty
+    Value T
+
+< struct Hold T, {F _ = Choice _}
+    < value: F T
+
+< trait Compare {Rhs = Self}
+    @same: &Rhs -> Bool
+
+same: T -> T -> Bool where T: Compare
+< same = left, right -> left.same &right
+
+read: Chosen -> I64
+< read = value -> value.second
+
+read_envelope: Envelope -> I64
+< read_envelope = value -> value.value.value
+"#);
+    build_product_artifact(&dep_dir, "dep", &artifact_path, true, true);
+    delete_crate_source_files(&dep_dir);
+    let exit_code = write_and_run_artifact_app(r#"
+> dep::Pair
+> dep::Chosen
+> dep::Envelope
+> dep::Choice
+> dep::Hold
+> dep::Compare
+> dep::same
+> dep::read
+
+struct Seed
+    value: Bool
+
+struct Local
+    < value: I64
+
+impl Compare for Local
+    @same = rhs -> true
+
+consume: Choice -> I64
+consume = value -> match value
+    Choice::Empty => 0
+    Choice::Value item => item
+
+scope_check: Envelope -> I64
+scope_check = value -> value.value.value
+
+read_hold: Hold I64 -> I64
+read_hold = value -> match value.value
+    Choice::Empty => 0
+    Choice::Value item => item
+
+main = ->
+    pair: Chosen = Pair
+        first: 7
+        second: 42
+    left = Local
+        value: 9
+    right = Local
+        value: 9
+    empty = Choice::Empty
+    consume empty
+    held = Hold
+        value: Choice::Value 42
+    if same left, right
+        if ~I64Eq (~I64Add (read pair), (read_hold held)), 84
+            0
+        else
+            1
+    else
+        2
+"#, vec![("dep".into(), artifact_path)]);
+    assert_eq!(exit_code, 0);
+}
+
+#[test]
 fn test_compile_generic_trait_default_method_from_product_artifact() {
     let temp_dir = temp_test_dir("product_generic_trait_default_downstream");
     let dep_dir = temp_dir.join("dep");

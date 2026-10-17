@@ -39,7 +39,13 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(crate) fn normalize_projection_type(&self, ty: &Type) -> Type {
-        ProjectionNormalizer::normalize(self, ty)
+        let projected = ProjectionNormalizer::normalize(self, ty);
+        if crate::type_services::visit::type_any(&projected, |nested| matches!(nested, Type::Apply { .. } | Type::Lambda { .. })) {
+            self.type_context().normalize_type(&projected)
+                .expect("accepted constructor substitutions must remain kind-correct")
+        } else {
+            projected
+        }
     }
 
     fn contains_resolvable_projection(ty: &Type) -> bool {

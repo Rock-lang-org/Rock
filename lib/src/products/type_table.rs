@@ -1348,7 +1348,7 @@ impl SerializedHirFunction {
         Ok(Self {
             id: value.id,
             name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params),
+            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
             generic_bounds: encode_generic_bounds(&value.generic_bounds, encoder)?,
             params: value
                 .params
@@ -1371,7 +1371,7 @@ impl SerializedHirFunction {
         Ok(crate::hir::HirFunctionFor::<crate::hir::AcceptedHir> {
             id: self.id,
             name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params),
+            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
             generic_bounds: decode_generic_bounds(self.generic_bounds, decoder)?,
             params: self
                 .params
@@ -1399,7 +1399,7 @@ impl SerializedProductFunctionInterface {
         Ok(Self {
             id: value.id,
             name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params),
+            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
             generic_bounds: encode_generic_bounds(&value.generic_bounds, encoder)?,
             params: encoder.encode_types(&value.params)?,
             ret_type: encoder.encode_type(&value.ret_type)?,
@@ -1421,7 +1421,7 @@ impl SerializedProductFunctionInterface {
         Ok(ProductFunctionInterface {
             id: self.id,
             name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params),
+            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
             generic_bounds: decode_generic_bounds(self.generic_bounds, decoder)?,
             params: decoder.decode_types(&self.params)?,
             ret_type: decoder.decode_type(self.ret_type)?,
@@ -1442,7 +1442,7 @@ impl SerializedProductStructInterface {
         Ok(Self {
             id: value.id,
             name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params),
+            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
             fields: value
                 .fields
                 .iter()
@@ -1458,7 +1458,7 @@ impl SerializedProductStructInterface {
         Ok(ProductStructInterface {
             id: self.id,
             name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params),
+            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
             fields: self
                 .fields
                 .into_iter()
@@ -1476,7 +1476,7 @@ impl SerializedProductTypeAliasInterface {
         Ok(Self {
             id: value.id,
             name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params),
+            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
             ty: encoder.encode_type(&value.ty)?,
         })
     }
@@ -1488,7 +1488,7 @@ impl SerializedProductTypeAliasInterface {
         Ok(ProductTypeAliasInterface {
             id: self.id,
             name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params),
+            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
             ty: decoder.decode_type(self.ty)?,
         })
     }
@@ -1502,7 +1502,7 @@ impl SerializedProductEnumInterface {
         Ok(Self {
             id: value.id,
             name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params),
+            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
             variants: value
                 .variants
                 .iter()
@@ -1515,7 +1515,7 @@ impl SerializedProductEnumInterface {
         Ok(ProductEnumInterface {
             id: self.id,
             name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params),
+            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
             variants: self
                 .variants
                 .into_iter()
@@ -1557,11 +1557,11 @@ impl SerializedProductTraitInterface {
         Ok(Self {
             id: value.id,
             name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params),
+            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
             target: value
                 .target
                 .as_ref()
-                .map(|target| encode_generic_param_decls(std::slice::from_ref(target)).remove(0)),
+                .map(|target| encode_generic_param_decls(std::slice::from_ref(target), encoder).map(|mut params| params.remove(0))).transpose()?,
             predicates: value
                 .predicates
                 .iter()
@@ -1590,10 +1590,10 @@ impl SerializedProductTraitInterface {
         Ok(ProductTraitInterface {
             id: self.id,
             name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params),
+            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
             target: self
                 .target
-                .map(|target| decode_generic_param_decls(vec![target]).remove(0)),
+                .map(|target| decode_generic_param_decls(vec![target], decoder).map(|mut params| params.remove(0))).transpose()?,
             predicates: self
                 .predicates
                 .into_iter()
@@ -1623,14 +1623,14 @@ impl SerializedProductImplInterface {
             id: value.id,
             owner: value.owner.clone(),
             type_name: value.type_name.clone(),
-            type_generics: encode_generic_param_decls(&value.type_generics),
+            type_generics: encode_generic_param_decls(&value.type_generics, encoder)?,
             receiver_pattern: SerializedHirImplReceiverPattern::encode(
                 &value.receiver_pattern,
                 encoder,
             )?,
             trait_name: value.trait_name.clone(),
             trait_id: value.trait_id,
-            trait_generics: encode_generic_param_decls(&value.trait_generics),
+            trait_generics: encode_generic_param_decls(&value.trait_generics, encoder)?,
             trait_arg_types: encoder.encode_types(&value.trait_arg_types)?,
             associated_types: value
                 .associated_types
@@ -1658,11 +1658,11 @@ impl SerializedProductImplInterface {
             id: self.id,
             owner: self.owner,
             type_name: self.type_name,
-            type_generics: decode_generic_param_decls(self.type_generics),
+            type_generics: decode_generic_param_decls(self.type_generics, decoder)?,
             receiver_pattern: self.receiver_pattern.decode(decoder)?,
             trait_name: self.trait_name,
             trait_id: self.trait_id,
-            trait_generics: decode_generic_param_decls(self.trait_generics),
+            trait_generics: decode_generic_param_decls(self.trait_generics, decoder)?,
             trait_arg_types: decoder.decode_types(&self.trait_arg_types)?,
             associated_types: self
                 .associated_types
@@ -1742,7 +1742,7 @@ impl SerializedHirStruct {
         Ok(Self {
             id: value.id,
             name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params),
+            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
             fields: value
                 .fields
                 .iter()
@@ -1755,7 +1755,7 @@ impl SerializedHirStruct {
         Ok(crate::hir::HirStruct {
             id: self.id,
             name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params),
+            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
             fields: self
                 .fields
                 .into_iter()
@@ -1820,7 +1820,7 @@ impl SerializedHirEnum {
         Ok(Self {
             id: value.id,
             name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params),
+            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
             variants: value
                 .variants
                 .iter()
@@ -1833,7 +1833,7 @@ impl SerializedHirEnum {
         Ok(crate::hir::HirEnum {
             id: self.id,
             name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params),
+            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
             variants: self
                 .variants
                 .into_iter()
@@ -1913,7 +1913,7 @@ impl SerializedHirFunctionSig {
         Ok(Self {
             id: value.id,
             name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params),
+            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
             params: encoder.encode_types(&value.params)?,
             ret: encoder.encode_type(&value.ret)?,
             generic_bounds: encode_generic_bounds(&value.generic_bounds, encoder)?,
@@ -1929,7 +1929,7 @@ impl SerializedHirFunctionSig {
         Ok(crate::hir::HirFunctionSig {
             id: self.id,
             name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params),
+            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
             params: decoder.decode_types(&self.params)?,
             ret: decoder.decode_type(self.ret)?,
             generic_bounds: decode_generic_bounds(self.generic_bounds, decoder)?,
@@ -1948,14 +1948,14 @@ impl SerializedHirImpl {
             id: value.id,
             owner: value.owner.clone(),
             type_name: value.type_name.clone(),
-            type_generics: encode_generic_param_decls(&value.type_generics),
+            type_generics: encode_generic_param_decls(&value.type_generics, encoder)?,
             receiver_pattern: SerializedHirImplReceiverPattern::encode(
                 &value.receiver_pattern,
                 encoder,
             )?,
             trait_name: value.trait_name.clone(),
             trait_id: value.trait_id,
-            trait_generics: encode_generic_param_decls(&value.trait_generics),
+            trait_generics: encode_generic_param_decls(&value.trait_generics, encoder)?,
             trait_arg_types: encoder.encode_types(&value.trait_arg_types)?,
             associated_types: value
                 .associated_types
@@ -1977,11 +1977,11 @@ impl SerializedHirImpl {
             id: self.id,
             owner: self.owner,
             type_name: self.type_name,
-            type_generics: decode_generic_param_decls(self.type_generics),
+            type_generics: decode_generic_param_decls(self.type_generics, decoder)?,
             receiver_pattern: self.receiver_pattern.decode(decoder)?,
             trait_name: self.trait_name,
             trait_id: self.trait_id,
-            trait_generics: decode_generic_param_decls(self.trait_generics),
+            trait_generics: decode_generic_param_decls(self.trait_generics, decoder)?,
             trait_arg_types: decoder.decode_types(&self.trait_arg_types)?,
             associated_types: self
                 .associated_types
@@ -3081,25 +3081,27 @@ fn decode_generic_bounds(
     Ok(decoded)
 }
 
-fn encode_generic_param_decls(decls: &[GenericParamDecl]) -> Vec<ProductGenericParamDecl> {
+fn encode_generic_param_decls(decls: &[GenericParamDecl], encoder: &mut ProductTypeEncoder) -> Result<Vec<ProductGenericParamDecl>, String> {
     decls
         .iter()
-        .map(|decl| ProductGenericParamDecl {
+        .map(|decl| Ok(ProductGenericParamDecl {
             id: encode_generic_param_id(decl.id),
             name: decl.name.clone(),
             kind: decl.kind.clone(),
-        })
+            default: decl.default.as_ref().map(|ty| encoder.encode_type(ty)).transpose()?,
+        }))
         .collect()
 }
 
-fn decode_generic_param_decls(decls: Vec<ProductGenericParamDecl>) -> Vec<GenericParamDecl> {
+fn decode_generic_param_decls(decls: Vec<ProductGenericParamDecl>, decoder: &mut ProductTypeDecoder<'_>) -> Result<Vec<GenericParamDecl>, String> {
     decls
         .into_iter()
-        .map(|decl| GenericParamDecl {
+        .map(|decl| Ok(GenericParamDecl {
             id: decode_generic_param_id(decl.id),
             name: decl.name,
             kind: decl.kind,
-        })
+            default: decl.default.map(|ty| decoder.decode_type(ty)).transpose()?,
+        }))
         .collect()
 }
 
@@ -3131,6 +3133,7 @@ pub(super) struct ProductGenericParamDecl {
     pub id: ProductGenericParamId,
     pub name: String,
     pub kind: Kind,
+    pub default: Option<ProductTypeId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -3672,11 +3675,14 @@ mod tests {
             Kind::arrow(Kind::Type, Kind::Type),
         )];
 
-        let encoded = super::encode_generic_param_decls(&declarations);
+        let mut encoder = super::ProductTypeEncoder::new();
+        let encoded = super::encode_generic_param_decls(&declarations, &mut encoder).unwrap();
         assert_eq!(encoded[0].id.owner, super::product_def_id(def(7)));
         assert_eq!(encoded[0].name, "F");
         assert_eq!(encoded[0].kind, Kind::arrow(Kind::Type, Kind::Type));
-        assert_eq!(super::decode_generic_param_decls(encoded), declarations);
+        let table = encoder.finish();
+        let mut decoder = super::ProductTypeDecoder::new(&table);
+        assert_eq!(super::decode_generic_param_decls(encoded, &mut decoder).unwrap(), declarations);
     }
 
     #[test]

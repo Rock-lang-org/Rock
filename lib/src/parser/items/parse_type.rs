@@ -334,7 +334,9 @@ pub fn parse_generic_param_list(mut stream: Input) -> IResult<Vec<GenericParamDe
     }
 
     loop {
-        let (next_stream, param) = if matches!(stream.seek()?.token_type, TokenType::OpenParen) {
+        let (next_stream, param) = if matches!(stream.seek()?.token_type, TokenType::OpenBrace) {
+            parse_default_generic_param(stream)?
+        } else if matches!(stream.seek()?.token_type, TokenType::OpenParen) {
             parse_parenthesized_constructor_param(stream)?
         } else {
             parse_plain_generic_param(stream)?
@@ -351,6 +353,23 @@ pub fn parse_generic_param_list(mut stream: Input) -> IResult<Vec<GenericParamDe
         }
     }
     Ok((stream, params))
+}
+
+pub(super) fn parse_default_generic_param(stream: Input) -> IResult<GenericParamDecl> {
+    let start = stream.seek()?.span;
+    let (stream, _) = TokenType::OpenBrace.process(stream)?;
+    let (stream, mut param) = if matches!(stream.seek()?.token_type, TokenType::OpenParen) {
+        parse_parenthesized_constructor_param(stream)?
+    } else {
+        parse_constructor_param_inner(stream, true).or_else(|_| parse_plain_generic_param(stream))?
+    };
+    let (stream, _) = TokenType::Equal.process(stream)?;
+    let (stream, default) = parse_type(stream)?;
+    let end = stream.seek()?.span;
+    let (stream, _) = TokenType::CloseBrace.process(stream)?;
+    param.default = Some(Box::new(default));
+    param.span = join_spans(&start, &end);
+    Ok((stream, param))
 }
 
 pub fn parse_constructor_param(stream: Input) -> IResult<GenericParamDecl> {
@@ -399,6 +418,7 @@ fn parse_constructor_param_inner(
         return Ok((
             stream,
             GenericParamDecl {
+                default: None,
                 name,
                 kind: Some(TypeApplication {
                     constructor: Box::new(kind),
@@ -459,6 +479,7 @@ fn parse_constructor_param_inner(
     Ok((
         stream,
         GenericParamDecl {
+            default: None,
             name,
             kind: Some(application),
             span,
@@ -490,6 +511,7 @@ pub fn parse_plain_generic_param(stream: Input) -> IResult<GenericParamDecl> {
     Ok((
         stream,
         GenericParamDecl {
+            default: None,
             name,
             kind: None,
             span,
@@ -500,7 +522,7 @@ pub fn parse_plain_generic_param(stream: Input) -> IResult<GenericParamDecl> {
 fn starts_generic_param(stream: &Input) -> bool {
     matches!(
         stream.seek().map(|token| token.token_type),
-        Ok(TokenType::Type(_)) | Ok(TokenType::OpenParen)
+        Ok(TokenType::Type(_)) | Ok(TokenType::OpenParen) | Ok(TokenType::OpenBrace)
     )
 }
 

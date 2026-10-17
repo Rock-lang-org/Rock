@@ -375,10 +375,20 @@ fn lower_where_clauses(
             }
             subject => context.lower_parse_type(subject),
         };
-        let type_args = type_args
+        let argument_kinds = context.traits.values().find(|item| item.id == trait_id)
+            .map(|item| item.generic_params.iter().map(|param| param.kind.clone()).collect::<Vec<_>>()).unwrap_or_default();
+        let mut type_args = type_args
             .iter()
-            .map(|generic| context.lower_parse_type(generic))
+            .enumerate()
+            .map(|(index, generic)| crate::type_lowering::TypeLowerer::lower_type_argument(context, generic,
+                argument_kinds.get(index).unwrap_or(&crate::type_services::kind::Kind::Type)))
             .collect::<Vec<_>>();
+        if let Some(trait_def) = context.traits.values().find(|item| item.id == trait_id) {
+            match crate::type_lowering::complete_generic_args(&trait_def.generic_params, type_args.clone(), Some(&subject)) {
+                Ok(completed) => type_args = completed,
+                Err(message) => context.push_error_with_span(message, clause.trait_bound.as_ref().unwrap().span()),
+            }
+        }
         bounds.predicates.push(crate::types::Predicate::Trait {
             subject: subject.clone(),
             trait_id,
@@ -469,7 +479,7 @@ pub(crate) fn build_struct_with_id(
     sd: &ast::StructDecl,
     id: DefId,
 ) -> HirStruct {
-    let generic_params = crate::type_lowering::lower_generic_param_decls(id, &sd.generic_params);
+    let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, &sd.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect();
@@ -488,6 +498,7 @@ pub(crate) fn build_struct_with_id(
         generic_param_kinds,
         &generic_spans,
     );
+    crate::type_lowering::lower_param_defaults(context, &mut generic_params, &sd.generic_params, None);
     let fields = sd
         .fields
         .iter()
@@ -512,10 +523,11 @@ pub(crate) fn build_struct_with_id(
 pub(crate) fn build_type_alias_with_id(
     context: &mut CollectContext,
     name: &ast::ParseTypeInner,
+    params: &[ast::GenericParamDecl],
     target: &ast::ParseType,
     id: DefId,
 ) -> crate::hir::HirTypeAlias {
-    let generic_params = crate::type_lowering::lower_parse_generic_param_decls(id, &name.generics);
+    let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, params);
     let generic_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect();
@@ -523,13 +535,13 @@ pub(crate) fn build_type_alias_with_id(
         .iter()
         .map(|param| param.kind.clone())
         .collect();
-    let generic_spans = name
-        .generics
+    let generic_spans = params
         .iter()
-        .map(|param| param.span())
+        .map(|param| param.span.clone())
         .collect::<Vec<_>>();
     let (previous_owner, previous_params, previous_kinds) = context
         .push_generic_context_with_kinds_at(id, generic_names, generic_kinds, &generic_spans);
+    crate::type_lowering::lower_param_defaults(context, &mut generic_params, params, None);
     let mut ty = crate::type_lowering::TypeLowerer::lower_parse_type_term(context, target);
     context.pop_generic_context_with_kinds(previous_owner, previous_params, previous_kinds);
     if !generic_params.is_empty() {
@@ -587,8 +599,8 @@ pub(crate) fn build_enum_with_id(
     ed: &ast::EnumDecl,
     id: DefId,
 ) -> HirEnum {
-    let generic_params =
-        crate::type_lowering::lower_parse_generic_param_decls(id, &ed.name.generics);
+    let mut generic_params =
+        crate::type_lowering::lower_generic_param_decls(id, &ed.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect();
@@ -597,10 +609,9 @@ pub(crate) fn build_enum_with_id(
         .map(|param| param.kind.clone())
         .collect();
     let generic_spans = ed
-        .name
-        .generics
+        .generic_params
         .iter()
-        .map(|param| param.span())
+        .map(|param| param.span.clone())
         .collect::<Vec<_>>();
     let (prev_owner, prev_params, prev_kinds) = context.push_generic_context_with_kinds_at(
         id,
@@ -608,6 +619,7 @@ pub(crate) fn build_enum_with_id(
         generic_param_kinds,
         &generic_spans,
     );
+    crate::type_lowering::lower_param_defaults(context, &mut generic_params, &ed.generic_params, None);
     let mut next_field_id = 0;
     let variants = ed
         .variants
@@ -1114,7 +1126,7 @@ pub(crate) fn build_trait_with_id(
     id: DefId,
     member_ids: &CollectedTraitMemberIds,
 ) -> HirTrait {
-    let generic_params = crate::type_lowering::lower_generic_param_decls(id, &td.generic_params);
+    let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, &td.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect::<Vec<_>>();
@@ -1158,6 +1170,14 @@ pub(crate) fn build_trait_with_id(
         &generic_context_spans,
     );
 
+    let subject_name = td.for_.as_ref().map(|param| param.name.name.clone()).unwrap_or_else(|| "Self".into());
+    let subject = GenericParamDecl::new(
+        GenericParamId { owner: id, index: generic_params.len() as u32 },
+        subject_name.clone(),
+        td.for_.as_ref().map(|param| crate::type_lowering::lower_generic_param_kind(param.kind.as_ref()))
+            .unwrap_or(crate::type_services::kind::Kind::Type),
+    );
+    crate::type_lowering::lower_param_defaults(context, &mut generic_params, &td.generic_params, Some((subject_name, subject)));
     let associated_types: Vec<HirAssociatedTypeDecl> = td
         .associated_types
         .iter()
@@ -1461,16 +1481,19 @@ pub(crate) fn build_impl_with_id(
             }
         })
         .collect();
-    let trait_arg_types: Vec<Type> = imp
-        .name
-        .generics()
-        .iter()
-        .map(|g| context.lower_parse_type(g))
-        .collect();
     let trait_def = trait_name
         .as_deref()
         .and_then(|name| context.trait_by_name(name))
         .cloned();
+    let mut trait_arg_types: Vec<Type> = imp
+        .name
+        .generics()
+        .iter()
+        .enumerate()
+        .map(|(index, generic)| crate::type_lowering::TypeLowerer::lower_type_argument(context, generic,
+            trait_def.as_ref().and_then(|item| item.generic_params.get(index)).map(|param| &param.kind)
+                .unwrap_or(&crate::type_services::kind::Kind::Type)))
+        .collect();
     let trait_id = trait_def.as_ref().map(|trait_def| trait_def.id);
     let impl_target_ty = match &receiver_pattern {
         crate::hir::HirImplReceiverPattern::Exact(ty)
@@ -1480,6 +1503,10 @@ pub(crate) fn build_impl_with_id(
         }
     };
     if let Some(trait_def) = trait_def.as_ref() {
+        match crate::type_lowering::complete_generic_args(&trait_def.generic_params, trait_arg_types.clone(), Some(&impl_target_ty)) {
+            Ok(completed) => trait_arg_types = completed,
+            Err(message) => context.push_error_with_span(message, imp.name.span()),
+        }
         let target_kind = trait_def
             .target
             .as_ref()
@@ -1759,6 +1786,7 @@ mod tests {
 
     fn generic_param(name: &str) -> ast::GenericParamDecl {
         ast::GenericParamDecl {
+            default: None,
             name: ident(name),
             kind: None,
             span: Span::test(),
@@ -1989,6 +2017,7 @@ mod tests {
     fn build_struct_preserves_constructor_generic_kind_and_application() {
         let owner = def_id(90);
         let constructor_param = ast::GenericParamDecl {
+            default: None,
             name: ident("F"),
             kind: Some(ast::TypeApplication {
                 constructor: Box::new(named_type("F")),
@@ -2116,9 +2145,10 @@ mod tests {
     fn test_build_enum_mirrors_variant_header_construction() {
         let mut lowerer = CollectContext::new();
         let decl = EnumDecl {
+            generic_params: vec![generic_param("T")],
             name: ParseTypeInner {
                 name: "Message".to_string(),
-                generics: vec![generic_type("T")],
+                generics: vec![],
                 span: Span::test(),
             },
             variants: vec![
@@ -2191,6 +2221,7 @@ mod tests {
     fn build_enum_assigns_variant_ids_and_owner_unique_named_field_ids() {
         let mut context = CollectContext::new();
         let decl = EnumDecl {
+            generic_params: Vec::new(),
             name: type_inner("Message"),
             variants: vec![
                 EnumVariant {
@@ -2833,6 +2864,7 @@ mod tests {
             },
         );
         let target = ast::GenericParamDecl {
+            default: None,
             name: ident("F"),
             kind: Some(ast::TypeApplication {
                 constructor: Box::new(named_type("F")),
