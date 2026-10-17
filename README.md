@@ -841,7 +841,6 @@ A few of the remaining important features which are planned but still missing:
 - More complete std
 - Multiline imports like in rust
 - bin/lib compilation distinction
-- --debug/--release mode (optimisations are there already)
 - String interpolation
 - Test suite
 - RockDoc
