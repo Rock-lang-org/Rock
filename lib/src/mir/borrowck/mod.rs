@@ -928,13 +928,37 @@ fn type_id_is_pointer(view: TypeView<'_>, ty: crate::ids::TypeId) -> bool {
     matches!(view.ty(ty), Ty::Pointer(_))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OriginTracking {
+    All,
+    Pointers,
+    References,
+    MutableReferences,
+}
+
+fn type_id_contains_mutable_reference(
+    view: TypeView<'_>,
+    backend_contract: &MirBackendContract,
+    ty: TypeId,
+) -> bool {
+    type_id_tracks_origin_inner(view, backend_contract, ty, OriginTracking::MutableReferences, &mut HashSet::new())
+}
+
+fn type_id_contains_pointer(
+    view: TypeView<'_>,
+    backend_contract: &MirBackendContract,
+    ty: TypeId,
+) -> bool {
+    type_id_tracks_origin_inner(view, backend_contract, ty, OriginTracking::Pointers, &mut HashSet::new())
+}
+
 fn type_id_contains_reference(
     view: TypeView<'_>,
     backend_contract: &MirBackendContract,
     ty: crate::ids::TypeId,
 ) -> bool {
     let mut seen = HashSet::new();
-    type_id_tracks_origin_inner(view, backend_contract, ty, false, &mut seen)
+    type_id_tracks_origin_inner(view, backend_contract, ty, OriginTracking::References, &mut seen)
 }
 
 fn type_id_tracks_origin(
@@ -943,14 +967,14 @@ fn type_id_tracks_origin(
     ty: crate::ids::TypeId,
 ) -> bool {
     let mut seen = HashSet::new();
-    type_id_tracks_origin_inner(view, backend_contract, ty, true, &mut seen)
+    type_id_tracks_origin_inner(view, backend_contract, ty, OriginTracking::All, &mut seen)
 }
 
 fn type_id_tracks_origin_inner(
     view: TypeView<'_>,
     backend_contract: &MirBackendContract,
     ty: crate::ids::TypeId,
-    include_pointers: bool,
+    tracking: OriginTracking,
     seen: &mut HashSet<crate::ids::TypeId>,
 ) -> bool {
     if !seen.insert(ty) {
@@ -958,15 +982,16 @@ fn type_id_tracks_origin_inner(
     }
 
     match view.ty(ty) {
-        Ty::Reference { .. } => true,
-        Ty::Pointer(_) if include_pointers => true,
+        Ty::Reference { mutable, .. } => tracking != OriginTracking::Pointers
+            && (*mutable || tracking != OriginTracking::MutableReferences),
+        Ty::Pointer(_) if matches!(tracking, OriginTracking::All | OriginTracking::Pointers) => true,
         Ty::Tuple(elems) => elems.iter().any(|elem| {
-            type_id_tracks_origin_inner(view, backend_contract, *elem, include_pointers, seen)
+            type_id_tracks_origin_inner(view, backend_contract, *elem, tracking, seen)
         }),
         // Bare slice/string MIR values still carry borrowed storage metadata.
-        Ty::Slice(_) | Ty::Str => true,
+        Ty::Slice(_) | Ty::Str => matches!(tracking, OriginTracking::All | OriginTracking::References),
         Ty::Array { inner, .. } => {
-            type_id_tracks_origin_inner(view, backend_contract, *inner, include_pointers, seen)
+            type_id_tracks_origin_inner(view, backend_contract, *inner, tracking, seen)
         }
         Ty::Function {
             params,
@@ -975,21 +1000,21 @@ fn type_id_tracks_origin_inner(
             ..
         } => {
             params.iter().any(|param| {
-                type_id_tracks_origin_inner(view, backend_contract, *param, include_pointers, seen)
-            }) || type_id_tracks_origin_inner(view, backend_contract, *ret, include_pointers, seen)
+                type_id_tracks_origin_inner(view, backend_contract, *param, tracking, seen)
+            }) || type_id_tracks_origin_inner(view, backend_contract, *ret, tracking, seen)
                 || captures.iter().any(|capture| {
                     type_id_tracks_origin_inner(
                         view,
                         backend_contract,
                         capture.ty,
-                        include_pointers,
+                        tracking,
                         seen,
                     )
                 })
         }
         Ty::Struct { id, args } => {
             args.iter().any(|arg| {
-                type_id_tracks_origin_inner(view, backend_contract, *arg, include_pointers, seen)
+                type_id_tracks_origin_inner(view, backend_contract, *arg, tracking, seen)
             }) || contract_struct_fields(backend_contract, *id).is_some_and(|layout| {
                 let fields = layout
                     .iter()
@@ -1007,7 +1032,7 @@ fn type_id_tracks_origin_inner(
                         view,
                         backend_contract,
                         &view.type_for(*field_ty).substitute_generics(&subst),
-                        include_pointers,
+                        tracking,
                         seen,
                     )
                 })
@@ -1015,7 +1040,7 @@ fn type_id_tracks_origin_inner(
         }
         Ty::Enum { id, args } => {
             args.iter().any(|arg| {
-                type_id_tracks_origin_inner(view, backend_contract, *arg, include_pointers, seen)
+                type_id_tracks_origin_inner(view, backend_contract, *arg, tracking, seen)
             }) || contract_enum_variants(backend_contract, *id).is_some_and(|variants| {
                 let fields = variants
                     .iter()
@@ -1046,7 +1071,7 @@ fn type_id_tracks_origin_inner(
                                 view,
                                 backend_contract,
                                 &view.type_for(*field_ty).substitute_generics(&subst),
-                                include_pointers,
+                                tracking,
                                 seen,
                             )
                         })
@@ -1057,7 +1082,7 @@ fn type_id_tracks_origin_inner(
                                 view,
                                 backend_contract,
                                 &view.type_for(*field_ty).substitute_generics(&subst),
-                                include_pointers,
+                                tracking,
                                 seen,
                             )
                         })
@@ -1084,19 +1109,19 @@ fn type_id_tracks_origin_inner(
                     view,
                     backend_contract,
                     output,
-                    include_pointers,
+                    tracking,
                     &mut output_seen,
                 )
             });
 
             output_tracks
-                || type_id_tracks_origin_inner(view, backend_contract, *ty, include_pointers, seen)
+                || type_id_tracks_origin_inner(view, backend_contract, *ty, tracking, seen)
                 || trait_args.iter().any(|arg| {
                     type_id_tracks_origin_inner(
                         view,
                         backend_contract,
                         *arg,
-                        include_pointers,
+                        tracking,
                         seen,
                     )
                 })
@@ -1130,31 +1155,32 @@ fn type_id_tracks_origin_for_structural_type(
     view: TypeView<'_>,
     backend_contract: &MirBackendContract,
     ty: &Type,
-    include_pointers: bool,
+    tracking: OriginTracking,
     seen: &mut HashSet<crate::ids::TypeId>,
 ) -> bool {
     if let Some(id) = view.id_for_type(ty) {
-        return type_id_tracks_origin_inner(view, backend_contract, id, include_pointers, seen);
+        return type_id_tracks_origin_inner(view, backend_contract, id, tracking, seen);
     }
 
     match ty {
-        Type::Reference { .. } => true,
-        Type::Pointer(_) if include_pointers => true,
+        Type::Reference { mutable, .. } => tracking != OriginTracking::Pointers
+            && (*mutable || tracking != OriginTracking::MutableReferences),
+        Type::Pointer(_) if matches!(tracking, OriginTracking::All | OriginTracking::Pointers) => true,
         Type::Tuple(elems) => elems.iter().any(|elem| {
             type_id_tracks_origin_for_structural_type(
                 view,
                 backend_contract,
                 elem,
-                include_pointers,
+                tracking,
                 seen,
             )
         }),
-        Type::Slice(_) | Type::Str => true,
+        Type::Slice(_) | Type::Str => matches!(tracking, OriginTracking::All | OriginTracking::References),
         Type::Array(inner, _) => type_id_tracks_origin_for_structural_type(
             view,
             backend_contract,
             inner,
-            include_pointers,
+            tracking,
             seen,
         ),
         Type::Function {
@@ -1168,21 +1194,21 @@ fn type_id_tracks_origin_for_structural_type(
                     view,
                     backend_contract,
                     param,
-                    include_pointers,
+                    tracking,
                     seen,
                 )
             }) || type_id_tracks_origin_for_structural_type(
                 view,
                 backend_contract,
                 ret,
-                include_pointers,
+                tracking,
                 seen,
             ) || captures.iter().any(|capture| {
                 type_id_tracks_origin_for_structural_type(
                     view,
                     backend_contract,
                     &capture.ty,
-                    include_pointers,
+                    tracking,
                     seen,
                 )
             })
@@ -1193,7 +1219,7 @@ fn type_id_tracks_origin_for_structural_type(
                     view,
                     backend_contract,
                     arg,
-                    include_pointers,
+                    tracking,
                     seen,
                 )
             }) || contract_struct_fields(backend_contract, *id).is_some_and(|layout| {
@@ -1214,7 +1240,7 @@ fn type_id_tracks_origin_for_structural_type(
                         view,
                         backend_contract,
                         &field_ty.substitute_generics(&subst),
-                        include_pointers,
+                        tracking,
                         seen,
                     )
                 })
@@ -1226,7 +1252,7 @@ fn type_id_tracks_origin_for_structural_type(
                     view,
                     backend_contract,
                     arg,
-                    include_pointers,
+                    tracking,
                     seen,
                 )
             }) || contract_enum_variants(backend_contract, *id).is_some_and(|variants| {
@@ -1257,7 +1283,7 @@ fn type_id_tracks_origin_for_structural_type(
                         view,
                         backend_contract,
                         &field_ty.substitute_generics(&subst),
-                        include_pointers,
+                        tracking,
                         seen,
                     )
                 })
@@ -1283,7 +1309,7 @@ fn type_id_tracks_origin_for_structural_type(
                     view,
                     backend_contract,
                     output,
-                    include_pointers,
+                    tracking,
                     &mut output_seen,
                 )
             });
@@ -1293,7 +1319,7 @@ fn type_id_tracks_origin_for_structural_type(
                     view,
                     backend_contract,
                     ty,
-                    include_pointers,
+                    tracking,
                     seen,
                 )
                 || trait_args.iter().any(|arg| {
@@ -1301,7 +1327,7 @@ fn type_id_tracks_origin_for_structural_type(
                         view,
                         backend_contract,
                         arg,
-                        include_pointers,
+                        tracking,
                         seen,
                     )
                 })
@@ -1311,14 +1337,14 @@ fn type_id_tracks_origin_for_structural_type(
                 view,
                 backend_contract,
                 constructor,
-                include_pointers,
+                tracking,
                 seen,
             ) || args.iter().any(|arg| {
                 type_id_tracks_origin_for_structural_type(
                     view,
                     backend_contract,
                     arg,
-                    include_pointers,
+                    tracking,
                     seen,
                 )
             })
@@ -1327,7 +1353,7 @@ fn type_id_tracks_origin_for_structural_type(
             view,
             backend_contract,
             body,
-            include_pointers,
+            tracking,
             seen,
         ),
         Type::Generic(_) | Type::TypeVar(_) | Type::Constructor { .. } | Type::BoundVar { .. } => {
@@ -1614,7 +1640,7 @@ impl BorrowChecker {
                 );
                 Self::check_created_reborrows(
                     location, &loans_by_location, &loan_table, &live_loans,
-                    func, &mut diagnostics, stmt.span.clone(),
+                    &mut diagnostics, stmt.span.clone(),
                 );
                 Self::check_statement_loans(
                     stmt,
@@ -1667,7 +1693,7 @@ impl BorrowChecker {
                 );
                 Self::check_created_reborrows(
                     location, &loans_by_location, &loan_table, &active_loans,
-                    func, &mut diagnostics, func.terminator_origin(term).source_span().cloned(),
+                    &mut diagnostics, func.terminator_origin(term).source_span().cloned(),
                 );
                 Self::check_terminator(
                     term,
@@ -1689,17 +1715,20 @@ impl BorrowChecker {
         locations: &LoanLocationIndex,
         table: &LoanTable,
         active: &LoanState,
-        func: &MirFunction,
         diagnostics: &mut Diagnostics,
         span: Option<Span>,
     ) {
         for id in locations.loan_ids_at(location) {
             let Some(loan) = table.get(id) else { continue; };
             if let Some(through) = &loan.reborrow_source {
-                Self::check_place_loan_access_through(
-                    &loan.diagnostic_place, loan.kind, through, table, active,
-                    func, diagnostics, span.clone(),
-                );
+                if let Err(conflict) = LoanAnalysis::check_reborrow(
+                    &loan.diagnostic_place, loan.kind, through.local, table, active,
+                ) {
+                    diagnostics.push(crate::mir::borrowck::diagnostics::borrow_conflict(
+                        &loan.diagnostic_place, span.clone(),
+                        table.get(conflict).and_then(|loan| loan.origin_span.clone()),
+                    ));
+                }
             }
         }
     }

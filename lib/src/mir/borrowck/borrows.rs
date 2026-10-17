@@ -16,7 +16,7 @@ use super::accesses::AccessKind;
 pub struct BorrowData {
     pub owner: Local,
     pub place: Place,
-    /// Access path that authorizes a reborrow of a recovered storage root.
+    /// Pointer access or aggregate input carrying authority for recovered storage.
     pub reborrow_source: Option<Place>,
     pub kind: AccessKind,
     pub created_at: Location,
@@ -125,7 +125,8 @@ fn recover_raw_borrows(
     let mut roots = origins.origins_for_place(state, source).into_iter().filter_map(|origin| {
         let (local, deref) = match origin {
             ReferenceOrigin::Local(local) | ReferenceOrigin::Temporary(local) => (local, false),
-            ReferenceOrigin::Param(local) => (local, true),
+            ReferenceOrigin::Param(local) => (local,
+                origins.local_type_is_pointer(local) || origins.local_type_is_reference(local)),
             _ => return None,
         };
         Some((local, deref))
@@ -136,7 +137,9 @@ fn recover_raw_borrows(
         let mut borrow = template.clone();
         borrow.place = Place { local, projection: if deref { vec![Projection::Deref] } else { Vec::new() } };
         let mut through = source.clone();
-        through.projection.push(Projection::Deref);
+        if origins.place_type_is_pointer(source) {
+            through.projection.push(Projection::Deref);
+        }
         borrow.reborrow_source = Some(through);
         borrow
     }).collect()
@@ -167,16 +170,25 @@ fn collect_terminator_borrows_with_context(
         return Vec::new();
     };
     let type_view = TypeView::new(type_context);
-    let Ty::Reference { mutable, .. } = type_view.ty(destination_decl.ty) else {
+    if !super::type_id_contains_reference(type_view, origins.backend_contract, destination_decl.ty) {
         return Vec::new();
+    }
+    let kind = if super::type_id_contains_mutable_reference(type_view, origins.backend_contract, destination_decl.ty) {
+        AccessKind::BorrowMut
+    } else {
+        AccessKind::BorrowShared
     };
-    let kind = if *mutable { AccessKind::BorrowMut } else { AccessKind::BorrowShared };
     origins.call_return_argument_indices(func, args)
         .into_iter()
         .flat_map(|index| {
             let Some(arg) = args.get(index) else { return Vec::new(); };
             if let Operand::Copy(source) | Operand::Move(source) = arg {
-                if origins.place_type_is_pointer(source) {
+                let source_ty = origins.backend_contract.place_type_id(type_context, mir_func, source);
+                // Aggregate arguments carry a conservative origin/loan envelope.
+                // Recover it at the call just as for a direct raw pointer; do not
+                // invent a dereference projection on the aggregate itself.
+                if source_ty.is_some_and(|ty| !matches!(type_view.ty(ty), Ty::Reference { .. })
+                    && super::type_id_contains_pointer(type_view, origins.backend_contract, ty)) {
                     return recover_raw_borrows(origins, state, source, &BorrowData {
                         owner: destination.local,
                         place: source.clone(),

@@ -737,6 +737,191 @@ main = ->
 }
 
 #[test]
+fn test_raw_pointer_aggregate_arguments_retain_return_loans() {
+    for reference in ["&I64", "&mut I64"] {
+        for (argument, projection, value) in [
+            ("Holder", "holder.ptr", "Holder\n        ptr: &mut value as *I64"),
+            ("(*I64, I64)", "holder.0", "(&mut value as *I64, 0)"),
+            ("((*I64, I64), Bool)", "(holder.0).0", "((&mut value as *I64, 0), true)"),
+        ].into_iter().chain((reference == "&I64").then_some(
+            ("[*I64; 1]", "holder[0]", "[&mut value as *I64]"),
+        )) {
+            let source = format!(r#"
+struct Holder
+    < ptr: *I64
+
+unsafe borrow: {argument} -> {reference}
+unsafe borrow = holder -> unsafe {reference_expr}*{projection}
+
+main = !->
+    mut value = 1
+    holder = {value}
+    view = unsafe borrow holder
+    value = 9
+    (*view).println!
+"#, reference_expr = if reference == "&I64" { "&" } else { "&mut " });
+            compile_should_fail(&source, "borrow conflict");
+            let valid = source.replace("    value = 9\n", "");
+            assert_eq!(compile_and_run(&valid), "1\n");
+            if reference == "&mut I64" {
+                assert_eq!(compile_and_run(&valid.replace("    (*view).println!", "    *view = 7\n    (*view).println!")), "7\n");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_raw_pointer_aggregate_results_retain_return_loans() {
+    for reference in ["&I64", "&mut I64"] {
+        for (result, value, projection) in [
+            (format!("({reference}, I64)"), "(view, 0)", "pair.0"),
+            (format!("(({reference}, I64), Bool)"), "((view, 0), true)", "(pair.0).0"),
+            ("View".to_string(), "View\n        value: view", "pair.value"),
+        ].into_iter().chain((reference == "&I64").then_some(
+            (format!("[{reference}; 1]"), "[view]", "pair[0]"),
+        )) {
+            let source = format!(r#"
+struct View
+    < value: {reference}
+
+unsafe borrow: *I64 -> {result}
+unsafe borrow = ptr ->
+    view = unsafe {reference_expr}*ptr
+    {value}
+
+main = !->
+    mut value = 1
+    ptr = &mut value as *I64
+    pair = unsafe borrow ptr
+    value = 9
+    (*{projection}).println!
+"#, reference_expr = if reference == "&I64" { "&" } else { "&mut " });
+            compile_should_fail(&source, "borrow conflict");
+            let valid = source.replace("    value = 9\n", "");
+            assert_eq!(compile_and_run(&valid), "1\n");
+            if reference == "&mut I64" {
+                let write = valid.replace(&format!("    (*{projection}).println!"),
+                    &format!("    *{projection} = 7\n    (*{projection}).println!"));
+                assert_eq!(compile_and_run(&write), "7\n");
+                compile_should_fail(&valid.replace("    pair = unsafe borrow ptr",
+                    "    sibling = unsafe &*ptr\n    pair = unsafe borrow ptr\n    (*sibling).println!"), "borrow conflict");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_raw_pointer_enum_arguments_and_results_retain_return_loans() {
+    for reference in ["&I64", "&mut I64"] {
+        let source = format!(r#"
+enum Input
+    Value *I64
+
+enum Output
+    Value {reference}
+
+unsafe borrow: Input -> Output
+unsafe borrow = input -> match input
+    Input::Value ptr => Output::Value (unsafe {reference_expr}*ptr)
+
+main = !->
+    mut value = 1
+    input = Input::Value (&mut value as *I64)
+    output = unsafe borrow input
+    view = match output
+        Output::Value view => view
+    value = 9
+    (*view).println!
+"#, reference_expr = if reference == "&I64" { "&" } else { "&mut " });
+        compile_should_fail(&source, "borrow conflict");
+        assert_eq!(compile_and_run(&source.replace("    value = 9\n", "")), "1\n");
+    }
+}
+
+#[test]
+fn test_raw_pointer_aggregate_reborrow_uses_selected_input_authority() {
+    let source = r#"
+struct Holder
+    < ptr: *I64
+
+unsafe borrow: *I64 -> Holder -> &mut I64
+unsafe borrow = unused, holder -> unsafe &mut *holder.ptr
+
+main = !->
+    mut a = 1
+    mut b = 2
+    unused = &mut a as *I64
+    ptr = &mut b as *I64
+    holder = Holder
+        ptr: ptr
+    view = unsafe borrow unused, holder
+    a = 7
+    *view = 9
+    (*view).println!
+"#;
+    assert_eq!(compile_and_run(source), "9\n");
+    compile_should_fail(&source.replace("    a = 7", "    b = 7"), "borrow conflict");
+    compile_should_fail(&source.replace("    view = unsafe borrow unused, holder",
+        "    sibling = unsafe &*ptr\n    view = unsafe borrow unused, holder\n    (*sibling).println!"), "borrow conflict");
+}
+
+#[test]
+fn test_raw_pointer_aggregate_return_loans_survive_deleted_source_artifacts() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let dependency = dir.join("loans.rk");
+    fs::write(&dependency, r#"
+< struct Holder
+    < ptr: *I64
+
+unsafe borrow: Holder -> (&I64, I64)
+< unsafe borrow = holder -> (unsafe &*holder.ptr, 0)
+
+unsafe borrow_mut: Holder -> (&mut I64, I64)
+< unsafe borrow_mut = holder -> (unsafe &mut *holder.ptr, 0)
+"#).unwrap();
+    let config = rock_lib::Config {
+        entry_file: dependency.clone(), output_dir: dir.clone(),
+        current_crate_name: Some("loans".to_string()),
+        no_std: true, no_prelude: true, no_link: true,
+        ..Default::default()
+    };
+    let artifact = dir.join("loans.rkca");
+    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+        .write_artifact_to_path(&artifact).unwrap();
+    fs::remove_file(dependency).unwrap();
+    for method in ["borrow", "borrow_mut"] {
+        for invalid in [false, true] {
+            let entry = dir.join("consumer.rk");
+            let mutation = if invalid { "value = 9" } else if method == "borrow_mut" { "*pair.0 = 7" } else { "*pair.0" };
+            fs::write(&entry, format!(r#"
+> loans::Holder
+> loans::{method}
+
+main = ->
+    mut value = 1
+    holder = Holder
+        ptr: &mut value as *I64
+    pair = unsafe {method} holder
+    {mutation}
+    *pair.0
+"#)).unwrap();
+            let result = rock_lib::compile(&rock_lib::Config {
+                entry_file: entry, current_crate_name: None,
+                extern_artifacts: vec![("loans".to_string(), artifact.clone())],
+                ..config.clone()
+            });
+            assert_eq!(result.is_err(), invalid, "{method}, {mutation}: {result:?}");
+            if let Err(errors) = result {
+                assert!(errors.0.iter().any(|error| error.message.contains("borrow conflict")), "{errors:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn test_raw_pointer_return_reborrow_uses_selected_argument() {
     for selected in ["first", "second"] {
         let source = format!(r#"
@@ -10617,6 +10802,114 @@ main = !-> return
 }
 
 #[test]
+fn test_default_type_arguments_mutually_recursive_nominal_fields() {
+    let first = "struct First {T = I64}\n    value: T\n    other: *Second\n";
+    for second in [
+        "struct Second {T = Bool}\n    value: T\n    other: *First\n",
+        "enum Second {T = Bool}\n    End\n    Link T, *First\n",
+    ] {
+        for declarations in [format!("{first}\n{second}"), format!("{second}\n{first}")] {
+            compile_should_pass(&format!("{declarations}\nmain = !-> return\n"));
+        }
+    }
+}
+
+#[test]
+fn test_default_type_arguments_mutual_fields_in_deleted_source_artifacts() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    fs::write(dir.join("models.rk"), r#"
+< struct First {T = I64}
+    < value: T
+    < other: *Second
+
+< enum Second {T = Bool}
+    End
+    Link T, *First
+"#).unwrap();
+    let entry = dir.join("lib.rk");
+    fs::write(&entry, "< mod models\n").unwrap();
+    let config = rock_lib::Config {
+        entry_file: entry.clone(), output_dir: dir.clone(),
+        current_crate_name: Some("recursive".to_string()),
+        no_std: true, no_prelude: true, no_link: true,
+        ..Default::default()
+    };
+    let artifact = dir.join("recursive.rkca");
+    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+        .write_artifact_to_path(&artifact).unwrap();
+    fs::remove_file(dir.join("models.rk")).unwrap();
+    fs::remove_file(&entry).unwrap();
+    fs::write(&entry, r#"
+> recursive::models::First
+> recursive::models::Second
+
+read: First -> I64
+read = value -> value.value
+
+main = ->
+    second: Second = Second::End
+    first = First
+        value: 7
+        other: &second as *Second
+    read first
+"#).unwrap();
+    rock_lib::compile(&rock_lib::Config {
+        entry_file: entry, current_crate_name: None,
+        extern_artifacts: vec![("recursive".to_string(), artifact)],
+        ..config
+    }).expect("mutual defaults must survive publication and remapping");
+}
+
+#[test]
+fn test_default_type_arguments_mutual_fields_across_file_modules() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    fs::write(dir.join("first.rk"), r#"
+> second::Second
+type Seed = I64
+< struct First {T = Seed}
+    < value: T
+    < tag: Seed
+    < other: *Second
+"#).unwrap();
+    fs::write(dir.join("second.rk"), r#"
+> first::First
+type Seed = Bool
+< enum Second {T = Seed}
+    End
+    Link T, Seed, *First
+"#).unwrap();
+    let entry = dir.join("main.rk");
+    for modules in ["mod first\nmod second", "mod second\nmod first"] {
+        fs::write(&entry, format!(r#"
+{modules}
+> first::First
+> second::Second
+read: First -> I64
+read = value -> value.tag
+
+main = ->
+    other: Second = Second::End
+    value: First = First
+        value: 7
+        tag: 8
+        other: &other as *Second
+    read value
+"#)).unwrap();
+        rock_lib::compile(&rock_lib::Config {
+            entry_file: entry.clone(), output_dir: dir.clone(),
+            no_std: true, no_prelude: true, no_link: true,
+            ..Default::default()
+        }).expect("mutual field defaults and aliases must keep their module scope");
+    }
+}
+
+#[test]
 fn test_default_type_arguments_static_factory_fallback_and_inference() {
     assert_eq!(compile_and_run(r#"
 struct Phantom {T = I64}
@@ -10671,6 +10964,7 @@ fn test_default_type_arguments_reject_invalid_defaults() {
         ("struct Bad {F _ = I64}\nmain = !->\n    ()\n", "has kind Type, expected Type -> Type"),
         ("type Bad {T = Bad} = T\nmain = !->\n    ()\n", "invalid or cyclic type in generic default"),
         ("type First {T = Second} = T\ntype Second {T = First} = T\nmain = !->\n    ()\n", "invalid or cyclic type in generic default"),
+        ("struct First {T = Second}\nstruct Second {T = First}\nmain = !-> return\n", "default"),
         ("struct Bad {T = Self}\nmain = !->\n    ()\n", "unknown type 'Self' in generic default"),
     ] {
         compile_should_fail(source, expected);

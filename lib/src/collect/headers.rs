@@ -474,12 +474,37 @@ fn collect_type_var_ids(ty: &Type, type_vars: &mut HashSet<TypeVarId>) {
     });
 }
 
+pub(crate) fn build_nominal_generic_params(
+    context: &mut CollectContext,
+    syntax: &[ast::GenericParamDecl],
+    id: DefId,
+) -> Vec<GenericParamDecl> {
+    let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, syntax);
+    let spans = syntax.iter().map(|param| param.span.clone()).collect::<Vec<_>>();
+    let previous = context.push_generic_context_with_kinds_at(
+        id,
+        GenericParamDecl::names(&generic_params).map(str::to_string).collect(),
+        generic_params.iter().map(|param| param.kind.clone()).collect(),
+        &spans,
+    );
+    crate::type_lowering::lower_param_defaults(context, &mut generic_params, syntax, None);
+    context.pop_generic_context_with_kinds(previous.0, previous.1, previous.2);
+    // Publish through every qualified/imported alias before any fields are lowered.
+    for declaration in context.structs.values_mut().filter(|item| item.id == id) {
+        declaration.generic_params.clone_from(&generic_params);
+    }
+    for declaration in context.enums.values_mut().filter(|item| item.id == id) {
+        declaration.generic_params.clone_from(&generic_params);
+    }
+    generic_params
+}
+
 pub(crate) fn build_struct_with_id(
     context: &mut CollectContext,
     sd: &ast::StructDecl,
     id: DefId,
+    generic_params: Vec<GenericParamDecl>,
 ) -> HirStruct {
-    let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, &sd.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect();
@@ -498,12 +523,6 @@ pub(crate) fn build_struct_with_id(
         generic_param_kinds,
         &generic_spans,
     );
-    crate::type_lowering::lower_param_defaults(context, &mut generic_params, &sd.generic_params, None);
-    // Recursive field types must see completed descriptors through every alias
-    // of the predeclared identity, including qualified module names.
-    for declaration in context.structs.values_mut().filter(|item| item.id == id) {
-        declaration.generic_params.clone_from(&generic_params);
-    }
     let fields = sd
         .fields
         .iter()
@@ -603,9 +622,8 @@ pub(crate) fn build_enum_with_id(
     context: &mut CollectContext,
     ed: &ast::EnumDecl,
     id: DefId,
+    generic_params: Vec<GenericParamDecl>,
 ) -> HirEnum {
-    let mut generic_params =
-        crate::type_lowering::lower_generic_param_decls(id, &ed.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect();
@@ -624,10 +642,6 @@ pub(crate) fn build_enum_with_id(
         generic_param_kinds,
         &generic_spans,
     );
-    crate::type_lowering::lower_param_defaults(context, &mut generic_params, &ed.generic_params, None);
-    for declaration in context.enums.values_mut().filter(|item| item.id == id) {
-        declaration.generic_params.clone_from(&generic_params);
-    }
     let mut next_field_id = 0;
     let variants = ed
         .variants
@@ -1768,6 +1782,16 @@ mod tests {
     use crate::language_items::SizedLanguageItems;
     use crate::lexer::Span;
     use crate::types::{AssociatedTypeKey, GenericParamId, Type};
+
+    fn build_struct_with_id(context: &mut CollectContext, decl: &StructDecl, id: DefId) -> HirStruct {
+        let params = build_nominal_generic_params(context, &decl.generic_params, id);
+        super::build_struct_with_id(context, decl, id, params)
+    }
+
+    fn build_enum_with_id(context: &mut CollectContext, decl: &EnumDecl, id: DefId) -> HirEnum {
+        let params = build_nominal_generic_params(context, &decl.generic_params, id);
+        super::build_enum_with_id(context, decl, id, params)
+    }
 
     fn ident(name: &str) -> Ident {
         Ident {

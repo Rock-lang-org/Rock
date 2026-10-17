@@ -307,6 +307,32 @@ impl LoanAnalysis {
         table: &LoanTable,
         active_loans: &LoanState,
     ) -> Result<(), LoanId> {
+        Self::check_aliasing_with_owner(
+            place, kind,
+            through.projection.contains(&Projection::Deref).then_some(through.local),
+            table, active_loans,
+        )
+    }
+
+    /// A selected call can reborrow an aggregate's carried storage without
+    /// dereferencing the aggregate. Authority belongs to that input's owner.
+    pub fn check_reborrow(
+        place: &Place,
+        kind: LoanKind,
+        source: Local,
+        table: &LoanTable,
+        active_loans: &LoanState,
+    ) -> Result<(), LoanId> {
+        Self::check_aliasing_with_owner(place, kind, Some(source), table, active_loans)
+    }
+
+    fn check_aliasing_with_owner(
+        place: &Place,
+        kind: LoanKind,
+        owner: Option<Local>,
+        table: &LoanTable,
+        active_loans: &LoanState,
+    ) -> Result<(), LoanId> {
         let original_place = place.clone();
         let place = crate::mir::borrowck::provenance::resolve_place(place, table, active_loans);
         let access_path = crate::mir::borrowck::provenance::resolve_place_path(
@@ -319,7 +345,8 @@ impl LoanAnalysis {
             let Some(loan) = table.get(loan_id) else {
                 continue;
             };
-            if Self::access_through_mutable_loan_owner(through, loan_id, loan, active_loans)
+            if loan.kind == LoanKind::Mut
+                && owner.is_some_and(|owner| active_loans.owner_contains(loan_id, owner))
             {
                 continue;
             }
@@ -353,18 +380,6 @@ impl LoanAnalysis {
             }
         }
         Ok(())
-    }
-
-    fn access_through_mutable_loan_owner(
-        place: &Place,
-        loan_id: LoanId,
-        loan: &LoanData,
-        active_loans: &LoanState,
-    ) -> bool {
-        // The owner of an exclusive loan may both read and write through it.
-        loan.kind == LoanKind::Mut
-            && active_loans.owner_contains(loan_id, place.local)
-            && place.projection.contains(&Projection::Deref)
     }
 
     fn resolve_loan_path(

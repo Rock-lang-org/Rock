@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 
 use crate::ast;
 use crate::collect::context::{
@@ -11,9 +12,18 @@ use crate::hir::{HirAssociatedTypeDecl, HirEnum, HirStruct, HirTrait, HirTypeAli
 use crate::ids::{AssocTypeId, DefId, ModuleId};
 use crate::types::Type;
 
-/// Header dependencies are resolved before uses, without changing source IDs.
-/// Recursive nominal references remain legal; default expansion is checked by
-/// type lowering rather than treating every declaration cycle as an error.
+enum NominalDeclaration {
+    Struct(ast::StructDecl),
+    Enum(ast::EnumDecl),
+}
+
+struct PendingNominalFields {
+    declaration: NominalDeclaration,
+    module_path: PathBuf,
+}
+
+/// Resolve descriptor dependencies first, then nominal fields. Field cycles do
+/// not imply default-expansion cycles and must not order descriptor publication.
 fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLevel)> {
     use crate::ast::visit::Visitor;
     struct Names(Vec<String>);
@@ -39,7 +49,15 @@ fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLevel)> {
     }).collect::<HashMap<_, _>>();
     let dependencies = module.top_levels.iter().map(|item| {
         let mut names = Names(Vec::new());
-        names.visit_top_level(item);
+        match item {
+            ast::TopLevel::StructDecl(decl) => {
+                for param in &decl.generic_params { names.visit_generic_param_decl(param); }
+            }
+            ast::TopLevel::EnumDecl(decl) => {
+                for param in &decl.generic_params { names.visit_generic_param_decl(param); }
+            }
+            _ => names.visit_top_level(item),
+        }
         match item {
             ast::TopLevel::Import(path) => {
                 let segments = match path { ast::Path::Ident(path) => &path.path, ast::Path::Type(path) => &path.path };
@@ -71,9 +89,64 @@ fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLevel)> {
 pub(crate) struct LocalCollector {
     context: CollectContext,
     id_environment: CollectedIdEnvironment,
+    pending_nominal_fields: BTreeMap<DefId, PendingNominalFields>,
 }
 
 impl LocalCollector {
+    fn collect_struct_header(&mut self, sd: &ast::StructDecl, id: DefId) -> HirStruct {
+        self.pending_nominal_fields.insert(id, PendingNominalFields {
+            declaration: NominalDeclaration::Struct(sd.clone()),
+            module_path: self.context.current_module_path.clone(),
+        });
+        HirStruct {
+            id,
+            name: sd.name.name.clone(),
+            generic_params: headers::build_nominal_generic_params(&mut self.context, &sd.generic_params, id),
+            fields: Vec::new(),
+        }
+    }
+
+    fn collect_enum_header(&mut self, ed: &ast::EnumDecl, id: DefId) -> HirEnum {
+        self.pending_nominal_fields.insert(id, PendingNominalFields {
+            declaration: NominalDeclaration::Enum(ed.clone()),
+            module_path: self.context.current_module_path.clone(),
+        });
+        HirEnum {
+            id,
+            name: ed.name.name.clone(),
+            generic_params: headers::build_nominal_generic_params(&mut self.context, &ed.generic_params, id),
+            variants: Vec::new(),
+        }
+    }
+
+    fn complete_nominal_fields(&mut self) {
+        let module_path = self.context.current_module_path.clone();
+        // All source modules now expose completed defaults. Keep declaration
+        // scope while filling fields, including mutually recursive file modules.
+        for (id, pending) in std::mem::take(&mut self.pending_nominal_fields) {
+            self.context.current_module_path = pending.module_path;
+            match pending.declaration {
+                NominalDeclaration::Struct(sd) => {
+                    let params = self.context.structs.values().find(|item| item.id == id)
+                        .expect("nominal descriptors precede fields").generic_params.clone();
+                    let strukt = headers::build_struct_with_id(&mut self.context, &sd, id, params);
+                    for alias in self.context.structs.values_mut().filter(|item| item.id == id) {
+                        alias.clone_from(&strukt);
+                    }
+                }
+                NominalDeclaration::Enum(ed) => {
+                    let params = self.context.enums.values().find(|item| item.id == id)
+                        .expect("nominal descriptors precede fields").generic_params.clone();
+                    let enum_ = headers::build_enum_with_id(&mut self.context, &ed, id, params);
+                    for alias in self.context.enums.values_mut().filter(|item| item.id == id) {
+                        alias.clone_from(&enum_);
+                    }
+                }
+            }
+        }
+        self.context.current_module_path = module_path;
+    }
+
     #[cfg(test)]
     pub(crate) fn new(context: CollectContext) -> Self {
         Self::new_with_id_environment(context, CollectedIdEnvironment::default())
@@ -86,6 +159,7 @@ impl LocalCollector {
         Self {
             context,
             id_environment,
+            pending_nominal_fields: BTreeMap::new(),
         }
     }
 
@@ -198,7 +272,7 @@ impl LocalCollector {
                     ) else {
                         continue;
                     };
-                    let strukt = headers::build_struct_with_id(&mut self.context, sd, id);
+                    let strukt = self.collect_struct_header(sd, id);
                     self.context
                         .structs
                         .insert(sd.name.name.clone(), strukt.clone());
@@ -214,7 +288,7 @@ impl LocalCollector {
                     ) else {
                         continue;
                     };
-                    let enum_ = headers::build_enum_with_id(&mut self.context, ed, id);
+                    let enum_ = self.collect_enum_header(ed, id);
                     self.context
                         .enums
                         .insert(ed.name.name.clone(), enum_.clone());
@@ -487,7 +561,7 @@ impl LocalCollector {
                     ) else {
                         continue;
                     };
-                    let strukt = headers::build_struct_with_id(&mut self.context, sd, id);
+                    let strukt = self.collect_struct_header(sd, id);
                     if local_prefix.is_some() {
                         self.context
                             .structs
@@ -507,7 +581,7 @@ impl LocalCollector {
                     ) else {
                         continue;
                     };
-                    let enum_ = headers::build_enum_with_id(&mut self.context, ed, id);
+                    let enum_ = self.collect_enum_header(ed, id);
                     if local_prefix.is_some() {
                         self.context
                             .enums
@@ -845,7 +919,7 @@ impl LocalCollector {
                     ) else {
                         continue;
                     };
-                    let strukt = headers::build_struct_with_id(&mut self.context, sd, id);
+                    let strukt = self.collect_struct_header(sd, id);
                     self.context.structs.insert(qualified_name, strukt);
                 }
                 ast::TopLevel::EnumDecl(ed) => {
@@ -858,7 +932,7 @@ impl LocalCollector {
                     ) else {
                         continue;
                     };
-                    let enum_ = headers::build_enum_with_id(&mut self.context, ed, id);
+                    let enum_ = self.collect_enum_header(ed, id);
                     self.context.enums.insert(qualified_name, enum_);
                 }
                 ast::TopLevel::Module(module_decl) => {
@@ -1361,7 +1435,7 @@ impl LocalCollector {
                     ) else {
                         continue;
                     };
-                    let strukt = headers::build_struct_with_id(&mut self.context, sd, id);
+                    let strukt = self.collect_struct_header(sd, id);
                     self.context.structs.insert(qualified_name, strukt.clone());
                     if exports.contains_key(&short_name) {
                         self.context.structs.insert(short_name, strukt);
@@ -1378,7 +1452,7 @@ impl LocalCollector {
                     ) else {
                         continue;
                     };
-                    let enum_ = headers::build_enum_with_id(&mut self.context, ed, id);
+                    let enum_ = self.collect_enum_header(ed, id);
                     self.context.enums.insert(qualified_name, enum_.clone());
                     if exports.contains_key(&short_name) {
                         self.context.enums.insert(short_name, enum_);
@@ -1749,11 +1823,12 @@ impl LocalCollector {
     }
 
     pub(crate) fn finish(
-        self,
+        mut self,
         item_index: &crate::collect::item_index::ItemIndex,
         root_module_id: crate::ids::ModuleId,
         current_crate_name: Option<&str>,
     ) -> LocalCollection {
+        self.complete_nominal_fields();
         self.context
             .into_local_collection(item_index, root_module_id, current_crate_name)
     }
