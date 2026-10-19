@@ -377,6 +377,13 @@ pub struct MacroInvoc {
     pub span: Span,
     pub args: crate::lexer::lossless::LosslessStream,
     pub arguments: Vec<std::ops::Range<usize>>,
+    pub block: Option<MacroBlockInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MacroBlockInput {
+    pub header_indent: usize,
+    pub body_indent: usize,
 }
 
 impl MacroInvoc {

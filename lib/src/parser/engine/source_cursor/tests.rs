@@ -8,6 +8,25 @@ use crate::Config;
 const STORAGE: ScanLimits = ScanLimits { max_source_bytes: 1024 * 1024, max_runs: 65536 };
 const CACHE: SourceLimits = SourceLimits { max_entries: 65536, max_branches: 128 };
 
+#[test]
+fn macro_a_03_nested_capture_ranges_remain_bound_to_one_source_input() {
+    let stream = scan("%dsl\n    \"opaque\nnext\n");
+    let input = SourceInput::new(&stream, true, CACHE).unwrap();
+    let header = input.cursor().advance(2).unwrap();
+    let (resumed, captured) = header.capture_indented_block(STORAGE).unwrap().unwrap();
+    assert_eq!(captured.input.runs().iter().map(|run| run.text()).collect::<String>(), "    \"opaque\n");
+    let separator = resumed.peek(0).unwrap().unwrap();
+    assert_eq!(separator.token.token_type, TokenType::Eol);
+    assert_eq!(separator.origin, crate::lexer::interpretation::layout::LayoutOrigin::Synthetic);
+    assert_eq!(separator.token.span, captured.input.end_span());
+    assert_eq!(header.slice_until(resumed, STORAGE).unwrap().len_bytes(), "\n    \"opaque\n".len());
+    assert!(resumed.slice_until(header, STORAGE).is_err());
+    let other_input = SourceInput::new(&stream, true, CACHE).unwrap();
+    assert!(header.slice_until(other_input.cursor(), STORAGE).is_err());
+    assert!(header.prefix(0).unwrap().capture_indented_block(STORAGE).unwrap().is_none());
+    assert_eq!(resumed.advance(2).unwrap().peek(0).unwrap().unwrap().token.token_type, TokenType::Ident("next".into()));
+}
+
 fn scan(text: &str) -> LosslessStream {
     LosslessStream::from_bytes("/virtual/macro-a0-09.rk".into(), text.as_bytes().to_vec(), STORAGE).unwrap()
 }

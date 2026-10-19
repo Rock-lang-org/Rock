@@ -287,6 +287,25 @@ impl ParseCtx<'_> {
         }
     }
 
+    pub fn capture_indented_block(&self)
+        -> Result<Option<(Self, crate::lexer::interpretation::layout::CapturedBlock)>, ParseError>
+    {
+        let cursor::TokenCursor::Source(source) = self.cursor else { return Ok(None); };
+        let Some((resumed, captured)) = source.capture_indented_block(crate::lexer::lossless::ScanLimits {
+            max_source_bytes: 16 * 1024 * 1024, max_runs: 1024 * 1024,
+        }).map_err(|error| cursor::source_error(error, source.source_eof()))? else { return Ok(None); };
+        BEST_ERROR.with(|best| {
+            let mut best = best.borrow_mut();
+            if best.as_ref().and_then(ParseError::source_span).is_some_and(|span| {
+                captured.input.runs().iter().any(|run| {
+                    let extent = run.span();
+                    extent.file_path == span.file_path && span.start >= extent.start && span.start < extent.end
+                })
+            }) { *best = None; }
+        });
+        Ok(Some((Self { cursor: cursor::TokenCursor::Source(resumed), invalid_indent: None, ..*self }, captured)))
+    }
+
     pub fn source_token_start(&self) -> Result<Option<usize>, ParseError> {
         let cursor::TokenCursor::Source(source) = self.cursor else { return Ok(None) };
         let token = source.peek(0).map_err(|error| cursor::source_error(error, source.source_eof()))?;

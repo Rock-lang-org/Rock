@@ -155,6 +155,11 @@ impl FormatNode for MacroInvoc {
         write!(f, "%")?;
         self.path.fmt_with(context, f)?;
 
+        if self.block.is_some() {
+            writeln!(f)?;
+            for run in self.args.runs() { f.write_str(run.text())?; }
+            return Ok(());
+        }
         if self.output == crate::ast::MacroOutputCategory::Expression {
             if self.arguments.is_empty() { return write!(f, "!"); }
             for run in self.args.runs() { f.write_str(run.text())?; }

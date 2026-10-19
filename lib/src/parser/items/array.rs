@@ -14,6 +14,15 @@ pub fn repeat_array(stream: Input) -> IResult<(Expression, usize)> {
     let mut index = 0;
     while !lookahead.is_empty() {
         let (next, token) = lookahead.consume()?;
+        if matches!(token.token_type, TokenType::MacroInvoc(_)) {
+            if let Ok((after_path, _)) = super::macro_decl::macro_path(lookahead) {
+                if after_path.capture_indented_block()?.is_some() {
+                    // The speculative repeat-array scan cannot cross an opaque
+                    // body. Let the ordinary array/expression parser own it.
+                    return Err(ParseError::Fail);
+                }
+            }
+        }
         match &token.token_type {
             TokenType::OpenBracket => bracket_depth += 1,
             TokenType::CloseBracket if bracket_depth > 0 => bracket_depth -= 1,

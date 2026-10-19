@@ -6,7 +6,10 @@ pub fn parenthesis<P: Parser>(parser: P) -> impl FnMut(Input) -> IResult<P::Outp
         super::empty_lines::empty_lines.opt(),
         parser,
         super::empty_lines::empty_lines.opt(),
-        TokenType::CloseParen,
+        TokenType::CloseParen.or(preceded(
+            TokenType::Eol,
+            preceded(super::empty_lines::empty_lines, preceded(crate::parser::indent_token, TokenType::CloseParen)),
+        )),
     )
         .map(|(_, _, x, _, _)| x);
 

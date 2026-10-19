@@ -257,6 +257,54 @@ remain in A.03 and later slices. `bd ready --json` still reports command not fou
 Formatting remains deferred; no formatter/check, Clippy, or separate build gate
 was run.
 
+### A.03 delivery receipt (2026-10-19)
+
+Actual parsed macro paths can now introduce indented item/expression input blocks.
+The optional capture view compares physical margins before interpreting the body,
+retains everything after the header LF through dedent/EOF, and records header and
+first-body indentation separately from the requested output category. Arbitrary
+UTF-8, odd internal margins, wide margins, blank lines, comment-looking lines,
+CRLF/tabs, quotes, delimiters, and apparent nested calls remain lossless data.
+Expression blocks expose a source-aware synthetic separator; item parsing consumes
+that separator. Parentheses can close on the terminating dedented line, and outer
+argument ranges may span capture branches of the same retained source only.
+
+- Initial `cargo test -p rock-lib --lib macro_a_03_ -- --nocapture` was RED
+  because block metadata did not exist. The first implementation passed three of
+  eight tests; item parsing incorrectly retained the expression separator. After
+  separating item newline ownership, all eight passed.
+- Adjacent `cargo test -p rock-lib --lib parser:: -- --nocapture` initially
+  passed 556/557: its old invocation assertion included the header newline in
+  input. Updated that assertion to the specified after-header range without
+  changing the source fixture.
+- Added nested-parenthesis and inline-module parser controls. The former observed
+  RED until closing-layout handling and cross-branch retained ranges were wired.
+  The latter exposed existing top-level `mod` dispatch selecting a source-backed
+  shell before its inline alternative; this slice leaves that unrelated dispatch
+  unchanged and tests the inline-module parser directly.
+- A dedicated array-lookahead control observed RED: speculative repeat-array
+  scanning had already interpreted an opaque quote across the dedent. That scan
+  now yields to the ordinary array/expression parser when it encounters a block
+  header, before requesting body tokens. Literal-array capture passes without
+  opaque payload tokens appearing in the cached-token observer.
+- Focused `cargo test -p rock-lib --lib macro_a_03_ -- --nocapture` passes
+  13 tests, including synthetic separator origin and rejection of unrelated-source,
+  backwards, and bounded-token-prefix capture ranges.
+- Final `cargo test -p rock-lib` passes 2,516 units, 789 main integrations,
+  and one parser integration; one doctest remains ignored (archive
+  `cf4e52eb9f1e5015`). Adjacent final `--lib parser:: -- --nocapture` and
+  `--lib macro_expansion:: -- --nocapture` runners pass 562 and 60 tests.
+  Warnings remain the 13 unused optional-group library interfaces and two
+  group-error-field warnings in tests. No functional edits follow these gates.
+
+`%derive` is reserved with a structured unsupported-attachment diagnostic; `%m!`
+does not acquire block input. Unresolved item-block paths diagnose explicitly,
+while existing declared item macros keep their current matching behavior.
+Expression execution, generated-result categories, repeated-array values containing
+opaque blocks, and library DSL policies are not certified by this parser slice.
+Formatting remains deferred; no formatter/check, Clippy, or separate build gate
+was run. Beads remains unavailable.
+
 ### Ab. Scope and schedule the same engine across modules
 
 | Slice | Implement only | Focused acceptance | Runner |

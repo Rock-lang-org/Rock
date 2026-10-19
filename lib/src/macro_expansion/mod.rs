@@ -67,6 +67,11 @@ pub fn expand_macros_with_context(
                         i,
                         (entry.clone(), invocation.clone()),
                     );
+                } else if invocation.block.is_some() {
+                    return Err(Diagnostics(vec![Diagnostic::new(
+                        "block macro expansion is not implemented for unresolved macro paths".into(),
+                        invocation.span.clone(),
+                    ).with_code(crate::diagnostic::DiagnosticCode::Macro)]));
                 }
             }
         }

@@ -33,9 +33,16 @@ pub fn macro_entry(stream: Input) -> IResult<MacroEntry> {
 
 pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
     let (stream, (span, path)) = macro_path(stream)?;
-    let start = stream;
-    let (stream, _) = consume_tokens_until(TokenType::Indent(0)).process(stream)?;
-    let args = start.lossless_until(stream)?;
+    let (stream, args, block) = if let Some((stream, captured)) = stream.capture_indented_block()? {
+        let (stream, _) = TokenType::Eol.process(stream)?;
+        (stream, captured.input, Some(crate::ast::MacroBlockInput {
+            header_indent: captured.header_indent, body_indent: captured.body_indent,
+        }))
+    } else {
+        let start = stream;
+        let (stream, _) = consume_tokens_until(TokenType::Indent(0)).process(stream)?;
+        (stream, start.lossless_until(stream)?, None)
+    };
     let id = crate::ast::InvocationId::fresh()
         .map_err(|message| ParseError::HardError(message.into(), span.clone()))?;
     Ok((stream, MacroInvoc {
@@ -46,10 +53,11 @@ pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
             span,
             args,
             arguments: Vec::new(),
+            block,
         }))
 }
 
-fn macro_path(stream: Input) -> IResult<(crate::lexer::Span, crate::ast::IdentifierPath)> {
+pub(super) fn macro_path(stream: Input) -> IResult<(crate::lexer::Span, crate::ast::IdentifierPath)> {
     let (mut stream, (mut span, name)) = (get_span, macro_invoc_token).process(stream)?;
     let mut path = vec![crate::ast::IdentOrType::Ident(Ident { name, span: span.clone() })];
     while matches!(stream.seek().ok().map(|token| token.token_type), Some(TokenType::DoubleColon)) {
@@ -59,11 +67,27 @@ fn macro_path(stream: Input) -> IResult<(crate::lexer::Span, crate::ast::Identif
         path.push(crate::ast::IdentOrType::Ident(part));
         stream = next;
     }
+    if path.len() == 1 && matches!(&path[0], crate::ast::IdentOrType::Ident(ident) if ident.name == "derive") {
+        return Err(ParseError::HardError("%derive attachment parsing is not implemented".into(), span));
+    }
     Ok((stream, (span, crate::ast::IdentifierPath { path })))
 }
 
 pub fn macro_expression(stream: Input) -> IResult<MacroInvoc> {
     let (start, (span, path)) = macro_path(stream)?;
+    if let Some((stream, captured)) = start.capture_indented_block()? {
+        let id = crate::ast::InvocationId::fresh().map_err(|message| ParseError::HardError(message.into(), span.clone()))?;
+        return Ok((stream, MacroInvoc {
+            id, parent: stream.expansion_parent, output: crate::ast::MacroOutputCategory::Expression,
+            path, span, args: captured.input, arguments: Vec::new(),
+            block: Some(crate::ast::MacroBlockInput {
+                header_indent: captured.header_indent, body_indent: captured.body_indent,
+            }),
+        }));
+    }
+    if matches!(start.seek(), Ok(token) if token.token_type == TokenType::Eol) {
+        return Err(ParseError::HardError("bare expression macro requires an indented input block; use '!' for no arguments".into(), span));
+    }
     let (stream, parsed) = super::expression::call_arguments(start)
         .map_err(|error| required_macro_input(error, "expected ordinary macro call arguments or '!'", span.clone()))?;
     let args = if parsed.is_empty() { stream.lossless_until(stream)? } else { start.lossless_until(stream)? };
@@ -78,7 +102,7 @@ pub fn macro_expression(stream: Input) -> IResult<MacroInvoc> {
         }
     }).collect::<Result<Vec<_>, _>>()?;
     let id = crate::ast::InvocationId::fresh().map_err(|message| ParseError::HardError(message.into(), span.clone()))?;
-    Ok((stream, MacroInvoc { id, parent: stream.expansion_parent, output: crate::ast::MacroOutputCategory::Expression, path, span, args, arguments }))
+    Ok((stream, MacroInvoc { id, parent: stream.expansion_parent, output: crate::ast::MacroOutputCategory::Expression, path, span, args, arguments, block: None }))
 }
 
 fn required_macro_input(error: ParseError, message: &str, span: crate::lexer::Span) -> ParseError {

@@ -20,6 +20,12 @@ pub struct LayoutToken {
     pub context: Option<SyntaxContext>,
 }
 
+pub struct CapturedBlock {
+    pub input: LosslessStream,
+    pub header_indent: usize,
+    pub body_indent: usize,
+}
+
 #[derive(Clone, Copy)]
 enum Terminal {
     Reading,
@@ -42,6 +48,7 @@ pub struct LayoutView<'a> {
     emitted: bool,
     last_was_eol: bool,
     last_was_indent: bool,
+    capture_separator: bool,
 }
 
 impl<'a> LayoutView<'a> {
@@ -56,11 +63,61 @@ impl<'a> LayoutView<'a> {
             emitted: false,
             last_was_eol: false,
             last_was_indent: false,
+            capture_separator: false,
         }
     }
 
     pub fn offset(&self) -> usize {
         self.view.offset()
+    }
+
+    /// Called only after parsing an actual macro path. Inspect physical margins,
+    /// not Rock tokens, until the body boundary is established.
+    pub fn capture_indented_block(&mut self, limits: crate::lexer::lossless::ScanLimits)
+        -> Result<Option<CapturedBlock>, RockError>
+    {
+        let mut line = physical_line_start(self.view.cursor);
+        let header_indent = physical_indent(&mut line);
+        let mut cursor = self.view.cursor;
+        physical_indent(&mut cursor);
+        if cursor.current() == Some('/') {
+            let slash = cursor;
+            cursor.bump();
+            if cursor.current() != Some('/') || cursor.ends_token(slash) { return Ok(None); }
+            while !matches!(cursor.current(), None | Some('\n')) { cursor.bump(); }
+        }
+        if cursor.current() != Some('\n') { return Ok(None); }
+        cursor.bump();
+        let start = cursor.offset;
+        let mut body_indent = None;
+        let end = loop {
+            let line_start = cursor.offset;
+            let width = physical_indent(&mut cursor);
+            match cursor.current() {
+                None => break cursor.offset,
+                Some('\n') => { cursor.bump(); }
+                Some(_) => {
+                    if width <= header_indent { break line_start; }
+                    body_indent.get_or_insert(width);
+                    while !matches!(cursor.current(), None | Some('\n')) { cursor.bump(); }
+                    if cursor.current() == Some('\n') { cursor.bump(); }
+                }
+            }
+        };
+        let Some(body_indent) = body_indent else { return Ok(None); };
+        // The recognized header contains only trivia before its physical LF.
+        // Requesting this EOL cannot interpret any byte of the body.
+        let eol = self.next_token()?;
+        if !matches!(eol, Some(LayoutToken { token: Token { token_type: TokenType::Eol, .. }, .. }))
+            || self.offset() != start
+        {
+            return Err(RockError::InvalidCaptureBoundary { span: self.view.cursor.stream.end_span() });
+        }
+        let input = self.capture_to(end, limits)?;
+        // The captured physical newlines terminate the enclosing Rock expression
+        // too; expose that separator without attributing it to original input.
+        self.capture_separator = true;
+        Ok(Some(CapturedBlock { input, header_indent, body_indent }))
     }
 
     /// Suspend only at physical line boundaries; do not ask Rock to interpret
@@ -145,6 +202,18 @@ impl<'a> LayoutView<'a> {
     }
 
     pub fn next_token(&mut self) -> Result<Option<LayoutToken>, RockError> {
+        if self.capture_separator {
+            self.capture_separator = false;
+            let offset = self.offset();
+            let span = self.view.cursor.stream.slice(offset..offset,
+                crate::lexer::lossless::ScanLimits { max_source_bytes: 0, max_runs: 0 })
+                .map_err(RockError::Preservation)?.start_span();
+            return Ok(Some(self.emit(LayoutToken {
+                token: Token { token_type: TokenType::Eol, span },
+                origin: LayoutOrigin::Synthetic,
+                context: None,
+            })));
+        }
         loop {
             if !matches!(self.terminal, Terminal::Reading) {
                 return Ok(self.terminal_token());
@@ -197,6 +266,31 @@ impl<'a> LayoutView<'a> {
                 context: piece.context,
             })));
         }
+    }
+}
+
+fn physical_indent(cursor: &mut super::Cursor<'_>) -> usize {
+    let start = cursor.offset;
+    while cursor.current().is_some_and(|ch| ch.is_whitespace() && ch != '\n') { cursor.bump(); }
+    cursor.offset - start
+}
+
+fn physical_line_start(mut cursor: super::Cursor<'_>) -> super::Cursor<'_> {
+    loop {
+        if cursor.byte == 0 && cursor.run > 0 {
+            cursor.run -= 1;
+            cursor.byte = cursor.stream.runs()[cursor.run].text().len();
+        }
+        let Some(run) = cursor.stream.runs().get(cursor.run) else { return cursor; };
+        if let Some(lf) = run.text()[..cursor.byte].rfind('\n') {
+            cursor.offset -= cursor.byte - lf - 1;
+            cursor.byte = lf + 1;
+            if cursor.byte == run.text().len() { cursor.run += 1; cursor.byte = 0; }
+            return cursor;
+        }
+        cursor.offset -= cursor.byte;
+        cursor.byte = 0;
+        if cursor.run == 0 { return cursor; }
     }
 }
 

@@ -228,7 +228,8 @@ impl SourceCursor<'_> {
     }
 
     pub fn slice_until(&self, end: Self, limits: ScanLimits) -> Result<LosslessStream, SourceError> {
-        if !std::ptr::eq(self.input, end.input) || self.branch != end.branch {
+        // Capturing nested blocks forks interpretation, not the retained source.
+        if !std::ptr::eq(self.input, end.input) {
             return Err(SourceError::Rock(RockError::InvalidCaptureBoundary { span: self.input.eof.clone() }));
         }
         self.input.stream.slice(self.offset()?..end.offset()?, limits).map_err(SourceError::Preservation)
@@ -279,6 +280,18 @@ impl SourceCursor<'_> {
         let captured = checkpoint.view.capture_to(end, limits).map_err(SourceError::Rock)?;
         let branch = self.input.fork(checkpoint)?;
         Ok((Self { branch, start: 0, end: None, ..*self }, captured))
+    }
+
+    pub fn capture_indented_block(&self, limits: ScanLimits)
+        -> Result<Option<(Self, crate::lexer::interpretation::layout::CapturedBlock)>, SourceError>
+    {
+        if self.end.is_some() { return Ok(None); }
+        let mut checkpoint = self.input.checkpoint(self.branch, self.start)?;
+        let Some(captured) = checkpoint.view.capture_indented_block(limits).map_err(SourceError::Rock)? else {
+            return Ok(None);
+        };
+        let branch = self.input.fork(checkpoint)?;
+        Ok(Some((Self { branch, start: 0, end: None, ..*self }, captured)))
     }
 }
 
