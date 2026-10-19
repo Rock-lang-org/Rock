@@ -31,6 +31,7 @@ pub enum RockError {
     Preservation(LosslessError),
     UnterminatedBlockComment(Span),
     IndentationTooWide { width: usize, span: Span },
+    InvalidCaptureBoundary { span: Span },
 }
 
 #[derive(Clone, Copy)]

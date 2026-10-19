@@ -164,7 +164,7 @@ fn multiline_operator_continuation(stream: Input) -> IResult<(Operator, Expressi
         return Err(ParseError::Fail);
     }
 
-    let expected_indent = stream.indent_level + stream.indent_step;
+    let expected_indent = stream.indent_level + stream.indent_step()?;
 
     // Match Eol
     let (stream, _) = TokenType::Eol.process(stream)?;
@@ -381,14 +381,14 @@ pub fn secondary(stream: Input) -> IResult<SecondaryExpr> {
 
             // For multiline argument lists, calculate the method chain indent level
             // Arguments are at stream.indent_level, method chains would be at indent_level - indent_step
-            let method_chain_level = if stream.indent_level >= stream.indent_step {
-                stream.indent_level - stream.indent_step
+                    let method_chain_level = if stream.indent_level >= stream.indent_step()? {
+                        stream.indent_level - stream.indent_step()?
             } else {
                 0
             };
 
             // Only close if the dot is at or below the method chain level
-            if (indent_level as usize) <= method_chain_level + stream.indent_step {
+                    if (indent_level as usize) <= method_chain_level + stream.indent_step()? {
                 return arguments_list_short_circuit(stream)
                     .and_then(|_| Err(ParseError::ShortCircuit));
             }
@@ -544,7 +544,7 @@ pub fn multiline_arguments_context_aware(stream: Input) -> IResult<Vec<Argument>
     // This only applies at the base level (indent 0) where multiline dots create ambiguity
     // Inside function bodies or other nested contexts, there's no ambiguity
     if stream.indent_level == 0 && stream.after_multiline_dot {
-        if arg_indent_level == stream.indent_step {
+            if arg_indent_level == stream.indent_step()? {
             // At base level immediately after a multiline dot chain, one indent step is ambiguous:
             // it could start arguments or continue the surrounding call chain.
             return Err(ParseError::UnexpectedIndent(

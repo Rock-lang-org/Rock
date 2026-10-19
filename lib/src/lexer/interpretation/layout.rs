@@ -63,6 +63,32 @@ impl<'a> LayoutView<'a> {
         self.view.offset()
     }
 
+    /// Suspend only at physical line boundaries; do not ask Rock to interpret
+    /// any byte in the captured range, including quotes, comments or margins.
+    pub fn capture_to(&mut self, end: usize, limits: crate::lexer::lossless::ScanLimits)
+        -> Result<LosslessStream, RockError>
+    {
+        let stream = self.view.cursor.stream;
+        let start = self.offset();
+        let captured = stream.slice(start..end, limits).map_err(RockError::Preservation)?;
+        if !matches!(self.terminal, Terminal::Reading) || !self.at_line_start {
+            return Err(RockError::InvalidCaptureBoundary { span: captured.start_span() });
+        }
+        let mut cursor = self.view.cursor;
+        let mut last = None;
+        while cursor.offset < end {
+            last = cursor.bump();
+        }
+        if end != start && end != stream.len_bytes() && last != Some('\n') {
+            return Err(RockError::InvalidCaptureBoundary { span: captured.end_span() });
+        }
+        self.view.cursor = cursor;
+        self.line_has_code = false;
+        self.suppress_eol = false;
+        self.last_was_indent = false;
+        Ok(captured)
+    }
+
     fn emit(&mut self, token: LayoutToken) -> LayoutToken {
         self.emitted = true;
         self.last_was_eol = token.token.token_type == TokenType::Eol;

@@ -192,14 +192,14 @@ fn parse_macro_block_recursive<'a>(
 
                 // fix the indentation for the parser
                 if let TokenType::Indent(level) = token.token_type {
-                    if level == 0 || level == stream.indent_step as u8 {
+                    if level == 0 || level == stream.indent_step()? as u8 {
                         // the definition is over
                         return Ok((stream, block));
                     }
                     if level % 2 != 0 {
                         return Err(ParseError::UnexpectedIndent(level, token.span.clone()));
                     }
-                    let Some(base_indent) = (stream.indent_step as u8).checked_mul(2) else {
+                    let Some(base_indent) = (stream.indent_step()? as u8).checked_mul(2) else {
                         return Err(ParseError::UnexpectedIndent(level, token.span.clone()));
                     };
                     let Some(adjusted_indent) = level.checked_sub(base_indent) else {

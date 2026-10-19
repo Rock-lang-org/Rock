@@ -1,0 +1,266 @@
+//! Capture-capable lossless backing for parser cursors.
+
+use std::cell::RefCell;
+
+use crate::lexer::interpretation::layout::{LayoutToken, LayoutView};
+use crate::lexer::interpretation::RockError;
+use crate::lexer::lossless::{LosslessError, LosslessStream, ScanLimits};
+use crate::lexer::{Span, TokenType};
+
+#[derive(Debug, Clone, Copy)]
+pub struct SourceLimits {
+    /// All cached results, including errors and EOF, across every branch.
+    pub max_entries: usize,
+    pub max_branches: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum SourceError {
+    Rock(RockError),
+    Preservation(LosslessError),
+    UnexpectedEOF(Span),
+    UnexpectedIndent(u8, Span),
+    LimitExceeded { resource: &'static str, span: Span },
+}
+
+#[derive(Clone)]
+struct Checkpoint<'a> {
+    view: LayoutView<'a>,
+    indent_step: Option<usize>,
+}
+
+struct Entry<'a> {
+    before: Checkpoint<'a>,
+    result: Result<Option<LayoutToken>, SourceError>,
+}
+
+struct Branch<'a> {
+    entries: Vec<Entry<'a>>,
+    tail: Checkpoint<'a>,
+    stopped: bool,
+}
+
+struct Cache<'a> {
+    branches: Vec<Branch<'a>>,
+    entries: usize,
+    reads: usize,
+}
+
+/// Owns lazy cache storage while cursor/checkpoint handles stay cheap Copy values.
+/// A capture forks only the reader state, never mutable speculative results.
+pub struct SourceInput<'a> {
+    stream: &'a LosslessStream,
+    eof: Span,
+    limits: SourceLimits,
+    cache: RefCell<Cache<'a>>,
+}
+
+impl std::fmt::Debug for SourceInput<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SourceInput").field("eof", &self.eof).finish_non_exhaustive()
+    }
+}
+
+impl<'a> SourceInput<'a> {
+    pub fn new(stream: &'a LosslessStream, terminal_layout: bool, limits: SourceLimits)
+        -> Result<Self, SourceError>
+    {
+        if limits.max_branches == 0 {
+            return Err(SourceError::LimitExceeded { resource: "branches", span: stream.start_span() });
+        }
+        let mut branches = Vec::new();
+        reserve(&mut branches, 0)?;
+        branches.push(Branch {
+            entries: Vec::new(),
+            tail: Checkpoint { view: LayoutView::new(stream, terminal_layout), indent_step: None },
+            stopped: false,
+        });
+        Ok(Self {
+            stream, eof: stream.end_span(), limits,
+            cache: RefCell::new(Cache { branches, entries: 0, reads: 0 }),
+        })
+    }
+
+    pub fn cursor(&'a self) -> SourceCursor<'a> {
+        SourceCursor { input: self, branch: 0, start: 0, end: None }
+    }
+
+    fn peek(&self, branch: usize, index: usize) -> Result<Option<LayoutToken>, SourceError> {
+        let mut cache = self.cache.borrow_mut();
+        loop {
+            let current = &cache.branches[branch];
+            if let Some(entry) = current.entries.get(index) {
+                return entry.result.clone();
+            }
+            if current.stopped {
+                // A deferred error terminates this interpretation, not the source.
+                return current.entries.last().map(|entry| entry.result.clone()).unwrap_or(Ok(None));
+            }
+            if cache.entries == self.limits.max_entries {
+                return Err(SourceError::LimitExceeded { resource: "entries", span: self.eof.clone() });
+            }
+            let before = current.tail.clone();
+            reserve(&mut cache.branches[branch].entries, before.view.offset())?;
+            let mut after = before.clone();
+            cache.reads += 1;
+            let result = after.view.next_token().map_err(SourceError::Rock).and_then(|token| {
+                if let Some(token) = &token {
+                    if let TokenType::Indent(width) = token.token.token_type {
+                        if width % 2 != 0 {
+                            return Err(SourceError::UnexpectedIndent(width, token.token.span.clone()));
+                        }
+                        if width != 0 && after.indent_step.is_none() {
+                            after.indent_step = Some(usize::from(width));
+                        }
+                    }
+                }
+                Ok(token)
+            });
+            let current = &mut cache.branches[branch];
+            current.stopped = !matches!(result, Ok(Some(_)));
+            current.tail = if result.is_err() { before.clone() } else { after };
+            current.entries.push(Entry { before, result });
+            cache.entries += 1;
+        }
+    }
+
+    fn checkpoint(&self, branch: usize, index: usize) -> Result<Checkpoint<'a>, SourceError> {
+        // Materialize only the prefix before this checkpoint, never its next token.
+        if index > 0 {
+            self.peek(branch, index - 1)?
+                .ok_or_else(|| SourceError::UnexpectedEOF(self.eof.clone()))?;
+        }
+        let cache = self.cache.borrow();
+        let current = &cache.branches[branch];
+        if let Some(entry) = current.entries.get(index) {
+            Ok(entry.before.clone())
+        } else if index == current.entries.len() {
+            Ok(current.tail.clone())
+        } else {
+            Err(SourceError::UnexpectedEOF(self.eof.clone()))
+        }
+    }
+
+    fn fork(&self, checkpoint: Checkpoint<'a>) -> Result<usize, SourceError> {
+        let mut cache = self.cache.borrow_mut();
+        if cache.branches.len() == self.limits.max_branches {
+            return Err(SourceError::LimitExceeded { resource: "branches", span: self.eof.clone() });
+        }
+        reserve(&mut cache.branches, checkpoint.view.offset())?;
+        let branch = cache.branches.len();
+        cache.branches.push(Branch { entries: Vec::new(), tail: checkpoint, stopped: false });
+        Ok(branch)
+    }
+
+    #[cfg(test)]
+    fn read_count(&self) -> usize {
+        self.cache.borrow().reads
+    }
+}
+
+/// Token indices name cached results, not guessed offsets in printed text.
+#[derive(Debug, Clone, Copy)]
+pub struct SourceCursor<'a> {
+    input: &'a SourceInput<'a>,
+    branch: usize,
+    start: usize,
+    end: Option<usize>,
+}
+
+impl SourceCursor<'_> {
+    pub(super) fn source_eof(&self) -> Span {
+        self.input.eof.clone()
+    }
+
+    /// Explicit full inspection, not used by ordinary parser lookahead.
+    /// A terminal deferred error is one input event, never an empty suffix.
+    pub(super) fn event_count(&self) -> usize {
+        let mut count = 0;
+        loop {
+            match self.peek(count) {
+                Ok(Some(_)) => count += 1,
+                Ok(None) => return count,
+                Err(_) => return count + 1,
+            }
+        }
+    }
+
+    pub fn peek(&self, distance: usize) -> Result<Option<LayoutToken>, SourceError> {
+        let Some(index) = self.start.checked_add(distance) else { return Ok(None) };
+        if self.end.is_some_and(|end| index >= end) { return Ok(None) }
+        self.input.peek(self.branch, index)
+    }
+
+    pub fn advance(&self, count: usize) -> Result<Self, SourceError> {
+        if count > 0 && self.peek(count - 1)?.is_none() {
+            return Err(SourceError::UnexpectedEOF(self.eof_span()?));
+        }
+        let start = self.start.checked_add(count)
+            .ok_or_else(|| SourceError::UnexpectedEOF(self.input.eof.clone()))?;
+        Ok(Self { start, ..*self })
+    }
+
+    /// Does not inspect the token following the prefix, even for EOF metadata.
+    pub fn prefix(&self, count: usize) -> Result<Self, SourceError> {
+        let advanced = self.advance(count)?;
+        Ok(Self { end: Some(advanced.start), ..*self })
+    }
+
+    pub fn offset(&self) -> Result<usize, SourceError> {
+        Ok(self.input.checkpoint(self.branch, self.start)?.view.offset())
+    }
+
+    pub fn eof_span(&self) -> Result<Span, SourceError> {
+        match self.end {
+            Some(end) => {
+                let offset = self.input.checkpoint(self.branch, end)?.view.offset();
+                self.input.stream.slice(offset..offset, ScanLimits { max_source_bytes: 0, max_runs: 0 })
+                    .map(|stream| stream.start_span()).map_err(SourceError::Preservation)
+            }
+            None => Ok(self.input.eof.clone()),
+        }
+    }
+
+    /// Discover layout at this position only; speculative later results cannot
+    /// select a step or make an earlier checkpoint invalid.
+    pub fn indent_step(&self) -> Result<usize, SourceError> {
+        if let Some(step) = self.input.checkpoint(self.branch, self.start)?.indent_step {
+            return Ok(step);
+        }
+        let mut cursor = *self;
+        while let Some(token) = cursor.peek(0)? {
+            match token.token.token_type {
+                TokenType::Indent(width) if width > 0 => return Ok(usize::from(width)),
+                TokenType::Indent(0) | TokenType::Eol => cursor = cursor.advance(1)?,
+                _ => break,
+            }
+        }
+        Ok(4)
+    }
+
+    pub fn same_remaining(&self, other: &Self) -> bool {
+        std::ptr::eq(self.input, other.input) && self.branch == other.branch
+            && self.start == other.start && self.end == other.end
+    }
+
+    pub fn capture_to(&self, end: usize, limits: ScanLimits)
+        -> Result<(Self, LosslessStream), SourceError>
+    {
+        let mut checkpoint = self.input.checkpoint(self.branch, self.start)?;
+        // A bounded branch needs its own physically bounded view, not permission
+        // to interpret past the token prefix after skipping any of its contents.
+        if self.end.is_some() {
+            return Err(SourceError::Rock(RockError::InvalidCaptureBoundary { span: self.eof_span()? }));
+        }
+        let captured = checkpoint.view.capture_to(end, limits).map_err(SourceError::Rock)?;
+        let branch = self.input.fork(checkpoint)?;
+        Ok((Self { branch, start: 0, end: None, ..*self }, captured))
+    }
+}
+
+fn reserve<T>(entries: &mut Vec<T>, offset: usize) -> Result<(), SourceError> {
+    entries.try_reserve(1).map_err(|_| SourceError::Preservation(LosslessError::AllocationFailed { offset }))
+}
+
+#[cfg(test)]
+mod tests;
