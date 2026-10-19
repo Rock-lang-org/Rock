@@ -305,6 +305,32 @@ opaque blocks, and library DSL policies are not certified by this parser slice.
 Formatting remains deferred; no formatter/check, Clippy, or separate build gate
 was run. Beads remains unavailable.
 
+### A.04 delivery receipt (2026-10-19)
+
+Generated parsing now dispatches explicitly to an item list or one ordinary Rock
+expression. Both use the same lossless/capture-aware source boundary, expansion
+parent, parser configuration, resource limits, and complete-input check. Empty
+item output is accepted; no category fallback or synthetic lambda is introduced.
+
+- Initial `cargo test -p rock-lib --lib macro_a_04_ -- --nocapture` was RED:
+  the requested-category/result API did not exist (and the initial assertion
+  referenced an unavailable test formatter helper, subsequently removed).
+- The first implemented run passed five of six tests; an empty item stream
+  exposed terminal blank layout being treated as an item. The module parser now
+  consumes empty lines before probing the next item. All six focused tests pass.
+- Controls cover comma/grouping structure, empty/multiple items, empty expressions,
+  category mismatches, trailing input, NUL/forged EOF, direct non-Rock DSL output,
+  bounded-source offsets/errors, ordinary `do`/`loop` syntax, and opaque generated
+  nested blocks with explicit parent edges.
+- Adjacent `cargo test -p rock-lib --lib parser:: -- --nocapture` and
+  `cargo test -p rock-lib --lib macro_expansion:: -- --nocapture` pass 568 and
+  66 tests, respectively.
+
+Expression execution and repeated-array values containing opaque blocks remain
+outside this slice; the latter must parse correctly or reject structurally before
+A.06 enables execution. Formatting remains deferred; no formatter/check, Clippy,
+or separate build gate was run. Beads remains unavailable.
+
 ### Ab. Scope and schedule the same engine across modules
 
 | Slice | Implement only | Focused acceptance | Runner |

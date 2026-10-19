@@ -307,7 +307,7 @@ fn parse_generated_top_levels(
     context: &MacroExpansionContext<'_>,
     expansion_id: Option<ExpansionId>,
 ) -> Result<Vec<TopLevel>, Diagnostics> {
-    let module = generated_parser::parse_generated_source(&stream, context.config, expansion_id).map_err(
+    let parsed = generated_parser::parse_generated_source(&stream, context.config, crate::ast::MacroOutputCategory::Items, expansion_id).map_err(
         |mut diags| {
             if let Some(expansion_id) = expansion_id {
                 context.map_generated_diagnostics(&mut diags, expansion_id);
@@ -318,7 +318,12 @@ fn parse_generated_top_levels(
         },
     )?;
 
-    Ok(module.top_levels)
+    match parsed {
+        generated_parser::GeneratedSyntax::Items(module) => Ok(module.top_levels),
+        generated_parser::GeneratedSyntax::Expression(_) => Err(Diagnostics(vec![Diagnostic::new(
+            "generated item request returned an expression".into(), stream.start_span(),
+        ).with_code(crate::diagnostic::DiagnosticCode::Macro)])),
+    }
 }
 
 fn with_expansion_trace(

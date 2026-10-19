@@ -44,24 +44,54 @@ pub fn parse_lossless_source(
     config: &Config,
     expansion_parent: Option<crate::macro_expansion::ExpansionId>,
 ) -> Result<Module, ParseError> {
+    parse_lossless(stream, config, expansion_parent, module_inline).map(|mut module| {
+        module.filepath = Some(stream.start_span().file_path);
+        module
+    })
+}
+
+pub fn parse_lossless_expression(
+    stream: &LosslessStream,
+    config: &Config,
+    expansion_parent: Option<crate::macro_expansion::ExpansionId>,
+) -> Result<Expression, ParseError> {
+    parse_lossless(stream, config, expansion_parent, expression_fragment)
+}
+
+fn expression_fragment(stream: Input) -> IResult<Expression> {
+    let (stream, _) = empty_lines.process(stream)?;
+    let (stream, _) = indent.process(stream)?;
+    let (stream, expression) = expression.process(stream)?;
+    let (stream, _) = TokenType::Eol.process(stream)?;
+    let (stream, _) = empty_lines.process(stream)?;
+    let (stream, _) = TokenType::Eof.process(stream)?;
+    Ok((stream, expression))
+}
+
+fn parse_lossless<P: Parser>(
+    stream: &LosslessStream,
+    config: &Config,
+    expansion_parent: Option<crate::macro_expansion::ExpansionId>,
+    mut parser: P,
+) -> Result<P::Output, ParseError> {
     let input = source_cursor::SourceInput::new(stream, true, CURSOR_LIMITS)
         .map_err(|error| engine::source_error(error, stream.start_span()))?;
     // Reset the best error tracker at the start of parsing
     engine::reset_best_error();
 
     let ctx = ParseCtx { expansion_parent, ..ParseCtx::from_source(&input, config) };
-    let result = module_inline.process(ctx);
+    let result = parser.process(ctx).and_then(|(rest, value)| {
+        if rest.is_empty() { Ok(value) } else {
+            Err(ParseError::UnexpectedToken("end of source fragment".into(), rest.seek()?))
+        }
+    });
 
     if config.has_debug_print(DebugPrint::Tokens) {
         println!("{:#?}", input.tokens_debug());
     }
 
     match result {
-        Ok((_, mut program)) => {
-            // Set the filepath on the module
-            program.filepath = Some(stream.start_span().file_path);
-            Ok(program)
-        }
+        Ok(value) => Ok(value),
         Err(e) => {
             // Return the best error we've seen during parsing
             Err(engine::get_best_error(e).without_source_context())

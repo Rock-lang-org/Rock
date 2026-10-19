@@ -9,6 +9,8 @@ pub fn module_inline(stream: Input) -> IResult<Module> {
 
     // Manually parse top-level items to track the deepest error
     loop {
+        let (rest, _) = super::empty_lines.process(current_stream)?;
+        current_stream = rest;
         if current_stream.is_empty() {
             break;
         }
