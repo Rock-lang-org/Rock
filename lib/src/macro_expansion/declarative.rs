@@ -32,6 +32,7 @@ pub struct MacroTemplate {
 pub enum CaptureKind {
     Ident,
     Expr,
+    /// The existing single Rock type-name token, not an arbitrary type fragment.
     Type,
 }
 
@@ -59,8 +60,7 @@ impl CaptureSet {
     pub fn new() -> Self { Self::default() }
 
     pub fn insert_direct(&mut self, name: String, stream: TokenStream) {
-        let streams = self.direct.entry(name).or_default();
-        if !streams.contains(&stream) { streams.push(stream); }
+        self.direct.entry(name).or_default().push(stream);
     }
 
     pub fn get_direct(&self, name: &str) -> Option<&[TokenStream]> {
@@ -77,6 +77,17 @@ impl CaptureSet {
 }
 
 impl DeclarativeMacro {
+    pub(super) fn validate(&self) -> Result<(), String> {
+        if self.arms.is_empty() {
+            return Err("declarative macro requires at least one arm".into());
+        }
+        for arm in &self.arms {
+            super::macro_arg_matcher::validate_matcher(&arm.matcher.fragments)?;
+            arm.template.validate()?;
+        }
+        Ok(())
+    }
+
     pub fn from_ast(decl: &MacroDecl) -> Self {
         Self {
             name: decl.name.name.clone(),
@@ -92,14 +103,27 @@ impl DeclarativeMacro {
 }
 
 impl MacroTemplate {
+    fn validate(&self) -> Result<(), String> {
+        for fragment in &self.fragments {
+            if let TemplateFragment::Repetition(inner) = fragment {
+                if inner.iter().any(|fragment| matches!(fragment, TemplateFragment::Repetition(_))) {
+                    return Err("nested repetition is not supported in declarative macro templates".into());
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn expand(&self, captures: &CaptureSet) -> Result<TokenStream, String> {
+        self.validate()?;
         self.expand_fragments(&self.fragments, captures, None, None)
     }
 
     pub fn expand_with_origins(&self, captures: &CaptureSet, expansion: ExpansionId, generated_source: GeneratedSourceId)
         -> Result<TokenStream, String>
     {
+        self.validate()?;
         self.expand_fragments(&self.fragments, captures, None, Some((expansion, generated_source)))
     }
 

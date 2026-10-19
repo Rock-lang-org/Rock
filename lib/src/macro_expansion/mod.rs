@@ -28,6 +28,9 @@ pub mod token_tree;
 #[cfg(test)]
 mod storage_tests;
 
+#[cfg(test)]
+mod matcher_contract_tests;
+
 pub use context::MacroExpansionContext;
 pub use source_map::{
     ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, TokenOrigin,
@@ -43,6 +46,7 @@ pub fn expand_macros_with_context(
     let mut depth = 0;
     let mut module = program.module;
 
+    validate_macro_definitions(&module)?;
     while module.has_macro_invoc() {
         let mut decls = HashMap::new();
         let mut proc_macros = HashMap::new();
@@ -76,6 +80,7 @@ pub fn expand_macros_with_context(
             }
         }
         module = expand_macros_once(module, &decls, &proc_macros, context)?;
+        validate_macro_definitions(&module)?;
 
         depth += 1;
 
@@ -109,6 +114,21 @@ pub fn expand_macros_with_context(
     if !pending.diagnostics.0.is_empty() { return Err(pending.diagnostics); }
 
     Ok(program)
+}
+
+fn validate_macro_definitions(module: &Module) -> Result<(), Diagnostics> {
+    struct Definitions { diagnostics: Diagnostics }
+    impl<'ast> crate::ast::visit::Visitor<'ast> for Definitions {
+        fn visit_macro_decl(&mut self, declaration: &'ast MacroDecl) {
+            if let Err(message) = DeclarativeMacro::from_ast(declaration).validate() {
+                self.diagnostics.push(Diagnostic::new(message, declaration.name.span.clone())
+                    .with_code(crate::diagnostic::DiagnosticCode::Macro));
+            }
+        }
+    }
+    let mut definitions = Definitions { diagnostics: Diagnostics::default() };
+    crate::ast::visit::walk_module(&mut definitions, module);
+    if definitions.diagnostics.0.is_empty() { Ok(()) } else { Err(definitions.diagnostics) }
 }
 
 fn expand_macros_once(
@@ -162,7 +182,6 @@ fn expand_top_level(
         parent,
     });
     let declarative_macro = DeclarativeMacro::from_ast(macro_decl);
-    let mut top_levels = vec![];
     let mut diagnostics = Diagnostics::default();
 
     for arm in &declarative_macro.arms {
@@ -177,9 +196,12 @@ fn expand_top_level(
         );
         let correspondances = match macro_matcher.run() {
             Ok(correspondances) => correspondances,
-            Err(diags) => {
+            Err(macro_arg_matcher::MatchError::NoMatch(diags)) => {
                 diagnostics.merge(with_expansion_trace(diags, context, expansion_id));
                 continue;
+            }
+            Err(macro_arg_matcher::MatchError::Invalid(diags)) => {
+                return Err(with_expansion_trace(diags, context, expansion_id));
             }
         };
 
@@ -198,20 +220,14 @@ fn expand_top_level(
             }
         };
 
-        top_levels.extend(parse_generated_top_levels(
+        return parse_generated_top_levels(
             body,
             context,
             Some(expansion_id),
-        )?);
-
-        break;
+        );
     }
 
-    if top_levels.is_empty() {
-        return Err(diagnostics);
-    }
-
-    Ok(top_levels)
+    Err(diagnostics)
 }
 
 fn expand_proc_macro_top_level(

@@ -20,6 +20,27 @@ struct MacroThread<'a> {
 }
 
 #[derive(Debug)]
+pub(super) enum MatchError {
+    NoMatch(Diagnostics),
+    Invalid(Diagnostics),
+}
+
+impl MatchError {
+    #[cfg(test)]
+    pub(super) fn into_diagnostics(self) -> Diagnostics {
+        match self { Self::NoMatch(diagnostics) | Self::Invalid(diagnostics) => diagnostics }
+    }
+}
+
+impl From<Diagnostics> for MatchError {
+    fn from(diagnostics: Diagnostics) -> Self { Self::Invalid(diagnostics) }
+}
+
+impl From<ParseError> for MatchError {
+    fn from(error: ParseError) -> Self { Self::Invalid(error.into()) }
+}
+
+#[derive(Debug)]
 pub struct MacroArgMatcher<'args, 'ctx, 'cfg> {
     threads: Vec<MacroThread<'args>>,
     must_be_completed: bool,
@@ -57,7 +78,10 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
         }
     }
 
-    pub fn run(&mut self) -> Result<Correspondance, Diagnostics> {
+    pub fn run(&mut self) -> Result<Correspondance, MatchError> {
+        for thread in &self.threads {
+            validate_matcher(&thread.tokens).map_err(|message| ParseError::HardError(message, self.macro_span.clone()))?;
+        }
         self.must_be_completed = true;
 
         let (correspondances, _) = self.match_threads()?;
@@ -76,14 +100,27 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
         ).into())
     }
 
-    fn match_threads(&mut self) -> Result<(Correspondance, &'args [Token]), Diagnostics> {
+    fn match_threads(&mut self) -> Result<(Correspondance, &'args [Token]), MatchError> {
         let mut threads = self.threads.clone();
         let mut most_advanced_arg_idx = 0;
+        let mut solution = None;
 
-        while !has_one_solution(threads.clone(), self.must_be_completed) && !threads.is_empty() {
+        while !threads.is_empty() {
             let mut new_threads = vec![];
 
             for thread in &mut threads {
+                if remaining_is_all_repetition_or_empty(&thread.tokens)
+                    && (!self.must_be_completed || thread.args.is_empty())
+                {
+                    if !self.must_be_completed {
+                        return Ok((thread.correspondances.clone(), thread.args));
+                    }
+                    if solution.is_some() {
+                        return Err(ParseError::HardError("ambiguous declarative macro match".into(), self.invoc_span.clone()).into());
+                    }
+                    solution = Some((thread.correspondances.clone(), thread.args));
+                    continue;
+                }
                 if let Some(arg) = thread.args.first() {
                     let tokens = &thread.tokens;
 
@@ -199,12 +236,15 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                                     self.context,
                                 );
 
-                                let Ok((correspondances, new_args)) = matcher.match_threads()
-                                else {
-                                    break;
+                                let (correspondances, new_args) = match matcher.match_threads() {
+                                    Ok(found) => found,
+                                    Err(MatchError::NoMatch(_)) => break,
+                                    Err(error) => return Err(error),
                                 };
                                 if new_args.len() == repeated_args.len() {
-                                    break;
+                                    return Err(ParseError::HardError(
+                                        "declarative macro repetition made no input progress".into(), self.invoc_span.clone(),
+                                    ).into());
                                 }
 
                                 repeated_correspondances.insert_nested(correspondances);
@@ -219,61 +259,54 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                             }
                         }
                     }
-                } else {
-                    // FOUND IT
-                    if (self.must_be_completed
-                        && thread.tokens.is_empty()
-                        && thread.args.is_empty())
-                        || (!self.must_be_completed && (thread.tokens.is_empty()))
-                    {
-                        return Ok((thread.correspondances.clone(), thread.args));
-                    }
                 }
             }
             self.threads = new_threads.clone();
             threads = new_threads.clone();
         }
 
-        if let Some(thread) = get_correspondances_thread(threads.clone(), self.must_be_completed) {
-            Ok((thread.correspondances.clone(), thread.args))
+        if let Some(solution) = solution {
+            Ok(solution)
         } else {
             if most_advanced_arg_idx >= self.args.len() {
                 most_advanced_arg_idx = self.args.len().saturating_sub(1);
             }
 
             let Some(last_found_arg) = self.args.get(most_advanced_arg_idx) else {
-                return Err(ParseError::MacroNoCorrespondance {
+                return Err(MatchError::NoMatch(ParseError::MacroNoCorrespondance {
                     macro_name: self.macro_span.clone(),
                     invoc_name: self.invoc_span.clone(),
                     invoc_arg: None,
                 }
-                .into());
+                .into()));
             };
 
-            Err(ParseError::MacroNoCorrespondance {
+            Err(MatchError::NoMatch(ParseError::MacroNoCorrespondance {
                 macro_name: self.macro_span.clone(),
                 invoc_name: self.invoc_span.clone(),
                 invoc_arg: Some(last_found_arg.span.clone()),
             }
-            .into())
+            .into()))
         }
     }
 }
 
-/// Preserve the legacy item matcher's layout-insensitive policy while retaining
-/// the exact source ranges for all captures; A.05 owns matcher policy changes.
+/// The flat matcher ignores whitespace, physical line endings and Rock comments.
+/// It does not synthesize parser layout or reinterpret arbitrary DSL units. Only
+/// this temporary Rock view discards trivia; captures slice the retained input
+/// from the first significant piece through the last, including internal trivia.
+/// Spacing-sensitive Rock token kinds remain distinct during literal matching.
 pub(super) fn rock_arguments(input: &TokenStream) -> Result<(Vec<Token>, Vec<std::ops::Range<usize>>), Diagnostics> {
-    use crate::lexer::interpretation::layout::{LayoutOrigin, LayoutView};
-    let mut view = LayoutView::new(input, false);
+    use crate::lexer::interpretation::{PieceKind, RockView};
+    let mut view = RockView::new(input);
     let mut tokens = Vec::new();
     let mut ranges = Vec::new();
-    while let Some(piece) = view.next_token().map_err(|error| ParseError::HardError(
+    while let Some(piece) = view.next_piece().map_err(|error| ParseError::HardError(
         format!("invalid Rock macro arguments: {error:?}"), input.start_span(),
     ))? {
-        if matches!(piece.token.token_type, TokenType::Indent(_) | TokenType::Eol | TokenType::Eof) { continue; }
-        if let LayoutOrigin::Source(range) = piece.origin {
-            tokens.push(piece.token);
-            ranges.push(range);
+        if let PieceKind::Token(token_type) = piece.kind {
+            tokens.push(Token { token_type, span: piece.span });
+            ranges.push(piece.range);
         }
     }
     Ok((tokens, ranges))
@@ -293,42 +326,18 @@ fn remaining_is_all_repetition_or_empty(tokens: &[MatcherFragment]) -> bool {
     })
 }
 
-fn has_one_solution(threads: Vec<MacroThread>, must_be_completed: bool) -> bool {
-    threads.iter().any(|thread| {
-        (must_be_completed
-            && (remaining_is_all_repetition_or_empty(&thread.tokens) && thread.args.is_empty()))
-            || (!must_be_completed
-                && (remaining_is_all_repetition_or_empty(&thread.tokens) || thread.args.is_empty()))
-    })
-}
-
-fn get_correspondances_thread(
-    threads: Vec<MacroThread<'_>>,
-    must_be_completed: bool,
-) -> Option<MacroThread<'_>> {
-    if must_be_completed {
-        return threads
-            .iter()
-            .find(|thread| {
-                remaining_is_all_repetition_or_empty(&thread.tokens) && thread.args.is_empty()
-            })
-            .cloned();
+pub(super) fn validate_matcher(fragments: &[MatcherFragment]) -> Result<(), String> {
+    for fragment in fragments {
+        if let MatcherFragment::Repetition(inner) = fragment {
+            if inner.iter().any(|fragment| matches!(fragment, MatcherFragment::Repetition(_))) {
+                return Err("nested repetition is not supported in declarative macro matchers".into());
+            }
+            if inner.is_empty() {
+                return Err("declarative macro repetition must make input progress".into());
+            }
+        }
     }
-
-    if let Some(found) = threads.iter().find(|thread| {
-        remaining_is_all_repetition_or_empty(&thread.tokens) && thread.args.is_empty()
-    }) {
-        Some(found.clone())
-    } else if let Some(found) = threads.iter().find(|thread| thread.args.is_empty()) {
-        return Some(found.clone());
-    } else if let Some(found) = threads
-        .iter()
-        .find(|thread| remaining_is_all_repetition_or_empty(&thread.tokens))
-    {
-        return Some(found.clone());
-    } else {
-        None
-    }
+    Ok(())
 }
 
 #[cfg(test)]

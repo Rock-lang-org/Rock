@@ -325,11 +325,54 @@ item output is accepted; no category fallback or synthetic lambda is introduced.
 - Adjacent `cargo test -p rock-lib --lib parser:: -- --nocapture` and
   `cargo test -p rock-lib --lib macro_expansion:: -- --nocapture` pass 568 and
   66 tests, respectively.
+- The subsequent full `cargo test -p rock-lib` passes 2,522 units, 789 main
+  integrations, and one parser integration; one doctest is ignored (archive
+  `ce87e6befc02ff1d`). No A.04 functional changes followed its focused gates.
 
 Expression execution and repeated-array values containing opaque blocks remain
 outside this slice; the latter must parse correctly or reject structurally before
 A.06 enables execution. Formatting remains deferred; no formatter/check, Clippy,
 or separate build gate was run. Beads remains unavailable.
+
+### A.05 delivery receipt (2026-10-20)
+
+Declarative matching now explicitly ignores Rock whitespace, physical line
+endings, and comments in its temporary view while retaining original internal
+trivia, snapshot segments, contexts, and independent capture occurrences. Literal
+matching keeps Rock's spacing-sensitive token kinds; `ty` remains a single type
+name. Indentation is not synthesized or narrowed before the flat matcher ignores
+it. Non-Rock block input still produces structured diagnostics, not an arbitrary
+text/DSL match.
+
+Repetition submatches must finish the whole group before succeeding; complete
+arms must consume all significant input. Ambiguous complete splits diagnose and
+cannot fall through to another arm. Definition validation rejects unsupported
+nested repetitions, empty-progress matcher repetitions, and empty definitions,
+including unused declarations. Repeated key groups are stable across hash-map
+order, duplicated captures are not deduplicated, and template length mismatches
+reject. A selected arm emitting zero items now succeeds without arm fallthrough.
+
+- `cargo test -p rock-lib --lib macro_a_05_ -- --nocapture` initially observed
+  RED at three passes/seven failures. Strengthening the duplicate-origin control
+  and adding ambiguity produced two passes/nine failures. Implementation then
+  reached nine/eleven and ten/eleven; fixture corrections made repetition closes
+  explicit (`)*`) and retained the spacing needed for a literal operator at EOF.
+- The focused diagnostic command
+  `cargo test -p rock-lib --lib macro_a_05_flat_repetition -- --nocapture`
+  observed the remaining literal-token spacing mismatch. Its temporary debug
+  print was removed after correcting that input, without relaxing token matching.
+- The focused runner subsequently passed eleven tests; the added empty-definition
+  control brings final acceptance to twelve. Final adjacent
+  `cargo test -p rock-lib --lib macro_expansion:: -- --nocapture` and
+  `cargo test -p rock-lib --lib parser:: -- --nocapture` pass 78 and 568 tests.
+- Final `cargo test -p rock-lib` passes 2,534 units, 789 main integrations, and
+  one parser integration; one doctest is ignored (archive `971354cdeddd19a8`).
+  Warnings remain the 13 unused optional-group library interfaces and two
+  group-error-field warnings in tests. No functional edits follow these gates.
+
+Expression execution/opaque expression forwarding and capture-aware relative
+layout remain A.06. Formatting is still deferred; no formatter/check, Clippy, or
+separate build gate ran. Beads remains unavailable.
 
 ### Ab. Scope and schedule the same engine across modules
 

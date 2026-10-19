@@ -18,11 +18,7 @@ impl Correspondance {
     }
 
     pub fn insert_direct(&mut self, name: String, tokens: TokenStream) {
-        let entry = self.entries.entry(name).or_insert(vec![tokens.clone()]);
-
-        if !entry.contains(&tokens) {
-            entry.push(tokens);
-        }
+        self.entries.entry(name).or_default().push(tokens);
     }
 
     pub fn insert_nested(&mut self, correspondance: Correspondance) {
@@ -47,7 +43,7 @@ impl Correspondance {
     }
 
     pub fn keys(&self) -> Vec<String> {
-        self.entries
+        let mut keys: Vec<_> = self.entries
             .keys()
             .cloned()
             .chain(
@@ -55,7 +51,10 @@ impl Correspondance {
                     .iter()
                     .flat_map(|corresp| corresp.keys()),
             )
-            .collect()
+            .collect();
+        keys.sort();
+        keys.dedup();
+        keys
     }
 
     pub fn get(&self, name: &str, max_level: usize) -> Option<Vec<TokenStream>> {
