@@ -1,4 +1,5 @@
 mod lexer;
+pub mod groups;
 pub mod interpretation;
 pub mod lossless;
 mod span;

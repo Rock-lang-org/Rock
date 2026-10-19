@@ -1,11 +1,5 @@
-use crate::lexer::{Span, Token, TokenType};
+use crate::lexer::{groups::Delimiter, Span, Token, TokenType};
 use crate::macro_expansion::{ExpansionId, GeneratedSourceId, TokenOrigin};
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Delimiter {
-    Paren,
-    Bracket,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TokenTree {
@@ -109,27 +103,15 @@ impl TokenStream {
                     inner,
                     close_origin,
                 } => {
-                    match delimiter {
-                        Delimiter::Paren => tokens.push((
-                            token_with_origin_span(TokenType::OpenParen, open_origin),
-                            open_origin.clone(),
-                        )),
-                        Delimiter::Bracket => tokens.push((
-                            token_with_origin_span(TokenType::OpenBracket, open_origin),
-                            open_origin.clone(),
-                        )),
-                    }
+                    tokens.push((
+                        token_with_origin_span(delimiter.open_token(), open_origin),
+                        open_origin.clone(),
+                    ));
                     tokens.extend(inner.to_tokens_with_origins());
-                    match delimiter {
-                        Delimiter::Paren => tokens.push((
-                            token_with_origin_span(TokenType::CloseParen, close_origin),
-                            close_origin.clone(),
-                        )),
-                        Delimiter::Bracket => tokens.push((
-                            token_with_origin_span(TokenType::CloseBracket, close_origin),
-                            close_origin.clone(),
-                        )),
-                    }
+                    tokens.push((
+                        token_with_origin_span(delimiter.close_token(), close_origin),
+                        close_origin.clone(),
+                    ));
                 }
             }
         }

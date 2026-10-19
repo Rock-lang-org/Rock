@@ -29,7 +29,8 @@ pub use context::MacroExpansionContext;
 pub use source_map::{
     ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, TokenOrigin,
 };
-pub use token_tree::{Delimiter, TokenStream, TokenTree};
+pub use crate::lexer::groups::Delimiter;
+pub use token_tree::{TokenStream, TokenTree};
 
 pub fn expand_macros_with_context(
     mut program: Program,
