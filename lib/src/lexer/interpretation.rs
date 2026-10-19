@@ -11,6 +11,8 @@ pub enum PieceKind {
     Token(TokenType),
     Whitespace,
     LineEnding,
+    LineComment,
+    BlockComment,
 }
 
 #[derive(Debug, Clone)]
@@ -27,8 +29,7 @@ pub struct RockPiece {
 pub enum RockError {
     Lexer(LexerError),
     Preservation(LosslessError),
-    /// Literal/comment interpretation is delivered in A0.05, not approximated here.
-    DelimitedSyntaxPending(Span),
+    UnterminatedBlockComment(Span),
 }
 
 #[derive(Clone, Copy)]
@@ -251,10 +252,10 @@ impl<'a> RockView<'a> {
             } else {
                 TokenType::Number(self.spelling(start)?)
             }
-        } else if matches!(character, '\'' | '"')
-            || (character == '/' && matches!(self.peek(start, 1), Some('/' | '*')))
-        {
-            return Err(RockError::DelimitedSyntaxPending(self.span(start, character.len_utf8())));
+        } else if matches!(character, '\'' | '"') {
+            return self.quoted(start, character).map(Some);
+        } else if character == '/' && matches!(self.peek(start, 1), Some('/' | '*')) {
+            return self.comment(start).map(Some);
         } else if OPERATORS_CHARS.contains(&character) {
             self.take_while(start, |ch| OPERATORS_CHARS.contains(&ch));
             let spelling = self.spelling(start)?;
@@ -274,5 +275,10 @@ impl<'a> RockView<'a> {
     }
 }
 
+mod delimited;
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod delimited_tests;

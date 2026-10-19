@@ -162,11 +162,11 @@ fn macro_a0_04_unmatched_groups_are_independent_tokens_not_global_errors() {
 }
 
 #[test]
-fn macro_a0_04_quoted_and_comment_views_are_explicitly_pending() {
-    for spelling in ["\"open", "'open", "// open", "/* open"] {
+fn macro_a0_05_failed_delimited_views_leave_the_source_untouched() {
+    for spelling in ["\"open", "'open", "/* open"] {
         let source = scan(spelling);
         let mut view = RockView::new(&source);
-        assert!(matches!(view.next_piece(), Err(RockError::DelimitedSyntaxPending(_))));
+        assert!(view.next_piece().is_err());
         assert_eq!(view.offset(), 0);
         assert_eq!(source.runs().iter().map(|run| run.text()).collect::<String>(), spelling);
     }
