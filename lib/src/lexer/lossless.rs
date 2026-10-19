@@ -1,0 +1,162 @@
+//! Source preservation only; Rock syntax is an optional, separate interpretation.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use super::Span;
+
+/// Storage hints, not Rock token kinds: quotes, comments and groups are just text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunKind {
+    Text,
+    /// Unicode whitespace other than the physical line endings CR and LF.
+    Whitespace,
+    /// One LF, CR, or CRLF, including inside unterminated quotes/comments.
+    LineEnding,
+}
+
+impl RunKind {
+    fn of(character: char) -> Self {
+        match character {
+            '\r' | '\n' => Self::LineEnding,
+            character if character.is_whitespace() => Self::Whitespace,
+            _ => Self::Text,
+        }
+    }
+}
+
+/// Both retained spelling and run metadata count toward preservation budgets.
+#[derive(Debug, Clone, Copy)]
+pub struct ScanLimits {
+    pub max_source_bytes: usize,
+    pub max_runs: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LosslessError {
+    EmptySourcePath,
+    SourceTooLarge { bytes: usize, limit: usize },
+    InvalidUtf8 { valid_up_to: usize, error_len: Option<usize> },
+    TooManyRuns { offset: usize, limit: usize },
+    AllocationFailed { offset: usize },
+}
+
+#[derive(Debug)]
+struct SourceSnapshot {
+    file_path: PathBuf,
+    text: String,
+}
+
+/// An immutable UTF-8 byte range backed by a retained source, never decoded text.
+#[derive(Debug, Clone)]
+pub struct LosslessRun {
+    source: Arc<SourceSnapshot>,
+    kind: RunKind,
+    range: std::ops::Range<usize>,
+}
+
+impl LosslessRun {
+    pub fn kind(&self) -> RunKind {
+        self.kind
+    }
+
+    pub fn range(&self) -> std::ops::Range<usize> {
+        self.range.clone()
+    }
+
+    pub fn text(&self) -> &str {
+        // Only the scanner constructs ranges, at validated UTF-8 boundaries.
+        &self.source.text[self.range.clone()]
+    }
+
+    pub fn span(&self) -> Span {
+        Span::new(self.source.file_path.clone(), self.range.start, self.range.end)
+    }
+}
+
+/// Complete source coverage; no synthetic EOF/layout and no Rock interpretation.
+#[derive(Debug, Clone)]
+pub struct LosslessStream {
+    source: Arc<SourceSnapshot>,
+    runs: Vec<LosslessRun>,
+}
+
+impl LosslessStream {
+    /// Takes ownership of bytes without copying spelling or consulting the filesystem.
+    pub fn from_bytes(
+        file_path: PathBuf,
+        bytes: Vec<u8>,
+        limits: ScanLimits,
+    ) -> Result<Self, LosslessError> {
+        if file_path.as_os_str().is_empty() {
+            return Err(LosslessError::EmptySourcePath);
+        }
+        if bytes.len() > limits.max_source_bytes {
+            return Err(LosslessError::SourceTooLarge {
+                bytes: bytes.len(),
+                limit: limits.max_source_bytes,
+            });
+        }
+        let text = String::from_utf8(bytes).map_err(|error| {
+            let error = error.utf8_error();
+            LosslessError::InvalidUtf8 {
+                valid_up_to: error.valid_up_to(),
+                error_len: error.error_len(),
+            }
+        })?;
+        let source = Arc::new(SourceSnapshot { file_path, text });
+        let mut runs = Vec::new();
+        let mut characters = source.text.char_indices().peekable();
+
+        // Every iteration consumes at least one scalar, without recursion/lookbehind.
+        while let Some((start, character)) = characters.next() {
+            if runs.len() == limits.max_runs {
+                return Err(LosslessError::TooManyRuns {
+                    offset: start,
+                    limit: limits.max_runs,
+                });
+            }
+            let kind = RunKind::of(character);
+            let mut end = start + character.len_utf8();
+            if kind == RunKind::LineEnding {
+                if character == '\r' && characters.peek().map(|(_, ch)| *ch) == Some('\n') {
+                    characters.next();
+                    end += 1;
+                }
+            } else {
+                while let Some(&(offset, next)) = characters.peek() {
+                    if RunKind::of(next) != kind {
+                        break;
+                    }
+                    characters.next();
+                    end = offset + next.len_utf8();
+                }
+            }
+            runs.try_reserve(1).map_err(|_| LosslessError::AllocationFailed {
+                offset: start,
+            })?;
+            runs.push(LosslessRun {
+                source: Arc::clone(&source),
+                kind,
+                range: start..end,
+            });
+        }
+
+        Ok(Self { source, runs })
+    }
+
+    pub fn file_path(&self) -> &Path {
+        &self.source.file_path
+    }
+
+    pub fn text(&self) -> &str {
+        &self.source.text
+    }
+
+    pub fn runs(&self) -> &[LosslessRun] {
+        &self.runs
+    }
+}
+
+#[cfg(test)]
+mod tests;

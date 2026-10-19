@@ -1,4 +1,5 @@
 mod lexer;
+pub mod lossless;
 mod span;
 mod token;
 
