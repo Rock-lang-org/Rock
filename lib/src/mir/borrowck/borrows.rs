@@ -222,6 +222,12 @@ fn borrow_from_reference_argument(
     };
     let type_view = TypeView::new(type_context);
     let mut source_ty = backend_contract.place_type_id(type_context, func, source)?;
+    // A shared input stays shared even if a different returned field is mutable.
+    let kind = if matches!(type_view.ty(source_ty), Ty::Reference { mutable: false, .. }) {
+        AccessKind::BorrowShared
+    } else {
+        kind
+    };
     let mut deref_count = 0;
     while let Ty::Reference { inner, .. } = type_view.ty(source_ty) {
         deref_count += 1;

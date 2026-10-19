@@ -1612,6 +1612,7 @@ impl BorrowChecker {
             func,
             type_context,
             backend_contract,
+            return_summaries,
             &loan_table,
             &loans_by_location,
             &reference_liveness,

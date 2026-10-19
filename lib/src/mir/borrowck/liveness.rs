@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::mir::{
-    BasicBlock, BasicBlockId, Local, MirBackendContract, MirFunction, MirProjectionKey, Operand,
+    BasicBlock, BasicBlockId, Local, MirBackendContract, MirFunction, MirFunctionId, MirProjectionKey, Operand,
     Place, Projection, Rvalue, StatementData, StatementKind, Terminator,
 };
 
@@ -10,6 +10,8 @@ use crate::mir::dataflow::analyses::{LoanState, LoanTable};
 use crate::mir::dataflow::{Analysis, BitSet, Lattice, LocalSet};
 use crate::type_context::{Ty, TypeContext, TypeView};
 use crate::types::{GenericParamId, Type};
+
+use super::{MissingSummaryMode, OriginSet, ReferenceEscapeAnalysis};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoanLocationIndex {
@@ -119,6 +121,7 @@ pub fn compute_active_loan_entries(
         func,
         type_context,
         &backend_contract,
+        &HashMap::new(),
         table,
         loan_at_location,
         reference_liveness,
@@ -129,6 +132,7 @@ pub fn compute_active_loan_entries_with_contract(
     func: &MirFunction,
     type_context: &TypeContext,
     backend_contract: &MirBackendContract,
+    return_summaries: &HashMap<MirFunctionId, OriginSet>,
     table: &LoanTable,
     loan_at_location: &LoanLocationIndex,
     reference_liveness: &ReferenceLiveness,
@@ -136,6 +140,7 @@ pub fn compute_active_loan_entries_with_contract(
     let analysis = ActiveLoanAnalysis::new(
         type_context,
         backend_contract,
+        return_summaries,
         table,
         loan_at_location,
         reference_liveness,
@@ -146,6 +151,7 @@ pub fn compute_active_loan_entries_with_contract(
 pub(super) struct ActiveLoanAnalysis<'a> {
     type_context: &'a TypeContext,
     backend_contract: &'a MirBackendContract,
+    return_summaries: &'a HashMap<MirFunctionId, OriginSet>,
     table: &'a LoanTable,
     loan_at_location: &'a LoanLocationIndex,
     reference_liveness: &'a ReferenceLiveness,
@@ -155,6 +161,7 @@ impl<'a> ActiveLoanAnalysis<'a> {
     pub fn new(
         type_context: &'a TypeContext,
         backend_contract: &'a MirBackendContract,
+        return_summaries: &'a HashMap<MirFunctionId, OriginSet>,
         table: &'a LoanTable,
         loan_at_location: &'a LoanLocationIndex,
         reference_liveness: &'a ReferenceLiveness,
@@ -162,6 +169,7 @@ impl<'a> ActiveLoanAnalysis<'a> {
         Self {
             type_context,
             backend_contract,
+            return_summaries,
             table,
             loan_at_location,
             reference_liveness,
@@ -228,6 +236,7 @@ impl Analysis for ActiveLoanAnalysis<'_> {
                 func,
                 self.type_context,
                 self.backend_contract,
+                self.return_summaries,
                 term,
             );
         }
@@ -305,6 +314,7 @@ fn apply_active_loan_terminator_transfer(
     func: &MirFunction,
     type_context: &TypeContext,
     backend_contract: &MirBackendContract,
+    return_summaries: &HashMap<MirFunctionId, OriginSet>,
     term: &Terminator,
 ) {
     let Terminator::Call {
@@ -314,35 +324,37 @@ fn apply_active_loan_terminator_transfer(
         return;
     };
 
-    let raw_forward = matches!(callee,
-        Operand::Constant(crate::mir::Constant::Callable(crate::mir::MirCallable::Resolved(
-            crate::mir::MirCallableKey::Intrinsic(crate::mir::MirIntrinsicId::PtrFromParts | crate::mir::MirIntrinsicId::PtrOffset)
-        )))
-    );
-    let destination_contains_reference = func.local_decls.get(destination.local.0).is_some_and(|decl|
-        type_id_contains_reference_with_contract(TypeView::new(type_context), backend_contract, decl.ty)
-    );
-    if !destination_contains_reference && !raw_forward {
-        return;
-    }
-
-    let Some(Operand::Copy(source) | Operand::Move(source)) = args.first() else {
+    let Some(destination_ty) = backend_contract.place_type_id(type_context, func, destination) else {
         return;
     };
-    // Raw-reference results inherit authority from each recovered loan's source,
-    // never from an arbitrary pointer argument. Raw intrinsics still forward it.
-    if !raw_forward && !func.local_decls.get(source.local.0).is_some_and(|decl|
-        type_id_contains_reference_with_contract(TypeView::new(type_context), backend_contract, decl.ty)
-    ) {
+    let view = TypeView::new(type_context);
+    let raw_result = super::type_id_contains_pointer(view, backend_contract, destination_ty);
+    let reference_result = type_id_contains_reference_with_contract(view, backend_contract, destination_ty);
+    if !raw_result && !reference_result {
         return;
     }
-    if !source.projection.is_empty()
-        || !tracks_local_reference_liveness(func, type_context, backend_contract, source.local)
-    {
-        return;
+    let origins = ReferenceEscapeAnalysis::new(
+        func, type_context, backend_contract, return_summaries, MissingSummaryMode::Conservative,
+    );
+    for index in origins.call_return_argument_indices(callee, args) {
+        let Some(Operand::Copy(source) | Operand::Move(source)) = args.get(index) else {
+            continue;
+        };
+        let Some(source_ty) = backend_contract.place_type_id(type_context, func, source) else {
+            continue;
+        };
+        // Raw forwarding preserves pointer authority, not a temporary borrow of
+        // an accessor's receiver. References formed from raw storage instead
+        // inherit through their recovered, checked reborrow.
+        let forwards_pointer = raw_result && super::type_id_contains_pointer(view, backend_contract, source_ty);
+        let forwards_reference = reference_result && type_id_contains_reference_with_contract(view, backend_contract, source_ty);
+        if !forwards_pointer && !forwards_reference {
+            continue;
+        }
+        if tracks_local_reference_liveness(func, type_context, backend_contract, source.local) {
+            state.copy_owner(source.local, destination.local);
+        }
     }
-
-    state.copy_owner(source.local, destination.local);
 }
 
 fn local_is_mutable_reference(
@@ -1230,7 +1242,8 @@ mod tests {
             let by_location = LoanLocationIndex::for_function(&table, &func);
             let liveness = compute_reference_liveness(&func, &type_context);
             let contract = MirBackendContract::default();
-            let analysis = ActiveLoanAnalysis::new(&type_context, &contract, &table, &by_location, &liveness);
+            let summaries = std::collections::HashMap::new();
+            let analysis = ActiveLoanAnalysis::new(&type_context, &contract, &summaries, &table, &by_location, &liveness);
             let successors = super::compute_successors(&func);
             let mut predecessors = vec![Vec::new(); func.basic_blocks.len()];
             for (block, targets) in successors.iter().enumerate() {
@@ -1313,6 +1326,7 @@ mod tests {
             func,
             type_context,
             backend_contract,
+            &std::collections::HashMap::new(),
             &table,
             &by_location,
             &reference_liveness,
@@ -2286,9 +2300,11 @@ mod tests {
         let grouped = LoanLocationIndex::for_function(&table, &func);
         let reference_liveness = compute_reference_liveness(&func, &type_context);
         let backend_contract = MirBackendContract::default();
+        let summaries = std::collections::HashMap::new();
         let analysis = ActiveLoanAnalysis::new(
             &type_context,
             &backend_contract,
+            &summaries,
             &table,
             &grouped,
             &reference_liveness,
