@@ -1,6 +1,9 @@
 pub mod engine;
 mod items;
 
+#[cfg(test)]
+mod conformance_tests;
+
 use std::path::PathBuf;
 
 pub use engine::*;

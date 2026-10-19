@@ -1,0 +1,354 @@
+# Macro infrastructure: staged implementation plan
+
+Date: 2026-10-19
+
+Status: execution sequence. Test families below are implementation contracts,
+not claims that every slice exists or passes; acceptance requires actual test
+receipts for the implemented slice and its prerequisites.
+
+Contract: [macro infrastructure specification](2026-10-19-macro-infrastructure.md).
+The specification owns language/API requirements; this document breaks delivery
+into dependent, independently testable changes. These identifiers describe design
+slices, not issue status. Beads remains the issue tracker; `bd` is unavailable in
+the planning environment, so no implementation issues were created here.
+
+## Delivery strategy
+
+Build the preservation layer first, then macro semantics, then a usable Rock
+worker/build workflow, and finally derives. Do not implement the entire frontend,
+SDK, or syntax library in one change.
+
+| Spec stage | Slices | Usable result at the stage gate |
+| --- | --- | --- |
+| A0: lossless frontend | A0.01–A0.10 | Existing Rock parses through lossless preservation and a capture-capable Rock interpretation boundary |
+| A: expansion foundation | A.01–A.15 | Hygienic declarative expressions and bounded block invocations work across source modules; generated syntax is checked normally |
+| B: host proc macros | B.01–B.22 | A Rock-authored dependency builds/runs through the SDK; indented DSL and interpolation proofs work without compiler callbacks |
+| C: derive attachment | C.01–C.12 | `%derive` invokes external Rock macros using a reusable Rock syntax library; all spec acceptance families have final evidence |
+
+The default dependency of a slice is the preceding slice, with each stage
+depending on the previous stage's gate. This deliberately gives one safe serial
+execution order, not a requirement to introduce parallel implementations.
+Private implementation tests may exercise an unfinished component, but public
+syntax must either work through normal checking or fail with a structured
+unsupported-feature diagnostic. Never let an unexpanded node reach lowering.
+
+For every functional slice:
+
+1. Add the smallest test expressing the new behavior and at least one relevant
+   rejection; observe the expected failure before implementation.
+2. Change only the owning component and its necessary integration call sites.
+3. Run that slice's focused test family and adjacent existing regressions.
+4. Preserve a compiling tree and passing previously delivered behavior. Stop
+   before starting the next slice if its prerequisites are not established.
+
+Characterization slice A0.01 is different: its tests must pass on the starting
+compiler and describe language behavior, not accidentally freeze bugs or hangs.
+Do not leave intentionally failing tests or production compatibility paths as
+the result of a slice. Evolving the implementation is allowed; keeping two
+shipping lexers, token ABIs, or macro engines is not.
+
+## Test naming and commands
+
+Use a discoverable prefix for each slice, such as `macro_a0_02_`, `macro_a_12_`,
+or `macro_b_08_`. Each test name adds a behavior suffix. The prefix is a test
+selection contract, not a new test framework. Reuse existing test helpers; keep
+compiler execution in `lib/tests/integration.rs` unless a concrete need justifies
+a dedicated target. Pure unit tests stay beside their owning modules.
+
+The runner codes used in the tables mean:
+
+| Runner | Focused command template |
+| --- | --- |
+| U | `cargo test -p rock-lib --lib PREFIX -- --nocapture` |
+| I | `cargo test -p rock-lib --test integration PREFIX -- --nocapture` |
+| S | `cargo test -p rock-shared --lib PREFIX -- --nocapture` |
+| R | `cargo test -p rock --lib PREFIX -- --nocapture` |
+| K | `cargo test -p rockc --bin rockc PREFIX -- --nocapture` |
+
+Replace `PREFIX` with the slice prefix; execute every runner listed for a slice,
+serially. Verify a nonzero test count, not only exit status. To isolate one test,
+use its fully qualified name with `--exact`. Test names may move with module
+boundaries; update the actual command reference rather than claiming a zero-test
+run passed.
+
+For example, once its proposed tests exist:
+
+```bash
+cargo test -p rock-lib --lib macro_a0_02_ -- --nocapture
+```
+
+Rock SDK/syntax-library tests run as ordinary Rock programs compiled by the Rust
+integration harness; they are not Cargo packages. Build their ordinary providers
+first and supply dependencies as artifacts. Use `rockc`/compiler test helpers
+until the package workflow is delivered; afterward also test real `rock build`
+and `rock run`. Never add compiler-owned SDK/std discovery to make tests pass.
+
+## A0. Lossless frontend foundation
+
+Primary owners: `lib/src/lexer/`, `lib/src/parser/engine/`,
+`lib/src/parser/mod.rs`, and adjacent lexer/parser tests.
+
+### A0a. Establish the data model without changing Rock syntax
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| A0.01 | Add a compact source/expected-result corpus for current lexical and parser behavior. Include tokens/spans, spacing-sensitive operators/dots, literals, comments, layout, and ordinary parse failures. | Existing valid cases retain AST meaning and byte spans; malformed ordinary strings/indentation produce structured errors. Existing fixtures and frozen observers remain untouched. | U |
+| A0.02 | Introduce immutable source-backed lossless units/runs and a deterministic neutral scanner. Do not replace the parser yet. | Exact coverage/reconstruction for UTF-8, whitespace, CRLF, comments, backticks, emoji, NUL, unterminated quotes/comments, and unmatched brackets; bounded progress and source-ingestion rejection of invalid UTF-8. | U |
+| A0.03 | Add checked slices, joins, and origin/context segments over that representation. Reserve root/source contexts without implementing expansion hygiene yet. | Slice within/between runs, join and duplicate slices without metadata loss; reject out-of-range/non-UTF-8-boundary cuts and conflicting binding-context merges. Adjacency is not guessed from printed text. | U |
+| A0.04 | Implement the Rock interpretation of identifiers, keywords/types, numbers, punctuation, special macro/intrinsic tokens, arrows, and spacing-sensitive operators. | Relevant A0.01 token/span expectations pass over neutral units; classification works across run boundaries. An unfamiliar unit remains preservable but fails when requested as ordinary Rock syntax. | U |
+| A0.05 | Move Rock string/character/comment recognition into that interpretation layer, retaining original units and source mappings. | Escapes/Unicode and comment handling match the existing language; failed recognition is bounded and does not destroy the source. A slice ending inside a quote cannot read beyond its supplied limit. | U |
+| A0.06 | Supply the parser's layout/trivia/EOF view with checked indentation widths and explicit source extents. | Comment-line/newline behavior matches ordinary Rock; original trivia remains retrievable. Large widths cannot wrap through `u8`; NUL is not mistaken for EOF. Parser-added terminal layout is not misreported as original source. | U |
+| A0.07 | Add explicitly requested balanced-group views and structural group constructors, retaining underlying units. | Valid nested `()`, `[]`, `{}` round-trip with exact origins; malformed Rock group requests diagnose. The same unmatched characters remain traversable as neutral leaves; group creation never globally validates arbitrary DSL text. | U |
+
+The old lexer is not a second public input model. These slices introduce and
+test the replacement components; A0.10 retires the old destructive scanning
+implementation after integration. Existing internal Rock `TokenType` values can
+remain the parser's interpreted vocabulary, not the SDK's lossless substrate.
+
+### A0b. Replace the eager parser boundary
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| A0.08 | Encapsulate parser input access behind cursor/range operations before changing its backing storage. Port direct slice users in arrays, expressions, macro declarations, function shorthand, traits, and combinators. | Existing parser/combinator tests pass. Peek, bounded subparse, rollback, remaining-input comparison, and EOF spans retain their semantics; no caller bypasses capture boundaries by indexing `ParseCtx.tokens`. | U |
+| A0.09 | Back the cursor with lossless data and a bounded, capture-capable Rock view. Make lookahead, backtracking, and indentation discovery respect opaque ranges. | A cursor can suspend Rock interpretation, capture a physical range, and resume after it. Malformed quotes/comments and odd body indentation in that range cannot poison later tokens, `indent_step`, or `invalid_indent`; repeated peeks have bounded work. | U |
+| A0.10 | Switch source/generated-source parser entry points to the new pipeline; remove the old whole-file strict `lexer.collect()` path and destructive scanner. Keep internal interpreted-token entry points only where they are real compiler APIs. | A0.01 and existing parser tests pass through the replacement. Source and generated-source entry points share the boundary/EOF rules; ordinary compilation/diagnostic smoke cases pass without a legacy fallback. | U, I |
+
+**A0 gate:** run all `macro_a0_` unit/integration families, adjacent lexer/parser
+regressions, and `cargo test -p rock-lib` serially. Record actual failures and
+warnings. The public block-invocation grammar arrives in A.03; A0 proves the
+capture mechanism, not a usable HTML macro or self-hosted compiler.
+
+## A. Common invocation, expansion, and hygiene
+
+Primary owners: `lib/src/ast/`, parser macro/expression items,
+`lib/src/macro_expansion/`, `lib/src/source_loader/`, `lib/src/lib.rs`, and
+binding/resolution owners in `collect`/`lower`.
+
+### Aa. Capture and expand one invocation correctly
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| A.01 | Migrate macro invocation/capture/template storage to the shared lossless stream and add invocation/node IDs plus requested output categories. Port existing proc fixture payloads and bump the active wire version when changing them. | Current item macro fixtures still work; equal spans have distinct invocation identities and explicit parent edges. Inline/item/block-shaped synthetic inputs all use the same stream type; old payloads reject rather than silently losing trivia. | U |
+| A.02 | Parse qualified expression macro calls using ordinary comma/grouping/postfix rules, preserving exact argument ranges. | `%m 1, (f 2, 3)` and `%m!` have the expected boundaries; argument names need not resolve. Ambiguous cases follow ordinary calls; malformed inline Rock input rejects, and nested macro input is not executed during parsing. | U |
+| A.03 | Add bare-header indented-block capture in item/expression positions, using A0's physical-range boundary. | Dedent/EOF, leading/internal blank lines, comment-looking lines, tabs/CRLF under source indentation policy, and exact untrimmed ranges work. Quotes/comments/brackets cannot swallow following Rock. `%m!`, `%derive`, and multiline ordinary calls do not compete for block ownership; no false header inside a Rock string/comment. | U |
+| A.04 | Parse generated results by requested category with full consumption and capture-aware nested-block recognition. | One expression or an item list succeeds in the proper category; empty expression, trailing junk, item/expression mismatch, forged EOF, and invalid direct DSL-as-Rock output reject. Arbitrary input inside a generated nested block is not prematurely Rock-lexed. | U |
+| A.05 | Port declarative matching to lossless captures with explicit Rock-view trivia policy, preserving current first-arm and flat-repetition semantics. | Existing item matchers pass; each arm consumes all input. Equal-spelled captures retain separate origins; repetition progresses, and unsupported nested repetition/mismatched lengths diagnose instead of flattening. Non-Rock block input is not silently treated as an expression. | U |
+| A.06 | Expand declarative invocations into expressions, forwarding opaque expression captures and checked relative layout. | Precedence/grouping survive nested forwarding without print/re-lex; bindings/tail expressions parse normally. Moving generated layout preserves a nested DSL payload; `return`/`break` are not changed by a synthetic lambda wrapper. | U, I |
+
+The parsing/storage slices do not declare expression macros finished. Before the
+stage gate, unfinished execution/resolution paths must diagnose explicitly; do
+not fall back to a global macro name or spelling-based capture to get a demo.
+
+### Ab. Scope and schedule the same engine across modules
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| A.07 | Replace short-name registry lookup with canonical macro identities and module-scoped explicit imports/exports. Reuse existing path/visibility machinery without requiring full ordinary declaration collection first. | Local forward references, aliases, qualified direct proc imports from synthetic artifacts, and same-spelled value/macro names work. Conflicts/privacy failures diagnose; no auto-injection, last-writer-wins, facade/glob fallback, or cross-crate declarative publication. | U |
+| A.08 | Traverse loaded root/inline/file modules and every expression-bearing AST field with one expansion visitor. | Invocations in function/lambda bodies, defaults, initializers, conditions, arrays, and nested arguments are visited. Outer input stays opaque until emitted; discarded nested invocations never run. | U |
+| A.09 | Interleave generated item/module/import discovery to a deterministic fixed point, then expand expressions outside-in before ordinary collection. | Generated modules and macro imports become available before bodies are diagnosed. Each invocation executes once; forward definitions and no-progress/import-cycle failures are stable independent of map registration order. | U, I |
+| A.10 | Enforce aggregate expansion/source-discovery/matching budgets and ID-based ancestry through those rounds. | Direct/mutual recursion, many siblings, repeated spans, non-progress matching, wide generated modules, and spelling/trivia-heavy streams terminate with the right invocation trace; no unexpanded success reaches collection/lowering. | U |
+
+### Ac. Carry binding identity all the way to normal checking
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| A.11 | Carry syntax contexts through interpreted tokens, AST identifiers/paths, and capture/group operations. Update equality, hashing, and ordering together wherever they represent binding identity. | Same spelling/different contexts remain distinct; ordinary source root contexts preserve existing programs. Classify/slice/forward operations cannot drop or mint contexts, and source spans do not determine identity. | U |
+| A.12 | Make local binding/reference and pattern resolution context-aware through lowering. | Caller locals collide with generated locals safely; destructuring, shadowing, lambdas, duplicated captures, and captured mutable references bind to the intended owners. Borrow-check negatives remain negatives. | U, I |
+| A.13 | Carry contexts through module/type/generic/associated paths and definition-side environment lookup. | Captured type names and generic binders survive impl/type application; definition helpers resolve under aliasing/shadowing. Private helpers and undeclared dependencies remain inaccessible; no hardcoded std/operator meaning enters resolution. | U, I |
+| A.14 | Apply template fresh contexts and proc construction permissions: fresh identifiers, explicit call-site names, and authorized definition-side dependency paths. | Template free names use definition scope, captures use caller scope, and generated public names require explicit exposure. Forged/cross-invocation contexts and conflicting-context merges reject. Exercise existing native fixture workers; Rock authoring comes later. | U, I |
+| A.15 | Preserve expansion/source mappings through inference, borrow checking, codegen diagnostics, and expanded-output inspection. Close the normal-compilation integration seam. | Caller/generated failures show the correct ancestry and locations; `return`/`break`, unsafe rules, borrowing, and drop timing behave like handwritten output. Normal compilation and equivalent expansion inspection use the same engine. | I, R |
+
+**A gate:** run all `macro_a_` families and existing declarative/proc/module
+regressions, then `cargo test -p rock-lib` and affected CLI tests serially.
+Synthetic/native worker tests prove compiler semantics only; they are not evidence
+that a user can author/build a Rock proc package. Context delivery is not complete
+if only AST equality changed while lowerer lookups still discard it.
+
+## B. Usable Rock-authored host proc macros
+
+Primary owners: `lib/src/macro_expansion/proc_macro.rs`, compiler config/products/
+artifact owners, new ordinary Rock package `rock_macro/`, `rock-shared` manifests,
+and `rock` dependency/artifact/build drivers. Keep `rockc` thin and artifact-only;
+keep compiler semantics and dispatcher type checking in `lib`.
+
+### Ba. Harden the existing one-shot worker contract
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| B.01 | Specify/implement the enriched version-locked Rust request/result schema and golden messages: lossless units/segments, categories, authorized handles, optional views, diagnostics, and fragment descriptors. | Full round trips and byte-exact goldens; reject truncated/trailing/oversized data, invalid tags/UTF-8/ranges/coverage, and forged handles before allocation/execution as applicable. Unknown source characters are data, not invalid wire variants; no raw-string input variant. | U |
+| B.02 | Bound the whole subprocess IO deadline and handle success/error streams without unbounded joins. | Native fixtures cover partial IO, blocked stdin/stdout, oversized stdout/stderr, malformed response, nonzero exit after valid output, crash, and missing executable; success requires a valid response plus successful termination. | U, I |
+| B.03 | Complete timeout/cancellation cleanup including descendants retaining pipes. Reuse the platform/process support appropriate to the execution host. | Controlled child/descendant fixtures are reaped and IO resources close within a bounded watchdog deadline on cancellation, timeout, broken pipe, and decode failure; no leaked child survives the test. Unsupported host cleanup must diagnose, not hang. | I |
+| B.04 | Add no-proc-execution policy to compiler configuration and both CLI paths; enforce it immediately before any spawn. | Metadata load/inspection and declarative expansion spawn nothing; a proc use fails clearly when disabled. Test with a marker executable and wrong-host/protocol metadata; preserve OS permission errors and never launch through a shell. | U, K, R |
+
+Do not run unbounded failure fixtures merely to discover they hang; every process
+test needs its own bounded cleanup/watchdog. One fresh worker per invocation,
+protocol-only stdout, bounded diagnostic stderr, and no execution on import are
+requirements from the first runnable path, not deferred hardening.
+
+### Bb. Bootstrap the SDK without macros or compiler callbacks
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| B.05 | Add ordinary Rock SDK data types for streams, segments, spans, contexts, results, and diagnostics matching B.01. Use explicitly supplied host dependencies. | A plain Rock program constructs/inspects owned input and result data without a proc worker, quotation macro, compiler AST, or implicitly discovered SDK/std package. Empty and Unicode cases compile and run. | I |
+| B.06 | Add local cursor/slice/splice/group operations and symbolic authorized identifier/path/diagnostic constructors. | Rock programs preserve exact spelling/trivia and context handles through copies/joins; fresh versus forwarded/call-site identifiers differ correctly. Invalid ranges yield structured failures; unmatched DSL punctuation remains accessible. | I |
+| B.07 | Exercise binary stdin/stdout transport with ordinary Rock IO before implementing serialization. Reuse `std::io::traits::{Read, Write}` and existing byte collections. | A plain executable reads fragmented input, handles EOF/limits, and writes exact bytes including NUL/non-ASCII. Short IO/error paths work. Any missing reusable IO helper gets its own focused upstream test, not compiler magic or a second IO framework. | I |
+| B.08 | Implement bounded request decoding in Rock for the exact schema/options from B.01. | Rust-produced goldens decode in Rock with matching units, handles, categories, views, and diagnostics metadata. Invalid lengths/tags/truncation/UTF-8 fail before unchecked allocation; do not build a general serializer framework. | I |
+| B.09 | Implement Rock result/diagnostic/fragment encoding interoperable with Rust validation. | Rock-produced bytes match goldens and Rust decoding for every required result variant. Test errors and empty output as well as success; field order, integer representation, and framing are explicit rather than Rust-memory-layout assumptions. | I |
+| B.10 | Add the generated-runner support function: read one request, call a supplied ordinary entry, write one final response, exit. | A plain Rock identity worker processes real compiler requests using the same ABI for inline/block-shaped input. Two requests are not silently accepted, errors do not contaminate stdout, and process-global state is not reused. | I |
+
+The first worker is intentionally built from ordinary Rock code and test-provided
+entry functions. This proves the SDK/runtime seam before the source-declared
+export workflow; it is not permission to require authors to write a dispatcher.
+
+### Bc. Build proc packages through the ordinary dependency workflow
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| B.11 | Add `[lib].proc_macro = true` and target-role metadata to the existing manifest model. | Ordinary libraries remain unchanged; reject nonboolean flags and forbidden proc-library/bin combinations. No macro export list, new target section, or macro-dependency table appears. | S, R |
+| B.12 | Parse source `macro name = ...` proc declarations alongside existing declarative definitions; discover ordinary exports after source macro expansion. Reserve derive declarations for C.02. | Exported/private helper distinction, duplicate names, reserved `derive`, and wrong-target declarations diagnose. Metadata discovery executes no provider macro; ordinary functions are not implicit macro exports. | U |
+| B.13 | Generate/check the compiler-owned host dispatcher and SDK wrapper from discovered source declarations, then compile it through the ordinary pipeline. | A source-declared identity implementation needs no handwritten table/main. Wrong entry signatures fail normal type checking against the explicitly supplied SDK contract, not a compiler-known package spelling; no self-expansion bootstrap is needed. | U, I |
+| B.14 | Publish/validate proc-only products with host executable identity/required files/exports, distinct from runtime object artifacts. Adapt `rockc` artifact emission/inspection by explicit product role. | Proc artifact loads with no dummy object/runtime exports. Ordinary artifact object validation is not weakened; wrong kinds/host/protocol/content identities reject before spawn. Host implementation functions cannot be imported as runtime values. | U, K |
+| B.15 | Make dependency planning and artifact identities host/target-role aware using ordinary dependency declarations. | A proc's SDK/std/ordinary libraries build for the host; program libraries build for the target. Distinct simulated triples, transitive proc dependencies, and cycles are tested; host objects/SDK exports never enter the target linker. Runtime helper requirements resolve to consumer-side dependency identities. | R |
+| B.16 | Wire host SDK/dispatcher build, packaging, and direct proc artifact inputs through real `rock build`/`rock run`. | Build/run an ordinary consumer importing the Rock identity macro from a direct dependency. Check root/qualified/aliased imports, invocation-only execution, missing runtime helper dependencies, and no source/bare-executable dependency injection into `rockc`. | R, I |
+| B.17 | Complete role-sensitive freshness, relocation, and source-free package acceptance. | Rebuild on provider/SDK/dependency/executable changes without sharing host/target objects. Move the package and consume artifacts after removing fixture provider sources; relative paths and content checks work, provider bytes stay unchanged, obsolete/corrupt versions reject, and no worker runs on inspection. | R, K, I |
+
+Do not widen `rock`'s dependency on compiler internals to generate semantic data:
+`rock` orchestrates `rockc`, which delegates compilation/discovery/checking to
+`lib`. Proc-only artifact emission must stop assuming every emitted artifact has
+a normal target object, while retaining that invariant for ordinary libraries.
+
+### Bd. Prove the actual consumers, not only an identity macro
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| B.18 | Extract/reuse canonical literal decoding and supply decoded-byte-to-source mappings for already Rock-recognized input literals. | Escapes/multibyte subranges map precisely. Do not scan arbitrary DSL quotes as Rock literals to populate views; no duplicate full lexer or compiler callback enters the SDK. | U, I |
+| B.19 | Materialize authorized literal/generated-source fragments after worker return into lossless units, then normal capture-aware Rock parsing. | Literal holes and generated text keep contexts/subspans; invalid ranges/handles/Rock output and token-gluing attempts reject. Fragment nesting/bytes/interpretation share budgets, and copied captures are never printed/re-lexed. | U, I |
+| B.20 | Add an external Rock block-DSL fixture using the generic SDK, without a production HTML implementation. | Exact HTML-shaped input includes apostrophes, unmatched quotes/brackets, comments, backticks, Unicode, whitespace, and a following dedented binding. Prove library-defined interpretation/subspan errors, expression/item results, nested forwarding, and normal rejection of DSL text emitted directly as Rock. | I, R |
+| B.21 | Add a minimal external interpolation macro/helper fixture using literal views and deferred fragments. | `Hello {name}` and a `count + 1` hole resolve at caller scope; escaped/Unicode error ranges are exact. Missing names, formatting support, or runtime helper dependencies fail normally; provider/trait names are not compiler-recognized. | I, R |
+| B.22 | Close interpolation's evaluation/ownership proof and host artifact acceptance for the nontrivial consumers. | Holes execute once left-to-right, named values are borrowed, temporary destruction is normal, helper/local collisions are hygienic, and calls retain consuming behavior. Repeat source-free packaged consumer tests for DSL/interpolation, not only identity. | I |
+
+**B gate:** all `macro_b_` families, the real SDK cross-language goldens, existing
+process/build/artifact tests, and the formatting/DSL proofs pass. Run the broader
+serialized gates below. A Rust-only worker, protocol round trip, or manifest flag
+alone is not Stage B completion. Runnable foreign-target acceptance is required
+only where supported by the existing toolchain; simulated host/target identity
+tests are unconditional, and any real cross-target limitation is recorded.
+
+## C. Derives and the reusable Rock syntax library
+
+Primary owners: parser/AST declaration token retention and attachment items,
+the shared expansion engine, and new ordinary Rock package `rock_syntax/`.
+The SDK must not depend on the syntax library. Compiler AST projection, full
+expression/type coverage, production derives, and self-hosting stay out of scope.
+
+### Ca. Retain declarations and define the attachment boundary
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| C.01 | Retain original declaration streams/ranges during parsing rather than reconstructing syntax from AST printing. | Struct/enum names, fields/variants, visibility, generic bounds/defaults, trivia, and context segments recover exactly from original input. Multiple consumers see one immutable original declaration; generated origins remain intact. | U |
+| C.02 | Parse `%derive path, path` attachment and `macro derive Name = ...` source declarations/exports; validate target/kind metadata without running a derive. | Qualified/comma-separated lists, comments/blank lines, and consecutive directives attach correctly. Empty lists, intervening items, missing/unsupported targets, duplicate canonical derives, and Rust-style/arbitrary attributes diagnose; block capture does not steal the directive. | U |
+
+### Cb. Grow the syntax library one grammar family at a time
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| C.03 | Add standalone Rock syntax cursor, bounded lexical/group interpretation, and parse-error data over SDK lossless streams. | Parse supplied units without `MacroContext`/worker/RPC; compare shared positive/negative lexical/group fixtures with the Rust interpretation. Preserve trivia/contexts and diagnose malformed requested Rock syntax without preventing neutral inspection. | I |
+| C.04 | Parse/emission-support the initial derive type syntax needed by fixtures: names/paths, applications, references, and other explicitly enumerated forms. | Shared compiler/library type fixtures and unchanged-node round trips pass; unsupported forms and trailing tokens diagnose at the right spans. No alias resolution, inference, or operator meanings are implemented in the library. | I |
+| C.05 | Parse generic binders, supported bounds/kinds/defaults, and distinguish binder syntax from type-application arguments. | Earlier-parameter/default cases and nested comma/group boundaries match the Rust parser. Emitting impl binders/type arguments is correct; unsupported grammar does not get guessed into another node. | I |
+| C.06 | Add `DeriveInput` struct parsing with ordered fields, visibility, and opaque default-expression slices where boundaries are established. | Named fields, generics, defaults, exact source spans/trivia, full input consumption, malformed fields, and unsupported boundaries agree with shared fixtures; no compiler-prepared declaration structure is used. | I |
+| C.07 | Extend `DeriveInput` to enums and named/positional/nullary variants supported by Rock. | Variant/field order and shape, nested types, and generic cases match the compiler; malformed/unsupported variants report structured errors. Struct handling continues to pass. | I |
+| C.08 | Complete token emission/builders for transformed supported nodes and the impl syntax required by the derive proofs. Keep quote-style conveniences ordinary library helpers. | Parse/emit/parse and edited-node tests preserve unchanged slices/contexts/trivia and grouping. Captured input names bind correctly in emitted impls; construction does not stringify captured subtrees or require a quotation proc macro to build itself. | I |
+
+Each grammar slice publishes its supported forms in library docs and adds shared
+conformance fixtures. A concrete missing form needed by the next proof becomes a
+small parser extension with tests; do not silently grow this into all of Syn or
+add type signatures to unrelated annotation-free inference regressions.
+
+### Cc. Dispatch and validate real derives
+
+| Slice | Implement only | Focused acceptance | Runner |
+| --- | --- | --- | --- |
+| C.09 | Dispatch attachments through the same proc engine with `DeriveLike` kind and item output, retaining the declaration once and appending outputs in order. | Every derive sees identical original input; empty output is valid. Generated derives re-enter bounded discovery, consume-once is node-ID based, wrong kinds fail, and a derive cannot replace/delete the declaration. | U, I |
+| C.10 | Add an external Rock derive for a small ordinary test trait on a struct using `rock_syntax`, including a generic/bound case. | The full source export/build/import/attachment/parse/emission path compiles and runs. Capture/helper collisions are hygienic; missing bounds, privacy failures, and duplicate/incoherent impls are ordinary compiler errors. | I, R |
+| C.11 | Extend the external proof to enum shapes and packaged/source-free providers; exercise multiple/recursive attachments and invalid categories. | Named/positional/nullary cases and ordered derives run correctly from artifacts alone. Ordinary impl/type rules remain enforced, unsupported attribute transforms diagnose, and generic/default/visibility/token-retention controls survive real transport. | I, R |
+| C.12 | Close the acceptance mapping, remove obsolete implementation paths/fixture encodings, and execute final-snapshot gates. | Every spec family maps to named tests and actual receipts; synthetic wrong-version controls remain, while no legacy reader/global registry/destructive macro input path survives. Full passes certify infrastructure, not production formatting/derive libraries or self-hosting. | All affected runners and broader gates |
+
+## Stage gates and final verification
+
+At each stage gate, execute the stage's proposed families plus adjacent existing
+tests first. For B and final C, run these broader commands serially on the same
+final source snapshot, and include any additional affected workspace target:
+
+```bash
+cargo test -p rock-lib
+cargo test -p rock-shared
+cargo test -p rock
+cargo test -p rockc
+cargo build --release
+cargo clippy --workspace --all-targets
+```
+
+LLVM 18/static development dependencies remain required. Build current compiler
+binaries before CLI acceptance so `ROCKC`/adjacent-binary selection cannot use a
+stale compiler; use existing child-local test environment support. Rebuild
+explicit std/SDK dependencies after schema or semantic changes. A dependency
+rebuild is not permission for compiler-owned std discovery or compatibility
+readers.
+
+Keep test execution serialized; retain each long run's output once and inspect
+that receipt rather than rerunning to recover it. Record exact commands, test
+counts, warnings/failures, and final source/artifact identity in the associated
+issue/evidence. Respect current log-location/access instructions; this plan does
+not authorize `.agent-work/` or `.sisyphus/` inspection, formatting, or VCS changes.
+Do not run formatters or formatting checks. Do not stage, commit, push, reset,
+or alter unrelated existing work as part of executing this plan without current
+user authorization.
+
+### Acceptance-family mapping
+
+This table locates where requirements are established and subsequently exercised;
+it is not a completion checklist or a claim of test execution.
+
+| Spec family | Establishing/proof slices |
+| --- | --- |
+| Lossless frontend | A0.01–A0.10; A.01; B.05–B.09 |
+| Syntax/category | A.02–A.06; B.20; C.02/C.09 |
+| Block boundaries | A0.09; A.03/A.04/A.06; B.20 |
+| Declarative behavior | A.05/A.06; A.10; A.14 |
+| Modules/resolution | A.07–A.10; A.13; B.12–B.17 |
+| Hygiene | A0.03; A.11–A.15; B.06/B.19/B.22; C.08–C.11 |
+| SDK/protocol | A.01; B.01; B.05–B.10; B.18/B.19 |
+| Process failure | B.02–B.04; B.10/B.14 |
+| Build/artifacts | B.11–B.17; B.22; C.11 |
+| Host separation | B.14–B.17 |
+| Recursion/budgets | A0.02/A0.09; A.01/A.09/A.10; B.01–B.03/B.19; C.03/C.09/C.11 |
+| Formatting proof | B.18/B.19/B.21/B.22 |
+| DSL proof | A.03/A.04; B.20/B.22 |
+| Syntax library | C.03–C.08; C.10/C.11 |
+| Derive proof | C.01/C.02; C.09–C.11 |
+| Semantic integration | A.12–A.15; B.21/B.22; C.10/C.11 |
+| Trust/inspection | A.07; B.02–B.04; B.14–B.17 |
+
+### Stop and split rules
+
+- If a slice requires a new abstraction spanning another subsystem, first split
+  out the prerequisite with its own focused test; retain the stage dependency.
+- If lexical/parser behavior conflicts with the spec, resolve that design
+  explicitly before changing acceptance expectations. Do not secretly revert to
+  Rust-token-only blocks, raw-string input variants, or a global regex prepass.
+- If SDK/Rock syntax work exposes a compiler or std prerequisite, reproduce and
+  track the smallest blocker in beads; fix its actual owning phase/library rather
+  than adding compiler-known SDK names, inferred-type callbacks, or fixture-only
+  language bypasses.
+- If a gate fails, the stage is not complete. Preserve existing semantic negatives,
+  source fixtures, and evidence; report the blocker instead of weakening tests.
+- Keep full raw-source scanning in Rock, full Syn-scale grammar, macro facades,
+  persistent workers/caching, general attributes, production HTML/formatting/
+  derives, and the self-hosted compiler rewrite outside these slices.
+
+## First implementation boundary
+
+Start with **A0.01 only**: establish the small lexical/parser conformance corpus
+and its focused passing baseline. Then A0.02 introduces neutral preservation
+behind unit tests. Neither first slice changes invocation syntax, the macro SDK,
+artifact schemas, resolution, or production compiler selection.
