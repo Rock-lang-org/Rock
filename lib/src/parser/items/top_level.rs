@@ -225,6 +225,9 @@ pub fn top_level(stream: Input) -> IResult<TopLevel> {
                 preceded(TokenType::Keyword("extern".to_string()), function_sig)
                     .map(TopLevel::Extern),
             )
+            // Try the indented form before the header-only file declaration;
+            // otherwise a valid inline module commits after its first line.
+            .or(module.map(ModuleDecl).map(TopLevel::Module))
             .or(preceded(
                 TokenType::Keyword("mod".to_string()),
                 followed(primitives::ident_token, TokenType::Eol),
@@ -238,7 +241,6 @@ pub fn top_level(stream: Input) -> IResult<TopLevel> {
                 ),
             )
             .map(|ident| TopLevel::Mod(ident, true)))
-            .or(module.map(ModuleDecl).map(TopLevel::Module))
             .or((
                 TokenType::Keyword("type".to_string()),
                 super::parse_type_name,

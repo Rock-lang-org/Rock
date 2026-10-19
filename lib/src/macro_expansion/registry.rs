@@ -60,11 +60,15 @@ pub struct MacroRegistry {
 
 impl MacroRegistry {
     pub fn build(module: &Module, context: &MacroExpansionContext<'_>) -> Result<Self, Diagnostics> {
+        Self::build_with_modules(module, &context.source_modules, context)
+    }
+
+    pub(super) fn build_with_modules(module: &Module, sources: &crate::source_loader::SourceModuleSet, context: &MacroExpansionContext<'_>) -> Result<Self, Diagnostics> {
         let mut registry = Self { current_crate: context.config.current_crate_name.clone(), ..Self::default() };
         registry.index_module(module, Vec::new())?;
         // These are source-module identities from the loader, not pathname-based
         // guesses. The root AST remains authoritative for inline declarations.
-        for loaded in context.source_modules.modules() {
+        for loaded in sources.modules() {
             let mut path: Vec<_> = loaded.qualified_name.split("::").map(String::from).collect();
             if path.first().map(String::as_str) == registry.current_crate.as_deref() { path.remove(0); }
             if !path.is_empty() {

@@ -121,12 +121,20 @@ impl ModuleGraph {
         &self.root_module
     }
 
+    pub(crate) fn root_module_mut(&mut self) -> &mut ast::Module {
+        &mut self.root_module
+    }
+
     pub fn loaded_files(&self) -> &[PathBuf] {
         &self.loaded_files
     }
 
     pub fn modules(&self) -> impl Iterator<Item = &LoadedModule> {
         self.modules.iter()
+    }
+
+    pub(crate) fn modules_mut(&mut self) -> impl Iterator<Item = &mut LoadedModule> {
+        self.modules.iter_mut()
     }
 
     pub fn module(&self, id: ModuleId) -> Option<&LoadedModule> {
@@ -417,6 +425,22 @@ impl SourceDatabase {
                 stack: stack.clone(),
             });
             return self.modules.get(&canonical_path).cloned();
+        }
+
+        // Expansion publishes bodies into the graph, not the raw parse cache.
+        // Rediscover children from that authoritative body without inserting a
+        // duplicate raw module that would hide its expanded expressions.
+        if let Some(loaded) = qualified_name.as_deref()
+            .and_then(|name| graph.module_by_qualified_name(name))
+            .filter(|loaded| loaded.canonical_path == canonical_path)
+        {
+            let module = loaded.module.clone();
+            self.load_states.insert(canonical_path.clone(), ModuleLoadState::Loading);
+            stack.push(path);
+            self.load_children(&module, qualified_name.as_deref(), config, stack, graph, errors);
+            stack.pop();
+            self.load_states.insert(canonical_path, ModuleLoadState::Loaded);
+            return Some(module);
         }
 
         if let Some(mut module) = self.modules.get(&canonical_path).cloned() {

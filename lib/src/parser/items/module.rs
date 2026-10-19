@@ -74,7 +74,7 @@ pub fn module(stream: Input) -> IResult<Module> {
         TokenType::Keyword("mod".to_string()),
         ident,
         TokenType::Eol,
-        indented(many(top_level)),
+        indented(many1(top_level)),
     )
         .map(|(_, name, _, top_levels)| Module {
             name: Some(name),
@@ -83,4 +83,17 @@ pub fn module(stream: Input) -> IResult<Module> {
             filepath: None,
         })
         .process(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{ast::TopLevel, parser::parse_string, Config};
+
+    #[test]
+    fn macro_a_08_inline_modules_do_not_commit_as_empty_file_headers() {
+        let parsed = parse_string("mod file\nmod outer\n    value = -> 42\n", &Config::default()).unwrap();
+        assert!(matches!(&parsed.module.top_levels[0], TopLevel::Mod(name, false) if name.name == "file"));
+        let TopLevel::Module(outer) = &parsed.module.top_levels[1] else { panic!("expected inline module") };
+        assert!(outer.0.top_level_from_ident("value").is_some());
+    }
 }

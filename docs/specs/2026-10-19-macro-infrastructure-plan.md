@@ -496,6 +496,59 @@ module discovery, aggregate budgets, binding hygiene, and Rock package authoring
 remain later slices. Formatting is deferred; no formatter/check, Clippy, or
 separate build gate ran. Beads remains unavailable.
 
+### A.08 delivery receipt (2026-10-20)
+
+One scope-aware expansion visitor now walks root, inline, and already loaded
+file-module items, then all semantic expression-bearing fields. It handles
+function/lambda parameters and bodies, struct/enum field defaults, trait/impl
+methods, assignment targets/initializers, conditions/guards, loops, ranges,
+casts, arrays/repeats, tuples, instances, secondary arguments/indices, and
+pattern-owned literal containers. Method and instance maps are visited in stable
+source/name order. Macro definitions and invocation inputs remain opaque data;
+only emitted syntax is recursively executed, outside-in.
+
+`expand_macros_in_graph` publishes expanded root and loaded bodies back to the
+source graph used by normal collection. Registry rebuilds use that same current
+forest. Later source discovery reuses graph bodies rather than appending a raw
+parse-cache duplicate that would hide expanded expressions. Loader identity,
+paths, and source bytes remain unchanged. Root-only expansion/inspection uses
+the same visitor and its explicitly provided source-module environment.
+
+Inline module parsing now tries a nonempty indented body before committing to a
+file-module header. Nested macro templates rebase from their declaration margin
+with checked arithmetic rather than subtracting a fixed root-level margin.
+No formatter or source-printing round trip is involved.
+
+- Initial `cargo test -p rock-lib --lib macro_a_08_ -- --nocapture` observed RED
+  at compilation because the graph expansion entry point did not exist. After
+  the visitor landed it passed three/six tests; inline parsing failed and one
+  container fixture used unsupported brace-instance syntax. The fixture now
+  uses ordinary named fields and a parenthesized lambda.
+- The same runner again passed three/six: prioritizing inline parsing exposed
+  empty inline bodies stealing file declarations and fixed-root macro margins
+  rejecting nested definitions. Requiring a nonempty body and checking the
+  actual declaration margin brought it to six passes.
+- A normal-frontend/rediscovery control observed five passes/two failures from
+  duplicate raw graph entries and unexpanded macros reaching lowering. Reusing
+  graph bodies repaired both; the runner passed seven tests.
+- Added guard/range/cast, pattern/enum-default, loaded native-worker, and local
+  parser controls observed ten passes/one failure from an incorrect expected
+  input count (seven, not eight). The final focused runner passes eleven tests.
+  The native worker control records exactly two executed expansions: one loaded
+  item call and one discard call; its nested procedural input never executes.
+- Adjacent `cargo test -p rock-lib --lib macro_expansion:: -- --nocapture`,
+  `cargo test -p rock-lib --lib parser:: -- --nocapture`, and
+  `cargo test -p rock-lib --lib source_loader:: -- --nocapture` pass 115/569/16
+  tests respectively.
+- Final `cargo test -p rock-lib` passes 2,573 units, 792 main integrations,
+  and one parser integration; one doctest is ignored (archive
+  `0a95921d27639ee9`). No functional edits follow this gate.
+
+Interleaved generated file discovery/import scheduling remains A.09; aggregate
+budgets and complete ID-based progress/ancestry enforcement remain A.10.
+Procedural expression calls still reject explicitly. Formatting remains deferred;
+no formatter/check, Clippy, or separate build gate ran. Beads remains unavailable.
+
 ### Ac. Carry binding identity all the way to normal checking
 
 | Slice | Implement only | Focused acceptance | Runner |

@@ -3,30 +3,128 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
 
 use super::{expand_declarative, generated_parser::GeneratedSyntax, registry::{MacroDefinition, MacroRegistry}, with_expansion_trace, MacroExpansionContext};
 
-/// A.06 establishes ordinary function-body expression substitution. Loaded
-/// modules and the remaining declaration-owned expression fields are A.08.
-pub(super) fn expand_function_bodies(module: &mut Module, context: &MacroExpansionContext<'_>) -> Result<(), Diagnostics> {
-    let registry = MacroRegistry::build(module, context)?;
-    let expander = Expressions { registry: &registry, context };
-    for item in &mut module.top_levels {
-        if let TopLevel::FunctionDecl(function) = item {
-            expander.block(&mut function.lambda.body, 0)?;
-        }
-    }
-    Ok(())
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Phase {
+    Items,
+    Expressions,
 }
 
-struct Expressions<'a, 'cfg> {
+/// One scope-aware walk owns all executable AST fields. Macro definitions and
+/// invocation inputs are data; only selected emitted syntax is traversed.
+pub(super) struct ExpansionVisitor<'a, 'cfg> {
     registry: &'a MacroRegistry,
     context: &'a MacroExpansionContext<'cfg>,
+    phase: Phase,
+    scope: Vec<String>,
 }
 
-impl Expressions<'_, '_> {
+impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
+    pub(super) fn new(registry: &'a MacroRegistry, context: &'a MacroExpansionContext<'cfg>, phase: Phase) -> Self {
+        Self { registry, context, phase, scope: Vec::new() }
+    }
+
+    pub(super) fn set_scope(&mut self, qualified_name: &str) {
+        self.scope = qualified_name.split("::").map(String::from).collect();
+        if self.scope.first().map(String::as_str) == self.context.config.current_crate_name.as_deref() {
+            self.scope.remove(0);
+        }
+    }
+
+    pub(super) fn module(&mut self, module: &mut Module) -> Result<(), Diagnostics> {
+        let mut output = Vec::new();
+        for mut item in std::mem::take(&mut module.top_levels) {
+            if self.phase == Phase::Items {
+                if let TopLevel::MacroInvoc(invocation) = &item {
+                    match self.registry.resolve(&self.scope, &invocation.path_name(), &invocation.span)? {
+                        Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. }) => {
+                            output.extend(super::expand_top_level(declaration, invocation, self.context)?);
+                            continue;
+                        }
+                        Some(super::registry::MacroEntry { definition: MacroDefinition::Procedural(entry), .. }) => {
+                            output.extend(super::expand_proc_macro_top_level(entry, invocation, self.context)?);
+                            continue;
+                        }
+                        None if invocation.block.is_some() => return Err(super::proc_macro_error(
+                            "block macro expansion is not implemented for unresolved macro paths", invocation.span.clone(),
+                        )),
+                        None => {}
+                    }
+                }
+            }
+            match &mut item {
+                TopLevel::Module(child) => {
+                    let old_scope = self.scope.clone();
+                    if let Some(name) = &child.0.name { self.scope.push(name.name.clone()); }
+                    self.module(&mut child.0)?;
+                    self.scope = old_scope;
+                }
+                TopLevel::FunctionDecl(function) if self.phase == Phase::Expressions => self.lambda(&mut function.lambda, 0)?,
+                TopLevel::StructDecl(declaration) if self.phase == Phase::Expressions => self.fields(&mut declaration.fields)?,
+                TopLevel::EnumDecl(declaration) if self.phase == Phase::Expressions => {
+                    for variant in &mut declaration.variants {
+                        if let NamedFieldsOrTypesList::NamedFields(fields) = &mut variant.fields { self.fields(fields)?; }
+                    }
+                }
+                TopLevel::TraitDecl(declaration) if self.phase == Phase::Expressions => self.methods(&mut declaration.methods)?,
+                TopLevel::Impl(declaration) if self.phase == Phase::Expressions => self.methods(&mut declaration.methods)?,
+                TopLevel::MacroDecl(_) | TopLevel::MacroInvoc(_) | TopLevel::Mod(_, _) | TopLevel::Import(_)
+                | TopLevel::GlobImport(_) | TopLevel::Export(_) | TopLevel::GlobExport(_) | TopLevel::Extern(_)
+                | TopLevel::InfixOperator(_, _) | TopLevel::FunctionSig(_) | TopLevel::NewType(_, _, _)
+                | TopLevel::FunctionDecl(_) | TopLevel::StructDecl(_) | TopLevel::EnumDecl(_)
+                | TopLevel::TraitDecl(_) | TopLevel::Impl(_) => {}
+            }
+            output.push(item);
+        }
+        module.top_levels = output;
+        Ok(())
+    }
+
+    fn fields(&self, fields: &mut [StructDeclField]) -> Result<(), Diagnostics> {
+        for field in fields {
+            if let Some(value) = &mut field.default { self.expression(value, 0)?; }
+        }
+        Ok(())
+    }
+
+    fn methods(&self, methods: &mut std::collections::HashMap<Ident, FunctionDecl>) -> Result<(), Diagnostics> {
+        let mut names: Vec<_> = methods.keys().cloned().collect();
+        names.sort_by(|a, b| a.span.start.cmp(&b.span.start).then(a.name.cmp(&b.name)));
+        for name in names {
+            if let Some(function) = methods.get_mut(&name) { self.lambda(&mut function.lambda, 0)?; }
+        }
+        Ok(())
+    }
+
+    fn lambda(&self, lambda: &mut LambdaDecl, depth: usize) -> Result<(), Diagnostics> {
+        for parameter in &mut lambda.parameters { self.pattern(parameter, depth)?; }
+        self.block(&mut lambda.body, depth)
+    }
+
+    fn pattern(&self, pattern: &mut Pattern, depth: usize) -> Result<(), Diagnostics> {
+        match &mut pattern.kind {
+            PatternKind::Literal(literal) => self.literal(literal, depth)?,
+            PatternKind::Tuple(patterns) => for pattern in patterns { self.pattern(pattern, depth)?; },
+            PatternKind::Array(patterns) => for pattern in patterns {
+                if let ArrayPattern::Pattern(pattern) = pattern { self.pattern(pattern, depth)?; }
+            },
+            PatternKind::Instance(instance) => match &mut instance.args {
+                FieldsPatternOrArgumentsPattern::Fields(fields) => for field in fields { self.pattern(&mut field.pattern, depth)?; },
+                FieldsPatternOrArgumentsPattern::Arguments(patterns) => for pattern in patterns { self.pattern(pattern, depth)?; },
+            },
+            PatternKind::Nested(pattern) | PatternKind::Reference { pattern, .. } => self.pattern(pattern, depth)?,
+            PatternKind::Ident(_) | PatternKind::Wildcard => {}
+        }
+        Ok(())
+    }
+
     fn block(&self, block: &mut Block, depth: usize) -> Result<(), Diagnostics> {
         for statement in &mut block.statements {
             match statement {
                 Statement::Assignment(assignment) => {
-                    if let AssignmentLHS::Expression(value) = &mut assignment.lhs { self.unary(value, depth)?; }
+                    match &mut assignment.lhs {
+                        AssignmentLHS::Expression(value) => self.unary(value, depth)?,
+                        AssignmentLHS::Pattern { pattern, .. } => self.pattern(pattern, depth)?,
+                    }
                     self.expression(&mut assignment.rhs, depth)?;
                 }
                 Statement::Expression(value) => self.expression(value, depth)?,
@@ -80,7 +178,7 @@ impl Expressions<'_, '_> {
                 if depth >= self.context.max_depth {
                     return Err(failure(self.context.depth_exceeded_diagnostic(invocation.span.clone())));
                 }
-                let resolved = self.registry.resolve(&[], &invocation.path_name(), &invocation.span)?;
+                let resolved = self.registry.resolve(&self.scope, &invocation.path_name(), &invocation.span)?;
                 let Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. }) = resolved else {
                     return Err(failure(Diagnostic::new("expression macro expansion is not implemented for unresolved or procedural macro paths".into(), invocation.span.clone())
                         .with_code(DiagnosticCode::Macro)));
@@ -93,14 +191,10 @@ impl Expressions<'_, '_> {
                 *operand = Operand::Expression(Box::new(generated));
             }
             Operand::Expression(value) => self.expression(value, depth)?,
-            Operand::LambdaDecl(lambda) => self.block(&mut lambda.body, depth)?,
+            Operand::LambdaDecl(lambda) => self.lambda(lambda, depth)?,
             Operand::Unsafe(block, _) => self.block(block, depth)?,
             Operand::Tuple(tuple) => for value in &mut tuple.elements { self.expression(value, depth)?; },
-            Operand::Literal(literal) => match &mut literal.kind {
-                LiteralKind::Array(array) => for value in &mut array.elements { self.expression(value, depth)?; },
-                LiteralKind::ArrayRepeat { value, .. } => self.expression(value, depth)?,
-                _ => {}
-            },
+            Operand::Literal(literal) => self.literal(literal, depth)?,
             Operand::Instance(instance) => {
                 let mut names: Vec<_> = instance.fields.keys().cloned().collect();
                 names.sort_by(|a, b| a.span.start.cmp(&b.span.start).then(a.name.cmp(&b.name)));
@@ -112,13 +206,14 @@ impl Expressions<'_, '_> {
             Operand::Match(value) => {
                 self.expression(&mut value.expr, depth)?;
                 for arm in &mut value.arms {
+                    self.pattern(&mut arm.pattern, depth)?;
                     if let Some(condition) = &mut arm.condition { self.expression(condition, depth)?; }
                     self.block(&mut arm.body, depth)?;
                 }
             }
             Operand::Loop(value) => match value.as_mut() {
-                Loop::While(condition, block, _) => { self.expression(&mut condition.expression, depth)?; self.block(block, depth)?; }
-                Loop::For(_, value, block, _) => { self.expression(value, depth)?; self.block(block, depth)?; }
+                Loop::While(condition, block, _) => { self.condition(condition, depth)?; self.block(block, depth)?; }
+                Loop::For(pattern, value, block, _) => { self.pattern(pattern, depth)?; self.expression(value, depth)?; self.block(block, depth)?; }
                 Loop::Loop(block, _) => self.block(block, depth)?,
             },
             Operand::Ident(_) | Operand::SelfIdent(_) | Operand::CallHole(_) | Operand::NativeOperator(_) => {}
@@ -127,12 +222,26 @@ impl Expressions<'_, '_> {
     }
 
     fn if_expression(&self, value: &mut If, depth: usize) -> Result<(), Diagnostics> {
-        self.expression(&mut value.condition.expression, depth)?;
+        self.condition(&mut value.condition, depth)?;
         self.block(&mut value.then, depth)?;
         match &mut value.else_ {
             Some(Else::If(value)) => self.if_expression(value, depth)?,
             Some(Else::Block(block)) => self.block(block, depth)?,
             None => {}
+        }
+        Ok(())
+    }
+
+    fn condition(&self, condition: &mut Condition, depth: usize) -> Result<(), Diagnostics> {
+        if let Some(pattern) = &mut condition.pattern { self.pattern(pattern, depth)?; }
+        self.expression(&mut condition.expression, depth)
+    }
+
+    fn literal(&self, literal: &mut Literal, depth: usize) -> Result<(), Diagnostics> {
+        match &mut literal.kind {
+            LiteralKind::Array(array) => for value in &mut array.elements { self.expression(value, depth)?; },
+            LiteralKind::ArrayRepeat { value, .. } => self.expression(value, depth)?,
+            LiteralKind::Bool(_) | LiteralKind::Number(_) | LiteralKind::Float(_) | LiteralKind::String(_) | LiteralKind::Char(_) => {}
         }
         Ok(())
     }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 
 use crate::{
     ast::{MacroDecl, MacroInvoc, Module, Program, TopLevel},
@@ -38,6 +38,9 @@ mod expression_tests;
 #[cfg(test)]
 mod resolution_tests;
 
+#[cfg(test)]
+mod traversal_tests;
+
 pub use context::MacroExpansionContext;
 pub use source_map::{
     ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, TokenOrigin,
@@ -50,40 +53,54 @@ pub fn expand_macros_with_context(
     mut program: Program,
     context: &MacroExpansionContext<'_>,
 ) -> Result<Program, Diagnostics> {
+    let mut modules = context.source_modules.modules().cloned().collect::<Vec<_>>();
+    expand_forest(&mut program.module, &mut modules, context)?;
+    Ok(program)
+}
+
+/// Expand the loaded forest and publish the same trees to collection's graph.
+/// The graph is authoritative; no file is rediscovered or read by this pass.
+pub fn expand_macros_in_graph(
+    graph: &mut crate::source_loader::ModuleGraph,
+    context: &MacroExpansionContext<'_>,
+) -> Result<Program, Diagnostics> {
+    let mut program = Program { module: graph.root_module().clone() };
+    let mut modules = graph.modules().cloned().collect::<Vec<_>>();
+    expand_forest(&mut program.module, &mut modules, context)?;
+    *graph.root_module_mut() = program.module.clone();
+    for (target, expanded) in graph.modules_mut().zip(modules) { *target = expanded; }
+    Ok(program)
+}
+
+fn expand_forest(
+    root: &mut Module,
+    modules: &mut [crate::source_loader::LoadedModule],
+    context: &MacroExpansionContext<'_>,
+) -> Result<(), Diagnostics> {
     let mut depth = 0;
-    let mut module = program.module;
-
-    validate_macro_definitions(&module)?;
-    registry::MacroRegistry::build(&module, context)?;
-    while module.has_macro_invoc() {
-        let mut decls = HashMap::new();
-        let mut proc_macros = HashMap::new();
-        let registry = registry::MacroRegistry::build(&module, context)?;
-
-        for (i, top_level) in module.top_levels.iter().enumerate() {
-            if let TopLevel::MacroInvoc(invocation) = &top_level {
-                if let Some(entry) = registry.resolve(&[], &invocation.path_name(), &invocation.span)? {
-                    match &entry.definition {
-                        registry::MacroDefinition::Declarative(declaration) => { decls.insert(i, (declaration.clone(), invocation.clone())); }
-                        registry::MacroDefinition::Procedural(procedural) => { proc_macros.insert(i, (procedural.clone(), invocation.clone())); }
-                    }
-                } else if invocation.block.is_some() {
-                    return Err(Diagnostics(vec![Diagnostic::new(
-                        "block macro expansion is not implemented for unresolved macro paths".into(),
-                        invocation.span.clone(),
-                    ).with_code(crate::diagnostic::DiagnosticCode::Macro)]));
-                }
+    loop {
+        validate_macro_definitions(root)?;
+        for loaded in modules.iter() { validate_macro_definitions(&loaded.module)?; }
+        let sources = crate::source_loader::SourceModuleSet::from_modules(modules.iter().cloned());
+        let registry = registry::MacroRegistry::build_with_modules(root, &sources, context)?;
+        if first_forest_invocation(root, modules).is_none() {
+            let mut visitor = expression::ExpansionVisitor::new(&registry, context, expression::Phase::Expressions);
+            visitor.module(root)?;
+            for loaded in modules.iter_mut() {
+                visitor.set_scope(&loaded.qualified_name);
+                visitor.module(&mut loaded.module)?;
             }
+            return Ok(());
         }
-        module = expand_macros_once(module, &decls, &proc_macros, context)?;
-        validate_macro_definitions(&module)?;
-
+        let mut visitor = expression::ExpansionVisitor::new(&registry, context, expression::Phase::Items);
+        visitor.module(root)?;
+        for loaded in modules.iter_mut() {
+            visitor.set_scope(&loaded.qualified_name);
+            visitor.module(&mut loaded.module)?;
+        }
         depth += 1;
-
-        if depth > context.max_depth {
+        if let Some(invocation) = first_forest_invocation(root, modules).filter(|_| depth > context.max_depth) {
             let mut diagnostics = Diagnostics::default();
-            let invocation = first_macro_invocation(&module)
-                .expect("remaining macro invocation must retain its source span");
             let trace_expansion = invocation.parent;
             let mut diagnostic = context.depth_exceeded_diagnostic(invocation.span.clone());
             if let Some(expansion_id) = trace_expansion {
@@ -93,24 +110,6 @@ pub fn expand_macros_with_context(
             return Err(diagnostics);
         }
     }
-
-    expression::expand_function_bodies(&mut module, context)?;
-    program.module = module;
-
-    struct PendingExpressions { diagnostics: Diagnostics }
-    impl<'ast> crate::ast::visit::Visitor<'ast> for PendingExpressions {
-        fn visit_macro_invoc(&mut self, invocation: &'ast MacroInvoc) {
-            if invocation.output == crate::ast::MacroOutputCategory::Expression {
-                self.diagnostics.push(Diagnostic::new("expression macro expansion is not implemented".into(), invocation.span.clone())
-                    .with_code(crate::diagnostic::DiagnosticCode::Macro));
-            }
-        }
-    }
-    let mut pending = PendingExpressions { diagnostics: Diagnostics::default() };
-    program.visit(&mut pending);
-    if !pending.diagnostics.0.is_empty() { return Err(pending.diagnostics); }
-
-    Ok(program)
 }
 
 fn validate_macro_definitions(module: &Module) -> Result<(), Diagnostics> {
@@ -126,41 +125,6 @@ fn validate_macro_definitions(module: &Module) -> Result<(), Diagnostics> {
     let mut definitions = Definitions { diagnostics: Diagnostics::default() };
     crate::ast::visit::walk_module(&mut definitions, module);
     if definitions.diagnostics.0.is_empty() { Ok(()) } else { Err(definitions.diagnostics) }
-}
-
-fn expand_macros_once(
-    mut module: Module,
-    decls: &HashMap<usize, (MacroDecl, MacroInvoc)>,
-    proc_macros: &HashMap<usize, (ProcMacroRegistryEntry, MacroInvoc)>,
-    context: &MacroExpansionContext<'_>,
-) -> Result<Module, Diagnostics> {
-    let results = module
-        .top_levels
-        .into_iter()
-        .enumerate()
-        .map(|(i, top_level)| match top_level {
-            TopLevel::MacroInvoc(_) => {
-                if let Some((decl, invocation)) = decls.get(&i) {
-                    return expand_top_level(decl, invocation, context);
-                }
-
-                let Some((entry, invocation)) = proc_macros.get(&i) else {
-                    return Ok(vec![top_level]);
-                };
-
-                expand_proc_macro_top_level(entry, invocation, context)
-            }
-            _ => Ok(vec![top_level]),
-        })
-        .collect::<Vec<_>>();
-
-    module.top_levels = vec![];
-
-    for result in results {
-        module.top_levels.extend(result?);
-    }
-
-    Ok(module)
 }
 
 fn expand_top_level(
@@ -398,8 +362,13 @@ fn first_macro_invocation(module: &Module) -> Option<&MacroInvoc> {
         .iter()
         .find_map(|top_level| match top_level {
             TopLevel::MacroInvoc(invocation) => Some(invocation),
+            TopLevel::Module(child) => first_macro_invocation(&child.0),
             _ => None,
         })
+}
+
+fn first_forest_invocation<'a>(root: &'a Module, modules: &'a [crate::source_loader::LoadedModule]) -> Option<&'a MacroInvoc> {
+    first_macro_invocation(root).or_else(|| modules.iter().find_map(|loaded| first_macro_invocation(&loaded.module)))
 }
 
 fn capture_set_from_correspondance(

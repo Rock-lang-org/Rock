@@ -255,16 +255,15 @@ fn parse_macro_block_recursive<'a>(
             _ => {
                 let mut token = token;
 
-                // fix the indentation for the parser
+                // Rebase relative to this declaration's module, not a fixed
+                // root-level margin; nested modules retain the same bytes/maps.
                 if let TokenType::Indent(level) = token.token_type {
-                    if level == 0 || level == stream.indent_step()? as u8 {
+                    if usize::from(level) <= stream.indent_level {
                         // the definition is over
                         return Ok((stream, block));
                     }
-                    if level % 2 != 0 {
-                        return Err(ParseError::UnexpectedIndent(level, token.span.clone()));
-                    }
-                    let Some(base_indent) = (stream.indent_step()? as u8).checked_mul(2) else {
+                    let Some(base_indent) = stream.indent_level.checked_add(stream.indent_step()?)
+                        .and_then(|width| u8::try_from(width).ok()) else {
                         return Err(ParseError::UnexpectedIndent(level, token.span.clone()));
                     };
                     let Some(adjusted_indent) = level.checked_sub(base_indent) else {
@@ -276,7 +275,7 @@ fn parse_macro_block_recursive<'a>(
                 let next = stream.advance(1)?;
                 let mut input = stream.lossless_until(next)?;
                 if let TokenType::Indent(_) = token.token_type {
-                    let base_indent = stream.indent_step()?.checked_mul(2)
+                    let base_indent = stream.indent_level.checked_add(stream.indent_step()?)
                         .ok_or_else(|| ParseError::UnexpectedIndent(255, token.span.clone()))?;
                     input = input.slice(base_indent..input.len_bytes(), super::super::SOURCE_LIMITS)
                         .map_err(|error| ParseError::HardError(format!("invalid macro margin: {error:?}"), token.span.clone()))?;
