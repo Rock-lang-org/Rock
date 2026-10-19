@@ -268,6 +268,15 @@ impl ParseCtx<'_> {
         Ok((Self { cursor: cursor::TokenCursor::Source(resumed), ..*self }, captured))
     }
 
+    pub fn lossless_until(&self, end: Self) -> Result<crate::lexer::lossless::LosslessStream, ParseError> {
+        match (self.cursor, end.cursor) {
+            (cursor::TokenCursor::Source(start), cursor::TokenCursor::Source(end)) => start
+                .slice_until(end, crate::lexer::lossless::ScanLimits { max_source_bytes: 16 * 1024 * 1024, max_runs: 1024 * 1024 })
+                .map_err(|error| cursor::source_error(error, start.source_eof())),
+            _ => Err(ParseError::HardError("macro syntax requires retained lossless source".into(), self.eof_span())),
+        }
+    }
+
     pub fn disallow_multiline_fn_call(&self) -> Result<Self, ParseError> {
         Ok(ParseCtx {
             disallowed_multiline_fn_call: true,

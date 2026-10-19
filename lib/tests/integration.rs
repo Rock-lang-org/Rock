@@ -12,9 +12,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use bincode::Options;
-use serde::Serialize;
-
 #[path = "support/std_cache_key.rs"]
 mod std_cache_key;
 use std_cache_key::{std_cache_compiler_stamp, std_cache_key};
@@ -20426,93 +20423,12 @@ fn proc_macro_host_with_response(
     (artifact, temp_dir)
 }
 
-#[derive(Serialize)]
-struct ProcMacroToken {
-    token_type: ProcMacroTokenType,
-    span: ProcMacroSpan,
-}
-
-#[derive(Serialize)]
-struct ProcMacroSpan {
-    file_path: PathBuf,
-    start: usize,
-    end: usize,
-}
-
-#[derive(Serialize)]
-#[allow(dead_code)]
-enum ProcMacroTokenType {
-    Ident(String),
-    Type(String),
-    Number(String),
-    Float(String),
-    Operator(String),
-    Comment(String),
-    StuckOperator(String),
-    NativeOperator(String),
-    Keyword(String),
-    MacroVar(String),
-    MacroInvoc(String),
-    MacroRepeatOpen,
-    MacroRepeatClose,
-    Equal,
-    OpenParen,
-    CloseParen,
-    OpenBracket,
-    CloseBracket,
-    OpenBrace,
-    CloseBrace,
-    Char(String),
-    String(String),
-    Arrow,
-    CurriedArrow,
-    TypeLambda,
-    FatArrow,
-    Coma,
-    Colon,
-    DoubleColon,
-    Dot,
-    DoubleDot,
-    SpacedDot,
-    Caret,
-    Tilde,
-    Arobase,
-    Interogation,
-    Ampersand,
-    Indent(u8),
-    Underscore,
-    Eol,
-    Eof,
-}
-
-fn proc_macro_token(token_type: ProcMacroTokenType) -> ProcMacroToken {
-    ProcMacroToken {
-        token_type,
-        span: ProcMacroSpan {
-            file_path: PathBuf::from("<proc-macro-output>"),
-            start: 0,
-            end: 0,
-        },
-    }
-}
-
 fn encode_generated_main_tokens() -> Vec<u8> {
-    let generated_tokens = vec![
-        proc_macro_token(ProcMacroTokenType::Indent(0)),
-        proc_macro_token(ProcMacroTokenType::Ident("main".to_string())),
-        proc_macro_token(ProcMacroTokenType::Equal),
-        proc_macro_token(ProcMacroTokenType::Arrow),
-        proc_macro_token(ProcMacroTokenType::Number("0".to_string())),
-        proc_macro_token(ProcMacroTokenType::Eol),
-        proc_macro_token(ProcMacroTokenType::Indent(0)),
-        proc_macro_token(ProcMacroTokenType::Eol),
-        proc_macro_token(ProcMacroTokenType::Eof),
-    ];
-
-    bincode::DefaultOptions::new()
-        .with_limit(rock_lib::macro_expansion::proc_macro::MAX_PROC_MACRO_MESSAGE_BYTES)
-        .serialize(&generated_tokens)
-        .unwrap()
+    let stream = rock_lib::macro_expansion::TokenStream::from_bytes(
+        "<proc-macro-output>".into(), b"main = -> 0\n".to_vec(),
+        rock_lib::macro_expansion::ScanLimits { max_source_bytes: 65536, max_runs: 4096 },
+    ).unwrap();
+    rock_lib::macro_expansion::proc_macro::encode_stream(&stream).unwrap()
 }
 
 #[test]

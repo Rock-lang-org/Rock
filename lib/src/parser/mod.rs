@@ -65,18 +65,6 @@ pub fn parse_lossless_source(stream: &LosslessStream, config: &Config) -> Result
     }
 }
 
-pub fn parse_module_tokens(
-    tokens: &[crate::lexer::Token],
-    config: &Config,
-) -> Result<Module, ParseError> {
-    engine::reset_best_error();
-    let result = module_inline.process(ParseCtx::from(tokens, config));
-    match result {
-        Ok((_, module)) => Ok(module),
-        Err(e) => Err(engine::get_best_error(e)),
-    }
-}
-
 pub fn parse_string(input: &str, config: &Config) -> Result<Program, ParseError> {
     parse_source(PathBuf::from("<memory>"), input, config).map(|mut module| {
         module.filepath = None;

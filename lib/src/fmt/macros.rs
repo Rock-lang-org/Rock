@@ -91,6 +91,10 @@ impl FormatNode for MacroFragment {
                 }
                 write!(f, "{}", token)
             }
+            MacroFragment::Trivia(input) => {
+                for run in input.runs() { f.write_str(run.text())?; }
+                Ok(())
+            }
             MacroFragment::Repetition(fragments) => {
                 write!(f, "$(")?;
 
@@ -125,6 +129,10 @@ impl HeadMacroFragment {
                 write!(f, ":ty")
             }
             MacroFragment::Token(token) => write!(f, "{}", token),
+            MacroFragment::Trivia(input) => {
+                for run in input.runs() { f.write_str(run.text())?; }
+                Ok(())
+            }
             MacroFragment::Repetition(fragments) => {
                 write!(f, "$(")?;
 
@@ -147,8 +155,11 @@ impl FormatNode for MacroInvoc {
         write!(f, "%")?;
         self.name.fmt_with(context, f)?;
 
-        for arg in &self.args {
-            write!(f, " {}", arg)?;
+        let mut view = crate::lexer::interpretation::layout::LayoutView::new(&self.args, false);
+        while let Some(piece) = view.next_token().map_err(|_| fmt::Error)? {
+            if !matches!(piece.token.token_type, TokenType::Indent(_) | TokenType::Eol | TokenType::Eof) {
+                write!(f, " {}", piece.token)?;
+            }
         }
 
         Ok(())

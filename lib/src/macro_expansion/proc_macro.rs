@@ -8,9 +8,11 @@ use bincode::Options;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
-use crate::lexer::{Span, Token};
+use crate::lexer::Span;
+use crate::ast::{InvocationId, MacroOutputCategory};
+use super::{ExpansionId, TokenStream};
 
-pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 2;
+pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 3;
 pub const MAX_PROC_MACRO_MESSAGE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +59,9 @@ pub struct ProcMacroRequest {
     pub macro_identity: String,
     pub source_module: Option<String>,
     pub expansion_id: Option<u32>,
+    pub invocation_id: InvocationId,
+    pub parent: Option<ExpansionId>,
+    pub output_category: MacroOutputCategory,
     pub input: Vec<u8>,
 }
 
@@ -94,9 +99,13 @@ pub fn encode_request(request: &ProcMacroRequest) -> Result<Vec<u8>, bincode::Er
 }
 
 pub fn decode_request(bytes: &[u8]) -> Result<ProcMacroRequest, bincode::Error> {
-    bincode::DefaultOptions::new()
+    let request: ProcMacroRequest = bincode::DefaultOptions::new()
         .with_limit(MAX_PROC_MACRO_MESSAGE_BYTES)
-        .deserialize(bytes)
+        .deserialize(bytes)?;
+    if request.protocol_version != PROC_MACRO_PROTOCOL_VERSION {
+        return Err(Box::new(bincode::ErrorKind::Custom("unsupported proc macro protocol version".into())));
+    }
+    Ok(request)
 }
 
 pub fn encode_response(response: &ProcMacroResponse) -> Result<Vec<u8>, bincode::Error> {
@@ -111,13 +120,13 @@ pub fn decode_response(bytes: &[u8]) -> Result<ProcMacroResponse, bincode::Error
         .deserialize(bytes)
 }
 
-pub fn encode_tokens(tokens: &[Token]) -> Result<Vec<u8>, bincode::Error> {
+pub fn encode_stream(stream: &TokenStream) -> Result<Vec<u8>, bincode::Error> {
     bincode::DefaultOptions::new()
         .with_limit(MAX_PROC_MACRO_MESSAGE_BYTES)
-        .serialize(tokens)
+        .serialize(stream)
 }
 
-pub fn decode_tokens(bytes: &[u8]) -> Result<Vec<Token>, bincode::Error> {
+pub fn decode_stream(bytes: &[u8]) -> Result<TokenStream, bincode::Error> {
     bincode::DefaultOptions::new()
         .with_limit(MAX_PROC_MACRO_MESSAGE_BYTES)
         .deserialize(bytes)
@@ -163,7 +172,7 @@ pub fn run_proc_macro_process(
     request: &ProcMacroRequest,
     timeout: Duration,
 ) -> Result<ProcMacroResponse, String> {
-    if artifact.protocol_version != request.protocol_version {
+    if artifact.protocol_version != PROC_MACRO_PROTOCOL_VERSION || request.protocol_version != PROC_MACRO_PROTOCOL_VERSION {
         return Ok(ProcMacroResponse::Diagnostics {
             messages: vec![format!(
                 "protocol version mismatch: artifact={}, request={}",
@@ -255,7 +264,7 @@ mod tests {
 
     #[test]
     fn proc_macro_protocol_version_tracks_enriched_request_shape() {
-        assert_eq!(PROC_MACRO_PROTOCOL_VERSION, 2);
+        assert_eq!(PROC_MACRO_PROTOCOL_VERSION, 3);
     }
 
     #[test]
@@ -267,6 +276,9 @@ mod tests {
             macro_identity: "macros::make_main".to_string(),
             source_module: None,
             expansion_id: None,
+            invocation_id: InvocationId::fresh().unwrap(),
+            parent: None,
+            output_category: MacroOutputCategory::Items,
             input: Vec::new(),
         };
         let encoded = encode_request(&request).unwrap();
@@ -290,6 +302,9 @@ mod tests {
             macro_identity: "macros::make_main".to_string(),
             source_module: Some("main".to_string()),
             expansion_id: Some(7),
+            invocation_id: InvocationId::fresh().unwrap(),
+            parent: Some(ExpansionId(3)),
+            output_category: MacroOutputCategory::Expression,
             input: vec![1, 2, 3],
         };
         let decoded = decode_request(&encode_request(&request).unwrap()).unwrap();
@@ -320,14 +335,12 @@ mod tests {
 
     #[test]
     fn proc_macro_protocol_roundtrips_token_payload() {
-        let tokens = vec![crate::lexer::Token::from(crate::lexer::TokenType::Ident(
-            "main".to_string(),
-        ))];
+        let input = super::super::token_tree::source("main /* trivia */\r\n");
 
-        let encoded = encode_tokens(&tokens).unwrap();
-        let decoded = decode_tokens(&encoded).unwrap();
+        let encoded = encode_stream(&input).unwrap();
+        let decoded = decode_stream(&encoded).unwrap();
 
-        assert_eq!(decoded, tokens);
+        assert_eq!(encode_stream(&decoded).unwrap(), encoded);
     }
 
     #[test]
@@ -359,6 +372,9 @@ mod tests {
             macro_identity: "macros::make_main".to_string(),
             source_module: None,
             expansion_id: None,
+            invocation_id: InvocationId::fresh().unwrap(),
+            parent: None,
+            output_category: MacroOutputCategory::Items,
             input: vec![0; OVERSIZED_PAYLOAD_BYTES],
         };
         let encoded = bincode::serialize(&request).unwrap();
@@ -394,6 +410,9 @@ mod tests {
             macro_identity: "macros::make_main".to_string(),
             source_module: None,
             expansion_id: None,
+            invocation_id: InvocationId::fresh().unwrap(),
+            parent: None,
+            output_category: MacroOutputCategory::Items,
             input: Vec::new(),
         };
 
@@ -423,6 +442,9 @@ mod tests {
             macro_identity: "macros::make_main".to_string(),
             source_module: None,
             expansion_id: None,
+            invocation_id: InvocationId::fresh().unwrap(),
+            parent: None,
+            output_category: MacroOutputCategory::Items,
             input: vec![0; OVERSIZED_PAYLOAD_BYTES],
         };
 

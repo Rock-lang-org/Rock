@@ -1,25 +1,19 @@
 use crate::lexer::{Token, TokenType};
-use crate::parser::items::tests::common::*;
 use crate::parser::items::*;
 use crate::parser::*;
 use crate::Config;
 
 #[test]
 fn test_parse_macro_entry() {
-    let input = "$a:ident =>\n        statement";
-    let tokens = lex(input);
-    // let tokens = &tokens[1..]; // skip the Indent(0)
+    let input = "macro make\n    $a:ident =>\n        statement";
     let config = Config::default();
 
-    let mut parse_ctx = ParseCtx::from(&tokens, &config);
-
-    // Hack to force the indent step
-    parse_ctx.indent_step = 4;
-
-    let (rest, macro_entry) = macro_entry(parse_ctx).unwrap();
+    let program = parse_string(input, &config).unwrap();
+    let TopLevel::MacroDecl(decl) = &program.module.top_levels[0] else { panic!("expected macro") };
+    let macro_entry = &decl.entries[0];
 
     assert_eq!(macro_entry.defs.len(), 1);
-    assert_eq!(rest.len(), 0);
+    assert_eq!(program.module.top_levels.len(), 1);
 }
 
 #[test]

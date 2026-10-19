@@ -41,16 +41,3 @@ pub fn assert_formatted_literal_kind_eq(actual: &LiteralKind, expected: &Literal
     };
     assert_formatted_eq(&actual, &expected);
 }
-
-/// Helper function to lex input (used by macro tests)
-/// This version keeps the indent and EOF tokens
-pub fn lex(input: &str) -> Vec<crate::lexer::Token> {
-    use crate::lexer::Lexer;
-    use std::path::PathBuf;
-
-    Lexer::new(PathBuf::from("/test.rk"), input)
-        .unwrap()
-        .with_newline_at_end(false)
-        .collect()
-        .unwrap()
-}

@@ -190,20 +190,15 @@ fn macro_a0_07_group_slices_retain_different_source_origins() {
 
 #[test]
 fn macro_a0_07_shared_delimiters_flatten_existing_macro_wrappers_with_origins() {
-    use crate::lexer::{Span, TokenType};
-    use crate::macro_expansion::{TokenOrigin, TokenStream, TokenTree};
+    use crate::lexer::Span;
+    use crate::macro_expansion::TokenStream;
 
     let open = Span::new("/virtual/open.rk".into(), 7, 8);
     let close = Span::new("/virtual/close.rk".into(), 3, 4);
-    let tree = TokenStream { trees: vec![TokenTree::Delimited {
-        delimiter: Delimiter::Brace,
-        open_origin: TokenOrigin::Source(open.clone()),
-        inner: TokenStream::default(),
-        close_origin: TokenOrigin::Source(close.clone()),
-    }] };
-    let tokens = tree.to_tokens_with_origins();
-    assert_eq!(tokens[0].0.token_type, TokenType::OpenBrace);
-    assert_eq!(tokens[0].0.span, open);
-    assert_eq!(tokens[1].0.token_type, TokenType::CloseBrace);
-    assert_eq!(tokens[1].0.span, close);
+    let left = TokenStream::from_bytes(open.file_path.clone(), b"       {".to_vec(), STORAGE).unwrap().slice(7..8, STORAGE).unwrap();
+    let right = TokenStream::from_bytes(close.file_path.clone(), b"   }".to_vec(), STORAGE).unwrap().slice(3..4, STORAGE).unwrap();
+    let group = StructuralGroup::from_parts(Delimiter::Brace, &left, &scan(""), &right, STORAGE).unwrap();
+    assert_eq!(text(group.stream()), "{}");
+    assert_eq!(group.stream().runs()[0].span(), open);
+    assert_eq!(group.stream().runs()[1].span(), close);
 }

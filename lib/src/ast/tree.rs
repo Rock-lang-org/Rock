@@ -333,6 +333,7 @@ pub struct MacroDecl {
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct MacroEntry {
+    pub input: crate::lexer::lossless::LosslessStream,
     pub defs: Vec<MacroFragment>,
     pub body: Vec<MacroFragment>,
 }
@@ -342,14 +343,35 @@ pub enum MacroFragment {
     Ident(Ident),
     Expr(Ident),
     Type(Ident),
-    Token(Token),
+    Token(MacroLexeme),
+    Trivia(crate::lexer::lossless::LosslessStream),
     Repetition(Vec<MacroFragment>),
+}
+
+/// A cached Rock interpretation over retained lexical input, never its replacement.
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+pub struct MacroLexeme {
+    pub token: Token,
+    pub input: crate::lexer::lossless::LosslessStream,
+}
+
+impl std::ops::Deref for MacroLexeme {
+    type Target = Token;
+
+    fn deref(&self) -> &Token { &self.token }
+}
+
+impl std::fmt::Display for MacroLexeme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.token.fmt(f) }
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct MacroInvoc {
+    pub id: super::InvocationId,
+    pub parent: Option<crate::macro_expansion::ExpansionId>,
+    pub output: super::MacroOutputCategory,
     pub name: Ident,
-    pub args: Vec<Token>,
+    pub args: crate::lexer::lossless::LosslessStream,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

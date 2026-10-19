@@ -227,6 +227,13 @@ impl SourceCursor<'_> {
         Ok(self.input.checkpoint(self.branch, self.start)?.view.offset())
     }
 
+    pub fn slice_until(&self, end: Self, limits: ScanLimits) -> Result<LosslessStream, SourceError> {
+        if !std::ptr::eq(self.input, end.input) || self.branch != end.branch {
+            return Err(SourceError::Rock(RockError::InvalidCaptureBoundary { span: self.input.eof.clone() }));
+        }
+        self.input.stream.slice(self.offset()?..end.offset()?, limits).map_err(SourceError::Preservation)
+    }
+
     pub fn eof_span(&self) -> Result<Span, SourceError> {
         match self.end {
             Some(end) => {

@@ -3,10 +3,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use super::Span;
 
 /// Storage hints, not Rock token kinds: quotes, comments and groups are just text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RunKind {
     Text,
     /// Unicode whitespace other than the physical line endings CR and LF.
@@ -35,7 +37,7 @@ impl SyntaxContext {
 }
 
 /// A splice is a lexical boundary even if its printed neighbours could touch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JoinBoundary {
     Separate,
     /// Explicitly restore adjacency of contiguous slices of the same snapshot.
@@ -64,7 +66,7 @@ pub enum LosslessError {
     ConflictingContexts { offset: usize, left: SyntaxContext, right: SyntaxContext },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct SourceSnapshot {
     file_path: PathBuf,
     text: String,
@@ -78,9 +80,23 @@ pub struct LosslessRun {
     range: std::ops::Range<usize>,
     context: SyntaxContext,
     boundary: JoinBoundary,
+    origin: Option<crate::macro_expansion::TokenOrigin>,
 }
 
+impl PartialEq for LosslessRun {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.source, &other.source) && self.kind == other.kind
+            && self.range == other.range && self.context == other.context && self.boundary == other.boundary && self.origin == other.origin
+    }
+}
+
+impl Eq for LosslessRun {}
+
 impl LosslessRun {
+    pub fn origin(&self) -> crate::macro_expansion::TokenOrigin {
+        self.origin.clone().unwrap_or_else(|| crate::macro_expansion::TokenOrigin::Source(self.span()))
+    }
+
     pub fn kind(&self) -> RunKind {
         self.kind
     }
@@ -103,7 +119,13 @@ impl LosslessRun {
     }
 
     pub fn span(&self) -> Span {
-        Span::new(self.source.file_path.clone(), self.range.start, self.range.end)
+        let path = match &self.origin {
+            Some(crate::macro_expansion::TokenOrigin::Generated { expansion, .. }) => format!("<macro-expansion:{}>", expansion.0).into(),
+            Some(crate::macro_expansion::TokenOrigin::Captured { capture_span, .. }) => capture_span.file_path.clone(),
+            Some(crate::macro_expansion::TokenOrigin::Source(span)) => span.file_path.clone(),
+            _ => self.source.file_path.clone(),
+        };
+        Span::new(path, self.range.start, self.range.end)
     }
 }
 
@@ -112,11 +134,20 @@ struct SourcePosition {
     source: Arc<SourceSnapshot>,
     offset: usize,
     context: SyntaxContext,
+    origin: Option<crate::macro_expansion::TokenOrigin>,
 }
+
+impl PartialEq for SourcePosition {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.source, &other.source) && self.offset == other.offset && self.context == other.context && self.origin == other.origin
+    }
+}
+
+impl Eq for SourcePosition {}
 
 /// Ordered source segments; logical byte offsets need not be source offsets.
 /// Reconstruction is inspection only, never a syntax-forwarding mechanism.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LosslessStream {
     runs: Vec<LosslessRun>,
     len_bytes: usize,
@@ -184,12 +215,13 @@ impl LosslessStream {
                 range: start..end,
                 context: SyntaxContext::ROOT,
                 boundary: JoinBoundary::SourceAdjacent,
+                origin: None,
             });
         }
 
         Ok(Self {
             len_bytes: source.text.len(),
-            anchor: SourcePosition { source, offset: 0, context: SyntaxContext::ROOT },
+            anchor: SourcePosition { source, offset: 0, context: SyntaxContext::ROOT, origin: None },
             runs,
         })
     }
@@ -200,9 +232,14 @@ impl LosslessStream {
 }
 
 mod splice;
+mod wire;
+mod origin;
 
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod splice_tests;
+
+#[cfg(test)]
+mod wire_tests;

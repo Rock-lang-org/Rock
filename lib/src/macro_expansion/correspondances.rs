@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::lexer::Token;
+use super::TokenStream;
 #[derive(Debug, Clone)]
 pub struct Correspondance {
-    pub entries: HashMap<String, Vec<Vec<Token>>>,
+    pub entries: HashMap<String, Vec<TokenStream>>,
     pub nested_corresp_keys: Vec<Vec<String>>,
     pub nested_corresp: Vec<Correspondance>,
 }
@@ -17,7 +17,7 @@ impl Correspondance {
         }
     }
 
-    pub fn insert_direct(&mut self, name: String, tokens: Vec<Token>) {
+    pub fn insert_direct(&mut self, name: String, tokens: TokenStream) {
         let entry = self.entries.entry(name).or_insert(vec![tokens.clone()]);
 
         if !entry.contains(&tokens) {
@@ -58,7 +58,7 @@ impl Correspondance {
             .collect()
     }
 
-    pub fn get(&self, name: &str, max_level: usize) -> Option<Vec<Vec<Token>>> {
+    pub fn get(&self, name: &str, max_level: usize) -> Option<Vec<TokenStream>> {
         if max_level == 0 {
             return self.entries.get(name).cloned();
         } else {

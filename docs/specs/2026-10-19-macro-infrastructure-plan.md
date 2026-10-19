@@ -168,6 +168,54 @@ The parsing/storage slices do not declare expression macros finished. Before the
 stage gate, unfinished execution/resolution paths must diagnose explicitly; do
 not fall back to a global macro name or spelling-based capture to get a demo.
 
+### A.01 delivery receipt (2026-10-19)
+
+Invocation inputs, declarative captures, and retained templates now use the shared
+lossless stream. Interpreted matcher tokens remain a temporary Rock view with
+exact logical capture ranges, not a second stored or wire payload. Template
+source retains original margins/trivia while the existing item expansion applies
+its relative margin. Optional groups use the shared group view rather than the
+retired compiler-token tree wrappers.
+
+Invocations carry distinct node-backed IDs, an explicit parent expansion edge,
+and an item/expression output request. Generated parsing records the parent on
+each child node; the span-keyed parent queues are removed. Worker protocol 3
+transports checked snapshot-table streams and invocation/category metadata;
+legacy token payloads and requests reject without a compatibility reader. The
+obsolete interpreted-token module parser and token wire helpers are removed.
+
+- Initial `cargo test -p rock-lib --lib macro_a_01_ -- --nocapture` was RED because
+  lossless streams lacked serialization. Snapshot-table transport subsequently
+  passed preservation and independent-snapshot adjacency rejection controls.
+- Adjacent `--lib macro_expansion:: -- --nocapture` initially passed 48/51;
+  `--lib parser:: -- --nocapture` initially passed 538/540. The migration exposed
+  incomplete-head diagnostics, odd-indent error ordering, and repetition layout;
+  repaired adjacent runs passed 58 macro and 540 parser tests.
+- An intermediate `cargo test -p rock-lib --lib` passed 2,482/2,483; adapting the
+  invocation observer to its explicit Rock view removed duplicated source trivia
+  without changing the observer fixture. The first full-suite attempt did not
+  compile because its fixture referenced the private lexer module; exporting the
+  shared scan-limit type through the macro API repaired that boundary.
+- The first complete `cargo test -p rock-lib` passed 2,492 units, 789 main
+  integrations, and one parser integration; one doctest was ignored (archive
+  `e696fe998537f7dc`). A subsequent dedicated RED test exposed a recaptured
+  generated-source location reverting to its definition file. Effective run and
+  empty-slice locations now retain the captured virtual source.
+- Final focused `cargo test -p rock-lib --lib macro_a_01_ -- --nocapture` passes
+  12 tests: distinct equal-span IDs/parents, shape-independent exact UTF-8/trivia
+  transport, retained template/capture ranges, actual worker metadata, provenance,
+  and malformed/old payload rejection.
+- Final `cargo test -p rock-lib` passes 2,493 unit tests, 789 main integrations,
+  and one parser integration; one doctest remains ignored (archive
+  `18cb8d2b745d7d20`). Library warnings remain the 13 unused optional-group
+  interfaces and two group-error-field warnings in tests. No functional edits
+  follow that gate.
+
+This slice does not add expression/block grammar, change declarative matching
+policy, or authorize worker-created hygiene/provenance; those remain in their
+own slices. `bd ready --json` still fails because `bd` is unavailable. Formatting
+remains deferred; no formatter/check, Clippy, or separate build gate was run.
+
 ### Ab. Scope and schedule the same engine across modules
 
 | Slice | Implement only | Focused acceptance | Runner |

@@ -5,6 +5,8 @@ use crate::{
 };
 
 use super::{
+    TokenStream,
+    token_tree::MACRO_LIMITS,
     context::MacroExpansionContext,
     correspondances::Correspondance,
     declarative::{CaptureKind, MatcherFragment},
@@ -22,6 +24,8 @@ pub struct MacroArgMatcher<'args, 'ctx, 'cfg> {
     threads: Vec<MacroThread<'args>>,
     must_be_completed: bool,
     args: &'args [Token],
+    input: &'args TokenStream,
+    ranges: &'args [std::ops::Range<usize>],
     macro_span: Span,
     invoc_span: Span,
     context: &'ctx MacroExpansionContext<'cfg>,
@@ -30,6 +34,8 @@ pub struct MacroArgMatcher<'args, 'ctx, 'cfg> {
 impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
     pub fn new(
         args: &'args [Token],
+        input: &'args TokenStream,
+        ranges: &'args [std::ops::Range<usize>],
         thread: Vec<MatcherFragment>,
         macro_span: Span,
         invoc_span: Span,
@@ -42,6 +48,8 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                 correspondances: Correspondance::new(),
             }],
             args,
+            input,
+            ranges,
             must_be_completed: false,
             macro_span,
             invoc_span,
@@ -55,6 +63,17 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
         let (correspondances, _) = self.match_threads()?;
 
         Ok(correspondances)
+    }
+
+    fn capture(&self, args: &[Token], count: usize) -> Result<TokenStream, Diagnostics> {
+        let offset = self.args.len() - args.len();
+        let retained = self.ranges.get(offset..offset.saturating_add(count))
+            .filter(|ranges| !ranges.is_empty())
+            .ok_or_else(|| Diagnostics::from(ParseError::HardError("macro capture made no progress".into(), self.invoc_span.clone())))?;
+        let range = retained[0].start..retained[retained.len() - 1].end;
+        self.input.slice(range, MACRO_LIMITS).map_err(|error| ParseError::HardError(
+            format!("invalid macro capture: {error:?}"), self.invoc_span.clone(),
+        ).into())
     }
 
     fn match_threads(&mut self) -> Result<(Correspondance, &'args [Token]), Diagnostics> {
@@ -80,7 +99,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                                 if let TokenType::Ident(_) = arg.token_type {
                                     thread
                                         .correspondances
-                                        .insert_direct(name.clone(), vec![arg.clone()]);
+                                        .insert_direct(name.clone(), self.capture(thread.args, 1)?);
 
                                     new_threads.push(MacroThread {
                                         args: &thread.args[1..],
@@ -102,8 +121,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                                 {
                                     thread.correspondances.insert_direct(
                                         name.clone(),
-                                        thread.args[..thread.args.len() - remaining_tokens.len()]
-                                            .to_vec(),
+                                        self.capture(thread.args, thread.args.len() - remaining_tokens.len())?,
                                     );
 
                                     thread.args =
@@ -126,7 +144,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                                 if let TokenType::Type(_) = arg.token_type {
                                     thread
                                         .correspondances
-                                        .insert_direct(name.clone(), vec![arg.clone()]);
+                                        .insert_direct(name.clone(), self.capture(thread.args, 1)?);
 
                                     new_threads.push(MacroThread {
                                         args: &thread.args[1..],
@@ -173,6 +191,8 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                             loop {
                                 let mut matcher = MacroArgMatcher::new(
                                     repeated_args,
+                                    self.input,
+                                    &self.ranges[self.args.len() - repeated_args.len()..],
                                     repetition.clone(),
                                     self.macro_span.clone(),
                                     self.invoc_span.clone(),
@@ -240,6 +260,25 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
     }
 }
 
+/// Preserve the legacy item matcher's layout-insensitive policy while retaining
+/// the exact source ranges for all captures; A.05 owns matcher policy changes.
+pub(super) fn rock_arguments(input: &TokenStream) -> Result<(Vec<Token>, Vec<std::ops::Range<usize>>), Diagnostics> {
+    use crate::lexer::interpretation::layout::{LayoutOrigin, LayoutView};
+    let mut view = LayoutView::new(input, false);
+    let mut tokens = Vec::new();
+    let mut ranges = Vec::new();
+    while let Some(piece) = view.next_token().map_err(|error| ParseError::HardError(
+        format!("invalid Rock macro arguments: {error:?}"), input.start_span(),
+    ))? {
+        if matches!(piece.token.token_type, TokenType::Indent(_) | TokenType::Eol | TokenType::Eof) { continue; }
+        if let LayoutOrigin::Source(range) = piece.origin {
+            tokens.push(piece.token);
+            ranges.push(range);
+        }
+    }
+    Ok((tokens, ranges))
+}
+
 fn remaining_is_all_repetition_or_empty(tokens: &[MatcherFragment]) -> bool {
     if tokens.is_empty() {
         return true;
@@ -298,7 +337,6 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use crate::lexer::{Token, TokenType};
     use crate::macro_expansion::declarative::{CaptureKind, MatcherFragment};
 
     fn test_config() -> crate::Config {
@@ -325,14 +363,15 @@ mod tests {
     fn macro_arg_matcher_accepts_compiled_matcher_fragments() {
         let config = test_config();
         let context = MacroExpansionContext::new(&config);
-        let args = vec![Token::from(TokenType::Ident("main".to_string()))];
+        let input = super::super::token_tree::source("main");
+        let (args, ranges) = rock_arguments(&input).unwrap();
         let matcher = vec![MatcherFragment::Capture {
             name: "name".to_string(),
             kind: CaptureKind::Ident,
         }];
 
         let correspondance =
-            MacroArgMatcher::new(&args, matcher, Span::test(), Span::test(), &context)
+            MacroArgMatcher::new(&args, &input, &ranges, matcher, Span::test(), Span::test(), &context)
                 .run()
                 .unwrap();
 

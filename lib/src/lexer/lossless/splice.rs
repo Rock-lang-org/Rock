@@ -9,7 +9,13 @@ use crate::lexer::Span;
 
 impl SourcePosition {
     fn span(&self) -> Span {
-        Span::new(self.source.file_path.clone(), self.offset, self.offset)
+        let path = match &self.origin {
+            Some(crate::macro_expansion::TokenOrigin::Generated { expansion, .. }) => format!("<macro-expansion:{}>", expansion.0).into(),
+            Some(crate::macro_expansion::TokenOrigin::Captured { capture_span, .. }) => capture_span.file_path.clone(),
+            Some(crate::macro_expansion::TokenOrigin::Source(span)) => span.file_path.clone(),
+            _ => self.source.file_path.clone(),
+        };
+        Span::new(path, self.offset, self.offset)
     }
 }
 
@@ -20,14 +26,14 @@ impl LosslessStream {
 
     pub fn start_span(&self) -> Span {
         match self.runs.first() {
-            Some(run) => Span::new(run.source.file_path.clone(), run.range.start, run.range.start),
+            Some(run) => Span::new(run.span().file_path, run.range.start, run.range.start),
             None => self.anchor.span(),
         }
     }
 
     pub fn end_span(&self) -> Span {
         match self.runs.last() {
-            Some(run) => Span::new(run.source.file_path.clone(), run.range.end, run.range.end),
+            Some(run) => Span::new(run.span().file_path, run.range.end, run.range.end),
             None => self.anchor.span(),
         }
     }
@@ -59,6 +65,7 @@ impl LosslessStream {
                     source: Arc::clone(&run.source),
                     offset: source_offset,
                     context: run.context,
+                    origin: run.origin.clone(),
                 });
             }
             base = end;

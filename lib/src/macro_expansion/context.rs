@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, VecDeque},
-    path::PathBuf,
-};
+use std::cell::RefCell;
 
 use crate::{
     diagnostic::{Diagnostic, DiagnosticLocation, Diagnostics},
@@ -20,14 +16,6 @@ pub struct MacroExpansionContext<'a> {
     pub proc_macro_artifacts: Vec<ProcMacroArtifact>,
     source_map: RefCell<MacroSourceMap>,
     latest_expansion: RefCell<Option<ExpansionId>>,
-    generated_invocation_parents: RefCell<HashMap<SpanKey, VecDeque<ExpansionId>>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct SpanKey {
-    file_path: PathBuf,
-    start: usize,
-    end: usize,
 }
 
 impl<'a> MacroExpansionContext<'a> {
@@ -38,7 +26,6 @@ impl<'a> MacroExpansionContext<'a> {
             proc_macro_artifacts: Vec::new(),
             source_map: RefCell::new(MacroSourceMap::new()),
             latest_expansion: RefCell::new(None),
-            generated_invocation_parents: RefCell::new(HashMap::new()),
         }
     }
 
@@ -114,44 +101,4 @@ impl<'a> MacroExpansionContext<'a> {
         }
     }
 
-    pub fn record_generated_invocation_parent(&self, span: &Span, parent: ExpansionId) {
-        self.generated_invocation_parents
-            .borrow_mut()
-            .entry(SpanKey::from(span))
-            .or_default()
-            .push_back(parent);
-    }
-
-    pub fn peek_parent_expansion_for_invocation(&self, span: &Span) -> Option<ExpansionId> {
-        self.generated_invocation_parents
-            .borrow()
-            .get(&SpanKey::from(span))
-            .and_then(|parents| parents.front().copied())
-    }
-
-    pub fn take_parent_expansion_for_invocation(&self, span: &Span) -> Option<ExpansionId> {
-        let key = SpanKey::from(span);
-        let mut parents = self.generated_invocation_parents.borrow_mut();
-        let (parent, remove_key) = {
-            let queue = parents.get_mut(&key)?;
-            let parent = queue.pop_front();
-            (parent, queue.is_empty())
-        };
-
-        if remove_key {
-            parents.remove(&key);
-        }
-
-        parent
-    }
-}
-
-impl From<&Span> for SpanKey {
-    fn from(span: &Span) -> Self {
-        Self {
-            file_path: span.file_path.clone(),
-            start: span.start,
-            end: span.end,
-        }
-    }
 }

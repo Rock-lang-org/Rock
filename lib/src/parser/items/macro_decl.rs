@@ -1,6 +1,6 @@
 use crate::{
     lexer::{Token, TokenType},
-    parser::{engine::*, Ident, MacroDecl, MacroEntry, MacroFragment, MacroInvoc},
+    parser::{engine::*, Ident, MacroDecl, MacroEntry, MacroFragment, MacroInvoc, MacroLexeme},
 };
 
 use super::{consume_tokens_until, empty_lines, get_span, ident, indent, macro_invoc_token};
@@ -17,7 +17,8 @@ pub fn macro_decl(stream: Input) -> IResult<MacroDecl> {
 }
 
 pub fn macro_entry(stream: Input) -> IResult<MacroEntry> {
-    let (stream, (_, _, defs, _, _, mut body)) = (
+    let start = stream;
+    let (stream, (_, _, defs, _, _, body)) = (
         empty_lines,
         indent,
         parse_macro_head_recursive,
@@ -26,40 +27,24 @@ pub fn macro_entry(stream: Input) -> IResult<MacroEntry> {
         parse_macro_block_recursive,
     )
         .process(stream)?;
-    let boundary_span = stream
-        .seek()
-        .map(|token| token.span)
-        .unwrap_or_else(|_| stream.eof_span());
-    body.push(MacroFragment::Token(Token {
-        token_type: TokenType::Eof,
-        span: boundary_span,
-    }));
-
-    Ok((stream, MacroEntry { defs, body }))
+    let input = start.lossless_until(stream)?;
+    Ok((stream, MacroEntry { input, defs, body }))
 }
 
 pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
-    (
-        get_span,
-        macro_invoc_token,
-        consume_tokens_until(TokenType::Indent(0)),
-    )
-        .map(|(span, name, args)| MacroInvoc {
+    let (stream, (span, name)) = (get_span, macro_invoc_token).process(stream)?;
+    let start = stream;
+    let (stream, _) = consume_tokens_until(TokenType::Indent(0)).process(stream)?;
+    let args = start.lossless_until(stream)?;
+    let id = crate::ast::InvocationId::fresh()
+        .map_err(|message| ParseError::HardError(message.into(), span.clone()))?;
+    Ok((stream, MacroInvoc {
+            id,
+            parent: None,
+            output: crate::ast::MacroOutputCategory::Items,
             name: Ident { name, span },
-            args: args
-                .iter()
-                .filter(|t| {
-                    t.token_type != TokenType::Eol
-                        && if let TokenType::Indent(_) = t.token_type {
-                            false
-                        } else {
-                            true
-                        }
-                })
-                .cloned()
-                .collect::<Vec<_>>(),
-        })
-        .process(stream)
+            args,
+        }))
 }
 
 fn incomplete_macro_head(message: &str, token: &Token) -> ParseError {
@@ -84,7 +69,7 @@ fn parse_macro_head_recursive<'a>(
                         &token,
                     ));
                 };
-                if colon_token.token_type == TokenType::Eof {
+                if matches!(colon_token.token_type, TokenType::Eof | TokenType::Eol) {
                     return Err(incomplete_macro_head(
                         "expected ':' after macro variable",
                         &colon_token,
@@ -100,7 +85,7 @@ fn parse_macro_head_recursive<'a>(
                 let Ok(kind_token) = stream.seek_nth(2) else {
                     return Err(incomplete_macro_head("expected macro fragment kind", &token));
                 };
-                if kind_token.token_type == TokenType::Eof {
+                if matches!(kind_token.token_type, TokenType::Eof | TokenType::Eol) {
                     return Err(incomplete_macro_head(
                         "expected macro fragment kind",
                         &kind_token,
@@ -152,8 +137,9 @@ fn parse_macro_head_recursive<'a>(
                 return Ok((stream, defs));
             }
             _ => {
-                defs.push(MacroFragment::Token(token));
-                stream = stream.advance(1)?;
+                let next = stream.advance(1)?;
+                defs.push(MacroFragment::Token(MacroLexeme { token, input: stream.lossless_until(next)? }));
+                stream = next;
             }
         }
     }
@@ -170,12 +156,20 @@ fn parse_macro_block_recursive<'a>(
         let token = stream.seek()?;
         match &token.token_type {
             TokenType::MacroVar(name) => {
+                let next = stream.advance(1)?;
+                let input = stream.lossless_until(next)?;
+                let prefix = input.len_bytes().checked_sub(token.span.end - token.span.start)
+                    .ok_or_else(|| ParseError::HardError("invalid macro variable extent".into(), token.span.clone()))?;
+                if prefix > 0 && !block.is_empty() {
+                    block.push(MacroFragment::Trivia(input.slice(0..prefix, super::super::SOURCE_LIMITS)
+                        .map_err(|error| ParseError::HardError(format!("invalid macro trivia: {error:?}"), token.span.clone()))?));
+                }
                 let ident = MacroFragment::Ident(Ident {
                     name: name.clone(),
                     span: token.span.clone(),
                 });
                 block.push(ident);
-                stream = stream.advance(1)?;
+                stream = next;
             }
             TokenType::MacroRepeatOpen => {
                 let (remaining, inner_block) =
@@ -208,8 +202,17 @@ fn parse_macro_block_recursive<'a>(
                     token.token_type = TokenType::Indent(adjusted_indent);
                 }
 
-                block.push(MacroFragment::Token(token));
-                stream = stream.advance(1)?;
+                let next = stream.advance(1)?;
+                let mut input = stream.lossless_until(next)?;
+                if let TokenType::Indent(_) = token.token_type {
+                    let base_indent = stream.indent_step()?.checked_mul(2)
+                        .ok_or_else(|| ParseError::UnexpectedIndent(255, token.span.clone()))?;
+                    input = input.slice(base_indent..input.len_bytes(), super::super::SOURCE_LIMITS)
+                        .map_err(|error| ParseError::HardError(format!("invalid macro margin: {error:?}"), token.span.clone()))?;
+                }
+
+                block.push(MacroFragment::Token(MacroLexeme { token, input }));
+                stream = next;
             }
         }
     }

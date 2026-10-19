@@ -1,12 +1,12 @@
 use crate::lexer::Span;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ExpansionId(pub u32);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GeneratedSourceId(pub u32);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TokenOrigin {
     Source(Span),
     Captured {
@@ -43,6 +43,7 @@ impl TokenOrigin {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MacroExpansionRecord {
+    pub invocation: crate::ast::InvocationId,
     pub macro_name: String,
     pub invocation_span: Span,
     pub definition_span: Option<Span>,
@@ -143,12 +144,14 @@ mod tests {
     fn expansion_source_map_records_invocation_definition_and_parent() {
         let mut map = MacroSourceMap::new();
         let parent = map.record_expansion(MacroExpansionRecord {
+            invocation: crate::ast::InvocationId::fresh().unwrap(),
             macro_name: "outer".to_string(),
             invocation_span: span(1, 7),
             definition_span: Some(span(10, 20)),
             parent: None,
         });
         let child = map.record_expansion(MacroExpansionRecord {
+            invocation: crate::ast::InvocationId::fresh().unwrap(),
             macro_name: "inner".to_string(),
             invocation_span: span(30, 36),
             definition_span: Some(span(40, 50)),
@@ -166,6 +169,7 @@ mod tests {
     fn expansion_trace_converts_to_diagnostic_labels() {
         let mut map = MacroSourceMap::new();
         let id = map.record_expansion(MacroExpansionRecord {
+            invocation: crate::ast::InvocationId::fresh().unwrap(),
             macro_name: "make".to_string(),
             invocation_span: Span::test(),
             definition_span: Some(Span::test()),
@@ -183,6 +187,7 @@ mod tests {
     fn expansion_trace_omits_definition_label_without_definition_location() {
         let mut map = MacroSourceMap::new();
         let id = map.record_expansion(MacroExpansionRecord {
+            invocation: crate::ast::InvocationId::fresh().unwrap(),
             macro_name: "make".to_string(),
             invocation_span: span(1, 7),
             definition_span: None,
@@ -223,12 +228,14 @@ mod tests {
     fn trace_stops_when_parent_links_cycle() {
         let mut map = MacroSourceMap::new();
         let first = map.record_expansion(MacroExpansionRecord {
+            invocation: crate::ast::InvocationId::fresh().unwrap(),
             macro_name: "first".to_string(),
             invocation_span: span(1, 7),
             definition_span: Some(span(10, 20)),
             parent: None,
         });
         let second = map.record_expansion(MacroExpansionRecord {
+            invocation: crate::ast::InvocationId::fresh().unwrap(),
             macro_name: "second".to_string(),
             invocation_span: span(30, 36),
             definition_span: Some(span(40, 50)),
@@ -247,6 +254,7 @@ mod tests {
     fn recorded_expansion_has_generated_source_identity() {
         let mut map = MacroSourceMap::new();
         let expansion = map.record_expansion(MacroExpansionRecord {
+            invocation: crate::ast::InvocationId::fresh().unwrap(),
             macro_name: "make_item".to_string(),
             invocation_span: span(1, 10),
             definition_span: Some(span(20, 40)),
