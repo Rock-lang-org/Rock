@@ -17,7 +17,7 @@ impl FormatNode for TraitDecl {
         self.name.fmt_with(context, f)?;
         for (index, param) in self.generic_params.iter().enumerate() {
             write!(f, " ")?;
-            let parenthesized = param.kind.as_ref().is_some_and(|kind| kind.args.is_empty());
+            let parenthesized = param.default.is_none() && param.kind.as_ref().is_some_and(|kind| kind.args.is_empty());
             if parenthesized {
                 write!(f, "(")?;
             }
@@ -366,6 +366,7 @@ impl FormatNode for ParseTypeInner {
 
 impl FormatNode for GenericParamDecl {
     fn fmt_with<W: Write>(&self, context: &mut FormatContext, f: &mut W) -> fmt::Result {
+        if self.default.is_some() { write!(f, "{{")?; }
         self.name.fmt_with(context, f)?;
         if let Some(kind) = &self.kind {
             if kind.args.is_empty() {
@@ -380,6 +381,11 @@ impl FormatNode for GenericParamDecl {
                     }
                 }
             }
+        }
+        if let Some(default) = &self.default {
+            write!(f, " = ")?;
+            default.fmt_with(context, f)?;
+            write!(f, "}}")?;
         }
         Ok(())
     }

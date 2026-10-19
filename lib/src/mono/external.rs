@@ -570,7 +570,7 @@ mod tests {
     ) -> ExternCrateRecord {
         loaded_object_backed_crate_named_with_backend_symbols(
             CrateId(1),
-            "stdlib",
+            "std",
             interface_impls,
             cross_crate_impls,
             backend_symbols,
@@ -621,7 +621,7 @@ mod tests {
                 traits_with_defaults: BTreeMap::new(),
                 generic_impls: cross_crate_impls,
             }),
-            ExternCrateLink::object(PathBuf::from("stdlib.o"), backend_symbols),
+            ExternCrateLink::object(PathBuf::from("std.o"), backend_symbols),
         )
     }
 
@@ -961,7 +961,7 @@ mod tests {
         let impl_id = DefId::new(CrateId(0), LocalDefId(70));
         let method_id = DefId::new(CrateId(0), LocalDefId(71));
         let mut method =
-            simple_hir_function("from_str", Some("stdlib::String_from_str"), method_id);
+            simple_hir_function("from_str", Some("std::String_from_str"), method_id);
         method.params = vec![HirParam {
             name: "s".to_string(),
             local_id: crate::ids::HirLocalId(0),
@@ -1229,10 +1229,10 @@ mod tests {
         let mut resolver = ResolverTables::default();
         resolver
             .item_names_by_id
-            .insert(box_id, "stdlib::Box".to_string());
+            .insert(box_id, "std::Box".to_string());
         let loaded = ExternCrateRecord::new(
             CrateId(1),
-            "stdlib".to_string(),
+            "std".to_string(),
             ExternCrateMetadata::new(ArtifactCrateInterface::default(), resolver, BTreeMap::new())
                 .with_language_items(crate::hir::HirLanguageItems {
                     drop: Some(crate::language_items::DropLanguageItems {
@@ -1246,7 +1246,7 @@ mod tests {
                 traits_with_defaults: BTreeMap::new(),
                 generic_impls: vec![drop_impl],
             }),
-            ExternCrateLink::object(PathBuf::from("stdlib.o"), BTreeMap::new()),
+            ExternCrateLink::object(PathBuf::from("std.o"), BTreeMap::new()),
         );
         let mut ctx = CrateContext::new();
         ctx.add_extern_crate(loaded).unwrap();
@@ -1553,7 +1553,7 @@ mod tests {
             .names
             .functions_by_name
             .keys()
-            .any(|name| name.starts_with("stdlib::")));
+            .any(|name| name.starts_with("std::")));
     }
 
     #[test]
@@ -1710,7 +1710,7 @@ mod tests {
                 .expect("dependency should be available");
             let mut mono = Monomorphizer::new();
 
-            mono.record_imported_impl("stdlib", &imp, Some(dep));
+            mono.record_imported_impl("std", &imp, Some(dep));
 
             mono.instances
                 .records()
@@ -1799,7 +1799,7 @@ mod tests {
             .values()
             .find(|record| record.provided_by_object)
             .expect("object-backed method instance should be recorded");
-        assert_eq!(record.symbols.source_name, "stdlib::println");
+        assert_eq!(record.symbols.source_name, "std::println");
         assert_eq!(record.symbols.backend_symbol, "artifact_box_println");
     }
 

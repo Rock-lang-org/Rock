@@ -1,0 +1,56 @@
+// Rock Standard Library
+//
+// Domain modules own their implementations and public re-exports.
+// The prelude exposes the same common items independently of this layout.
+
+// ============================================================================
+// Operator precedence declarations (higher = binds tighter)
+// ALL operators must be declared here - no hardcoded defaults
+// ============================================================================
+infix 1 ||
+infix 1 |>
+infix 1 |>>
+infix 2 &&
+infix 3 |
+infix 4 ^
+infix 5 &
+infix 6 ==
+infix 6 !=
+infix 7 <
+infix 7 <=
+infix 7 >
+infix 7 >=
+infix 8 <<
+infix 8 >>
+infix 8 >>=
+infix 9 +
+infix 9 -
+infix 8 <|>
+infix 8 <$>
+infix 8 <&>
+infix 8 <*>
+infix 8 <!>
+infix 8 !>
+infix 10 *
+infix 10 /
+infix 10 %
+
+< mod ffi
+< mod mem
+< mod num
+< mod cmp
+< mod clone
+< mod convert
+< mod hash
+< mod show
+< mod ops
+< mod functional
+< mod control
+< mod collections
+< mod string
+< mod concurrency
+< mod env
+< mod io
+
+// Prelude module - re-exports of all items available without qualification
+mod prelude

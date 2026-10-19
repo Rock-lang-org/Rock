@@ -420,6 +420,18 @@ impl Lowerer {
             can_autoref_mut,
         );
 
+        // Shared slice methods must not introduce an exclusive array borrow.
+        // Keep both array views ahead of unrelated trait-deref candidates.
+        if let Some(slice_ref) = self.coerce_array_value_to_slice_ref(expr.clone()) {
+            push_candidate(
+                self,
+                &mut candidates,
+                &mut seen,
+                slice_ref,
+                ReceiverAdjustment::ArrayValueToSliceRef,
+                false,
+            );
+        }
         if let Some(mut_slice_ref) = self.coerce_array_value_to_mut_slice_ref(expr.clone()) {
             push_candidate(
                 self,
@@ -518,17 +530,6 @@ impl Lowerer {
                 &mut seen,
                 slice_ref,
                 ReceiverAdjustment::ArrayRefToSliceRef,
-                false,
-            );
-        }
-
-        if let Some(slice_ref) = self.coerce_array_value_to_slice_ref(expr.clone()) {
-            push_candidate(
-                self,
-                &mut candidates,
-                &mut seen,
-                slice_ref,
-                ReceiverAdjustment::ArrayValueToSliceRef,
                 false,
             );
         }
@@ -1078,8 +1079,9 @@ mod tests {
         let candidates = lowerer.receiver_adjustment_candidates(expr);
 
         assert_eq!(candidates[0].adjustment, ReceiverAdjustment::None);
+        assert_eq!(candidates[1].adjustment, ReceiverAdjustment::ArrayValueToSliceRef);
         assert!(matches!(
-            (&candidates[0].expr.ty, &candidates[1].expr.ty, candidates[1].adjustment),
+            (&candidates[0].expr.ty, &candidates[2].expr.ty, candidates[2].adjustment),
             (
                 Type::Array(elem, 3),
                 Type::Reference { mutable: true, inner },

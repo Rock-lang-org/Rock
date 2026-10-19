@@ -1,7 +1,7 @@
 as_bytes: &Str -> Vec U8
 as_bytes = s ->
-    len = string_len s
-    ptr = ~ArrPtr s
+    len = s.len!
+    ptr = s.as_ptr!
     mut result = Vec::new!
     i = 0
     one = 1
@@ -34,7 +34,7 @@ byte_to_ascii_str = b ->
 reverse_ascii = s ->
     bytes = as_bytes s
     slice = bytes.as_slice!
-    len = string_len s
+    len = s.len!
     result = String::from ""
     one = 1
     i = len - one
@@ -50,7 +50,7 @@ count_byte = s, target ->
     count = 0
     i = 0
     one = 1
-    len = string_len s
+    len = s.len!
     while i < len
         if ((byte_at slice, i) as I64) == target
             count = count + one
@@ -60,7 +60,7 @@ count_byte = s, target ->
 is_ascii_palindrome = s ->
     bytes = as_bytes s
     slice = bytes.as_slice!
-    len = string_len s
+    len = s.len!
     i = 0
     result = 1
     one = 1

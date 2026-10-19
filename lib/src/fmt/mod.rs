@@ -234,9 +234,16 @@ impl FormatNode for TopLevel {
             TopLevel::TraitDecl(decl) => decl.fmt_with(context, f),
             TopLevel::EnumDecl(decl) => decl.fmt_with(context, f),
             TopLevel::Impl(impl_) => impl_.fmt_with(context, f),
-            TopLevel::NewType(inner, ty) => {
+            TopLevel::NewType(inner, params, ty) => {
                 write!(f, "type ")?;
                 inner.fmt_with(context, f)?;
+                for (index, param) in params.iter().enumerate() {
+                    write!(f, " ")?;
+                    if param.kind.is_some() && param.default.is_none() { write!(f, "(")?; }
+                    param.fmt_with(context, f)?;
+                    if param.kind.is_some() && param.default.is_none() { write!(f, ")")?; }
+                    if index + 1 < params.len() { write!(f, ",")?; }
+                }
                 write!(f, " = ")?;
                 ty.fmt_with(context, f)?;
                 writeln!(f)
@@ -252,7 +259,7 @@ impl FormatNode for StructDecl {
         self.name.fmt_with(context, f)?;
         for (index, param) in self.generic_params.iter().enumerate() {
             write!(f, " ")?;
-            if param.kind.is_some() {
+            if param.kind.is_some() && param.default.is_none() {
                 write!(f, "(")?;
                 param.fmt_with(context, f)?;
                 write!(f, ")")?;
@@ -298,6 +305,13 @@ impl FormatNode for EnumDecl {
         }
         write!(f, "enum ")?;
         self.name.fmt_with(context, f)?;
+        for (index, param) in self.generic_params.iter().enumerate() {
+            write!(f, " ")?;
+            if param.kind.is_some() && param.default.is_none() { write!(f, "(")?; }
+            param.fmt_with(context, f)?;
+            if param.kind.is_some() && param.default.is_none() { write!(f, ")")?; }
+            if index + 1 < self.generic_params.len() { write!(f, ",")?; }
+        }
         writeln!(f)?;
 
         context.increase_indent();

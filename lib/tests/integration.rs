@@ -15,14 +15,2236 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use bincode::Options;
 use serde::Serialize;
 
-#[path = "support/stdlib_cache_key.rs"]
-mod stdlib_cache_key;
-use stdlib_cache_key::{stdlib_cache_compiler_stamp, stdlib_cache_key};
+#[path = "support/std_cache_key.rs"]
+mod std_cache_key;
+use std_cache_key::{std_cache_compiler_stamp, std_cache_key};
 
 #[path = "support/callable.rs"]
 mod callable;
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn test_ordinary_constant_integer_arithmetic_is_diagnosed() {
+    for expression in [
+        "(127 as I8) + (1 as I8)",
+        "(255 as U8) + (1 as U8)",
+        "(32767 as I16) + (1 as I16)",
+        "(65535 as U16) + (1 as U16)",
+        "(2147483647 as I32) + (1 as I32)",
+        "(4294967295 as U32) + (1 as U32)",
+        "9223372036854775807 + 1",
+        "(-1 as U64) + (1 as U64)",
+        "(-128 as I8) - (1 as I8)",
+        "(64 as I8) * (2 as I8)",
+        "-(-128 as I8)",
+        "(1 as I8) / (0 as I8)",
+        "(-128 as I8) / (-1 as I8)",
+        "(-128 as I8) % (-1 as I8)",
+        "(1 as I8) << (8 as I8)",
+        "(1 as I8) >> (-1 as I8)",
+        "((120 as I8) + (7 as I8)) + (1 as I8)",
+        "~IntCheckedAdd ((120 as I8) + (7 as I8)), (1 as I8)",
+        "(~I8Not (127 as I8)) / (-1 as I8)",
+        "((126 as I8) | (1 as I8)) + (1 as I8)",
+        "(((127 as I8) + (1 as I8)) == (0 as I8)).println!",
+    ] {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = test_temp_dir(id);
+        fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("constant.rk");
+        fs::write(&entry, format!("main = !->\n    {expression}\n")).unwrap();
+        let errors = rock_lib::compile(&rock_lib::Config {
+            no_link: true,
+            ..test_config(entry.clone(), dir)
+        }).unwrap_err();
+        assert!(errors.0.iter().any(|error| {
+            error.message.contains("invalid constant integer arithmetic")
+                && matches!(&error.location, rock_lib::diagnostic::DiagnosticLocation::Source(span) if span.file_path == entry)
+        }), "{expression}: {errors:?}");
+        if expression.contains("println") {
+            let source = fs::read_to_string(&entry).unwrap();
+            let diagnostic = errors.0.iter().find(|error| error.message.contains("invalid constant integer arithmetic")).unwrap();
+            let rock_lib::diagnostic::DiagnosticLocation::Source(span) = &diagnostic.location else { panic!("missing source span"); };
+            let highlighted = &source[span.start..span.end];
+            assert!(highlighted.contains('+') && !highlighted.contains("println"), "wrong operation highlighted: {highlighted}");
+        }
+    }
+}
+
+#[test]
+fn test_constant_operator_analysis_uses_selected_body_and_producer_policy() {
+    for checked in [false, true] {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = test_temp_dir(id);
+        fs::create_dir_all(&dir).unwrap();
+        let dependency = dir.join("operators.rk");
+        fs::write(&dependency, r#"
+infix 9 +
+infix 9 -
+< trait Add
+    @+: Self -> Self
+< trait Sub
+    @-: Self -> Self
+impl Add for I8
+    @+ = other -> if ~OverflowChecks! then ~IntCheckedAdd *self, other else ~IntWrappingAdd *self, other
+impl Sub for I8
+    @- = other ->
+        ~IntCheckedAdd *self, other
+        0 as I8
+"#).unwrap();
+        let artifact = dir.join("operators.rkca");
+        let config = rock_lib::Config {
+            entry_file: dependency.clone(),
+            output_dir: dir.clone(),
+            current_crate_name: Some("operators".to_string()),
+            overflow_checks: Some(checked),
+            no_std: true,
+            no_prelude: true,
+            no_link: true,
+            ..Default::default()
+        };
+        rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+            .write_artifact_to_path(&artifact).unwrap();
+        fs::remove_file(dependency).unwrap();
+        for (expression, invalid, opt_level) in [
+            ("(127 as I8) + (1 as I8)", checked),
+            ("(127 as I8) - (1 as I8)", true),
+            ("(1 as I8) - (2 as I8)", false),
+        ].into_iter().flat_map(|(expression, invalid)| [0, 3].map(move |opt| (expression, invalid, opt))) {
+            let entry = dir.join("consumer.rk");
+            fs::write(&entry, format!(
+                "> operators::Add\n> operators::Sub\nmain = !->\n    {expression}\n"
+            )).unwrap();
+            let result = rock_lib::compile(&rock_lib::Config {
+                entry_file: entry,
+                current_crate_name: None,
+                overflow_checks: Some(!checked),
+                opt_level,
+                extern_artifacts: vec![("operators".to_string(), artifact.clone())],
+                ..config.clone()
+            });
+            assert_eq!(result.is_err(), invalid, "checks={checked}, {expression}: {result:?}");
+            if let Err(errors) = result {
+                assert!(errors.0.iter().any(|error| error.message.contains("invalid constant integer arithmetic")), "{errors:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_constant_integer_arithmetic_keeps_explicit_nontrapping_families() {
+    assert_eq!(compile_and_run(r#"
+main = !->
+    ((127 as I8).wrapping_add (1 as I8) == (-128 as I8)).println!
+    ((127 as I8).saturating_add (1 as I8) == (127 as I8)).println!
+    match ((127 as I8).checked_add (1 as I8))
+        Option::None => true.println!
+        Option::Some value => false.println!
+    ((127 as I8).overflowing_add (1 as I8)).1.println!
+    ((-128 as I8).wrapping_neg! == (-128 as I8)).println!
+    ((~IntWrappingMul (-1 as U64), (-1 as U64)) == (1 as U64)).println!
+"#), "true\n".repeat(6));
+}
+
+#[test]
+fn test_constant_arithmetic_composes_selected_methods_across_artifacts() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let library = r#"
+< trait Divide
+    @divide: I8 -> I8
+    @wrapped: I8 -> I8
+    @discarded: I8 -> I8
+    @ignore: I8 -> I8
+    @ignored: I8 -> I8
+impl Divide for I8
+    @wrapped = other -> self.divide other
+    @divide = other -> ~IntCheckedDiv *self, other
+    @discarded = other ->
+        self.wrapped other
+        1 as I8
+    @ignore = other -> 1 as I8
+    @ignored = other -> self.ignore (self.wrapped other)
+"#;
+    let entry = dir.join("library.rk");
+    fs::write(&entry, library).unwrap();
+    let config = rock_lib::Config {
+        entry_file: entry.clone(), output_dir: dir.clone(),
+        current_crate_name: Some("arithmetic".to_string()),
+        no_std: true, no_prelude: true, no_link: true,
+        ..Default::default()
+    };
+    let artifact = dir.join("arithmetic.rkca");
+    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+        .write_artifact_to_path(&artifact).unwrap();
+    fs::remove_file(entry).unwrap();
+    for imported in [false, true] {
+        for (expression, invalid) in [
+            ("(1 as I8).wrapped (0 as I8)", true),
+            ("(1 as I8).discarded (0 as I8)", true),
+            ("(1 as I8).ignored (0 as I8)", true),
+            ("(6 as I8).wrapped (2 as I8)", false),
+        ] {
+            let entry = dir.join("consumer.rk");
+            let prefix = if imported { "> arithmetic::Divide" } else { library };
+            fs::write(&entry, format!("{prefix}\nmain = !->\n    {expression}\n")).unwrap();
+            let result = rock_lib::compile(&rock_lib::Config {
+                entry_file: entry, current_crate_name: None,
+                extern_artifacts: if imported { vec![("arithmetic".to_string(), artifact.clone())] } else { Vec::new() },
+                ..config.clone()
+            });
+            assert_eq!(result.is_err(), invalid, "imported={imported}, {expression}: {result:?}");
+            if let Err(errors) = result {
+                assert!(errors.0.iter().any(|error| error.message.contains("invalid constant integer arithmetic")), "{errors:?}");
+            }
+        }
+    }
+    let bridge = dir.join("bridge.rk");
+    fs::write(&bridge, r#"
+> arithmetic::Divide
+< trait Relay
+    @relay: I8 -> I8
+impl Relay for I8
+    @relay = other -> self.wrapped other
+"#).unwrap();
+    let bridge_artifact = dir.join("bridge.rkca");
+    rock_lib::compile_with_products(&rock_lib::Config {
+        entry_file: bridge.clone(), current_crate_name: Some("bridge".to_string()),
+        extern_artifacts: vec![("arithmetic".to_string(), artifact.clone())],
+        ..config.clone()
+    }).unwrap().products.unwrap().write_artifact_to_path(&bridge_artifact).unwrap();
+    fs::remove_file(bridge).unwrap();
+    let entry = dir.join("consumer.rk");
+    fs::write(&entry, "> bridge::Relay\nmain = !->\n    (1 as I8).relay (0 as I8)\n").unwrap();
+    let errors = rock_lib::compile(&rock_lib::Config {
+        entry_file: entry, current_crate_name: None,
+        extern_artifacts: vec![("arithmetic".to_string(), artifact), ("bridge".to_string(), bridge_artifact)],
+        ..config
+    }).unwrap_err();
+    assert!(errors.0.iter().any(|error| error.message.contains("invalid constant integer arithmetic")), "{errors:?}");
+    compile_should_fail("main = !->\n    (1 as I8).wrapping_div (0 as I8)\n", "invalid constant integer arithmetic");
+}
+
+#[test]
+fn test_overflow_policy_is_independent_of_optimization_and_survives_artifacts() {
+    for opt_level in [0, 3] {
+        for override_checks in [None, Some(false), Some(true)] {
+            let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let dir = test_temp_dir(id);
+            fs::create_dir_all(&dir).unwrap();
+            let entry = dir.join("policy.rk");
+            fs::write(&entry, r#"
+infix 9 +
+trait Add
+    @+: Self -> Self
+impl Add for I8
+    @+ = other -> if ~OverflowChecks! then ~IntCheckedAdd *self, other else ~IntWrappingAdd *self, other
+main = ->
+    x = 127 as I8
+    wrapped = x + (1 as I8)
+    if ~I8Eq wrapped, (~I8Not (127 as I8)) then 0 else 1
+"#).unwrap();
+            let config = rock_lib::Config {
+                entry_file: entry,
+                output_dir: dir.clone(),
+                opt_level,
+                overflow_checks: override_checks,
+                no_std: true,
+                no_prelude: true,
+                ..Default::default()
+            };
+            rock_lib::compile(&config).unwrap();
+            let result = Command::new(dir.join("policy")).output().unwrap();
+            let checked = override_checks.unwrap_or(opt_level == 0);
+            assert_eq!(result.status.success(), !checked, "optimization={opt_level}, checks={override_checks:?}");
+
+            let dependency = dir.join("dependency.rk");
+            fs::write(&dependency, r#"
+compute: I8 -> I8
+< compute = value ->
+    if ~OverflowChecks!
+        ~IntCheckedAdd value, (1 as I8)
+    else
+        ~IntWrappingAdd value, (1 as I8)
+"#).unwrap();
+            let artifact = dir.join("dependency.rkca");
+            let output = rock_lib::compile_with_products(&rock_lib::Config {
+                entry_file: dependency.clone(),
+                current_crate_name: Some("dependency".to_string()),
+                no_link: true,
+                emit_object: Some(dir.join("dependency.o")),
+                ..config.clone()
+            }).unwrap();
+            output.products.unwrap().write_artifact_to_path(&artifact).unwrap();
+            fs::remove_file(dependency).unwrap();
+            let consumer = dir.join("consumer.rk");
+            fs::write(&consumer, r#"
+> dependency::compute
+main = ->
+    result = compute (127 as I8)
+    if ~I8Eq result, (~I8Not (127 as I8)) then 0 else 1
+"#).unwrap();
+            rock_lib::compile(&rock_lib::Config {
+                entry_file: consumer,
+                overflow_checks: Some(!checked),
+                opt_level: if opt_level == 0 { 3 } else { 0 },
+                extern_artifacts: vec![("dependency".to_string(), artifact)],
+                ..config
+            }).unwrap();
+            let result = Command::new(dir.join("consumer")).output().unwrap();
+            assert_eq!(result.status.success(), !checked, "dependency policy changed across artifact boundary");
+        }
+    }
+}
+
+#[test]
+fn test_std_release_artifact_keeps_wrapping_operators_in_checked_consumers() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let std_entry = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("std/src/lib.rk");
+    let artifact = dir.join("std.rkca");
+    rock_lib::compile_with_products(&rock_lib::Config {
+        entry_file: std_entry,
+        output_dir: dir.clone(),
+        current_crate_name: Some("std".to_string()),
+        opt_level: 3,
+        no_std: true,
+        no_link: true,
+        emit_object: Some(dir.join("std.o")),
+        ..Default::default()
+    }).unwrap().products.unwrap().write_artifact_to_path(&artifact).unwrap();
+    let entry = dir.join("consumer.rk");
+    fs::write(&entry, r#"
+main = !->
+    high = 127 as I8
+    low = high + (1 as I8)
+    (low == (~I8Not high)).println!
+    ((low - (1 as I8)) == high).println!
+    ((high * (2 as I8)) == (-2 as I8)).println!
+    ((-low) == low).println!
+    (((1 as I8) << (8 as I8)) == (1 as I8)).println!
+    (((2 as I8) >> (9 as I8)) == (1 as I8)).println!
+"#).unwrap();
+    for opt_level in [0, 3] {
+        rock_lib::compile(&rock_lib::Config {
+            entry_file: entry.clone(),
+            output_dir: dir.clone(),
+            extern_artifacts: vec![("std".to_string(), artifact.clone())],
+            opt_level,
+            overflow_checks: Some(true),
+            ..Default::default()
+        }).unwrap();
+        let output = Command::new(dir.join("consumer")).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "true\n".repeat(6));
+    }
+}
+
+#[test]
+fn test_integer_intrinsics_reject_bad_operands_and_invalid_constants() {
+    for (expression, expected) in [
+        ("~IntOverflowingAdd true, false", "integer operands"),
+        ("~IntOverflowingAdd (1 as I8), (2 as I16)", "integer operands"),
+        ("~IntOverflowingNeg (1 as F64)", "integer operands"),
+        ("~IntOverflowingMul (1 as I64)", "integer operands"),
+        ("~IntCheckedAdd (127 as I8), (1 as I8)", "invalid constant"),
+        ("~IntCheckedShl (1 as U8), (8 as U32)", "invalid constant"),
+        ("~IntWrappingDiv (1 as I64), (0 as I64)", "invalid constant"),
+    ] {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = test_temp_dir(id);
+        fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("invalid.rk");
+        fs::write(&entry, format!("main = !->\n    {expression}\n")).unwrap();
+        let errors = rock_lib::compile(&rock_lib::Config {
+            entry_file: entry,
+            output_dir: dir,
+            no_std: true,
+            no_prelude: true,
+            ..Default::default()
+        }).unwrap_err();
+        assert!(errors.0.iter().any(|error| error.message.contains(expected)), "{expression}: {errors:?}");
+    }
+}
+
+#[test]
+fn test_integer_runtime_failures_never_reach_llvm_poison() {
+    use std::os::unix::process::ExitStatusExt;
+
+    for opt_level in [0, 3] {
+        for (operation, operand) in [
+            ("~IntWrappingDiv (1 as I8), value", "0 as I8"),
+            ("~IntOverflowingRem (1 as I8), value", "0 as I8"),
+            ("~IntCheckedDiv (~I8Not (127 as I8)), value", "~I8Not (0 as I8)"),
+            ("~IntCheckedRem (~I8Not (127 as I8)), value", "~I8Not (0 as I8)"),
+            ("~IntCheckedNeg value", "~I8Not (127 as I8)"),
+            ("~IntCheckedShl (1 as I8), value", "8 as I8"),
+            ("~IntCheckedShr (1 as I8), value", "~I8Not (0 as I8)"),
+        ] {
+            let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let dir = test_temp_dir(id);
+            fs::create_dir_all(&dir).unwrap();
+            let entry = dir.join("trap.rk");
+            let result = if operation.starts_with("~IntOverflowing") { "(I8, Bool)" } else { "I8" };
+            fs::write(&entry, format!(
+                "bad: I8 -> {result}\nbad = value -> {operation}\nmain = !->\n    bad ({operand})\n"
+            )).unwrap();
+            rock_lib::compile(&rock_lib::Config {
+                entry_file: entry,
+                output_dir: dir.clone(),
+                no_std: true,
+                no_prelude: true,
+                opt_level,
+                overflow_checks: Some(false),
+                ..Default::default()
+            }).unwrap();
+            let output = Command::new(dir.join("trap")).output().unwrap();
+            assert!(output.status.signal().is_some(), "{operation} must trap even with checks disabled");
+        }
+    }
+}
+
+#[test]
+fn test_integer_arithmetic_families_all_widths() {
+    for (ty, bits, signed) in [
+        ("I8", 8, true), ("I16", 16, true), ("I32", 32, true), ("I64", 64, true),
+        ("U8", 8, false), ("U16", 16, false), ("U32", 32, false), ("U64", 64, false),
+    ] {
+        let mut source = String::from("main = !->\n");
+        let mut count = 0;
+        source.push_str(&format!(
+            "    z{ty} = 0 as {ty}\n    one{ty} = 1 as {ty}\n    two{ty} = 2 as {ty}\n    lo{ty} = z{ty}.min_value!\n    hi{ty} = z{ty}.max_value!\n"
+        ));
+        let wrapped_max = if signed { format!("lo{ty}") } else { format!("z{ty}") };
+        let expressions = [
+            format!("(hi{ty}.wrapping_add one{ty}) == {wrapped_max}"),
+            format!("(hi{ty}.overflowing_add one{ty}).1"),
+            format!("(hi{ty}.saturating_add one{ty}) == hi{ty}"),
+            format!("(lo{ty}.wrapping_sub one{ty}) == hi{ty}"),
+            format!("(lo{ty}.overflowing_sub one{ty}).1"),
+            format!("(lo{ty}.saturating_sub one{ty}) == lo{ty}"),
+            format!("(hi{ty}.overflowing_mul two{ty}).1"),
+            format!("(hi{ty}.saturating_mul two{ty}) == hi{ty}"),
+            format!("(one{ty}.wrapping_shl ({bits} as U32)) == one{ty}"),
+            format!("(one{ty}.overflowing_shl ({bits} as U32)).1"),
+            format!("(two{ty}.wrapping_shr ({} as U32)) == one{ty}", bits + 1),
+            format!("(two{ty}.overflowing_shr ({} as U32)).1", bits + 1),
+            format!("(two{ty}.wrapping_div one{ty}) == two{ty}"),
+            format!("(two{ty}.wrapping_rem one{ty}) == z{ty}"),
+        ];
+        for expression in expressions {
+            source.push_str(&format!("    ({expression}).println!\n"));
+            count += 1;
+        }
+        for expression in [
+            format!("hi{ty}.checked_add one{ty}"),
+            format!("lo{ty}.checked_sub one{ty}"),
+            format!("hi{ty}.checked_mul two{ty}"),
+            format!("one{ty}.checked_div z{ty}"),
+            format!("one{ty}.checked_rem z{ty}"),
+            format!("one{ty}.checked_shl ({bits} as U32)"),
+            format!("one{ty}.checked_shr ({bits} as U32)"),
+        ] {
+            source.push_str(&format!("    match ({expression})\n        Option::None => true.println!\n        Option::Some value => false.println!\n"));
+            count += 1;
+        }
+        for (expression, expected) in [
+            (format!("one{ty}.checked_add one{ty}"), format!("two{ty}")),
+            (format!("two{ty}.checked_sub one{ty}"), format!("one{ty}")),
+            (format!("one{ty}.checked_mul two{ty}"), format!("two{ty}")),
+            (format!("two{ty}.checked_div two{ty}"), format!("one{ty}")),
+            (format!("one{ty}.checked_rem two{ty}"), format!("one{ty}")),
+            (format!("z{ty}.checked_neg!"), format!("z{ty}")),
+            (format!("one{ty}.checked_shl (1 as U32)"), format!("two{ty}")),
+            (format!("two{ty}.checked_shr (1 as U32)"), format!("one{ty}")),
+        ] {
+            source.push_str(&format!("    match ({expression})\n        Option::None => false.println!\n        Option::Some value => (value == {expected}).println!\n"));
+            count += 1;
+        }
+        if signed {
+            source.push_str(&format!("    minus{ty} = z{ty}.wrapping_sub one{ty}\n"));
+            for expression in [
+                format!("lo{ty}.wrapping_neg! == lo{ty}"),
+                format!("lo{ty}.overflowing_neg!.1"),
+                format!("lo{ty}.saturating_neg! == hi{ty}"),
+                format!("(lo{ty}.wrapping_div minus{ty}) == lo{ty}"),
+                format!("(lo{ty}.overflowing_div minus{ty}).1"),
+                format!("(lo{ty}.wrapping_rem minus{ty}) == z{ty}"),
+                format!("(lo{ty}.overflowing_rem minus{ty}).1"),
+                format!("(lo{ty}.saturating_div minus{ty}) == hi{ty}"),
+                format!("(minus{ty}.wrapping_shr (1 as U32)) == minus{ty}"),
+                format!("(lo{ty}.saturating_mul two{ty}) == lo{ty}"),
+            ] {
+                source.push_str(&format!("    ({expression}).println!\n"));
+                count += 1;
+            }
+            for expression in [format!("lo{ty}.checked_neg!"), format!("lo{ty}.checked_div minus{ty}"), format!("lo{ty}.checked_rem minus{ty}")] {
+                source.push_str(&format!("    match ({expression})\n        Option::None => true.println!\n        Option::Some value => false.println!\n"));
+                count += 1;
+            }
+        }
+        for opt_level in [0, 3] {
+            assert_eq!(compile_and_run_at_opt(&source, opt_level), "true\n".repeat(count), "{ty}, O{opt_level}");
+        }
+    }
+}
+
+#[test]
+fn test_integer_minimum_formatting_never_negates_the_minimum() {
+    let source = r#"
+main = !->
+    smallest = (0 as I64).min_value!
+    smallest.println!
+    (String::from smallest).println!
+    ((0 as I64).max_value!).println!
+    (-1).println!
+    0.println!
+"#;
+    for opt_level in [0, 3] {
+        assert_eq!(compile_and_run_at_opt(source, opt_level),
+            "-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-1\n0\n");
+    }
+}
+
+#[test]
+fn test_raw_wide_pointers_and_utf8_constructors() {
+    let output = compile_and_run(r#"
+main = !->
+    mut values = [10, 20, 30]
+    data = values.as_mut_ptr!
+    raw: *[I64] = ~PtrFromParts data, 3
+    view = unsafe &mut *raw
+    view[1] = 42
+    view[1].println!
+    bytes = [195 as U8, 169 as U8]
+    match str_from_utf8 (&bytes)
+        Option::Some text => text.println!
+        Option::None => "bad".println!
+    invalid = [255 as U8]
+    match str_from_utf8 (&invalid)
+        Option::Some text => "bad".println!
+        Option::None => "invalid".println!
+    empty = unsafe slice_from_raw_parts data, 0
+    empty.len!.println!
+    mut number = 7
+    thin = &mut number as *I64
+    wide: *[I64] = ~PtrFromParts thin, 1
+    borrowed = unsafe &mut *wide
+    borrowed[0] = 8
+    borrowed[0].println!
+"#);
+    assert_eq!(output, "42\né\ninvalid\n0\n8\n");
+}
+
+#[test]
+fn test_raw_wide_pointer_rejects_invalid_types_and_ambiguity() {
+    for source in [
+        "main = !->\n    raw: *[I64] = ~PtrFromParts (0 as *U8), 1\n",
+        "main = !->\n    raw: *Str = ~PtrFromParts (0 as *I64), 1\n",
+        "main = !->\n    raw: *I64 = ~PtrFromParts (0 as *I64), 1\n",
+        "main = !->\n    raw = ~PtrFromParts (0 as *I64), 1\n",
+        "main = !->\n    raw: *[I64] = ~PtrFromParts (0 as *I64)\n",
+    ] {
+        compile_should_fail(source, "PtrFromParts");
+    }
+}
+
+#[test]
+fn test_source_free_raw_slice_constructor_preserves_origins() {
+    for opt_level in [0, 3] {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = test_temp_dir(id);
+        fs::create_dir_all(&dir).unwrap();
+        let dependency = dir.join("raw_slices.rk");
+        fs::write(&dependency, r#"
+unsafe borrow: *I64 -> I64 -> &[I64]
+< unsafe borrow = data, len ->
+    raw: *[I64] = ~PtrFromParts data, len
+    unsafe &*raw
+unsafe borrow_mut: *I64 -> I64 -> &mut [I64]
+< unsafe borrow_mut = data, len ->
+    raw: *[I64] = ~PtrFromParts data, len
+    unsafe &mut *raw
+"#).unwrap();
+        let config = rock_lib::Config {
+            entry_file: dependency.clone(),
+            current_crate_name: Some("raw_slices".to_string()),
+            output_dir: dir.clone(),
+            opt_level,
+            no_std: true,
+            no_prelude: true,
+            no_link: true,
+            emit_object: Some(dir.join("raw_slices.o")),
+            ..Default::default()
+        };
+        let artifact = dir.join("raw_slices.rkca");
+        rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+            .write_artifact_to_path(&artifact).unwrap();
+        fs::remove_file(dependency).unwrap();
+        let entry = dir.join("consumer.rk");
+        let config = rock_lib::Config {
+            entry_file: entry.clone(),
+            current_crate_name: None,
+            extern_artifacts: vec![("raw_slices".to_string(), artifact)],
+            no_link: false,
+            emit_object: None,
+            ..config
+        };
+        fs::write(&entry, r#"
+> raw_slices::borrow
+main = ->
+    values = [1, 2]
+    view = unsafe borrow (~ArrPtr (&values)), 2
+    if ~I64Eq (~ArrayLen *view), 2 then 0 else 1
+"#).unwrap();
+        rock_lib::compile(&config).unwrap();
+        assert!(Command::new(dir.join("consumer")).status().unwrap().success());
+        for (source, expected) in [
+            (r#"
+> raw_slices::borrow
+escape: () -> &[I64]
+escape = ->
+    values = [1, 2]
+    unsafe borrow (~ArrPtr (&values)), 2
+main = !->
+    escape!
+"#, "local"),
+            (r#"
+> raw_slices::borrow_mut
+main = ->
+    mut values = [1, 2]
+    data = ~ArrPtr (&mut values)
+    first = unsafe borrow_mut data, 2
+    second = unsafe borrow_mut data, 2
+    ~I64Add (~ArrayLen *first), (~ArrayLen *second)
+"#, "borrow"),
+        ] {
+            fs::write(&entry, source).unwrap();
+            let diagnostics = rock_lib::compile(&config).unwrap_err();
+            assert!(diagnostics.0.iter().any(|error| error.message.contains(expected)), "{diagnostics:?}");
+        }
+    }
+}
+
+#[test]
+fn test_raw_wide_pointer_borrow_cannot_escape_local_storage() {
+    compile_should_fail(r#"
+escape: () -> &[I64]
+escape = ->
+    values = [1, 2]
+    raw: *[I64] = ~PtrFromParts values.as_ptr!, 2
+    unsafe &*raw
+
+main = !->
+    escaped = escape!
+    escaped[0].println!
+"#, "local");
+}
+
+#[test]
+fn test_raw_wide_pointer_borrows_preserve_exclusivity() {
+    compile_should_fail(r#"
+main = !->
+    mut values = [1, 2]
+    raw: *[I64] = ~PtrFromParts values.as_mut_ptr!, 2
+    first = unsafe &mut *raw
+    second = unsafe &mut *raw
+    first[0].println!
+    second[0].println!
+"#, "borrow");
+    compile_should_fail(r#"
+main = !->
+    mut values = [1, 2]
+    data = values.as_mut_ptr!
+    first = unsafe slice_from_raw_parts_mut data, 2
+    second = unsafe slice_from_raw_parts_mut data, 2
+    first[0].println!
+    second[0].println!
+"#, "borrow");
+    compile_should_fail(r#"
+main = !->
+    mut values = [1, 2]
+    raw: *[I64] = ~PtrFromParts values.as_ptr!, 2
+    view = unsafe &*raw
+    values[0] = 9
+    view[0].println!
+"#, "borrow");
+}
+
+#[test]
+fn test_raw_slice_constructors_validate_scalar_preconditions_and_allow_zsts() {
+    for source in [
+        "main = !->\n    view = unsafe slice_from_raw_parts (0 as *I64), 0\n    view.len!.println!\n",
+        "main = !->\n    values = [1]\n    view = unsafe slice_from_raw_parts values.as_ptr!, -1\n    view.len!.println!\n",
+        "main = !->\n    values = [1]\n    view = unsafe slice_from_raw_parts values.as_ptr!, 9223372036854775807\n    view.len!.println!\n",
+    ] {
+        let (_, success) = compile_and_run_with_status(source);
+        assert!(!success, "raw slice construction must reject invalid scalar metadata");
+    }
+    let output = compile_and_run(r#"
+struct Empty
+main = !->
+    empty = Empty
+    data = &empty as *Empty
+    view = unsafe slice_from_raw_parts data, 9223372036854775807
+    view.len!.println!
+"#);
+    assert_eq!(output, "9223372036854775807\n");
+}
+
+#[test]
+fn test_raw_pointer_projected_borrows_retain_storage_loans() {
+    for pointer in ["holder.ptr", "pair.0"] {
+        let source = format!(r#"
+struct Holder
+    < ptr: *[I64]
+
+main = ->
+    mut values = [1, 2]
+    raw: *[I64] = ~PtrFromParts (~ArrPtr (&mut values)), 2
+    holder = Holder
+        ptr: raw
+    pair = (raw, 0)
+    view = unsafe &*{pointer}
+    values[0] = 9
+    view[0]
+"#);
+        compile_should_fail(&source, "borrow conflict");
+        assert_eq!(compile_and_run(&source.replace("    values[0] = 9\n", "")
+            .replace("    view[0]\n", "    view[0].println!\n    0\n")), "1\n");
+    }
+}
+
+#[test]
+fn test_return_loan_mixed_inputs_preserve_shared_access() {
+    for (result, value, shared, exclusive) in [
+        ("(&I64, &mut I64)", "(a, b)", "pair.0", "pair.1"),
+        ("((&I64, I64), &mut I64)", "((a, 0), b)", "(pair.0).0", "pair.1"),
+        ("Views", "Views\n        shared: a\n        exclusive: b", "pair.shared", "pair.exclusive"),
+    ] {
+        let source = format!(r#"
+struct Views
+    < shared: &I64
+    < exclusive: &mut I64
+
+split: &I64 -> &mut I64 -> {result}
+split = a, b ->
+    {value}
+
+main = !->
+    mut a = 1
+    mut b = 2
+    shared = &a
+    pair = split &a, &mut b
+    *{exclusive} = 7
+    (*shared + *{shared}).println!
+    (*{exclusive}).println!
+"#);
+        assert_eq!(compile_and_run(&source), "2\n7\n");
+        for mutation in ["a = 9", "b = 9"] {
+            compile_should_fail(&source.replace("    pair = split &a, &mut b\n",
+                &format!("    pair = split &a, &mut b\n    {mutation}\n")), "borrow conflict");
+        }
+    }
+}
+
+#[test]
+fn test_return_loan_raw_forwarding_preserves_selected_authority() {
+    for selected in ["first", "second"] {
+        let unselected = if selected == "first" { "b" } else { "a" };
+        let source = format!(r#"
+identity: *I64 -> *I64
+identity = ptr -> ptr
+
+choose: *I64 -> *I64 -> *I64
+choose = first, second -> identity {selected}
+
+main = !->
+    mut a = 1
+    mut b = 2
+    first = &mut a as *I64
+    second = &mut b as *I64
+    forwarded = choose first, second
+    {unselected} = 5
+    view = unsafe &mut *forwarded
+    *view = 7
+    (*view).println!
+    unsafe (*{selected}).println!
+"#);
+        assert_eq!(compile_and_run(&source), "7\n7\n");
+        compile_should_fail(&source.replace("    *view = 7", &format!("    {} = 9",
+            if selected == "first" { "a" } else { "b" })), "borrow conflict");
+        compile_should_fail(&source.replace("    view = unsafe &mut *forwarded",
+            &format!("    sibling = unsafe &*{selected}\n    view = unsafe &mut *forwarded\n    (*sibling).println!")), "borrow conflict");
+    }
+}
+
+#[test]
+fn test_return_loan_repairs_survive_deleted_source_artifacts() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let dependency = dir.join("loans.rk");
+    fs::write(&dependency, r#"
+split: &I64 -> &mut I64 -> (&I64, &mut I64)
+< split = a, b -> (a, b)
+
+identity: *I64 -> *I64
+< identity = ptr -> ptr
+"#).unwrap();
+    let config = rock_lib::Config {
+        entry_file: dependency.clone(), output_dir: dir.clone(),
+        current_crate_name: Some("loans".to_string()),
+        no_std: true, no_prelude: true, no_link: true,
+        ..Default::default()
+    };
+    let artifact = dir.join("loans.rkca");
+    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+        .write_artifact_to_path(&artifact).unwrap();
+    fs::remove_file(dependency).unwrap();
+    for (source, exit_code) in [(r#"
+> loans::split
+main = ->
+    mut a = 1
+    mut b = 2
+    shared = &a
+    pair = split &a, &mut b
+    *pair.1 = 7
+    result = ~I64Add *shared, *pair.0
+    ~I64Add result, *pair.1
+"#, 9), (r#"
+> loans::identity
+main = ->
+    mut value = 1
+    ptr = &mut value as *I64
+    forwarded = identity ptr
+    view = unsafe &mut *forwarded
+    *view = 7
+    result = *view
+    unsafe ~I64Add result, *ptr
+"#, 14)] {
+        for opt_level in [0, 3] {
+            for invalid in [false, true] {
+                let entry = dir.join("consumer.rk");
+                let source = if invalid {
+                    source.replace("    *pair.1 = 7", "    a = 9\n    *pair.1 = 7")
+                        .replace("    view = unsafe &mut *forwarded",
+                            "    sibling = unsafe &*ptr\n    view = unsafe &mut *forwarded\n    *sibling")
+                } else { source.to_string() };
+                fs::write(&entry, source).unwrap();
+                let result = rock_lib::compile(&rock_lib::Config {
+                    entry_file: entry, current_crate_name: None, opt_level,
+                    extern_artifacts: vec![("loans".to_string(), artifact.clone())],
+                    no_link: invalid,
+                    ..config.clone()
+                });
+                if invalid {
+                    let errors = result.unwrap_err();
+                    assert!(errors.0.iter().any(|error| error.message.contains("borrow conflict")), "{errors:?}");
+                } else {
+                    result.unwrap();
+                    let output = run_test_command(&mut Command::new(dir.join("consumer")));
+                    assert_eq!(output.status.code(), Some(exit_code));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_raw_pointer_mixed_return_arguments_retain_all_loans() {
+    compile_should_fail(r#"
+unsafe choose: &I64 -> *I64 -> Bool -> &I64
+unsafe choose = first, second, flag ->
+    if flag then first else unsafe &*second
+
+main = ->
+    mut a = 1
+    mut b = 2
+    data = &mut b as *I64
+    view = unsafe choose &a, data, false
+    b = 9
+    *view
+"#, "borrow conflict");
+}
+
+#[test]
+fn test_raw_pointer_aggregate_arguments_retain_return_loans() {
+    for reference in ["&I64", "&mut I64"] {
+        for (argument, projection, value) in [
+            ("Holder", "holder.ptr", "Holder\n        ptr: &mut value as *I64"),
+            ("(*I64, I64)", "holder.0", "(&mut value as *I64, 0)"),
+            ("((*I64, I64), Bool)", "(holder.0).0", "((&mut value as *I64, 0), true)"),
+        ].into_iter().chain((reference == "&I64").then_some(
+            ("[*I64; 1]", "holder[0]", "[&mut value as *I64]"),
+        )) {
+            let source = format!(r#"
+struct Holder
+    < ptr: *I64
+
+unsafe borrow: {argument} -> {reference}
+unsafe borrow = holder -> unsafe {reference_expr}*{projection}
+
+main = !->
+    mut value = 1
+    holder = {value}
+    view = unsafe borrow holder
+    value = 9
+    (*view).println!
+"#, reference_expr = if reference == "&I64" { "&" } else { "&mut " });
+            compile_should_fail(&source, "borrow conflict");
+            let valid = source.replace("    value = 9\n", "");
+            assert_eq!(compile_and_run(&valid), "1\n");
+            if reference == "&mut I64" {
+                assert_eq!(compile_and_run(&valid.replace("    (*view).println!", "    *view = 7\n    (*view).println!")), "7\n");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_raw_pointer_aggregate_results_retain_return_loans() {
+    for reference in ["&I64", "&mut I64"] {
+        for (result, value, projection) in [
+            (format!("({reference}, I64)"), "(view, 0)", "pair.0"),
+            (format!("(({reference}, I64), Bool)"), "((view, 0), true)", "(pair.0).0"),
+            ("View".to_string(), "View\n        value: view", "pair.value"),
+        ].into_iter().chain((reference == "&I64").then_some(
+            (format!("[{reference}; 1]"), "[view]", "pair[0]"),
+        )) {
+            let source = format!(r#"
+struct View
+    < value: {reference}
+
+unsafe borrow: *I64 -> {result}
+unsafe borrow = ptr ->
+    view = unsafe {reference_expr}*ptr
+    {value}
+
+main = !->
+    mut value = 1
+    ptr = &mut value as *I64
+    pair = unsafe borrow ptr
+    value = 9
+    (*{projection}).println!
+"#, reference_expr = if reference == "&I64" { "&" } else { "&mut " });
+            compile_should_fail(&source, "borrow conflict");
+            let valid = source.replace("    value = 9\n", "");
+            assert_eq!(compile_and_run(&valid), "1\n");
+            if reference == "&mut I64" {
+                let write = valid.replace(&format!("    (*{projection}).println!"),
+                    &format!("    *{projection} = 7\n    (*{projection}).println!"));
+                assert_eq!(compile_and_run(&write), "7\n");
+                compile_should_fail(&valid.replace("    pair = unsafe borrow ptr",
+                    "    sibling = unsafe &*ptr\n    pair = unsafe borrow ptr\n    (*sibling).println!"), "borrow conflict");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_raw_pointer_enum_arguments_and_results_retain_return_loans() {
+    for reference in ["&I64", "&mut I64"] {
+        let source = format!(r#"
+enum Input
+    Value *I64
+
+enum Output
+    Value {reference}
+
+unsafe borrow: Input -> Output
+unsafe borrow = input -> match input
+    Input::Value ptr => Output::Value (unsafe {reference_expr}*ptr)
+
+main = !->
+    mut value = 1
+    input = Input::Value (&mut value as *I64)
+    output = unsafe borrow input
+    view = match output
+        Output::Value view => view
+    value = 9
+    (*view).println!
+"#, reference_expr = if reference == "&I64" { "&" } else { "&mut " });
+        compile_should_fail(&source, "borrow conflict");
+        assert_eq!(compile_and_run(&source.replace("    value = 9\n", "")), "1\n");
+    }
+}
+
+#[test]
+fn test_raw_pointer_aggregate_reborrow_uses_selected_input_authority() {
+    let source = r#"
+struct Holder
+    < ptr: *I64
+
+unsafe borrow: *I64 -> Holder -> &mut I64
+unsafe borrow = unused, holder -> unsafe &mut *holder.ptr
+
+main = !->
+    mut a = 1
+    mut b = 2
+    unused = &mut a as *I64
+    ptr = &mut b as *I64
+    holder = Holder
+        ptr: ptr
+    view = unsafe borrow unused, holder
+    a = 7
+    *view = 9
+    (*view).println!
+"#;
+    assert_eq!(compile_and_run(source), "9\n");
+    compile_should_fail(&source.replace("    a = 7", "    b = 7"), "borrow conflict");
+    compile_should_fail(&source.replace("    view = unsafe borrow unused, holder",
+        "    sibling = unsafe &*ptr\n    view = unsafe borrow unused, holder\n    (*sibling).println!"), "borrow conflict");
+}
+
+#[test]
+fn test_raw_pointer_aggregate_return_loans_survive_deleted_source_artifacts() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let dependency = dir.join("loans.rk");
+    fs::write(&dependency, r#"
+< struct Holder
+    < ptr: *I64
+
+unsafe borrow: Holder -> (&I64, I64)
+< unsafe borrow = holder -> (unsafe &*holder.ptr, 0)
+
+unsafe borrow_mut: Holder -> (&mut I64, I64)
+< unsafe borrow_mut = holder -> (unsafe &mut *holder.ptr, 0)
+"#).unwrap();
+    let config = rock_lib::Config {
+        entry_file: dependency.clone(), output_dir: dir.clone(),
+        current_crate_name: Some("loans".to_string()),
+        no_std: true, no_prelude: true, no_link: true,
+        ..Default::default()
+    };
+    let artifact = dir.join("loans.rkca");
+    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+        .write_artifact_to_path(&artifact).unwrap();
+    fs::remove_file(dependency).unwrap();
+    for method in ["borrow", "borrow_mut"] {
+        for invalid in [false, true] {
+            let entry = dir.join("consumer.rk");
+            let mutation = if invalid { "value = 9" } else if method == "borrow_mut" { "*pair.0 = 7" } else { "*pair.0" };
+            fs::write(&entry, format!(r#"
+> loans::Holder
+> loans::{method}
+
+main = ->
+    mut value = 1
+    holder = Holder
+        ptr: &mut value as *I64
+    pair = unsafe {method} holder
+    {mutation}
+    *pair.0
+"#)).unwrap();
+            let result = rock_lib::compile(&rock_lib::Config {
+                entry_file: entry, current_crate_name: None,
+                extern_artifacts: vec![("loans".to_string(), artifact.clone())],
+                ..config.clone()
+            });
+            assert_eq!(result.is_err(), invalid, "{method}, {mutation}: {result:?}");
+            if let Err(errors) = result {
+                assert!(errors.0.iter().any(|error| error.message.contains("borrow conflict")), "{errors:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_raw_pointer_return_reborrow_uses_selected_argument() {
+    for selected in ["first", "second"] {
+        let source = format!(r#"
+unsafe choose: *I64 -> *I64 -> &mut I64
+unsafe choose = first, second -> unsafe &mut *{selected}
+
+main = !->
+    mut a = 1
+    mut b = 2
+    first_ptr = &mut a as *I64
+    second_ptr = &mut b as *I64
+    view = unsafe choose first_ptr, second_ptr
+    {unselected} = 7
+    *view = 9
+    (*view).println!
+    unsafe (*{selected}_ptr).println!
+"#, unselected = if selected == "first" { "b" } else { "a" });
+        assert_eq!(compile_and_run(&source), "9\n9\n");
+        let conflicting = source.replace("    *view = 9", &format!("    {} = 9", if selected == "first" { "a" } else { "b" }));
+        compile_should_fail(&conflicting, "borrow conflict");
+    }
+}
+
+#[test]
+fn test_raw_pointer_return_loans_survive_deleted_source_artifacts() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let dependency = dir.join("loans.rk");
+    fs::write(&dependency, r#"
+unsafe choose: &I64 -> *I64 -> Bool -> &I64
+< unsafe choose = first, second, flag ->
+    if flag then first else unsafe &*second
+
+unsafe second: *I64 -> *I64 -> &mut I64
+< unsafe second = first, second -> unsafe &mut *second
+"#).unwrap();
+    let config = rock_lib::Config {
+        entry_file: dependency.clone(), output_dir: dir.clone(),
+        current_crate_name: Some("loans".to_string()),
+        no_std: true, no_prelude: true, no_link: true,
+        ..Default::default()
+    };
+    let artifact = dir.join("loans.rkca");
+    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+        .write_artifact_to_path(&artifact).unwrap();
+    fs::remove_file(dependency).unwrap();
+    for (call, mutation, invalid) in [
+        ("choose &a, holder.ptr, false", "b = 9", true),
+        ("choose &a, holder.ptr, false", "*view", false),
+        ("second (&mut a as *I64), (holder.ptr)", "*view = 9", false),
+        ("second (&mut a as *I64), (holder.ptr)", "b = 9", true),
+    ] {
+        let entry = dir.join("consumer.rk");
+        fs::write(&entry, format!(r#"
+> loans::choose
+> loans::second
+struct Holder
+    < ptr: *I64
+main = ->
+    mut a = 1
+    mut b = 2
+    holder = Holder
+        ptr: &mut b as *I64
+    view = unsafe {call}
+    {mutation}
+    *view
+"#)).unwrap();
+        let result = rock_lib::compile(&rock_lib::Config {
+            entry_file: entry, current_crate_name: None,
+            extern_artifacts: vec![("loans".to_string(), artifact.clone())],
+            ..config.clone()
+        });
+        assert_eq!(result.is_err(), invalid, "{call}, {mutation}: {result:?}");
+        if let Err(errors) = result {
+            assert!(errors.0.iter().any(|error| error.message.contains("borrow conflict")), "{errors:?}");
+        }
+    }
+}
+
+#[test]
+fn test_std_primitive_arithmetic_and_ordering_complete_integer_coverage() {
+    let mut source = String::from("main = !->\n");
+    for ty in ["I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64"] {
+        source.push_str(&format!(
+            "    a_{ty} = 12 as {ty}\n    b_{ty} = 5 as {ty}\n"
+        ));
+        for (operator, expected) in [("+", 17), ("-", 7), ("*", 60), ("/", 2), ("%", 2)] {
+            source.push_str(&format!(
+                "    ((a_{ty} {operator} b_{ty}) == ({expected} as {ty})).println!\n"
+            ));
+        }
+        for expression in [
+            format!("b_{ty} < a_{ty}"),
+            format!("b_{ty} <= a_{ty}"),
+            format!("a_{ty} > b_{ty}"),
+            format!("a_{ty} >= b_{ty}"),
+            format!("a_{ty} >= a_{ty}"),
+            format!("a_{ty} <= a_{ty}"),
+        ] {
+            source.push_str(&format!("    ({expression}).println!\n"));
+        }
+    }
+    source.push_str(r#"
+    ((-(7 as I8)) == ((0 as I8) - (7 as I8))).println!
+    ((-(7 as I16)) == ((0 as I16) - (7 as I16))).println!
+    ((255 as U8) > (127 as U8)).println!
+    ((65535 as U16) > (32767 as U16)).println!
+    ((4294967295 as U32) > (2147483647 as U32)).println!
+    high = !(0 as U64)
+    (high > (9223372036854775807 as U64)).println!
+    (((255 as U8) / (2 as U8)) == (127 as U8)).println!
+    (((-8 as I8) >> (1 as I8)) == (-4 as I8)).println!
+    (((128 as U8) >> (1 as U8)) == (64 as U8)).println!
+"#);
+    assert_eq!(compile_and_run(&source), "true\n".repeat(97));
+}
+
+#[test]
+fn test_std_bitwise_traits_are_independent_and_support_bool() {
+    let output = compile_and_run(r#"
+struct Flag
+    < value: Bool
+
+impl BitAnd Bool for Flag
+    type Output = Bool
+    @& = other -> self.value & other
+
+combine: T -> T -> () where T: BitXor T
+combine = a, b !-> a ^ b
+
+main = !->
+    flag = Flag
+        value: true
+    (flag & false).println!
+    (true & true).println!
+    (false | true).println!
+    combine true, false
+    combine (5 as U16), (3 as U16)
+    (true ^ false).println!
+    (true ^ true).println!
+    (((5 as U16) ^ (3 as U16)) == (6 as U16)).println!
+"#);
+    assert_eq!(output, "false\ntrue\ntrue\ntrue\nfalse\ntrue\n");
+}
+
+#[test]
+fn test_std_bitwise_bool_shifts_are_rejected() {
+    for operator in ["<<", ">>"] {
+        compile_should_fail(
+            &format!("main = !->\n    (true {operator} false).println!\n"),
+            "operator",
+        );
+    }
+}
+
+#[test]
+fn test_float_intrinsic_inequality_matches_partial_equality_for_nan() {
+    let output = compile_and_run(r#"
+main = !->
+    nan64 = (0 as F64) / (0 as F64)
+    nan32 = (0 as F32) / (0 as F32)
+    (nan64 != nan64).println!
+    (nan32 != nan32).println!
+    (~F64Ne nan64, nan64).println!
+    (~F32Ne nan32, nan32).println!
+    (~F64Ne nan64, (1 as F64)).println!
+    (~F32Ne (1 as F32), nan32).println!
+    (~F64Ne (0 as F64), (-0.0 as F64)).println!
+    (~F32Ne (2 as F32), (2 as F32)).println!
+"#);
+    assert_eq!(output, "true\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\n");
+}
+
+#[test]
+fn test_std_partial_and_total_comparison_contracts() {
+    let output = compile_and_run(r#"
+describe: Option Ordering -> I64
+describe = comparison ->
+    match comparison
+        Option::Some order =>
+            match order
+                Ordering::Less => -1
+                Ordering::Equal => 0
+                Ordering::Greater => 1
+        Option::None => 2
+
+partial: T -> T -> I64 where T: PartialOrd
+partial = left, right -> describe (left.partial_cmp &right)
+
+total: T -> T -> Bool where T: Ord
+total = left, right -> (left.cmp &right) == Ordering::Less
+
+main = !->
+    (partial (3 as U8), (4 as U8)).println!
+    (partial (4 as I16), (3 as I16)).println!
+    (partial (4 as F64), (4 as F64)).println!
+    nan64 = (0 as F64) / (0 as F64)
+    nan32 = (0 as F32) / (0 as F32)
+    nan64.is_nan!.println!
+    nan32.is_nan!.println!
+    (partial nan64, (1 as F64)).println!
+    (partial (1 as F32), nan32).println!
+    (nan64 < nan64).println!
+    (nan64 <= nan64).println!
+    (nan64 > nan64).println!
+    (nan64 >= nan64).println!
+    (nan32 == nan32).println!
+    (nan32 != nan32).println!
+    (partial (0 as F64), (-0.0 as F64)).println!
+    infinity = (1 as F64) / (0 as F64)
+    (partial infinity, infinity).println!
+    (partial (1 as F64), infinity).println!
+    (total false, true).println!
+    (total 'é', '🦀').println!
+    (total "abc", "abd").println!
+    (total "ab", "abc").println!
+    (total "é", "🦀").println!
+    (partial (), ()).println!
+    (() == ()).println!
+    (() != ()).println!
+    (() <= ()).println!
+    (() < ()).println!
+    (Ordering::Less < Ordering::Equal).println!
+"#);
+    assert_eq!(output, "-1\n1\n0\ntrue\ntrue\n2\n2\nfalse\nfalse\nfalse\nfalse\nfalse\ntrue\n0\n0\n-1\ntrue\ntrue\ntrue\ntrue\ntrue\n0\ntrue\nfalse\ntrue\nfalse\ntrue\n");
+}
+
+#[test]
+fn test_std_floats_do_not_satisfy_total_comparison_bounds() {
+    for ty in ["F32", "F64"] {
+        for bound in ["Eq", "Ord"] {
+            compile_should_fail(
+                &format!(
+                    "require: T -> () where T: {bound}\nrequire = value !-> return\n\nmain = !->\n    require (1 as {ty})\n"
+                ),
+                bound,
+            );
+        }
+    }
+}
+
+#[test]
+fn test_std_wrapping_negation_and_pointer_subtraction_boundaries() {
+    let output = compile_and_run(r#"
+struct Empty
+
+main = !->
+    smallest = (-9223372036854775807) - 1
+    (smallest.wrapping_neg! == smallest).println!
+    min8 = (0 as I8).min_value!
+    min16 = (0 as I16).min_value!
+    (min8.wrapping_neg! == min8).println!
+    (min16.wrapping_neg! == min16).println!
+    ((((-2147483647 as I32) - (1 as I32)).wrapping_neg!) == ((-2147483647 as I32) - (1 as I32))).println!
+    ((7 as I8).wrapping_neg! == (-7 as I8)).println!
+    value = 42
+    ptr = &value as *I64
+    same = unsafe ptr - 0
+    ((same as I64) == (ptr as I64)).println!
+    forward = unsafe ptr - (-1)
+    backward = unsafe forward - 1
+    ((backward as I64) == (ptr as I64)).println!
+    byte_ptr = ptr as *U8
+    far = unsafe byte_ptr - smallest
+    returned = unsafe far + smallest
+    ((returned as I64) == (byte_ptr as I64)).println!
+    empty = Empty
+    empty_ptr = &empty as *Empty
+    shifted = unsafe empty_ptr - smallest
+    ((shifted as I64) == (empty_ptr as I64)).println!
+"#);
+    assert_eq!(output, "true\n".repeat(9));
+}
+
+#[test]
+fn test_std_total_equality_requires_partial_equality() {
+    compile_should_fail(r#"
+struct MissingEquality
+
+impl Eq for MissingEquality
+
+main = !-> return
+"#, "supertrait obligation");
+}
+
+#[test]
+fn test_removed_make_arr_intrinsic_is_rejected() {
+    compile_should_fail(r#"
+main = !->
+    values = [1, 2]
+    unsafe ~MakeArr values.as_ptr!, 2
+"#, "MakeArr");
+}
+
+#[test]
+fn test_mutable_raw_slice_borrow_requires_unsafe() {
+    compile_should_fail(r#"
+main = !->
+    mut values = [1, 2]
+    raw: *[I64] = ~PtrFromParts values.as_mut_ptr!, 2
+    view = &mut *raw
+    view[0].println!
+"#, "requires an unsafe block");
+}
+
+#[test]
+fn test_slice_methods_lengths_and_empty_views() {
+    let output = compile_and_run(r#"
+inspect: &[I64] -> ()
+inspect = values !->
+    values.len!.println!
+    values.is_empty!.println!
+
+main = !->
+    mut values = [10, 20, 30]
+    values.len!.println!
+    values.is_empty!.println!
+    inspect &values
+    inspect &values[1..]
+    inspect &values[3..3]
+    view = &mut values[..]
+    view.len!.println!
+    view.is_empty!.println!
+    ptr = view.as_mut_ptr!
+    unsafe *ptr = 42
+    view[0].println!
+    view.len!.println!
+    empty: [U8; 0] = []
+    empty.len!.println!
+    empty.is_empty!.println!
+"#);
+    assert_eq!(output, "3\nfalse\n3\nfalse\n2\nfalse\n0\ntrue\n3\nfalse\n42\n3\n0\ntrue\n");
+}
+
+#[test]
+fn test_slice_methods_pointer_identity_and_mutation() {
+    let output = compile_and_run(r#"
+main = !->
+    mut values = [10, 20, 30]
+    original = values.as_ptr! as I64
+    borrowed = (&values).as_ptr! as I64
+    (original == borrowed).println!
+    tail = &values[1..]
+    offset = unsafe ~PtrOffset values.as_ptr!, 1
+    ((tail.as_ptr! as I64) == (offset as I64)).println!
+    ptr = values.as_mut_ptr!
+    ((ptr as I64) == original).println!
+    unsafe *ptr = 42
+    values[0].println!
+    values[1].println!
+"#);
+    assert_eq!(output, "true\ntrue\ntrue\n42\n20\n");
+}
+
+#[test]
+fn test_slice_methods_do_not_move_non_copy_elements() {
+    let output = compile_and_run(r#"
+main = !->
+    values = [(String::from "first"), (String::from "second")]
+    values.len!.println!
+    ptr = values.as_ptr!
+    (unsafe &*ptr).println!
+    values[1].println!
+    values.len!.println!
+"#);
+    assert_eq!(output, "2\nfirst\nsecond\n2\n");
+}
+
+#[test]
+fn test_slice_methods_borrowed_str_bytes_and_pointer() {
+    let output = compile_and_run(r#"
+main = !->
+    text = "aé🦀"
+    text.len!.println!
+    text.is_empty!.println!
+    "".is_empty!.println!
+    bytes = text.as_bytes!
+    bytes.len!.println!
+    bytes[0].println!
+    bytes[1].println!
+    ((text.as_ptr! as I64) == (bytes.as_ptr! as I64)).println!
+    owned = String::from text
+    owned.as_str!.as_bytes!.len!.println!
+    owned.println!
+"#);
+    assert_eq!(output, "7\nfalse\ntrue\n7\n97\n195\ntrue\n7\naé🦀\n");
+}
+
+#[test]
+fn test_slice_methods_shared_slice_cannot_get_mut_pointer() {
+    compile_should_fail(r#"
+main = !->
+    values = [1, 2]
+    shared = &values[..]
+    ptr = shared.as_mut_ptr!
+    unsafe *ptr = 42
+"#, "as_mut_ptr");
+}
+
+#[test]
+fn test_slice_methods_immutable_array_cannot_get_mut_pointer() {
+    compile_should_fail(r#"
+main = !->
+    values = [1, 2]
+    ptr = values.as_mut_ptr!
+    unsafe *ptr = 42
+"#, "mutable receiver");
+}
+
+#[test]
+fn test_slice_methods_byte_view_cannot_escape_local_string() {
+    compile_should_fail(r#"
+make_bytes: () -> &[U8]
+make_bytes = ->
+    text = String::from "local"
+    text.as_str!.as_bytes!
+
+main = !->
+    make_bytes!.len!.println!
+"#, "does not live long enough");
+}
+
+#[test]
+fn test_std_sizeof_borrows_values_and_queries_pointees() {
+    let source = r#"
+> std::mem::sizeof
+> std::mem::sizeof_pointee
+> std::mem::Sized
+> std::mem::Box
+> std::mem::Drop
+> std::show::Show
+
+inspect: &T -> I64 where T: Sized
+inspect = value -> sizeof value
+
+slice_view: &[I64] -> &[I64]
+slice_view = values -> values
+
+struct Empty
+
+struct Pair
+    < small: U8
+    < large: I64
+
+struct Tracked
+    < value: I64
+
+impl Drop for Tracked
+    ~@drop = !-> self.value.println!
+
+main = !->
+    (sizeof &(0 as U8)).println!
+    (sizeof &(0 as U16)).println!
+    (sizeof &(0 as U32)).println!
+    (sizeof &(0 as I64)).println!
+    (sizeof &true).println!
+    (sizeof &'🦀').println!
+    (sizeof &Empty).println!
+    values = [1, 2, 3]
+    (inspect &values).println!
+    view = slice_view &values
+    (sizeof &view).println!
+    pair = Pair
+        small: 1 as U8
+        large: 2
+    (sizeof &pair).println!
+    null_pair = 0 as *Pair
+    (sizeof_pointee null_pair).println!
+    null_empty = 0 as *Empty
+    (sizeof_pointee null_empty).println!
+    null_integer = 0 as *I64
+    (sizeof &null_integer).println!
+    (sizeof_pointee null_integer).println!
+    value = Tracked
+        value: 73
+    (inspect &value).println!
+    value.value.println!
+    boxed = Box::new value
+    (sizeof boxed.as_ref!).println!
+    "end".println!
+"#;
+    for opt_level in [0, 3] {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = test_temp_dir(id);
+        fs::create_dir_all(&dir).unwrap();
+        let _cleanup = TestDirCleanup(dir.clone());
+        let entry = dir.join("sizeof.rk");
+        fs::write(&entry, source).unwrap();
+        let mut config = test_config(entry, dir.clone());
+        config.opt_level = opt_level;
+        config.no_prelude = true;
+        rock_lib::compile(&config).unwrap();
+        let output = run_test_command(&mut Command::new(dir.join("sizeof")));
+        assert_eq!(output.status.code(), Some(0), "optimization level {opt_level}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "1\n2\n4\n8\n1\n4\n0\n24\n16\n16\n16\n0\n8\n8\n8\n73\n8\nend\n73\n",
+            "optimization level {opt_level}",
+        );
+    }
+}
+
+#[test]
+fn test_std_sizeof_rejects_unsized_pointees() {
+    for source in [
+        r#"
+main = !->
+    values = [1, 2, 3]
+    slice = &values[..]
+    sizeof slice
+"#,
+        r#"
+main = !->
+    sizeof "hello"
+"#,
+        r#"
+main = !->
+    values = [1, 2, 3]
+    slice = &values[..]
+    sizeof_pointee (slice as *[I64])
+"#,
+    ] {
+        compile_should_fail(source, "Sized");
+    }
+}
+
+#[test]
+fn test_std_domain_facades_without_prelude() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let entry = dir.join("facades.rk");
+    std::fs::write(
+        &entry,
+        r#"
+> std::collections::Vec
+> std::control::Option
+> std::control::Result
+> std::control::ControlFlow
+> std::mem::Box
+> std::mem::sizeof
+> std::string::String
+> std::functional::Functor
+> std::functional::fmap
+> std::cmp::Eq
+> std::num::Add
+> std::ops::Index
+> std::ops::Deref
+> std::concurrency::Mutex
+> std::concurrency::thread::spawn
+> std::io::Write
+> std::io::fs::File
+> std::io::net::Ipv4Addr
+> std::ffi::libc::sqrt
+
+first: &Vec I64 -> I64
+first = values -> values[0]
+
+main = ->
+    mut values: Vec I64 = Vec::new!
+    values.push 42
+    boxed: Box I64 = Box::new (first &values)
+    selected: Option I64 = fmap (value -> value), (Option::Some *boxed)
+    match selected
+        Option::Some value => value
+        Option::None => 0
+"#,
+    )
+    .unwrap();
+    let mut config = test_config(entry, dir.clone());
+    config.no_prelude = true;
+    rock_lib::compile(&config).expect("domain facades should work without prelude imports");
+    let output = Command::new(dir.join("facades")).output().unwrap();
+    assert_eq!(output.status.code(), Some(42));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_std_domain_facades_with_prelude() {
+    let output = compile_and_run(
+        r#"
+> std::collections::Vec
+> std::control::Option
+> std::mem::Box
+> std::string::String
+
+main = !->
+    mut values: Vec I64 = Vec::new!
+    values.push 42
+    first: Option I64 = Option::Some values[0]
+    first.println!
+    boxed = Box::new 42
+    (*boxed).println!
+    text = String::from "hello"
+    text.println!
+"#,
+    );
+    assert_eq!(output, "Some(42)\n42\nhello\n");
+}
+
+#[test]
+fn test_std_old_flat_module_paths_are_not_aliases() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let entry = dir.join("old_paths.rk");
+    for (path, value) in [
+        ("std::vec::Vec", "values: Vec I64 = Vec::new!"),
+        ("std::option::Option", "value: Option I64 = Option::Some 42"),
+        ("std::sync::Mutex", "value: Mutex I64 = Mutex::new 42"),
+    ] {
+        std::fs::write(&entry, format!("> {path}\nmain = !->\n    {value}\n")).unwrap();
+        let mut config = test_config(entry.clone(), dir.clone());
+        config.no_prelude = true;
+        let diagnostics = rock_lib::compile(&config).expect_err("old module paths must not resolve");
+        assert!(format!("{diagnostics:?}").contains(path));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_fold_loop_utf8_traversal() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    text = String::from "aé🦀"
+    for_each text.chars!, (!.println!)
+    for ch in text.chars!
+        ch.println!
+    for (offset, ch) in text.char_indices!
+        offset.println!
+        ch.println!
+    text.println!
+"#,
+    );
+    assert_eq!(output, "a\né\n🦀\na\né\n🦀\n0\na\n1\né\n3\n🦀\naé🦀\n");
+}
+
+#[test]
+fn test_fold_loop_control_flow() {
+    let output = compile_and_run(
+        r#"
+pick: () -> I64
+pick = ->
+    for (offset, ch) in "aé🦀z".char_indices!
+        if offset == 0
+            continue
+        if offset == 3
+            return ch as I64
+    -1
+
+main = !->
+    total = 0
+    for (offset, ch) in "aé🦀z".char_indices!
+        if offset == 0
+            continue
+        total = total + offset
+        if offset == 3
+            break
+    total.println!
+    pick!.println!
+    for ch in "é".chars!
+        for n in 0..3
+            if n == 1
+                continue
+            n.println!
+        ch.println!
+    for outer in "ab".chars!
+        for inner in "xy".chars!
+            inner.println!
+            break
+        outer.println!
+"#,
+    );
+    assert_eq!(output, "4\n129408\n0\n2\né\nx\na\nx\nb\n");
+}
+
+#[test]
+fn test_fold_loop_try_returns_from_enclosing_function() {
+    let output = compile_and_run(
+        r#"
+check: I64 -> Result I64, I64
+check = value -> if value == 1 then Result::Err 99 else Result::Ok value
+run: () -> Result I64, I64
+run = ->
+    for (offset, ch) in "abc".char_indices!
+        value = check offset?
+        value.println!
+    Result::Ok 42
+main = !-> run!.println!
+"#,
+    );
+    assert_eq!(output, "0\nErr(99)\n");
+}
+
+#[test]
+fn test_fold_loop_user_collections_and_generic_source() {
+    let output = compile_and_run(
+        r#"
+struct One T
+    < value: T
+impl Foldable for One
+    try_fold = mut step, initial, source -> step (initial, source.value)
+
+visit: C -> () where C: FoldableValue I64
+visit = source !->
+    for value in source
+        value.println!
+
+main = !->
+    value = One
+        value: 42
+    visit value
+    for value in (Option::Some 7)
+        value.println!
+    range = 2..4
+    visit range
+    mut values = Vec::new!
+    values.push 8
+    values.push 9
+    for value in &values
+        value.println!
+    for value in values
+        value.println!
+"#,
+    );
+    assert_eq!(output, "42\n7\n2\n3\n8\n9\n8\n9\n");
+}
+
+#[test]
+fn test_fold_loop_infers_source_and_element_types() {
+    let output = compile_and_run(
+        r#"
+count_all = source ->
+    count = 0
+    for value in source
+        count = count + 1
+    count
+
+main = !->
+    count_all "é🦀".chars! .println!
+    count_all (Option::Some 42) .println!
+"#,
+    );
+    assert_eq!(output, "2\n1\n");
+}
+
+#[test]
+fn test_fold_loop_uses_marked_protocol_without_std() {
+    let status = compile_and_run_without_std(
+        r#"
+lang control_flow
+< enum Signal Stop, State
+    lang break
+    Halt Stop
+    lang continue
+    More State
+
+lang try
+< trait Propagate
+    lang output
+    type Value
+    lang residual
+    type Error
+    lang branch
+    ~@split: Signal Self::Error, Self::Value
+
+lang from_residual
+< trait Lift E
+    lang method
+    lift: E -> Self
+
+lang fn_once
+< trait Call Args, Ret
+    lang output
+    type Output
+    lang method
+    ~@invoke: Args -> Ret
+
+lang fn_mut
+< trait CallMut Args, Ret where Self: Call Args, Ret
+    lang output
+    type Output
+    lang method
+    ^@invoke_mut: Args -> Ret
+
+lang fold
+< trait Each A
+    lang method
+    ~@scan: S -> B -> Signal R, B where S: CallMut (B, A), (Signal R, B)
+
+struct Once
+    < value: I64
+
+impl Each I64 for Once
+    ~@scan = mut step, initial -> step (initial, self.value)
+
+main = ->
+    source = Once
+        value: 42
+    for value in source
+        return value
+    0
+"#,
+    );
+    assert_eq!(status, 42);
+}
+
+#[test]
+fn test_fold_loop_custom_source_stops_requesting_elements() {
+    let output = compile_and_run(
+        r#"
+struct Counter
+    < end: I64
+
+impl FoldableValue I64 for Counter
+    ~@try_fold = mut step, initial ->
+        state = initial
+        i = 0
+        while i < self.end
+            (100 + i).println!
+            match step (state, i)
+                ControlFlow::Continue next => state = next
+                ControlFlow::Break result =>
+                    stopped: ControlFlow R, B = ControlFlow::Break result
+                    return stopped
+            i = i + 1
+        ControlFlow::Continue state
+
+make = ->
+    999.println!
+    Counter
+        end: 5
+
+main = !->
+    for value in make!
+        value.println!
+        if value == 1
+            break
+"#,
+    );
+    assert_eq!(output, "999\n100\n0\n101\n1\n");
+}
+
+#[test]
+fn test_fold_loop_owned_elements_drop_on_break_and_return() {
+    let output = compile_and_run(
+        r#"
+struct Item
+    < value: I64
+impl Drop for Item
+    ~@drop = !-> self.value.println!
+
+first: Vec String -> String
+first = values ->
+    for value in values
+        return value
+    String::from "empty"
+
+main = !->
+    mut values = Vec::new!
+    values.push (Item
+        value: 1)
+    values.push (Item
+        value: 2)
+    values.push (Item
+        value: 3)
+    for item in values
+        break
+    mut words = Vec::new!
+    words.push (String::from "first")
+    words.push (String::from "second")
+    first words .println!
+"#,
+    );
+    assert_eq!(output, "1\n2\n3\nfirst\n");
+}
+
+#[test]
+fn test_fold_loop_utf8_cursor_resume_and_empty() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    mut chars = "é🦀".chars!
+    chars.next!.println!
+    for ch in chars
+        ch.println!
+    mut indexed = "é🦀".char_indices!
+    match indexed.next!
+        Option::Some pair => pair.0.println!
+        Option::None => -1.println!
+    for (offset, ch) in indexed
+        offset.println!
+        ch.println!
+    for ch in "".chars!
+        999.println!
+    mut empty = "".chars!
+    empty.next!.println!
+    empty.next!.println!
+"#,
+    );
+    assert_eq!(output, "Some(é)\n🦀\n0\n2\n🦀\nNone\nNone\n");
+}
+
+#[test]
+fn test_fold_loop_cursor_foldl_and_direct_try_fold() {
+    let output = compile_and_run(
+        r#"
+sum: (I64, Char) -> I64
+sum = pair -> pair.0 + (pair.1 as I64)
+stop: (I64, (I64, Char)) -> ControlFlow I64, I64
+stop = pair ->
+    (total, entry) = pair
+    if entry.0 == 3
+        ControlFlow::Break total
+    else
+        ControlFlow::Continue (total + 1)
+
+main = !->
+    "aé🦀".chars!.foldl sum, 0 .println!
+    match "aé🦀z".char_indices!.try_fold stop, 0
+        ControlFlow::Break total => total.println!
+        ControlFlow::Continue total => total.println!
+"#,
+    );
+    assert_eq!(output, "129738\n2\n");
+}
+
+#[test]
+fn test_fold_loop_native_loop_and_nested_lambda_control() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    count = 0
+    loop
+        count = count + 1
+        if count < 3
+            continue
+        break
+    count.println!
+    for ch in "ab".chars!
+        local = ->
+            return 7
+        local!.println!
+        ch.println!
+        break
+"#,
+    );
+    assert_eq!(output, "3\n7\na\n");
+}
+
+#[test]
+fn test_fold_loop_utf8_cursor_cannot_outlive_string() {
+    compile_should_fail(
+        r#"
+bad: () -> Chars
+bad = ->
+    text = String::from "é"
+    text.chars!
+main = !-> for_each bad!, (!.println!)
+"#,
+        "Cannot return reference",
+    );
+}
+
+#[test]
+fn test_fold_loop_rejects_refutable_pattern() {
+    compile_should_fail(
+        r#"
+main = !->
+    for 1 in (Option::Some 1)
+        42.println!
+"#,
+        "for loop pattern must be irrefutable",
+    );
+}
+
+#[test]
+fn test_utf8_strings_and_range_indexing() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    text = "aé中🦀z"
+    text.len!.println!
+    (&text[1..3]).println!
+    (&text[3..=5]).println!
+    (&text[6..10]).println!
+    (&text[..1]).println!
+    (&text[10..]).println!
+    (&text[..]).println!
+    (&text[11..11]).len!.println!
+    owned = String::from text
+    (&owned[1..6]).println!
+    owned.char_at 3 .println!
+    str_char_at text, 5 .println!
+    str_char_at text, -1 .println!
+    String::from 'é' .println!
+    String::from '中' .println!
+    String::from '🦀' .println!
+    ('🦀' as I64).println!
+"#,
+    );
+    assert_eq!(
+        output,
+        "11\né\n中\n🦀\na\nz\naé中🦀z\n0\né中\nSome(🦀)\nNone\nNone\né\n中\n🦀\n129408\n"
+    );
+}
+
+#[test]
+fn test_utf8_validation() {
+    for bytes in [
+        vec![0x80],
+        vec![0xc0, 0x80],
+        vec![0xc2],
+        vec![0xe0, 0x80, 0x80],
+        vec![0xed, 0xa0, 0x80],
+        vec![0xf0, 0x80, 0x80, 0x80],
+        vec![0xf4, 0x90, 0x80, 0x80],
+        vec![0xf5, 0x80, 0x80, 0x80],
+        vec![0xc2, 0x41],
+        vec![0xff],
+    ] {
+        let values = bytes
+            .iter()
+            .map(|b| format!("{b} as U8"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = format!(
+            "main = !->\n    bytes = [{values}]\n    String::from_utf8 (&bytes) .println!\n"
+        );
+        assert_eq!(compile_and_run(&source), "None\n", "{bytes:?}");
+    }
+    assert_eq!(
+        compile_and_run(
+            r#"
+main = !->
+    bytes = [240 as U8, 159 as U8, 166 as U8, 128 as U8]
+    String::from_utf8 (&bytes) .println!
+    empty: [U8; 0] = []
+    String::from_utf8 (&empty) .println!
+"#
+        ),
+        "Some(🦀)\nSome()\n"
+    );
+}
+
+#[test]
+fn test_utf8_invalid_ranges_are_checked() {
+    for range in [
+        "2..3",
+        "1..2",
+        "2..2",
+        "-1..1",
+        "3..1",
+        "0..5",
+        "..=4",
+        "..=9223372036854775807",
+    ] {
+        for receiver in ["\"aéz\"", "String::from \"aéz\""] {
+            let source =
+                format!("main = !->\n    text = {receiver}\n    (&text[{range}]).println!\n");
+            let (output, success) = compile_and_run_with_status(&source);
+            assert!(!success, "{receiver}[{range}] unexpectedly succeeded");
+            assert!(
+                output.contains("out of bounds") || output.contains("UTF-8 boundary"),
+                "{output}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_utf8_char_width_escapes_and_nul() {
+    let output = compile_and_run(
+        r#"
+echo: Char -> Char
+echo = value -> value
+main = !->
+    chars = ['é', '中', '🦀']
+    chars[2].println!
+    echo '中' .println!
+    ('\n' as I64).println!
+    ('\'' as I64).println!
+    ('\\' as I64).println!
+    text = String::from "é\0🦀"
+    text.len!.println!
+    text.println!
+    str_char_at "é", 1 .println!
+    String::from (1114111 as Char) .len!.println!
+    match '\n'
+        '\n' => 1.println!
+        _ => 0.println!
+"#,
+    );
+    assert_eq!(output, "🦀\n中\n10\n39\n92\n7\né\0🦀\nSome(́)\n4\n1\n");
+}
+
+#[test]
+fn test_utf8_invalid_char_casts_trap_before_narrowing() {
+    for value in [-1_i64, 0xd800, 0xdfff, 0x110000, 0x100000041] {
+        let source = format!("main = !->\n    value = {value}\n    (value as Char).println!\n");
+        assert!(
+            !compile_and_run_with_status(&source).1,
+            "{value} must not form a Char"
+        );
+    }
+}
+
+#[test]
+fn test_utf8_invalid_byte_conversion_is_checked() {
+    let (output, success) = compile_and_run_with_status(
+        r#"
+main = !->
+    bytes = [255 as U8]
+    String::from (&bytes) .println!
+"#,
+    );
+    assert!(!success);
+    assert_eq!(output, "invalid UTF-8\n");
+}
+
+#[test]
+fn test_utf8_scalar_boundaries_roundtrip() {
+    let scalars = [
+        0_u32, 0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff,
+    ];
+    let mut source = String::from("main = !->\n");
+    let mut expected = String::new();
+    for (i, scalar) in scalars.into_iter().enumerate() {
+        source.push_str(&format!(
+            "    text{i} = String::from ({scalar} as Char)\n    is_utf8 text{i}.as_bytes! .println!\n    text{i}.len!.println!\n    decoded{i} = text{i}.char_at 0 .unwrap_or 'x'\n    (decoded{i} as I64).println!\n"
+        ));
+        expected.push_str(&format!(
+            "true\n{}\n{scalar}\n",
+            char::from_u32(scalar).unwrap().len_utf8()
+        ));
+    }
+    assert_eq!(compile_and_run(&source), expected);
+}
+
+#[test]
+fn test_utf8_char_literals_require_one_scalar() {
+    for literal in ["''", "'ab'", "'é'", "'\\q'"] {
+        compile_should_fail(
+            &format!("main = !->\n    {literal}.println!\n"),
+            "character literal must contain exactly one Unicode scalar",
+        );
+    }
+}
+
+#[test]
+fn test_utf8_strings_do_not_allow_byte_mutation_or_integer_indexing() {
+    compile_should_fail(
+        r#"
+main = !->
+    text = String::from "é"
+    text[0].println!
+"#,
+        "No implementation found for operator '[]'",
+    );
+    compile_should_fail(
+        r#"
+main = !->
+    mut text = String::from "é"
+    text[0..2] = "hi"
+"#,
+        "No mutable indexing implementation found",
+    );
+}
+
+#[test]
+fn test_utf8_string_slice_cannot_outlive_owner() {
+    compile_should_fail(
+        r#"
+bad: () -> &Str
+bad = ->
+    text = String::from "é🦀"
+    &text[2..]
+
+main = !-> bad!.println!
+"#,
+        "Cannot return reference",
+    );
+}
 
 #[test]
 fn test_multiline_chain_targets_completed_call() {
@@ -248,8 +2470,8 @@ main = !->
 }
 
 #[test]
-fn test_do_notation_without_stdlib() {
-    let status = compile_and_run_without_stdlib(
+fn test_do_notation_without_std() {
+    let status = compile_and_run_without_std(
         r#"
 bind: I64 -> (I64 -> I64) -> I64
 bind = value, callback -> callback value
@@ -372,7 +2594,7 @@ increment: F I64 -> F I64 where F _: Monad
 
 #[test]
 fn test_do_notation_does_not_reserve_bind_operator_globally() {
-    let status = compile_and_run_without_stdlib(
+    let status = compile_and_run_without_std(
         r#"
 infix 8 <-
 <-: I64 -> I64 -> I64
@@ -415,7 +2637,7 @@ macro make_main
     assert_eq!(output, "42\n");
 }
 
-const STDLIB_CACHE_LOCK_STALE_AFTER: Duration = Duration::from_secs(10 * 60);
+const STD_CACHE_LOCK_STALE_AFTER: Duration = Duration::from_secs(10 * 60);
 const TEST_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn test_temp_dir(id: u64) -> PathBuf {
@@ -430,8 +2652,8 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn stdlib_path() -> PathBuf {
-    workspace_root().join("stdlib")
+fn std_path() -> PathBuf {
+    workspace_root().join("std")
 }
 
 struct CacheLock {
@@ -455,7 +2677,7 @@ fn acquire_cache_lock(path: &Path) -> Option<CacheLock> {
                 if let Err(err) = file.write_all(cache_lock_metadata().as_bytes()) {
                     let _ = std::fs::remove_file(path);
                     panic!(
-                        "failed to write stdlib cache lock {}: {}",
+                        "failed to write std cache lock {}: {}",
                         path.display(),
                         err
                     );
@@ -465,16 +2687,16 @@ fn acquire_cache_lock(path: &Path) -> Option<CacheLock> {
                 });
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                if stdlib_cache_entry_is_ready_for_lock(path) {
+                if std_cache_entry_is_ready_for_lock(path) {
                     return None;
                 }
-                if recover_stale_cache_lock(path, STDLIB_CACHE_LOCK_STALE_AFTER) {
+                if recover_stale_cache_lock(path, STD_CACHE_LOCK_STALE_AFTER) {
                     continue;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(25));
             }
             Err(err) => panic!(
-                "failed to acquire stdlib cache lock {}: {}",
+                "failed to acquire std cache lock {}: {}",
                 path.display(),
                 err
             ),
@@ -497,16 +2719,16 @@ fn current_unix_nanos() -> u128 {
         .unwrap_or_default()
 }
 
-fn stdlib_cache_entry_is_ready_for_lock(lock_path: &Path) -> bool {
+fn std_cache_entry_is_ready_for_lock(lock_path: &Path) -> bool {
     let artifact_dir = lock_path.with_extension("");
-    stdlib_cache_entry_is_ready(
-        &artifact_dir.join("stdlib.rkca"),
-        &artifact_dir.join("stdlib.o"),
+    std_cache_entry_is_ready(
+        &artifact_dir.join("std.rkca"),
+        &artifact_dir.join("std.o"),
         &artifact_dir.join("ready"),
     )
 }
 
-fn stdlib_cache_lock_is_stale(path: &Path, stale_after: Duration) -> bool {
+fn std_cache_lock_is_stale(path: &Path, stale_after: Duration) -> bool {
     let age = std::fs::read_to_string(path)
         .ok()
         .and_then(|contents| lock_age_from_metadata(&contents))
@@ -516,7 +2738,7 @@ fn stdlib_cache_lock_is_stale(path: &Path, stale_after: Duration) -> bool {
 }
 
 fn recover_stale_cache_lock(path: &Path, stale_after: Duration) -> bool {
-    if stdlib_cache_entry_is_ready_for_lock(path) || !stdlib_cache_lock_is_stale(path, stale_after)
+    if std_cache_entry_is_ready_for_lock(path) || !std_cache_lock_is_stale(path, stale_after)
     {
         return false;
     }
@@ -525,7 +2747,7 @@ fn recover_stale_cache_lock(path: &Path, stale_after: Duration) -> bool {
         Ok(()) => true,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
         Err(err) => panic!(
-            "failed to remove stale stdlib cache lock {}: {}",
+            "failed to remove stale std cache lock {}: {}",
             path.display(),
             err
         ),
@@ -557,7 +2779,7 @@ fn lock_age_from_file_metadata(path: &Path) -> Option<Duration> {
         .ok()
 }
 
-fn stdlib_cache_entry_is_ready(
+fn std_cache_entry_is_ready(
     artifact_path: &Path,
     object_path: &Path,
     ready_path: &Path,
@@ -584,28 +2806,28 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-fn publish_stdlib_cache_dir(
+fn publish_std_cache_dir(
     build_dir: &Path,
     artifact_dir: &Path,
     ready_path: &Path,
 ) -> Result<(), String> {
     remove_file_if_exists(ready_path).map_err(|err| {
         format!(
-            "failed to remove stale stdlib cache ready marker {}: {}",
+            "failed to remove stale std cache ready marker {}: {}",
             ready_path.display(),
             err
         )
     })?;
     remove_dir_if_exists(artifact_dir).map_err(|err| {
         format!(
-            "failed to remove stale stdlib cache directory {}: {}",
+            "failed to remove stale std cache directory {}: {}",
             artifact_dir.display(),
             err
         )
     })?;
     if artifact_dir.exists() {
         return Err(format!(
-            "stdlib cache destination still exists before publish: {}",
+            "std cache destination still exists before publish: {}",
             artifact_dir.display()
         ));
     }
@@ -620,7 +2842,7 @@ fn publish_stdlib_cache_dir(
             ));
             remove_dir_if_exists(&publish_dir).map_err(|cleanup_err| {
                 format!(
-                    "failed to clean stdlib cache publish directory {} after rename failed: {}; cleanup failed: {}",
+                    "failed to clean std cache publish directory {} after rename failed: {}; cleanup failed: {}",
                     publish_dir.display(),
                     rename_err,
                     cleanup_err
@@ -629,7 +2851,7 @@ fn publish_stdlib_cache_dir(
             copy_dir_all(build_dir, &publish_dir).map_err(|copy_err| {
                 let cleanup = cleanup_error_suffix(remove_dir_if_exists(&publish_dir));
                 format!(
-                    "failed to copy stdlib cache from {} to {} after rename failed: {}; copy failed: {}{}",
+                    "failed to copy std cache from {} to {} after rename failed: {}; copy failed: {}{}",
                     build_dir.display(),
                     publish_dir.display(),
                     rename_err,
@@ -637,10 +2859,10 @@ fn publish_stdlib_cache_dir(
                     cleanup
                 )
             })?;
-            validate_stdlib_cache_payload(&publish_dir).map_err(|validate_err| {
+            validate_std_cache_payload(&publish_dir).map_err(|validate_err| {
                 let cleanup = cleanup_error_suffix(remove_dir_if_exists(&publish_dir));
                 format!(
-                    "failed to validate stdlib cache publish directory {}: {}{}",
+                    "failed to validate std cache publish directory {}: {}{}",
                     publish_dir.display(),
                     validate_err,
                     cleanup
@@ -649,7 +2871,7 @@ fn publish_stdlib_cache_dir(
             std::fs::rename(&publish_dir, artifact_dir).map_err(|publish_err| {
                 let cleanup = cleanup_error_suffix(remove_dir_if_exists(&publish_dir));
                 format!(
-                    "failed to publish copied stdlib cache from {} to {} after rename failed: {}; publish failed: {}{}",
+                    "failed to publish copied std cache from {} to {} after rename failed: {}; publish failed: {}{}",
                     publish_dir.display(),
                     artifact_dir.display(),
                     rename_err,
@@ -659,7 +2881,7 @@ fn publish_stdlib_cache_dir(
             })?;
             remove_dir_if_exists(build_dir).map_err(|cleanup_err| {
                 format!(
-                    "failed to remove copied stdlib cache build directory {}: {}",
+                    "failed to remove copied std cache build directory {}: {}",
                     build_dir.display(),
                     cleanup_err
                 )
@@ -667,10 +2889,10 @@ fn publish_stdlib_cache_dir(
         }
     }
 
-    validate_stdlib_cache_payload(artifact_dir)?;
+    validate_std_cache_payload(artifact_dir)?;
     std::fs::write(ready_path, b"ready").map_err(|err| {
         format!(
-            "failed to mark stdlib cache directory ready {}: {}",
+            "failed to mark std cache directory ready {}: {}",
             ready_path.display(),
             err
         )
@@ -700,26 +2922,26 @@ fn cleanup_error_suffix(result: std::io::Result<()>) -> String {
     }
 }
 
-fn validate_stdlib_cache_payload(dir: &Path) -> Result<(), String> {
-    let artifact_path = dir.join("stdlib.rkca");
-    let object_path = dir.join("stdlib.o");
+fn validate_std_cache_payload(dir: &Path) -> Result<(), String> {
+    let artifact_path = dir.join("std.rkca");
+    let object_path = dir.join("std.o");
     if !object_path.is_file() {
         return Err(format!(
-            "stdlib cache object file is missing: {}",
+            "std cache object file is missing: {}",
             object_path.display()
         ));
     }
     rock_lib::products::CompilerProducts::read_artifact_from_path(&artifact_path).map(|_| ())
 }
 
-fn write_minimal_stdlib_artifact_for_cache_test(path: &Path) {
+fn write_minimal_std_artifact_for_cache_test(path: &Path) {
     rock_lib::products::CompilerProducts {
-        crate_identity: rock_lib::products::ProductCrateIdentity::local("stdlib".to_string()),
+        crate_identity: rock_lib::products::ProductCrateIdentity::local("std".to_string()),
         identity_table: rock_lib::products::ProductIdentityTable::default(),
         interface: rock_lib::products::ProductInterface::default(),
         bodies: rock_lib::products::ProductBodies::default(),
         link: rock_lib::products::ProductLinkData {
-            object_path: Some(PathBuf::from("stdlib.o")),
+            object_path: Some(PathBuf::from("std.o")),
             ..rock_lib::products::ProductLinkData::default()
         },
         dependencies: Vec::new(),
@@ -732,55 +2954,57 @@ fn write_minimal_stdlib_artifact_for_cache_test(path: &Path) {
 }
 
 #[test]
-fn stdlib_cache_key_changes_when_stdlib_source_changes() {
+fn std_cache_key_changes_when_std_source_changes() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
-    let stdlib_dir = dir.join("stdlib");
-    std::fs::create_dir_all(&stdlib_dir).unwrap();
-    std::fs::write(stdlib_dir.join("lib.rk"), "main = -> 0\n").unwrap();
+    let std_dir = dir.join("std");
+    std::fs::create_dir_all(std_dir.join("src/values")).unwrap();
+    std::fs::write(std_dir.join("src/lib.rk"), "mod values\n").unwrap();
+    let values = std_dir.join("src/values/mod.rk");
+    std::fs::write(&values, "answer = -> 0\n").unwrap();
 
-    let first = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
-    let second = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
+    let first = std_cache_key(&std_dir, "compiler-stamp");
+    let second = std_cache_key(&std_dir, "compiler-stamp");
     assert_eq!(first, second);
 
-    std::fs::write(stdlib_dir.join("lib.rk"), "main = -> 1\n").unwrap();
-    let changed = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
+    std::fs::write(&values, "answer = -> 1\n").unwrap();
+    let changed = std_cache_key(&std_dir, "compiler-stamp");
 
     assert_ne!(first, changed);
-    assert_ne!(changed, stdlib_cache_key(&stdlib_dir, "rebuilt-compiler"));
+    assert_ne!(changed, std_cache_key(&std_dir, "rebuilt-compiler"));
 
-    std::fs::write(stdlib_dir.join("rock.toml"), "[crate]\nname = \"stdlib\"\n").unwrap();
-    let with_manifest = stdlib_cache_key(&stdlib_dir, "compiler-stamp");
+    std::fs::write(std_dir.join("rock.toml"), "[crate]\nname = \"std\"\n").unwrap();
+    let with_manifest = std_cache_key(&std_dir, "compiler-stamp");
     assert_ne!(changed, with_manifest);
     std::fs::write(
-        stdlib_dir.join("rock.toml"),
+        std_dir.join("rock.toml"),
         "[crate]\nname = \"renamed\"\n",
     )
     .unwrap();
     assert_ne!(
         with_manifest,
-        stdlib_cache_key(&stdlib_dir, "compiler-stamp")
+        std_cache_key(&std_dir, "compiler-stamp")
     );
     let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]
-fn stdlib_cache_rejects_missing_ready_marker() {
+fn std_cache_rejects_missing_ready_marker() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     std::fs::create_dir_all(&dir).unwrap();
-    write_minimal_stdlib_artifact_for_cache_test(&dir.join("stdlib.rkca"));
-    std::fs::write(dir.join("stdlib.o"), b"object").unwrap();
+    write_minimal_std_artifact_for_cache_test(&dir.join("std.rkca"));
+    std::fs::write(dir.join("std.o"), b"object").unwrap();
 
-    assert!(!stdlib_cache_entry_is_ready(
-        &dir.join("stdlib.rkca"),
-        &dir.join("stdlib.o"),
+    assert!(!std_cache_entry_is_ready(
+        &dir.join("std.rkca"),
+        &dir.join("std.o"),
         &dir.join("ready")
     ));
 }
 
 #[test]
-fn stdlib_cache_stale_lock_recovery_does_not_spin_forever() {
+fn std_cache_stale_lock_recovery_does_not_spin_forever() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     std::fs::create_dir_all(&dir).unwrap();
@@ -793,7 +3017,7 @@ fn stdlib_cache_stale_lock_recovery_does_not_spin_forever() {
 }
 
 #[test]
-fn stdlib_cache_publish_replaces_stale_ready_entry_atomically() {
+fn std_cache_publish_replaces_stale_ready_entry_atomically() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     let artifact_dir = dir.join("cache");
@@ -802,67 +3026,68 @@ fn stdlib_cache_publish_replaces_stale_ready_entry_atomically() {
     std::fs::create_dir_all(&artifact_dir).unwrap();
     std::fs::create_dir_all(&build_dir).unwrap();
     std::fs::write(artifact_dir.join("ready"), b"ready").unwrap();
-    std::fs::write(artifact_dir.join("stdlib.rkca"), b"invalid stale artifact").unwrap();
-    std::fs::write(artifact_dir.join("stdlib.o"), b"stale object").unwrap();
-    write_minimal_stdlib_artifact_for_cache_test(&build_dir.join("stdlib.rkca"));
-    std::fs::write(build_dir.join("stdlib.o"), b"fresh object").unwrap();
+    std::fs::write(artifact_dir.join("std.rkca"), b"invalid stale artifact").unwrap();
+    std::fs::write(artifact_dir.join("std.o"), b"stale object").unwrap();
+    write_minimal_std_artifact_for_cache_test(&build_dir.join("std.rkca"));
+    std::fs::write(build_dir.join("std.o"), b"fresh object").unwrap();
 
-    publish_stdlib_cache_dir(&build_dir, &artifact_dir, &ready_path)
+    publish_std_cache_dir(&build_dir, &artifact_dir, &ready_path)
         .expect("cache publish should replace stale ready entry");
 
-    assert!(stdlib_cache_entry_is_ready(
-        &artifact_dir.join("stdlib.rkca"),
-        &artifact_dir.join("stdlib.o"),
+    assert!(std_cache_entry_is_ready(
+        &artifact_dir.join("std.rkca"),
+        &artifact_dir.join("std.o"),
         &ready_path,
     ));
     assert_eq!(
-        std::fs::read(artifact_dir.join("stdlib.o")).unwrap(),
+        std::fs::read(artifact_dir.join("std.o")).unwrap(),
         b"fresh object"
     );
 }
 
-fn stdlib_artifact_path() -> PathBuf {
-    static STDLIB_ARTIFACT: OnceLock<PathBuf> = OnceLock::new();
+fn std_artifact_path() -> PathBuf {
+    static STD_ARTIFACT: OnceLock<PathBuf> = OnceLock::new();
 
-    STDLIB_ARTIFACT
+    STD_ARTIFACT
         .get_or_init(|| {
-            let stdlib_dir = stdlib_path();
-            let cache_key = stdlib_cache_key(&stdlib_dir, &stdlib_cache_compiler_stamp());
+            let std_dir = std_path();
+            let cache_key = std_cache_key(&std_dir, &std_cache_compiler_stamp());
             let artifact_dir = std::env::temp_dir().join(format!(
-                "rock_integration_stdlib_product_artifact_{}",
+                "rock_integration_std_product_artifact_{}",
                 cache_key
             ));
-            let artifact_path = artifact_dir.join("stdlib.rkca");
-            let object_path = artifact_dir.join("stdlib.o");
+            let artifact_path = artifact_dir.join("std.rkca");
+            let object_path = artifact_dir.join("std.o");
             let ready_path = artifact_dir.join("ready");
             let lock_path = artifact_dir.with_extension("lock");
-            if stdlib_cache_entry_is_ready(&artifact_path, &object_path, &ready_path) {
+            if std_cache_entry_is_ready(&artifact_path, &object_path, &ready_path) {
                 return artifact_path;
             }
 
             let Some(_cache_lock) = acquire_cache_lock(&lock_path) else {
                 return artifact_path;
             };
-            if stdlib_cache_entry_is_ready(&artifact_path, &object_path, &ready_path) {
+            if std_cache_entry_is_ready(&artifact_path, &object_path, &ready_path) {
                 return artifact_path;
             }
 
             let build_dir = artifact_dir.with_extension(format!("building-{}", std::process::id()));
             remove_dir_if_exists(&build_dir)
-                .expect("Failed to clean stdlib product artifact build directory");
+                .expect("Failed to clean std product artifact build directory");
             std::fs::create_dir_all(&build_dir).unwrap();
-            let build_artifact_path = build_dir.join("stdlib.rkca");
-            let build_object_path = build_dir.join("stdlib.o");
+            let build_artifact_path = build_dir.join("std.rkca");
+            let build_object_path = build_dir.join("std.o");
 
             let output = rock_lib::compile_with_products(&rock_lib::Config {
-                entry_file: stdlib_dir.join("lib.rk"),
+                entry_file: std_dir.join("src/lib.rk"),
                 output_dir: build_dir.clone(),
                 debug_print: vec![],
                 meta_files: vec![],
                 extern_artifacts: vec![],
                 source_providers: Vec::new(),
-                current_crate_name: Some("stdlib".to_string()),
+                current_crate_name: Some("std".to_string()),
                 opt_level: 0,
+                overflow_checks: None,
                 emit_llvm: false,
                 no_link: true,
                 emit_object: Some(build_object_path),
@@ -870,20 +3095,23 @@ fn stdlib_artifact_path() -> PathBuf {
                 no_std: true,
                 sysroot: None,
             })
-            .expect("Failed to compile stdlib product artifact for integration tests");
+            .unwrap_or_else(|diagnostics| {
+                diagnostics.report();
+                panic!("Failed to compile std product artifact for integration tests");
+            });
             let mut products = output
                 .products
-                .expect("stdlib compile should produce product data");
-            products.link.object_path = Some(PathBuf::from("stdlib.o"));
+                .expect("std compile should produce product data");
+            products.link.object_path = Some(PathBuf::from("std.o"));
             products
                 .write_artifact_to_path(&build_artifact_path)
-                .expect("Failed to write stdlib product artifact for integration tests");
+                .expect("Failed to write std product artifact for integration tests");
 
             rock_lib::products::CompilerProducts::read_artifact_from_path(&build_artifact_path)
-                .expect("Failed to validate stdlib product artifact for integration tests");
+                .expect("Failed to validate std product artifact for integration tests");
 
-            publish_stdlib_cache_dir(&build_dir, &artifact_dir, &ready_path)
-                .expect("Failed to publish stdlib product artifact cache");
+            publish_std_cache_dir(&build_dir, &artifact_dir, &ready_path)
+                .expect("Failed to publish std product artifact cache");
             artifact_path
         })
         .clone()
@@ -895,10 +3123,11 @@ fn test_config(entry_file: PathBuf, output_dir: PathBuf) -> rock_lib::Config {
         output_dir,
         debug_print: vec![],
         meta_files: vec![],
-        extern_artifacts: vec![("stdlib".to_string(), stdlib_artifact_path())],
+        extern_artifacts: vec![("std".to_string(), std_artifact_path())],
         source_providers: Vec::new(),
         current_crate_name: None,
         opt_level: 0,
+        overflow_checks: None,
         emit_llvm: false,
         no_link: false,
         emit_object: None,
@@ -1051,7 +3280,7 @@ fn run_test_command(command: &mut Command) -> Output {
     }
 }
 
-fn compile_and_run_without_stdlib(source: &str) -> i32 {
+fn compile_and_run_without_std(source: &str) -> i32 {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     fs::create_dir_all(&dir).unwrap();
@@ -1063,13 +3292,17 @@ fn compile_and_run_without_stdlib(source: &str) -> i32 {
     config.extern_artifacts.clear();
     config.no_std = true;
     config.no_prelude = true;
-    rock_lib::compile(&config).expect("no-stdlib compilation failed");
+    rock_lib::compile(&config).expect("no-std compilation failed");
 
     let mut command = Command::new(dir.join(format!("no_std_{id}")));
     run_test_command(&mut command).status.code().unwrap_or(1)
 }
 
 fn compile_and_run(source: &str) -> String {
+    compile_and_run_at_opt(source, 0)
+}
+
+fn compile_and_run_at_opt(source: &str, opt_level: u8) -> String {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     std::fs::create_dir_all(&dir).unwrap();
@@ -1077,7 +3310,8 @@ fn compile_and_run(source: &str) -> String {
     let source_path = dir.join(format!("test_{}.rk", id));
     std::fs::write(&source_path, source).unwrap();
 
-    let config = test_config(source_path.clone(), dir.clone());
+    let mut config = test_config(source_path.clone(), dir.clone());
+    config.opt_level = opt_level;
 
     rock_lib::compile(&config).expect("Compilation failed");
 
@@ -1178,10 +3412,10 @@ fn test_hello_world() {
 }
 
 #[test]
-fn test_stdlib_program_args_are_owned_and_available_outside_main() {
+fn test_std_program_args_are_owned_and_available_outside_main() {
     let output = compile_and_run_with_args(
         r#"
-> stdlib::env::args
+> std::env::args
 
 read_args = -> args!
 
@@ -1236,7 +3470,7 @@ fn test_arithmetic() {
 }
 
 #[test]
-fn test_operator_resolution_does_not_depend_on_stdlib_trait_names() {
+fn test_operator_resolution_does_not_depend_on_std_trait_names() {
     let output = compile_and_run(
         r#"< struct Boxed
     < value: I64
@@ -2111,7 +4345,7 @@ main = ->
     s[1] .println!
     0
 "#,
-        "cannot index Str by integer",
+        "No implementation found for operator '[]'",
     );
 }
 
@@ -2689,7 +4923,7 @@ main = ->
 fn nested_index_mut_updates_matrix_element() {
     let output = compile_and_run(
         r#"
-> stdlib::vec::Vec
+> std::collections::Vec
 
 main = ->
     mut first = Vec::new!
@@ -3145,17 +5379,17 @@ fn test_mut_ref_assign() {
 }
 
 #[test]
-fn test_stdlib_math() {
+fn test_std_math() {
     let output = compile_and_run(
         r#"
 main = ->
-    stdlib::libc::sqrt 144.0 .println!
-    stdlib::libc::sin 0.0 .println!
-    stdlib::libc::cos 0.0 .println!
-    stdlib::libc::pow 2.0, 10.0 .println!
-    stdlib::libc::ceil 3.2 .println!
-    stdlib::libc::floor 3.8 .println!
-    string_len "hello" .println!
+    std::ffi::libc::sqrt 144.0 .println!
+    std::ffi::libc::sin 0.0 .println!
+    std::ffi::libc::cos 0.0 .println!
+    std::ffi::libc::pow 2.0, 10.0 .println!
+    std::ffi::libc::ceil 3.2 .println!
+    std::ffi::libc::floor 3.8 .println!
+    "hello".len!.println!
     0
 "#,
     );
@@ -3170,7 +5404,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_prelude_extern_is_available_without_explicit_import() {
+fn test_std_prelude_extern_is_available_without_explicit_import() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -3186,9 +5420,9 @@ main = ->
 fn test_socket_posix_ffi_surface_compiles_and_returns_errno() {
     let output = compile_and_run(
         r#"
-> stdlib::libc::socket
-> stdlib::libc::close
-> stdlib::libc::__errno_location
+> std::ffi::libc::socket
+> std::ffi::libc::close
+> std::ffi::libc::__errno_location
 
 last_errno = ->
     ptr = __errno_location!
@@ -3217,8 +5451,8 @@ main = ->
 fn test_socket_addr_v4_constructors() {
     let output = compile_and_run(
         r#"
-> stdlib::net::Ipv4Addr
-> stdlib::net::SocketAddrV4
+> std::io::net::Ipv4Addr
+> std::io::net::SocketAddrV4
 
 main = ->
     local = Ipv4Addr::localhost!
@@ -3251,9 +5485,9 @@ main = ->
 fn test_tcp_listener_bind_port_zero_reports_local_addr() {
     let output = compile_and_run(
         r#"
-> stdlib::net::TcpListener
-> stdlib::net::SocketAddrV4
-> stdlib::result::Result
+> std::io::net::TcpListener
+> std::io::net::SocketAddrV4
+> std::control::Result
 
 main = ->
     match (TcpListener::bind (SocketAddrV4::localhost 0))
@@ -3279,9 +5513,9 @@ main = ->
 fn test_tcp_listener_fd_field_is_private() {
     compile_should_fail(
         r#"
-> stdlib::result::Result
-> stdlib::net::TcpListener
-> stdlib::net::SocketAddrV4
+> std::control::Result
+> std::io::net::TcpListener
+> std::io::net::SocketAddrV4
 
 main = ->
     match (TcpListener::bind (SocketAddrV4::localhost 0))
@@ -3298,9 +5532,9 @@ main = ->
 fn test_tcp_stream_fd_field_is_private() {
     compile_should_fail(
         r#"
-> stdlib::result::Result
-> stdlib::net::TcpStream
-> stdlib::net::SocketAddrV4
+> std::control::Result
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
 
 main = ->
     match (TcpStream::connect (SocketAddrV4::localhost 1))
@@ -3317,10 +5551,10 @@ main = ->
 fn test_tcp_stream_connect_failure_returns_error() {
     let output = compile_and_run(
         r#"
-> stdlib::result::Result
-> stdlib::net::TcpStream
-> stdlib::net::SocketAddrV4
-> stdlib::io::IoError
+> std::control::Result
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
+> std::io::IoError
 
 main = ->
     match (TcpStream::connect (SocketAddrV4::localhost 70000))
@@ -3346,13 +5580,13 @@ fn test_tcp_stream_shared_safe_io_and_write_shutdown() {
     let _cleanup = TestDirCleanup(dir.clone());
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::arc::Arc
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::result::Result
-> stdlib::net::TcpListener
-> stdlib::net::TcpStream
-> stdlib::net::SocketAddrV4
+> std::concurrency::Arc
+> std::io::IoError
+> std::io::Write
+> std::control::Result
+> std::io::net::TcpListener
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
 
 roundtrip: () -> Result I64, IoError
 roundtrip = ->
@@ -3398,7 +5632,7 @@ main = ->
 fn test_stdout_write_all_uses_native_slice() {
     let output = compile_and_run(
         r#"
-> stdlib::io::stdout
+> std::io::stdout
 
 main = ->
     mut output = stdout!
@@ -3412,20 +5646,20 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_arc_forwards_shared_write_bound() {
+fn test_std_arc_forwards_shared_write_bound() {
     let output = compile_and_run(
         r#"
-> stdlib::arc::Arc
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::result::Result
+> std::concurrency::Arc
+> std::io::IoError
+> std::io::Write
+> std::control::Result
 
 struct Sink
 
 impl Write for Sink
     @write = _ -> Result::Ok 1
-    @write_str = value -> stdlib::io::write_str self, value
-    @write_all = bytes -> stdlib::io::write_all self, bytes
+    @write_str = value -> std::io::write_str self, value
+    @write_all = bytes -> std::io::write_all self, bytes
 
 write_one: &W -> Result I64, IoError where W: Write
 write_one = target ->
@@ -3448,9 +5682,9 @@ main = ->
 fn test_write_helpers_handle_partial_string_and_zero_writes() {
     let output = compile_and_run(
         r#"
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::result::Result
+> std::io::IoError
+> std::io::Write
+> std::control::Result
 
 struct PartialSink
 struct ZeroSink
@@ -3462,13 +5696,13 @@ impl Write for PartialSink
             len
         else
             2)
-    @write_str = value -> stdlib::io::write_str self, value
-    @write_all = bytes -> stdlib::io::write_all self, bytes
+    @write_str = value -> std::io::write_str self, value
+    @write_all = bytes -> std::io::write_all self, bytes
 
 impl Write for ZeroSink
     @write = _ -> Result::Ok 0
-    @write_str = value -> stdlib::io::write_str self, value
-    @write_all = bytes -> stdlib::io::write_all self, bytes
+    @write_str = value -> std::io::write_str self, value
+    @write_all = bytes -> std::io::write_all self, bytes
 
 main = ->
     sink = PartialSink
@@ -3497,13 +5731,13 @@ fn test_tcp_listener_stream_localhost_roundtrip() {
     let _cleanup = TestDirCleanup(dir.clone());
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::io::IoError
-> stdlib::io::Read
-> stdlib::io::Write
-> stdlib::result::Result
-> stdlib::net::TcpListener
-> stdlib::net::TcpStream
-> stdlib::net::SocketAddrV4
+> std::io::IoError
+> std::io::Read
+> std::io::Write
+> std::control::Result
+> std::io::net::TcpListener
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
 
 roundtrip: () -> Result I64, IoError
 roundtrip = ->
@@ -3547,13 +5781,13 @@ fn test_tcp_listener_accept_method_section_in_result_chain() {
     let _cleanup = TestDirCleanup(dir.clone());
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::io::IoError
-> stdlib::io::Read
-> stdlib::io::Write
-> stdlib::result::Result
-> stdlib::net::TcpListener
-> stdlib::net::TcpStream
-> stdlib::net::SocketAddrV4
+> std::io::IoError
+> std::io::Read
+> std::io::Write
+> std::control::Result
+> std::io::net::TcpListener
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
 
 accept_with_method_section: TcpListener -> Result TcpStream, IoError
 accept_with_method_section = listener ->
@@ -3602,10 +5836,10 @@ fn test_file_create_write_str_uses_generic_write_trait() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::result::Result
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
+> std::control::Result
 
 write_text: &mut W -> &Str -> Result I64, IoError where W: Write
 write_text = writer, text ->
@@ -3648,10 +5882,10 @@ fn test_file_open_read_uses_generic_read_trait() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
-> stdlib::io::IoError
-> stdlib::io::Read
-> stdlib::result::Result
+> std::io::fs::File
+> std::io::IoError
+> std::io::Read
+> std::control::Result
 
 read_into: &mut R -> &mut [U8] -> Result I64, IoError where R: Read
 read_into = reader, buf ->
@@ -3700,10 +5934,10 @@ fn test_file_append_writes_at_end() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::result::Result
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
+> std::control::Result
 
 append_text: &Str -> Result I64, IoError
 append_text = path ->
@@ -3740,9 +5974,9 @@ fn test_io_pipe_operator_consumes_reader_and_copies_until_eof() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
-> stdlib::io::IoError
-> stdlib::result::Result
+> std::io::fs::File
+> std::io::IoError
+> std::control::Result
 
 copy_file: &Str -> &Str -> Result I64, IoError
 copy_file = source, target ->
@@ -3786,10 +6020,10 @@ fn test_file_create_rejects_embedded_nul_path() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
-> stdlib::io::IoError
-> stdlib::io::Write
-> stdlib::result::Result
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
+> std::control::Result
 
 overwrite: &Str -> Result I64, IoError
 overwrite = path ->
@@ -3821,9 +6055,9 @@ fn test_file_open_missing_path_returns_os_error() {
 
     let output = compile_and_run_in_working_dir(
         r#"
-> stdlib::fs::File
-> stdlib::io::IoError
-> stdlib::result::Result
+> std::io::fs::File
+> std::io::IoError
+> std::control::Result
 
 main = ->
     match File::open "missing.txt"
@@ -3841,9 +6075,9 @@ main = ->
 fn test_file_fd_field_is_private() {
     compile_should_fail(
         r#"
-> stdlib::fs::File
-> stdlib::io::IoError
-> stdlib::result::Result
+> std::io::fs::File
+> std::io::IoError
+> std::control::Result
 
 read_fd: &Str -> Result I64, IoError
 read_fd = path ->
@@ -3860,14 +6094,14 @@ main = -> 0
 fn test_file_raw_fd_constructor_not_public() {
     compile_should_fail(
         r#"
-> stdlib::fs::File
+> std::io::fs::File
 
 main = ->
     file = File
         fd: 0
     0
 "#,
-        "Cannot construct struct 'stdlib::fs::File' because it has private fields",
+        "Cannot construct struct 'std::io::fs::File' because it has private fields",
     );
 }
 
@@ -3875,7 +6109,7 @@ main = ->
 fn test_function_name_can_match_c_extern_symbol() {
     let output = compile_and_run(
         r#"
-> stdlib::net::TcpListener
+> std::io::net::TcpListener
 
 main = ->
     listen! .println!
@@ -3892,14 +6126,14 @@ listen = -> 42
 fn test_tcp_listener_raw_fd_constructor_not_public() {
     compile_should_fail(
         r#"
-> stdlib::net::TcpListener
+> std::io::net::TcpListener
 
 main = ->
     listener = TcpListener
         fd: 0
     0
 "#,
-        "Cannot construct struct 'stdlib::net::TcpListener' because it has private fields",
+        "Cannot construct struct 'std::io::net::TcpListener' because it has private fields",
     );
 }
 
@@ -4056,7 +6290,7 @@ main = ->
 fn deferred_method_section_autorefs_shared_receiver() {
     let output = compile_and_run(
         r#"
-> stdlib::result::Result
+> std::control::Result
 
 struct Counter
     < value: I64
@@ -4354,15 +6588,67 @@ main = !->
 }
 
 #[test]
-fn unit_arrow_main_exits_zero_without_stdlib() {
+fn unit_arrow_main_exits_zero_without_std() {
     for source in [
         "main = !-> 42\n",
         "main = !-> (42, 7)\n",
         "main = !-> return\n",
     ] {
-        assert_eq!(compile_and_run_without_stdlib(source), 0);
+        assert_eq!(compile_and_run_without_std(source), 0);
     }
-    assert_eq!(compile_and_run_without_stdlib("main = -> 7\n"), 7);
+    assert_eq!(compile_and_run_without_std("main = -> 7\n"), 7);
+}
+
+#[test]
+fn test_main_exit_status_at_all_optimization_levels() {
+    let cases = [
+        ("std_effect", "main = !-> true.println!\n", true, true, 0, "true\n"),
+        ("raw_effect", "extern putchar: I32 -> I32\nmain = !-> putchar (65 as I32)\n", false, true, 0, "A"),
+        ("discard_integer", "main = !-> 42\n", false, true, 0, ""),
+        ("explicit_unit", "main = -> ()\n", false, true, 0, ""),
+        ("early_cleanup", r#"
+struct Cleanup
+    < value: I64
+
+impl Drop for Cleanup
+    ~@drop = !-> self.value.println!
+
+main = !->
+    cleanup = Cleanup
+        value: 17
+    true.println!
+    return
+"#, true, true, 0, "true\n17\n"),
+        ("integer_i64", "main = -> 7\n", false, false, 7, ""),
+        ("integer_i32", "main = -> 13 as I32\n", false, false, 13, ""),
+    ];
+    for opt_level in 0..=3 {
+        for (name, source, with_std, unit_return, exit_code, stdout) in cases {
+            let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+            let dir = test_temp_dir(id);
+            fs::create_dir_all(&dir).unwrap();
+            let _cleanup = TestDirCleanup(dir.clone());
+            let entry = dir.join(format!("{name}.rk"));
+            fs::write(&entry, source).unwrap();
+            let mut config = test_config(entry, dir.clone());
+            config.opt_level = opt_level;
+            config.emit_llvm = true;
+            if !with_std {
+                config.extern_artifacts.clear();
+                config.no_std = true;
+                config.no_prelude = true;
+            }
+            rock_lib::compile(&config).unwrap_or_else(|error| panic!("{name} at -O {opt_level}: {error:?}"));
+            let output = run_test_command(&mut Command::new(dir.join(name)));
+            assert_eq!(output.status.code(), Some(exit_code), "{name} at -O {opt_level}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{name} at -O {opt_level}");
+            if unit_return {
+                let ir = fs::read_to_string(dir.join(format!("{name}.ll"))).unwrap();
+                assert!(ir.contains("define internal void @__rock_main()"), "{name} must retain its unit ABI");
+                assert!(ir.contains("ret i32 0"), "{name} must return zero from the C entry wrapper");
+            }
+        }
+    }
 }
 
 #[test]
@@ -4436,9 +6722,9 @@ fn test_string_operations() {
     let output = compile_and_run(
         r#"
 main = ->
-    string_len "hello" .println!
-    string_len "" .println!
-    string_len "world!" .println!
+    "hello".len!.println!
+    "".len!.println!
+    "world!".len!.println!
     0
 "#,
     );
@@ -5394,10 +7680,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_join_returns_value() {
+fn test_std_thread_spawn_join_returns_value() {
     let output = compile_and_run(
         r#"
-> stdlib::thread::spawn
+> std::concurrency::thread::spawn
 
 main = ->
     match spawn (-> 42)
@@ -5414,11 +7700,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_handle_drop_detaches_without_waiting() {
+fn test_std_thread_handle_drop_detaches_without_waiting() {
     let output = compile_and_run(
         r#"
-> stdlib::thread::sleep_ms
-> stdlib::thread::spawn
+> std::concurrency::thread::sleep_ms
+> std::concurrency::thread::spawn
 
 launch = ->
     match spawn (->
@@ -5439,11 +7725,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_detached_thread_drops_unobserved_result() {
+fn test_std_detached_thread_drops_unobserved_result() {
     let output = compile_and_run(
         r#"
-> stdlib::thread::sleep_ms
-> stdlib::thread::spawn
+> std::concurrency::thread::sleep_ms
+> std::concurrency::thread::spawn
 
 struct DetachedResult
 
@@ -5481,10 +7767,10 @@ main = -> 0
 }
 
 #[test]
-fn test_stdlib_thread_spawn_accepts_owned_send_capture() {
+fn test_std_thread_spawn_accepts_owned_send_capture() {
     let output = compile_and_run(
         r#"
-> stdlib::thread::spawn
+> std::concurrency::thread::spawn
 
 struct Owned
     < value: I64
@@ -5509,10 +7795,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_rejects_borrowed_capture() {
+fn test_std_thread_spawn_rejects_borrowed_capture() {
     compile_should_fail(
         r#"
-> stdlib::thread::spawn
+> std::concurrency::thread::spawn
 
 main = ->
     value = 41
@@ -5524,10 +7810,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_rejects_borrowed_capture_after_branch_merge() {
+fn test_std_thread_spawn_rejects_borrowed_capture_after_branch_merge() {
     compile_should_fail(
         r#"
-> stdlib::thread::spawn
+> std::concurrency::thread::spawn
 
 main = ->
     value = 41
@@ -5540,10 +7826,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_rejects_borrowed_method_value() {
+fn test_std_thread_spawn_rejects_borrowed_method_value() {
     compile_should_fail(
         r#"
-> stdlib::thread::spawn
+> std::concurrency::thread::spawn
 
 struct Value
     < number: I64
@@ -5563,10 +7849,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_rejects_downstream_send_impl() {
+fn test_std_thread_spawn_rejects_downstream_send_impl() {
     compile_should_fail(
         r#"
-> stdlib::thread::spawn
+> std::concurrency::thread::spawn
 
 struct FakeSend
     < pointer: *I64
@@ -5587,10 +7873,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_accepts_struct_callable_impl() {
+fn test_std_thread_spawn_accepts_struct_callable_impl() {
     let output = compile_and_run(
         r#"
-> stdlib::thread::spawn
+> std::concurrency::thread::spawn
 
 struct Task
 
@@ -5613,12 +7899,12 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_arc_mutex_synchronizes_threaded_updates() {
+fn test_std_arc_mutex_synchronizes_threaded_updates() {
     let output = compile_and_run(
         r#"
-> stdlib::arc::Arc
-> stdlib::sync::Mutex
-> stdlib::thread::spawn
+> std::concurrency::Arc
+> std::concurrency::Mutex
+> std::concurrency::thread::spawn
 
 struct Counter
     < value: I64
@@ -5667,10 +7953,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_mutex_guard_drop_unlocks_mutex() {
+fn test_std_mutex_guard_drop_unlocks_mutex() {
     let output = compile_and_run(
         r#"
-> stdlib::sync::Mutex
+> std::concurrency::Mutex
 
 set_value: &Mutex I64 -> ()
 set_value = mutex ->
@@ -5691,11 +7977,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_mutex_guard_is_not_send() {
+fn test_std_mutex_guard_is_not_send() {
     compile_should_fail(
         r#"
-> stdlib::sync::Mutex
-> stdlib::thread::spawn
+> std::concurrency::Mutex
+> std::concurrency::thread::spawn
 
 main = ->
     mutex = Mutex::new 7
@@ -5708,10 +7994,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_thread_spawn_rejects_reference_hidden_in_moved_struct() {
+fn test_std_thread_spawn_rejects_reference_hidden_in_moved_struct() {
     compile_should_fail(
         r#"
-> stdlib::thread::spawn
+> std::concurrency::thread::spawn
 
 struct Borrowed
     < value: &I64
@@ -5731,10 +8017,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_mutex_try_lock_observes_guard_lifetime() {
+fn test_std_mutex_try_lock_observes_guard_lifetime() {
     let output = compile_and_run(
         r#"
-> stdlib::sync::Mutex
+> std::concurrency::Mutex
 
 lock_once: &Mutex I64 -> ()
 lock_once = mutex ->
@@ -5758,10 +8044,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_arc_drops_owned_value_once() {
+fn test_std_arc_drops_owned_value_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::arc::Arc
+> std::concurrency::Arc
 
 main = ->
     value = Arc::new (String::from "shared")
@@ -6464,7 +8750,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_try_protocol_methods() {
+fn test_std_try_protocol_methods() {
     let output = compile_and_run(
         r#"
 main: () -> I64
@@ -6482,7 +8768,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_into_uses_from_blanket_impl() {
+fn test_std_into_uses_from_blanket_impl() {
     let output = compile_and_run(
         r#"
 struct Small
@@ -6508,8 +8794,8 @@ main = ->
 }
 
 #[test]
-fn test_static_trait_overloads_infer_arguments_without_stdlib() {
-    let status = compile_and_run_without_stdlib(
+fn test_static_trait_overloads_infer_arguments_without_std() {
+    let status = compile_and_run_without_std(
         r#"
 trait Convert T
     convert: T -> Self
@@ -6539,7 +8825,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_string_from_conversions() {
+fn test_std_string_from_conversions() {
     let output = compile_and_run(
         r#"
 convert: T -> U where U: From T
@@ -6574,7 +8860,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_string_from_rejects_unsupported_source() {
+fn test_std_string_from_rejects_unsupported_source() {
     compile_should_fail(
         r#"
 main = !->
@@ -6585,7 +8871,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_fixed_u8_arrays_convert_to_string_for_any_length() {
+fn test_std_fixed_u8_arrays_convert_to_string_for_any_length() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -6813,7 +9099,7 @@ main = ->
 
 #[test]
 fn test_try_uses_complete_renamed_language_item_protocol() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"
 lang control_flow
 < enum Flow B, C
@@ -7246,6 +9532,84 @@ main = ->
     );
 
     assert_eq!(output.trim(), "41");
+}
+
+#[test]
+fn test_signatureless_named_callback_receives_call_site_receiver_type() {
+    let output = compile_and_run(
+        r#"
+struct First
+struct Second
+
+impl First
+    @write_all: &[U8] -> I64
+    @write_all = bytes -> ~ArrayLen bytes
+
+impl Second
+    @write_all: &[U8] -> I64
+    @write_all = _ -> 99
+
+dispatch = mut target, callback ->
+    bytes = [1 as U8, 2 as U8]
+    callback &mut target, &bytes[..], 0
+
+forward = output, bytes, _ -> output.write_all bytes
+
+main = !->
+    dispatch First, forward .println!
+"#,
+    );
+    assert_eq!(output.trim(), "2");
+}
+
+#[test]
+fn test_signatureless_io_callback_receiver_is_inferred_through_result_loop() {
+    let output = compile_and_run(
+        r#"
+> std::io::Write
+> std::io::stdout
+> std::io::IoError
+
+struct Source
+
+impl Source
+    @recv: &mut [U8] -> Result I64, I64
+    @recv = _ -> Result::Ok 0
+
+receive_with = stream, mut target, write ->
+    mut buffer = [0; 4]
+    mut total = 0
+    while true
+        match stream.recv &mut buffer
+            Result::Ok count =>
+                if count <= 0
+                    return total
+                else
+                    match write &mut target, &buffer[..count], count
+                        Result::Ok written => total = total + written
+                        Result::Err _ => return total
+            Result::Err _ => return total
+    total
+
+discard = _, _, count ->
+    if true
+        Result::Ok count
+    else
+        Result::Err IoError::Os 1
+
+impl Source
+    @consume = -> receive_with Source, 0, discard
+    @consume_stdout = -> receive_with Source, stdout!, write_stdout
+
+write_stdout = output, bytes, _ -> output.write_all bytes
+
+main = !->
+    source = Source
+    source.consume!.println!
+    source.consume_stdout!.println!
+"#,
+    );
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), vec!["0", "0"]);
 }
 
 #[test]
@@ -8108,7 +10472,7 @@ main = ->
 fn vec_deref_does_not_return_reference_to_temporary_slice() {
     compile_should_fail(
         r#"
-> stdlib::vec::Vec
+> std::collections::Vec
 
 bad: Vec I64 -> &I64
 bad = v -> &v.len!
@@ -8154,7 +10518,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_show_formats_owned_elements() {
+fn test_std_vec_show_formats_owned_elements() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -8170,7 +10534,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_rejects_zero_sized_elements_on_push() {
+fn test_std_vec_rejects_zero_sized_elements_on_push() {
     let (_output, success) = compile_and_run_with_status(
         r#"
 struct Empty
@@ -8186,7 +10550,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_new_as_slice_uses_non_null_buffer() {
+fn test_std_vec_new_as_slice_uses_non_null_buffer() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -8201,7 +10565,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_push_uses_non_null_buffer() {
+fn test_std_vec_push_uses_non_null_buffer() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -8217,7 +10581,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_index_works() {
+fn test_std_vec_index_works() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -8233,7 +10597,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_index_out_of_bounds_traps() {
+fn test_std_vec_index_out_of_bounds_traps() {
     let (_output, success) = compile_and_run_with_status(
         r#"
 main = ->
@@ -8248,7 +10612,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_shared_binding_index_works() {
+fn test_std_vec_shared_binding_index_works() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -8301,7 +10665,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_rejects_zero_sized_values_on_insert() {
+fn test_std_hash_map_rejects_zero_sized_values_on_insert() {
     let (_output, success) = compile_and_run_with_status(
         r#"
 struct Empty
@@ -8317,12 +10681,14 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_rejects_zero_sized_keys_on_insert() {
+fn test_std_hash_map_rejects_zero_sized_keys_on_insert() {
     let (_output, success) = compile_and_run_with_status(
         r#"
 struct Empty
 
 impl Eq for Empty
+
+impl PartialEq Empty for Empty
     @== = other -> true
     @!= = other -> false
 
@@ -8376,6 +10742,8 @@ struct Tracked
     < id: I64
 
 impl Eq for Tracked
+
+impl PartialEq Tracked for Tracked
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -8410,10 +10778,16 @@ struct Tracked
     < id: I64
 
 impl Eq for Tracked
+
+impl PartialEq Tracked for Tracked
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
 impl Ord for Tracked
+    @cmp = other -> self.id.cmp &((*other).id)
+
+impl PartialOrd for Tracked
+    @partial_cmp = other -> Option::Some (self.cmp other)
     @< = other -> self.id < (*other).id
     @<= = other -> self.id <= (*other).id
     @> = other -> self.id > (*other).id
@@ -8440,6 +10814,393 @@ main = ->
 
     let lines: Vec<&str> = output.trim().lines().collect();
     assert_eq!(lines, vec!["9"]);
+}
+
+#[test]
+fn test_default_type_arguments_annotations_and_overrides() {
+    let output = compile_and_run(r#"
+struct Pair A, {B = A}
+    < first: A
+    < second: B
+
+type Bytes {T = U8} = Pair T
+
+enum Choice {T = I64}
+    Empty
+    Value T
+
+sum: Pair I64 -> I64
+sum = pair -> pair.first + pair.second
+
+byte: Bytes -> U8
+byte = pair -> pair.second
+
+read: Choice -> I64
+read = choice -> match choice
+    Choice::Empty => 0
+    Choice::Value value => value
+
+main = !->
+    pair = Pair
+        first: 20
+        second: 22
+    (sum pair).println!
+    bytes = Pair
+        first: 3 as U8
+        second: 7 as U8
+    (byte bytes).println!
+    mixed: Pair I64, Bool = Pair
+        first: 1
+        second: true
+    mixed.second.println!
+    (read (Choice::Value 9)).println!
+"#);
+    assert_eq!(output.trim(), "42\n7\ntrue\n9");
+}
+
+#[test]
+fn test_default_type_arguments_inference_and_fallback() {
+    let output = compile_and_run(r#"
+struct Value {T = Bool}
+    < value: T
+
+impl Value T
+    new = value -> Value
+        value: value
+
+struct Phantom {T = I64}
+
+enum Choice {T = I64}
+    Empty
+    Value T
+
+use_phantom: Phantom I64 -> I64
+use_phantom = value -> 42
+
+identity = value -> value
+
+main = !->
+    value = Value
+        value: 7
+    value.value.println!
+    constructed = Value::new 11
+    constructed.value.println!
+    phantom = Phantom
+    (use_phantom phantom).println!
+    empty = Choice::Empty
+    match empty
+        Choice::Empty => 8.println!
+        Choice::Value value => value.println!
+    through_call = identity Phantom
+    (use_phantom through_call).println!
+    unconstrained = identity Choice::Empty
+    match unconstrained
+        Choice::Empty => 12.println!
+        Choice::Value value => 13.println!
+"#);
+    assert_eq!(output.trim(), "7\n11\n42\n8\n42\n12");
+}
+
+#[test]
+fn test_default_type_arguments_trait_self_and_explicit_rhs() {
+    let output = compile_and_run(r#"
+trait Compare {Rhs = Self}
+    @same: &Rhs -> Bool
+
+impl Compare for I64
+    @same = rhs -> *self == *rhs
+
+impl Compare I64 for Bool
+    @same = rhs -> *self
+
+same: T -> T -> Bool where T: Compare
+same = left, right -> left.same &right
+
+main = !->
+    (same 4, 4).println!
+    (true.same &4).println!
+"#);
+    assert_eq!(output.trim(), "true\ntrue");
+}
+
+#[test]
+fn test_default_type_arguments_recursive_nominal_fields() {
+    compile_should_pass(r#"
+struct Node {T = I64}
+    value: T
+    next: *Node
+
+enum Chain {T = I64}
+    End
+    Link T, *Chain
+
+main = !-> return
+"#);
+}
+
+#[test]
+fn test_default_type_arguments_mutually_recursive_nominal_fields() {
+    let first = "struct First {T = I64}\n    value: T\n    other: *Second\n";
+    for second in [
+        "struct Second {T = Bool}\n    value: T\n    other: *First\n",
+        "enum Second {T = Bool}\n    End\n    Link T, *First\n",
+    ] {
+        for declarations in [format!("{first}\n{second}"), format!("{second}\n{first}")] {
+            compile_should_pass(&format!("{declarations}\nmain = !-> return\n"));
+        }
+    }
+}
+
+#[test]
+fn test_default_type_arguments_mutual_fields_in_deleted_source_artifacts() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    fs::write(dir.join("models.rk"), r#"
+< struct First {T = I64}
+    < value: T
+    < other: *Second
+
+< enum Second {T = Bool}
+    End
+    Link T, *First
+"#).unwrap();
+    let entry = dir.join("lib.rk");
+    fs::write(&entry, "< mod models\n").unwrap();
+    let config = rock_lib::Config {
+        entry_file: entry.clone(), output_dir: dir.clone(),
+        current_crate_name: Some("recursive".to_string()),
+        no_std: true, no_prelude: true, no_link: true,
+        ..Default::default()
+    };
+    let artifact = dir.join("recursive.rkca");
+    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
+        .write_artifact_to_path(&artifact).unwrap();
+    fs::remove_file(dir.join("models.rk")).unwrap();
+    fs::remove_file(&entry).unwrap();
+    fs::write(&entry, r#"
+> recursive::models::First
+> recursive::models::Second
+
+read: First -> I64
+read = value -> value.value
+
+main = ->
+    second: Second = Second::End
+    first = First
+        value: 7
+        other: &second as *Second
+    read first
+"#).unwrap();
+    rock_lib::compile(&rock_lib::Config {
+        entry_file: entry, current_crate_name: None,
+        extern_artifacts: vec![("recursive".to_string(), artifact)],
+        ..config
+    }).expect("mutual defaults must survive publication and remapping");
+}
+
+#[test]
+fn test_default_type_arguments_mutual_fields_across_file_modules() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    fs::write(dir.join("first.rk"), r#"
+> second::Second
+type Seed = I64
+< struct First {T = Seed}
+    < value: T
+    < tag: Seed
+    < other: *Second
+"#).unwrap();
+    fs::write(dir.join("second.rk"), r#"
+> first::First
+type Seed = Bool
+< enum Second {T = Seed}
+    End
+    Link T, Seed, *First
+"#).unwrap();
+    let entry = dir.join("main.rk");
+    for modules in ["mod first\nmod second", "mod second\nmod first"] {
+        fs::write(&entry, format!(r#"
+{modules}
+> first::First
+> second::Second
+read: First -> I64
+read = value -> value.tag
+
+main = ->
+    other: Second = Second::End
+    value: First = First
+        value: 7
+        tag: 8
+        other: &other as *Second
+    read value
+"#)).unwrap();
+        rock_lib::compile(&rock_lib::Config {
+            entry_file: entry.clone(), output_dir: dir.clone(),
+            no_std: true, no_prelude: true, no_link: true,
+            ..Default::default()
+        }).expect("mutual field defaults and aliases must keep their module scope");
+    }
+}
+
+#[test]
+fn test_default_type_arguments_static_factory_fallback_and_inference() {
+    assert_eq!(compile_and_run(r#"
+struct Phantom {T = I64}
+
+impl Phantom T
+    new: () -> Phantom T
+    new = -> Phantom
+
+struct Value {T = Bool}
+    < value: T
+
+impl Value T
+    new: T -> Value T
+    new = value -> Value
+        value: value
+
+main = !->
+    phantom = Phantom::new!
+    explicit: Phantom Bool = Phantom::new!
+    value = Value::new 42
+    value.value.println!
+"#), "42\n");
+}
+
+#[test]
+fn test_default_type_arguments_forward_declarations_in_file_modules() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    fs::write(dir.join("models.rk"), r#"
+read: Outer -> I64
+< read = value -> value.value.value
+
+< struct Outer {T = Inner}
+    < value: T
+
+< struct Inner {T = I64}
+    < value: T
+"#).unwrap();
+    fs::write(dir.join("test.rk"), "mod models\nmain = !-> return\n").unwrap();
+    rock_lib::compile(&test_config(dir.join("test.rk"), dir.clone())).expect("Compilation failed");
+}
+
+#[test]
+fn test_default_type_arguments_reject_invalid_defaults() {
+    for (source, expected) in [
+        ("struct Bad {T = Missing}\nmain = !->\n    ()\n", "unknown type 'Missing' in generic default"),
+        ("struct Bad {T = T}\nmain = !->\n    ()\n", "default cannot reference current or later parameter 'T'"),
+        ("struct Bad {T = U}, {U = I64}\nmain = !->\n    ()\n", "default cannot reference current or later parameter 'U'"),
+        ("struct Bad {T = I64}, U\nmain = !->\n    ()\n", "required parameters must precede defaulted parameters"),
+        ("struct Bad {F _ = I64}\nmain = !->\n    ()\n", "has kind Type, expected Type -> Type"),
+        ("type Bad {T = Bad} = T\nmain = !->\n    ()\n", "invalid or cyclic type in generic default"),
+        ("type First {T = Second} = T\ntype Second {T = First} = T\nmain = !->\n    ()\n", "invalid or cyclic type in generic default"),
+        ("struct First {T = Second}\nstruct Second {T = First}\nmain = !-> return\n", "default"),
+        ("struct Bad {T = Self}\nmain = !->\n    ()\n", "unknown type 'Self' in generic default"),
+    ] {
+        compile_should_fail(source, expected);
+    }
+}
+
+#[test]
+fn test_default_type_arguments_declaration_order_and_constructor_kinds() {
+    let output = compile_and_run(r#"
+read: Outer -> I64
+read = value -> value.value.value
+
+struct Outer {T = Inner}
+    < value: T
+
+struct Inner {T = I64}
+    < value: T
+
+struct Chain A, {B = A}, {C = B}
+    < value: C
+
+struct Hold T, {F _ = Option}
+    < value: F T
+
+struct Apply (F _), T
+    < value: F T
+
+chain: Chain I64 -> I64
+chain = value -> value.value
+
+option: Hold I64 -> I64
+option = value -> match value.value
+    Option::Some item => item
+    Option::None => 0
+
+explicit_constructor: Apply Inner, I64 -> I64
+explicit_constructor = value -> value.value.value
+
+main = !->
+    inner = Inner
+        value: 42
+    outer = Outer
+        value: inner
+    (read outer).println!
+    chained = Chain
+        value: 9
+    (chain chained).println!
+    held = Hold
+        value: Option::Some 7
+    (option held).println!
+    applied = Apply
+        value: Inner
+            value: 42
+    (explicit_constructor applied).println!
+"#);
+    assert_eq!(output.trim(), "42\n9\n7\n42");
+}
+
+#[test]
+fn test_default_type_arguments_use_declaration_module_scope() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    fs::write(dir.join("models.rk"), r#"
+struct Seed
+    < value: I64
+
+< struct Envelope {T = Seed}
+    < value: T
+
+< make = -> Envelope
+    value: Seed
+        value: 42
+"#).unwrap();
+    fs::write(dir.join("test.rk"), r#"
+struct Holder {T = Envelope}
+    < value: T
+
+struct Seed
+    value: Bool
+
+> models::Envelope
+> models::make
+
+mod models
+
+read: Holder -> I64
+read = value -> value.value.value.value
+
+main = !->
+    holder = Holder
+        value: make!
+    (read holder).println!
+"#).unwrap();
+    rock_lib::compile(&test_config(dir.join("test.rk"), dir.clone())).expect("Compilation failed");
+    let output = run_test_command(&mut Command::new(dir.join("test")));
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
 }
 
 #[test]
@@ -8544,6 +11305,8 @@ struct BadKey
     < id: I64
 
 impl Eq for BadKey
+
+impl PartialEq BadKey for BadKey
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -8621,7 +11384,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_drops_keys_and_values() {
+fn test_std_hash_map_drops_keys_and_values() {
     let output = compile_and_run(
         r#"
 struct TrackedKey
@@ -8629,6 +11392,8 @@ struct TrackedKey
     < drop_id: I64
 
 impl Eq for TrackedKey
+
+impl PartialEq TrackedKey for TrackedKey
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -8672,7 +11437,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_overwrite_drops_old_value_and_unused_key_once() {
+fn test_std_hash_map_overwrite_drops_old_value_and_unused_key_once() {
     let output = compile_and_run(
         r#"
 struct TrackedKey
@@ -8680,6 +11445,8 @@ struct TrackedKey
     < drop_id: I64
 
 impl Eq for TrackedKey
+
+impl PartialEq TrackedKey for TrackedKey
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -8722,7 +11489,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_get_and_contains_borrow_probe_key_without_consuming() {
+fn test_std_hash_map_get_and_contains_borrow_probe_key_without_consuming() {
     let output = compile_and_run(
         r#"
 struct TrackedKey
@@ -8730,6 +11497,8 @@ struct TrackedKey
     < drop_id: I64
 
 impl Eq for TrackedKey
+
+impl PartialEq TrackedKey for TrackedKey
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -8798,7 +11567,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_hash_map_growth_drops_moved_keys_and_values_once() {
+fn test_std_hash_map_growth_drops_moved_keys_and_values_once() {
     let output = compile_and_run(
         r#"
 struct TrackedKey
@@ -8806,6 +11575,8 @@ struct TrackedKey
     < drop_id: I64
 
 impl Eq for TrackedKey
+
+impl PartialEq TrackedKey for TrackedKey
     @== = other -> self.id == (*other).id
     @!= = other -> self.id != (*other).id
 
@@ -9248,7 +12019,7 @@ main = ->
 }
 
 #[test]
-fn test_generic_function_argument_app_ir_does_not_define_stdlib_object_symbols() {
+fn test_generic_function_argument_app_ir_does_not_define_std_object_symbols() {
     let llvm = compile_to_llvm_ir(
         r#"
 identity = x -> x
@@ -9271,11 +12042,11 @@ main = ->
     );
     let offending_defs: Vec<&str> = llvm
         .lines()
-        .filter(|line| line.starts_with("define ") && line.contains("@stdlib__String_none_new"))
+        .filter(|line| line.starts_with("define ") && line.contains("@std__String_none_new"))
         .collect();
     assert!(
         offending_defs.is_empty(),
-        "app IR unexpectedly defines stdlib object-backed symbols: {:?}",
+        "app IR unexpectedly defines std object-backed symbols: {:?}",
         offending_defs
     );
 }
@@ -9330,7 +12101,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_conversions_return_owned_strings() {
+fn test_std_conversions_return_owned_strings() {
     let (output, success) = compile_and_run_with_status(
         r#"
 main = ->
@@ -9364,7 +12135,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_string_helpers_return_owned_values() {
+fn test_std_string_helpers_return_owned_values() {
     let (output, success) = compile_and_run_with_status(
         r#"
 main = ->
@@ -9388,7 +12159,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_string_add_operators() {
+fn test_std_string_add_operators() {
     let src = r#"
 main = ->
     suffix = String::from "!"
@@ -9405,22 +12176,168 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_eq_default_not_equal() {
+fn test_parameterized_equality_selects_rhs_and_inherits_not_equal() {
+    let output = compile_and_run(r#"
+struct Tag
+    < id: I64
+
+impl PartialEq Tag for Tag
+    @== = other -> self.id == other.id
+
+impl PartialEq I64 for Tag
+    @== = other -> self.id == *other
+
+impl PartialEq Bool for Tag
+    @== = other -> (self.id != 0) == *other
+
+compare_both: T -> U -> V -> Bool where T: PartialEq U, T: PartialEq V
+compare_both = left, first, second -> left == first && left != second
+
+main = !->
+    tag = Tag
+        id: 7
+    same = Tag
+        id: 7
+    (tag == same).println!
+    (tag != same).println!
+    (tag == 7).println!
+    (tag != 8).println!
+    (tag == true).println!
+    (tag != false).println!
+    tag.id.println!
+    same.id.println!
+    compare_both tag, 7, false .println!
+    compare_both same, true, 8 .println!
+"#);
+    assert_eq!(output, "true\nfalse\ntrue\ntrue\ntrue\ntrue\n7\n7\ntrue\ntrue\n");
+}
+
+#[test]
+fn test_parameterized_equality_borrows_owned_strings_in_both_directions() {
+    let output = compile_and_run(r#"
+same_then_use_right: T -> U -> U where T: PartialEq U
+same_then_use_right = left, right ->
+    (left == right).println!
+    (left != right).println!
+    right
+
+main = !->
+    owned = String::from "Rock"
+    same = String::from "Rock"
+    (owned == same).println!
+    (owned != same).println!
+    (owned == "Rock").println!
+    (owned != "Rock!").println!
+    ("Rock" == owned).println!
+    ("rock" != owned).println!
+    (String::new! == "").println!
+    (String::from "é" == "é").println!
+    same_then_use_right "Rock", owned .println!
+    same.println!
+"#);
+    assert_eq!(output, "true\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\nRock\nRock\n");
+}
+
+#[test]
+fn test_parameterized_equality_generic_impl_preserves_rhs_substitution() {
+    let output = compile_and_run(r#"
+struct Wrapper T
+    < value: T
+
+impl PartialEq (Wrapper U) for Wrapper T where T: PartialEq U
+    @== = other -> self.value == other.value
+
+main = !->
+    left = Wrapper
+        value: String::from "Rock"
+    right = Wrapper
+        value: "Rock"
+    (left == right).println!
+    (left != right).println!
+    left.value.println!
+    right.value.println!
+"#);
+    assert_eq!(output, "true\nfalse\nRock\nRock\n");
+}
+
+#[test]
+fn test_parameterized_equality_infers_signatureless_operands() {
+    let output = compile_and_run(r#"
+same = left, right -> left == right
+different = left, right -> left != right
+
+main = !->
+    owned = String::from "Rock"
+    same owned, "Rock" .println!
+    different "Rock", (String::from "rock") .println!
+"#);
+    assert_eq!(output, "true\ntrue\n");
+}
+
+#[test]
+fn test_parameterized_equality_does_not_imply_reverse_impl() {
+    compile_should_fail(r#"
+struct Tag
+    < id: I64
+
+impl PartialEq I64 for Tag
+    @== = other -> self.id == *other
+
+main = !->
+    tag = Tag
+        id: 7
+    (7 == tag).println!
+"#, "No implementation found");
+}
+
+#[test]
+fn test_parameterized_equality_cross_type_impl_does_not_satisfy_eq() {
+    compile_should_fail(r#"
+struct Tag
+    < id: I64
+
+impl PartialEq I64 for Tag
+    @== = other -> self.id == *other
+
+impl Eq for Tag
+
+main = !-> return
+"#, "supertrait obligation");
+}
+
+#[test]
+fn test_std_eq_default_not_equal() {
     let src = r#"
+struct Tag
+    < value: I64
+
+impl PartialEq Tag for Tag
+    @== = other -> self.value == other.value
+
 main = ->
     1 != 2 .println!
     1 != 1 .println!
     "abc" != "abd" .println!
     "abc" != "abc" .println!
+    true != false .println!
+    true != true .println!
+    first = Tag
+        value: 1
+    same = Tag
+        value: 1
+    different = Tag
+        value: 2
+    first != different .println!
+    first != same .println!
     0
 "#;
 
     let output = compile_and_run(src);
-    assert_eq!(output, "true\nfalse\ntrue\nfalse\n");
+    assert_eq!(output, "true\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\n");
 }
 
 #[test]
-fn test_stdlib_repeated_primitive_show_println_drops_temporaries() {
+fn test_std_repeated_primitive_show_println_drops_temporaries() {
     let (output, success) = compile_and_run_with_status(
         r#"
 main = ->
@@ -9570,7 +12487,7 @@ extern malloc: I64 -> *U8
 
 main = ->
     s = "Hello, World!"
-    string_len s .println!
+    s.len!.println!
     string_find s, "World" .println!
     string_find s, "xyz" .println!
     string_contains s, "Hello" .println!
@@ -9585,7 +12502,7 @@ main = ->
         *(~PtrOffset buf, 5) = 101
         *(~PtrOffset buf, 6) = 102
         *(~PtrOffset buf, 7) = 0
-    bounded = unsafe ~BorrowStr buf, 7
+    bounded = unsafe str_from_utf8_unchecked (slice_from_raw_parts buf, 7)
     string_find bounded, "def" .println!
     0
 "#,
@@ -9742,8 +12659,8 @@ main = ->
         *(~PtrOffset right_buf, 2) = 0
         *(~PtrOffset right_buf, 3) = 100
         *(~PtrOffset right_buf, 4) = 0
-    left = unsafe ~BorrowStr left_buf, 4
-    right = unsafe ~BorrowStr right_buf, 4
+    left = unsafe str_from_utf8_unchecked (slice_from_raw_parts left_buf, 4)
+    right = unsafe str_from_utf8_unchecked (slice_from_raw_parts right_buf, 4)
     if left == right
         1.println!
     else
@@ -10021,7 +12938,7 @@ main = ->
         *(~PtrOffset buf, 3) = 99
         *(~PtrOffset buf, 4) = 100
         *(~PtrOffset buf, 5) = 0
-    bounded = unsafe ~BorrowStr buf, 5
+    bounded = unsafe str_from_utf8_unchecked (slice_from_raw_parts buf, 5)
     bounded.println!
     0
 "#,
@@ -10384,7 +13301,7 @@ fn compile_should_pass(source: &str) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-fn compile_should_pass_without_stdlib(source: &str) {
+fn compile_should_pass_without_std(source: &str) {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     fs::create_dir_all(&dir).unwrap();
@@ -10402,7 +13319,7 @@ fn compile_should_pass_without_stdlib(source: &str) {
 
 #[test]
 fn test_integer_literal_defaults_to_i64() {
-    compile_should_pass_without_stdlib(
+    compile_should_pass_without_std(
         r#"main = ->
     value = 42
     0
@@ -10412,7 +13329,7 @@ fn test_integer_literal_defaults_to_i64() {
 
 #[test]
 fn test_float_literal_defaults_to_f64() {
-    compile_should_pass_without_stdlib(
+    compile_should_pass_without_std(
         r#"main = ->
     value = 4.2
     0
@@ -10433,7 +13350,7 @@ fn test_unconstrained_local_lambda_is_rejected() {
 
 #[test]
 fn test_generic_function_remains_polymorphic_under_strict_finalization() {
-    compile_should_pass_without_stdlib(
+    compile_should_pass_without_std(
         r#"identity = value -> value
 
 main = ->
@@ -11007,7 +13924,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_drops_initialized_elements() {
+fn test_std_vec_drops_initialized_elements() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -11035,7 +13952,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_set_drops_replaced_element_once() {
+fn test_std_vec_set_drops_replaced_element_once() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -11063,7 +13980,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_set_out_of_bounds_drops_ignored_value_once() {
+fn test_std_vec_set_out_of_bounds_drops_ignored_value_once() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -11091,7 +14008,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_growth_drops_initialized_elements_once() {
+fn test_std_vec_growth_drops_initialized_elements_once() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -11125,7 +14042,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_methods() {
+fn test_std_option_methods() {
     let output = compile_and_run(
         r#"
 inc = x -> x + 1
@@ -11170,7 +14087,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_inspect_borrows_payload_and_returns_option() {
+fn test_std_option_inspect_borrows_payload_and_returns_option() {
     let output = compile_and_run(
         r#"
 print_ref: &I64 -> I32
@@ -11188,7 +14105,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_inspect_owned_string_borrows_and_returns_owned_option() {
+fn test_std_option_inspect_owned_string_borrows_and_returns_owned_option() {
     let output = compile_and_run(
         r#"
 print_len: &String -> I32
@@ -11206,7 +14123,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_inspect_owned_string_consumes_receiver() {
+fn test_std_option_inspect_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 print_len: &String -> I32
@@ -11224,7 +14141,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_methods() {
+fn test_std_result_methods() {
     let output = compile_and_run(
         r#"
 inc = x -> x + 1
@@ -11273,8 +14190,8 @@ main = ->
 #[test]
 fn test_hkt_functor_option_result_vec() {
     let products =
-        rock_lib::products::CompilerProducts::read_artifact_from_path(&stdlib_artifact_path())
-            .expect("read stdlib artifact");
+        rock_lib::products::CompilerProducts::read_artifact_from_path(&std_artifact_path())
+            .expect("read std artifact");
     let functional_trait_ids = products
         .interface
         .traits
@@ -11323,7 +14240,7 @@ fn test_hkt_functor_option_result_vec() {
 
     let output = compile_and_run(
         r#"
-> stdlib::io::IoError
+> std::io::IoError
 
 type IoResult = Result _, IoError
 
@@ -12019,7 +14936,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_traversable_sequence() {
+fn test_std_traversable_sequence() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -12051,7 +14968,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_eager_map_move_only_preserves_order() {
+fn test_std_vec_eager_map_move_only_preserves_order() {
     let output = compile_and_run(
         r#"
 string_len: String -> I64
@@ -12076,7 +14993,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_for_each_ranges_and_mutable_capture() {
+fn test_std_for_each_ranges_and_mutable_capture() {
     let output = compile_and_run(
         r#"
 main = !->
@@ -12112,7 +15029,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_for_each_owned_and_borrowed_collections() {
+fn test_std_for_each_owned_and_borrowed_collections() {
     let output = compile_and_run(
         r#"
 main = !->
@@ -12137,7 +15054,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_for_each_book_fizzbuzz() {
+fn test_std_for_each_book_fizzbuzz() {
     let source = include_str!("../../docs/examples/fizzbuzz.rk");
     let chapter = include_str!("../../docs/src/getting-started/first-project.md");
     let listing = chapter
@@ -12163,14 +15080,14 @@ fn test_stdlib_for_each_book_fizzbuzz() {
 }
 
 #[test]
-fn test_stdlib_for_each_hkt_foldable_carriers() {
+fn test_std_for_each_hkt_foldable_carriers() {
     let output = compile_and_run(
         r#"
 struct One T
     < value: T
 
 impl Foldable for One
-    foldl = mut step, initial, value ->
+    try_fold = mut step, initial, value ->
         step.call_mut (initial, value.value)
 
 main = !->
@@ -12228,7 +15145,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_for_each_rejects_open_ended_ranges() {
+fn test_std_for_each_rejects_open_ended_ranges() {
     for range in ["(..)", "(1..)", "(..3)", "(..=3)"] {
         let (output, success) = compile_and_run_with_status(&format!(
             "main = !->\n    for_each {range}, number !-> number.println!\n"
@@ -12239,7 +15156,7 @@ fn test_stdlib_for_each_rejects_open_ended_ranges() {
 }
 
 #[test]
-fn test_stdlib_for_each_drops_owned_items_and_callback_once() {
+fn test_std_for_each_drops_owned_items_and_callback_once() {
     let output = compile_and_run(
         r#"
 struct Item
@@ -12280,7 +15197,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_for_each_consumes_owned_source() {
+fn test_std_for_each_consumes_owned_source() {
     compile_should_fail(
         r#"
 main = !->
@@ -12294,7 +15211,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_for_each_rejects_non_unit_action() {
+fn test_std_for_each_rejects_non_unit_action() {
     compile_should_fail(
         r#"
 main = !->
@@ -12305,7 +15222,7 @@ main = !->
 }
 
 #[test]
-fn test_stdlib_vec_map_ref_preserves_source() {
+fn test_std_vec_map_ref_preserves_source() {
     let output = compile_and_run(
         r#"
 string_len: &String -> I64
@@ -12331,7 +15248,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_map_ref_contextually_types_closure_parameter() {
+fn test_std_vec_map_ref_contextually_types_closure_parameter() {
     let output = compile_and_run(
         r#"
 print_value: I64 -> ()
@@ -12354,7 +15271,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_try_for_each_short_circuits() {
+fn test_std_vec_try_for_each_short_circuits() {
     let output = compile_and_run(
         r#"
 visit: &I64 -> Result (), I64
@@ -12388,7 +15305,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_eager_operations_preserve_order_and_are_stack_safe() {
+fn test_std_vec_eager_operations_preserve_order_and_are_stack_safe() {
     let output = compile_and_run(
         r#"
 double: I64 -> I64
@@ -12506,7 +15423,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_eager_operations_drop_inputs_and_outputs_once() {
+fn test_std_vec_eager_operations_drop_inputs_and_outputs_once() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -12542,7 +15459,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_vec_filtering_and_try_map_drop_each_value_once() {
+fn test_std_vec_filtering_and_try_map_drop_each_value_once() {
     let output = compile_and_run(
         r#"
 struct Tracked
@@ -12632,7 +15549,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_result_fp_operators() {
+fn test_std_option_result_fp_operators() {
     let output = compile_and_run(
         r#"
 inc = x -> x + 1
@@ -12690,11 +15607,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_bifunctor_and_error_operator() {
+fn test_std_result_bifunctor_and_error_operator() {
     let output = compile_and_run(
         r#"
-> stdlib::bifunctor::first
-> stdlib::bifunctor::second
+> std::functional::first
+> std::functional::second
 
 inc = value -> value + 1
 double = value -> value * 2
@@ -12745,7 +15662,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_show_default_println() {
+fn test_std_show_default_println() {
     let src = r#"
 struct Named
     < value: I64
@@ -12768,12 +15685,12 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_result_show_prints_payloads() {
+fn test_std_option_result_show_prints_payloads() {
     let output = compile_and_run(
         r#"
-> stdlib::option::Option
-> stdlib::result::Result
-> stdlib::io::IoError
+> std::control::Option
+> std::control::Result
+> std::io::IoError
 
 main = ->
     none: Option I64 = Option::None
@@ -12809,7 +15726,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_show_owned_string_is_non_consuming() {
+fn test_std_option_show_owned_string_is_non_consuming() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -12824,7 +15741,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_show_owned_string_is_non_consuming() {
+fn test_std_result_show_owned_string_is_non_consuming() {
     let output = compile_and_run(
         r#"
 main = ->
@@ -12842,7 +15759,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_map_owned_string_consumes_receiver() {
+fn test_std_option_map_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 main = ->
@@ -12858,7 +15775,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_map_owned_string_consumes_receiver() {
+fn test_std_result_map_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 main = ->
@@ -12874,7 +15791,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_map_err_owned_string_consumes_receiver() {
+fn test_std_result_map_err_owned_string_consumes_receiver() {
     compile_should_fail(
         r#"
 main = ->
@@ -12890,7 +15807,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_option_bind_owned_string_forwards_move_receiver() {
+fn test_std_option_bind_owned_string_forwards_move_receiver() {
     let output = compile_and_run(
         r#"
 bind: String -> Option I64
@@ -12908,7 +15825,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_result_bind_owned_string_forwards_move_receiver() {
+fn test_std_result_bind_owned_string_forwards_move_receiver() {
     let output = compile_and_run(
         r#"
 bind: String -> Result I64, String
@@ -12929,7 +15846,7 @@ main = ->
 fn test_result_method_sections_preserve_unresolved_payload_until_materialization() {
     let output = compile_and_run(
         r#"
-> stdlib::result::Result
+> std::control::Result
 
 struct Source
     < value: I64
@@ -12962,7 +15879,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_pipe_operator_function() {
+fn test_std_pipe_operator_function() {
     let output = compile_and_run(
         r#"
 inc = x -> x + 1
@@ -13181,7 +16098,7 @@ main = ->
     s[0].println!
     0
 "#,
-        "cannot index Str by integer",
+        "No implementation found for operator '[]'",
     );
 }
 
@@ -13280,7 +16197,7 @@ fn test_as_cast_ptr_to_int() {
         r#"
 main = ->
     s = "hello"
-    p = str_raw_ptr s
+    p = s.as_ptr!
     i = p as I64
     if i > 0
         "ok".println!
@@ -13319,7 +16236,7 @@ main = ->
     c.println!
     0
 "#,
-        "cannot index Str by integer",
+        "No implementation found for operator '[]'",
     );
 }
 
@@ -13333,7 +16250,7 @@ main = ->
     s[i].println!
     0
 "#,
-        "cannot index Str by integer",
+        "No implementation found for operator '[]'",
     );
 }
 
@@ -13577,7 +16494,7 @@ main = ->
 
 #[test]
 fn safe_custom_pointer_index_impl_allows_read_and_write_outside_unsafe() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang index
 < trait ReadAt Key
     lang output
@@ -13787,7 +16704,7 @@ main = ->
 
 #[test]
 fn marked_renamed_sized_trait_drives_implicit_bounds_by_id() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang sized
 < trait StaticLayout
 
@@ -13856,11 +16773,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_drops_inner_value() {
+fn test_std_box_drops_inner_value() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -13881,10 +16798,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_rejects_zero_sized_value() {
+fn test_std_box_rejects_zero_sized_value() {
     let (_output, success) = compile_and_run_with_status(
         r#"
-> stdlib::box_type::Box
+> std::mem::Box
 
 struct Empty
 
@@ -13898,10 +16815,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_new_uses_non_null_pointer() {
+fn test_std_box_new_uses_non_null_pointer() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
+> std::mem::Box
 
 main = ->
     boxed = Box::new 42
@@ -13937,11 +16854,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_drops_aggregate_field_value() {
+fn test_std_box_drops_aggregate_field_value() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -13969,7 +16886,7 @@ main = ->
 fn test_drop_order_runs_owner_before_field_cleanup() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> std::mem::drop::Drop
 
 struct Child
     < value: I64
@@ -14002,7 +16919,7 @@ main = ->
 fn test_branch_move_drops_value_once_after_merge() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14033,7 +16950,7 @@ main = ->
 fn test_field_assignment_drops_old_field_before_overwrite() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14063,7 +16980,7 @@ main = ->
 fn test_tuple_array_and_enum_payload_cleanup_drop_elements() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14100,7 +17017,7 @@ main = ->
 fn test_expression_statement_temporary_is_dropped() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14126,7 +17043,7 @@ main = ->
 fn test_borrowed_temporary_drops_when_call_expression_finishes() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> std::mem::drop::Drop
 
 struct Holder
     < value: I64
@@ -14160,7 +17077,7 @@ main = ->
 fn test_return_expression_temporary_drops_before_returning_to_caller() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> std::mem::drop::Drop
 
 struct Holder
     < value: I64
@@ -14195,8 +17112,8 @@ main = ->
 fn test_owned_string_temporary_lives_through_ffi_call() {
     let output = compile_and_run(
         r#"
-> stdlib::libc::puts
-> stdlib::string_type::String
+> std::ffi::libc::puts
+> std::string::String
 
 main = ->
     puts ((String::from "hello").as_ptr!)
@@ -14208,12 +17125,12 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_has_no_keep_alive_lifetime_workarounds() {
-    let stdlib_files = ["convert.rk", "option.rk", "result.rk", "show.rk"];
-    let offenders = stdlib_files
+fn test_std_has_no_keep_alive_lifetime_workarounds() {
+    let std_files = ["src/convert.rk", "src/control/option.rk", "src/control/result.rk", "src/show.rk"];
+    let offenders = std_files
         .iter()
         .filter_map(|file| {
-            let path = stdlib_path().join(file);
+            let path = std_path().join(file);
             let source = fs::read_to_string(&path).unwrap();
             source.contains("keep_alive").then_some(file.to_string())
         })
@@ -14221,7 +17138,7 @@ fn test_stdlib_has_no_keep_alive_lifetime_workarounds() {
 
     assert!(
         offenders.is_empty(),
-        "stdlib should rely on full-expression temporary lifetimes, found keep_alive in {offenders:?}"
+        "std should rely on full-expression temporary lifetimes, found keep_alive in {offenders:?}"
     );
 }
 
@@ -14284,11 +17201,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_move_drops_inner_value_once() {
+fn test_std_box_move_drops_inner_value_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14311,11 +17228,11 @@ main = ->
 }
 
 #[test]
-fn test_returned_stdlib_box_binding_drops_inner_value_once() {
+fn test_returned_std_box_binding_drops_inner_value_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14343,8 +17260,8 @@ main = ->
 fn test_method_by_value_owned_arg_drops_once() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -14378,8 +17295,8 @@ main = ->
 fn test_partial_move_from_direct_drop_type_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -14414,8 +17331,8 @@ main = ->
 fn test_nested_partial_move_from_direct_drop_type_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -14454,7 +17371,7 @@ main = ->
 fn test_tuple_partial_move_from_direct_drop_type_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::drop::Drop
+> std::mem::drop::Drop
 
 struct Child
     < id: I64
@@ -14487,8 +17404,8 @@ main = ->
 fn test_array_element_move_of_cleanup_value_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < id: I64
@@ -14512,11 +17429,11 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_box_reassignment_drops_old_and_new_values_once() {
+fn test_std_box_reassignment_drops_old_and_new_values_once() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14543,8 +17460,8 @@ main = ->
 fn test_by_value_owned_parameter_is_dropped_when_unused() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14572,7 +17489,7 @@ main = ->
 fn test_by_value_owned_parameter_with_local_drop_is_dropped_when_unused() {
     let output = compile_and_run(
         r#"
-> stdlib::drop::Drop
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14600,8 +17517,8 @@ main = ->
 fn test_assigning_moved_out_field_does_not_drop_stale_value() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14634,8 +17551,8 @@ main = ->
 fn test_enum_partial_payload_move_drops_unmoved_payload_field() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14667,8 +17584,8 @@ main = ->
 fn test_parent_cleanup_skips_moved_field_but_drops_unmoved_sibling() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14702,8 +17619,8 @@ main = ->
 fn test_branch_skipped_field_move_drops_both_fields_after_merge() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14738,8 +17655,8 @@ main = ->
 fn test_branch_taken_field_move_drops_moved_field_once_and_sibling_after_merge() {
     let output = compile_and_run(
         r#"
-> stdlib::box_type::Box
-> stdlib::drop::Drop
+> std::mem::Box
+> std::mem::drop::Drop
 
 struct Tracked
     < value: I64
@@ -14771,16 +17688,16 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_raw_buffer_capacity_and_pointer_access() {
+fn test_std_raw_buffer_capacity_and_pointer_access() {
     let (output, success) = compile_and_run_with_status(
         r#"
-> stdlib::raw_buffer::RawBuffer
+> std::mem::raw_buffer::RawBuffer
 
 main = ->
     empty: RawBuffer I64 = RawBuffer::new!
     empty.cap!.println!
 
-    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (stdlib::mem::size_of 0), 2
+    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (std::mem::sizeof &0), 2
     buf.cap!.println!
     ptr = buf.ptr!
     unsafe *ptr = 41
@@ -14797,13 +17714,13 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_raw_buffer_with_capacity_requires_unsafe() {
+fn test_std_raw_buffer_with_capacity_requires_unsafe() {
     compile_should_fail(
         r#"
-> stdlib::raw_buffer::RawBuffer
+> std::mem::raw_buffer::RawBuffer
 
 main = ->
-    buf = RawBuffer::with_capacity (stdlib::mem::size_of 0), 2
+    buf = RawBuffer::with_capacity (std::mem::sizeof &0), 2
     0
 "#,
         "requires an unsafe block",
@@ -14811,10 +17728,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_raw_buffer_as_slice_rejects_len_above_capacity() {
+fn test_std_raw_buffer_as_slice_rejects_len_above_capacity() {
     let (_output, success) = compile_and_run_with_status(
         r#"
-> stdlib::raw_buffer::RawBuffer
+> std::mem::raw_buffer::RawBuffer
 
 main = ->
     buf: RawBuffer I64 = RawBuffer::new!
@@ -14830,10 +17747,10 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_raw_buffer_as_slice_requires_unsafe() {
+fn test_std_raw_buffer_as_slice_requires_unsafe() {
     compile_should_fail(
         r#"
-> stdlib::raw_buffer::RawBuffer
+> std::mem::raw_buffer::RawBuffer
 
 main = ->
     buf: RawBuffer I64 = RawBuffer::new!
@@ -14845,13 +17762,13 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_raw_buffer_zero_capacity_as_slice_uses_non_null_buffer() {
+fn test_std_raw_buffer_zero_capacity_as_slice_uses_non_null_buffer() {
     let output = compile_and_run(
         r#"
-> stdlib::raw_buffer::RawBuffer
+> std::mem::raw_buffer::RawBuffer
 
 main = ->
-    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (stdlib::mem::size_of 0), 0
+    buf: RawBuffer I64 = unsafe RawBuffer::with_capacity (std::mem::sizeof &0), 0
     slice = unsafe buf.as_slice 0
     ((~ArrPtr (*slice)) as I64) != 0 .println!
     0
@@ -14865,8 +17782,8 @@ main = ->
 fn test_global_alloc_requires_unsafe() {
     compile_should_fail(
         r#"
-> stdlib::alloc::Global
-> stdlib::alloc::Layout
+> std::mem::alloc::Global
+> std::mem::alloc::Layout
 
 main = ->
     layout = Layout
@@ -15223,7 +18140,7 @@ main = ->
 fn returning_vec_get_from_local_vec_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::vec::Vec
+> std::collections::Vec
 
 bad: () -> Option &I64
 bad = ->
@@ -15243,7 +18160,7 @@ main = ->
 fn returning_reference_to_local_vec_index_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::vec::Vec
+> std::collections::Vec
 
 bad: () -> &I64
 bad = ->
@@ -15263,7 +18180,7 @@ main = ->
 fn returning_box_as_ref_from_local_box_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::box_type::Box
+> std::mem::Box
 
 bad: () -> &I64
 bad = ->
@@ -15282,7 +18199,7 @@ main = ->
 fn returning_raw_deref_from_local_box_pointer_is_rejected() {
     compile_should_fail(
         r#"
-> stdlib::box_type::Box
+> std::mem::Box
 
 bad: () -> &I64
 bad = ->
@@ -15302,7 +18219,7 @@ main = ->
 fn returning_vec_get_from_input_vec_reference_is_allowed() {
     let output = compile_and_run(
         r#"
-> stdlib::vec::Vec
+> std::collections::Vec
 
 get_first: &Vec I64 -> Option &I64
 get_first = v -> (*v).get 0
@@ -15324,7 +18241,7 @@ main = ->
 fn returning_vec_index_from_input_vec_reference_is_allowed() {
     let output = compile_and_run(
         r#"
-> stdlib::vec::Vec
+> std::collections::Vec
 
 first: &Vec I64 -> &I64
 first = v -> &((*v)[0])
@@ -16201,7 +19118,7 @@ main = -> 0
 }
 
 #[test]
-fn test_unary_neg_dispatches_through_stdlib_trait_with_associated_output() {
+fn test_unary_neg_dispatches_through_std_trait_with_associated_output() {
     let output = compile_and_run(
         r#"
 struct Wrapper
@@ -16223,7 +19140,110 @@ main = ->
 }
 
 #[test]
-fn test_unary_not_dispatches_through_stdlib_trait_with_associated_output() {
+fn test_std_numeric_operators_eq_for_all_integer_widths_and_char() {
+    let mut source = String::from(r#"
+equal: T -> T -> Bool where T: Eq
+equal = a, b -> a == b
+
+unequal: T -> T -> Bool where T: Eq
+unequal = a, b -> a != b
+
+main = !->
+"#);
+    for ty in ["I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64"] {
+        for (method, rhs) in [("equal", 7), ("equal", 8), ("unequal", 7), ("unequal", 8)] {
+            source.push_str(&format!("    ({method} (7 as {ty}), ({rhs} as {ty})).println!\n"));
+        }
+    }
+    source.push_str(r#"
+    (equal '🦀', '🦀').println!
+    (equal 'é', '中').println!
+    (unequal 'é', 'é').println!
+    (unequal 'a', 'b').println!
+    (equal (255 as U8), (127 as U8)).println!
+    (equal (65535 as U16), (32767 as U16)).println!
+    (equal (4294967295 as U32), (2147483647 as U32)).println!
+    high = !(0 as U64)
+    (equal high, (9223372036854775807 as U64)).println!
+"#);
+    assert_eq!(compile_and_run(&source), "true\nfalse\nfalse\ntrue\n".repeat(9) + "false\nfalse\nfalse\nfalse\n");
+}
+
+#[test]
+fn test_std_numeric_operators_not_preserves_integer_width() {
+    let mut source = String::from(r#"
+main = !->
+"#);
+    let mut expected = String::new();
+    for (ty, ones) in [
+        ("I8", -1i64), ("I16", -1), ("I32", -1), ("I64", -1),
+        ("U8", 255), ("U16", 65535), ("U32", 4294967295), ("U64", -1),
+    ] {
+        source.push_str(&format!(
+            "    zero_{ty} = 0 as {ty}
+    ones_{ty}: {ty} = !zero_{ty}
+    (ones_{ty} as I64).println!
+    ((!ones_{ty}) == zero_{ty}).println!
+    ((!(!(85 as {ty}))) == (85 as {ty})).println!
+"
+        ));
+        expected.push_str(&format!("{ones}\ntrue\ntrue\n"));
+    }
+    source.push_str("    (!true).println!\n    (!false).println!\n");
+    expected.push_str("false\ntrue\n");
+    assert_eq!(compile_and_run(&source), expected);
+}
+
+#[test]
+fn test_std_numeric_operators_integer_utilities() {
+    let output = compile_and_run(r#"
+main = !->
+    (abs (-7)).println!
+    (abs 0).println!
+    (abs 7).println!
+    (min (-7), 3).println!
+    (min 3, (-7)).println!
+    (max (-7), 3).println!
+    (max 3, (-7)).println!
+    (min 4, 4).println!
+    (max 4, 4).println!
+    smallest = (-9223372036854775807) - 1
+    ((abs smallest) == smallest).println!
+    ((min smallest, 0) == smallest).println!
+    (max smallest, 0).println!
+"#);
+    assert_eq!(output, "7\n0\n7\n-7\n-7\n3\n3\n4\n4\ntrue\ntrue\n0\n");
+}
+
+#[test]
+fn test_std_numeric_operators_hash_map_explicit_grow_with_collisions() {
+    let output = compile_and_run(r#"
+show_entry: &HashMap I64, I64 -> I64 -> ()
+show_entry = map, key !->
+    match map.get (&key)
+        Option::Some value => (*value).println!
+        Option::None => "missing".println!
+
+main = !->
+    mut map = HashMap::new!
+    map.insert 7, 70
+    map.insert 15, 150
+    map.insert 23, 230
+    map.insert (-1), 10
+    map.grow (sizeof &0), (sizeof &0)
+    map.len!.println!
+    show_entry &map, 7
+    show_entry &map, 15
+    show_entry &map, 23
+    show_entry &map, (-1)
+    map.insert 15, 151
+    show_entry &map, 15
+"#);
+    assert_eq!(output, "4\n70\n150\n230\n10\n151\n");
+}
+
+#[test]
+fn test_unary_not_dispatches_through_std_trait_with_associated_output() {
     let output = compile_and_run(
         r#"
 struct Wrapper
@@ -16345,7 +19365,7 @@ main = ->
 
 #[test]
 fn index_syntax_uses_marked_trait_member_and_output_ids() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang index
 < trait Lookup Key
     lang output
@@ -16371,7 +19391,7 @@ main = ->
 
 #[test]
 fn index_syntax_selects_separate_read_and_write_authority() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang index
 < trait ReadAt Key
     lang output
@@ -16556,7 +19576,7 @@ main = ->
 
 #[test]
 fn index_mut_impl_pairs_reordered_bounds() {
-    compile_should_pass_without_stdlib(
+    compile_should_pass_without_std(
         r#"trait First
 trait Second
 
@@ -16594,7 +19614,7 @@ main = ->
 
 #[test]
 fn index_mut_impl_accepts_shared_mutable_slice_pair() {
-    compile_should_pass_without_stdlib(
+    compile_should_pass_without_std(
         r#"lang index
 < trait ReadAt Key
     lang output
@@ -16703,7 +19723,7 @@ main = ->
 
 #[test]
 fn index_syntax_prefers_marked_array_impl_before_builtin_key_coercion() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang index
 < trait Lookup Key
     lang output
@@ -16729,7 +19749,7 @@ main = ->
 
 #[test]
 fn marked_slice_index_mut_updates_fixed_array() {
-    let exit_code = compile_and_run_without_stdlib(
+    let exit_code = compile_and_run_without_std(
         r#"lang index
 < trait ReadAt Key
     lang output
@@ -16808,7 +19828,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_index_trait_is_available_from_prelude() {
+fn test_std_index_trait_is_available_from_prelude() {
     let output = compile_and_run(
         r#"
 struct Boxed
@@ -16830,7 +19850,7 @@ main = ->
 }
 
 #[test]
-fn test_stdlib_deref_trait_is_available_from_prelude() {
+fn test_std_deref_trait_is_available_from_prelude() {
     let output = compile_and_run(
         r#"
 struct Box T
@@ -17409,6 +20429,8 @@ enum ProcMacroTokenType {
     CloseParen,
     OpenBracket,
     CloseBracket,
+    OpenBrace,
+    CloseBrace,
     Char(String),
     String(String),
     Arrow,
@@ -17473,6 +20495,7 @@ fn test_function_like_proc_macro_expands_through_public_macro_api() {
         source_providers: Vec::new(),
         current_crate_name: None,
         opt_level: 0,
+        overflow_checks: None,
         emit_llvm: false,
         no_link: false,
         emit_object: None,

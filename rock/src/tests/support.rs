@@ -1,24 +1,41 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
 
 use crate::{
-    bundled_sysroot::{current_sysroot_layout, STDLIB_CRATE_NAME},
+    bundled_sysroot::{current_sysroot_layout, STD_CRATE_NAME},
     package::Package,
 };
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-pub(crate) fn sysroot_env_lock() -> &'static Mutex<()> {
-    static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+/// Re-run only this test when it needs process-local environment or cwd state.
+/// Overrides belong to the child command, never to the concurrent parent suite.
+pub(crate) fn run_isolated_test(name: &str, env: &[(&str, &OsStr)]) -> bool {
+    const ISOLATED_TEST: &str = "ROCK_ISOLATED_TEST";
+    if std::env::var(ISOLATED_TEST).as_deref() == Ok(name) {
+        return false;
+    }
+    let mut command = ProcessCommand::new(std::env::current_exe().unwrap());
+    command.args([name, "--exact", "--nocapture"])
+        .env(ISOLATED_TEST, name)
+        .env("ROCKC", crate::rockc::resolve_rockc_path().unwrap());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = run_command_output(&mut command);
+    assert!(output.status.success(), "isolated test {name} failed; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "isolated test filter must execute exactly one test: {name}");
+    true
 }
 
 pub(crate) fn temp_test_dir(name: &str) -> PathBuf {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("rock_cli_{}_{}", name, id));
+    let dir = std::env::temp_dir().join(format!("rock_cli_{}_{}_{}", name, std::process::id(), id));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -34,7 +51,7 @@ pub(crate) fn write_package(
     write_package_with_options(root, name, lib_path, deps, source, false);
 }
 
-pub(super) fn write_package_with_options(
+pub(crate) fn write_package_with_options(
     root: &Path,
     name: &str,
     lib_path: &str,
@@ -71,24 +88,24 @@ pub(super) fn write_package_with_options(
     fs::write(lib_file, source).unwrap();
 }
 
-pub(super) fn assert_sysroot_stdlib_files_exist() {
+pub(super) fn assert_sysroot_std_files_exist() {
     let layout = current_sysroot_layout().unwrap();
 
-    assert!(layout.stdlib_artifact.exists());
-    assert!(layout.stdlib_object.exists());
+    assert!(layout.std_artifact.exists());
+    assert!(layout.std_object.exists());
     assert!(layout.manifest_path.exists());
     assert!(layout.components_path.exists());
 }
 
-pub(super) fn write_answer_stdlib(root: &Path, answer: i32) {
+pub(super) fn write_answer_std(root: &Path, answer: i32) {
     write_package(
         root,
-        STDLIB_CRATE_NAME,
+        STD_CRATE_NAME,
         "lib.rk",
         &[],
         "< mod prelude\n< mod math\n",
     );
-    fs::write(root.join("prelude.rk"), "< stdlib::math::answer\n").unwrap();
+    fs::write(root.join("prelude.rk"), "< std::math::answer\n").unwrap();
     fs::write(
         root.join("math.rk"),
         format!("< answer = -> {}\n< answer\n", answer),
@@ -98,6 +115,12 @@ pub(super) fn write_answer_stdlib(root: &Path, answer: i32) {
 
 pub(crate) fn load_package(root: PathBuf) -> Package {
     Package::load(root).unwrap()
+}
+
+pub(crate) fn load_dependency_package(root: PathBuf, project_root: &Path) -> Package {
+    let mut package = load_package(root);
+    package.use_project_build(&project_root.canonicalize().unwrap());
+    package
 }
 
 pub(crate) fn run_command_output(command: &mut ProcessCommand) -> Output {
@@ -119,6 +142,26 @@ pub(crate) fn assert_executable_exit_code(executable: &Path, expected: i32) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn isolated_test_overrides_are_child_local() {
+    let previous = std::env::var_os("ROCK_TEST_CHILD_VALUE");
+    let previous_dir = std::env::current_dir().unwrap();
+    if run_isolated_test(
+        "tests::support::isolated_test_overrides_are_child_local",
+        &[("ROCK_TEST_CHILD_VALUE", OsStr::new("child-only"))],
+    ) {
+        assert_eq!(std::env::var_os("ROCK_TEST_CHILD_VALUE"), previous);
+        assert_eq!(std::env::current_dir().unwrap(), previous_dir);
+        return;
+    }
+    assert_eq!(std::env::var("ROCK_TEST_CHILD_VALUE").unwrap(), "child-only");
+    let root = temp_test_dir("isolated_cwd");
+    std::env::set_current_dir(&root).unwrap();
+    assert_eq!(std::env::current_dir().unwrap(), root);
+    std::env::set_current_dir(previous_dir).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

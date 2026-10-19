@@ -6,6 +6,7 @@ mod commands;
 mod compile;
 mod deps;
 mod package;
+mod progress;
 pub mod project;
 mod rockc;
 

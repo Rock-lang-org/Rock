@@ -4,3 +4,4 @@ mod test_parse_impl_for;
 mod test_parse_impl_self_receiver;
 mod test_parse_impl_with_empty_lines;
 mod test_parse_impl_with_methods;
+mod test_parse_impl_structural_target;

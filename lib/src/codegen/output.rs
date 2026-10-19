@@ -51,6 +51,10 @@ impl<'ctx> CodeGen<'ctx> {
             )
             .ok_or_else(|| CodegenError::toolchain("Failed to create target machine"))?;
 
+        // Size and offset constants must use the same layout as object emission.
+        self.module.set_triple(&triple);
+        self.module.set_data_layout(&machine.get_target_data().get_data_layout());
+
         // Run optimization passes (skip at O0 — saves time without losing correctness)
         if opt_level != OptimizationLevel::None {
             let passes = match opt_level {

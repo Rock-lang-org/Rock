@@ -235,7 +235,7 @@ fn compiler_recognized_sized_identity_is_not_string_based() {
         if path == "semantic_identity_audit.rs" {
             continue;
         }
-        assert_production_file_absent(&path, &["\"stdlib::sized::Sized\"", "\"Sized\""]);
+        assert_production_file_absent(&path, &["\"std::sized::Sized\"", "\"Sized\""]);
     }
 }
 
@@ -595,12 +595,12 @@ fn prelude_and_root_exports_use_id_backed_capabilities() {
         assert_production_file_absent(
             path,
             &[
-                "stdlib_prelude_export_ids",
+                "std_prelude_export_ids",
                 "artifact_root_export_ids",
                 "artifact_root_exports",
-                "stdlib_prelude_exports",
-                "capture_stdlib_exports",
-                "inject_stdlib_prelude",
+                "std_prelude_exports",
+                "capture_std_exports",
+                "inject_std_prelude",
             ],
         );
     }
@@ -1031,7 +1031,7 @@ fn dependency_and_prelude_policy_are_session_owned() {
             "fn register_crate_resolvers",
             "fn apply_loaded_prelude",
             "ctx.dependency_errors_for_phase(\"lowering\")",
-            "ctx.has_extern_crate(\"stdlib\")",
+            "ctx.has_extern_crate(\"std\")",
             "inject_loaded_prelude",
         ],
     );

@@ -344,8 +344,8 @@ mod tests {
             origin: key.origin.clone(),
             substitution: key.substitution.clone(),
             symbols: InstanceSymbols::new(
-                "stdlib::parse::identity",
-                "stdlib::parse::identity_mono_0",
+                "std::parse::identity",
+                "std::parse::identity_mono_0",
             ),
             declared: None,
             provided_by_object: false,

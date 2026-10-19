@@ -94,6 +94,25 @@ fn declaration_binders_are_explicit_and_parenthesized() {
 }
 
 #[test]
+fn default_binders_parse_for_all_declaration_owners() {
+    let program = parse_string(
+        "struct Pair A, {B = A}\nenum Choice {T = U8}\n    Empty\ntrait Compare {Rhs = Self}\n    @compare: &Rhs -> Bool\ntype Items {T = U8} = Pair T\nstruct Higher T, {F _ = Pair U8, _}\n",
+        &Config::default(),
+    ).expect("default binders should parse");
+    match &program.module.top_levels[0] {
+        crate::ast::TopLevel::StructDecl(decl) => {
+            assert!(decl.generic_params[0].default.is_none());
+            assert!(decl.generic_params[1].default.is_some());
+        }
+        _ => panic!("expected struct"),
+    }
+    match &program.module.top_levels[3] {
+        crate::ast::TopLevel::NewType(_, params, _) => assert!(params[0].default.is_some()),
+        _ => panic!("expected alias"),
+    }
+}
+
+#[test]
 fn higher_order_kind_binder_parses_and_roundtrips() {
     let source = "struct Higher (H: (Type -> Type) -> Type)\n";
     let program = parse_string(source, &Config::default()).expect("higher-order kind binder");

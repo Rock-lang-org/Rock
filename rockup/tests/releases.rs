@@ -45,7 +45,9 @@ while [ "$#" -gt 0 ]; do
     esac
     shift
 done
-if [ "$latest" = yes ]; then
+if [ "$url" = 'https://api.github.com/repos/Rock-lang-org/Rock/releases?per_page=100&page=1' ]; then
+    cat "$FIXTURE/releases.json"
+elif [ "$latest" = yes ]; then
     [ "$url" = https://github.com/Rock-lang-org/Rock/releases/latest ] || exit 93
     printf 'https://github.com/Rock-lang-org/Rock/releases/tag/v1.2.3'
 else
@@ -57,6 +59,7 @@ else
 fi
 "#,
         );
+        fs::write(root.join("releases.json"), "[]").unwrap();
         Self { root }
     }
 
@@ -98,8 +101,8 @@ fi
         fs::create_dir_all(&lib).unwrap();
         // Filenames match the current ToolchainLayout contract.
         for file in [
-            rock_shared::sysroot::STDLIB_ARTIFACT_FILE_NAME,
-            rock_shared::sysroot::STDLIB_OBJECT_FILE_NAME,
+            rock_shared::sysroot::STD_ARTIFACT_FILE_NAME,
+            rock_shared::sysroot::STD_OBJECT_FILE_NAME,
             rock_shared::sysroot::TOOLCHAIN_MANIFEST_FILE_NAME,
             rock_shared::sysroot::COMPONENTS_MANIFEST_FILE_NAME,
         ] {
@@ -168,6 +171,20 @@ fn script(path: &Path, body: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+fn copy_manager(path: &Path) {
+    // Keep writable executable descriptors out of the multithreaded test process:
+    // concurrent child spawns can inherit them until exec and cause ETXTBSY.
+    // Waiting for cp also ensures its writable descriptor is closed before use.
+    success(
+        Command::new("cp")
+            .arg("--")
+            .arg(env!("CARGO_BIN_EXE_rockup"))
+            .arg(path)
+            .output()
+            .unwrap(),
+    );
+}
+
 fn success(output: Output) {
     assert!(
         output.status.success(),
@@ -181,7 +198,7 @@ fn success(output: Output) {
 fn self_install_persists_only_manager_then_install_fetches_toolchain() {
     let fixture = Fixture::new();
     let downloaded = fixture.root.join("downloaded-rockup");
-    fs::copy(env!("CARGO_BIN_EXE_rockup"), &downloaded).unwrap();
+    copy_manager(&downloaded);
     success(
         fixture
             .command_for(&downloaded)
@@ -191,8 +208,10 @@ fn self_install_persists_only_manager_then_install_fetches_toolchain() {
     );
     fs::remove_file(downloaded).unwrap();
     let manager = fixture.root.join("home/bin/rockup");
+    assert!(!fixture.root.join("requests").exists());
     let list = fixture.command_for(&manager).arg("list").output().unwrap();
-    assert!(list.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&list.stdout)
+        .starts_with("Installed toolchains (* active):\n  (none)\n"));
     success(list);
     for binary in ["rock", "rockc", "rock-lsp"] {
         let shim = fs::read_to_string(fixture.root.join("home/bin").join(binary)).unwrap();
@@ -201,7 +220,9 @@ fn self_install_persists_only_manager_then_install_fetches_toolchain() {
     assert!(fixture.root.join("home/env").is_file());
     assert!(fixture.root.join("user/.profile").is_file());
     assert!(!fixture.root.join("home/default-toolchain").exists());
-    assert!(!fixture.root.join("requests").exists());
+    let requests = fs::read_to_string(fixture.root.join("requests")).unwrap();
+    assert_eq!(requests.lines().count(), 1);
+    assert!(requests.contains("https://api.github.com/"));
     let source = fixture.source("old");
     fixture.pack(&source, &[]);
     success(
@@ -222,7 +243,8 @@ fn install_update_default_and_local_path() {
     success(fixture.run(&["install"]));
     fixture.assert_old();
     let listed = fixture.run(&["list"]);
-    assert_eq!(String::from_utf8_lossy(&listed.stdout).trim(), "* stable");
+    assert!(String::from_utf8_lossy(&listed.stdout)
+        .starts_with("Installed toolchains (* active):\n* stable\n"));
     success(listed);
     assert!(!fixture.run(&["install"]).status.success());
 
@@ -268,6 +290,51 @@ fn install_update_default_and_local_path() {
             & 0o7777,
         0o755
     );
+}
+
+#[test]
+fn list_shows_available_versions_and_survives_network_failure() {
+    let fixture = Fixture::new();
+    let source = fixture.source("old");
+    fixture.pack(&source, &[]);
+    success(fixture.run(&["install", "v1.2.3"]));
+    let releases: Vec<_> = [("v1.2.3", false), ("v1.3.0-rc.1", true)]
+        .into_iter()
+        .map(|(tag, prerelease)| {
+            let archive = format!("rock-{tag}-{TARGET}.tar.gz");
+            serde_json::json!({
+                "tag_name": tag,
+                "draft": false,
+                "prerelease": prerelease,
+                "assets": [{"name": archive}, {"name": format!("{archive}.sha256")}],
+            })
+        })
+        .collect();
+    fs::write(
+        fixture.root.join("releases.json"),
+        serde_json::to_vec(&releases).unwrap(),
+    )
+    .unwrap();
+    let listed = fixture.run(&["list"]);
+    let stdout = String::from_utf8_lossy(&listed.stdout);
+    assert!(stdout.contains("* v1.2.3\n"));
+    assert!(
+        stdout.contains("Available versions:\n  v1.2.3 (installed)\n  v1.3.0-rc.1 (prerelease)\n")
+    );
+    assert!(listed.stderr.is_empty());
+    success(listed);
+
+    let offline = fixture
+        .command()
+        .env("FAIL_DOWNLOAD", "yes")
+        .arg("list")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&offline.stdout);
+    assert!(stdout.contains("* v1.2.3\n"));
+    assert!(stdout.contains("Available versions:\n  (unavailable)"));
+    assert!(String::from_utf8_lossy(&offline.stderr).contains("could not list available versions"));
+    success(offline);
 }
 
 #[test]
@@ -413,7 +480,7 @@ fn unsafe_names_are_rejected_without_network_or_outside_writes() {
 fn self_update_is_atomic_and_keeps_shim_destination() {
     let fixture = Fixture::new();
     let executable = fixture.root.join("rockup");
-    fs::copy(env!("CARGO_BIN_EXE_rockup"), &executable).unwrap();
+    copy_manager(&executable);
     let source = fixture.source("old");
     success(
         fixture

@@ -7,7 +7,7 @@ use std::{
 #[cfg(test)]
 use std::{collections::HashSet, sync::Mutex};
 
-use rock_shared::{process, sysroot::STDLIB_CRATE_NAME};
+use rock_shared::{process, sysroot::STD_CRATE_NAME};
 
 use crate::package::Package;
 
@@ -72,10 +72,13 @@ pub(crate) fn ensure_dev_binary_built(package: &str) -> Result<(), String> {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("Failed to resolve workspace root for dev binary build")?;
-    let output = Command::new("cargo")
-        .current_dir(workspace_root)
-        .args(["build", "-p", package])
-        .output()
+    let binary = process::dev_target_binary_from_current_exe(package)?;
+    let mut command = Command::new("cargo");
+    command.current_dir(workspace_root).args(["build", "-p", package]);
+    if binary.parent().and_then(|dir| dir.file_name()) == Some(std::ffi::OsStr::new("release")) {
+        command.arg("--release");
+    }
+    let output = command.output()
         .map_err(|e| format!("Failed to spawn cargo build for {}: {}", package, e))?;
     if !output.status.success() {
         return Err(format!(
@@ -102,6 +105,7 @@ pub(crate) fn build_dependency_artifact_invocation(
     dependency_artifacts: &[ExternArtifact],
 ) -> RockcInvocation {
     let mut invocation = RockcInvocation::new(executable)
+        .arg(package.profile.flag())
         .arg("--crate-name")
         .arg(package.manifest.crate_.name.clone())
         .arg("--entry-file")
@@ -114,7 +118,7 @@ pub(crate) fn build_dependency_artifact_invocation(
         .arg("--emit-artifact")
         .arg(package.artifact_path());
 
-    if package.manifest.crate_.no_std || package.manifest.crate_.name == STDLIB_CRATE_NAME {
+    if package.manifest.crate_.no_std || package.manifest.crate_.name == STD_CRATE_NAME {
         invocation = invocation.arg("--no-std");
     }
     if package.manifest.crate_.no_std {
@@ -139,12 +143,13 @@ pub(crate) fn build_root_invocation(
     artifacts: &[ExternArtifact],
 ) -> RockcInvocation {
     let mut invocation = RockcInvocation::new(executable)
+        .arg(package.profile.flag())
         .arg("--entry-file")
         .arg(package.entry_file())
         .arg("--output-dir")
         .arg(package.build_dir());
 
-    if package.manifest.crate_.no_std || package.manifest.crate_.name == STDLIB_CRATE_NAME {
+    if package.manifest.crate_.no_std || package.manifest.crate_.name == STD_CRATE_NAME {
         invocation = invocation.arg("--no-std");
     }
     if package.manifest.crate_.no_std {
@@ -163,11 +168,17 @@ pub(crate) fn build_root_invocation(
     invocation
 }
 
-pub(crate) fn run_invocation(invocation: RockcInvocation, context: &str) -> Result<(), String> {
+pub(crate) fn run_invocation(
+    invocation: RockcInvocation,
+    package: &Package,
+    progress: Option<&crate::progress::BuildProgress>,
+    context: &str,
+) -> Result<(), String> {
     let executable = invocation.executable.clone();
 
     #[cfg(test)]
     {
+        let _ = (package, progress);
         let output = invocation.into_command().output().map_err(|e| {
             format!(
                 "Failed to spawn rockc for {} using {}: {}",
@@ -192,7 +203,7 @@ pub(crate) fn run_invocation(invocation: RockcInvocation, context: &str) -> Resu
 
     #[cfg(not(test))]
     {
-        let status = invocation.into_command().status().map_err(|e| {
+        let status = crate::progress::run_command(&mut invocation.into_command(), package, progress).map_err(|e| {
             format!(
                 "Failed to spawn rockc for {} using {}: {}",
                 context,
@@ -215,6 +226,7 @@ pub(crate) fn run_invocation(invocation: RockcInvocation, context: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::package::BuildProfile;
     use crate::tests::support::{load_package, temp_test_dir, write_package};
 
     fn args_as_strings(invocation: &RockcInvocation) -> Vec<String> {
@@ -246,6 +258,30 @@ mod tests {
     }
 
     #[test]
+    fn test_invocations_and_output_paths_use_the_selected_profile() {
+        let temp_dir = temp_test_dir("rockc_build_profiles");
+        write_package(&temp_dir, "app", "src/main.rk", &[], "main = !-> ()\n");
+        let mut package = load_package(temp_dir.clone());
+        let executable = PathBuf::from("rockc");
+        for profile in [BuildProfile::Debug, BuildProfile::Release] {
+            package.profile = profile;
+            assert_eq!(package.build_dir(), package.root_dir.join("build").join(profile.directory()));
+            assert!(package.artifact_path().starts_with(package.build_dir()));
+            assert!(package.object_path().starts_with(package.build_dir()));
+            for invocation in [
+                build_root_invocation(executable.clone(), &package, &[]),
+                build_dependency_artifact_invocation(executable.clone(), &package, &[]),
+            ] {
+                let args = args_as_strings(&invocation);
+                assert!(args.contains(&profile.flag().to_string()));
+                let other = if profile == BuildProfile::Debug { "--release" } else { "--debug" };
+                assert!(!args.iter().any(|arg| arg == other || arg == "-O" || arg == "--opt-level"));
+            }
+        }
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
     fn test_dependency_invocation_uses_extern_artifact_for_all_deps() {
         let temp_dir = temp_test_dir("rockc_dep_invocation");
         write_package(
@@ -265,8 +301,8 @@ mod tests {
                     path: PathBuf::from("/tmp/dep_a.rkca"),
                 },
                 ExternArtifact {
-                    name: STDLIB_CRATE_NAME.to_string(),
-                    path: PathBuf::from("/tmp/stdlib.rkca"),
+                    name: STD_CRATE_NAME.to_string(),
+                    path: PathBuf::from("/tmp/std.rkca"),
                 },
             ],
         );
@@ -296,7 +332,7 @@ mod tests {
             .windows(2)
             .any(|pair| pair[0] == "--extern-artifact" && pair[1] == "dep_a=/tmp/dep_a.rkca"));
         assert!(args.windows(2).any(|pair| {
-            pair[0] == "--extern-artifact" && pair[1] == "stdlib=/tmp/stdlib.rkca"
+            pair[0] == "--extern-artifact" && pair[1] == "std=/tmp/std.rkca"
         }));
 
         let _ = std::fs::remove_dir_all(temp_dir);
@@ -316,8 +352,8 @@ mod tests {
                     path: PathBuf::from("/tmp/dep.rkca"),
                 },
                 ExternArtifact {
-                    name: STDLIB_CRATE_NAME.to_string(),
-                    path: PathBuf::from("/tmp/stdlib.rkca"),
+                    name: STD_CRATE_NAME.to_string(),
+                    path: PathBuf::from("/tmp/std.rkca"),
                 },
             ],
         );
@@ -334,7 +370,7 @@ mod tests {
             .windows(2)
             .any(|pair| pair[0] == "--extern-artifact" && pair[1] == "dep=/tmp/dep.rkca"));
         assert!(args.windows(2).any(|pair| {
-            pair[0] == "--extern-artifact" && pair[1] == "stdlib=/tmp/stdlib.rkca"
+            pair[0] == "--extern-artifact" && pair[1] == "std=/tmp/std.rkca"
         }));
         assert!(!args.contains(&"--emit-artifact".to_string()));
         assert!(!args.contains(&"--no-link".to_string()));

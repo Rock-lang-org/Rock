@@ -200,6 +200,7 @@ pub struct InferenceEngine {
     var_kinds: HashMap<TypeVarId, Kind>,
     normalization_env: TypeNormalizationEnv,
     type_display_context: crate::type_services::display::TypeDisplayContext,
+    generic_defaults: Vec<(Type, Type)>,
 }
 
 struct ResolveFolder<'a> {
@@ -995,6 +996,7 @@ impl InferenceEngine {
             var_kinds: HashMap::new(),
             normalization_env: TypeNormalizationEnv::new(),
             type_display_context: Default::default(),
+            generic_defaults: Vec::new(),
         }
     }
 
@@ -1017,6 +1019,7 @@ impl InferenceEngine {
             var_kinds,
             normalization_env,
             type_display_context: Default::default(),
+            generic_defaults: Vec::new(),
         }
     }
 
@@ -1032,6 +1035,7 @@ impl InferenceEngine {
             var_kinds: self.var_kinds.clone(),
             normalization_env: self.normalization_env.clone(),
             type_display_context: self.type_display_context.clone(),
+            generic_defaults: self.generic_defaults.clone(),
         }
     }
 
@@ -1179,6 +1183,30 @@ impl InferenceEngine {
 
     pub fn fresh_type_var(&mut self) -> Type {
         self.fresh_type_var_of_kind(Kind::Type)
+    }
+
+    pub(crate) fn fresh_generic_args(&mut self, params: &[crate::types::GenericParamDecl], span: &Span) -> Vec<Type> {
+        let args = params.iter().map(|param| self.fresh_type_var_at_kind(span.clone(), param.kind.clone())).collect::<Vec<_>>();
+        self.register_generic_defaults(params, &args);
+        args
+    }
+
+    pub(crate) fn register_generic_defaults(&mut self, params: &[crate::types::GenericParamDecl], args: &[Type]) {
+        let substitutions = params.iter().zip(args).map(|(param, arg)| (param.id, arg.clone())).collect();
+        for (param, arg) in params.iter().zip(args) {
+            if let Some(default) = &param.default {
+                self.generic_defaults.push((arg.clone(), default.substitute_generics(&substitutions)));
+            }
+        }
+    }
+
+    pub(crate) fn apply_generic_defaults(&mut self, parameter_vars: &HashSet<TypeVarId>) -> Result<(), InferenceError> {
+        for (arg, default) in std::mem::take(&mut self.generic_defaults) {
+            if matches!(self.resolve(&arg), Type::TypeVar(id) if !parameter_vars.contains(&id)) {
+                self.unify(&arg, &default).map_err(|error| InferenceError { error, span: self.span_for_type(&arg) })?;
+            }
+        }
+        Ok(())
     }
 
     pub fn fresh_type_var_of_kind(&mut self, kind: Kind) -> Type {

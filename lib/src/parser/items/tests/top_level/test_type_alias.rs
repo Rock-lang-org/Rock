@@ -12,7 +12,7 @@ fn test_type_alias() {
     let (rest, top_level) = top_level.process(ParseCtx::from(&tokens, &config)).unwrap();
 
     match top_level {
-        TopLevel::NewType(name, _ty) => {
+        TopLevel::NewType(name, _, _ty) => {
             assert_eq!(name.name, "MyInt");
             // Test passes if we get a type alias
         }

@@ -1,7 +1,7 @@
 use std::fs;
 
 use crate::{
-    constants::{LIB_DIR, STDLIB_ARTIFACT_NAME, TOOLCHAINS_DIR},
+    constants::{LIB_DIR, STD_ARTIFACT_NAME, TOOLCHAINS_DIR},
     target::{add_target_component_from_dir, detect_target_component_source},
     toolchain::{install_toolchain, set_default_toolchain},
 };
@@ -56,7 +56,7 @@ fn test_add_target_component_installs_into_selected_toolchain() {
         add_target_component_from_dir(&home, triple, None, &component_source, temp_dir.as_path())
             .unwrap();
     assert_eq!(
-        fs::read_to_string(installed.join(STDLIB_ARTIFACT_NAME)).unwrap(),
+        fs::read_to_string(installed.join(STD_ARTIFACT_NAME)).unwrap(),
         "wasm artifact\n"
     );
 
@@ -98,7 +98,7 @@ fn test_add_target_component_uses_project_pin() {
         .join(LIB_DIR)
         .join("rocklib")
         .join(triple)
-        .join(STDLIB_ARTIFACT_NAME)
+        .join(STD_ARTIFACT_NAME)
         .exists());
 
     let _ = fs::remove_dir_all(temp_dir);

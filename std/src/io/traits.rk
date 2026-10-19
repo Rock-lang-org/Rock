@@ -1,0 +1,110 @@
+// Portable IO traits and errors.
+
+> std::ffi::libc::__errno_location
+> std::ffi::libc::read
+> std::ffi::libc::write
+> std::concurrency::arc::Arc
+> std::ops::index::Index
+> std::ops::range::Range
+> std::control::result::Result
+> std::show::Show
+> std::string::owned::String
+
+< enum IoError
+    Os I32
+    InvalidPath
+    InvalidAddress
+    InvalidInput
+    WriteZero
+
+< struct Stdin
+
+< struct Stdout
+
+< last_os_error = ->
+    ptr = __errno_location!
+    IoError::Os (unsafe *ptr)
+
+< trait Read
+    ^@read: &mut [U8] -> Result I64, IoError
+
+< trait Write
+    @write: &[U8] -> Result I64, IoError
+    @write_str: &Str -> Result I64, IoError
+    @write_all: &[U8] -> Result I64, IoError
+
+write_all: &W -> &[U8] -> Result I64, IoError where W: Write
+< write_all = target, buf ->
+    mut total: I64 = 0
+    len = buf.len!
+    while total < len
+        match target.write (&buf[total..])
+            Result::Ok count =>
+                if count <= 0
+                    failure: Result I64, IoError = Result::Err IoError::WriteZero
+                    return failure
+                total = total + count
+            Result::Err error =>
+                failure: Result I64, IoError = Result::Err error
+                return failure
+    Result::Ok total
+
+write_str: &W -> &Str -> Result I64, IoError where W: Write
+< write_str = target, value -> write_all target, value.as_bytes!
+
+impl Write for Arc W where W: Write
+    @write = buf -> (*(*self)).write buf
+    @write_str = value -> (*(*self)).write_str value
+    @write_all = buf -> (*(*self)).write_all buf
+
+< stdin = -> Stdin
+
+< stdout = -> Stdout
+
+impl Stdin
+    ^@read_bytes: &mut [U8] -> Result I64, IoError
+    ^@read_bytes = buf ->
+        count = read 0, buf.as_mut_ptr!, buf.len!
+        if count < 0
+            Result::Err (last_os_error!)
+        else
+            Result::Ok count
+
+impl Read for Stdin
+    ^@read = buf -> self.read_bytes buf
+
+copy: &mut R -> &W -> Result I64, IoError where R: Read, W: Write
+< copy = source, target ->
+    mut buffer: [U8; 8192] = [0; 8192]
+    mut total: I64 = 0
+    mut done = false
+    while !done
+        read_result: Result I64, IoError = source.read (&mut buffer)
+        count: I64 = read_result?
+        if count <= 0
+            done = true
+        else
+            write_result: Result I64, IoError = write_all target, (&buffer[..count])
+            written: I64 = write_result?
+            if written <= 0
+                done = true
+            else
+                total = total + written
+    Result::Ok total
+
+|>>: R -> &W -> Result I64, IoError where R: Read, W: Write
+|>> = mut source, target -> copy (&mut source), target
+
+impl Write for Stdout
+    @write = buf ->
+        count = write 1, buf.as_ptr!, buf.len!
+        if count < 0
+            Result::Err (last_os_error!)
+        else
+            Result::Ok count
+
+    @write_str = value -> write_str self, value
+    @write_all = buf -> write_all self, buf
+
+impl Show for IoError
+    @show = -> String::from "IoError"

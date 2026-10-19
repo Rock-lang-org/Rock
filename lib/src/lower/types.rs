@@ -8,6 +8,11 @@ use crate::types::Type;
 use crate::lower::Lowerer;
 
 impl TypeLoweringContext for Lowerer {
+    fn constructor_params(&self, id: crate::ids::DefId) -> Option<Vec<crate::types::GenericParamDecl>> {
+        self.items.structures().find(|(_, item)| item.id == id).map(|(_, item)| item.generic_params.clone())
+            .or_else(|| self.items.enumerations().find(|(_, item)| item.id == id).map(|(_, item)| item.generic_params.clone()))
+            .or_else(|| self.items.type_alias(id).map(|item| item.generic_params.clone()))
+    }
     fn push_type_error(&mut self, message: String, span: crate::lexer::Span) {
         self.diagnostics.push(message, span);
     }

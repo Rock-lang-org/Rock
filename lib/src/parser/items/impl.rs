@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::AssociatedTypeDef,
+    ast::{AssociatedTypeDef, ParseType},
     lexer::TokenType,
     parser::{engine::*, parse_type, parse_type_inner, FunctionDecl, FunctionSig, Impl},
 };
@@ -36,9 +36,10 @@ fn associated_type_def(stream: Input) -> IResult<AssociatedTypeDef> {
 }
 
 pub fn r#impl(stream: Input) -> IResult<Impl> {
-    (
+    let start = stream;
+    let (rest, implementation) = (
         TokenType::Keyword("impl".to_string()),
-        parse_type_inner,
+        parse_type_inner.map(ParseType::Type).or(parse_type),
         preceded(TokenType::Keyword("for".to_string()), parse_type).opt(),
         // Parse optional where clauses: `where T: Show, U: Display`
         preceded(
@@ -85,5 +86,9 @@ pub fn r#impl(stream: Input) -> IResult<Impl> {
                 where_clauses: where_clauses.unwrap_or_default(),
             }
         })
-        .process(stream)
+        .process(stream)?;
+    if implementation.for_.is_some() && !matches!(implementation.name, ParseType::Type(_)) {
+        return Err(ParseError::UnexpectedToken("trait name before 'for'".to_string(), start.seek()?));
+    }
+    Ok((rest, implementation))
 }

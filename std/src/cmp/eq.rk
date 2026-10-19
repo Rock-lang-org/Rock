@@ -1,0 +1,82 @@
+// Partial equality owns the operators; Eq additionally promises reflexivity.
+
+< trait PartialEq {Rhs = Self}
+    @==: &Rhs -> Bool
+    @!=: &Rhs -> Bool
+    @!= = other -> !(*self == *other)
+
+< trait Eq where Self: PartialEq
+
+impl PartialEq for I64
+    @== = other -> ~I64Eq *self, *other
+
+impl PartialEq for I32
+    @== = other -> ~I32Eq *self, *other
+
+impl PartialEq for I16
+    @== = other -> ~I16Eq *self, *other
+
+impl PartialEq for I8
+    @== = other -> ~I8Eq *self, *other
+
+impl PartialEq for U64
+    @== = other -> ~U64Eq *self, *other
+
+impl PartialEq for U32
+    @== = other -> ~U32Eq *self, *other
+
+impl PartialEq for U16
+    @== = other -> ~U16Eq *self, *other
+
+impl PartialEq for U8
+    @== = other -> ~U8Eq *self, *other
+
+impl PartialEq for Char
+    @== = other -> (*self as U32) == (*other as U32)
+
+impl PartialEq for F64
+    @== = other -> ~F64Eq *self, *other
+
+impl PartialEq for F32
+    @== = other -> ~F32Eq *self, *other
+
+impl PartialEq for Bool
+    @== = other -> ~BoolEq *self, *other
+
+// &Str implementation for UTF-8 string slices / static string literals.
+impl PartialEq for &Str
+    @== = other ->
+        lhs_str = *self
+        rhs_str = *other
+        len = lhs_str.len!
+        other_len = rhs_str.len!
+        if len != other_len
+            false
+        else
+            lhs = lhs_str.as_ptr!
+            rhs = rhs_str.as_ptr!
+            i = 0
+            equal = true
+            while equal && i < len
+                left = unsafe lhs[i]
+                right = unsafe rhs[i]
+                if left != right
+                    equal = false
+                i = i + 1
+            equal
+
+impl PartialEq for ()
+    @== = other -> true
+
+impl Eq for I64
+impl Eq for I32
+impl Eq for I16
+impl Eq for I8
+impl Eq for U64
+impl Eq for U32
+impl Eq for U16
+impl Eq for U8
+impl Eq for Char
+impl Eq for Bool
+impl Eq for &Str
+impl Eq for ()

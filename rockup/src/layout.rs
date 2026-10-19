@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::constants::{
     BIN_DIR, COMPONENTS_MANIFEST_NAME, LIB_DIR, ROCKC_BIN_NAME, ROCK_BIN_NAME, ROCK_LSP_BIN_NAME,
-    STDLIB_ARTIFACT_NAME, STDLIB_OBJECT_NAME, TOOLCHAIN_MANIFEST_NAME,
+    STD_ARTIFACT_NAME, STD_OBJECT_NAME, TOOLCHAIN_MANIFEST_NAME,
 };
 
 pub(crate) use rock_shared::sysroot::host_target_triple;
@@ -16,8 +16,8 @@ pub(crate) struct ToolchainLayout {
     pub(crate) rock_bin: PathBuf,
     pub(crate) rockc_bin: PathBuf,
     pub(crate) rock_lsp_bin: PathBuf,
-    pub(crate) stdlib_artifact: PathBuf,
-    pub(crate) stdlib_object: PathBuf,
+    pub(crate) std_artifact: PathBuf,
+    pub(crate) std_object: PathBuf,
     pub(crate) manifest_path: PathBuf,
     pub(crate) components_path: PathBuf,
 }
@@ -38,8 +38,8 @@ impl ToolchainLayout {
             rock_bin: bin_dir.join(ROCK_BIN_NAME),
             rockc_bin: bin_dir.join(ROCKC_BIN_NAME),
             rock_lsp_bin: bin_dir.join(ROCK_LSP_BIN_NAME),
-            stdlib_artifact: target_libdir.join(STDLIB_ARTIFACT_NAME),
-            stdlib_object: target_libdir.join(STDLIB_OBJECT_NAME),
+            std_artifact: target_libdir.join(STD_ARTIFACT_NAME),
+            std_object: target_libdir.join(STD_OBJECT_NAME),
             manifest_path: target_libdir.join(TOOLCHAIN_MANIFEST_NAME),
             components_path: target_libdir.join(COMPONENTS_MANIFEST_NAME),
             bin_dir,

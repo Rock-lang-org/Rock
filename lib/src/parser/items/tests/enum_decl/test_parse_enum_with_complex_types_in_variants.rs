@@ -11,7 +11,8 @@ fn test_parse_enum_with_complex_types_in_variants() {
 
     let (rest, enum_decl) = enum_decl.process(ParseCtx::from(&tokens, &config)).unwrap();
 
-    assert_eq!(enum_decl.name.to_string(), "ComplexEnum T");
+    assert_eq!(enum_decl.name.to_string(), "ComplexEnum");
+    assert_eq!(enum_decl.generic_params[0].name.name, "T");
     assert_eq!(enum_decl.variants.len(), 1);
     let variant = &enum_decl.variants[0];
 

@@ -14,7 +14,7 @@ fn test_parse_impl_with_associated_type() {
 
     let (rest, impl_decl) = r#impl.process(ParseCtx::from(&tokens, &config)).unwrap();
 
-    assert_eq!(impl_decl.name.name, "Deref");
+    assert_eq!(impl_decl.name.type_name(), "Deref");
     assert_eq!(impl_decl.associated_types.len(), 1);
     assert_eq!(impl_decl.associated_types[0].name.name, "Target");
     assert_eq!(impl_decl.associated_types[0].ty.to_string(), "T");

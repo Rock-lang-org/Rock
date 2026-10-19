@@ -164,13 +164,13 @@ impl<'ast> Visitor<'ast> for AstValidator {
 
     fn visit_impl(&mut self, node: &'ast Impl) {
         let label = if let Some(for_) = &node.for_ {
-            format!("Impl({} for {})", node.name.name, for_.type_name())
+            format!("Impl({} for {})", node.name.type_name(), for_.type_name())
         } else {
-            format!("Impl({})", node.name.name)
+            format!("Impl({})", node.name.type_name())
         };
         self.push_ctx(&label);
 
-        if node.name.name.is_empty() {
+        if node.name.type_name().is_empty() {
             self.error("Impl block has empty type name");
         }
         if node.methods.is_empty() && node.signatures.is_empty() {
@@ -394,7 +394,7 @@ fn find_impl<'a>(program: &'a Program, name: &str) -> &'a Impl {
         .top_levels
         .iter()
         .find_map(|tl| match tl {
-            TopLevel::Impl(i) if i.name.name == name => Some(i),
+            TopLevel::Impl(i) if i.name.type_name() == name => Some(i),
             _ => None,
         })
         .unwrap_or_else(|| panic!("impl '{}' not found", name))
@@ -534,7 +534,7 @@ fn enum_with_payload() {
 
     let p = parse(input);
     let e = find_enum(&p, "Result");
-    assert_eq!(e.name.generics.len(), 2);
+    assert_eq!(e.generic_params.len(), 2);
     assert_eq!(e.variants.len(), 2);
 
     // Each variant should have a type payload
@@ -617,7 +617,7 @@ impl Show for Container T
     let i = program_find_impl_for(&p, "Show", "Container");
     assert!(i.is_some(), "Should find impl Show for Container T");
     let i = i.unwrap();
-    assert_eq!(i.name.generics.len(), 0, "Show trait has no generics");
+    assert_eq!(i.name.generics().len(), 0, "Show trait has no generics");
     assert_eq!(
         i.for_.as_ref().unwrap().generics().len(),
         1,
@@ -847,7 +847,7 @@ fn program_find_impl_for<'a>(
 ) -> Option<&'a Impl> {
     program.module.top_levels.iter().find_map(|tl| match tl {
         TopLevel::Impl(i)
-            if i.name.name == trait_name
+            if i.name.type_name() == trait_name
                 && i.for_.as_ref().map(|f| f.type_name()) == Some(for_name.to_string()) =>
         {
             Some(i)

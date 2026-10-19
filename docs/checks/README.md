@@ -10,7 +10,7 @@ cargo build --release -p rockc
 node docs/checks/compile-examples.cjs
 ```
 
-The runner rebuilds the stdlib, assembles the companion files in the modules and
+The runner rebuilds the std, assembles the companion files in the modules and
 packages chapters, and builds their dependencies. The HTTP examples require the
 `rock_http` checkout and revision documented in the HTTP chapter, at
 `../rock_http` by default. Set `ROCK_HTTP_ROOT` to use another checkout location,

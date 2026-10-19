@@ -1,0 +1,9 @@
+main = ->
+    sqrt 144.0 .println!
+    sin 0.0 .println!
+    cos 0.0 .println!
+    pow 2.0, 10.0 .println!
+    ceil 3.2 .println!
+    floor 3.8 .println!
+    "hello".len!.println!
+    0

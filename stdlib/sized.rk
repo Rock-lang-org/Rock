@@ -1,8 +1,0 @@
-// Sized trait - marker trait for types with known compile-time size
-//
-// This is an auto-trait: the compiler automatically implements Sized
-// for all structs, enums, and primitive types.
-// Use the free function `size_of` from stdlib::mem to get the byte size of a value.
-
-lang sized
-< trait Sized

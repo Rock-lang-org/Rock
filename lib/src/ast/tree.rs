@@ -62,7 +62,7 @@ pub enum TopLevel {
     TraitDecl(TraitDecl),
     EnumDecl(EnumDecl),
     Impl(Impl),
-    NewType(ParseTypeInner, ParseType),
+    NewType(ParseTypeInner, Vec<GenericParamDecl>, ParseType),
 }
 
 impl TopLevel {
@@ -72,11 +72,11 @@ impl TopLevel {
             TopLevel::StructDecl(sd) => Some(&sd.name.name),
             TopLevel::TraitDecl(td) => Some(&td.name.name),
             TopLevel::EnumDecl(ed) => Some(&ed.name.name),
-            TopLevel::Impl(i) => Some(&i.name.name),
+            TopLevel::Impl(i) => i.name.named_inner().map(|name| &name.name),
             TopLevel::MacroDecl(md) => Some(&md.name.name),
             TopLevel::MacroInvoc(mi) => Some(&mi.name.name),
             TopLevel::FunctionSig(fs) => Some(&fs.name.name),
-            TopLevel::NewType(nt, _) => Some(&nt.name),
+            TopLevel::NewType(nt, _, _) => Some(&nt.name),
             _ => None,
         }
     }
@@ -120,6 +120,7 @@ pub struct AssociatedTypeDecl {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnumDecl {
     pub name: ParseTypeInner,
+    pub generic_params: Vec<GenericParamDecl>,
     pub variants: Vec<EnumVariant>,
     pub exported: bool,
     pub language_items: LanguageItemAnnotations,
@@ -165,7 +166,7 @@ pub enum NamedFieldsOrTypesList {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Impl {
-    pub name: ParseTypeInner,
+    pub name: ParseType,
     pub for_: Option<ParseType>,
     pub associated_types: Vec<AssociatedTypeDef>,
     pub methods: HashMap<Ident, FunctionDecl>,
@@ -214,6 +215,14 @@ pub enum ParseType {
 }
 
 impl ParseType {
+    pub fn named_inner(&self) -> Option<&ParseTypeInner> {
+        match self {
+            ParseType::Type(inner) => Some(inner),
+            ParseType::Application(application) => application.constructor.named_inner(),
+            _ => None,
+        }
+    }
+
     pub fn span(&self) -> Span {
         match self {
             ParseType::Type(inner) => inner.span.clone(),
@@ -291,6 +300,7 @@ pub struct ParseTypeInner {
 /// a constructor binder explicit, but no kind is inferred here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GenericParamDecl {
+    pub default: Option<Box<ParseType>>,
     pub name: Ident,
     pub kind: Option<TypeApplication>,
     pub span: Span,

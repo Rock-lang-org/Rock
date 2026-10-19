@@ -5,9 +5,9 @@ use crate::crate_system::CrateContext;
 use crate::ids::{AssocTypeId, DefId, ModuleId, VariantId};
 use crate::language_items::{
     merge_language_item_providers_all, DropLanguageItems, FnLanguageItems, FnMutLanguageItems,
-    FnOnceLanguageItems, IndexLanguageItems, IndexMutLanguageItems, LanguageItemRole,
-    LanguageItems, RangeLanguageItems, SendLanguageItems, SizedLanguageItems, SyncLanguageItems,
-    TryLanguageItems,
+    FnOnceLanguageItems, FoldLanguageItems, IndexLanguageItems, IndexMutLanguageItems,
+    LanguageItemRole, LanguageItems, RangeLanguageItems, SendLanguageItems, SizedLanguageItems,
+    SyncLanguageItems, TryLanguageItems,
 };
 use crate::lexer::Span;
 use crate::lower::ResolveError;
@@ -102,6 +102,7 @@ struct ProtocolError {
 struct BindingState {
     sized: Option<RootRecord>,
     drop: DropPartial,
+    fold: DropPartial,
     index: IndexPartial,
     index_mut: IndexPartial,
     fn_once: FnPartial,
@@ -526,6 +527,7 @@ impl BindingState {
         let slot = match role {
             LanguageItemRole::Sized => &mut self.sized,
             LanguageItemRole::Drop => &mut self.drop.root,
+            LanguageItemRole::Fold => &mut self.fold.root,
             LanguageItemRole::Index => &mut self.index.root,
             LanguageItemRole::IndexMut => &mut self.index_mut.root,
             LanguageItemRole::FnOnce => &mut self.fn_once.root,
@@ -559,6 +561,7 @@ impl BindingState {
         let span = value.span.clone();
         let slot = match (protocol, role) {
             (LanguageItemRole::Drop, LanguageItemRole::Method) => &mut self.drop.method,
+            (LanguageItemRole::Fold, LanguageItemRole::Method) => &mut self.fold.method,
             (LanguageItemRole::Index, LanguageItemRole::Method) => &mut self.index.method,
             (LanguageItemRole::IndexMut, LanguageItemRole::Method) => &mut self.index_mut.method,
             (LanguageItemRole::FnOnce, LanguageItemRole::Method) => &mut self.fn_once.method,
@@ -665,6 +668,16 @@ impl BindingState {
     fn finish(mut self) -> Result<LanguageItems<DefId>, Vec<ResolveError>> {
         self.complete_sized();
         self.complete_drop();
+        if let Some(root) = &self.fold.root {
+            if self.fold.method.is_none() {
+                self.error(
+                    LanguageItemRole::Fold,
+                    Some(LanguageItemRole::Method),
+                    "language item fold.method is missing".to_string(),
+                    root.span.clone(),
+                );
+            }
+        }
         self.complete_index();
         self.complete_index_mut();
         self.complete_fn(LanguageItemRole::FnOnce);
@@ -688,6 +701,13 @@ impl BindingState {
             .map(|root| SizedLanguageItems { trait_id: root.id });
         let drop = match (self.drop.root, self.drop.method) {
             (Some(root), Some(method)) if method.owner_id == root.id => Some(DropLanguageItems {
+                trait_id: root.id,
+                method_id: method.id,
+            }),
+            _ => None,
+        };
+        let fold = match (self.fold.root, self.fold.method) {
+            (Some(root), Some(method)) if method.owner_id == root.id => Some(FoldLanguageItems {
                 trait_id: root.id,
                 method_id: method.id,
             }),
@@ -852,6 +872,7 @@ impl BindingState {
         Ok(LanguageItems {
             sized,
             drop,
+            fold,
             index,
             index_mut,
             fn_once,
@@ -1113,6 +1134,7 @@ fn root_expected_kind(role: LanguageItemRole) -> Option<ItemKind> {
     match role {
         LanguageItemRole::Sized
         | LanguageItemRole::Drop
+        | LanguageItemRole::Fold
         | LanguageItemRole::Index
         | LanguageItemRole::IndexMut
         | LanguageItemRole::FnOnce
@@ -1133,6 +1155,7 @@ fn expected_child_kind(
 ) -> Option<LanguageItemMemberKind> {
     match (protocol, role) {
         (LanguageItemRole::Drop, LanguageItemRole::Method)
+        | (LanguageItemRole::Fold, LanguageItemRole::Method)
         | (LanguageItemRole::Index, LanguageItemRole::Method)
         | (LanguageItemRole::IndexMut, LanguageItemRole::Method)
         | (LanguageItemRole::FnOnce, LanguageItemRole::Method)
@@ -1179,6 +1202,7 @@ fn role_order(role: LanguageItemRole) -> u8 {
     match role {
         LanguageItemRole::Sized => 0,
         LanguageItemRole::Drop => 1,
+        LanguageItemRole::Fold => 25,
         LanguageItemRole::Index => 2,
         LanguageItemRole::IndexMut => 3,
         LanguageItemRole::FnOnce => 4,

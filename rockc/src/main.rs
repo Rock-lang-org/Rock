@@ -161,9 +161,15 @@ pub struct Config {
     /// Crate name for product identity and codegen symbol qualification
     #[arg(long)]
     crate_name: Option<String>,
-    /// Optimization level (0-3)
-    #[arg(short = 'O', long, default_value = "0")]
-    opt_level: u8,
+    /// Build without optimization (default)
+    #[arg(long, conflicts_with = "release")]
+    debug: bool,
+    /// Build with full optimization
+    #[arg(long, conflicts_with = "debug")]
+    release: bool,
+    /// Override integer overflow checks (true/false), independently of optimization.
+    #[arg(long, action = clap::ArgAction::Set)]
+    overflow_checks: Option<bool>,
     /// Emit LLVM IR file
     #[arg(long)]
     emit_llvm: bool,
@@ -176,10 +182,10 @@ pub struct Config {
     /// Emit object file to this exact path
     #[arg(long)]
     emit_object: Option<PathBuf>,
-    /// Don't inject stdlib prelude
+    /// Don't inject std prelude
     #[arg(long)]
     no_prelude: bool,
-    /// Don't auto-load bundled stdlib from the sysroot
+    /// Don't auto-load bundled std from the sysroot
     #[arg(long)]
     no_std: bool,
     /// Override the compiler sysroot
@@ -223,7 +229,8 @@ impl Config {
             extern_artifacts,
             source_providers: Vec::new(),
             current_crate_name: config.crate_name,
-            opt_level: config.opt_level,
+            opt_level: if config.release { 3 } else { 0 },
+            overflow_checks: config.overflow_checks,
             emit_llvm: config.emit_llvm,
             no_link: config.no_link,
             emit_object: config.emit_object,
@@ -1215,6 +1222,91 @@ mod tests {
         assert!(!messages.contains("Parse {"));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_build_profiles() {
+        for (flags, expected) in [
+            (vec![], 0),
+            (vec!["--debug"], 0),
+            (vec!["--release"], 3),
+        ] {
+            let mut args = vec!["rockc", "--entry-file", "main.rk"];
+            args.extend(flags);
+            let config = Config::try_parse_from(args).unwrap().into_compiler_config().unwrap();
+            assert_eq!(config.opt_level, expected);
+        }
+        for flags in [
+            vec!["--debug", "--release"],
+            vec!["--release", "--debug"],
+        ] {
+            let mut args = vec!["rockc", "--entry-file", "main.rk"];
+            args.extend(flags);
+            assert!(Config::try_parse_from(args).is_err());
+        }
+    }
+
+    #[test]
+    fn test_overflow_checks_are_independent_of_build_profile() {
+        for (profile, expected_opt) in [("--debug", 0), ("--release", 3)] {
+            for (flag, expected) in [("true", true), ("false", false)] {
+                let config = Config::try_parse_from([
+                    "rockc", "--entry-file", "main.rk", profile, "--overflow-checks", flag,
+                ]).unwrap().into_compiler_config().unwrap();
+                assert_eq!(config.opt_level, expected_opt);
+                assert_eq!(config.overflow_checks, Some(expected));
+            }
+        }
+        assert!(Config::try_parse_from(["rockc", "--overflow-checks", "invalid"]).is_err());
+    }
+
+    #[test]
+    fn test_numeric_optimization_flags_are_unknown() {
+        for flags in [
+            vec!["-O"],
+            vec!["-O", "0"],
+            vec!["-O", "3"],
+            vec!["-O0"],
+            vec!["-O1"],
+            vec!["-O2"],
+            vec!["-O3"],
+            vec!["--opt-level"],
+            vec!["--opt-level", "3"],
+            vec!["--opt-level=0"],
+            vec!["--opt-level=3"],
+        ] {
+            let mut args = vec!["rockc", "--entry-file", "main.rk"];
+            args.extend(flags);
+            let error = Config::try_parse_from(args).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
+        let help = <Config as clap::CommandFactory>::command().render_long_help().to_string();
+        assert!(!help.contains("-O"));
+        assert!(!help.contains("--opt-level"));
+    }
+
+    #[test]
+    fn test_build_profile_flags_compile_unit_main_with_zero_exit_status() {
+        let dir = artifact_deps_test_dir("profile_unit_main");
+        let entry = dir.join("main.rk");
+        std::fs::write(&entry, "extern putchar: I32 -> I32\nmain = !-> putchar (65 as I32)\n").unwrap();
+        for flag in [None, Some("--debug"), Some("--release")] {
+            let output_dir = dir.join(flag.unwrap_or("default").trim_start_matches('-'));
+            let mut args = vec![
+                "rockc".to_string(), "--entry-file".to_string(), entry.display().to_string(),
+                "--output-dir".to_string(), output_dir.display().to_string(),
+                "--no-std".to_string(), "--no-prelude".to_string(),
+            ];
+            if let Some(flag) = flag {
+                args.push(flag.to_string());
+            }
+            let config = Config::try_parse_from(args).unwrap().into_compiler_config().unwrap();
+            rock_lib::compile(&config).unwrap();
+            let output = std::process::Command::new(output_dir.join("main")).output().unwrap();
+            assert_eq!(output.status.code(), Some(0), "profile {flag:?}");
+            assert_eq!(output.stdout, b"A", "profile {flag:?}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

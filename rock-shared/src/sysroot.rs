@@ -12,12 +12,12 @@ use std::{
 
 pub const ROCK_SYSROOT_ENV: &str = "ROCK_SYSROOT";
 pub const CARGO_TARGET_DIR_ENV: &str = "CARGO_TARGET_DIR";
-pub const STDLIB_CRATE_NAME: &str = "stdlib";
-pub const STDLIB_ARTIFACT_FILE_NAME: &str = "stdlib.rkca";
-pub const STDLIB_OBJECT_FILE_NAME: &str = "stdlib.o";
+pub const STD_CRATE_NAME: &str = "std";
+pub const STD_ARTIFACT_FILE_NAME: &str = "std.rkca";
+pub const STD_OBJECT_FILE_NAME: &str = "std.o";
 pub const TOOLCHAIN_MANIFEST_FILE_NAME: &str = "manifest.json";
 pub const COMPONENTS_MANIFEST_FILE_NAME: &str = "components.json";
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 45;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SysrootSource {
@@ -52,8 +52,8 @@ pub struct SysrootLayout {
     pub sysroot: PathBuf,
     pub target_triple: String,
     pub target_libdir: PathBuf,
-    pub stdlib_artifact: PathBuf,
-    pub stdlib_object: PathBuf,
+    pub std_artifact: PathBuf,
+    pub std_object: PathBuf,
     pub manifest_path: PathBuf,
     pub components_path: PathBuf,
 }
@@ -65,8 +65,8 @@ impl SysrootLayout {
         Self {
             sysroot,
             target_triple,
-            stdlib_artifact: target_libdir.join(STDLIB_ARTIFACT_FILE_NAME),
-            stdlib_object: target_libdir.join(STDLIB_OBJECT_FILE_NAME),
+            std_artifact: target_libdir.join(STD_ARTIFACT_FILE_NAME),
+            std_object: target_libdir.join(STD_OBJECT_FILE_NAME),
             manifest_path: target_libdir.join(TOOLCHAIN_MANIFEST_FILE_NAME),
             components_path: target_libdir.join(COMPONENTS_MANIFEST_FILE_NAME),
             target_libdir,
@@ -110,7 +110,7 @@ pub fn resolve_sysroot_from(
         });
     }
 
-    // Installed toolchains use <sysroot>/bin. Their stdlib must not come
+    // Installed toolchains use <sysroot>/bin. Their std must not come
     // from a checkout or Cargo's build directory, even if the bundle is missing.
     if executable
         .parent()
@@ -340,10 +340,10 @@ mod tests {
             PathBuf::from("/toolchains/stable/lib/rocklib").join(&layout.target_triple)
         );
         assert_eq!(
-            layout.stdlib_artifact,
-            layout.target_libdir.join("stdlib.rkca")
+            layout.std_artifact,
+            layout.target_libdir.join("std.rkca")
         );
-        assert_eq!(layout.stdlib_object, layout.target_libdir.join("stdlib.o"));
+        assert_eq!(layout.std_object, layout.target_libdir.join("std.o"));
         assert_eq!(
             layout.manifest_path,
             layout.target_libdir.join("manifest.json")
@@ -364,7 +364,7 @@ mod tests {
 
         fs::create_dir_all(&nested).unwrap();
         fs::create_dir_all(&layout.target_libdir).unwrap();
-        fs::write(&layout.stdlib_artifact, b"artifact").unwrap();
+        fs::write(&layout.std_artifact, b"artifact").unwrap();
 
         let resolution = resolve_sysroot_from(
             None,

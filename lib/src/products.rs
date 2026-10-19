@@ -15,13 +15,15 @@ use crate::hir::{
 use crate::ids::{CrateId, DefId, Idx, LocalDefId};
 use crate::infer::ResolvedHirProgram;
 use crate::language_items::{
-    DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems,
+    DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, FoldLanguageItems,
     IndexLanguageItems, IndexMutLanguageItems, LanguageItems, RangeLanguageItems,
     SendLanguageItems, SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
 };
 use crate::types::{GenericParamDecl, Type};
 
 mod type_table;
+
+pub use crate::infer::constants::{ArithmeticSummary, ArithmeticType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ProductCrateId(pub u32);
@@ -58,7 +60,7 @@ impl From<DefId> for ProductDefId {
     }
 }
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 45;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 50;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;
@@ -303,6 +305,7 @@ pub struct ProductFunctionInterface {
     pub is_method: bool,
     pub self_receiver: Option<crate::types::ReceiverMode>,
     pub is_unsafe: bool,
+    pub constant_arithmetic: Option<ArithmeticSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,6 +344,7 @@ impl<P: HirPhase> From<&HirFunctionFor<P>> for ProductFunctionInterface {
             is_method: function.is_method,
             self_receiver: function.self_receiver,
             is_unsafe: function.is_unsafe,
+            constant_arithmetic: None,
         }
     }
 }
@@ -1158,6 +1162,7 @@ impl CompilerProducts {
             record_id_remap(&mut id_remap, requested_id, id);
             record_name(&mut identity_table, id, name);
             let mut trt = trt.clone();
+            let mut signature_backed_method_ids = BTreeMap::new();
             let mut signature_names = trt.signatures.keys().cloned().collect::<Vec<_>>();
             signature_names.sort();
             for signature_name in signature_names {
@@ -1176,6 +1181,9 @@ impl CompilerProducts {
                 );
                 record_id_remap(&mut id_remap, requested_signature_id, signature_id);
                 trait_member_product_ids.insert(original_signature_id, signature_id);
+                if trt.methods.get(&signature_name).is_some_and(|method| method.id == original_signature_id) {
+                    signature_backed_method_ids.insert(signature_name.clone(), signature_id);
+                }
                 record_display_name(
                     &mut identity_table,
                     signature_id,
@@ -1189,13 +1197,16 @@ impl CompilerProducts {
                 let method = &trt.methods[&method_name];
                 let original_method_id = method.id;
                 let requested_method_id = ProductDefId::from(original_method_id);
-                let method_id = reserve_product_id(
-                    requested_method_id,
-                    &mut used_ids,
-                    fallback_crate,
-                    &mut next_fallback_local,
-                    false,
-                );
+                // A default body and its signature share one canonical member ID.
+                // Reserving it twice makes call-target remapping ambiguous.
+                let method_id = signature_backed_method_ids.get(&method_name).copied()
+                    .unwrap_or_else(|| reserve_product_id(
+                        requested_method_id,
+                        &mut used_ids,
+                        fallback_crate,
+                        &mut next_fallback_local,
+                        false,
+                    ));
                 record_id_remap(&mut id_remap, requested_method_id, method_id);
                 trait_member_product_ids.insert(original_method_id, method_id);
                 record_display_name(
@@ -1341,6 +1352,15 @@ impl CompilerProducts {
         }
 
         remap_product_type_def_ids(&mut interface, &mut bodies, &id_remap);
+        let summaries = hir.constant_arithmetic.iter().flat_map(|(id, summary)| {
+            let product_id = ProductDefId::from(*id);
+            id_remap.get(&product_id).into_iter().flatten().map(move |id| (*id, summary))
+        }).collect::<BTreeMap<_, _>>();
+        for function in interface.functions.values_mut()
+            .chain(interface.impls.values_mut().flat_map(|imp| imp.methods.values_mut()))
+            .chain(interface.traits.values_mut().flat_map(|trt| trt.methods.values_mut())) {
+            function.constant_arithmetic = summaries.get(&ProductDefId::from(function.id)).map(|summary| (*summary).clone());
+        }
         interface.language_items =
             product_language_items_from_program(&hir.program, &hir.current_def_ids, &id_remap)?;
         record_product_aliases(
@@ -1409,6 +1429,25 @@ fn product_language_items_from_program<P: HirPhase>(
             )
             .map(|ids| {
                 ids.map(|ids| DropLanguageItems {
+                    trait_id: ids[0],
+                    method_id: ids[1],
+                })
+            })
+        })
+        .transpose()?
+        .flatten();
+    let fold = language_items
+        .fold
+        .as_ref()
+        .map(|items| {
+            map_product_language_item_bundle(
+                "fold",
+                &[items.trait_id, items.method_id],
+                current_def_ids,
+                id_remap,
+            )
+            .map(|ids| {
+                ids.map(|ids| FoldLanguageItems {
                     trait_id: ids[0],
                     method_id: ids[1],
                 })
@@ -1593,6 +1632,7 @@ fn product_language_items_from_program<P: HirPhase>(
         .flatten();
 
     Ok(ProductLanguageItems {
+        fold,
         sized,
         drop,
         index,
@@ -1715,6 +1755,9 @@ fn assert_valid_product_type_ids(ty: &crate::types::Type) {
 fn assert_valid_product_generic_param_decls(decls: &[GenericParamDecl]) {
     for decl in decls {
         assert_valid_product_input_def_id(decl.id.owner);
+        if let Some(default) = &decl.default {
+            assert_valid_product_type_ids(default);
+        }
     }
 }
 
@@ -2240,6 +2283,10 @@ fn remap_generic_param_decls_product_ids(
             unambiguous_product_id(ProductDefId::from(generic_decl.id.owner), id_remap)
         {
             generic_decl.id.owner = product_def_id_to_def_id(product_id);
+        }
+        if let Some(default) = &mut generic_decl.default {
+            default.remap_def_ids(&mut |id| unambiguous_product_id(ProductDefId::from(id), id_remap)
+                .map(product_def_id_to_def_id).unwrap_or(id));
         }
     }
 }
@@ -3134,6 +3181,9 @@ fn remap_generic_param_decls_owned_owner(
         if generic_decl.id.owner == old_id {
             generic_decl.id.owner = new_id;
         }
+        if let Some(default) = &mut generic_decl.default {
+            remap_type_owned_generic_owner(default, old_id, new_id);
+        }
     }
 }
 
@@ -3712,6 +3762,7 @@ mod tests {
     #[test]
     fn product_artifact_roundtrip_preserves_complete_language_item_registry() {
         let language_items = ProductLanguageItems {
+            fold: None,
             sized: Some(SizedLanguageItems {
                 trait_id: product_def_id(17),
             }),
@@ -3792,6 +3843,7 @@ mod tests {
                     is_method: receiver.is_some(),
                     self_receiver: receiver,
                     is_unsafe: false,
+                    constant_arithmetic: None,
                 },
             );
         }
@@ -4982,8 +5034,8 @@ mod tests {
         let dependency_id = DefId::new(CrateId(1), LocalDefId(42));
         let mut hir = resolved_hir_for_products();
         hir.resolver.insert_export_alias_with_name(
-            "stdlib::alloc::Global".to_string(),
-            "stdlib::alloc::Global".to_string(),
+            "std::alloc::Global".to_string(),
+            "std::alloc::Global".to_string(),
             dependency_id,
         );
 
@@ -5000,7 +5052,7 @@ mod tests {
         assert!(!products
             .identity_table
             .export_names
-            .contains_key("stdlib::alloc::Global"));
+            .contains_key("std::alloc::Global"));
     }
 
     #[test]
@@ -5088,6 +5140,29 @@ mod tests {
             decoded.identity_table.prelude_export_names.get("plain"),
             Some(&plain_id)
         );
+    }
+
+    #[test]
+    fn compiler_products_roundtrip_and_validate_constant_arithmetic_summaries() {
+        use super::{ArithmeticSummary, ArithmeticType};
+        let mut products = products_from_hir(&resolved_hir_for_products()).unwrap();
+        let id = *products.interface.functions.keys().next().unwrap();
+        products.interface.functions.get_mut(&id).unwrap().constant_arithmetic =
+            Some(ArithmeticSummary::Integer(42));
+        let bytes = products.to_artifact_bytes().unwrap();
+        let decoded = CompilerProducts::from_artifact_bytes(&bytes).unwrap();
+        assert!(matches!(decoded.interface.functions[&id].constant_arithmetic,
+            Some(ArithmeticSummary::Integer(42))));
+
+        for invalid in [
+            ArithmeticSummary::Argument(usize::MAX),
+            ArithmeticSummary::Integer(i128::MIN),
+            ArithmeticSummary::Cast(Box::new(ArithmeticSummary::Integer(0)), ArithmeticType::Bool),
+            ArithmeticSummary::Intrinsic("IntCheckedAdd".to_string(), ArithmeticType::I8, Vec::new()),
+        ] {
+            products.interface.functions.get_mut(&id).unwrap().constant_arithmetic = Some(invalid);
+            assert!(products.to_artifact_bytes().unwrap_err().contains("constant arithmetic summary"));
+        }
     }
 
     #[test]
@@ -5971,7 +6046,7 @@ mod tests {
                 foreign_function_id,
                 accept_function(test_function(
                     foreign_function_id,
-                    "stdlib::identity",
+                    "std::identity",
                     generic_params(foreign_function_id, &["T"]),
                 )),
             );
@@ -5979,8 +6054,8 @@ mod tests {
                 foreign_impl_id,
                 HirImplFor::<AcceptedHir> {
                     id: foreign_impl_id,
-                    owner: crate::hir::HirImplOwner::Named("stdlib::Box".to_string()),
-                    type_name: "stdlib::Box".to_string(),
+                    owner: crate::hir::HirImplOwner::Named("std::Box".to_string()),
+                    type_name: "std::Box".to_string(),
                     type_generics: generic_params(foreign_impl_id, &["T"]),
                     receiver_pattern: crate::hir::HirImplReceiverPattern::Exact(Type::Struct {
                         id: DefId::new(CrateId(0), LocalDefId(2)),
@@ -5989,7 +6064,7 @@ mod tests {
                             index: 0,
                         })],
                     }),
-                    trait_name: Some("stdlib::Show".to_string()),
+                    trait_name: Some("std::Show".to_string()),
                     trait_id: None,
                     trait_generics: Vec::new(),
                     trait_arg_types: Vec::new(),
@@ -6004,8 +6079,8 @@ mod tests {
             ProductCrateIdentity::local("demo".to_string()),
             &hir,
             vec![ProductDependencyIdentity::artifact_object(
-                "stdlib".to_string(),
-                PathBuf::from("build/stdlib.rkca"),
+                "std".to_string(),
+                PathBuf::from("build/std.rkca"),
             )],
             BTreeMap::new(),
             ProductSourceFingerprint::default(),
@@ -6046,7 +6121,7 @@ mod tests {
                     foreign_function_id,
                     accept_function(test_function(
                         foreign_function_id,
-                        "stdlib::identity",
+                        "std::identity",
                         generic_params(foreign_function_id, &["T"]),
                     )),
                 );
@@ -6057,8 +6132,8 @@ mod tests {
             ProductCrateIdentity::local("demo".to_string()),
             &hir,
             vec![ProductDependencyIdentity::artifact_object(
-                "stdlib".to_string(),
-                PathBuf::from("build/stdlib.rkca"),
+                "std".to_string(),
+                PathBuf::from("build/std.rkca"),
             )],
             BTreeMap::new(),
             ProductSourceFingerprint::default(),
@@ -6125,9 +6200,9 @@ mod tests {
     #[test]
     fn compiler_products_record_dependency_identities_by_product_crate_id() {
         let hir = resolved_hir_for_products();
-        let stdlib = ProductDependencyIdentity::artifact_object(
-            "stdlib".to_string(),
-            PathBuf::from("build/stdlib.rkca"),
+        let std = ProductDependencyIdentity::artifact_object(
+            "std".to_string(),
+            PathBuf::from("build/std.rkca"),
         );
         let math = ProductDependencyIdentity::artifact_object(
             "math".to_string(),
@@ -6137,11 +6212,11 @@ mod tests {
         let products = CompilerProducts::from_resolved_hir(
             ProductCrateIdentity::local("demo".to_string()),
             &hir,
-            vec![stdlib, math],
+            vec![std, math],
             BTreeMap::from([
                 (
                     ProductCrateId(7),
-                    ProductCrateIdentity::local("stdlib".to_string()),
+                    ProductCrateIdentity::local("std".to_string()),
                 ),
                 (
                     ProductCrateId(42),
@@ -6166,7 +6241,7 @@ mod tests {
         );
         assert_eq!(
             products.identity_table.dependencies[&ProductCrateId(7)].name,
-            "stdlib"
+            "std"
         );
         assert_eq!(
             products.identity_table.dependencies[&ProductCrateId(42)].name,
@@ -6189,12 +6264,12 @@ mod tests {
             crate_identity,
             &hir,
             vec![ProductDependencyIdentity::artifact_object(
-                "stdlib".to_string(),
-                PathBuf::from("build/stdlib.rkca"),
+                "std".to_string(),
+                PathBuf::from("build/std.rkca"),
             )],
             BTreeMap::from([(
                 ProductCrateId(7),
-                ProductCrateIdentity::local("stdlib".to_string()),
+                ProductCrateIdentity::local("std".to_string()),
             )]),
             source_fingerprint.clone(),
             ProductLinkData::default(),
@@ -6210,13 +6285,13 @@ mod tests {
         assert_eq!(freshness.target_triple.as_deref(), Some("test-target"));
         assert_eq!(freshness.source_fingerprint, source_fingerprint);
         assert_eq!(freshness.dependencies.len(), 1);
-        assert_eq!(freshness.dependencies[0].name, "stdlib");
+        assert_eq!(freshness.dependencies[0].name, "std");
         assert_eq!(
             freshness.dependencies[0]
                 .crate_identity
                 .as_ref()
                 .map(|identity| identity.name.as_str()),
-            Some("stdlib")
+            Some("std")
         );
         assert!(!freshness.compiler_version.is_empty());
     }
@@ -7062,7 +7137,7 @@ mod tests {
 
     #[test]
     fn product_artifact_format_version_matches_shared_contract() {
-        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 45);
+        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 50);
         assert_eq!(
             PRODUCT_ARTIFACT_FORMAT_VERSION,
             rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION
@@ -7332,6 +7407,46 @@ mod tests {
         .expect("test HIR has valid language items");
 
         assert_eq!(products.bodies.trait_default_methods.len(), 2);
+    }
+
+    #[test]
+    fn compiler_products_share_signature_and_default_member_identity() {
+        let mut hir = resolved_hir_for_products();
+        let trait_id = DefId::new(CrateId(0), LocalDefId(4));
+        let member_id = DefId::new(CrateId(0), LocalDefId(7));
+        let impl_id = DefId::new(CrateId(0), LocalDefId(5));
+        let effective_id = DefId::new(CrateId(0), LocalDefId(8));
+        rebuild_program(&mut hir.program, |_, _, _, traits, _, _, _, _| {
+            let trait_def = traits.get_mut(&trait_id).unwrap();
+            let method = &trait_def.methods["show"];
+            trait_def.signatures.insert("show".to_string(), HirFunctionSig {
+                id: member_id,
+                name: "show".to_string(),
+                generic_params: method.generic_params.clone(),
+                params: method.params.iter().map(|param| param.ty.clone()).collect(),
+                ret: method.ret_type.clone(),
+                generic_bounds: method.generic_bounds.clone(),
+                self_receiver: method.self_receiver,
+                is_unsafe: method.is_unsafe,
+            });
+        });
+        let (products, remap) = CompilerProducts::from_resolved_hir_with_remap(
+            ProductCrateIdentity::local("demo".to_string()),
+            &hir,
+            Vec::new(),
+            BTreeMap::new(),
+            ProductSourceFingerprint::default(),
+            ProductLinkData::default(),
+        ).expect("test HIR has valid language items");
+        let trait_def = &products.interface.traits[&ProductDefId::from(trait_id)];
+        assert_eq!(trait_def.methods["show"].id, trait_def.signatures["show"].id);
+        assert_eq!(trait_def.methods["show"].id, member_id);
+        assert_eq!(remap[&ProductDefId::from(member_id)].len(), 1);
+        assert_eq!(
+            products.interface.effective_trait_methods[&(ProductDefId::from(impl_id), ProductDefId::from(member_id))],
+            ProductDefId::from(effective_id),
+        );
+        assert!(products.bodies.trait_default_methods.contains_key(&ProductDefId::from(member_id)));
     }
 
     #[test]

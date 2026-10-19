@@ -212,7 +212,7 @@ a >>= f     // method-backed bind operator
 
 Custom infix operators currently have two precise resolution paths:
 - Function-backed operators resolve through normal function name resolution, for example `|>`.
-- Method-backed operators resolve against the left operand type, for example stdlib operators like `>>=`, `<|>`, and `<&>`.
+- Method-backed operators resolve against the left operand type, for example std operators like `>>=`, `<|>`, and `<&>`.
 
 ### 3.5 Unary Operations
 ```haskell
@@ -560,7 +560,7 @@ identity, composition, and naturality.
 `Bifunctor` targets binary constructors. For `Result T, E`, `first` maps the
 success parameter `T`, `second` and `<!>` map the error parameter `E`, and
 `bimap` maps both. The generic functional operators are `<$>`, `<&>`, `<*>`,
-`<!>`, and `>>=`; their meanings live in stdlib source rather than the compiler.
+`<!>`, and `>>=`; their meanings live in std source rather than the compiler.
 
 These operations are strict and evaluate finite containers left-to-right.
 `Functor::fmap` and `Foldable::foldl` consume their containers. `Vec::map_ref`

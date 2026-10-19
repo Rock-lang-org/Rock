@@ -156,7 +156,7 @@ The trailing expression still runs, but its value is discarded and the function 
 Keep `->` when `main` intentionally chooses an integer exit status:
 
 ```rock
-> stdlib::env::args
+> std::env::args
 
 main: () -> I64
 main = ->

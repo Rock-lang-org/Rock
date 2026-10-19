@@ -12,6 +12,7 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 mod intrinsics;
+mod integer;
 pub(crate) mod mir_llvm;
 mod output;
 mod runtime;
@@ -869,7 +870,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let mut current_ty = self.normalize_projection_type(&self.structural_type_for(local.ty));
-        let mut scalar_downcast_payload = false;
+        let mut unwrapped_downcast_payload = false;
         for projection in &place.projection {
             current_ty = self.normalize_projection_type(&current_ty);
             current_ty = match projection {
@@ -885,8 +886,8 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 },
                 crate::mir::Projection::Field { index, .. } => {
-                    if scalar_downcast_payload {
-                        scalar_downcast_payload = false;
+                    if unwrapped_downcast_payload {
+                        unwrapped_downcast_payload = false;
                         if *index == 0 {
                             continue;
                         }
@@ -902,7 +903,7 @@ impl<'ctx> CodeGen<'ctx> {
                     self.normalize_projection_type(&field_ty)
                 }
                 crate::mir::Projection::Index(_) => {
-                    scalar_downcast_payload = false;
+                    unwrapped_downcast_payload = false;
                     match &current_ty {
                         Type::Array(element, _) | Type::Slice(element) | Type::Pointer(element) => {
                             self.normalize_projection_type(element)
@@ -930,7 +931,8 @@ impl<'ctx> CodeGen<'ctx> {
                                 id, variant_id.0
                             ))
                         })?;
-                    scalar_downcast_payload = !matches!(payload_ty, Type::Tuple(_));
+                    unwrapped_downcast_payload =
+                        self.enum_variant_payload_is_unwrapped(*id, variant_id.0 as usize)?;
                     self.normalize_projection_type(&payload_ty)
                 }
             };
@@ -1292,17 +1294,12 @@ mod tests {
         let key = crate::mir::MirCallableKey::Instance(instance_id);
         let function_id = crate::mir::MirFunctionId::Instance(instance_id);
         let mut contract = crate::mir::MirBackendContract::default();
-        let mut signature = crate::mir::MirCallableSignature::from_instance_type_ids(
+        let signature = crate::mir::MirCallableSignature::from_instance_type_ids(
             &params,
             ret,
             is_method,
             type_context,
         );
-        if symbol == "main" {
-            if let Some(i32_ty) = type_context.id_for_type(&Type::I32) {
-                signature.ret.abi_ty = i32_ty;
-            }
-        }
         contract.callables.insert(
             key.clone(),
             crate::mir::MirCallableDecl {
@@ -1587,8 +1584,8 @@ mod tests {
         codegen.compile_program_from_mir(&mir).unwrap();
 
         let ir = codegen.get_ir();
-        assert!(ir.contains("ret i32 99"), "IR was:\n{}", ir);
-        assert!(!ir.contains("ret i32 1"), "IR was:\n{}", ir);
+        assert!(ir.contains("ret i64 99"), "IR was:\n{}", ir);
+        assert!(!ir.contains("ret i64 1"), "IR was:\n{}", ir);
     }
 
     #[test]
@@ -1647,7 +1644,7 @@ mod tests {
         super::mir_llvm::compile_mir_program(&mut codegen, &mir).unwrap();
 
         let ir = codegen.get_ir();
-        assert!(ir.contains("ret i32 7"), "IR was:\n{}", ir);
+        assert!(ir.contains("ret i64 7"), "IR was:\n{}", ir);
     }
 
     #[test]
@@ -1706,7 +1703,7 @@ mod tests {
         codegen.compile_program_from_mir(&mir).unwrap();
 
         let ir = codegen.get_ir();
-        assert!(ir.contains("ret i32 42"), "IR was:\n{}", ir);
+        assert!(ir.contains("ret i64 42"), "IR was:\n{}", ir);
     }
 
     #[test]

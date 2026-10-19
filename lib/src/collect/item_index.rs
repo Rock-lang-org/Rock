@@ -536,11 +536,11 @@ fn item_name_and_kind(top_level: &ast::TopLevel) -> Option<(String, ItemKind, cr
             enum_.name.span.clone(),
         )),
         ast::TopLevel::Impl(impl_) => Some((
-            impl_.name.name.clone(),
+            impl_.name.type_name(),
             ItemKind::Impl,
-            impl_.name.span.clone(),
+            impl_.name.span(),
         )),
-        ast::TopLevel::NewType(name, _) => {
+        ast::TopLevel::NewType(name, _, _) => {
             Some((name.name.clone(), ItemKind::NewType, name.span.clone()))
         }
         ast::TopLevel::Import(_)
@@ -580,6 +580,7 @@ mod tests {
 
     fn enum_item(name: &str) -> TopLevel {
         TopLevel::EnumDecl(EnumDecl {
+            generic_params: Vec::new(),
             name: type_inner(name),
             variants: vec![],
             exported: false,

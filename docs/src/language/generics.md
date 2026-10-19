@@ -28,6 +28,59 @@ The concrete type of `number` is `Wrapper I64`, so `number.value` is `I64`. The 
 
 Generic arguments are written with spaces and commas, not angle brackets: `Wrapper I64` and `Choice I64, &Str`.
 
+## Default Type Arguments
+
+A declaration can supply a fallback type for a parameter. Write each defaulted parameter in braces, after any required parameters. Defaults work on structs, enums, traits, and type aliases.
+
+```rock
+struct Pair A, {B = A}
+    < first: A
+    < second: B
+
+type NumberPair {T = I64} = Pair T
+
+enum Choice {T = I64}
+    Empty
+    Value T
+
+main = !->
+    numbers: NumberPair = Pair
+        first: 7
+        second: 9
+    mixed: Pair I64, Bool = Pair
+        first: 7
+        second: true
+    choice: Choice = Choice::Value 42
+    numbers.second.println!
+    mixed.second.println!
+    match choice
+        Choice::Empty => 0.println!
+        Choice::Value value => value.println!
+```
+
+`Pair I64` means `Pair I64, I64`: its omitted `B` uses the earlier argument `A`. `NumberPair` uses `T = I64`, and `Choice` uses its default payload type. Explicit arguments override defaults, so `mixed` stores a `Bool` in its second field. The output is `9`, `true`, and `42`.
+
+Defaults are resolved in the declaration's module, not the caller's module. They may refer to earlier parameters, but not themselves or later parameters. A required parameter cannot follow a defaulted parameter, and the default must have the parameter's declared kind.
+
+Value construction still uses inference first. A default does not force every instance to use that type:
+
+```rock
+struct Value {T = Bool}
+    < value: T
+
+main = !->
+    number = Value
+        value: 7
+    flag: Value = Value
+        value: true
+    number.value.println!
+    flag.value.println!
+```
+
+The field establishes `Value I64` for `number`, despite the declaration's `Bool` default. In the annotation on `flag`, the omitted argument selects `Value Bool`. The output is `7` and `true`. Construction uses a default only when inference leaves that argument unconstrained; types determined by a generic function's parameters remain generic.
+
+Trait defaults can also use `Self`. The standard equality trait declares its right-hand parameter as `{Rhs = Self}`, so `T: PartialEq` means `T: PartialEq T`. An explicit `T: PartialEq U` still describes cross-type equality. Braces here declare defaults; they are not named arguments or associated-type constraints. Function type parameters remain inferred rather than gaining a new declaration syntax.
+
 ## Generic Functions
 
 An unconstrained type parameter can be passed through a function without the function knowing its concrete representation.
@@ -53,7 +106,7 @@ A generic body may only use operations promised by its bounds. Put bounds in a `
 struct Box T
     < value: T
 
-same_box: Box T -> Box T -> Bool where T: Eq
+same_box: Box T -> Box T -> Bool where T: PartialEq
 same_box = left, right -> left.value == right.value
 
 main = !->
@@ -69,7 +122,7 @@ main = !->
     same_box left_again, different .println!
 ```
 
-The body uses `==`, so `T: Eq` is required. In both calls inference chooses `T = I64`; the output is `true` and `false`. Without the bound, the generic body would have no promise that `==` exists.
+The body uses `==` between two values of type `T`, so it requires `T: PartialEq`, shorthand for `T: PartialEq T`. The trait argument names the right-hand operand type; `T: PartialEq U` instead permits comparing a `T` with a `U`. In both calls inference chooses `T = I64`; the output is `true` and `false`. Without the bound, the generic body would have no promise that `==` exists.
 
 The same rule applies to named methods. Here `T: Show` supplies `show!`, and the concrete argument type must implement that capability.
 

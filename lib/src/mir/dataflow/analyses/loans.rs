@@ -14,6 +14,7 @@ pub struct LoanData {
     pub id: LoanId,
     /// Original structural place retained for diagnostics; semantic checks use `place_path`.
     pub diagnostic_place: Place,
+    pub reborrow_source: Option<Place>,
     pub place_path: PlacePathId,
     pub initial_owner: Local,
     pub kind: LoanKind,
@@ -53,6 +54,7 @@ impl LoanTable {
             table.push(LoanData {
                 id: crate::ids::LoanId(0),
                 diagnostic_place: borrow.place.clone(),
+                reborrow_source: borrow.reborrow_source.clone(),
                 place_path,
                 initial_owner: borrow.owner,
                 kind,
@@ -156,9 +158,11 @@ impl LoanState {
             return false;
         };
         self.ensure_len(id.index() + 1);
+        let inherited = loan.reborrow_source.as_ref()
+            .is_some_and(|source| self.copy_owner(source.local, loan.initial_owner));
         let active_changed = self.active.insert(id);
         let owner_changed = self.owners[id.index()].insert(loan.initial_owner);
-        active_changed || owner_changed
+        inherited || active_changed || owner_changed
     }
 
     pub fn add_owner(&mut self, id: LoanId, owner: Local) -> bool {
@@ -291,6 +295,44 @@ impl LoanAnalysis {
         table: &LoanTable,
         active_loans: &LoanState,
     ) -> Result<(), LoanId> {
+        Self::check_aliasing_through(place, kind, place, table, active_loans)
+    }
+
+    /// Check a recovered storage root while retaining the reborrow authority of
+    /// the pointer/reference used to reach it; sibling loans still conflict.
+    pub fn check_aliasing_through(
+        place: &Place,
+        kind: LoanKind,
+        through: &Place,
+        table: &LoanTable,
+        active_loans: &LoanState,
+    ) -> Result<(), LoanId> {
+        Self::check_aliasing_with_owner(
+            place, kind,
+            through.projection.contains(&Projection::Deref).then_some(through.local),
+            table, active_loans,
+        )
+    }
+
+    /// A selected call can reborrow an aggregate's carried storage without
+    /// dereferencing the aggregate. Authority belongs to that input's owner.
+    pub fn check_reborrow(
+        place: &Place,
+        kind: LoanKind,
+        source: Local,
+        table: &LoanTable,
+        active_loans: &LoanState,
+    ) -> Result<(), LoanId> {
+        Self::check_aliasing_with_owner(place, kind, Some(source), table, active_loans)
+    }
+
+    fn check_aliasing_with_owner(
+        place: &Place,
+        kind: LoanKind,
+        owner: Option<Local>,
+        table: &LoanTable,
+        active_loans: &LoanState,
+    ) -> Result<(), LoanId> {
         let original_place = place.clone();
         let place = crate::mir::borrowck::provenance::resolve_place(place, table, active_loans);
         let access_path = crate::mir::borrowck::provenance::resolve_place_path(
@@ -303,7 +345,8 @@ impl LoanAnalysis {
             let Some(loan) = table.get(loan_id) else {
                 continue;
             };
-            if Self::access_through_mutable_loan_owner(&original_place, loan_id, loan, active_loans)
+            if loan.kind == LoanKind::Mut
+                && owner.is_some_and(|owner| active_loans.owner_contains(loan_id, owner))
             {
                 continue;
             }
@@ -339,18 +382,6 @@ impl LoanAnalysis {
         Ok(())
     }
 
-    fn access_through_mutable_loan_owner(
-        place: &Place,
-        loan_id: LoanId,
-        loan: &LoanData,
-        active_loans: &LoanState,
-    ) -> bool {
-        // The owner of an exclusive loan may both read and write through it.
-        loan.kind == LoanKind::Mut
-            && active_loans.owner_contains(loan_id, place.local)
-            && matches!(place.projection.first(), Some(Projection::Deref))
-    }
-
     fn resolve_loan_path(
         loan: &LoanData,
         table: &LoanTable,
@@ -378,6 +409,7 @@ mod tests {
     fn loan_data(id: LoanId, owner: Local) -> LoanData {
         LoanData {
             id,
+            reborrow_source: None,
             diagnostic_place: Place {
                 local: Local(1),
                 projection: vec![],
@@ -449,6 +481,7 @@ mod tests {
         let place_path = paths.intern(place.clone());
         let borrows = vec![BorrowData {
             owner: Local(2),
+            reborrow_source: None,
             place,
             kind: crate::mir::borrowck::accesses::AccessKind::BorrowShared,
             created_at: Location::new(BasicBlockId(0), StatementIndex(0)),
@@ -483,6 +516,7 @@ mod tests {
         let borrows = vec![
             BorrowData {
                 owner: Local(2),
+                reborrow_source: None,
                 place: root_place,
                 kind: crate::mir::borrowck::accesses::AccessKind::BorrowMut,
                 created_at: Location::new(BasicBlockId(0), StatementIndex(0)),
@@ -490,6 +524,7 @@ mod tests {
             },
             BorrowData {
                 owner: Local(3),
+                reborrow_source: None,
                 place: reborrow_place,
                 kind: crate::mir::borrowck::accesses::AccessKind::BorrowMut,
                 created_at: Location::new(BasicBlockId(0), StatementIndex(1)),
@@ -531,6 +566,7 @@ mod tests {
         let id = table.push(LoanData {
             id: LoanId(99),
             diagnostic_place,
+            reborrow_source: None,
             place_path: semantic_path,
             initial_owner: Local(2),
             kind: LoanKind::Shared,
@@ -573,6 +609,7 @@ mod tests {
                 projection: vec![],
             },
             place_path: crate::ids::PlacePathId(0),
+            reborrow_source: None,
             initial_owner: Local(2),
             kind: LoanKind::Mut,
             origin_span: None,
@@ -635,6 +672,7 @@ mod tests {
             loans: vec![LoanData {
                 id: LoanId(0),
                 diagnostic_place: diagnostic_place.clone(),
+                reborrow_source: None,
                 place_path: loan_path,
                 initial_owner: Local(2),
                 kind: LoanKind::Mut,
@@ -678,6 +716,7 @@ mod tests {
         table.replace_place_paths_for_test(paths);
         let owner_id = table.push(LoanData {
             id: LoanId(99),
+            reborrow_source: None,
             diagnostic_place: diagnostic_place.clone(),
             place_path: semantic_path,
             initial_owner: Local(2),
@@ -687,6 +726,7 @@ mod tests {
         });
         let diagnostic_id = table.push(LoanData {
             id: LoanId(99),
+            reborrow_source: None,
             diagnostic_place,
             place_path: diagnostic_path,
             initial_owner: Local(3),
@@ -722,6 +762,7 @@ mod tests {
             loans: vec![LoanData {
                 id: LoanId(0),
                 diagnostic_place: place.clone(),
+                reborrow_source: None,
                 place_path: crate::ids::PlacePathId(999),
                 initial_owner: Local(2),
                 kind: LoanKind::Shared,

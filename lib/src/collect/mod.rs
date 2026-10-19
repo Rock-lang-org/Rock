@@ -667,7 +667,7 @@ fn collect_impl(
     inject_prelude: bool,
     current_crate_name: Option<&str>,
 ) -> Result<Declarations, Vec<ResolveError>> {
-    let inject_prelude = inject_prelude && crate_ctx.has_extern_crate("stdlib");
+    let inject_prelude = inject_prelude && crate_ctx.has_extern_crate("std");
     let mut context = context::CollectContext::bootstrap_for_collection(
         inject_prelude,
         current_crate_name,
@@ -837,7 +837,7 @@ pub fn collect_artifact_declarations(
         .expect("artifact declaration collection requires loaded current source crate");
     let module = &source_crate.ast;
     let root_module_path = source_crate.root_module_path();
-    let inject_prelude = inject_prelude && crate_ctx.has_extern_crate("stdlib");
+    let inject_prelude = inject_prelude && crate_ctx.has_extern_crate("std");
     let mut context = context::CollectContext::bootstrap_for_collection(
         inject_prelude,
         Some(current_crate_name),
@@ -932,7 +932,7 @@ pub fn collect_artifact_declarations(
         module,
         root_module_id,
         current_crate_name,
-        current_crate_name == "stdlib",
+        current_crate_name == "std",
     );
 
     let context::LocalCollection {
@@ -1379,6 +1379,60 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
+    #[test]
+    fn nested_modules_resolve_later_nominals_and_collect_private_children() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "rock_collect_nested_nominals_{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(temp_dir.join("api")).unwrap();
+        std::fs::create_dir_all(temp_dir.join("model")).unwrap();
+        let entry = temp_dir.join("main.rk");
+        std::fs::write(&entry, "mod api\nmod model\n").unwrap();
+        std::fs::write(
+            temp_dir.join("api/mod.rk"),
+            "mod state\n> demo::model::Value\n> demo::model::Choice\n> demo::api::state::State\n< struct Envelope\n    value: Choice Value\n    state: State\ntake: Choice Value -> Value\n< take = choice -> match choice\n    Choice::Some value => value\n",
+        )
+        .unwrap();
+        std::fs::write(
+            temp_dir.join("api/state.rk"),
+            "< struct State\n    count: I64\n",
+        )
+        .unwrap();
+        std::fs::write(
+            temp_dir.join("model/mod.rk"),
+            "< struct Value\n    number: I64\n< enum Choice T\n    Some T\n",
+        )
+        .unwrap();
+        let config = crate::Config {
+            entry_file: entry.clone(),
+            no_std: true,
+            no_prelude: true,
+            current_crate_name: Some("demo".to_string()),
+            ..crate::Config::default()
+        };
+        let mut db = crate::source_loader::SourceDatabase::new();
+        let graph = db.load_entry(entry, &config).unwrap();
+        let program = crate::ast::Program {
+            module: graph.root_module().clone(),
+        };
+        let decls = collect_with_source_graph(
+            &program,
+            &graph,
+            &crate::crate_system::CrateContext::new(),
+            false,
+            Some("demo"),
+        )
+        .expect("nested headers should resolve later nominal declarations");
+        let state = decls.items.structs().values().find(|item| item.name == "State").unwrap();
+        assert_eq!(state.fields.len(), 1, "private children need complete declarations");
+        let take = function_named(&decls, "demo::api::take").unwrap();
+        assert!(take.generic_params.is_empty(), "imported types are not inferred generics");
+        assert!(matches!(take.params[0].ty, Type::Enum { .. }));
+        assert!(matches!(take.ret_type, Type::Struct { .. }));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
     fn ident_expr(name: &str) -> crate::ast::Expression {
         crate::ast::Expression::UnaryExpr(crate::ast::UnaryExpr::PrimaryExpr(
             crate::ast::PrimaryExpr {
@@ -1438,6 +1492,7 @@ mod tests {
 
     fn generic_param_decl(name: &str) -> crate::ast::GenericParamDecl {
         crate::ast::GenericParamDecl {
+            default: None,
             name: ident(name),
             kind: None,
             span: crate::lexer::Span::test(),
@@ -1488,7 +1543,8 @@ mod tests {
                         exported: false,
                     }),
                     TopLevel::EnumDecl(crate::ast::EnumDecl {
-                        name: generic_type_inner("Choice", vec![generic_t()]),
+                        name: generic_type_inner("Choice", vec![]),
+                        generic_params: vec![generic_param_decl("T")],
                         variants: vec![crate::ast::EnumVariant {
                             name: type_inner("Some"),
                             fields: crate::ast::NamedFieldsOrTypesList::TypesList(vec![inner_t()]),
@@ -1525,7 +1581,7 @@ mod tests {
                     )),
                     TopLevel::FunctionDecl(single_param_function_decl("identity", "value")),
                     TopLevel::Impl(Impl {
-                        name: generic_type_inner("Outer", vec![generic_t()]),
+                        name: ParseType::Type(generic_type_inner("Outer", vec![generic_t()])),
                         for_: None,
                         associated_types: vec![],
                         methods: HashMap::from([(ident("new"), function_decl("new"))]),
@@ -1848,7 +1904,7 @@ mod tests {
 
     fn inherent_impl(type_name: &str, method_name: &str) -> Impl {
         Impl {
-            name: type_inner(type_name),
+            name: ParseType::Type(type_inner(type_name)),
             for_: None,
             associated_types: vec![],
             methods: HashMap::from([(ident(method_name), function_decl(method_name))]),
@@ -1873,7 +1929,7 @@ mod tests {
 
     fn trait_impl(type_name: &str, trait_name: &str, method_name: &str) -> Impl {
         Impl {
-            name: type_inner(trait_name),
+            name: ParseType::Type(type_inner(trait_name)),
             for_: Some(crate::ast::ParseType::Type(type_inner(type_name))),
             associated_types: vec![],
             methods: HashMap::from([(ident(method_name), function_decl(method_name))]),
@@ -2087,6 +2143,7 @@ mod tests {
                         exported: false,
                     }),
                     TopLevel::EnumDecl(crate::ast::EnumDecl {
+                        generic_params: Vec::new(),
                         name: type_inner("Maybe"),
                         variants: vec![crate::ast::EnumVariant {
                             name: type_inner("None"),
@@ -2172,7 +2229,7 @@ mod tests {
                         language_items: Default::default(),
                     }),
                     TopLevel::Impl(Impl {
-                        name: type_inner("Iterable"),
+                        name: ParseType::Type(type_inner("Iterable")),
                         for_: Some(ParseType::Type(type_inner("Box"))),
                         associated_types: vec![crate::ast::AssociatedTypeDef {
                             name: ident("Output"),
@@ -2649,25 +2706,25 @@ mod tests {
     }
 
     #[test]
-    fn collect_records_stdlib_prelude_alias_by_canonical_def_id() {
+    fn collect_records_std_prelude_alias_by_canonical_def_id() {
         let print_id = DefId::new(CrateId(8), LocalDefId(3));
         let mut print = hir_function("print");
         print.id = print_id;
 
         let mut interface = ArtifactCrateInterface::default();
-        interface.insert_function("stdlib::prelude::print".to_string(), print);
+        interface.insert_function("std::prelude::print".to_string(), print);
 
         let mut resolver = crate::collect::resolver::ResolverTables::default();
         resolver
             .item_paths
-            .insert("stdlib::prelude::print".to_string(), print_id);
+            .insert("std::prelude::print".to_string(), print_id);
         resolver
             .item_names_by_id
-            .insert(print_id, "stdlib::prelude::print".to_string());
+            .insert(print_id, "std::prelude::print".to_string());
         let prelude_export_ids = BTreeMap::from([(
             "print".to_string(),
             ArtifactExport {
-                source: "stdlib::prelude::print".to_string(),
+                source: "std::prelude::print".to_string(),
                 id: print_id,
             },
         )]);
@@ -2675,7 +2732,7 @@ mod tests {
         let mut crate_ctx = CrateContext::new();
         add_artifact_extern_crate(
             &mut crate_ctx,
-            "stdlib",
+            "std",
             interface,
             resolver,
             prelude_export_ids,
@@ -2690,17 +2747,17 @@ mod tests {
         };
 
         let decls = collect(&program, &crate_ctx, true, Some("test"))
-            .expect("collect should record stdlib prelude alias IDs");
+            .expect("collect should record std prelude alias IDs");
 
         assert_eq!(decls.resolver.import_aliases.get("print"), Some(&print_id));
         assert_eq!(
             decls.resolver.item_names_by_id.get(&print_id),
-            Some(&"stdlib::prelude::print".to_string())
+            Some(&"std::prelude::print".to_string())
         );
     }
 
     #[test]
-    fn collect_preserves_non_stdlib_prelude_capability_without_unqualified_injection() {
+    fn collect_preserves_non_std_prelude_capability_without_unqualified_injection() {
         let util_id = DefId::new(CrateId(9), LocalDefId(3));
         let mut util = hir_function("util");
         util.id = util_id;
@@ -2741,7 +2798,7 @@ mod tests {
         };
 
         let decls = collect(&program, &crate_ctx, true, Some("test"))
-            .expect("collect should preserve non-stdlib prelude providers without injection");
+            .expect("collect should preserve non-std prelude providers without injection");
 
         assert!(decls.resolver.import_aliases.get("util").is_none());
         assert!(decls.items.functions().contains_key(&util_id));
@@ -2829,11 +2886,11 @@ mod tests {
     }
 
     #[test]
-    fn collect_context_bootstraps_interface_stdlib_prelude() {
+    fn collect_context_bootstraps_interface_std_prelude() {
         let print_id = DefId::new(CrateId(0), LocalDefId(0));
         let mut interface = ArtifactCrateInterface::default();
         interface.insert_function(
-            "stdlib::print".to_string(),
+            "std::print".to_string(),
             HirFunction {
                 id: print_id,
                 name: "print".to_string(),
@@ -2856,14 +2913,14 @@ mod tests {
         crate_ctx
             .add_extern_crate(crate::crate_system::ExternCrateRecord::new(
                 CrateId(1),
-                "stdlib".to_string(),
+                "std".to_string(),
                 crate::crate_system::ExternCrateMetadata::new(
                     interface,
                     crate::collect::resolver::ResolverTables::default(),
                     BTreeMap::from([(
                         "print".to_string(),
                         ArtifactExport {
-                            source: "stdlib::print".to_string(),
+                            source: "std::print".to_string(),
                             id: print_id,
                         },
                     )]),
@@ -2880,9 +2937,9 @@ mod tests {
 
         assert_eq!(
             context.import_aliases.get("print"),
-            Some(&"stdlib::print".to_string())
+            Some(&"std::print".to_string())
         );
-        assert!(context.functions.contains_key("stdlib::print"));
+        assert!(context.functions.contains_key("std::print"));
         assert!(!context.functions.contains_key("print"));
     }
 
@@ -3993,6 +4050,7 @@ mod tests {
                         exported: false,
                     }),
                     TopLevel::EnumDecl(crate::ast::EnumDecl {
+                        generic_params: Vec::new(),
                         name: type_inner("Color"),
                         variants: vec![],
                         exported: false,
@@ -5547,10 +5605,10 @@ lang index_mut
     }
 
     #[test]
-    fn collect_language_items_merges_stdlib_metadata_without_prelude_injection() {
+    fn collect_language_items_merges_std_metadata_without_prelude_injection() {
         let sized_id = DefId::new(CrateId(7), LocalDefId(11));
         let crate_ctx = language_item_provider_context([(
-            "stdlib",
+            "std",
             LanguageItems {
                 sized: Some(SizedLanguageItems { trait_id: sized_id }),
                 ..LanguageItems::default()
@@ -5563,7 +5621,7 @@ lang index_mut
             false,
             Some("app"),
         )
-        .expect("explicit stdlib metadata should merge without prelude injection");
+        .expect("explicit std metadata should merge without prelude injection");
 
         assert_eq!(
             decls.language_items.sized.map(|items| items.trait_id),

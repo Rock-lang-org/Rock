@@ -1,0 +1,31 @@
+// Utility functions
+//
+// These functions provide common integer utility operations.
+
+> std::cmp::ord::PartialOrd
+> std::num::integer::Integer
+
+// Absolute value of an integer
+abs: I64 -> I64
+< abs = x ->
+    if x < 0
+        // Preserve this utility's historical wrapping contract at I64::MIN.
+        x.wrapping_neg!
+    else
+        x
+
+// Minimum of two integers
+min: I64 -> I64 -> I64
+< min = a, b ->
+    if a < b
+        a
+    else
+        b
+
+// Maximum of two integers
+max: I64 -> I64 -> I64
+< max = a, b ->
+    if a > b
+        a
+    else
+        b

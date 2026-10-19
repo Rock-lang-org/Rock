@@ -359,7 +359,7 @@ fn analysis_config(
         artifacts.extend(project.extern_artifacts.iter().cloned());
     }
     artifacts.extend(settings.extern_artifacts.iter().cloned());
-    let has_stdlib = artifacts.contains_key("stdlib");
+    let has_std = artifacts.contains_key("std");
 
     Config {
         entry_file: project
@@ -371,7 +371,7 @@ fn analysis_config(
         no_prelude: settings.no_prelude
             || project
                 .map(|project| project.no_prelude)
-                .unwrap_or(!has_stdlib),
+                .unwrap_or(!has_std),
         no_std: project.map(|project| project.no_std).unwrap_or(true),
         ..Config::default()
     }
@@ -604,8 +604,8 @@ mod tests {
             extern_artifacts: vec![
                 ("dep".to_string(), PathBuf::from("/project/build/dep.rkca")),
                 (
-                    "stdlib".to_string(),
-                    PathBuf::from("/toolchain/stdlib.rkca"),
+                    "std".to_string(),
+                    PathBuf::from("/toolchain/std.rkca"),
                 ),
             ],
             no_prelude: false,
@@ -636,8 +636,8 @@ mod tests {
                 ("dep".to_string(), PathBuf::from("/override/dep.rkca")),
                 ("extra".to_string(), PathBuf::from("/override/extra.rkca")),
                 (
-                    "stdlib".to_string(),
-                    PathBuf::from("/toolchain/stdlib.rkca")
+                    "std".to_string(),
+                    PathBuf::from("/toolchain/std.rkca")
                 ),
             ]
         );

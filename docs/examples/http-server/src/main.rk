@@ -1,4 +1,4 @@
-> stdlib::net::SocketAddrV4
+> std::io::net::SocketAddrV4
 > rock_http::config::ServerConfig
 > rock_http::error::HttpError
 > rock_http::request::Method

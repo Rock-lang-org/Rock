@@ -1,0 +1,29 @@
+// Neg trait - unary numeric or custom negation with an associated output type.
+
+< trait Neg
+    type Output
+    @-: Self::Output
+
+impl Neg for I64
+    type Output = I64
+    @- = -> if ~OverflowChecks! then ~IntCheckedNeg *self else ~IntWrappingNeg *self
+
+impl Neg for I32
+    type Output = I32
+    @- = -> if ~OverflowChecks! then ~IntCheckedNeg *self else ~IntWrappingNeg *self
+
+impl Neg for I16
+    type Output = I16
+    @- = -> if ~OverflowChecks! then ~IntCheckedNeg *self else ~IntWrappingNeg *self
+
+impl Neg for I8
+    type Output = I8
+    @- = -> if ~OverflowChecks! then ~IntCheckedNeg *self else ~IntWrappingNeg *self
+
+impl Neg for F64
+    type Output = F64
+    @- = -> ~F64Neg *self
+
+impl Neg for F32
+    type Output = F32
+    @- = -> ~F32Neg *self

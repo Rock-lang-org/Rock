@@ -12,7 +12,8 @@ use crate::infer::{ConstraintOwner, ConstraintStore, ObligationState, PartialHir
 use crate::language_items::TryLanguageItems;
 use crate::lower::ResolveError;
 use crate::selection::{
-    type_pattern_matches, ReceiverAdjustment, ReceiverCandidate, SelectedMethod, SelectionService,
+    type_pattern_matches, ReceiverAdjustment, ReceiverCandidate, SelectedMethod, SelectedOrigin,
+    SelectionService,
 };
 use crate::types::{
     CallableKind, CaptureKind, FunctionCapture, FunctionSafety, GenericParamId, TraitBound, Type,
@@ -1077,12 +1078,17 @@ fn constrained_signature_vars(
         match constraint {
             Constraint::Trait { ty, bound, .. } => {
                 if matches!(hir.engine.resolve(ty), Type::TypeVar(_))
-                    && hir
+                    && (hir
                         .language_items
                         .callable_protocols()
                         .any(|(_, id, _)| id == bound.trait_id)
+                        || hir
+                            .language_items
+                            .fold
+                            .as_ref()
+                            .is_some_and(|fold| fold.trait_id == bound.trait_id))
                 {
-                    // A callable requirement is a polymorphic predicate, not
+                    // Callable and fold requirements are polymorphic predicates, not
                     // evidence fixing the declaration to one caller's type.
                     continue;
                 }
@@ -1497,6 +1503,57 @@ fn propagate_call_instance(
             } else {
                 let _ = hir.engine.unify(ret.as_ref(), source_ret.as_ref());
             }
+            // A caller can be lowered before this body's callable predicates
+            // exist. Refresh them using this instance's substitutions, never
+            // by specializing the declaration's callback to one caller.
+            let callback_instances = instance_bindings.clone();
+            for (source_id, instance) in callback_instances {
+                let native = hir.engine.resolve(&instance);
+                let mut native_type = &native;
+                while let Type::Reference { inner, .. } = native_type {
+                    native_type = inner;
+                }
+                let Type::Function { params, ret, .. } = native_type else {
+                    continue;
+                };
+                let packed = match params.as_slice() {
+                    [] => Type::Unit,
+                    [param] => param.clone(),
+                    params => Type::Tuple(params.to_vec()),
+                };
+                for bound in hir.engine.get_bounds(source_id) {
+                    if bound.type_args.len() != 2
+                        || !hir.language_items.callable_protocols()
+                            .any(|(_, id, _)| id == bound.trait_id)
+                    {
+                        continue;
+                    }
+                    for (source, actual) in bound.type_args.iter().zip([&packed, ret.as_ref()]) {
+                        propagate_instance_relation(
+                            &mut hir.engine, source, actual, &mut instance_bindings, &shared_vars,
+                        );
+                    }
+                    let instantiated = crate::types::TraitBound {
+                        trait_id: bound.trait_id,
+                        type_args: bound.type_args.iter()
+                            .map(|ty| hir.engine.resolve(ty).substitute(&instance_bindings))
+                            .collect(),
+                    };
+                    let already_recorded = hir.constraint_store.iter().any(|(_, constraint)| {
+                        matches!(constraint, Constraint::Trait { ty, bound, span, .. }
+                            if span == &callee.span
+                                && hir.engine.resolve(ty) == hir.engine.resolve(&instance)
+                                && bound.trait_id == instantiated.trait_id
+                                && bound.type_args.iter().map(|ty| hir.engine.resolve(ty)).collect::<Vec<_>>()
+                                    == instantiated.type_args.iter().map(|ty| hir.engine.resolve(ty)).collect::<Vec<_>>())
+                    });
+                    if !already_recorded {
+                        hir.constraint_store.add_trait(
+                            instance.clone(), instantiated, callee.span.clone(), "inferred callable argument",
+                        );
+                    }
+                }
+            }
             if args.len() < source_params.len() {
                 source_partial_result = Some(Type::function_with_safety(
                     source_params[args.len()..].to_vec(),
@@ -1904,6 +1961,11 @@ fn collect_unresolved_authority_vars(
                 if target.is_none() {
                     if let HirExprKind::FieldAccess(receiver, _, _) = &callee.kind {
                         collect_type_vars(&engine.resolve(&receiver.ty), output);
+                        // Overload selection can depend on arguments as well as
+                        // the receiver; keep those variables linked to callers.
+                        for arg in args {
+                            collect_type_vars(&engine.resolve(&arg.ty), output);
+                        }
                     }
                 }
                 if !matches!(callee.kind, HirExprKind::FieldAccess(..))
@@ -2878,6 +2940,37 @@ impl MethodAuthorityContext<'_> {
         }
     }
 
+    fn deferred_method_accepts_args(&self, candidate: &SelectedMethod, args: &[HirExpr]) -> bool {
+        if candidate.substituted_params.len() != args.len() {
+            return false;
+        }
+        let mut substitution = candidate.owner_substitution.clone();
+        if matches!(candidate.origin, SelectedOrigin::TraitBound { .. }) {
+            // Caller-owned generics in a bound are rigid, not impl parameters
+            // that can be rebound to make a different RHS fit.
+            let mut generics = HashSet::new();
+            for param in &candidate.substituted_params {
+                param.ty.collect_generic_params(&mut generics);
+            }
+            for generic in generics {
+                substitution.entry(generic).or_insert(Type::Generic(generic));
+            }
+        }
+        candidate.substituted_params.iter().zip(args).all(|(param, arg)| {
+            let expected = self.resolved_type(&param.ty);
+            let actual = self.resolved_type(&arg.ty);
+            if contains_recovery_type(&actual) || contains_recovery_type(&expected)
+                || type_pattern_matches(&expected, &actual, &mut substitution)
+            {
+                return true;
+            }
+            if let Type::Reference { mutable: false, inner } = &expected {
+                return type_pattern_matches(inner, &actual, &mut substitution);
+            }
+            false
+        })
+    }
+
     fn select_deferred_method(
         &mut self,
         receiver: &HirExpr,
@@ -2887,17 +2980,20 @@ impl MethodAuthorityContext<'_> {
         errors: &mut Vec<ResolveError>,
     ) -> Option<SelectedMethod> {
         let receiver_candidates = self.receiver_adjustment_candidates(receiver.clone());
+        let unresolved_inputs = contains_recovery_type(&self.resolved_type(&receiver.ty))
+            || args.iter().any(|arg| contains_recovery_type(&self.resolved_type(&arg.ty)));
         if let Type::TypeVar(id) = self.resolved_type(&receiver.ty) {
             let bounds = self.engine.borrow().get_bounds(id);
             if !bounds.is_empty() {
                 if let Ok(selected) = self
                     .service()
-                    .select_bound_method_preferring_non_ref_receiver(
+                    .select_bound_method_matching(
                         &receiver_candidates,
                         &bounds,
                         method_name,
                         Type::TypeVar(id),
                         matches!(receiver.kind, HirExprKind::Call(_, _, _)),
+                        |candidate| self.deferred_method_accepts_args(candidate, args),
                     )
                 {
                     return Some(selected);
@@ -2909,12 +3005,13 @@ impl MethodAuthorityContext<'_> {
             if !bounds.is_empty() {
                 if let Ok(selected) = self
                     .service()
-                    .select_bound_method_preferring_non_ref_receiver(
+                    .select_bound_method_matching(
                         &receiver_candidates,
                         &bounds,
                         method_name,
                         Type::Generic(param),
                         matches!(receiver.kind, HirExprKind::Call(_, _, _)),
+                        |candidate| self.deferred_method_accepts_args(candidate, args),
                     )
                 {
                     return Some(selected);
@@ -2929,6 +3026,9 @@ impl MethodAuthorityContext<'_> {
                 method_name,
                 |ty| self.resolved_type(ty),
             );
+            if selected.len() > 1 {
+                selected.retain(|candidate| self.deferred_method_accepts_args(candidate, args));
+            }
             let has_proven = selected
                 .iter()
                 .any(|candidate| candidate.pending_impl_bounds.is_empty());
@@ -2955,7 +3055,7 @@ impl MethodAuthorityContext<'_> {
                     }
                 }
                 _ => {
-                    if !self.strict && contains_recovery_type(&candidate.expr.ty) {
+                    if !self.strict && unresolved_inputs {
                         self.ambiguous = true;
                         continue;
                     }
@@ -2976,7 +3076,7 @@ impl MethodAuthorityContext<'_> {
             return proven.pop();
         }
         if proven.len() > 1 {
-            if !self.strict && contains_recovery_type(&receiver.ty) {
+            if !self.strict && unresolved_inputs {
                 self.ambiguous = true;
                 return None;
             }
@@ -3000,21 +3100,7 @@ impl MethodAuthorityContext<'_> {
                     .select_inferred_method_candidates(receiver, method_name, |ty| {
                         self.resolved_type(ty)
                     });
-            inferred.retain(|candidate| {
-                if candidate.substituted_params.len() != args.len() {
-                    return false;
-                }
-                let mut substitution = candidate.owner_substitution.clone();
-                candidate
-                    .substituted_params
-                    .iter()
-                    .zip(args)
-                    .all(|(param, arg)| {
-                        let actual = self.resolved_type(&arg.ty);
-                        contains_recovery_type(&actual)
-                            || type_pattern_matches(&param.ty, &actual, &mut substitution)
-                    })
-            });
+            inferred.retain(|candidate| self.deferred_method_accepts_args(candidate, args));
             if let Some(expected) = _expected_ty.map(|ty| self.resolved_type(ty)) {
                 if !contains_recovery_type(&expected) {
                     inferred.retain(|candidate| {
@@ -3054,7 +3140,7 @@ impl MethodAuthorityContext<'_> {
                 return selected;
             }
             if inferred.len() > 1 {
-                if !self.strict && contains_recovery_type(&receiver.ty) {
+                if !self.strict && unresolved_inputs {
                     self.ambiguous = true;
                     return None;
                 }
@@ -3189,7 +3275,9 @@ impl MethodAuthorityContext<'_> {
                     Some(&expr.ty),
                     errors,
                 ) else {
-                    if !self.strict && contains_recovery_type(&self.resolved_type(&receiver.ty)) {
+                    if !self.strict && (contains_recovery_type(&self.resolved_type(&receiver.ty))
+                        || args.iter().any(|arg| contains_recovery_type(&self.resolved_type(&arg.ty))))
+                    {
                         return;
                     }
                     self.materialize_field_access(callee, errors);
@@ -3230,9 +3318,15 @@ impl MethodAuthorityContext<'_> {
                 for (param, arg) in selected.substituted_params.iter().zip(args.iter_mut()) {
                     let mut actual = self.engine.borrow().resolve(&arg.ty);
                     let expected = param.ty.substitute_generics(&substitution);
-                    if matches!(expected, Type::Reference { mutable: false, .. })
-                        && !matches!(actual, Type::Reference { .. })
-                    {
+                    let borrow_argument = match &expected {
+                        Type::Reference { mutable: false, inner } => {
+                            !matches!(actual, Type::Reference { .. })
+                                || (!type_pattern_matches(&expected, &actual, &mut substitution.clone())
+                                    && type_pattern_matches(inner, &actual, &mut substitution.clone()))
+                        }
+                        _ => false,
+                    };
+                    if borrow_argument {
                         let borrowed = HirExpr {
                             ty: Type::Reference {
                                 mutable: false,
@@ -4103,7 +4197,13 @@ impl MethodAuthorityContext<'_> {
             return;
         };
         self.materialize_expr(receiver, errors);
-        receiver.ty = self.engine.borrow().resolve(&receiver.ty);
+        receiver.ty = match self.engine.borrow().normalize_resolved_type(&receiver.ty) {
+            Ok(ty) => ty,
+            Err(message) => {
+                errors.push(ResolveError::with_span(message, receiver.span.clone()));
+                return;
+            }
+        };
         if let Type::Reference { inner, .. } = &receiver.ty {
             let dereferenced = HirExpr {
                 ty: inner.as_ref().clone(),

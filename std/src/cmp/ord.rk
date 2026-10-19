@@ -1,0 +1,234 @@
+// Partial comparisons can be unordered; Ord promises a total ordering.
+
+> std::cmp::eq::PartialEq
+> std::cmp::eq::Eq
+> std::control::option::Option
+
+< enum Ordering
+    Less
+    Equal
+    Greater
+
+impl Ordering
+    @rank: I64
+    @rank = ->
+        match *self
+            Ordering::Less => 0
+            Ordering::Equal => 1
+            Ordering::Greater => 2
+
+impl PartialEq Ordering for Ordering
+    @== = other -> self.rank! == other.rank!
+
+impl Eq for Ordering
+
+< trait PartialOrd where Self: PartialEq Self
+    @partial_cmp: &Self -> Option Ordering
+    @<: &Self -> Bool
+    @< = other ->
+        match self.partial_cmp other
+            Option::Some order =>
+                match order
+                    Ordering::Less => true
+                    _ => false
+            Option::None => false
+
+    @<=: &Self -> Bool
+    @<= = other ->
+        match self.partial_cmp other
+            Option::Some order =>
+                match order
+                    Ordering::Greater => false
+                    _ => true
+            Option::None => false
+
+    @>: &Self -> Bool
+    @> = other ->
+        match self.partial_cmp other
+            Option::Some order =>
+                match order
+                    Ordering::Greater => true
+                    _ => false
+            Option::None => false
+
+    @>=: &Self -> Bool
+    @>= = other ->
+        match self.partial_cmp other
+            Option::Some order =>
+                match order
+                    Ordering::Less => false
+                    _ => true
+            Option::None => false
+
+< trait Ord where Self: Eq, Self: PartialOrd
+    @cmp: &Self -> Ordering
+
+impl Ord for I64
+    @cmp = other ->
+        if ~I64Lt *self, *other
+            Ordering::Less
+        else if ~I64Gt *self, *other
+            Ordering::Greater
+        else
+            Ordering::Equal
+
+impl Ord for I32
+    @cmp = other ->
+        if ~I32Lt *self, *other
+            Ordering::Less
+        else if ~I32Gt *self, *other
+            Ordering::Greater
+        else
+            Ordering::Equal
+
+impl Ord for I16
+    @cmp = other ->
+        if ~I16Lt *self, *other
+            Ordering::Less
+        else if ~I16Gt *self, *other
+            Ordering::Greater
+        else
+            Ordering::Equal
+
+impl Ord for I8
+    @cmp = other ->
+        if ~I8Lt *self, *other
+            Ordering::Less
+        else if ~I8Gt *self, *other
+            Ordering::Greater
+        else
+            Ordering::Equal
+
+impl Ord for U64
+    @cmp = other ->
+        if ~U64Lt *self, *other
+            Ordering::Less
+        else if ~U64Gt *self, *other
+            Ordering::Greater
+        else
+            Ordering::Equal
+
+impl Ord for U32
+    @cmp = other ->
+        if ~U32Lt *self, *other
+            Ordering::Less
+        else if ~U32Gt *self, *other
+            Ordering::Greater
+        else
+            Ordering::Equal
+
+impl Ord for U16
+    @cmp = other ->
+        if ~U16Lt *self, *other
+            Ordering::Less
+        else if ~U16Gt *self, *other
+            Ordering::Greater
+        else
+            Ordering::Equal
+
+impl Ord for U8
+    @cmp = other ->
+        if ~U8Lt *self, *other
+            Ordering::Less
+        else if ~U8Gt *self, *other
+            Ordering::Greater
+        else
+            Ordering::Equal
+
+impl Ord for Bool
+    @cmp = other ->
+        if *self
+            if *other then Ordering::Equal else Ordering::Greater
+        else
+            if *other then Ordering::Less else Ordering::Equal
+
+impl Ord for Char
+    @cmp = other -> (*self as U32).cmp &(*other as U32)
+
+impl Ord for ()
+    @cmp = other -> Ordering::Equal
+
+impl Ord for Ordering
+    @cmp = other -> self.rank!.cmp &(other.rank!)
+
+impl Ord for &Str
+    @cmp = other ->
+        left = (*self).as_bytes!
+        right = (*other).as_bytes!
+        i = 0
+        while i < left.len! && i < right.len!
+            if left[i] < right[i]
+                return Ordering::Less
+            if left[i] > right[i]
+                return Ordering::Greater
+            i = i + 1
+        left.len!.cmp &(right.len!)
+
+impl PartialOrd for I64
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for I32
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for I16
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for I8
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for U64
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for U32
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for U16
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for U8
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for Bool
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for Char
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for ()
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for Ordering
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl PartialOrd for &Str
+    @partial_cmp = other -> Option::Some (self.cmp other)
+
+impl F64
+    @is_nan: Bool
+    @is_nan = -> !(*self == *self)
+
+impl F32
+    @is_nan: Bool
+    @is_nan = -> !(*self == *self)
+
+impl PartialOrd for F64
+    @partial_cmp = other ->
+        if ~F64Lt *self, *other
+            Option::Some Ordering::Less
+        else if ~F64Gt *self, *other
+            Option::Some Ordering::Greater
+        else if ~F64Eq *self, *other
+            Option::Some Ordering::Equal
+        else
+            Option::None
+
+impl PartialOrd for F32
+    @partial_cmp = other ->
+        if ~F32Lt *self, *other
+            Option::Some Ordering::Less
+        else if ~F32Gt *self, *other
+            Option::Some Ordering::Greater
+        else if ~F32Eq *self, *other
+            Option::Some Ordering::Equal
+        else
+            Option::None

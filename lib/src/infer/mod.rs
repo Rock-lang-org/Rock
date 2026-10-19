@@ -2,6 +2,7 @@
 //! into a fully-typed HirProgram.
 
 mod authority;
+pub(crate) mod constants;
 pub mod constraints;
 mod engine;
 mod finalize;
@@ -40,6 +41,7 @@ pub struct ResolvedHirProgram {
     pub type_ids: HirTypeIds,
     pub source_map: crate::source_map::SemanticSourceMap,
     pub(crate) normalization_env: TypeNormalizationEnv,
+    pub(crate) constant_arithmetic: HashMap<DefId, constants::ArithmeticSummary>,
 }
 
 impl ResolvedHirProgram {
@@ -69,6 +71,7 @@ impl ResolvedHirProgram {
         root_crate_id: crate::ids::CrateId,
         local_def_ids: IdGen<LocalDefId>,
     ) -> Self {
+        let summaries = constants::method_summaries(program.program(), HashMap::new());
         Self::from_accepted_with_normalization_env(
             program,
             resolver,
@@ -77,6 +80,7 @@ impl ResolvedHirProgram {
             local_def_ids,
             TypeNormalizationEnv::new(),
             crate::source_map::SemanticSourceMap::default(),
+            summaries,
         )
     }
 
@@ -88,6 +92,7 @@ impl ResolvedHirProgram {
         local_def_ids: IdGen<LocalDefId>,
         normalization_env: TypeNormalizationEnv,
         source_map: crate::source_map::SemanticSourceMap,
+        constant_arithmetic: HashMap<DefId, constants::ArithmeticSummary>,
     ) -> Self {
         let mut type_context = TypeContext::with_normalization_env(normalization_env.clone());
         let type_ids = collect_hir_type_ids(program.program(), &mut type_context);
@@ -101,6 +106,7 @@ impl ResolvedHirProgram {
             type_ids,
             source_map,
             normalization_env,
+            constant_arithmetic,
         }
     }
 
@@ -455,7 +461,25 @@ fn hir_program_from_partial(
 
 /// Finalize types: apply inference substitutions and generalize.
 /// Consumes PartialHir and produces a fully-typed HirProgram.
-pub fn finalize(mut hir: PartialHir) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
+pub fn finalize(hir: PartialHir) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
+    finalize_with_constant_methods(hir, HashMap::new())
+}
+
+pub(crate) fn finalize_with_crates(hir: PartialHir, ctx: &crate::crate_system::CrateContext) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
+    let mut summaries = HashMap::new();
+    for dependency in ctx.extern_crates() {
+        for imp in dependency.metadata().interface().impls.values() {
+            for method in imp.methods.values() {
+                if let Some(summary) = &method.constant_arithmetic {
+                    summaries.insert(method.id, summary.clone());
+                }
+            }
+        }
+    }
+    finalize_with_constant_methods(hir, summaries)
+}
+
+fn finalize_with_constant_methods(mut hir: PartialHir, summaries: HashMap<DefId, constants::ArithmeticSummary>) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
     hir.validate_item_ids()?;
     validate_method_ids(&hir)?;
     drive_inference_to_quiescence(&mut hir)?;
@@ -481,6 +505,11 @@ pub fn finalize(mut hir: PartialHir) -> Result<ResolvedHirProgram, Vec<ResolveEr
             .map(ResolveError::non_source)
             .collect());
     }
+    let summaries = constants::method_summaries(&program, summaries);
+    let constant_errors = constants::validate(&program, &current_def_ids, &summaries);
+    if !constant_errors.is_empty() {
+        return Err(constant_errors);
+    }
     let program = AcceptedHirProgram::try_from(program).map_err(|errors| {
         errors
             .into_iter()
@@ -495,6 +524,7 @@ pub fn finalize(mut hir: PartialHir) -> Result<ResolvedHirProgram, Vec<ResolveEr
         local_def_ids,
         normalization_env,
         source_map,
+        summaries,
     ))
 }
 
@@ -736,6 +766,20 @@ fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), Vec<Resolve
         }
     }
 
+    // A value determined by a function parameter is inferred generically, not
+    // an unconstrained construction site eligible for a declaration fallback.
+    let mut parameter_vars = HashSet::new();
+    for function in hir.functions.values().chain(hir.impls.values().flat_map(|item| item.methods.values()))
+        .chain(hir.traits.values().flat_map(|item| item.methods.values())) {
+        for param in &function.params {
+            crate::type_services::visit::visit_type(&hir.engine.resolve(&param.ty), &mut |ty: &Type| {
+                if let Type::TypeVar(id) = ty { parameter_vars.insert(*id); }
+            });
+        }
+    }
+    hir.engine.apply_generic_defaults(&parameter_vars).map_err(|error| vec![ResolveError::from_optional_span_code(
+        error.error.render(&hir.engine), error.span, crate::diagnostic::DiagnosticCode::Type,
+    )])?;
     for (_, owners, authority_obligations) in &mut component_work {
         solve_component_worklist(hir, &owners, authority_obligations, true)?;
         if authority_obligations.iter().any(|obligation| {

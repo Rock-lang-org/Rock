@@ -13,6 +13,7 @@ use crate::products::{
     ProductEnumInterface, ProductExternInterface, ProductFunctionInterface, ProductImplInterface,
     ProductLocalDefId, ProductStructInterface, ProductTraitInterface, ProductTypeAliasInterface,
 };
+use crate::type_services::kind::Kind;
 use crate::type_services::normalize::{TypeNormalizationEnv, TypeNormalizer};
 use crate::types::{GenericParamDecl, GenericParamId, NominalTypeKind, Type};
 
@@ -1736,6 +1737,24 @@ fn validate_product_interface_rows(products: &CompilerProducts) -> Result<(), St
         }
         for (signature_name, signature) in &trait_def.signatures {
             validate_product_interface_signature_name("trait", *id, signature_name, signature)?;
+            if let Some(method) = trait_def.methods.get(signature_name)
+                .filter(|method| method.id == signature.id)
+            {
+                // This is one member with both a declaration and a default body,
+                // not a second callable reusing an unrelated declaration's ID.
+                if method.params != signature.params
+                    || method.ret_type != signature.ret
+                    || method.generic_params != signature.generic_params
+                    || method.self_receiver != signature.self_receiver
+                    || method.is_unsafe != signature.is_unsafe
+                {
+                    return Err(format!(
+                        "Product artifact trait {} signature '{}' disagrees with its default method sharing the same ID",
+                        id.local_id.0, signature_name,
+                    ));
+                }
+                continue;
+            }
             record_product_nested_callable_id(
                 &mut callable_ids,
                 local_crate,
@@ -2152,8 +2171,11 @@ fn remap_function_interface_id(
     remap: &ProductIdentityRemap,
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductFunctionInterface, String> {
+    if let Some(summary) = &function.constant_arithmetic {
+        summary.validate(function.params.len())?;
+    }
     function.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut function.generic_params, remap)?;
+    remap_generic_param_decls(&mut function.generic_params, remap, type_validator)?;
     remap_generic_bounds(&mut function.generic_bounds, remap, type_validator)?;
     for param in &mut function.params {
         remap_type_def_ids(param, remap, type_validator)?;
@@ -2169,7 +2191,7 @@ fn remap_struct_interface_id(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductStructInterface, String> {
     strukt.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut strukt.generic_params, remap)?;
+    remap_generic_param_decls(&mut strukt.generic_params, remap, type_validator)?;
     for field in &mut strukt.fields {
         remap_type_def_ids(&mut field.ty, remap, type_validator)?;
     }
@@ -2183,7 +2205,7 @@ fn remap_type_alias_interface_id(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductTypeAliasInterface, String> {
     alias.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut alias.generic_params, remap)?;
+    remap_generic_param_decls(&mut alias.generic_params, remap, type_validator)?;
     remap_type_def_ids(&mut alias.ty, remap, type_validator)?;
     Ok(alias)
 }
@@ -2195,7 +2217,7 @@ fn remap_enum_interface_id(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductEnumInterface, String> {
     enm.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut enm.generic_params, remap)?;
+    remap_generic_param_decls(&mut enm.generic_params, remap, type_validator)?;
     for variant in &mut enm.variants {
         remap_variant_fields_def_ids(&mut variant.fields, remap, type_validator)?;
     }
@@ -2230,9 +2252,9 @@ fn remap_trait_interface_ids(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductTraitInterface, String> {
     trait_def.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut trait_def.generic_params, remap)?;
+    remap_generic_param_decls(&mut trait_def.generic_params, remap, type_validator)?;
     if let Some(target) = &mut trait_def.target {
-        remap_generic_param_decls(std::slice::from_mut(target), remap)?;
+        remap_generic_param_decls(std::slice::from_mut(target), remap, type_validator)?;
     }
     remap_predicates(&mut trait_def.predicates, remap, type_validator)?;
     for method in trait_def.methods.values_mut() {
@@ -2241,7 +2263,7 @@ fn remap_trait_interface_ids(
     }
     for sig in trait_def.signatures.values_mut() {
         sig.id = remap.def_id(ProductDefId::from(sig.id))?;
-        remap_generic_param_decls(&mut sig.generic_params, remap)?;
+        remap_generic_param_decls(&mut sig.generic_params, remap, type_validator)?;
         remap_generic_bounds(&mut sig.generic_bounds, remap, type_validator)?;
         for param in &mut sig.params {
             remap_type_def_ids(param, remap, type_validator)?;
@@ -2258,8 +2280,8 @@ fn remap_impl_interface_ids(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<ProductImplInterface, String> {
     imp.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut imp.type_generics, remap)?;
-    remap_generic_param_decls(&mut imp.trait_generics, remap)?;
+    remap_generic_param_decls(&mut imp.type_generics, remap, type_validator)?;
+    remap_generic_param_decls(&mut imp.trait_generics, remap, type_validator)?;
     if let Some(trait_id) = &mut imp.trait_id {
         *trait_id = remap.def_id(ProductDefId::from(*trait_id))?;
     }
@@ -2465,7 +2487,7 @@ fn remap_function_child_locations<P: crate::hir::HirPhase>(
         local_scope.insert(param.local_id);
     }
 
-    remap_generic_param_decls(&mut function.generic_params, remap)?;
+    remap_generic_param_decls(&mut function.generic_params, remap, type_validator)?;
     remap_generic_bounds(&mut function.generic_bounds, remap, type_validator)?;
     for param in &mut function.params {
         remap_type_def_ids(&mut param.ty, remap, type_validator)?;
@@ -2553,8 +2575,54 @@ fn remap_predicates(
 fn remap_generic_param_decls(
     decls: &mut [crate::types::GenericParamDecl],
     remap: &ProductIdentityRemap,
+    validator: &ProductNominalTypeValidator,
 ) -> Result<(), String> {
+    let mut env = validator.normalization_env.clone();
+    for decl in decls.iter() {
+        env.register_generic_kind(decl.id, decl.kind.clone());
+    }
+    let mut default_seen = false;
     for decl in decls {
+        if let Some(default) = &mut decl.default {
+            default_seen = true;
+            let owner = ProductDefId::from(decl.id.owner);
+            let subject_index = validator.trait_generic_counts.get(&owner).copied();
+            if let Some(index) = subject_index {
+                let subject = GenericParamId { owner: decl.id.owner, index: index as u32 };
+                if TypeNormalizer::new(&env).kind_of(&Type::Generic(subject)).is_err() {
+                    env.register_generic_kind(subject, crate::type_services::kind::Kind::Type);
+                }
+            }
+            let mut invalid_generic = false;
+            crate::type_services::visit::visit_type(default, &mut |ty: &Type| {
+                if let Type::Generic(param) = ty {
+                    if param.owner != decl.id.owner || (param.index >= decl.id.index && Some(param.index as usize) != subject_index) {
+                        invalid_generic = true;
+                    }
+                }
+            });
+            if invalid_generic { return Err("Product artifact generic default references an out-of-scope parameter".into()); }
+            struct BoundScope { groups: Vec<Vec<Kind>>, valid: bool }
+            impl crate::type_services::visit::TypeVisitor for BoundScope {
+                fn enter_binders(&mut self, params: &[Kind]) { self.groups.push(params.to_vec()); }
+                fn exit_binders(&mut self) { self.groups.pop(); }
+                fn visit_type(&mut self, ty: &Type) {
+                    if let Type::BoundVar { depth, index, kind } = ty {
+                        self.valid &= self.groups.iter().rev().nth(*depth as usize)
+                            .and_then(|group| group.get(*index as usize)) == Some(kind);
+                    }
+                    crate::type_services::visit::visit_type_children(ty, self);
+                }
+            }
+            let mut scope = BoundScope { groups: Vec::new(), valid: true };
+            crate::type_services::visit::visit_type(default, &mut scope);
+            if !scope.valid { return Err("Product artifact generic default contains an escaping type binder".into()); }
+            let kind = TypeNormalizer::new(&env).kind_of(default).map_err(|error| error.to_string())?;
+            if kind != decl.kind { return Err(format!("Product artifact generic default has kind {kind}, expected {}", decl.kind)); }
+            remap_type_def_ids(default, remap, validator)?;
+        } else if default_seen {
+            return Err("Product artifact required parameter follows a defaulted parameter".into());
+        }
         decl.id.owner = remap.def_id(ProductDefId::from(decl.id.owner))?;
     }
     Ok(())
@@ -3420,14 +3488,14 @@ fn remap_trait_ids(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<crate::hir::AcceptedHirTrait, String> {
     value.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut value.generic_params, remap)?;
+    remap_generic_param_decls(&mut value.generic_params, remap, type_validator)?;
     if let Some(target) = &mut value.target {
-        remap_generic_param_decls(std::slice::from_mut(target), remap)?;
+        remap_generic_param_decls(std::slice::from_mut(target), remap, type_validator)?;
     }
     remap_predicates(&mut value.predicates, remap, type_validator)?;
     for signature in value.signatures.values_mut() {
         signature.id = remap.def_id(ProductDefId::from(signature.id))?;
-        remap_generic_param_decls(&mut signature.generic_params, remap)?;
+        remap_generic_param_decls(&mut signature.generic_params, remap, type_validator)?;
         remap_generic_bounds(&mut signature.generic_bounds, remap, type_validator)?;
         for param in &mut signature.params {
             remap_type_def_ids(param, remap, type_validator)?;
@@ -3450,8 +3518,8 @@ fn remap_impl_ids(
     type_validator: &ProductNominalTypeValidator,
 ) -> Result<crate::hir::AcceptedHirImpl, String> {
     value.id = remap.def_id(id)?;
-    remap_generic_param_decls(&mut value.type_generics, remap)?;
-    remap_generic_param_decls(&mut value.trait_generics, remap)?;
+    remap_generic_param_decls(&mut value.type_generics, remap, type_validator)?;
+    remap_generic_param_decls(&mut value.trait_generics, remap, type_validator)?;
     if let crate::hir::HirImplOwner::Named(owner) = &mut value.owner {
         *owner = qualify_product_name(crate_name, owner);
     }
@@ -6153,6 +6221,51 @@ mod product_tests {
     }
 
     #[test]
+    fn product_interface_shared_default_member_id_requires_matching_signature() {
+        let trait_id = product_def_id(0, 1);
+        let member_id = product_hir_def_id(product_def_id(0, 2));
+        let method = test_function(member_id, "value");
+        let signature = crate::hir::HirFunctionSig {
+            id: member_id,
+            name: "value".to_string(),
+            generic_params: method.generic_params.clone(),
+            params: method.params.iter().map(|param| param.ty.clone()).collect(),
+            ret: method.ret_type.clone(),
+            generic_bounds: method.generic_bounds.clone(),
+            self_receiver: method.self_receiver,
+            is_unsafe: method.is_unsafe,
+        };
+        let mut products = product_with_function("dep", ProductCrateId(0), 0, PathBuf::from("dep.o"));
+        insert_interface_trait(&mut products, trait_id, HirTrait {
+            id: product_hir_def_id(trait_id),
+            name: "Value".to_string(),
+            generic_params: Vec::new(),
+            target: None,
+            predicates: Vec::new(),
+            associated_types: Vec::new(),
+            methods: HashMap::from([("value".to_string(), method)]),
+            signatures: HashMap::from([("value".to_string(), signature)]),
+        });
+        super::validate_product_interface_rows(&products).unwrap();
+        for change in 0..3 {
+            let mut malformed = products.clone();
+            let signature = malformed.interface.traits.get_mut(&trait_id).unwrap()
+                .signatures.get_mut("value").unwrap();
+            match change {
+                0 => signature.ret = Type::Bool,
+                1 => signature.params.push(Type::I64),
+                _ => signature.is_unsafe = true,
+            }
+            assert!(super::validate_product_interface_rows(&malformed).unwrap_err().contains("disagrees"));
+        }
+        let trait_def = products.interface.traits.get_mut(&trait_id).unwrap();
+        let mut unrelated = trait_def.signatures["value"].clone();
+        unrelated.name = "other".to_string();
+        trait_def.signatures.insert("other".to_string(), unrelated);
+        assert!(super::validate_product_interface_rows(&products).unwrap_err().contains("duplicate callable ID"));
+    }
+
+    #[test]
     fn load_product_artifact_rejects_nested_method_reusing_top_level_function_id() {
         let (base, _cleanup) = temp_test_dir("nested_method_reuses_function_id");
         let object_path = base.join("dep.o");
@@ -6515,6 +6628,32 @@ mod product_tests {
             error.contains("unresolved type"),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn product_artifact_rejects_invalid_generic_defaults() {
+        let id = product_def_id(0, 7);
+        let owner = product_hir_def_id(id);
+        for default in [
+            Type::Error,
+            Type::TypeVar(crate::ids::TypeVarId(0)),
+            Type::Generic(GenericParamId { owner, index: 0 }),
+            Type::Generic(GenericParamId { owner: product_hir_def_id(product_def_id(0, 0)), index: 0 }),
+            Type::Lambda { params: vec![Kind::Type], body: Box::new(Type::I64) },
+            Type::BoundVar { depth: 0, index: 0, kind: Kind::Type },
+        ] {
+            let mut products = product_with_function("dep", ProductCrateId(0), 0, PathBuf::from("dep.o"));
+            let mut param = GenericParamDecl::type_param(GenericParamId { owner, index: 0 }, "T");
+            param.default = Some(default);
+            products.interface.structs.insert(id, ProductStructInterface {
+                id: owner, name: "dep::Private".into(), generic_params: vec![param], fields: vec![],
+            });
+            let remap = super::ProductIdentityRemap {
+                local_crate: ProductCrateId(0),
+                crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
+            };
+            assert!(super::validate_product_type_fields(&products, &remap, &CrateContext::new()).is_err());
+        }
     }
 
     #[test]
@@ -10543,8 +10682,8 @@ mod product_tests {
         ));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
-        let artifact_path = base.join("stdlib.rkca");
-        let object_path = base.join("stdlib.o");
+        let artifact_path = base.join("std.rkca");
+        let object_path = base.join("std.o");
         fs::write(&object_path, []).unwrap();
 
         let struct_id = DefId::new(CrateId(1), LocalDefId(7));
@@ -10553,7 +10692,7 @@ mod product_tests {
         identity_table.local_crate = Some(ProductCrateId(1));
         identity_table
             .display_names
-            .insert(product_id, "stdlib::prelude::String".to_string());
+            .insert(product_id, "std::prelude::String".to_string());
         identity_table
             .prelude_export_names
             .insert("Text".to_string(), product_id);
@@ -10570,7 +10709,7 @@ mod product_tests {
         );
 
         let products = CompilerProducts {
-            crate_identity: ProductCrateIdentity::local("stdlib".to_string()),
+            crate_identity: ProductCrateIdentity::local("std".to_string()),
             identity_table,
             interface,
             bodies: Default::default(),
@@ -10588,9 +10727,9 @@ mod product_tests {
         let mut ctx = CrateContext::new();
         ctx.load_product_artifact_from_path(artifact_path).unwrap();
 
-        let stdlib = ctx.extern_crate("stdlib").unwrap();
-        let export = stdlib.metadata().prelude_export_ids().get("Text").unwrap();
-        assert_eq!(export.source, "stdlib::prelude::String");
+        let std = ctx.extern_crate("std").unwrap();
+        let export = std.metadata().prelude_export_ids().get("Text").unwrap();
+        assert_eq!(export.source, "std::prelude::String");
         assert_eq!(export.id.crate_id, CrateId(1));
 
         let _ = fs::remove_dir_all(base);
@@ -10605,8 +10744,8 @@ mod product_tests {
         ));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
-        let artifact_path = base.join("stdlib.rkca");
-        let object_path = base.join("stdlib.o");
+        let artifact_path = base.join("std.rkca");
+        let object_path = base.join("std.o");
         fs::write(&object_path, []).unwrap();
 
         let product_id = ProductDefId {
@@ -10620,7 +10759,7 @@ mod product_tests {
             .insert("String".to_string(), product_id);
 
         let products = CompilerProducts {
-            crate_identity: ProductCrateIdentity::local("stdlib".to_string()),
+            crate_identity: ProductCrateIdentity::local("std".to_string()),
             identity_table,
             interface: ProductInterface::default(),
             bodies: Default::default(),
@@ -10738,8 +10877,8 @@ mod product_tests {
         ));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
-        let artifact_path = base.join("stdlib.rkca");
-        let object_path = base.join("stdlib.o");
+        let artifact_path = base.join("std.rkca");
+        let object_path = base.join("std.o");
         fs::write(&object_path, []).unwrap();
 
         let struct_id = DefId::new(CrateId(1), LocalDefId(7));
@@ -10748,7 +10887,7 @@ mod product_tests {
         identity_table.local_crate = Some(ProductCrateId(1));
         identity_table
             .display_names
-            .insert(product_id, "stdlib::prelude::String".to_string());
+            .insert(product_id, "std::prelude::String".to_string());
 
         let mut interface = ProductInterface::default();
         interface.structs.insert(
@@ -10762,7 +10901,7 @@ mod product_tests {
         );
 
         let products = CompilerProducts {
-            crate_identity: ProductCrateIdentity::local("stdlib".to_string()),
+            crate_identity: ProductCrateIdentity::local("std".to_string()),
             identity_table,
             interface,
             bodies: Default::default(),
@@ -10780,17 +10919,17 @@ mod product_tests {
         let mut ctx = CrateContext::new();
         ctx.load_product_artifact_from_path(artifact_path).unwrap();
 
-        let stdlib = ctx.extern_crate("stdlib").unwrap();
-        let interface = stdlib.metadata().interface();
+        let std = ctx.extern_crate("std").unwrap();
+        let interface = std.metadata().interface();
         let exported_struct = interface
-            .struct_by_canonical_name("stdlib::prelude::String")
+            .struct_by_canonical_name("std::prelude::String")
             .unwrap();
-        let prelude_export = stdlib
+        let prelude_export = std
             .metadata()
             .prelude_export_ids()
             .get("String")
             .unwrap();
-        assert_eq!(prelude_export.source, "stdlib::prelude::String");
+        assert_eq!(prelude_export.source, "std::prelude::String");
         assert_eq!(prelude_export.id, exported_struct.id);
 
         let _ = fs::remove_dir_all(base);

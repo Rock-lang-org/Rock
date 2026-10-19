@@ -86,13 +86,13 @@ established by the wrapper's contract.
 ## Owning foreign allocations
 
 An owning pointer needs one allocator and one matching release path. The
-following complete program uses the POSIX stdlib declarations, checks the
+following complete program uses the POSIX std declarations, checks the
 allocation result, never dereferences uninitialized memory, and frees the
 allocation once:
 
 ```rock
-> stdlib::libc::malloc
-> stdlib::libc::free
+> std::ffi::libc::malloc
+> std::ffi::libc::free
 
 unsafe allocate_and_release: I64 -> I64
 allocate_and_release = size ->

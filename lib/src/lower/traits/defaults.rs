@@ -175,6 +175,16 @@ impl Lowerer {
                 generic_bounds,
                 fd.is_unsafe,
             );
+            // Default bodies share the declaration's generic identities,
+            // including method-local parameters used in local annotations.
+            for generic in trait_def
+                .generic_params
+                .iter()
+                .chain(trait_def.target.iter())
+                .chain(&func.generic_params)
+            {
+                context.register_generic_param(generic.name.clone(), generic.id);
+            }
             context.seed_after_existing_locals(func.params.iter().map(|param| param.local_id));
             let body = self.with_body_context(context, |lowerer| {
                 lowerer.push_scope();

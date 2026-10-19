@@ -1,0 +1,236 @@
+// Profile-independent integer arithmetic. The overflowing primitives report a
+// wrapped value and a flag; std owns Option construction and saturation policy.
+> std::control::option::Option
+> std::cmp::eq::PartialEq
+
+< trait Integer
+    @min_value: Self
+    @max_value: Self
+    @is_negative: Bool
+    @is_zero: Bool
+    @overflowing_add: Self -> (Self, Bool)
+    @overflowing_sub: Self -> (Self, Bool)
+    @overflowing_mul: Self -> (Self, Bool)
+    @overflowing_div: Self -> (Self, Bool)
+    @overflowing_rem: Self -> (Self, Bool)
+    @overflowing_neg: (Self, Bool)
+    @overflowing_shl: U32 -> (Self, Bool)
+    @overflowing_shr: U32 -> (Self, Bool)
+
+    @checked_add: Self -> Option Self
+    @checked_add = other ->
+        result = self.overflowing_add other
+        if result.1 then Option::None else Option::Some result.0
+
+    @checked_sub: Self -> Option Self
+    @checked_sub = other ->
+        result = self.overflowing_sub other
+        if result.1 then Option::None else Option::Some result.0
+
+    @checked_mul: Self -> Option Self
+    @checked_mul = other ->
+        result = self.overflowing_mul other
+        if result.1 then Option::None else Option::Some result.0
+
+    @checked_div: Self -> Option Self
+    @checked_div = other ->
+        if other.is_zero!
+            Option::None
+        else
+            result = self.overflowing_div other
+            if result.1 then Option::None else Option::Some result.0
+
+    @checked_rem: Self -> Option Self
+    @checked_rem = other ->
+        if other.is_zero!
+            Option::None
+        else
+            result = self.overflowing_rem other
+            if result.1 then Option::None else Option::Some result.0
+
+    @checked_neg: Option Self
+    @checked_neg = ->
+        result = self.overflowing_neg!
+        if result.1 then Option::None else Option::Some result.0
+
+    @checked_shl: U32 -> Option Self
+    @checked_shl = count ->
+        result = self.overflowing_shl count
+        if result.1 then Option::None else Option::Some result.0
+
+    @checked_shr: U32 -> Option Self
+    @checked_shr = count ->
+        result = self.overflowing_shr count
+        if result.1 then Option::None else Option::Some result.0
+
+    @wrapping_add: Self -> Self
+    @wrapping_add = other -> (self.overflowing_add other).0
+    @wrapping_sub: Self -> Self
+    @wrapping_sub = other -> (self.overflowing_sub other).0
+    @wrapping_mul: Self -> Self
+    @wrapping_mul = other -> (self.overflowing_mul other).0
+    @wrapping_div: Self -> Self
+    @wrapping_div = other -> (self.overflowing_div other).0
+    @wrapping_rem: Self -> Self
+    @wrapping_rem = other -> (self.overflowing_rem other).0
+    @wrapping_neg: Self
+    @wrapping_neg = -> self.overflowing_neg!.0
+    @wrapping_shl: U32 -> Self
+    @wrapping_shl = count -> (self.overflowing_shl count).0
+    @wrapping_shr: U32 -> Self
+    @wrapping_shr = count -> (self.overflowing_shr count).0
+
+    @saturating_add: Self -> Self
+    @saturating_add = other ->
+        down = other.is_negative!
+        result = self.overflowing_add other
+        if result.1
+            if down then self.min_value! else self.max_value!
+        else
+            result.0
+
+    @saturating_sub: Self -> Self
+    @saturating_sub = other ->
+        up = other.is_negative!
+        result = self.overflowing_sub other
+        if result.1
+            if up then self.max_value! else self.min_value!
+        else
+            result.0
+
+    @saturating_mul: Self -> Self
+    @saturating_mul = other ->
+        down = if self.is_negative!
+            if other.is_negative! then false else true
+        else
+            other.is_negative!
+        result = self.overflowing_mul other
+        if result.1
+            if down then self.min_value! else self.max_value!
+        else
+            result.0
+
+    @saturating_div: Self -> Self
+    @saturating_div = other ->
+        result = self.overflowing_div other
+        if result.1 then self.max_value! else result.0
+
+    @saturating_neg: Self
+    @saturating_neg = ->
+        result = self.overflowing_neg!
+        if result.1
+            if self.is_negative! then self.max_value! else self.min_value!
+        else
+            result.0
+
+impl Integer for I8
+    @min_value = -> ~I8Not (127 as I8)
+    @max_value = -> 127 as I8
+    @is_negative = -> ~I8Lt *self, (0 as I8)
+    @is_zero = -> ~I8Eq *self, (0 as I8)
+    @overflowing_add = other -> ~IntOverflowingAdd *self, other
+    @overflowing_sub = other -> ~IntOverflowingSub *self, other
+    @overflowing_mul = other -> ~IntOverflowingMul *self, other
+    @overflowing_div = other -> ~IntOverflowingDiv *self, other
+    @overflowing_rem = other -> ~IntOverflowingRem *self, other
+    @overflowing_neg = -> ~IntOverflowingNeg *self
+    @overflowing_shl = count -> ~IntOverflowingShl *self, count
+    @overflowing_shr = count -> ~IntOverflowingShr *self, count
+
+impl Integer for I16
+    @min_value = -> ~I16Not (32767 as I16)
+    @max_value = -> 32767 as I16
+    @is_negative = -> ~I16Lt *self, (0 as I16)
+    @is_zero = -> ~I16Eq *self, (0 as I16)
+    @overflowing_add = other -> ~IntOverflowingAdd *self, other
+    @overflowing_sub = other -> ~IntOverflowingSub *self, other
+    @overflowing_mul = other -> ~IntOverflowingMul *self, other
+    @overflowing_div = other -> ~IntOverflowingDiv *self, other
+    @overflowing_rem = other -> ~IntOverflowingRem *self, other
+    @overflowing_neg = -> ~IntOverflowingNeg *self
+    @overflowing_shl = count -> ~IntOverflowingShl *self, count
+    @overflowing_shr = count -> ~IntOverflowingShr *self, count
+
+impl Integer for I32
+    @min_value = -> ~I32Not (2147483647 as I32)
+    @max_value = -> 2147483647 as I32
+    @is_negative = -> ~I32Lt *self, (0 as I32)
+    @is_zero = -> ~I32Eq *self, (0 as I32)
+    @overflowing_add = other -> ~IntOverflowingAdd *self, other
+    @overflowing_sub = other -> ~IntOverflowingSub *self, other
+    @overflowing_mul = other -> ~IntOverflowingMul *self, other
+    @overflowing_div = other -> ~IntOverflowingDiv *self, other
+    @overflowing_rem = other -> ~IntOverflowingRem *self, other
+    @overflowing_neg = -> ~IntOverflowingNeg *self
+    @overflowing_shl = count -> ~IntOverflowingShl *self, count
+    @overflowing_shr = count -> ~IntOverflowingShr *self, count
+
+impl Integer for I64
+    @min_value = -> ~I64Not 9223372036854775807
+    @max_value = -> 9223372036854775807
+    @is_negative = -> ~I64Lt *self, 0
+    @is_zero = -> ~I64Eq *self, 0
+    @overflowing_add = other -> ~IntOverflowingAdd *self, other
+    @overflowing_sub = other -> ~IntOverflowingSub *self, other
+    @overflowing_mul = other -> ~IntOverflowingMul *self, other
+    @overflowing_div = other -> ~IntOverflowingDiv *self, other
+    @overflowing_rem = other -> ~IntOverflowingRem *self, other
+    @overflowing_neg = -> ~IntOverflowingNeg *self
+    @overflowing_shl = count -> ~IntOverflowingShl *self, count
+    @overflowing_shr = count -> ~IntOverflowingShr *self, count
+
+impl Integer for U8
+    @min_value = -> 0 as U8
+    @max_value = -> ~U8Not (0 as U8)
+    @is_negative = -> false
+    @is_zero = -> ~U8Eq *self, (0 as U8)
+    @overflowing_add = other -> ~IntOverflowingAdd *self, other
+    @overflowing_sub = other -> ~IntOverflowingSub *self, other
+    @overflowing_mul = other -> ~IntOverflowingMul *self, other
+    @overflowing_div = other -> ~IntOverflowingDiv *self, other
+    @overflowing_rem = other -> ~IntOverflowingRem *self, other
+    @overflowing_neg = -> ~IntOverflowingNeg *self
+    @overflowing_shl = count -> ~IntOverflowingShl *self, count
+    @overflowing_shr = count -> ~IntOverflowingShr *self, count
+
+impl Integer for U16
+    @min_value = -> 0 as U16
+    @max_value = -> ~U16Not (0 as U16)
+    @is_negative = -> false
+    @is_zero = -> ~U16Eq *self, (0 as U16)
+    @overflowing_add = other -> ~IntOverflowingAdd *self, other
+    @overflowing_sub = other -> ~IntOverflowingSub *self, other
+    @overflowing_mul = other -> ~IntOverflowingMul *self, other
+    @overflowing_div = other -> ~IntOverflowingDiv *self, other
+    @overflowing_rem = other -> ~IntOverflowingRem *self, other
+    @overflowing_neg = -> ~IntOverflowingNeg *self
+    @overflowing_shl = count -> ~IntOverflowingShl *self, count
+    @overflowing_shr = count -> ~IntOverflowingShr *self, count
+
+impl Integer for U32
+    @min_value = -> 0 as U32
+    @max_value = -> ~U32Not (0 as U32)
+    @is_negative = -> false
+    @is_zero = -> ~U32Eq *self, (0 as U32)
+    @overflowing_add = other -> ~IntOverflowingAdd *self, other
+    @overflowing_sub = other -> ~IntOverflowingSub *self, other
+    @overflowing_mul = other -> ~IntOverflowingMul *self, other
+    @overflowing_div = other -> ~IntOverflowingDiv *self, other
+    @overflowing_rem = other -> ~IntOverflowingRem *self, other
+    @overflowing_neg = -> ~IntOverflowingNeg *self
+    @overflowing_shl = count -> ~IntOverflowingShl *self, count
+    @overflowing_shr = count -> ~IntOverflowingShr *self, count
+
+impl Integer for U64
+    @min_value = -> 0 as U64
+    @max_value = -> ~U64Not (0 as U64)
+    @is_negative = -> false
+    @is_zero = -> ~U64Eq *self, (0 as U64)
+    @overflowing_add = other -> ~IntOverflowingAdd *self, other
+    @overflowing_sub = other -> ~IntOverflowingSub *self, other
+    @overflowing_mul = other -> ~IntOverflowingMul *self, other
+    @overflowing_div = other -> ~IntOverflowingDiv *self, other
+    @overflowing_rem = other -> ~IntOverflowingRem *self, other
+    @overflowing_neg = -> ~IntOverflowingNeg *self
+    @overflowing_shl = count -> ~IntOverflowingShl *self, count
+    @overflowing_shr = count -> ~IntOverflowingShr *self, count

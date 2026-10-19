@@ -11,8 +11,8 @@ pub(crate) fn new_project(parent: &Path, name: &str) -> Result<PathBuf, String> 
     {
         return Err("Project names must start with an ASCII letter and contain only ASCII letters, digits, '-' or '_'".to_string());
     }
-    if name == "stdlib" {
-        return Err("Project name 'stdlib' is reserved for the standard library".to_string());
+    if name == "std" {
+        return Err("Project name 'std' is reserved for the standard library".to_string());
     }
 
     let root = parent.join(name);

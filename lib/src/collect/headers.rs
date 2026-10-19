@@ -375,10 +375,20 @@ fn lower_where_clauses(
             }
             subject => context.lower_parse_type(subject),
         };
-        let type_args = type_args
+        let argument_kinds = context.traits.values().find(|item| item.id == trait_id)
+            .map(|item| item.generic_params.iter().map(|param| param.kind.clone()).collect::<Vec<_>>()).unwrap_or_default();
+        let mut type_args = type_args
             .iter()
-            .map(|generic| context.lower_parse_type(generic))
+            .enumerate()
+            .map(|(index, generic)| crate::type_lowering::TypeLowerer::lower_type_argument(context, generic,
+                argument_kinds.get(index).unwrap_or(&crate::type_services::kind::Kind::Type)))
             .collect::<Vec<_>>();
+        if let Some(trait_def) = context.traits.values().find(|item| item.id == trait_id) {
+            match crate::type_lowering::complete_generic_args(&trait_def.generic_params, type_args.clone(), Some(&subject)) {
+                Ok(completed) => type_args = completed,
+                Err(message) => context.push_error_with_span(message, clause.trait_bound.as_ref().unwrap().span()),
+            }
+        }
         bounds.predicates.push(crate::types::Predicate::Trait {
             subject: subject.clone(),
             trait_id,
@@ -464,12 +474,37 @@ fn collect_type_var_ids(ty: &Type, type_vars: &mut HashSet<TypeVarId>) {
     });
 }
 
+pub(crate) fn build_nominal_generic_params(
+    context: &mut CollectContext,
+    syntax: &[ast::GenericParamDecl],
+    id: DefId,
+) -> Vec<GenericParamDecl> {
+    let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, syntax);
+    let spans = syntax.iter().map(|param| param.span.clone()).collect::<Vec<_>>();
+    let previous = context.push_generic_context_with_kinds_at(
+        id,
+        GenericParamDecl::names(&generic_params).map(str::to_string).collect(),
+        generic_params.iter().map(|param| param.kind.clone()).collect(),
+        &spans,
+    );
+    crate::type_lowering::lower_param_defaults(context, &mut generic_params, syntax, None);
+    context.pop_generic_context_with_kinds(previous.0, previous.1, previous.2);
+    // Publish through every qualified/imported alias before any fields are lowered.
+    for declaration in context.structs.values_mut().filter(|item| item.id == id) {
+        declaration.generic_params.clone_from(&generic_params);
+    }
+    for declaration in context.enums.values_mut().filter(|item| item.id == id) {
+        declaration.generic_params.clone_from(&generic_params);
+    }
+    generic_params
+}
+
 pub(crate) fn build_struct_with_id(
     context: &mut CollectContext,
     sd: &ast::StructDecl,
     id: DefId,
+    generic_params: Vec<GenericParamDecl>,
 ) -> HirStruct {
-    let generic_params = crate::type_lowering::lower_generic_param_decls(id, &sd.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect();
@@ -512,10 +547,11 @@ pub(crate) fn build_struct_with_id(
 pub(crate) fn build_type_alias_with_id(
     context: &mut CollectContext,
     name: &ast::ParseTypeInner,
+    params: &[ast::GenericParamDecl],
     target: &ast::ParseType,
     id: DefId,
 ) -> crate::hir::HirTypeAlias {
-    let generic_params = crate::type_lowering::lower_parse_generic_param_decls(id, &name.generics);
+    let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, params);
     let generic_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect();
@@ -523,13 +559,13 @@ pub(crate) fn build_type_alias_with_id(
         .iter()
         .map(|param| param.kind.clone())
         .collect();
-    let generic_spans = name
-        .generics
+    let generic_spans = params
         .iter()
-        .map(|param| param.span())
+        .map(|param| param.span.clone())
         .collect::<Vec<_>>();
     let (previous_owner, previous_params, previous_kinds) = context
         .push_generic_context_with_kinds_at(id, generic_names, generic_kinds, &generic_spans);
+    crate::type_lowering::lower_param_defaults(context, &mut generic_params, params, None);
     let mut ty = crate::type_lowering::TypeLowerer::lower_parse_type_term(context, target);
     context.pop_generic_context_with_kinds(previous_owner, previous_params, previous_kinds);
     if !generic_params.is_empty() {
@@ -586,9 +622,8 @@ pub(crate) fn build_enum_with_id(
     context: &mut CollectContext,
     ed: &ast::EnumDecl,
     id: DefId,
+    generic_params: Vec<GenericParamDecl>,
 ) -> HirEnum {
-    let generic_params =
-        crate::type_lowering::lower_parse_generic_param_decls(id, &ed.name.generics);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect();
@@ -597,10 +632,9 @@ pub(crate) fn build_enum_with_id(
         .map(|param| param.kind.clone())
         .collect();
     let generic_spans = ed
-        .name
-        .generics
+        .generic_params
         .iter()
-        .map(|param| param.span())
+        .map(|param| param.span.clone())
         .collect::<Vec<_>>();
     let (prev_owner, prev_params, prev_kinds) = context.push_generic_context_with_kinds_at(
         id,
@@ -1114,7 +1148,7 @@ pub(crate) fn build_trait_with_id(
     id: DefId,
     member_ids: &CollectedTraitMemberIds,
 ) -> HirTrait {
-    let generic_params = crate::type_lowering::lower_generic_param_decls(id, &td.generic_params);
+    let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, &td.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect::<Vec<_>>();
@@ -1158,6 +1192,14 @@ pub(crate) fn build_trait_with_id(
         &generic_context_spans,
     );
 
+    let subject_name = td.for_.as_ref().map(|param| param.name.name.clone()).unwrap_or_else(|| "Self".into());
+    let subject = GenericParamDecl::new(
+        GenericParamId { owner: id, index: generic_params.len() as u32 },
+        subject_name.clone(),
+        td.for_.as_ref().map(|param| crate::type_lowering::lower_generic_param_kind(param.kind.as_ref()))
+            .unwrap_or(crate::type_services::kind::Kind::Type),
+    );
+    crate::type_lowering::lower_param_defaults(context, &mut generic_params, &td.generic_params, Some((subject_name, subject)));
     let associated_types: Vec<HirAssociatedTypeDecl> = td
         .associated_types
         .iter()
@@ -1366,13 +1408,11 @@ pub(crate) fn build_impl_with_id(
             });
         }
     } else {
-        for generic in &imp.name.generics {
-            collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name| {
-                is_known_nominal_type_name(context, name)
-            });
-        }
+        collect_generic_names_from_parse_type(&imp.name, &mut impl_generic_params, &|name| {
+            is_known_nominal_type_name(context, name)
+        });
     }
-    for generic in &imp.name.generics {
+    for generic in imp.name.generics() {
         collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name| {
             is_known_nominal_type_name(context, name)
         });
@@ -1392,7 +1432,15 @@ pub(crate) fn build_impl_with_id(
             &|name| is_known_nominal_type_name(context, name),
         );
     }
-    for generic in &imp.name.generics {
+    if imp.for_.is_none() {
+        collect_declared_generic_kinds(
+            &imp.name,
+            &mut impl_generic_kinds,
+            &mut impl_generic_kind_conflicts,
+            &|name| is_known_nominal_type_name(context, name),
+        );
+    }
+    for generic in imp.name.generics() {
         collect_declared_generic_kinds(
             generic,
             &mut impl_generic_kinds,
@@ -1411,7 +1459,7 @@ pub(crate) fn build_impl_with_id(
     for (name, declared, required) in impl_generic_kind_conflicts {
         context.push_error_with_span(format!(
             "generic parameter '{name}' was declared with kind {declared}, but a later binder requires {required}",
-        ), imp.name.span.clone());
+        ), imp.name.span());
     }
     let generic_kinds = impl_generic_params
         .iter()
@@ -1422,7 +1470,7 @@ pub(crate) fn build_impl_with_id(
                 .unwrap_or(crate::type_services::kind::Kind::Type)
         })
         .collect();
-    let generic_spans = vec![imp.name.span.clone(); impl_generic_params.len()];
+    let generic_spans = vec![imp.name.span(); impl_generic_params.len()];
     let (prev_owner, prev_params, prev_kinds) = context.push_generic_context_with_kinds_at(
         id,
         impl_generic_params,
@@ -1436,7 +1484,7 @@ pub(crate) fn build_impl_with_id(
             type_name,
             type_generics,
             receiver_pattern,
-            Some(imp.name.name.clone()),
+            Some(imp.name.type_name()),
         )
     } else {
         let (type_name, type_generics, receiver_pattern) = context.impl_type_info(imp);
@@ -1445,7 +1493,7 @@ pub(crate) fn build_impl_with_id(
 
     let trait_generic_names: Vec<String> = imp
         .name
-        .generics
+        .generics()
         .iter()
         .filter_map(|g| {
             if let ast::ParseType::Type(inner) = g {
@@ -1455,16 +1503,19 @@ pub(crate) fn build_impl_with_id(
             }
         })
         .collect();
-    let trait_arg_types: Vec<Type> = imp
-        .name
-        .generics
-        .iter()
-        .map(|g| context.lower_parse_type(g))
-        .collect();
     let trait_def = trait_name
         .as_deref()
         .and_then(|name| context.trait_by_name(name))
         .cloned();
+    let mut trait_arg_types: Vec<Type> = imp
+        .name
+        .generics()
+        .iter()
+        .enumerate()
+        .map(|(index, generic)| crate::type_lowering::TypeLowerer::lower_type_argument(context, generic,
+            trait_def.as_ref().and_then(|item| item.generic_params.get(index)).map(|param| &param.kind)
+                .unwrap_or(&crate::type_services::kind::Kind::Type)))
+        .collect();
     let trait_id = trait_def.as_ref().map(|trait_def| trait_def.id);
     let impl_target_ty = match &receiver_pattern {
         crate::hir::HirImplReceiverPattern::Exact(ty)
@@ -1474,6 +1525,10 @@ pub(crate) fn build_impl_with_id(
         }
     };
     if let Some(trait_def) = trait_def.as_ref() {
+        match crate::type_lowering::complete_generic_args(&trait_def.generic_params, trait_arg_types.clone(), Some(&impl_target_ty)) {
+            Ok(completed) => trait_arg_types = completed,
+            Err(message) => context.push_error_with_span(message, imp.name.span()),
+        }
         let target_kind = trait_def
             .target
             .as_ref()
@@ -1488,14 +1543,14 @@ pub(crate) fn build_impl_with_id(
                 imp.for_
                     .as_ref()
                     .map(|ty| ty.span())
-                    .unwrap_or_else(|| imp.name.span.clone()),
+                    .unwrap_or_else(|| imp.name.span()),
             ),
             Err(error) => context.push_error_with_span(
                 error,
                 imp.for_
                     .as_ref()
                     .map(|ty| ty.span())
-                    .unwrap_or_else(|| imp.name.span.clone()),
+                    .unwrap_or_else(|| imp.name.span()),
             ),
             _ => {}
         }
@@ -1575,11 +1630,32 @@ pub(crate) fn build_impl_with_id(
                     &impl_target_ty,
                 )
             });
-        let func = if let Some(signature) = trait_signature {
+        let explicit_signature = imp.signatures.iter()
+            .find(|(name, _)| name.name == ident.name)
+            .map(|(_, signature)| build_function_sig_with_id(context, signature, method_id));
+        let mut func = if let Some(signature) = explicit_signature.or(trait_signature) {
             build_function_header_with_sig(context, fd, &signature, method_id)
         } else {
             build_function_header_with_id(context, fd, method_id)
         };
+        // Receiver identity is already known at collection time, even when
+        // this method's body is lowered after its callers in another module.
+        if imp.for_.is_none() && imp.signatures.contains_key(ident) {
+            if let (Some(receiver_mode), Some(receiver)) = (func.self_receiver, func.params.first_mut()) {
+                receiver.ty = match (receiver_mode, impl_target_ty.clone()) {
+                    (crate::types::ReceiverMode::Mut, target @ Type::Reference { mutable: true, .. }) => target,
+                    (crate::types::ReceiverMode::Shared, target) => Type::Reference {
+                        mutable: false,
+                        inner: Box::new(target),
+                    },
+                    (crate::types::ReceiverMode::Mut, target) => Type::Reference {
+                        mutable: true,
+                        inner: Box::new(target),
+                    },
+                    (crate::types::ReceiverMode::Move, target) => target,
+                };
+            }
+        }
         let method_name = ident.name.clone();
         methods.insert(method_name, func);
     }
@@ -1707,6 +1783,16 @@ mod tests {
     use crate::lexer::Span;
     use crate::types::{AssociatedTypeKey, GenericParamId, Type};
 
+    fn build_struct_with_id(context: &mut CollectContext, decl: &StructDecl, id: DefId) -> HirStruct {
+        let params = build_nominal_generic_params(context, &decl.generic_params, id);
+        super::build_struct_with_id(context, decl, id, params)
+    }
+
+    fn build_enum_with_id(context: &mut CollectContext, decl: &EnumDecl, id: DefId) -> HirEnum {
+        let params = build_nominal_generic_params(context, &decl.generic_params, id);
+        super::build_enum_with_id(context, decl, id, params)
+    }
+
     fn ident(name: &str) -> Ident {
         Ident {
             name: name.to_string(),
@@ -1732,6 +1818,7 @@ mod tests {
 
     fn generic_param(name: &str) -> ast::GenericParamDecl {
         ast::GenericParamDecl {
+            default: None,
             name: ident(name),
             kind: None,
             span: Span::test(),
@@ -1839,6 +1926,40 @@ mod tests {
     }
 
     #[test]
+    fn collect_structural_inherent_method_has_declared_return_and_receiver() {
+        let mut context = CollectContext::new();
+        let impl_id = def_id(100);
+        let method_id = def_id(101);
+        let implementation = Impl {
+            name: ParseType::Reference {
+                is_mut: false,
+                pointee: Box::new(ParseType::Slice(Box::new(named_type("T")))),
+            },
+            for_: None,
+            associated_types: vec![],
+            methods: HashMap::from([(
+                ident("pointer"),
+                function_decl("pointer", &[], Some(SelfReceiverMode::Shared), LambdaArrowKind::Normal),
+            )]),
+            signatures: HashMap::from([(
+                ident("pointer"),
+                function_sig("pointer", ParseType::Pointer(Box::new(named_type("T"))), Some(SelfReceiverMode::Shared), vec![]),
+            )]),
+            where_clauses: vec![],
+        };
+        let collected = build_impl_with_id(&mut context, &implementation, impl_id, &impl_method_ids(&[("pointer", method_id)]));
+        assert!(context.errors.is_empty(), "{:?}", context.errors);
+        let element = Type::Generic(GenericParamId { owner: impl_id, index: 0 });
+        let target = Type::Reference { mutable: false, inner: Box::new(Type::Slice(Box::new(element.clone()))) };
+        assert_eq!(collected.type_generics.len(), 1);
+        assert_eq!(collected.receiver_pattern, crate::hir::HirImplReceiverPattern::Exact(target.clone()));
+        let method = &collected.methods["pointer"];
+        assert_eq!(method.ret_type, Type::Pointer(Box::new(element)));
+        assert_eq!(method.params[0].ty, Type::Reference { mutable: false, inner: Box::new(target) });
+        assert_eq!(method.id, method_id);
+    }
+
+    #[test]
     fn collect_type_var_ids_visits_projection_base_and_trait_args() {
         let base_var = TypeVarId(10);
         let arg_var = TypeVarId(11);
@@ -1928,6 +2049,7 @@ mod tests {
     fn build_struct_preserves_constructor_generic_kind_and_application() {
         let owner = def_id(90);
         let constructor_param = ast::GenericParamDecl {
+            default: None,
             name: ident("F"),
             kind: Some(ast::TypeApplication {
                 constructor: Box::new(named_type("F")),
@@ -2055,9 +2177,10 @@ mod tests {
     fn test_build_enum_mirrors_variant_header_construction() {
         let mut lowerer = CollectContext::new();
         let decl = EnumDecl {
+            generic_params: vec![generic_param("T")],
             name: ParseTypeInner {
                 name: "Message".to_string(),
-                generics: vec![generic_type("T")],
+                generics: vec![],
                 span: Span::test(),
             },
             variants: vec![
@@ -2130,6 +2253,7 @@ mod tests {
     fn build_enum_assigns_variant_ids_and_owner_unique_named_field_ids() {
         let mut context = CollectContext::new();
         let decl = EnumDecl {
+            generic_params: Vec::new(),
             name: type_inner("Message"),
             variants: vec![
                 EnumVariant {
@@ -2772,6 +2896,7 @@ mod tests {
             },
         );
         let target = ast::GenericParamDecl {
+            default: None,
             name: ident("F"),
             kind: Some(ast::TypeApplication {
                 constructor: Box::new(named_type("F")),
@@ -3109,9 +3234,9 @@ mod tests {
         let assoc_id = crate::ids::AssocTypeId(7);
         context
             .import_aliases
-            .insert("Deref".to_string(), "stdlib::deref::Deref".to_string());
+            .insert("Deref".to_string(), "std::deref::Deref".to_string());
         context.traits.insert(
-            "stdlib::deref::Deref".to_string(),
+            "std::deref::Deref".to_string(),
             HirTrait {
                 target: None,
                 predicates: Vec::new(),
@@ -3129,7 +3254,7 @@ mod tests {
         );
 
         let imp = Impl {
-            name: type_inner("Deref"),
+            name: ParseType::Type(type_inner("Deref")),
             for_: Some(ParseType::Type(ParseTypeInner {
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],
@@ -3163,7 +3288,7 @@ mod tests {
             .canonical_import_aliases
             .insert("Clone".to_string(), trait_id);
         context.traits.insert(
-            "stdlib::clone::Clone".to_string(),
+            "std::clone::Clone".to_string(),
             HirTrait {
                 target: None,
                 predicates: Vec::new(),
@@ -3177,7 +3302,7 @@ mod tests {
         );
 
         let imp = Impl {
-            name: type_inner("Clone"),
+            name: ParseType::Type(type_inner("Clone")),
             for_: Some(ParseType::Type(type_inner("String"))),
             associated_types: Vec::new(),
             methods: HashMap::new(),
@@ -3270,11 +3395,11 @@ mod tests {
     fn test_build_impl_registers_methods_and_tracks_function_type_vars_by_id() {
         let mut lowerer = CollectContext::new();
         let imp = Impl {
-            name: ParseTypeInner {
+            name: ParseType::Type(ParseTypeInner {
                 name: "Show".to_string(),
                 generics: vec![],
                 span: Span::test(),
-            },
+            }),
             for_: Some(named_type("Point")),
             associated_types: vec![],
             methods: HashMap::from([(
@@ -3305,7 +3430,7 @@ mod tests {
     fn build_impl_assigns_source_order_associated_type_def_ids_per_owner() {
         let mut context = CollectContext::new();
         let left = Impl {
-            name: type_inner("Iterable"),
+            name: ParseType::Type(type_inner("Iterable")),
             for_: Some(named_type("List")),
             associated_types: vec![AssociatedTypeDef {
                 name: ident("Item"),
@@ -3317,7 +3442,7 @@ mod tests {
             where_clauses: vec![],
         };
         let right = Impl {
-            name: type_inner("Iterable"),
+            name: ParseType::Type(type_inner("Iterable")),
             for_: Some(named_type("Tree")),
             associated_types: vec![
                 AssociatedTypeDef {
@@ -3387,7 +3512,7 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: type_inner("Families"),
+            name: ParseType::Type(type_inner("Families")),
             for_: Some(ParseType::Type(ParseTypeInner {
                 name: "Box".to_string(),
                 generics: vec![named_type("I64")],
@@ -3432,7 +3557,7 @@ mod tests {
             span: Span::test(),
         });
         let imp = Impl {
-            name: type_inner("Functor"),
+            name: ParseType::Type(type_inner("Functor")),
             for_: Some(receiver),
             associated_types: Vec::new(),
             methods: HashMap::new(),
@@ -3490,11 +3615,11 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: ParseTypeInner {
+            name: ParseType::Type(ParseTypeInner {
                 name: "Holder".to_string(),
                 generics: vec![generic_type("F")],
                 span: Span::test(),
-            },
+            }),
             for_: Some(named_type("I64")),
             associated_types: vec![],
             methods: HashMap::new(),
@@ -3566,7 +3691,7 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: type_inner("Functor"),
+            name: ParseType::Type(type_inner("Functor")),
             for_: Some(named_type("Option")),
             associated_types: Vec::new(),
             methods: HashMap::new(),
@@ -3606,11 +3731,11 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: ParseTypeInner {
+            name: ParseType::Type(ParseTypeInner {
                 name: "Show".to_string(),
                 generics: vec![named_type("U8")],
                 span: Span::test(),
-            },
+            }),
             for_: Some(ParseType::Type(ParseTypeInner {
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],
@@ -3685,7 +3810,7 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: type_inner("Vec"),
+            name: ParseType::Type(type_inner("Vec")),
             for_: Some(ParseType::Type(ParseTypeInner {
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],
@@ -3731,7 +3856,7 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: type_inner("Vec"),
+            name: ParseType::Type(type_inner("Vec")),
             for_: Some(ParseType::Type(ParseTypeInner {
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],

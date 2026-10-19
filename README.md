@@ -1,9 +1,11 @@
-# Rock
+![Rock](assets/rock-banner.png)
 
 [![Book](https://github.com/Rock-lang-org/Rock/actions/workflows/book.yml/badge.svg?branch=master)](https://github.com/Rock-lang-org/Rock/actions/workflows/book.yml)
 [![Discord](https://img.shields.io/discord/990627124236939314.svg)](https://discord.gg/f6skPNB96J)
 
-[Read the Book](https://rock-lang-org.github.io/Rock/) | [GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [Examples](examples/)
+[GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [Examples](examples/)
+
+<h3 align="center"><a href="https://rock-lang-org.github.io/Rock/">Read the Book</a></h3>
 
 **A native language with a functional style and explicit ownership.**
 
@@ -33,9 +35,7 @@ Rock is experimental. Version `0.6.0` is not a stability promise: syntax, APIs, 
 
 `rockup` is Rock's rustup-style toolchain manager. It installs the matching compiler, project command, language server, and standard library together. You use `rock` for projects and `rockup` to manage installed versions.
 
-**Binary releases do not require Rust or an LLVM installation.** LLVM 18 is linked into the compiler. The initial release target is **x86_64 Linux GNU**, with **Ubuntu 24.04 / glibc 2.39** as its baseline. A C linker and standard system libraries are still required; these are not fully static executables.
-
-> **Release format:** rockup requires `v0.5.0` or later. Historical releases use a different asset layout and cannot be installed through this bootstrap.
+The initial release target is **x86_64 Linux GNU**, with **Ubuntu 24.04 / glibc 2.39** as its baseline. A C linker and standard system libraries are still required.
 
 ### Install the Toolchain
 
@@ -47,7 +47,7 @@ sudo apt install build-essential curl ca-certificates
 
 GNU tar, gzip, and `sha256sum` must also be available; they are normally already installed on Ubuntu. The installer does not run `sudo` or install system packages for you.
 
-Install Rock in one step. This executes a script from the release publisher, so only run it if you trust that publisher; you can inspect [`install.sh`](https://github.com/Rock-lang-org/Rock/releases/latest/download/install.sh) separately first.
+Install Rock in one step:
 
 ```sh
 curl --proto '=https' -fsSL https://github.com/Rock-lang-org/Rock/releases/latest/download/install.sh | sh
@@ -63,32 +63,6 @@ Restart your shell, or activate a POSIX-compatible shell with `. "${ROCKUP_HOME:
 rock --version
 rockup list
 ```
-
-### Keep It Updated
-
-Once rockup is installed, the everyday commands are short:
-
-| Command | What it does |
-| --- | --- |
-| `rockup install` | Install the latest stable toolchain |
-| `rockup update` | Install or update the stable toolchain |
-| `rockup self update` | Update the rockup manager itself |
-| `rockup list` | List installed toolchains and mark the active one |
-| `rockup install v0.6.0` | Install that specific release |
-| `rockup default v0.6.0` | Select that version, installing it if needed |
-| `rockup run v0.6.0 rock --version` | Run one command with a chosen version |
-| `rockup remove v0.6.0` | Remove an installed version |
-
-`install` and `update` default to `stable`, meaning GitHub's latest non-prerelease release. The channel name does not mean Rock's language or APIs are stable. Use `update`, rather than another `install`, when a toolchain is already present.
-
-To pin a project, install its version first and add a `rock-toolchain.toml` beside its manifest:
-
-```toml
-[toolchain]
-channel = "v0.6.0"
-```
-
-A project pin selects an installed toolchain; it does not download one automatically. See the [installation guide](https://rock-lang-org.github.io/Rock/getting-started/installation.html) for custom `ROCKUP_HOME` locations, shell setup, and troubleshooting. Windows, macOS, musl, and other CPU architectures are not release targets yet.
 
 ## Your First Program
 
@@ -130,13 +104,35 @@ Hello, Rock!
 
 Prefer `main = !->` for ordinary programs. Use `main = ->` when you intentionally return an integer process exit status instead; the discard form does not turn a discarded error value into a failure status.
 
-**Trying the tour:** each Rock code block below is a complete replacement for `src/main.rk`, independent of earlier blocks. The modules section shows its complete two-file project separately. Standard prelude names such as `Option`, `Vec`, and `println` are available through the installed stdlib; non-prelude imports are shown explicitly. In the examples, `|>` passes a result to the next function, and `(.println!)` is a function that prints its input.
+Builds default to `--debug`, with optimization disabled. Use `--release` for an optimized build or run:
+
+```console
+$ rock build --release
+$ rock run --release
+Hello, Rock!
+```
+
+Debug and release products are kept separately in `build/debug/` and `build/release/`. See the [build-profile reference](https://rock-lang-org.github.io/Rock/reference/tooling.html#debug-and-release-builds) for artifact and direct-compiler workflows.
+
+All dependency artifacts live inside the current project's `build/` directory,
+under each profile's `deps/` subdirectory; compiling a project does not create
+build directories in its dependency source trees. To remove both profiles and
+their dependency caches, run this from the project directory:
+
+```console
+$ rock clean
+```
+
+Cleaning preserves source files and the installed standard library. The next
+build recompiles the project's dependencies.
+
+**Trying the tour:** each Rock code block below is a complete replacement for `src/main.rk`, independent of earlier blocks. The modules section shows its complete two-file project separately. Standard prelude names such as `Option`, `Vec`, and `println` are available through the installed std; non-prelude imports are shown explicitly. In the examples, `|>` passes a result to the next function, and `(.println!)` is a lambda that prints its input.
 
 ## Everyday Syntax
 
 ### Values, Types, and Expressions
 
-A binding uses `name = value`. Rock infers types from expressions and how values are used, including across function calls. These examples leave ordinary function signatures and local types to inference; declarations such as struct fields, trait contracts, and foreign APIs still state their types.
+A binding uses `name = value`. Rock infers types from expressions and how values are used, including across function calls. These examples leave ordinary function signatures and local types to inference; declarations such as struct fields, trait contracts, and foreign APIs still state their types. All function signatures and explicit variable types are optional.
 
 ```haskell
 category = temperature ->
@@ -168,10 +164,10 @@ main = !->
 
     label.0.println!
     total.println!
-    &values[..2] .println!
+    values[..2].println!
 ```
 
-This prints `total`, `60`, and `[10, 20]`. The range `0..3` visits indices `0`, `1`, and `2`, excluding its upper bound. `&values[..2]` borrows the first two elements as a slice; it does not create a new owned array. `mut` makes mutable access explicit. Rock also has `while`, `loop`, `break`, and `continue`; see [Control Flow](https://rock-lang-org.github.io/Rock/language/control-flow.html).
+This prints `total`, `60`, and `[10, 20]`. The range `0..3` visits indices `0`, `1`, and `2`, excluding its upper bound. values[..2]` borrows the first two elements as a slice; it does not create a new owned array. `mut` makes mutable access explicit. Rock also has `while`, `loop`, `break`, and `continue`; see [Control Flow](https://rock-lang-org.github.io/Rock/language/control-flow.html).
 
 ## Functions and Pipelines
 
@@ -191,7 +187,7 @@ main = !->
         |> (.println!)
 ```
 
-This prints `41`. Each step receives the previous step's result, so there is no need to name an intermediate answer. `(.println!)` is a method section: a function that calls `println!` on its input. Use `|> (.println!)` to finish an existing multiline operator chain; otherwise, append `.println!` directly, with a space before the dot when it should apply to the whole call or expression. Each named function remains an ordinary function you can call directly.
+This prints `41`. Each step receives the previous step's result, so there is no need to name an intermediate answer. `(.println!)` is a method section: a function that calls `println!` on its input argument. Use `|> (.println!)` to finish an existing multiline operator chain; otherwise, append `.println!` directly, with a space before the dot when it should apply to the whole call or expression. Each named function remains an ordinary function you can call directly.
 
 ### Lambdas, Currying, and Call Holes
 
@@ -210,7 +206,7 @@ main = !->
 
     5
         |> (* 2)
-        |> (value -> value + 1)
+        |> value -> value + 1
         |> (.println!)
 ```
 
@@ -239,12 +235,13 @@ enum Answer T
 value_or = fallback, answer ~>
     match answer
         Answer::Value value => value
-        Answer::Missing => fallback
+        Answer::Missing     => fallback
 
 main = !->
     Answer::Value 42
         |> value_or 0
         |> (.println!)
+
     Answer::Missing
         |> value_or 7
         |> (.println!)
@@ -265,9 +262,8 @@ struct Counter
 impl Counter
     @read = -> self.value
 
-    ^@increment = ->
+    ^@increment = !->
         self.value = self.value + 1
-        return
 
     ~@finish = -> self.value
 
@@ -279,7 +275,7 @@ main = !->
     counter.finish!.println!
 ```
 
-This prints `42` twice. `< value` makes the field public. `return` without a value returns unit, written `()` in a type.
+This prints `42` twice. `< value` makes the field public.
 
 | Receiver | Meaning | Example above |
 | --- | --- | --- |
@@ -305,6 +301,36 @@ main = !->
 
 This prints `4`, then `Rock` twice. Borrowing does not copy the allocation; cloning does. Owned values are cleaned up deterministically through `Drop`. See [Ownership](https://rock-lang-org.github.io/Rock/language/ownership.html) for moves, mutable references, and lifetime constraints.
 
+### UTF-8 Strings and Slicing
+
+String literals have type `&Str`; `String` owns UTF-8 text, and `Char` represents one Unicode scalar value. Lengths and range indexes count **bytes**. Slicing checks both bounds and UTF-8 character boundaries, so it cannot split a multi-byte character.
+
+```haskell
+main = !->
+    text = String::from "aé中🦀"
+    text.len!.println!
+    text[1..3].println!
+    text.char_at 3 .println!
+    String::from '🦀' .println!
+```
+
+This prints `10`, `é`, `Some(🦀)`, and `🦀`. Use `&text[start..end]` for a borrowed substring, `char_at` for a zero-based Unicode scalar lookup, and `as_bytes!` for byte indexing. Integer string indexing is intentionally unsupported; a byte, a Unicode scalar, and a displayed character are different units. `String::from_utf8` validates raw bytes and returns `Option String`.
+
+See [Strings and Collections](https://rock-lang-org.github.io/Rock/std/collections.html) for range forms, validation, and Unicode details.
+
+Use `chars!` to traverse Unicode scalars and `char_indices!` to include their byte offsets. Both borrow the text without allocating a collection and work with `for_each` and `for..in`:
+
+```haskell
+main = !->
+    text = "aé🦀"
+    for_each text.chars!, (!.println!)
+    for (offset, ch) in text.char_indices!
+        offset.println!
+        ch.println!
+```
+
+The offsets are `0`, `1`, and `3`. Generalized loops also support owned and borrowed vectors and user-defined `Foldable`/`FoldableValue` sources, with short-circuiting traversal on `break`.
+
 ### Transforming Collections
 
 `Vec T` is a growable owned sequence. Its methods make a useful starting point before the more general functional traits.
@@ -315,7 +341,7 @@ main = !->
     for value in [1, 2, 3, 4]
         numbers.push value
 
-    numbers.filter (value -> *value % 2 == 0)
+    numbers.filter (value -> value % 2 == 0)
         <&> (* 10)
         |> (.println!)
 ```
@@ -389,9 +415,11 @@ main = !->
     double
         <$> Option::Some 21
         |> (.println!)
+
     Option::Some 21
         <&> double
         |> (.println!)
+
     Option::None
         <&> double
         |> (.println!)
@@ -421,15 +449,15 @@ Mapping a function that itself returns `Option` would produce nested options. `>
 ```haskell
 half_even = value ->
     if value % 2 == 0
-        Option::Some value / 2
-    else
-        Option::None
+    then Option::Some value / 2
+    else Option::None
 
 main = !->
     Option::Some 84
         >>= half_even
         >>= half_even
         |> (.println!)
+
     Option::Some 3
         >>= half_even
         |> (.println!)
@@ -444,9 +472,8 @@ The same mapping and binding ideas apply to successful `Result` values. `<!>` ma
 ```haskell
 divide = numerator, denominator ->
     if denominator == 0
-        Result::Err "division by zero"
-    else
-        Result::Ok numerator / denominator
+    then Result::Err "division by zero"
+    else Result::Ok numerator / denominator
 
 quarter = value -> divide (divide value, 2?), 2
 
@@ -454,6 +481,7 @@ describe_error = message -> "calculation: " + String::from message
 
 main = !->
     quarter 84 .println!
+
     divide 12, 0
         <!> describe_error
         |> (.println!)
@@ -468,9 +496,9 @@ This prints `Ok(21)` and `Err(calculation: division by zero)`. In `quarter`, the
 Use `do` when later operations need values from earlier ones. This program creates a file, writes two lines, and adds their byte counts without nesting callbacks:
 
 ```haskell
-> stdlib::fs::File
-> stdlib::io::IoError
-> stdlib::io::Write
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
 
 write_greeting: &Str -> Result I64, IoError
 write_greeting = path -> do
@@ -488,7 +516,28 @@ On success, this prints `Ok(22)` and leaves both lines in `greeting.txt`; creati
 
 `total = first + second` is an ordinary local binding. `pure total` wraps that value in the inferred carrier—here, `Result::Ok`. The final expression is returned unchanged, so the block can also end directly with another fallible operation.
 
-`do` is syntax sugar for calls to the `bind` function in scope; the prelude supplies its **Monad** implementation. It also works with `Option` and custom carriers supported by `bind`, using the same closure and ownership rules as explicit callbacks. See [Flat Sequencing with `do`](https://rock-lang-org.github.io/Rock/functional/error-handling.html#flat-sequencing-with-do) for more examples.
+`do` is syntax sugar for calls to the `bind` function in scope; the prelude supplies its **Monad** implementation. The `>>=` operator exposes the same sequencing explicitly, so the program above can also be written with nested callbacks:
+
+```haskell
+> std::io::fs::File
+> std::io::IoError
+> std::io::Write
+
+write_greeting: &Str -> Result I64, IoError
+write_greeting = path ->
+    File::create path >>= file ->
+        file.write_str "Hello from Rock\n" >>= first ->
+            file.write_str "Again\n" >>= second ->
+                total = first + second
+                pure total
+
+main = !->
+    write_greeting "greeting.txt" .println!
+```
+
+Each `action >>= value -> ...` passes a successful payload to the callback and returns its result; an error skips the callback. The nesting keeps `file` and `first` available to later steps. This version also prints `Ok(22)` on success; `do` expresses the same sequence without the increasing indentation.
+
+`do` also works with `Option` and custom carriers supported by `bind`, using the same closure and ownership rules as explicit callbacks. See [Flat Sequencing with `do`](https://rock-lang-org.github.io/Rock/functional/error-handling.html#flat-sequencing-with-do) for more examples.
 
 ### Apply a Wrapped Function
 
@@ -502,6 +551,7 @@ main = !->
         <$> Option::Some 20
         <*> Option::Some 22
         |> (.println!)
+
     Option::Some (+ 20)
         <*> Option::None
         |> (.println!)
@@ -554,21 +604,24 @@ main = !->
     Option::Some 4
         <&> double
         |> (.println!)
+
     values
         <&> double
         |> (.println!)
-    (Result _, &Str)::Functor::fmap double, Result::Ok 5 .println!
+
+    result: Result I64, &Str = Result::Ok 5
+    fmap double, result .println!
 ```
 
 This prints `Some(8)`, `[2, 4, 6]`, and `Ok(10)`.
 
 The first mapping operates on `Option`; the second operates on `Vec`. The callback does not inspect either container's representation. In the library's trait contract, a bound such as `F _: Functor` describes this capability: `F` takes one type argument and supports mapping.
 
-The final call directly selects `Functor::fmap` for `(Result _, &Str)`, fixing the error type that `Result::Ok 5` alone cannot determine. The underscore leaves the success type open: it is a **type-level hole**, distinct from the call-argument holes shown earlier.
+The final call uses `fmap` with two arguments: the mapping function and the container. The annotation on `result` fixes the error type that `Result::Ok 5` alone cannot determine, so the compiler can select the appropriate `Functor` implementation without a qualified call. In the constructor spelling `Result _, &Str` shown above, the underscore leaves the success type open: it is a **type-level hole**, distinct from the call-argument holes shown earlier.
 
 ### Implement the Abstraction Yourself
 
-These traits are not reserved for stdlib types. Here is a small container implementing `Functor`:
+These traits are not reserved for std types. Here is a small container implementing `Functor`:
 
 ```haskell
 enum Wrap T
@@ -615,8 +668,8 @@ positive = value ->
     if value > 0 then Option::Some value else Option::None
 
 main = !->
-    Vec::Foldable::foldl append_digit, 0, make_values! .println!
-    Vec::Traversable::traverse positive, make_values! .println!
+    foldl append_digit, 0, make_values! .println!
+    traverse positive, make_values! .println!
 ```
 
 This prints `123` and `Some([1, 2, 3])`. The fold callback receives one tuple containing the accumulator and current element. Traversal turns individual `Option I64` results into one `Option (Vec I64)`; if an element produces `None`, the overall result is `None`.
@@ -632,6 +685,7 @@ main = !->
     mut values = Vec::new!
     values.push Option::Some 4
     values.push Option::Some 5
+
     values
         |> sequence
         |> (.println!)
@@ -703,7 +757,7 @@ Functional code is not limited to numbers and options. The standard library incl
 Threads use the same `Result` operators as other fallible operations. A single chain can start a task, join it, and handle either outcome:
 
 ```haskell
-> stdlib::thread::spawn
+> std::concurrency::thread::spawn
 
 main = !->
     spawn (-> 42)
@@ -727,52 +781,7 @@ main = !->
 
 This prints `7` using C's integer `abs`. Rock also exposes raw pointers and explicit `unsafe` operations; read the [FFI](https://rock-lang-org.github.io/Rock/systems/ffi.html) and [Unsafe Code](https://rock-lang-org.github.io/Rock/systems/unsafe.html) chapters before working with memory at that boundary.
 
-For larger examples, explore the [TCP chat program](test_projects/new_new/main.rk), [file I/O guide](https://rock-lang-org.github.io/Rock/stdlib/io-and-files.html), and [concurrency guide](https://rock-lang-org.github.io/Rock/stdlib/concurrency.html). They combine these small building blocks rather than introducing a separate style of language.
-
-## Tools and Editors
-
-Run project commands from a directory containing `rock.toml`:
-
-| Command | Purpose |
-| --- | --- |
-| `rock run` | Build and run the project |
-| `rock run -- first second` | Pass arguments to the program |
-| `rock build` | Build without running |
-| `rock format` | Format the configured source file |
-| `rock expand` | Inspect macro-expanded source |
-| `rock artifact` | Build a reusable crate artifact |
-
-`rockc` is the lower-level compiler used by these workflows. Application authors normally do not need to invoke it directly. There is no `rock test` command yet; application checks can be ordinary Rock programs, while compiler contributors use Cargo's test suite.
-
-Rockup also installs `rock-lsp`. Editors can use it for diagnostics, inferred types on hover, function signatures, and signature help. Check that it is on your shell's path with:
-
-```sh
-rock-lsp --help
-```
-
-Without arguments it starts a language server over standard input/output, not an interactive prompt. Configure an LSP client to launch `rock-lsp` for `.rk` files.
-
-### Neovim
-
-The [rock.nvim](https://github.com/rock-lang-org/rock.nvim) plugin uses Neovim's built-in LSP client, without requiring `nvim-lspconfig`. It requires Neovim 0.11 or newer. Install it with your plugin manager, or clone that repository and add its root to `runtimepath` in `init.lua` (replace the path with your checkout):
-
-```lua
-vim.opt.runtimepath:prepend("/absolute/path/to/rock.nvim")
-require("rock").setup()
-```
-
-The plugin does not install the compiler: complete rockup installation first, then open a Rock project and run `:checkhealth rock`. The [editor guide](https://rock-lang-org.github.io/Rock/getting-started/editor-and-diagnostics.html) covers local checkouts, other clients, and diagnostics. Tree-sitter highlighting is provided by [tree-sitter-rock](https://github.com/rock-lang-org/tree-sitter-rock).
-
-### Ecosystem Repositories
-
-Editor integrations and application libraries are maintained separately:
-
-- [rock.nvim](https://github.com/rock-lang-org/rock.nvim): Neovim integration.
-- [vscode-rock](https://github.com/rock-lang-org/vscode-rock): VS Code extension.
-- [tree-sitter-rock](https://github.com/rock-lang-org/tree-sitter-rock): syntax grammar and highlighting queries.
-- [rock_http](https://github.com/rock-lang-org/rock_http): HTTP library and examples.
-
-`rock-lsp` stays in this repository with its compiler dependencies and ships with the matching toolchain.
+For larger examples, explore the [TCP chat program](test_projects/new_new/main.rk), [file I/O guide](https://rock-lang-org.github.io/Rock/std/io-and-files.html), and [concurrency guide](https://rock-lang-org.github.io/Rock/std/concurrency.html). They combine these small building blocks rather than introducing a separate style of language.
 
 ## Build From Source
 
@@ -796,7 +805,7 @@ From the repository root, with Rust and Cargo installed, build the workspace and
 
 ```sh
 cargo build --release
-target/release/rockup dev stdlib package --path stdlib --sysroot target/release
+target/release/rockup dev std package --path std --sysroot target/release
 target/release/rockup install dev --path target/release
 target/release/rockup default dev
 ```
@@ -822,3 +831,27 @@ See the [release maintainer guide](docs/releases.md) for packaging `v0.6.0`, ver
 - [Contributing documentation](docs/checks/README.md): book build and syntax-highlighting checks.
 
 Questions, small reproductions, and contributions are welcome through [GitHub issues](https://github.com/Rock-lang-org/Rock/issues) and [Discord](https://discord.gg/f6skPNB96J).
+
+## Next steps
+
+A few of the remaining important features which are planned but still missing:
+
+- Dependencies download
+- Better trait resolution
+- More complete std
+- Multiline imports like in rust
+- bin/lib compilation distinction
+- String interpolation
+- Test suite
+- RockDoc
+- Windows/Macos support
+- Release for other arch than x64
+- If-Let deconstruction
+- Derive
+- Proc macro
+- Tail recursion
+- Dynamic dispatch and vtables
+- Allow to import enum variant in scope
+- Split unit tests in their own modules
+
+- Self-host the compiler

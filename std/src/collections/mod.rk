@@ -1,0 +1,10 @@
+// Owned collections, borrowed slices, and eager traversal.
+< mod slice
+< mod vec
+< mod for_each
+< mod hash_map
+
+< slice::*
+< vec::Vec
+< hash_map::HashMap
+< for_each::*

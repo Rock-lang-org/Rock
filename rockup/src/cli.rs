@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use crate::{
-    dev::package_dev_stdlib,
+    dev::package_dev_std,
     fsutil::exit_code,
     home::{home_dir, RockupHome},
     shell::{
@@ -40,9 +40,42 @@ pub(crate) fn run() -> Result<Exit, String> {
             Ok(Exit::Success)
         }
         CommandConfig::List => {
-            for toolchain in list_toolchains(&home)? {
+            let installed = list_toolchains(&home)?;
+            println!("Installed toolchains (* active):");
+            if installed.is_empty() {
+                println!("  (none)");
+            }
+            for toolchain in &installed {
                 let prefix = if toolchain.is_active { "*" } else { " " };
                 println!("{} {}", prefix, toolchain.name);
+            }
+            println!("\nAvailable versions:");
+            match crate::release::available_releases() {
+                Ok(releases) => {
+                    if releases.is_empty() {
+                        println!("  (none)");
+                    }
+                    for release in releases {
+                        let prerelease = if release.prerelease {
+                            " (prerelease)"
+                        } else {
+                            ""
+                        };
+                        let installed = if installed.iter().any(|entry| entry.name == release.tag) {
+                            " (installed)"
+                        } else {
+                            ""
+                        };
+                        println!("  {}{}{}", release.tag, prerelease, installed);
+                    }
+                    println!(
+                        "\nInstall with `rockup install <version>` or `rockup install stable`."
+                    );
+                }
+                Err(error) => {
+                    println!("  (unavailable)");
+                    eprintln!("Warning: could not list available versions: {}", error);
+                }
             }
             Ok(Exit::Success)
         }
@@ -59,8 +92,8 @@ pub(crate) fn run() -> Result<Exit, String> {
             }
         },
         CommandConfig::Dev { command } => match command {
-            DevCommand::Stdlib { command } => match command {
-                DevStdlibCommand::Package {
+            DevCommand::Std { command } => match command {
+                DevStdCommand::Package {
                     path,
                     sysroot,
                     target,
@@ -68,7 +101,7 @@ pub(crate) fn run() -> Result<Exit, String> {
                     rockc,
                 } => {
                     let packaged =
-                        package_dev_stdlib(&path, &sysroot, target, copy_source, rockc.as_deref())?;
+                        package_dev_std(&path, &sysroot, target, copy_source, rockc.as_deref())?;
                     println!("{}", packaged.display());
                     Ok(Exit::Success)
                 }
@@ -142,7 +175,7 @@ pub(crate) enum CommandConfig {
     Remove {
         name: String,
     },
-    /// List installed toolchains, marking the active one with *.
+    /// List installed toolchains (* active) and versions available to install.
     List,
     Target {
         #[command(subcommand)]
@@ -201,14 +234,14 @@ pub(crate) enum TargetCommand {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum DevCommand {
-    Stdlib {
+    Std {
         #[command(subcommand)]
-        command: DevStdlibCommand,
+        command: DevStdCommand,
     },
 }
 
 #[derive(Subcommand, Debug)]
-pub(crate) enum DevStdlibCommand {
+pub(crate) enum DevStdCommand {
     Package {
         #[arg(long)]
         path: PathBuf,

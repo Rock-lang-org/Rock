@@ -53,6 +53,7 @@ use crate::types::{GenericParamId, Type};
 
 /// The main lowering context
 pub struct Lowerer {
+    pub(crate) overflow_checks: bool,
     pub(crate) engine: LowerInferenceService,
     pub(crate) scope: LowerScopeService,
     pub(crate) items: LowerItemService,
@@ -87,6 +88,7 @@ pub struct Lowerer {
     pub(crate) tuple_temp_counter: u32,
     pub(crate) source_map: crate::source_map::SemanticSourceMap,
     pub(crate) source_scope_stack: Vec<u32>,
+    pub(crate) fold_loop_stack: Vec<Option<control_flow::fold_loop::FoldLoopContext>>,
 }
 
 impl Lowerer {
@@ -205,6 +207,7 @@ impl Lowerer {
 
     pub(crate) fn from_services(services: LowererServices) -> Self {
         Self {
+            overflow_checks: true,
             engine: services.engine,
             scope: services.scope,
             items: services.items,
@@ -235,6 +238,7 @@ impl Lowerer {
             tuple_temp_counter: 0,
             source_map: Default::default(),
             source_scope_stack: Vec::new(),
+            fold_loop_stack: Vec::new(),
         }
     }
 
@@ -1276,11 +1280,11 @@ mod tests {
         assert!(!prelude.is_enabled());
 
         prelude.capture_loaded_prelude_exports(
-            "stdlib",
+            "std",
             &std::collections::BTreeMap::from([(
                 "print".to_string(),
                 ArtifactExport {
-                    source: "stdlib::prelude::print".to_string(),
+                    source: "std::prelude::print".to_string(),
                     id: print_id,
                 },
             )]),
@@ -1288,7 +1292,7 @@ mod tests {
 
         assert_eq!(
             prelude.export_source("print"),
-            Some("stdlib::prelude::print")
+            Some("std::prelude::print")
         );
         assert!(!Lowerer::with_options(false).prelude.is_enabled());
     }
@@ -2079,23 +2083,23 @@ mod tests {
         let mut lowerer = Lowerer::new_for_test();
         lowerer.items.insert_extern(HirExtern {
             id: puts_id,
-            name: "stdlib::libc::puts".to_string(),
+            name: "std::libc::puts".to_string(),
             params: vec![Type::I32],
             ret: Type::I32,
             variadic: false,
             is_unsafe: false,
         });
         lowerer.scope.define(
-            "stdlib::libc::puts".to_string(),
+            "std::libc::puts".to_string(),
             Type::function(vec![Type::I32], Type::I32),
             false,
         );
         lowerer.prelude.capture_loaded_prelude_exports(
-            "stdlib",
+            "std",
             &std::collections::BTreeMap::from([(
                 "puts".to_string(),
                 ArtifactExport {
-                    source: "stdlib::libc::puts".to_string(),
+                    source: "std::libc::puts".to_string(),
                     id: puts_id,
                 },
             )]),
@@ -2111,7 +2115,7 @@ mod tests {
 
         match expr.kind {
             HirExprKind::ResolvedVar(reference) => {
-                assert_eq!(reference.name, "stdlib::libc::puts");
+                assert_eq!(reference.name, "std::libc::puts");
                 assert_eq!(reference.target, HirVarTarget::Extern(puts_id));
             }
             other => panic!("expected resolved prelude extern alias, got {other:?}"),
@@ -2180,18 +2184,18 @@ mod tests {
         let prelude_id = DefId::new(CrateId(7), LocalDefId(3));
         let mut lowerer = Lowerer::new_for_test();
         lowerer.prelude.capture_loaded_prelude_exports(
-            "stdlib",
+            "std",
             &std::collections::BTreeMap::from([(
                 "answer".to_string(),
                 ArtifactExport {
-                    source: "stdlib::answer".to_string(),
+                    source: "std::answer".to_string(),
                     id: prelude_id,
                 },
             )]),
         );
         lowerer.items.insert_function(test_function(
             prelude_id,
-            "stdlib::answer",
+            "std::answer",
             vec![int_return(42)],
         ));
 

@@ -38,7 +38,7 @@ function artifact(name, entry, dependencies) {
     const destination = path.join(directory, `${name}.rkca`);
     const result = compile(entry, directory, dependencies, [
         "--crate-name", name, "--emit-artifact", destination,
-        ...(name === "stdlib" ? ["--no-prelude"] : []),
+        ...(name === "std" ? ["--no-prelude"] : []),
     ]);
     if (result.status !== 0) throw new Error(`Cannot build ${name}:\n${result.log}`);
     return [name, destination];
@@ -46,7 +46,7 @@ function artifact(name, entry, dependencies) {
 
 function main() {
     console.log(`Compiler: ${compiler}\nLogs: ${output}`);
-    const stdlib = artifact("stdlib", path.join(root, "stdlib/lib.rk"), []);
+    const std = artifact("std", path.join(root, "std/src/lib.rk"), []);
     const examples = [];
     for (const file of [path.join(root, "README.md"), ...walk(path.join(root, "docs/src"))]
         .filter(file => file.endsWith(".md"))) {
@@ -84,15 +84,15 @@ function main() {
     const failures = [];
     for (const [index, example] of examples.entries()) {
         const directory = path.join(output, String(index + 1));
-        const dependencies = example.noStd ? [] : [stdlib];
+        const dependencies = example.noStd ? [] : [std];
         try {
             if (example.source.includes("> rock_http::")) {
-                http ||= artifact("rock_http", path.join(httpRoot, "src/lib.rk"), [stdlib]);
+                http ||= artifact("rock_http", path.join(httpRoot, "src/lib.rk"), [std]);
                 dependencies.push(http);
             }
             for (const [name, source] of example.namedFiles) write(path.join(directory, name), source);
             if (example.source.includes("> geometry::") && example.namedFiles.some(([name]) => name === "geometry/main.rk")) {
-                geometry ||= artifact("geometry", path.join(directory, "geometry/main.rk"), [stdlib]);
+                geometry ||= artifact("geometry", path.join(directory, "geometry/main.rk"), [std]);
                 dependencies.push(geometry);
             }
             const name = example.namedFiles.find(([, source]) => source === example.source)?.[0] || "main.rk";

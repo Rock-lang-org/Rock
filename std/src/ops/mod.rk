@@ -1,0 +1,15 @@
+// Operator protocols and range values.
+< mod bitwise
+< mod neg
+< mod not
+< mod deref
+< mod range
+< mod index
+
+< bitwise::*
+< neg::*
+< not::*
+< deref::*
+< range::Range
+< index::Index
+< index::IndexMut

@@ -32,6 +32,7 @@ $ rock build
 $ rock run -- 7
 $ rock expand
 $ rock artifact
+$ rock clean
 ```
 
 `format` rewrites the configured source. Inspect formatter changes before committing them, then compile again.
@@ -45,6 +46,53 @@ $ rock artifact
 `artifact` materializes a reusable crate artifact. Normal path-dependent builds create and reuse dependency artifacts automatically, so most applications do not need to invoke it directly.
 
 There is no `rock test` command. Use a complete Rock executable as an application smoke test, or use the Rust integration suite when changing the compiler itself.
+
+## Debug and release builds
+
+`rock build`, `rock run`, and `rock artifact` use the debug profile by default. This profile disables optimization; you can also select it explicitly with `--debug`. Use `--release` to enable full optimization for the project and its source-built dependencies:
+
+```console
+$ rock build
+$ rock build --debug
+$ rock build --release
+$ rock run --release -- 7
+$ rock artifact --release
+```
+
+Debug outputs live in `build/debug/`, and release outputs live in `build/release/`. Each profile has its own dependency artifacts and objects, so switching profiles does not reuse products built with different optimization settings. The toolchain's precompiled standard library is shared between profiles. `--debug` and `--release` cannot be combined.
+
+Source-built dependencies use `build/<profile>/deps/` inside the current project,
+not build directories beside dependency sources. Each dependency gets a directory
+identified by its name, version, and source-path hash, so object files with the
+same entry filename do not overwrite one another.
+
+For compiler contributors and artifact-level workflows, `rockc` accepts the same flags. Unlike `rock`, it takes an entry file and explicit dependency artifacts rather than resolving `rock.toml`:
+
+```console
+$ rockc --entry-file main.rk --extern-artifact std=build/std.rkca --debug
+$ rockc --entry-file main.rk --extern-artifact std=build/std.rkca --release
+```
+
+`rockc` writes to its configured `--output-dir` (default: `build/`); `rock` chooses the profile-specific directories. `cargo build --release` optimizes the Rust compiler executable itself; use `rock build --release`, `rock run --release`, or `rockc --release` to optimize the Rock program being compiled.
+
+## Cleaning build output
+
+Run this from the directory containing the project's `rock.toml`:
+
+```console
+$ rock clean
+```
+
+`clean` removes the whole project `build/` directory, including debug and release
+products and their dependency caches. It preserves source files, other projects'
+build directories, and the installed standard library. The next build recompiles
+source-built dependencies. Cleaning an already-clean project succeeds without
+doing anything; a symlink or regular file named `build` is rejected rather than
+followed or removed.
+
+Build directories left in dependency trees by earlier builds are not deleted
+automatically. To remove one explicitly, run `rock clean` from that dependency's
+project directory.
 
 ## Standard library selection
 
@@ -68,8 +116,8 @@ Without the standard library, familiar operators, collections, strings, and prel
 
 ```console
 $ cargo build --release
-$ target/release/rockup dev stdlib package \
-    --path stdlib \
+$ target/release/rockup dev std package \
+    --path std \
     --sysroot target/release
 $ target/release/rockup install dev --path target/release
 $ target/release/rockup default dev

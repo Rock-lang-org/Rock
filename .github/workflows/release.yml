@@ -34,6 +34,7 @@ jobs:
           LLVM_SYS_180_PREFIX: /usr/lib/llvm-18
         run: |
           test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          test -s "docs/release-notes/$RELEASE_TAG.md"
           cargo test --locked -p rock-shared --all-features
           cargo test --locked -p rockup
           sh scripts/tests/install.sh
@@ -73,6 +74,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           name: release-assets
@@ -84,5 +88,4 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           gh release create "$RELEASE_TAG" assets/* --repo "$GH_REPO" --verify-tag --draft \
-            --title "Rock $RELEASE_TAG" --generate-notes \
-            --notes 'Linux x86_64 GNU only. LLVM 18 is statically linked; no LLVM installation required. Requires glibc 2.39+ and a C linker (Ubuntu 24.04: apt install build-essential curl ca-certificates). Install with the attached install.sh. Experimental release; review before publishing.'
+            --title "Rock $RELEASE_TAG" --notes-file "docs/release-notes/$RELEASE_TAG.md"

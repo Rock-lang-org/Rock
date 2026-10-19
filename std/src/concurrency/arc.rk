@@ -1,0 +1,61 @@
+// Atomically reference-counted shared ownership.
+
+> std::mem::alloc::Global
+> std::mem::alloc::Layout
+> std::mem::alloc::checked_alloc
+> std::mem::utils::sizeof_pointee
+> std::concurrency::atomic::AtomicU64
+> std::clone::Clone
+> std::cmp::eq::PartialEq
+> std::ops::not::Not
+> std::ops::deref::Deref
+> std::mem::drop::Drop
+> std::mem::drop::drop_in_place
+> std::ffi::libc::exit
+
+struct ArcInner T
+    < refs: AtomicU64
+    < value: T
+
+< struct Arc T
+    inner: *ArcInner T
+
+impl Arc T
+    new: T -> Arc T
+    new = value ->
+        null = 0 as *ArcInner T
+        bytes = sizeof_pointee null
+        layout = Layout
+            size: bytes
+            align: 1
+        inner = (checked_alloc layout) as *ArcInner T
+        unsafe *inner = ArcInner T
+            refs: AtomicU64::new (1 as U64)
+            value: value
+        Arc T
+            inner: inner
+
+impl Clone for Arc T
+    @clone = ->
+        refs = unsafe &(*self.inner).refs
+        previous = refs.fetch_add (1 as U64)
+        if previous == !(0 as U64)
+            exit (1 as I32)
+        Arc T
+            inner: self.inner
+
+impl Deref for Arc T
+    type Target = T
+    @* = -> unsafe &(*self.inner).value
+
+impl Drop for Arc T
+    ~@drop = ->
+        refs = unsafe &(*self.inner).refs
+        previous = refs.fetch_sub (1 as U64)
+        if previous == (1 as U64)
+            unsafe drop_in_place self.inner
+            layout = Layout
+                size: sizeof_pointee self.inner
+                align: 1
+            unsafe Global::dealloc (self.inner as *U8), layout
+        return

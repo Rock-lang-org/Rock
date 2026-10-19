@@ -1373,7 +1373,7 @@ mod tests {
 
     fn enum_ty(type_name: &str, args: Vec<Type>) -> Type {
         let local = match type_name {
-            "Option" | "stdlib::option::Option" => 10,
+            "Option" | "std::option::Option" => 10,
             "Result" => 11,
             _ => 12,
         };
@@ -2468,14 +2468,14 @@ mod tests {
     fn qualified_option_receiver() -> HirExpr {
         HirExpr {
             kind: HirExprKind::Var("some".to_string()),
-            ty: enum_ty("stdlib::option::Option", vec![Type::I64]),
+            ty: enum_ty("std::option::Option", vec![Type::I64]),
             span: Span::test(),
         }
     }
 
     fn seed_owner(mono: &mut Monomorphizer, name: &str) {
         let local = match name {
-            "Option" | "stdlib::option::Option" => 10,
+            "Option" | "std::option::Option" => 10,
             "Result" => 11,
             _ => 0,
         };
@@ -2688,7 +2688,7 @@ mod tests {
                 Some(ReceiverMode::Move),
                 selected_map_target(impl_id, method_id, Type::I64, Type::I64),
             ),
-            ty: enum_ty("stdlib::option::Option", vec![Type::I64]),
+            ty: enum_ty("std::option::Option", vec![Type::I64]),
             span: Span::test(),
         };
 

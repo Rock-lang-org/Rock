@@ -6,7 +6,7 @@ use crate::ast;
 use crate::hir::*;
 use crate::ids::TypeVarId;
 use crate::lexer::Span;
-use crate::selection::{ReceiverCandidate, SelectedMethod, SelectionDiagnostic};
+use crate::selection::{ReceiverCandidate, SelectedMethod, SelectedOrigin, SelectionDiagnostic};
 use crate::types::{GenericParamId, Type};
 
 use crate::lower::Lowerer;
@@ -184,7 +184,7 @@ impl Lowerer {
 
         let mut generic_params = HashSet::new();
         // Parameters used only in bounds still need fresh call-site variables
-        // (for example T in `C: ForEach T, A: FnMut T, ()`).
+        // (for example T in `C: FoldableValue T, A: FnMut T, ()`).
         generic_params.extend(func.generic_params.iter().map(|param| param.id));
         for param in &func.params {
             param.ty.collect_generic_params(&mut generic_params);
@@ -368,10 +368,12 @@ impl Lowerer {
             return false;
         }
 
-        if selected
-            .substituted_params
-            .iter()
-            .any(|param| Self::type_has_unresolved_parameter(&param.ty))
+        // Bound arguments belong to the caller: U and V are distinct rigid
+        // types even when both instantiate the same trait member.
+        let rigid_generics = matches!(selected.origin, SelectedOrigin::TraitBound { .. });
+        if !rigid_generics
+            && selected.substituted_params.iter()
+                .any(|param| Self::type_has_unresolved_parameter(&param.ty))
         {
             return true;
         }
@@ -384,7 +386,9 @@ impl Lowerer {
             .all(|(param, arg)| {
                 let expected = self.resolve_projection_type(&param.ty);
                 let actual = self.resolve_projection_type(&self.engine.resolve(&arg.ty));
-                if crate::selection::type_pattern_matches(&expected, &actual, &mut subst) {
+                if !rigid_generics
+                    && crate::selection::type_pattern_matches(&expected, &actual, &mut subst)
+                {
                     return true;
                 }
                 if Self::type_accepts_inference_vars(&expected, &actual) {
@@ -395,7 +399,8 @@ impl Lowerer {
                     mutable: false,
                 } = expected
                 {
-                    return crate::selection::type_pattern_matches(&inner, &actual, &mut subst)
+                    return (!rigid_generics
+                        && crate::selection::type_pattern_matches(&inner, &actual, &mut subst))
                         || Self::type_accepts_inference_vars(&inner, &actual);
                 }
                 false
@@ -1083,12 +1088,13 @@ impl Lowerer {
 
             let result = self
                 .selection_service()
-                .select_bound_method_preferring_non_ref_receiver(
+                .select_bound_method_matching(
                     &receiver_candidates,
                     &bounds,
                     op_str,
                     resolved_ty.clone(),
                     matches!(&left.kind, HirExprKind::Call(_, _, _)),
+                    |selected| self.operator_method_accepts_args(selected, std::slice::from_ref(&right)),
                 );
             let span = left.span.clone();
             if let Some(selected) = self.handle_optional_selection(result, span) {
@@ -1127,12 +1133,13 @@ impl Lowerer {
             let receiver_candidates = self.receiver_adjustment_candidates(left.clone());
             let result = self
                 .selection_service()
-                .select_bound_method_preferring_non_ref_receiver(
+                .select_bound_method_matching(
                     &receiver_candidates,
                     &bounds,
                     op_str,
                     resolved_ty.clone(),
                     matches!(&left.kind, HirExprKind::Call(_, _, _)),
+                    |selected| self.operator_method_accepts_args(selected, std::slice::from_ref(&right)),
                 );
             let span = left.span.clone();
             if let Some(selected) = self.handle_optional_selection(result, span) {
@@ -2108,8 +2115,14 @@ impl Lowerer {
                 }
             }
             ast::Operand::NativeOperator(op) => {
-                // Native operator reference
-                let ty = self.engine.fresh_type_var_at(op.span.clone());
+                let ty = if super::intrinsics::is_intrinsic_name(&op.name) {
+                    self.engine.fresh_type_var_at(op.span.clone())
+                } else {
+                    self.diagnostics.push_type_with_span(
+                        format!("Unknown intrinsic '~{}'", op.name), op.span.clone(),
+                    );
+                    Type::Error
+                };
                 HirExpr {
                     ty,
                     kind: HirExprKind::Var(op.name.clone()),
@@ -2145,11 +2158,33 @@ impl Lowerer {
                 kind: HirExprKind::StringLiteral(s.clone()),
                 span,
             },
-            ast::LiteralKind::Char(c) => HirExpr {
-                ty: Type::Char,
-                kind: HirExprKind::CharLiteral(c.chars().next().unwrap_or('\0')),
-                span,
-            },
+            ast::LiteralKind::Char(c) => {
+                let value = match c.as_str() {
+                    "\\n" => Some('\n'),
+                    "\\t" => Some('\t'),
+                    "\\r" => Some('\r'),
+                    "\\0" => Some('\0'),
+                    "\\\\" => Some('\\'),
+                    "\\'" => Some('\''),
+                    "\\\"" => Some('"'),
+                    _ => {
+                        let mut chars = c.chars();
+                        chars.next().filter(|_| chars.next().is_none())
+                    }
+                };
+                let Some(value) = value else {
+                    self.diagnostics.push_selection_with_span(
+                        "character literal must contain exactly one Unicode scalar or supported escape".to_string(),
+                        span.clone(),
+                    );
+                    return self.error_expression_at(span);
+                };
+                HirExpr {
+                    ty: Type::Char,
+                    kind: HirExprKind::CharLiteral(value),
+                    span,
+                }
+            }
             ast::LiteralKind::Array(arr) => {
                 let elem_ty = self.engine.fresh_type_var_at(span.clone());
                 let len = arr.elements.len();

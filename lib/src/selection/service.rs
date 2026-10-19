@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 use crate::hir::{
@@ -27,6 +28,7 @@ pub struct SelectionService<'a> {
     #[allow(dead_code)]
     current_impl_bounds: &'a HirGenericBounds,
     effective_trait_methods: &'a HashMap<(DefId, DefId), DefId>,
+    active_obligations: RefCell<HashSet<(Type, TraitBound)>>,
 }
 
 struct EffectiveTraitMethod {
@@ -57,6 +59,7 @@ impl<'a> SelectionService<'a> {
             current_trait,
             current_impl_bounds,
             effective_trait_methods: empty_effective_trait_methods(),
+            active_obligations: RefCell::new(HashSet::new()),
         }
     }
 
@@ -87,6 +90,7 @@ impl<'a> SelectionService<'a> {
                 method_name,
                 &mut normalize,
             );
+            Self::prefer_exact_receiver(&mut candidates, receiver_candidate.adjustment);
             match candidates.len() {
                 0 => continue,
                 1 => return Ok(candidates.pop().expect("one candidate")),
@@ -131,6 +135,7 @@ impl<'a> SelectionService<'a> {
                 &mut normalize,
             );
             candidates.retain(|candidate| matches(candidate));
+            Self::prefer_exact_receiver(&mut candidates, receiver_candidate.adjustment);
             let mut seen_targets = Vec::new();
             candidates.retain(|candidate| {
                 let target = (candidate.target.impl_id(), candidate.target.method_id());
@@ -171,6 +176,18 @@ impl<'a> SelectionService<'a> {
         })
     }
 
+    pub(crate) fn prefer_exact_receiver(
+        candidates: &mut Vec<SelectedMethod>,
+        adjustment: ReceiverAdjustment,
+    ) {
+        if candidates
+            .iter()
+            .any(|candidate| candidate.receiver_adjustment == adjustment)
+        {
+            candidates.retain(|candidate| candidate.receiver_adjustment == adjustment);
+        }
+    }
+
     pub fn select_concrete_method_candidates<F>(
         &self,
         receiver_candidates: &[ReceiverCandidate],
@@ -189,34 +206,8 @@ impl<'a> SelectionService<'a> {
                     .into_iter()
                     .filter_map(|id| self.impls.get(&id))
                     .filter_map(|imp| {
-                        if !self.impl_matches_receiver_type(imp, &candidate_ty) {
-                            return None;
-                        }
-                        let subst =
-                            self.impl_receiver_substitution(imp, method_name, &candidate_ty)?;
-                        if self.impl_bound_obligations(imp, &subst).is_none() {
-                            return None;
-                        }
-                        let receiver_adjustment = self.impl_method_self_type_adjustment(
-                            imp,
-                            method_name,
-                            &candidate_ty,
-                            candidate.can_autoref_mut,
-                        )?;
-                        let receiver_adjustment = if receiver_adjustment == ReceiverAdjustment::None
-                        {
-                            candidate.adjustment
-                        } else {
-                            receiver_adjustment
-                        };
-                        self.instantiate_impl_method(
-                            imp,
-                            &candidate.expr,
-                            &candidate_ty,
-                            method_name,
-                            receiver_adjustment,
-                        )
-                        .map(|selected| (imp.id, selected))
+                        self.select_impl_method_candidate(imp, candidate, &candidate_ty, method_name)
+                            .map(|selected| (imp.id, selected))
                     })
                     .collect::<Vec<_>>();
                 candidates.sort_by_key(|candidate| candidate.0);
@@ -225,6 +216,41 @@ impl<'a> SelectionService<'a> {
 
                 found
             })
+    }
+
+    fn select_impl_method_candidate(
+        &self,
+        imp: &HirImpl,
+        candidate: &ReceiverCandidate,
+        candidate_ty: &Type,
+        method_name: &str,
+    ) -> Option<SelectedMethod> {
+        if !function_has_receiver(&self.impl_method(imp, method_name)?) {
+            return None;
+        }
+        if !self.impl_matches_receiver_type(imp, candidate_ty) {
+            return None;
+        }
+        let subst = self.impl_receiver_substitution(imp, method_name, candidate_ty)?;
+        self.impl_bound_obligations(imp, &subst)?;
+        let receiver_adjustment = self.impl_method_self_type_adjustment(
+            imp,
+            method_name,
+            candidate_ty,
+            candidate.can_autoref_mut,
+        )?;
+        let receiver_adjustment = if receiver_adjustment == ReceiverAdjustment::None {
+            candidate.adjustment
+        } else {
+            receiver_adjustment
+        };
+        self.instantiate_impl_method(
+            imp,
+            &candidate.expr,
+            candidate_ty,
+            method_name,
+            receiver_adjustment,
+        )
     }
 
     /// Select a method for a receiver whose nominal head is still unknown.
@@ -244,6 +270,9 @@ impl<'a> SelectionService<'a> {
         self.impl_ids_in_order()
             .filter_map(|id| self.impls.get(&id))
             .filter_map(|imp| {
+                if !function_has_receiver(&self.impl_method(imp, method_name)?) {
+                    return None;
+                }
                 let receiver_ty = inferred_rigid_receiver_type(&imp.receiver_pattern)?;
                 let synthetic_receiver = HirExpr {
                     ty: receiver_ty,
@@ -255,21 +284,9 @@ impl<'a> SelectionService<'a> {
                     adjustment: ReceiverAdjustment::None,
                     can_autoref_mut: false,
                 };
-                self.select_concrete_method_candidates(
-                    std::slice::from_ref(&candidate),
-                    method_name,
-                    |ty| normalize(ty),
-                )
-                .into_iter()
-                .filter(|selected| selected.target.impl_id() == Some(imp.id))
-                .into_iter()
-                .filter(|selected| selected.pending_impl_bounds.is_empty())
-                .map(|mut selected| {
-                    selected.receiver.kind = receiver.kind.clone();
-                    selected.receiver.span = receiver.span.clone();
-                    selected
-                })
-                .next()
+                let candidate_ty = normalize(&candidate.expr.ty);
+                let selected = self.select_impl_method_candidate(imp, &candidate, &candidate_ty, method_name)?;
+                selected.pending_impl_bounds.is_empty().then_some(selected)
             })
             .collect()
     }
@@ -789,25 +806,23 @@ impl<'a> SelectionService<'a> {
         receiver_ty: &Type,
         can_autoref_mut: bool,
     ) -> Option<ReceiverAdjustment> {
-        if function_has_receiver(method) {
-            if let Some(self_param) = method.params.first() {
-                let mut subst =
-                    impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())?;
-                let expected_self = Self::receiver_mode_expected_self_type(
-                    self_param.ty.substitute_generics(&subst),
-                    method.self_receiver,
-                );
-                return Self::self_type_adjustment(
-                    &expected_self,
-                    receiver_ty,
-                    can_autoref_mut,
-                    self.impl_owner_is_reference_like(imp),
-                    imp.trait_id.is_some(),
-                    &mut subst,
-                );
-            }
+        if !function_has_receiver(method) {
+            return Some(ReceiverAdjustment::None);
         }
-        Some(ReceiverAdjustment::None)
+        let self_param = method.params.first()?;
+        let mut subst = impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())?;
+        let expected_self = Self::receiver_mode_expected_self_type(
+            self_param.ty.substitute_generics(&subst),
+            method.self_receiver,
+        );
+        Self::self_type_adjustment(
+            &expected_self,
+            receiver_ty,
+            can_autoref_mut,
+            self.impl_owner_is_reference_like(imp),
+            imp.trait_id.is_some(),
+            &mut subst,
+        )
     }
 
     fn receiver_mode_expected_self_type(
@@ -1419,6 +1434,35 @@ impl<'a> SelectionService<'a> {
         )
     }
 
+    pub fn select_bound_method_matching<M>(
+        &self,
+        receiver_candidates: &[ReceiverCandidate],
+        bounds: &[crate::types::TraitBound],
+        method_name: &str,
+        self_param_ty: Type,
+        receiver_is_call: bool,
+        mut matches: M,
+    ) -> Result<SelectedMethod, SelectionDiagnostic>
+    where
+        M: FnMut(&SelectedMethod) -> bool,
+    {
+        let candidates = self.select_bound_method_candidates(
+            receiver_candidates,
+            bounds,
+            method_name,
+            self_param_ty.clone(),
+        );
+        let matching = candidates.iter().filter(|candidate| matches(candidate)).cloned().collect::<Vec<_>>();
+        // Keep a unique declared candidate on mismatch so argument checking can
+        // report its expected type rather than hiding an available trait bound.
+        Self::prefer_non_ref_receiver_candidate(
+            if matching.is_empty() { candidates } else { matching },
+            receiver_is_call,
+            method_name,
+            &self_param_ty,
+        )
+    }
+
     pub fn prefer_non_ref_receiver_candidate(
         mut candidates: Vec<SelectedMethod>,
         receiver_is_call: bool,
@@ -1445,7 +1489,11 @@ impl<'a> SelectionService<'a> {
         let target_ids = candidates
             .iter()
             .filter_map(|candidate| {
-                Some((candidate.target.trait_id()?, candidate.target.method_id()?))
+                Some((
+                    candidate.target.trait_id()?,
+                    candidate.target.method_id()?,
+                    candidate.target.trait_args().to_vec(),
+                ))
             })
             .collect::<std::collections::HashSet<_>>();
         if target_ids.len() != 1 {
@@ -1457,9 +1505,10 @@ impl<'a> SelectionService<'a> {
             } else {
                 let mut candidate_ids = target_ids
                     .into_iter()
-                    .map(|(_, method_id)| method_id)
+                    .map(|(_, method_id, _)| method_id)
                     .collect::<Vec<_>>();
                 candidate_ids.sort();
+                candidate_ids.dedup();
                 SelectionDiagnostic::AmbiguousCandidates {
                     operation: method_name.to_string(),
                     receiver: receiver_ty.clone(),
@@ -1898,7 +1947,7 @@ impl<'a> SelectionService<'a> {
                     obligations.push((subject, bound));
                     continue;
                 }
-                if !self.trait_bound_satisfied(&subject, &bound, imp.id) {
+                if !self.trait_bound_satisfied(&subject, &bound) {
                     return None;
                 }
             }
@@ -1925,7 +1974,7 @@ impl<'a> SelectionService<'a> {
                     obligations.push((bounded_ty.clone(), bound));
                     continue;
                 }
-                if !self.trait_bound_satisfied(&bounded_ty, &bound, imp.id) {
+                if !self.trait_bound_satisfied(&bounded_ty, &bound) {
                     return None;
                 }
             }
@@ -1940,12 +1989,7 @@ impl<'a> SelectionService<'a> {
         })
     }
 
-    pub(crate) fn trait_bound_satisfied(
-        &self,
-        ty: &Type,
-        bound: &TraitBound,
-        excluded_impl: DefId,
-    ) -> bool {
+    pub(crate) fn trait_bound_satisfied(&self, ty: &Type, bound: &TraitBound) -> bool {
         if self.assumed_trait_bound_satisfied(ty, bound) {
             return true;
         }
@@ -1954,18 +1998,24 @@ impl<'a> SelectionService<'a> {
             return self.type_is_sized(ty);
         }
 
-        self.impl_ids_in_order()
+        // The same impl may solve a structurally smaller obligation (for
+        // example nested carriers); reject cycles in goals, not impl IDs.
+        let goal = (ty.clone(), bound.clone());
+        {
+            let mut active = self.active_obligations.borrow_mut();
+            if active.len() >= 128 || !active.insert(goal.clone()) {
+                return false;
+            }
+        }
+        let satisfied = self
+            .impl_ids_in_order()
             .into_iter()
             .filter_map(|id| self.impls.get(&id))
             .any(|imp| {
-                imp.id != excluded_impl
-                    && self.impl_matches_trait_ref_strict(
-                        imp,
-                        ty,
-                        bound.trait_id,
-                        Some(&bound.type_args),
-                    )
-            })
+                self.impl_matches_trait_ref_strict(imp, ty, bound.trait_id, Some(&bound.type_args))
+            });
+        self.active_obligations.borrow_mut().remove(&goal);
+        satisfied
     }
 
     pub(crate) fn trait_bounds_with_supertraits(
@@ -3515,6 +3565,74 @@ mod tests {
     }
 
     #[test]
+    fn inferred_candidates_only_normalize_eligible_impls_in_identity_order() {
+        let owner = def_id(10);
+        let mut impls = HashMap::new();
+        for index in (20..52).rev() {
+            let mut function = method(def_id(index + 100), owner);
+            if index == 22 {
+                function.self_receiver = None;
+                function.is_method = false;
+                function.params.clear();
+            }
+            let methods = if index <= 22 {
+                HashMap::from([("value".to_string(), function)])
+            } else {
+                HashMap::new()
+            };
+            let imp = HirImpl {
+                id: def_id(index),
+                owner: HirImplOwner::Named("Owner".to_string()),
+                type_name: "Owner".to_string(),
+                type_generics: Vec::new(),
+                receiver_pattern: HirImplReceiverPattern::Exact(Type::Struct {
+                    id: owner,
+                    args: Vec::new(),
+                }),
+                trait_name: None,
+                trait_id: None,
+                trait_generics: Vec::new(),
+                trait_arg_types: Vec::new(),
+                associated_types: Vec::new(),
+                bounds: HirGenericBounds::new(),
+                methods,
+            };
+            impls.insert(imp.id, imp);
+        }
+        let traits = HashMap::new();
+        let bounds = HirGenericBounds::new();
+        let service = SelectionService::new(&traits, &impls, None, None, &bounds);
+        let receiver = HirExpr {
+            kind: HirExprKind::Var("unresolved".to_string()),
+            ty: Type::TypeVar(TypeVarId(0)),
+            span: Span::test(),
+        };
+        let mut normalizations = 0;
+        let inferred = service.select_inferred_method_candidates(&receiver, "value", |ty| {
+            normalizations += 1;
+            ty.clone()
+        });
+        assert_eq!(normalizations, 2, "irrelevant impls must not start candidate searches");
+        assert_eq!(
+            inferred.iter().map(|selected| selected.target.impl_id().unwrap()).collect::<Vec<_>>(),
+            vec![def_id(20), def_id(21)],
+        );
+        let mut concrete_receiver = receiver.clone();
+        concrete_receiver.ty = Type::Struct { id: owner, args: Vec::new() };
+        let candidates = [receiver_candidate(concrete_receiver)];
+        let concrete = service.select_concrete_method_candidates(&candidates, "value", |ty| ty.clone());
+        assert_eq!(
+            inferred.iter().map(SelectedMethod::authority).collect::<Vec<_>>(),
+            concrete.iter().map(SelectedMethod::authority).collect::<Vec<_>>(),
+        );
+        assert!(matches!(
+            service.select_concrete_method(&candidates, "value", |ty| ty.clone()),
+            Err(SelectionDiagnostic::AmbiguousCandidates { candidates, .. })
+                if candidates == vec![def_id(20), def_id(21)]
+        ));
+    }
+
+    #[test]
     fn selection_service_selects_current_trait_self_method_by_trait_identity() {
         let trait_id = def_id(10);
         let method_id = def_id(11);
@@ -3625,6 +3743,67 @@ mod tests {
         assert_eq!(function.params[1].ty, Type::I64);
         assert_eq!(selected.substituted_params.len(), 1);
         assert_eq!(selected.substituted_params[0].ty, Type::I64);
+    }
+
+    #[test]
+    fn bound_method_selection_preserves_distinct_trait_arguments() {
+        let trait_id = def_id(10);
+        let method_id = def_id(11);
+        let rhs_param = GenericParamId { owner: trait_id, index: 0 };
+        let self_param = GenericParamId { owner: trait_id, index: 1 };
+        let mut compare = operator_method(method_id, trait_id, Type::Bool);
+        compare.name = "compare".to_string();
+        compare.params[0].ty = Type::Reference {
+            mutable: false,
+            inner: Box::new(Type::Generic(self_param)),
+        };
+        compare.params[1].ty = Type::Reference {
+            mutable: false,
+            inner: Box::new(Type::Generic(rhs_param)),
+        };
+        let traits = HashMap::from([(
+            trait_id,
+            HirTrait {
+                id: trait_id,
+                name: "Compare".to_string(),
+                generic_params: vec![GenericParamDecl::type_param(rhs_param, "Rhs")],
+                target: None,
+                predicates: Vec::new(),
+                associated_types: Vec::new(),
+                methods: HashMap::from([("compare".to_string(), compare)]),
+                signatures: HashMap::new(),
+            },
+        )]);
+        let impls = HashMap::new();
+        let current_impl_bounds = HirGenericBounds::new();
+        let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
+        let receiver_ty = Type::Generic(GenericParamId { owner: def_id(20), index: 0 });
+        let receivers = [receiver_candidate(HirExpr {
+            kind: HirExprKind::Var("left".to_string()),
+            ty: receiver_ty.clone(),
+            span: Span::test(),
+        })];
+        let bounds = [Type::I64, Type::Bool].map(|rhs| TraitBound {
+            trait_id,
+            type_args: vec![rhs],
+        });
+        assert!(matches!(
+            service.select_bound_method(&receivers, &bounds, "compare", receiver_ty.clone()),
+            Err(SelectionDiagnostic::AmbiguousCandidates { .. }),
+        ));
+        for rhs in [Type::I64, Type::Bool] {
+            let expected = Type::Reference { mutable: false, inner: Box::new(rhs.clone()) };
+            let selected = service.select_bound_method_matching(
+                &receivers,
+                &bounds,
+                "compare",
+                receiver_ty.clone(),
+                false,
+                |candidate| candidate.substituted_params[0].ty == expected,
+            ).expect("right-hand argument should select its exact trait instantiation");
+            assert_eq!(selected.target.method_id(), Some(method_id));
+            assert_eq!(selected.target.trait_args(), &[rhs]);
+        }
     }
 
     #[test]
@@ -5578,7 +5757,6 @@ mod tests {
                 trait_id: functor_id,
                 type_args: Vec::new(),
             },
-            def_id(999),
         ));
     }
 

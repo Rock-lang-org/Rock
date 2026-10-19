@@ -1,0 +1,19 @@
+// Memory utilities
+//
+// Size queries borrow values or use typed pointers without reading memory.
+
+> std::mem::sized::Sized
+
+sizeof: &T -> I64 where T: Sized
+< sizeof = value -> sizeof_pointee (value as *T)
+
+// A pointer is only a type witness: null and pointers to uninitialized storage
+// are valid because the function does not access the pointee.
+// The intrinsic inspects the pointee type without evaluating the dereference.
+sizeof_pointee: *T -> I64 where T: Sized
+< sizeof_pointee = ptr -> ~SizeOf (unsafe *ptr)
+
+// Deliberately suppress destruction of a value. This is safe but may leak
+// resources, matching Rust's mem::forget contract.
+forget: T -> ()
+< forget = value -> ~Forget value

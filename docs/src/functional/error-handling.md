@@ -219,7 +219,7 @@ The output is `5`, `8`, and `0`; the error `7` is preserved in `failed` even tho
 
 ## Functional Operators
 
-The prelude exports operator spellings for the same stdlib operations. The named methods above are usually clearer while learning the carriers.
+The prelude exports operator spellings for the same std operations. The named methods above are usually clearer while learning the carriers.
 
 ```rock
 increment: I64 -> I64

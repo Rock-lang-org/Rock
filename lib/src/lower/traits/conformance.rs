@@ -392,6 +392,9 @@ fn generated_default_method_receiver_is_self(expr: &HirExpr) -> bool {
 }
 
 fn apply_generated_default_self_type(func: &mut HirFunction, self_type: &Type) {
+    if func.self_receiver.is_none() {
+        return;
+    }
     let Some(existing_param_ty) = func.params.first().map(|param| param.ty.clone()) else {
         return;
     };
@@ -766,6 +769,51 @@ pub(crate) struct TraitConformanceOutput {
     pub(crate) effective_trait_methods: HashMap<(DefId, DefId), DefId>,
 }
 
+fn collect_effective_trait_methods(
+    items: &LowerItems,
+    root_crate_id: CrateId,
+    output: &mut TraitConformanceOutput,
+) {
+    for imp in items
+        .impl_defs_in_order()
+        .map(|(_, imp)| imp)
+        .filter(|imp| imp.id.crate_id == root_crate_id)
+    {
+        let Some(trait_id) = imp.trait_id else {
+            continue;
+        };
+        let Some(trait_def) = items.trait_def(trait_id) else {
+            continue;
+        };
+
+        for (member_name, member_id) in trait_def
+            .methods
+            .iter()
+            .map(|(name, method)| (name, method.id))
+            .chain(
+                trait_def
+                    .signatures
+                    .iter()
+                    .filter(|(name, _)| !trait_def.methods.contains_key(*name))
+                    .map(|(name, signature)| (name, signature.id)),
+            )
+        {
+            let Some(method_id) = imp.methods.get(member_name).map(|method| method.id) else {
+                continue;
+            };
+            let key = (imp.id, member_id);
+            if let Some(previous) = output.effective_trait_methods.insert(key, method_id) {
+                if previous != method_id {
+                    output.diagnostics.push(ResolveError::non_source(format!(
+                        "trait implementation {:?} has conflicting effective bodies {:?} and {:?} for member {:?}",
+                        imp.id, previous, method_id, member_id
+                    )));
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct IndexProtocolIds {
     index_trait: DefId,
@@ -823,6 +871,15 @@ impl<'a> TraitConformanceService<'a> {
 }
 
 impl TraitConformancePhase {
+    pub(crate) fn prepare_explicit_method_selection(lowerer: &mut Lowerer) {
+        // Default bodies can call concrete trait implementations before defaults
+        // are injected. Publish their exact member bindings, not name fallbacks.
+        let mut output = TraitConformanceOutput::default();
+        collect_effective_trait_methods(&lowerer.items, lowerer.root_crate_id, &mut output);
+        lowerer.imported_effective_trait_methods.extend(output.effective_trait_methods);
+        lowerer.diagnostics.extend(output.diagnostics);
+    }
+
     fn annotate_callable_impl_patterns(lowerer: &mut Lowerer) {
         let callable_traits = [
             lowerer
@@ -1825,12 +1882,11 @@ impl TraitConformanceService<'_> {
             trait_generic_subst: &HashMap<GenericParamId, Type>,
         ) {
             // Only substitute the self-related TypeVars from the default body.
-            let source_self_ty = func
-                .params
-                .first()
-                .map(|param| param.ty.clone())
-                .unwrap_or_else(|| self_type.clone());
-            crate::hir::substitute_typevars_in_function(func, &source_self_ty, self_type);
+            if func.self_receiver.is_some() {
+                if let Some(source_self_ty) = func.params.first().map(|param| param.ty.clone()) {
+                    crate::hir::substitute_typevars_in_function(func, &source_self_ty, self_type);
+                }
+            }
             substitute_trait_impl_types_in_function(
                 func,
                 self_type,
@@ -2129,45 +2185,7 @@ impl TraitConformanceService<'_> {
 
         self.validate_index_mut_pairs();
 
-        for imp in self
-            .items
-            .impl_defs_in_order()
-            .map(|(_, imp)| imp)
-            .filter(|imp| imp.id.crate_id == self.root_crate_id)
-        {
-            let Some(trait_id) = imp.trait_id else {
-                continue;
-            };
-            let Some(trait_def) = self.items.trait_def(trait_id) else {
-                continue;
-            };
-
-            for (member_name, member_id) in trait_def
-                .methods
-                .iter()
-                .map(|(name, method)| (name, method.id))
-                .chain(
-                    trait_def
-                        .signatures
-                        .iter()
-                        .filter(|(name, _)| !trait_def.methods.contains_key(*name))
-                        .map(|(name, signature)| (name, signature.id)),
-                )
-            {
-                let Some(method_id) = imp.methods.get(member_name).map(|method| method.id) else {
-                    continue;
-                };
-                let key = (imp.id, member_id);
-                if let Some(previous) = self.output.effective_trait_methods.insert(key, method_id) {
-                    if previous != method_id {
-                        self.output.diagnostics.push(ResolveError::non_source(format!(
-                                "trait implementation {:?} has conflicting effective bodies {:?} and {:?} for member {:?}",
-                                imp.id, previous, method_id, member_id
-                            )));
-                    }
-                }
-            }
-        }
+        collect_effective_trait_methods(self.items, self.root_crate_id, &mut self.output);
     }
 
     fn check_supertrait_obligations(&mut self) {
@@ -2236,7 +2254,7 @@ impl TraitConformanceService<'_> {
                     trait_id: required_trait,
                     type_args: args,
                 };
-                if !selection.trait_bound_satisfied(&subject, &bound, impl_id) {
+                if !selection.trait_bound_satisfied(&subject, &bound) {
                     let required_name = traits
                         .get(&required_trait)
                         .map(|required| required.name.as_str())

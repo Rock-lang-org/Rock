@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use crate::cli::{CommandConfig, Config, DevCommand, DevStdlibCommand, TargetCommand};
+use crate::cli::{CommandConfig, Config, DevCommand, DevStdCommand, TargetCommand};
 
 #[test]
 fn test_proxy_forwards_help_to_toolchain_binary() {
@@ -118,14 +118,14 @@ fn test_cli_parses_env_command() {
 }
 
 #[test]
-fn test_cli_parses_dev_stdlib_package_command() {
+fn test_cli_parses_dev_std_package_command() {
     let config = Config::try_parse_from([
         "rockup",
         "dev",
-        "stdlib",
+        "std",
         "package",
         "--path",
-        "/tmp/stdlib",
+        "/tmp/std",
         "--sysroot",
         "/tmp/dev-sysroot",
         "--target",
@@ -139,9 +139,9 @@ fn test_cli_parses_dev_stdlib_package_command() {
     match config.command {
         CommandConfig::Dev {
             command:
-                DevCommand::Stdlib {
+                DevCommand::Std {
                     command:
-                        DevStdlibCommand::Package {
+                        DevStdCommand::Package {
                             path,
                             sysroot,
                             target,
@@ -150,7 +150,7 @@ fn test_cli_parses_dev_stdlib_package_command() {
                         },
                 },
         } => {
-            assert_eq!(path, PathBuf::from("/tmp/stdlib"));
+            assert_eq!(path, PathBuf::from("/tmp/std"));
             assert_eq!(sysroot, PathBuf::from("/tmp/dev-sysroot"));
             assert_eq!(target.as_deref(), Some("wasm32-unknown-unknown"));
             assert!(copy_source);

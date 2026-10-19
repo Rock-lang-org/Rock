@@ -2,17 +2,15 @@ use std::fs;
 
 use crate::artifact::{collect_dependency_artifacts, ensure_artifact, ArtifactBuildState};
 use crate::build::build_project;
+use crate::package::BuildProfile;
 
 use super::support::{
-    assert_executable_exit_code, assert_sysroot_stdlib_files_exist, load_package, sysroot_env_lock,
+    assert_executable_exit_code, assert_sysroot_std_files_exist, load_dependency_package, load_package,
     temp_test_dir, write_package, write_package_with_options,
 };
 
 #[test]
 fn test_rock_artifact_cache_reuse_and_invalidation() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_cache");
     let dep_a = temp_dir.join("dep_a");
     let dep_b = temp_dir.join("dep_b");
@@ -40,8 +38,8 @@ fn test_rock_artifact_cache_reuse_and_invalidation() {
         "> dep_b::relay\n\nmain = -> relay 42\n",
     );
 
-    let executable = build_project(&app).unwrap();
-    let dep_a_package = load_package(dep_a.clone());
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
+    let dep_a_package = load_dependency_package(dep_a.clone(), &app);
     let dep_a_artifact = dep_a_package.artifact_path();
     let dep_a_object = dep_a_package.object_path();
     let dep_a_mtime_before = fs::metadata(&dep_a_artifact).unwrap().modified().unwrap();
@@ -49,7 +47,7 @@ fn test_rock_artifact_cache_reuse_and_invalidation() {
 
     assert_executable_exit_code(&executable, 42);
 
-    let _executable = build_project(&app).unwrap();
+    let _executable = build_project(&app, BuildProfile::Debug).unwrap();
     let dep_a_mtime_after_no_change = fs::metadata(&dep_a_artifact).unwrap().modified().unwrap();
     let dep_a_object_mtime_after_no_change =
         fs::metadata(&dep_a_object).unwrap().modified().unwrap();
@@ -61,7 +59,7 @@ fn test_rock_artifact_cache_reuse_and_invalidation() {
 
     fs::write(dep_a.join("lib.rk"), "answer = x -> 43\n< answer\n").unwrap();
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     let dep_a_artifact_mtime_after_change =
         fs::metadata(&dep_a_artifact).unwrap().modified().unwrap();
     let dep_a_object_mtime_after_change = fs::metadata(&dep_a_object).unwrap().modified().unwrap();
@@ -75,9 +73,6 @@ fn test_rock_artifact_cache_reuse_and_invalidation() {
 
 #[test]
 fn test_collect_dependency_artifacts_includes_transitive_dependencies() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("transitive_dependency_artifacts");
     let dep_a = temp_dir.join("dep_a");
     let dep_b = temp_dir.join("dep_b");
@@ -109,7 +104,7 @@ fn test_collect_dependency_artifacts_includes_transitive_dependencies() {
     );
 
     let package = load_package(app.clone());
-    let mut state = ArtifactBuildState::default();
+    let mut state = ArtifactBuildState::new(&package);
     let artifacts = collect_dependency_artifacts(&package, &mut state).unwrap();
     let artifact_names = artifacts
         .iter()
@@ -123,9 +118,6 @@ fn test_collect_dependency_artifacts_includes_transitive_dependencies() {
 
 #[test]
 fn test_rock_artifact_command_builds_cache_file() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_command");
     write_package(
         &temp_dir,
@@ -135,21 +127,18 @@ fn test_rock_artifact_command_builds_cache_file() {
         "identity = x -> x\n< identity\n",
     );
 
-    let mut state = ArtifactBuildState::default();
+    let mut state = ArtifactBuildState::new(&load_package(temp_dir.clone()));
     let artifact_path = ensure_artifact(&temp_dir, &mut state).unwrap();
 
     assert!(artifact_path.exists());
     assert!(load_package(temp_dir.clone()).object_path().exists());
-    assert_sysroot_stdlib_files_exist();
+    assert_sysroot_std_files_exist();
 
     let _ = fs::remove_dir_all(temp_dir);
 }
 
 #[test]
 fn test_missing_dependency_object_triggers_rebuild() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("missing_object_rebuild");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -163,8 +152,8 @@ fn test_missing_dependency_object_triggers_rebuild() {
         "> dep::answer\n\nmain = -> answer 5\n",
     );
 
-    let executable = build_project(&app).unwrap();
-    let dep_package = load_package(dep.clone());
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
+    let dep_package = load_dependency_package(dep.clone(), &app);
     let dep_object = dep_package.object_path();
     assert!(dep_object.exists());
     assert_executable_exit_code(&executable, 5);
@@ -172,7 +161,7 @@ fn test_missing_dependency_object_triggers_rebuild() {
     fs::remove_file(&dep_object).unwrap();
     assert!(!dep_object.exists());
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert!(dep_object.exists());
     assert_executable_exit_code(&executable, 5);
 
@@ -181,9 +170,6 @@ fn test_missing_dependency_object_triggers_rebuild() {
 
 #[test]
 fn test_missing_product_artifact_triggers_rebuild() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("missing_product_artifact_rebuild");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -197,8 +183,8 @@ fn test_missing_product_artifact_triggers_rebuild() {
         "> dep::answer\n\nmain = -> answer 6\n",
     );
 
-    let executable = build_project(&app).unwrap();
-    let dep_package = load_package(dep.clone());
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
+    let dep_package = load_dependency_package(dep.clone(), &app);
     let dep_artifact = dep_package.artifact_path();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 6);
@@ -206,7 +192,7 @@ fn test_missing_product_artifact_triggers_rebuild() {
     fs::remove_file(&dep_artifact).unwrap();
     assert!(!dep_artifact.exists());
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 6);
 
@@ -215,9 +201,6 @@ fn test_missing_product_artifact_triggers_rebuild() {
 
 #[test]
 fn test_source_change_after_artifact_overwrite_triggers_rebuild() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_overwrite_source_rebuild");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -231,8 +214,8 @@ fn test_source_change_after_artifact_overwrite_triggers_rebuild() {
         "> dep::answer\n\nmain = -> answer!\n",
     );
 
-    let executable = build_project(&app).unwrap();
-    let dep_package = load_package(dep.clone());
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
+    let dep_package = load_dependency_package(dep.clone(), &app);
     let dep_artifact = dep_package.artifact_path();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 7);
@@ -240,7 +223,7 @@ fn test_source_change_after_artifact_overwrite_triggers_rebuild() {
     fs::write(&dep_artifact, b"not a product artifact").unwrap();
     fs::write(dep.join("lib.rk"), "answer = -> 8\n< answer\n").unwrap();
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 8);
 
@@ -249,9 +232,6 @@ fn test_source_change_after_artifact_overwrite_triggers_rebuild() {
 
 #[test]
 fn test_corrupt_product_artifact_without_source_change_triggers_rebuild() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("corrupt_product_artifact_rebuild");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -265,15 +245,15 @@ fn test_corrupt_product_artifact_without_source_change_triggers_rebuild() {
         "> dep::answer\n\nmain = -> answer!\n",
     );
 
-    let executable = build_project(&app).unwrap();
-    let dep_package = load_package(dep.clone());
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
+    let dep_package = load_dependency_package(dep.clone(), &app);
     let dep_artifact = dep_package.artifact_path();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 7);
 
     fs::write(&dep_artifact, b"not a product artifact").unwrap();
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 7);
 
@@ -282,9 +262,6 @@ fn test_corrupt_product_artifact_without_source_change_triggers_rebuild() {
 
 #[test]
 fn test_ensure_artifact_reuses_dependency_artifacts_after_dependency_sources_are_deleted() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_dependency_bootstrap");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -298,7 +275,7 @@ fn test_ensure_artifact_reuses_dependency_artifacts_after_dependency_sources_are
         "> dep::answer\n\nmain = -> answer!\n",
     );
 
-    let mut state = ArtifactBuildState::default();
+    let mut state = ArtifactBuildState::new(&load_package(app.clone()));
     let dep_artifact = ensure_artifact(&dep, &mut state).unwrap();
     assert!(dep_artifact.exists());
 
@@ -312,11 +289,8 @@ fn test_ensure_artifact_reuses_dependency_artifacts_after_dependency_sources_are
 }
 
 #[test]
-fn test_ensure_artifact_loads_sysroot_stdlib_for_no_std_root_with_stdlib_using_dependency() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let temp_dir = temp_test_dir("artifact_dependency_sysroot_stdlib");
+fn test_ensure_artifact_loads_sysroot_std_for_no_std_root_with_std_using_dependency() {
+    let temp_dir = temp_test_dir("artifact_dependency_sysroot_std");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
 
@@ -336,7 +310,7 @@ fn test_ensure_artifact_loads_sysroot_stdlib_for_no_std_root_with_stdlib_using_d
         true,
     );
 
-    let mut state = ArtifactBuildState::default();
+    let mut state = ArtifactBuildState::new(&load_package(app.clone()));
     let artifact = ensure_artifact(&app, &mut state).unwrap();
     assert!(artifact.exists());
 
@@ -345,9 +319,6 @@ fn test_ensure_artifact_loads_sysroot_stdlib_for_no_std_root_with_stdlib_using_d
 
 #[test]
 fn test_build_project_reuses_source_free_artifacts_without_dependency_sources() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("source_free_artifact_reuse");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -361,8 +332,8 @@ fn test_build_project_reuses_source_free_artifacts_without_dependency_sources() 
         "> dep::answer\n\nmain = -> answer!\n",
     );
 
-    let executable = build_project(&app).unwrap();
-    let dep_package = load_package(dep.clone());
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
+    let dep_package = load_dependency_package(dep.clone(), &app);
     assert!(dep_package.artifact_path().exists());
     assert!(dep_package.object_path().exists());
 
@@ -370,7 +341,7 @@ fn test_build_project_reuses_source_free_artifacts_without_dependency_sources() 
 
     fs::remove_file(dep.join("lib.rk")).unwrap();
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert!(dep_package.artifact_path().exists());
     assert!(dep_package.object_path().exists());
     assert_executable_exit_code(&executable, 5);
@@ -380,9 +351,6 @@ fn test_build_project_reuses_source_free_artifacts_without_dependency_sources() 
 
 #[test]
 fn test_artifact_consumer_calls_dependency_qualified_impl_owner() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_dependency_qualified_impl_owner");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -428,12 +396,12 @@ main = ->
 ",
     );
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert_executable_exit_code(&executable, 23);
 
     fs::remove_file(dep.join("lib.rk")).unwrap();
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert_executable_exit_code(&executable, 23);
 
     let _ = fs::remove_dir_all(temp_dir);
@@ -441,9 +409,6 @@ main = ->
 
 #[test]
 fn test_artifact_consumer_uses_generic_impl_inherited_default_method() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_generic_inherited_default");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -484,12 +449,12 @@ main = ->
 ",
     );
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert_executable_exit_code(&executable, 31);
 
     fs::remove_file(dep.join("lib.rk")).unwrap();
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert_executable_exit_code(&executable, 31);
 
     let _ = fs::remove_dir_all(temp_dir);
@@ -497,9 +462,6 @@ main = ->
 
 #[test]
 fn test_artifact_consumer_uses_concrete_object_backed_inherited_default() {
-    let _guard = sysroot_env_lock()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let temp_dir = temp_test_dir("artifact_concrete_object_backed_default");
     let dep = temp_dir.join("dep");
     let app = temp_dir.join("app");
@@ -534,15 +496,15 @@ main = ->
 ",
     );
 
-    let executable = build_project(&app).unwrap();
-    let dep_package = load_package(dep.clone());
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
+    let dep_package = load_dependency_package(dep.clone(), &app);
     assert!(dep_package.artifact_path().exists());
     assert!(dep_package.object_path().exists());
     assert_executable_exit_code(&executable, 44);
 
     fs::remove_file(dep.join("lib.rk")).unwrap();
 
-    let executable = build_project(&app).unwrap();
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
     assert!(dep_package.artifact_path().exists());
     assert!(dep_package.object_path().exists());
     assert_executable_exit_code(&executable, 44);

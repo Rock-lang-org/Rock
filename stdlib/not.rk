@@ -1,9 +1,0 @@
-// Not trait - unary boolean or custom logical inversion with an associated output type.
-
-< trait Not
-    type Output
-    @!: Self::Output
-
-impl Not for Bool
-    type Output = Bool
-    @! = -> ~BoolNot *self

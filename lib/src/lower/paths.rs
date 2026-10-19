@@ -505,6 +505,9 @@ impl Lowerer {
 
     fn constructor_target_for_path_segment(&mut self, segment: &ast::IdentOrType) -> Option<Type> {
         match segment {
+            ast::IdentOrType::Type(ast::ParseType::Type(inner)) if inner.generics.is_empty() => Some(
+                crate::type_lowering::TypeLowerer::lower_constructor(self, &ast::ParseType::Type(inner.clone())),
+            ),
             ast::IdentOrType::Type(parse_type) => Some(
                 crate::type_lowering::TypeLowerer::lower_parse_type(self, parse_type),
             ),
@@ -670,6 +673,26 @@ impl Lowerer {
         }
     }
 
+    fn register_static_owner_defaults(&mut self, owner_ty: &Type, signature: &Type) {
+        let owner = match owner_ty {
+            Type::Constructor { id, .. } | Type::Struct { id, .. } | Type::Enum { id, .. } => *id,
+            _ => return,
+        };
+        let Some(params) = crate::type_lowering::TypeLoweringContext::constructor_params(self, owner) else { return; };
+        let mut arguments = match owner_ty {
+            Type::Struct { args, .. } | Type::Enum { args, .. } => Some(args.clone()),
+            _ => None,
+        };
+        crate::type_services::visit::visit_type(signature, &mut |nested: &Type| {
+            if let Type::Struct { id, args } | Type::Enum { id, args } = nested {
+                if *id == owner && arguments.is_none() { arguments = Some(args.clone()); }
+            }
+        });
+        if let Some(arguments) = arguments {
+            self.engine.register_generic_defaults(&params, &arguments);
+        }
+    }
+
     fn instantiate_selected_constructor_member(
         &mut self,
         target_ty: Type,
@@ -688,6 +711,7 @@ impl Lowerer {
             crate::types::FunctionSafety::from_is_unsafe(selected.function.is_unsafe),
         );
         let ty = self.instantiate_function_type(&selected.function, span.clone());
+        self.register_static_owner_defaults(&target_ty, &ty);
         let mut substitution = HashMap::new();
         Self::infer_generic_subst_from_types(&raw_ty, &ty, &mut substitution);
         let owner_params = selected
@@ -1120,6 +1144,7 @@ impl Lowerer {
                 Type::Slice(Box::new(element.substitute_generics(&owner_substitution)))
             }
         };
+        self.register_static_owner_defaults(&owner_ty, &ty);
         let function_id = match resolved.value.target {
             Some(HirVarTarget::Function(function_id)) => function_id,
             _ => {
@@ -1543,6 +1568,30 @@ impl Lowerer {
         captures
     }
 
+    fn define_capture_pattern(
+        pattern: &HirPattern,
+        defined: &mut std::collections::HashSet<String>,
+    ) {
+        match pattern {
+            HirPattern::Binding { name, .. } => {
+                defined.insert(name.clone());
+            }
+            HirPattern::Tuple(patterns)
+            | HirPattern::Or(patterns)
+            | HirPattern::Enum(_, _, _, patterns) => {
+                for pattern in patterns {
+                    Self::define_capture_pattern(pattern, defined);
+                }
+            }
+            HirPattern::Struct(_, _, _, fields) => {
+                for field in fields {
+                    Self::define_capture_pattern(&field.pattern, defined);
+                }
+            }
+            HirPattern::Wildcard | HirPattern::Literal(_) => {}
+        }
+    }
+
     fn collect_lambda_captures_block(
         &self,
         block: &HirBlock,
@@ -1793,6 +1842,16 @@ impl Lowerer {
                 );
                 for arm in arms {
                     let mut arm_defined = defined.clone();
+                    Self::define_capture_pattern(&arm.pattern, &mut arm_defined);
+                    if let Some(guard) = &arm.guard {
+                        self.collect_lambda_captures_expr(
+                            guard,
+                            &mut arm_defined,
+                            used,
+                            capture_kinds,
+                            current_kind,
+                        );
+                    }
                     self.collect_lambda_captures_block(
                         &arm.body,
                         &mut arm_defined,
@@ -1819,9 +1878,12 @@ impl Lowerer {
                     current_kind,
                 );
             }
-            HirExprKind::For { iter, body, .. } => {
+            HirExprKind::For {
+                var, iter, body, ..
+            } => {
                 self.collect_lambda_captures_expr(iter, defined, used, capture_kinds, current_kind);
                 let mut nested_defined = defined.clone();
+                nested_defined.insert(var.clone());
                 self.collect_lambda_captures_block(
                     body,
                     &mut nested_defined,
@@ -1971,20 +2033,7 @@ impl Lowerer {
                                     },
                                 );
                                 // For generic enums, create fresh type vars
-                                let type_args = if !enum_info.generic_params.is_empty() {
-                                    enum_info
-                                        .generic_params
-                                        .iter()
-                                        .map(|param| {
-                                            self.engine.fresh_type_var_at_kind(
-                                                span.clone(),
-                                                param.kind.clone(),
-                                            )
-                                        })
-                                        .collect()
-                                } else {
-                                    vec![]
-                                };
+                                let type_args = self.engine.fresh_generic_args(&enum_info.generic_params, &span);
                                 return HirExpr {
                                     ty: Type::Enum {
                                         id: enum_info.id,
@@ -2126,18 +2175,7 @@ impl Lowerer {
                     },
                 );
                 // For generic enums, create fresh type vars for type params
-                let type_args = if !enum_info.generic_params.is_empty() {
-                    enum_info
-                        .generic_params
-                        .iter()
-                        .map(|param| {
-                            self.engine
-                                .fresh_type_var_at_kind(span.clone(), param.kind.clone())
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                };
+                let type_args = self.engine.fresh_generic_args(&enum_info.generic_params, &span);
                 let ty = Type::Enum {
                     id: enum_info.id,
                     args: type_args,
@@ -2370,11 +2408,9 @@ impl Lowerer {
             // Handle generic enum type params
             let type_args = if !enum_info.generic_params.is_empty() {
                 // Create fresh type vars for each generic param
-                let mut type_var_mapping: HashMap<GenericParamId, Type> = HashMap::new();
-                for param in &enum_info.generic_params {
-                    let tv = self.engine.fresh_type_var_at(span.clone());
-                    type_var_mapping.insert(param.id, tv);
-                }
+                let fresh = self.engine.fresh_generic_args(&enum_info.generic_params, &span);
+                let type_var_mapping: HashMap<GenericParamId, Type> = enum_info.generic_params.iter().zip(fresh)
+                    .map(|(param, ty)| (param.id, ty)).collect();
                 // Unify type vars with arg types based on variant field types
                 match &variant.fields {
                     HirVariantFields::Positional(field_types) => {
@@ -2451,11 +2487,9 @@ impl Lowerer {
             let generic_params = hir_struct.generic_params.clone();
 
             // Create a mapping from generic param names to fresh type variables
-            let mut type_var_mapping: HashMap<GenericParamId, Type> = HashMap::new();
-            for param in &generic_params {
-                let tv = self.engine.fresh_type_var_at(span.clone());
-                type_var_mapping.insert(param.id, tv);
-            }
+            let fresh = self.engine.fresh_generic_args(&generic_params, &span);
+            let type_var_mapping: HashMap<GenericParamId, Type> = generic_params.iter().zip(fresh)
+                .map(|(param, ty)| (param.id, ty)).collect();
 
             let mut fields = Vec::new();
             for (ident, expr) in &inst.fields {
@@ -2593,9 +2627,11 @@ impl Lowerer {
         }
 
         let lambda_return_ty = self.engine.fresh_type_var_at(lambda.span.clone());
+        let loop_stack = std::mem::take(&mut self.fold_loop_stack);
         let body = self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
             lowerer.lower_lambda_body(lambda)
         });
+        self.fold_loop_stack = loop_stack;
         let span = lambda.span.clone();
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
         let ret_type = self.engine.resolve(&lambda_return_ty);
@@ -2670,6 +2706,7 @@ impl Lowerer {
         };
 
         let lambda_return_ty = self.engine.fresh_type_var_at(span.clone());
+        let loop_stack = std::mem::take(&mut self.fold_loop_stack);
         let body = if params.len() == 1 {
             self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
                 lowerer.lower_block(body)
@@ -2686,6 +2723,7 @@ impl Lowerer {
                 stmts: vec![HirStmt::Expr(inner)],
             }
         };
+        self.fold_loop_stack = loop_stack;
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
         let body_ty = self.engine.resolve(&lambda_return_ty);
         let mut captures = self.collect_lambda_captures(&body, std::slice::from_ref(&param));
@@ -2765,6 +2803,7 @@ mod tests {
             source_providers: Vec::new(),
             current_crate_name: Some("test".to_string()),
             opt_level: 0,
+            overflow_checks: None,
             emit_llvm: false,
             no_link: true,
             emit_object: None,
@@ -4684,17 +4723,17 @@ main = ->
         let method_id = def_id(49);
         lowerer
             .items
-            .insert_structure(empty_struct(struct_id, "stdlib::string::String"));
+            .insert_structure(empty_struct(struct_id, "std::string::String"));
         lowerer.resolver.insert_import_alias_with_name(
             "String".to_string(),
-            "stdlib::string::String".to_string(),
+            "std::string::String".to_string(),
             struct_id,
         );
         lowerer
             .items
             .insert_impl(HirImpl {
                 id: def_id(50),
-                owner: HirImplOwner::Named("stdlib::string::String".to_string()),
+                owner: HirImplOwner::Named("std::string::String".to_string()),
                 type_name: "String".to_string(),
                 type_generics: Vec::new(),
                 receiver_pattern: HirImplReceiverPattern::Exact(Type::Struct {
@@ -4713,7 +4752,7 @@ main = ->
         let expr = lowerer.lower_identifier_path(&identifier_path(&["String", "from"]));
 
         let (reference, target) = static_method_value_parts(&expr);
-        assert_eq!(reference.name, "stdlib::string::String::from");
+        assert_eq!(reference.name, "std::string::String::from");
         assert_eq!(reference.target, HirVarTarget::Function(method_id));
         assert_eq!(target.method.impl_id(), Some(def_id(50)));
         assert_eq!(target.method.method_id(), Some(method_id));
@@ -4748,14 +4787,14 @@ main = ->
             .insert_structure(empty_struct(struct_id, "String"));
         lowerer.resolver.insert_import_alias_with_name(
             "String".to_string(),
-            "stdlib::string::String".to_string(),
+            "std::string::String".to_string(),
             struct_id,
         );
         register_static_impl(
             &mut lowerer,
             def_id(155),
             struct_id,
-            "stdlib::string::String",
+            "std::string::String",
             "from",
             test_function(canonical_method_id, "from"),
         );
@@ -4763,7 +4802,7 @@ main = ->
         let expr = lowerer.lower_identifier_path(&identifier_path(&["String", "from"]));
 
         let (reference, target) = static_method_value_parts(&expr);
-        assert_eq!(reference.name, "stdlib::string::String::from");
+        assert_eq!(reference.name, "std::string::String::from");
         assert_eq!(
             reference.target,
             HirVarTarget::Function(canonical_method_id)
@@ -5371,7 +5410,7 @@ main = ->
             .insert_structure(private_field_struct(struct_id, "String"));
         lowerer.items.insert_structure(private_field_struct(
             struct_id,
-            "stdlib::string_type::String",
+            "std::string_type::String",
         ));
         lowerer
             .resolver
@@ -5380,7 +5419,7 @@ main = ->
         lowerer
             .resolver
             .item_names_by_id
-            .insert(struct_id, "stdlib::string_type::String".to_string());
+            .insert(struct_id, "std::string_type::String".to_string());
         lowerer.current_struct_impl = Some("String".to_string());
 
         let _literal = lowerer.lower_instance(&ast::Instance {
@@ -5406,7 +5445,7 @@ main = ->
         let struct_id = def_id(58);
         lowerer.items.insert_structure(private_field_struct(
             struct_id,
-            "stdlib::string_type::String",
+            "std::string_type::String",
         ));
         lowerer
             .resolver
@@ -5415,8 +5454,8 @@ main = ->
         lowerer
             .resolver
             .item_names_by_id
-            .insert(struct_id, "stdlib::string_type::String".to_string());
-        lowerer.current_struct_impl = Some("stdlib::string_type::String".to_string());
+            .insert(struct_id, "std::string_type::String".to_string());
+        lowerer.current_struct_impl = Some("std::string_type::String".to_string());
 
         let _literal = lowerer.lower_instance(&ast::Instance {
             name: ast::TypePath {
@@ -5444,15 +5483,15 @@ main = ->
             .insert_structure(private_field_struct(struct_id, "String"));
         lowerer.items.insert_structure(private_field_struct(
             struct_id,
-            "stdlib::string_type::String",
+            "std::string_type::String",
         ));
-        register_item_path(&mut lowerer, "stdlib::string_type::String", struct_id);
+        register_item_path(&mut lowerer, "std::string_type::String", struct_id);
         lowerer.current_struct_impl = Some("String".to_string());
 
         let _literal = lowerer.lower_instance(&ast::Instance {
             name: ast::TypePath {
                 path: vec![
-                    IdentOrType::Ident(ident("stdlib")),
+                    IdentOrType::Ident(ident("std")),
                     IdentOrType::Ident(ident("string_type")),
                     IdentOrType::Ident(ident("String")),
                 ],

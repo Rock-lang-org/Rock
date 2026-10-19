@@ -9,36 +9,74 @@ use rock_shared::fs::{collect_package_source_inputs, file_modified};
 
 use crate::{
     bundled_sysroot::{
-        ensure_sysroot_stdlib_available, package_requires_sysroot_stdlib, STDLIB_CRATE_NAME,
+        ensure_sysroot_std_available, package_requires_sysroot_std, STD_CRATE_NAME,
     },
     deps::resolve_dependency_root,
-    package::Package,
+    package::{BuildProfile, Package},
+    progress,
     rockc::{
         build_dependency_artifact_invocation, resolve_rockc_path, run_invocation, ExternArtifact,
     },
 };
 
-#[derive(Default)]
 pub(crate) struct ArtifactBuildState {
+    profile: BuildProfile,
+    project_root: PathBuf,
     artifacts: HashMap<PathBuf, PathBuf>,
-    uses_stdlib: HashMap<PathBuf, bool>,
+    artifact_dependencies: HashMap<PathBuf, Vec<(String, PathBuf)>>,
+    uses_std: HashMap<PathBuf, bool>,
     stack: Vec<PathBuf>,
+    pub(crate) progress: progress::BuildProgress,
 }
 
 impl ArtifactBuildState {
-    pub(crate) fn dependency_artifacts_use_stdlib(
+    pub(crate) fn new(package: &Package) -> Self {
+        Self {
+            profile: package.profile,
+            project_root: package.root_dir.clone(),
+            artifacts: HashMap::new(),
+            artifact_dependencies: HashMap::new(),
+            uses_std: HashMap::new(),
+            stack: Vec::new(),
+            progress: progress::BuildProgress::default(),
+        }
+    }
+
+    pub(crate) fn for_package(package: &Package) -> Result<Self, String> {
+        let mut roots = HashSet::new();
+        collect_package_roots(package, &mut roots)?;
+        Ok(Self {
+            progress: progress::BuildProgress::new(roots.len()),
+            ..Self::new(package)
+        })
+    }
+
+    pub(crate) fn dependency_artifacts_use_std(
         &self,
         dependency_artifacts: &[(String, PathBuf)],
     ) -> bool {
         dependency_artifacts.iter().any(|(name, artifact_path)| {
-            name != STDLIB_CRATE_NAME
+            name != STD_CRATE_NAME
                 && self
-                    .uses_stdlib
+                    .uses_std
                     .get(artifact_path)
                     .copied()
                     .unwrap_or(false)
         })
     }
+}
+
+fn collect_package_roots(package: &Package, roots: &mut HashSet<PathBuf>) -> Result<(), String> {
+    roots.insert(package.root_dir.clone());
+    if let Some(dependencies) = &package.manifest.dependencies {
+        for (name, dependency) in dependencies {
+            let root = resolve_dependency_root(&package.root_dir, name, dependency)?;
+            if !roots.contains(&root) {
+                collect_package_roots(&Package::load(root)?, roots)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn collect_dependency_artifacts(
@@ -65,22 +103,22 @@ pub(crate) fn collect_root_artifacts(
         })
         .collect::<Vec<_>>();
 
-    if package_requires_sysroot_stdlib(package) {
-        let layout = ensure_sysroot_stdlib_available()?;
+    if package_requires_sysroot_std(package) {
+        let layout = ensure_sysroot_std_available()?;
         artifacts.push(ExternArtifact {
-            name: STDLIB_CRATE_NAME.to_string(),
-            path: layout.stdlib_artifact,
+            name: STD_CRATE_NAME.to_string(),
+            path: layout.std_artifact,
         });
     }
-    if state.dependency_artifacts_use_stdlib(&dependency_artifacts) {
-        let stdlib_artifact = ensure_sysroot_stdlib_available()?.stdlib_artifact;
+    if state.dependency_artifacts_use_std(&dependency_artifacts) {
+        let std_artifact = ensure_sysroot_std_available()?.std_artifact;
         if !artifacts
             .iter()
-            .any(|artifact| artifact.path == stdlib_artifact)
+            .any(|artifact| artifact.path == std_artifact)
         {
             artifacts.push(ExternArtifact {
-                name: STDLIB_CRATE_NAME.to_string(),
-                path: stdlib_artifact,
+                name: STD_CRATE_NAME.to_string(),
+                path: std_artifact,
             });
         }
     }
@@ -144,30 +182,39 @@ pub(crate) fn ensure_artifact(
     state.stack.push(canonical_root.clone());
 
     let result = (|| {
-        let package = Package::load(canonical_root.clone())?;
-        let mut implicit_artifact_inputs = if package_requires_sysroot_stdlib(&package) {
-            vec![ensure_sysroot_stdlib_available()?.stdlib_artifact.clone()]
+        let mut package = Package::load(canonical_root.clone())?;
+        package.profile = state.profile;
+        package.use_project_build(&state.project_root);
+        let mut implicit_artifact_inputs = if package_requires_sysroot_std(&package) {
+            vec![ensure_sysroot_std_available()?.std_artifact.clone()]
         } else {
             Vec::new()
         };
         let mut dependency_artifacts = Vec::new();
-        let mut dependencies_use_stdlib = false;
+        let mut dependencies_use_std = false;
         if let Some(dependencies) = &package.manifest.dependencies {
             for (dep_name, dependency) in dependencies {
                 let dep_root = resolve_dependency_root(&package.root_dir, dep_name, dependency)?;
                 let artifact = ensure_artifact(&dep_root, state)?;
-                if dep_name != STDLIB_CRATE_NAME {
-                    dependencies_use_stdlib |=
-                        state.uses_stdlib.get(&artifact).copied().unwrap_or(false);
+                if dep_name != STD_CRATE_NAME {
+                    dependencies_use_std |=
+                        state.uses_std.get(&artifact).copied().unwrap_or(false);
+                }
+                // Loaded dependencies also require their complete artifact closure.
+                // Retain it in the build state so cached sources need not be re-read.
+                if let Some(transitive) = state.artifact_dependencies.get(&artifact) {
+                    dependency_artifacts.extend(transitive.iter().cloned());
                 }
                 dependency_artifacts.push((dep_name.clone(), artifact));
             }
         }
+        dependency_artifacts.sort();
+        dependency_artifacts.dedup();
 
-        if dependencies_use_stdlib {
-            let stdlib_artifact = ensure_sysroot_stdlib_available()?.stdlib_artifact;
-            if !implicit_artifact_inputs.contains(&stdlib_artifact) {
-                implicit_artifact_inputs.push(stdlib_artifact);
+        if dependencies_use_std {
+            let std_artifact = ensure_sysroot_std_available()?.std_artifact;
+            if !implicit_artifact_inputs.contains(&std_artifact) {
+                implicit_artifact_inputs.push(std_artifact);
             }
         }
 
@@ -206,13 +253,16 @@ pub(crate) fn ensure_artifact(
                 })
                 .collect::<Vec<_>>();
             artifacts.extend(implicit_artifact_inputs.iter().map(|path| ExternArtifact {
-                name: STDLIB_CRATE_NAME.to_string(),
+                name: STD_CRATE_NAME.to_string(),
                 path: path.clone(),
             }));
             let invocation =
                 build_dependency_artifact_invocation(resolve_rockc_path()?, &package, &artifacts);
+            progress::compiling(&package);
             run_invocation(
                 invocation,
+                &package,
+                Some(&state.progress),
                 &format!(
                     "dependency artifact for crate '{}'",
                     package.manifest.crate_.name
@@ -223,10 +273,12 @@ pub(crate) fn ensure_artifact(
         state
             .artifacts
             .insert(canonical_root.clone(), artifact_path.clone());
-        state.uses_stdlib.insert(
+        state.artifact_dependencies.insert(artifact_path.clone(), dependency_artifacts);
+        state.uses_std.insert(
             artifact_path.clone(),
-            package_requires_sysroot_stdlib(&package) || dependencies_use_stdlib,
+            package_requires_sysroot_std(&package) || dependencies_use_std,
         );
+        state.progress.complete();
         Ok(artifact_path)
     })();
 

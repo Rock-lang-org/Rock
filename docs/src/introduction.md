@@ -85,14 +85,14 @@ Read the book in order for a first pass, or choose a checkpoint that matches you
 | Feedback | [Editors and Diagnostics](getting-started/editor-and-diagnostics.md) | A project-aware editor and a build that verifies saved code |
 | Ownership | [Arrays and slices](language/arrays-slices-tuples.md), then [borrowing](language/references.md) | Choosing an owner, borrowing a view, and ending conflicting access |
 | Abstraction | [Traits](language/traits.md) and [error handling](functional/error-handling.md) | Reusable contracts and explicit failure paths |
-| Byte-oriented programs | [Files](stdlib/io-and-files.md) and [TCP](stdlib/networking.md) | Partial reads, complete writes, and resource cleanup |
-| Capstone | [An HTTP server](stdlib/http.md) | Package dependencies, routing, ownership, protocol limits, and concurrent workers |
+| Byte-oriented programs | [Files](std/io-and-files.md) and [TCP](std/networking.md) | Partial reads, complete writes, and resource cleanup |
+| Capstone | [An HTTP server](std/http.md) | Package dependencies, routing, ownership, protocol limits, and concurrent workers |
 
 Higher-kinded types and unsafe programming are deeper topics, not prerequisites for writing your first application. Return to them when a reusable abstraction or a low-level boundary makes their motivation concrete.
 
 At each stage, run the complete program first. Then change one input, predict the result, and compare it with the output or diagnostic. For the HTTP project, the chapter includes requests that check success, method rejection, and missing routes rather than relying only on a server-started message.
 
-The examples in this book are intentionally complete. A `rock` fence either contains a whole program or a complete top-level module fragment whose declarations are all present in that fence. A name supplied by the stdlib prelude may be used without an import; any other external name must be imported in the same file.
+The examples in this book are intentionally complete. A `rock` fence either contains a whole program or a complete top-level module fragment whose declarations are all present in that fence. A name supplied by the std prelude may be used without an import; any other external name must be imported in the same file.
 
 ## What this book does not cover
 

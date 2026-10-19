@@ -14,6 +14,7 @@ pub(crate) struct LoweringPipeline<'a> {
     program: &'a ast::Program,
     crate_ctx: &'a CrateContext,
     current_crate_name: Option<&'a str>,
+    overflow_checks: bool,
 }
 
 impl<'a> LoweringPipeline<'a> {
@@ -26,7 +27,13 @@ impl<'a> LoweringPipeline<'a> {
             program,
             crate_ctx,
             current_crate_name,
+            overflow_checks: true,
         }
+    }
+
+    pub(crate) fn with_overflow_checks(mut self, enabled: bool) -> Self {
+        self.overflow_checks = enabled;
+        self
     }
 
     pub(crate) fn lower_from_declarations(
@@ -34,6 +41,7 @@ impl<'a> LoweringPipeline<'a> {
         decls: Declarations,
     ) -> Result<PartialHir, Vec<ResolveError>> {
         let mut lowerer = Lowerer::from_declarations(decls)?;
+        lowerer.overflow_checks = self.overflow_checks;
         let session = LoweringSessionServices::new(
             self.crate_ctx,
             self.current_crate_name,
@@ -48,6 +56,7 @@ impl<'a> LoweringPipeline<'a> {
     }
 
     fn prepare_traits(&self, session: &LoweringSessionServices<'_>, lowerer: &mut Lowerer) {
+        TraitConformancePhase::prepare_explicit_method_selection(lowerer);
         session.lower_dependency_trait_bodies(lowerer);
         let Some(root_module_id) = lowerer
             .item_index
@@ -544,6 +553,67 @@ mod tests {
         let accepted = resolved.program.program();
         assert!(!accepted.functions.contains_key(&method_id));
         assert_eq!(accepted.impls[&impl_id].methods["identity"].id, method_id);
+    }
+
+    #[test]
+    fn lowering_pipeline_selects_concrete_operator_in_trait_default() {
+        let parsed = crate::parser::parse_string(
+            "trait Flag\n    @invert: Bool\n    @invert = -> !true\n\ntrait Flip\n    @!: Bool\n\nimpl Flip for Bool\n    @! = -> ~BoolNot *self\n\nimpl Flag for I64\n\nmain = -> 0\n",
+            &crate::Config {
+                no_std: true,
+                no_prelude: true,
+                ..crate::Config::default()
+            },
+        )
+        .expect("concrete operator in trait default should parse");
+        let program = Program {
+            module: parsed.module,
+        };
+        let crate_ctx = CrateContext::new();
+        let declarations = crate::collect::collect(&program, &crate_ctx, false, None)
+            .expect("concrete operator declarations should collect");
+        let lowered = LoweringPipeline::new(&program, &crate_ctx, None)
+            .lower_from_declarations(declarations)
+            .expect("trait default should select the explicit concrete operator");
+        let flip_id = lowered.resolver.item_paths["Flip"];
+        let flip_impl = lowered.impls.values().find(|imp| imp.trait_id == Some(flip_id)).unwrap();
+        let flag_id = lowered.resolver.item_paths["Flag"];
+        let flag_impl = lowered.impls.values().find(|imp| imp.trait_id == Some(flag_id)).unwrap();
+        let HirStmt::Expr(expr) = &flag_impl.methods["invert"].body.stmts[0] else {
+            panic!("default method should contain the operator call");
+        };
+        let HirExprKind::MethodCall(_, _, _, _, Some(target)) = &expr.kind else {
+            panic!("operator call should have an exact selected target");
+        };
+        assert_eq!(target.impl_id(), Some(flip_impl.id));
+        assert_eq!(target.method_id(), Some(flip_impl.methods["!"].id));
+        crate::infer::finalize(lowered)
+            .expect("concrete operator selected in trait default should finalize");
+    }
+
+    #[test]
+    fn lowering_pipeline_checks_conformance_after_selecting_operator_in_trait_default() {
+        let parsed = crate::parser::parse_string(
+            "trait Flag\n    @invert: Bool\n    @invert = -> !true\n\ntrait Flip\n    @!: I64\n\nimpl Flip for Bool\n    @! = -> ~BoolNot *self\n\nmain = -> 0\n",
+            &crate::Config {
+                no_std: true,
+                no_prelude: true,
+                ..crate::Config::default()
+            },
+        )
+        .expect("mismatched concrete operator source should parse");
+        let program = Program {
+            module: parsed.module,
+        };
+        let crate_ctx = CrateContext::new();
+        let declarations = crate::collect::collect(&program, &crate_ctx, false, None)
+            .expect("mismatched concrete operator declarations should collect");
+        let errors = LoweringPipeline::new(&program, &crate_ctx, None)
+            .lower_from_declarations(declarations)
+            .err()
+            .expect("early operator selection must not bypass conformance");
+        assert!(errors.iter().any(|error| error.message.contains("return type mismatch")));
+        assert!(!errors.iter().any(|error| error.message.contains("No implementation found")));
     }
 
     #[test]

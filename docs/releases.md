@@ -2,7 +2,7 @@
 
 This guide defines the Linux release contract for `Rock-lang-org/Rock`. Releases use tags named `vVERSION`. Only `x86_64-unknown-linux-gnu` is supported, built on Ubuntu 24.04 (glibc 2.39 baseline) with statically linked LLVM 18. End users do not need to install LLVM, but still need a C linker, curl, and CA certificates (`build-essential curl ca-certificates` on Ubuntu 24.04), plus GNU tar, gzip, and `sha256sum`. These are not fully static executables: system-library dependencies remain, and archives do not bundle the operating-system runtime.
 
-The rockup asset format starts with `v0.5.0`. Earlier releases provide historical standalone assets and are not supported by the bootstrap. This guide uses `v0.6.0` as its example; choose a new, unused tag when preparing subsequent releases.
+The rockup asset format starts with `v0.5.0`. Earlier releases provide historical standalone assets and are not supported by the bootstrap. This guide uses `v0.7.0` as its example; choose a new, unused tag when preparing subsequent releases.
 
 ## Repository Transfer
 
@@ -20,17 +20,17 @@ In the new organization, check GitHub Pages settings (GitHub Actions deployment 
 
 ## Asset Contract
 
-For `VERSION=0.6.0` and `TARGET=x86_64-unknown-linux-gnu`, attach:
+For `VERSION=0.7.0` and `TARGET=x86_64-unknown-linux-gnu`, attach:
 
 | Asset | Contents or purpose |
 | --- | --- |
-| `rock-v0.6.0-x86_64-unknown-linux-gnu.tar.gz` | Complete toolchain, extracted directly into its toolchain root |
+| `rock-v0.7.0-x86_64-unknown-linux-gnu.tar.gz` | Complete toolchain, extracted directly into its toolchain root |
 | `rockup-x86_64-unknown-linux-gnu` | Standalone executable, not an archive |
-| `stdlib-v0.6.0-x86_64-unknown-linux-gnu.tar.gz` | Matching standard-library component archive |
+| `std-v0.7.0-x86_64-unknown-linux-gnu.tar.gz` | Matching standard-library component archive |
 | Each binary/archive name followed by `.sha256` | SHA-256 sidecar for that exact asset |
 | `install.sh` | POSIX bootstrap from `scripts/install.sh` |
 
-The complete toolchain contains `bin/rock`, `bin/rockc`, `bin/rock-lsp`, the matching standard-library artifacts and component metadata under `lib/rocklib/TARGET/`, standard-library sources under `src/stdlib/`, and LLVM license notices under `share/licenses/llvm/`. Keep the compiler, object files, serialized artifacts, and metadata from the same build. Do not add an enclosing version directory inside the archive.
+The complete toolchain contains `bin/rock`, `bin/rockc`, `bin/rock-lsp`, the matching standard-library artifacts and component metadata under `lib/rocklib/TARGET/`, standard-library sources under `src/std/`, and LLVM license notices under `share/licenses/llvm/`. Keep the compiler, object files, serialized artifacts, and metadata from the same build. Do not add an enclosing version directory inside the archive.
 
 Generate sidecars from the asset directory using `sha256sum ASSET > ASSET.sha256`. Each sidecar must contain exactly one checksum line naming the asset's basename, not a local path. The bootstrap accepts the standard text or binary sha256sum separator; unrelated filenames, extra lines, and mismatched hashes are rejected. These are integrity checks, not signed provenance.
 
@@ -47,10 +47,10 @@ Stable standalone-manager downloads use `releases/latest/download/rockup-TARGET`
 The maintainer entry point is:
 
 ```sh
-bash scripts/release.sh v0.6.0
+bash scripts/release.sh v0.7.0
 ```
 
-Its contract is to build, package, and smoke-test locally, writing output to `dist/v0.6.0`. This default mode must not create tags, upload assets, or publish releases. Use Ubuntu 24.04 x86_64 with Rust/Cargo, LLVM 18 development files and static archives, a C toolchain, GNU tar, gzip, curl, CA certificates, and sha256sum. A build on a newer distribution can accidentally raise the glibc baseline; use the baseline environment for distributable artifacts.
+Its contract is to build, package, and smoke-test locally, writing output to `dist/v0.7.0`. This default mode must not create tags, upload assets, or publish releases. Use Ubuntu 24.04 x86_64 with Rust/Cargo, LLVM 18 development files and static archives, a C toolchain, GNU tar, gzip, curl, CA certificates, and sha256sum. A build on a newer distribution can accidentally raise the glibc baseline; use the baseline environment for distributable artifacts.
 
 Install the source-build dependencies and select LLVM 18 before packaging:
 
@@ -61,16 +61,16 @@ export LLVM_SYS_180_PREFIX=/usr/lib/llvm-18
 
 Static LLVM archives are mandatory; there is no dynamic-linking fallback. The new packaging contract requires rejecting shared LLVM dependencies via `ldd` and including LLVM license notices under `share/licenses/llvm/`.
 
-Before tagging, synchronize the package versions in `rock/Cargo.toml`, `rockc/Cargo.toml`, `rockup/Cargo.toml`, `rock-lsp/Cargo.toml`, `lib/Cargo.toml`, and `rock-shared/Cargo.toml`, and refresh `Cargo.lock`; the script rejects mismatched CLI versions. Existing output directories are never overwritten. The separate stdlib archive extracts directly to a target component directory and includes its manifests, artifact, and object file.
+Before tagging, synchronize the package versions in `rock/Cargo.toml`, `rockc/Cargo.toml`, `rockup/Cargo.toml`, `rock-lsp/Cargo.toml`, `lib/Cargo.toml`, and `rock-shared/Cargo.toml`, and refresh `Cargo.lock`; the script rejects mismatched package versions. Write the release changelog, migration notes, installation requirements, and comparison link in `docs/release-notes/v0.7.0.md` (using the actual tag for subsequent releases). Packaging rejects a missing or empty notes file, and both draft-creation paths use that file verbatim as the GitHub release body. Existing output directories are never overwritten. The separate std archive extracts directly to a target component directory and includes its manifests, artifact, and object file.
 
-Before accepting the output, inspect archive layouts, verify every sidecar from the output directory, and smoke-test with a disposable `HOME` and `ROCKUP_HOME`. Test that the bootstrap installs the manager, shims, shell setup, and selected toolchain in one invocation. Remove temporary downloads afterward: `rockup self install` must persist the downloaded manager at `ROCKUP_HOME/bin/rockup`. Activate the shell, then check `rock --version`, `rock-lsp --help`, and compilation/execution of a small application with the packaged stdlib without a separate install command. All three shims must work even though the bootstrap staging directory is gone. A shim pointing into the build or download staging directory is a release blocker.
+Before accepting the output, inspect archive layouts, verify every sidecar from the output directory, and smoke-test with a disposable `HOME` and `ROCKUP_HOME`. Test that the bootstrap installs the manager, shims, shell setup, and selected toolchain in one invocation. Remove temporary downloads afterward: `rockup self install` must persist the downloaded manager at `ROCKUP_HOME/bin/rockup`. Activate the shell, then check `rock --version`, `rock-lsp --help`, and compilation/execution of a small application with the packaged std without a separate install command. All three shims must work even though the bootstrap staging directory is gone. A shim pointing into the build or download staging directory is a release blocker.
 
 Run the bootstrap checks without network access:
 
 ```sh
 sh -n scripts/install.sh
 sh scripts/tests/install.sh
-bash scripts/tests/release.sh dist/v0.6.0
+bash scripts/tests/release.sh dist/v0.7.0
 ```
 
 The final check uses the real packaged binaries and archives with an offline HTTP fixture to exercise bootstrap cleanup, stable updates, pinned installation, self-update, shims, and compilation. The new CI contract requires running package smoke tests before draft creation in a clean Ubuntu 24.04 container with the runtime packages listed above and no LLVM installation. A successful build on an LLVM-equipped runner alone does not validate the runtime contract.
@@ -80,7 +80,7 @@ The final check uses the real packaged binaries and archives with an offline HTT
 Uploading is explicitly opt-in:
 
 ```sh
-bash scripts/release.sh v0.6.0 --publish
+bash scripts/release.sh v0.7.0 --publish
 ```
 
 Despite the option name, this creates a **draft only**, using authenticated `gh`. It requires the existing tag to point at local `HEAD` and to exist on GitHub; it must not create or move a tag. Arrange the reviewed commit and remote tag separately through the project's normal maintainer process. Do not use this option merely to test packaging.

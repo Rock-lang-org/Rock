@@ -61,13 +61,13 @@ decoy=$workspace/target/lib/rocklib/$target
 mkdir -p "$decoy" "$workspace/test_projects/app"
 cp rock.toml main.rk "$workspace/test_projects/app/"
 cp "$ROCKUP_HOME/toolchains/$RELEASE_TEST_TAG/lib/rocklib/$target/"{manifest,components}.json "$decoy/"
-printf 'stale checkout artifact\n' > "$decoy/stdlib.rkca"
-printf 'stale checkout object\n' > "$decoy/stdlib.o"
+printf 'stale checkout artifact\n' > "$decoy/std.rkca"
+printf 'stale checkout object\n' > "$decoy/std.o"
 (
     cd "$workspace/test_projects/app"
     "$ROCKUP_HOME/bin/rock" run | grep -Fx 'Hello, Rock!'
     CARGO_TARGET_DIR="$workspace/target" "$ROCKUP_HOME/bin/rock" run | grep -Fx 'Hello, Rock!'
 )
-grep -Fx 'stale checkout artifact' "$decoy/stdlib.rkca"
+grep -Fx 'stale checkout artifact' "$decoy/std.rkca"
 "$manager" remove stable
 printf 'Release bootstrap, update, pin, self-update, shims and compile passed.\n'

@@ -40,6 +40,8 @@ pub trait Analysis {
 
 /// Results of a dataflow analysis.
 pub struct Results<D> {
+    /// Blocks reachable from the function entry.
+    pub reachable: Vec<bool>,
     /// State at entry of each basic block.
     pub entry_sets: Vec<D>,
     /// State at exit of each basic block.
@@ -56,19 +58,30 @@ pub fn run_fixpoint<A: Analysis>(analysis: &A, func: &MirFunction) -> Results<A:
         .collect();
 
     // First block gets the initial state
-    entry_sets[0] = analysis.initial_state(func);
+    if num_blocks > 0 {
+        entry_sets[0] = analysis.initial_state(func);
+    }
 
     let mut exit_sets: Vec<A::Domain> = (0..num_blocks)
         .map(|_| analysis.bottom_state(func))
         .collect();
 
     // Worklist of blocks to process
-    let mut worklist: VecDeque<usize> = (0..num_blocks).collect();
+    let mut worklist = VecDeque::new();
+    let mut reachable = vec![false; num_blocks];
+    let mut processed = vec![false; num_blocks];
+    let mut queued = vec![false; num_blocks];
+    if num_blocks > 0 {
+        reachable[0] = true;
+        worklist.push_back(0);
+        queued[0] = true;
+    }
 
     // Successor map
     let successors = compute_successors(func);
 
     while let Some(block_idx) = worklist.pop_front() {
+        queued[block_idx] = false;
         let block_id = BasicBlockId(block_idx);
 
         // Compute exit state from entry state
@@ -82,19 +95,23 @@ pub fn run_fixpoint<A: Analysis>(analysis: &A, func: &MirFunction) -> Results<A:
         };
 
         // If changed, enqueue successors
-        if changed {
+        if changed || !processed[block_idx] {
+            processed[block_idx] = true;
             for &succ_idx in &successors[block_idx] {
                 let entry = &mut entry_sets[succ_idx];
-                entry.join(&exit_sets[block_idx]);
+                let entry_changed = entry.join(&exit_sets[block_idx]);
 
-                if !worklist.contains(&succ_idx) {
+                if (!reachable[succ_idx] || entry_changed) && !queued[succ_idx] {
                     worklist.push_back(succ_idx);
+                    queued[succ_idx] = true;
                 }
+                reachable[succ_idx] = true;
             }
         }
     }
 
     Results {
+        reachable,
         entry_sets,
         exit_sets,
     }

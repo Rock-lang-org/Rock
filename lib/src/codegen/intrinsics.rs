@@ -20,7 +20,7 @@ impl<'ctx> CodeGen<'ctx> {
         &mut self,
         intrinsic: MirIntrinsicId,
         compiled_args: &[BasicValueEnum<'ctx>],
-        _ret_ty: &Type,
+        ret_ty: &Type,
     ) -> Result<Option<BasicValueEnum<'ctx>>, CodegenError> {
         match intrinsic {
             MirIntrinsicId::I8Add
@@ -75,33 +75,25 @@ impl<'ctx> CodeGen<'ctx> {
             | MirIntrinsicId::I16Div
             | MirIntrinsicId::I32Div
             | MirIntrinsicId::I64Div => {
-                self.compile_int_intrinsic(compiled_args, "sdiv", |this, lhs, rhs| {
-                    this.builder.build_int_signed_div(lhs, rhs, "sdiv")
-                })
+                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Div, true)
             }
             MirIntrinsicId::U8Div
             | MirIntrinsicId::U16Div
             | MirIntrinsicId::U32Div
             | MirIntrinsicId::U64Div => {
-                self.compile_uint_intrinsic(compiled_args, "udiv", |this, lhs, rhs| {
-                    this.builder.build_int_unsigned_div(lhs, rhs, "udiv")
-                })
+                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Div, false)
             }
             MirIntrinsicId::I8Mod
             | MirIntrinsicId::I16Mod
             | MirIntrinsicId::I32Mod
             | MirIntrinsicId::I64Mod => {
-                self.compile_int_intrinsic(compiled_args, "srem", |this, lhs, rhs| {
-                    this.builder.build_int_signed_rem(lhs, rhs, "srem")
-                })
+                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Rem, true)
             }
             MirIntrinsicId::U8Mod
             | MirIntrinsicId::U16Mod
             | MirIntrinsicId::U32Mod
             | MirIntrinsicId::U64Mod => {
-                self.compile_uint_intrinsic(compiled_args, "urem", |this, lhs, rhs| {
-                    this.builder.build_int_unsigned_rem(lhs, rhs, "urem")
-                })
+                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Rem, false)
             }
             MirIntrinsicId::I8Neg
             | MirIntrinsicId::I16Neg
@@ -187,33 +179,25 @@ impl<'ctx> CodeGen<'ctx> {
             | MirIntrinsicId::I16Shl
             | MirIntrinsicId::I32Shl
             | MirIntrinsicId::I64Shl => {
-                self.compile_int_intrinsic(compiled_args, "shl", |this, lhs, rhs| {
-                    this.builder.build_left_shift(lhs, rhs, "shl")
-                })
+                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Shl, true)
             }
             MirIntrinsicId::U8Shl
             | MirIntrinsicId::U16Shl
             | MirIntrinsicId::U32Shl
             | MirIntrinsicId::U64Shl => {
-                self.compile_uint_intrinsic(compiled_args, "shl", |this, lhs, rhs| {
-                    this.builder.build_left_shift(lhs, rhs, "shl")
-                })
+                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Shl, false)
             }
             MirIntrinsicId::I8Shr
             | MirIntrinsicId::I16Shr
             | MirIntrinsicId::I32Shr
             | MirIntrinsicId::I64Shr => {
-                self.compile_int_intrinsic(compiled_args, "shr", |this, lhs, rhs| {
-                    this.builder.build_right_shift(lhs, rhs, true, "shr")
-                })
+                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Shr, true)
             }
             MirIntrinsicId::U8Shr
             | MirIntrinsicId::U16Shr
             | MirIntrinsicId::U32Shr
             | MirIntrinsicId::U64Shr => {
-                self.compile_uint_intrinsic(compiled_args, "shr", |this, lhs, rhs| {
-                    this.builder.build_right_shift(lhs, rhs, false, "shr")
-                })
+                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Shr, false)
             }
             MirIntrinsicId::I8Lt
             | MirIntrinsicId::I16Lt
@@ -339,7 +323,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.compile_float_compare_intrinsic(compiled_args, FloatPredicate::OEQ)
             }
             MirIntrinsicId::F32Ne | MirIntrinsicId::F64Ne => {
-                self.compile_float_compare_intrinsic(compiled_args, FloatPredicate::ONE)
+                self.compile_float_compare_intrinsic(compiled_args, FloatPredicate::UNE)
             }
             MirIntrinsicId::AtomicU64Exchange
             | MirIntrinsicId::AtomicU64FetchAdd
@@ -369,54 +353,26 @@ impl<'ctx> CodeGen<'ctx> {
                     })?;
                 Ok(Some(value.into()))
             }
-            MirIntrinsicId::MakeArr => {
-                let ptr = compiled_args[0].into_pointer_value();
-                let len = compiled_args[1].into_int_value();
-                let arr_ty = self.slice_layout_type();
-                let mut val = arr_ty.get_undef();
-                val = self
-                    .builder
-                    .build_insert_value(val, ptr, 0, "arr_ptr")
-                    .map_err(|e| CodegenError::from(format!("Failed MakeArr ptr: {}", e)))?
-                    .into_struct_value();
-                val = self
-                    .builder
-                    .build_insert_value(val, len, 1, "arr_len")
-                    .map_err(|e| CodegenError::from(format!("Failed MakeArr len: {}", e)))?
-                    .into_struct_value();
-                Ok(Some(val.into()))
-            }
-            MirIntrinsicId::BorrowSlice | MirIntrinsicId::BorrowSliceMut => {
-                let ptr = compiled_args[0].into_pointer_value();
-                let len = compiled_args[1].into_int_value();
-                let slice_ref_ty = self.slice_layout_type();
-                let mut val = slice_ref_ty.get_undef();
-                val = self
-                    .builder
-                    .build_insert_value(val, ptr, 0, "borrow_slice_ptr")
-                    .map_err(|e| CodegenError::from(format!("Failed BorrowSlice ptr: {}", e)))?
-                    .into_struct_value();
-                val = self
-                    .builder
-                    .build_insert_value(val, len, 1, "borrow_slice_len")
-                    .map_err(|e| CodegenError::from(format!("Failed BorrowSlice len: {}", e)))?
-                    .into_struct_value();
-                Ok(Some(val.into()))
-            }
-            MirIntrinsicId::BorrowStr => {
-                let ptr = compiled_args[0].into_pointer_value();
-                let len = compiled_args[1].into_int_value();
+            MirIntrinsicId::PtrFromParts => {
+                let [BasicValueEnum::PointerValue(ptr), BasicValueEnum::IntValue(len)] = compiled_args else {
+                    return Err(CodegenError::backend_contract("PtrFromParts requires a pointer and length"));
+                };
+                if len.get_type().get_bit_width() != 64
+                    || !matches!(ret_ty, Type::Pointer(inner) if matches!(inner.as_ref(), Type::Slice(_) | Type::Str))
+                {
+                    return Err(CodegenError::backend_contract("invalid raw wide-pointer signature"));
+                }
                 let str_ref_ty = self.slice_layout_type();
                 let mut val = str_ref_ty.get_undef();
                 val = self
                     .builder
-                    .build_insert_value(val, ptr, 0, "borrow_str_ptr")
-                    .map_err(|e| CodegenError::from(format!("Failed BorrowStr ptr: {}", e)))?
+                    .build_insert_value(val, *ptr, 0, "wide_data")
+                    .map_err(|e| CodegenError::from(format!("Failed PtrFromParts ptr: {}", e)))?
                     .into_struct_value();
                 val = self
                     .builder
-                    .build_insert_value(val, len, 1, "borrow_str_len")
-                    .map_err(|e| CodegenError::from(format!("Failed BorrowStr len: {}", e)))?
+                    .build_insert_value(val, *len, 1, "wide_length")
+                    .map_err(|e| CodegenError::from(format!("Failed PtrFromParts len: {}", e)))?
                     .into_struct_value();
                 Ok(Some(val.into()))
             }
@@ -431,6 +387,9 @@ impl<'ctx> CodeGen<'ctx> {
         arg_types: &[Type],
         ret_ty: &Type,
     ) -> Result<Option<BasicValueEnum<'ctx>>, CodegenError> {
+        if let MirIntrinsicId::Integer(integer) = intrinsic {
+            return self.compile_integer_intrinsic(integer, compiled_args, arg_types);
+        }
         if intrinsic.is_value_intrinsic() {
             return self.compile_intrinsic_values(intrinsic, compiled_args, ret_ty);
         }
@@ -571,6 +530,9 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(Some(result.into()))
             }
             MirIntrinsicId::ArrPtr => match self.resolve_projection_type(&arg_types[0]) {
+                Type::Reference { inner, .. } if matches!(inner.as_ref(), Type::Array(_, _)) => {
+                    Ok(Some(compiled_args[0]))
+                }
                 Type::Slice(_) => {
                     let arr = compiled_args[0].into_struct_value();
                     let ptr = self
@@ -647,6 +609,10 @@ impl<'ctx> CodeGen<'ctx> {
         arg_type_ids: &[TypeId],
         ret_type_id: TypeId,
     ) -> Result<Option<BasicValueEnum<'ctx>>, CodegenError> {
+        if let MirIntrinsicId::Integer(integer) = intrinsic {
+            let types = arg_type_ids.iter().map(|id| self.structural_type_for(*id)).collect::<Vec<_>>();
+            return self.compile_integer_intrinsic(integer, compiled_args, &types);
+        }
         if self.type_id_contains_projection(ret_type_id)
             || arg_type_ids
                 .iter()
@@ -785,6 +751,9 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(Some(result.into()))
             }
             MirIntrinsicId::ArrPtr => match self.type_view().ty(arg_type_ids[0]) {
+                Ty::Reference { inner, .. } if matches!(self.type_view().ty(*inner), Ty::Array { .. }) => {
+                    Ok(Some(compiled_args[0]))
+                }
                 Ty::Slice(_) => {
                     let arr = compiled_args[0].into_struct_value();
                     let ptr = self
@@ -1092,6 +1061,34 @@ mod tests {
     }
 
     #[test]
+    fn compile_float_inequality_includes_unordered_operands() {
+        let context = Context::create();
+        for (intrinsic, float_type) in [
+            (MirIntrinsicId::F32Ne, context.f32_type()),
+            (MirIntrinsicId::F64Ne, context.f64_type()),
+        ] {
+            let mut codegen = CodeGen::new(&context, "test");
+            let function_type = context.bool_type().fn_type(
+                &[float_type.into(), float_type.into()],
+                false,
+            );
+            let function = codegen.module.add_function("test", function_type, None);
+            let entry = context.append_basic_block(function, "entry");
+            codegen.builder.position_at_end(entry);
+            let lhs = function.get_nth_param(0).unwrap();
+            let rhs = function.get_nth_param(1).unwrap();
+            let value = codegen
+                .compile_intrinsic_values(intrinsic, &[lhs, rhs], &Type::Bool)
+                .unwrap()
+                .unwrap();
+            codegen.builder.build_return(Some(&value)).unwrap();
+
+            codegen.module.verify().unwrap();
+            assert!(codegen.get_ir().contains("fcmp une"));
+        }
+    }
+
+    #[test]
     fn compile_intrinsic_values_lowers_atomic_u64_fetch_add() {
         let context = Context::create();
         let mut codegen = CodeGen::new(&context, "test");
@@ -1150,7 +1147,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_intrinsic_values_lowers_borrow_slice() {
+    fn compile_intrinsic_values_lowers_raw_wide_pointer() {
         let context = Context::create();
         let mut codegen = CodeGen::new(&context, "test");
         let ptr_ty = context.ptr_type(inkwell::AddressSpace::default());
@@ -1164,14 +1161,14 @@ mod tests {
         let ptr = function.get_nth_param(0).unwrap();
         let len = function.get_nth_param(1).unwrap();
         let _value = codegen
-            .compile_intrinsic_values(MirIntrinsicId::BorrowSlice, &[ptr, len], &Type::Unit)
+            .compile_intrinsic_values(MirIntrinsicId::PtrFromParts, &[ptr, len], &Type::Pointer(Box::new(Type::Slice(Box::new(Type::U8)))))
             .unwrap()
             .unwrap();
         codegen.builder.build_return(None).unwrap();
 
         let ir = codegen.get_ir();
-        assert!(ir.contains("borrow_slice_ptr"));
-        assert!(ir.contains("borrow_slice_len"));
+        assert!(ir.contains("wide_data"));
+        assert!(ir.contains("wide_length"));
     }
 
     #[test]

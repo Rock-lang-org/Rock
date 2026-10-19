@@ -3231,7 +3231,7 @@ pub enum BinOp {
 
 impl BinOp {
     pub fn from_str(s: &str) -> Option<BinOp> {
-        // All operators are now handled via stdlib infix declarations and method calls
+        // All operators are now handled via std infix declarations and method calls
         // Short-circuit operators (&&, ||) are kept as BinOp for special handling
         match s {
             "&&" => Some(BinOp::And),

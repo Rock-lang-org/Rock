@@ -37,18 +37,19 @@ impl<'ctx> CodeGen<'ctx> {
                 .into()),
             Constant::Char(value) => Ok(self
                 .context
-                .i8_type()
+                .i32_type()
                 .const_int(*value as u64, false)
                 .into()),
             Constant::String(value) => {
                 let processed = Self::process_escape_sequences(value);
                 let byte_len = processed.len() as u64;
-                let str_ptr = self
-                    .builder
-                    .build_global_string_ptr(&processed, "str")
-                    .map_err(|e| {
-                        CodegenError::from(format!("Failed to create MIR string: {}", e))
-                    })?;
+                // LLVMBuildGlobalStringPtr takes a C string and truncates at NUL.
+                // Build the byte array explicitly to preserve the stored length.
+                let bytes = self.context.const_string(processed.as_bytes(), true);
+                let str_ptr = self.module.add_global(bytes.get_type(), None, "str");
+                str_ptr.set_initializer(&bytes);
+                str_ptr.set_constant(true);
+                str_ptr.set_linkage(inkwell::module::Linkage::Private);
                 let mut str_value = self.slice_layout_type().get_undef();
                 str_value = self
                     .builder

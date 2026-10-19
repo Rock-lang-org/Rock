@@ -1,0 +1,6 @@
+// Equality and ordering.
+< mod eq
+< mod ord
+
+< eq::*
+< ord::*

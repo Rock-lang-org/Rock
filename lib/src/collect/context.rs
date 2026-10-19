@@ -342,6 +342,11 @@ pub(crate) struct LocalCollection {
 }
 
 impl TypeLoweringContext for CollectContext {
+    fn constructor_params(&self, id: DefId) -> Option<Vec<crate::types::GenericParamDecl>> {
+        self.structs.values().find(|item| item.id == id).map(|item| item.generic_params.clone())
+            .or_else(|| self.enums.values().find(|item| item.id == id).map(|item| item.generic_params.clone()))
+            .or_else(|| self.type_aliases.values().find(|item| item.id == id).map(|item| item.generic_params.clone()))
+    }
     fn push_type_error(&mut self, message: String, span: Span) {
         self.push_error_with_span(message, span);
     }
@@ -1127,7 +1132,7 @@ impl CollectContext {
             return;
         }
 
-        if self.structs.contains_key(&canonical_source) {
+        if self.structs.contains_key(&canonical_source) || self.type_aliases.contains_key(&canonical_source) {
             self.import_aliases
                 .insert(short_name.clone(), canonical_source.clone());
             if is_explicit && record_canonical_aliases {
@@ -1184,7 +1189,7 @@ impl CollectContext {
                     self.record_canonical_alias(short_name.clone(), &export);
                 } else {
                     self.push_error(format!(
-                        "Failed to inject stdlib prelude alias '{}': declaration '{}' not found",
+                        "Failed to inject std prelude alias '{}': declaration '{}' not found",
                         short_name, qualified_name
                     ));
                 }
@@ -1252,6 +1257,14 @@ impl CollectContext {
             self.record_canonical_item_name(*id, name);
         }
 
+        // Nested public facades resolve to the same dependency declarations as
+        // their canonical paths, including while collecting function signatures.
+        for (alias, id) in &metadata.resolver().export_aliases {
+            if let Some(source) = metadata.resolver().canonical_name(*id) {
+                self.export_aliases.insert(alias.clone(), source.to_string());
+            }
+        }
+
         if !dep.root_exports().is_empty() {
             self.dependency_root_export_ids.insert(
                 crate_name.to_string(),
@@ -1262,7 +1275,7 @@ impl CollectContext {
             );
         }
 
-        if crate_name == "stdlib" && !dep.prelude_exports().is_empty() {
+        if crate_name == "std" && !dep.prelude_exports().is_empty() {
             self.record_loaded_prelude_exports(
                 dep.prelude_exports()
                     .iter()
@@ -1453,7 +1466,7 @@ impl CollectContext {
         let receiver = imp
             .for_
             .clone()
-            .unwrap_or_else(|| ast::ParseType::Type(imp.name.clone()));
+            .unwrap_or_else(|| imp.name.clone());
         let mut type_generics = Vec::new();
         collect_generic_names_from_parse_type(&receiver, &mut type_generics, &|name| {
             is_known_nominal_type_name(self, name)

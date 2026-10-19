@@ -7,7 +7,7 @@ rock new hello
 cd hello
 ```
 
-This creates a new directory containing `rock.toml`, `src/main.rk`, and a `.gitignore` that excludes build output. Existing directories are never overwritten. Project names start with an ASCII letter and can contain letters, digits, hyphens, and underscores; `stdlib` is reserved.
+This creates a new directory containing `rock.toml`, `src/main.rk`, and a `.gitignore` that excludes build output. Existing directories are never overwritten. Project names start with an ASCII letter and can contain letters, digits, hyphens, and underscores; `std` is reserved.
 
 The generated `rock.toml` manifest is:
 

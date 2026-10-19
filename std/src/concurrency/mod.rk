@@ -1,0 +1,12 @@
+// Shared ownership, synchronization, and owned threads.
+mod atomic
+< mod arc
+< mod mutex
+< mod thread_safety
+< mod thread
+
+< arc::Arc
+< mutex::Mutex
+< mutex::MutexGuard
+< thread_safety::*
+< thread::*

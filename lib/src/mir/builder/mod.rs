@@ -458,16 +458,11 @@ impl<'a> MirBuilder<'a> {
                 .take(function.arg_count)
                 .map(|local| local.ty)
                 .collect::<Vec<_>>();
-            let mut signature = super::MirCallableSignature::from_type_ids(
+            let signature = super::MirCallableSignature::from_type_ids(
                 &params,
                 function.ret_type,
                 super::MirPassMode::Direct,
             );
-            if function.name == "main" {
-                if let Some(i32_ty) = type_context.id_for_type(&Type::I32) {
-                    signature.ret.abi_ty = i32_ty;
-                }
-            }
 
             contract.callables.insert(
                 key.clone(),
@@ -624,7 +619,7 @@ impl<'a> MirBuilder<'a> {
             Operand::Constant(Constant::Int(_)) => type_context.id_for_type(&Type::I64),
             Operand::Constant(Constant::Float(_)) => type_context.id_for_type(&Type::F64),
             Operand::Constant(Constant::Bool(_)) => type_context.id_for_type(&Type::Bool),
-            Operand::Constant(Constant::Char(_)) => type_context.id_for_type(&Type::U8),
+            Operand::Constant(Constant::Char(_)) => type_context.id_for_type(&Type::Char),
             Operand::Constant(Constant::String(_)) => type_context.id_for_type(&Type::Str),
             Operand::Constant(Constant::Unit) => type_context.id_for_type(&Type::Unit),
             Operand::Constant(Constant::TypeId(id)) => Some(*id),
@@ -808,9 +803,9 @@ impl<'a> MirBuilder<'a> {
                         function
                             .params
                             .iter()
-                            .map(|param| type_context.intern_type(&param.ty))
+                        .map(|param| type_context.intern_canonical_type(&param.ty))
                             .collect(),
-                        type_context.intern_type(&function.ret_type),
+                    type_context.intern_canonical_type(&function.ret_type),
                         function.is_method,
                     )
                 } else {
@@ -835,15 +830,12 @@ impl<'a> MirBuilder<'a> {
                 );
                 super::MirCallableKind::LocalBody { function_id }
             };
-            let mut signature = super::MirCallableSignature::from_instance_type_ids(
+            let signature = super::MirCallableSignature::from_instance_type_ids(
                 &params,
                 ret,
                 is_method,
                 type_context,
             );
-            if record.symbols.backend_symbol == "main" {
-                signature.ret.abi_ty = type_context.intern_type(&Type::I32);
-            }
             let linkage = if record.is_specialization
                 && !record.provided_by_object
                 && !exportable_drop_glue_symbols.contains(record.symbols.backend_symbol.as_str())
@@ -959,7 +951,7 @@ impl<'a> MirBuilder<'a> {
                                 .fields
                                 .iter()
                                 .map(|field| {
-                                    (field.name.clone(), type_context.intern_type(&field.ty))
+                                    (field.name.clone(), type_context.intern_canonical_type(&field.ty))
                                 })
                                 .collect(),
                             generic_params: Self::mir_generic_param_ids(&structure.generic_params),
@@ -1203,14 +1195,14 @@ impl<'a> MirBuilder<'a> {
                         super::MirVariantLayoutFields::Positional(
                             fields
                                 .iter()
-                                .map(|ty| type_context.intern_type(ty))
+                        .map(|ty| type_context.intern_canonical_type(ty))
                                 .collect(),
                         )
                     }
                     HirVariantFields::Named(fields) => super::MirVariantLayoutFields::Named(
                         fields
                             .iter()
-                            .map(|field| (field.name.clone(), type_context.intern_type(&field.ty)))
+                        .map(|field| (field.name.clone(), type_context.intern_canonical_type(&field.ty)))
                             .collect(),
                     ),
                 },
@@ -1263,7 +1255,8 @@ impl<'a> MirBuilder<'a> {
     }
 
     fn type_id_for(&self, ty: &Type) -> TypeId {
-        self.type_context.borrow_mut().intern_type(ty)
+        // Accepted HIR is canonical, including constructor-valued nominal args.
+        self.type_context.borrow_mut().intern_canonical_type(ty)
     }
 
     fn new_local(&mut self, ty: TypeId, mutability: Mutability, name: Option<String>) -> Local {
@@ -4896,19 +4889,19 @@ mod tests {
         let unit_id = type_context.intern_type(&Type::Unit);
         let ptr_id = type_context.intern_type(&Type::Pointer(Box::new(Type::U8)));
         let len_id = type_context.intern_type(&Type::I64);
-        let slice_id = type_context.intern_type(&Type::Slice(Box::new(Type::U8)));
+        let slice_id = type_context.intern_type(&Type::Pointer(Box::new(Type::Slice(Box::new(Type::U8)))));
         let struct_id_ty = type_context.intern_type(&Type::Struct {
             id: struct_id,
             args: vec![],
         });
         let function = MirFunction {
             id: function_id.clone(),
-            name: "uses_borrow_slice".to_string(),
+            name: "uses_raw_wide_pointer".to_string(),
             basic_blocks: vec![BasicBlock {
                 statements: vec![],
                 terminator: Some(Terminator::Call {
                     func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
-                        crate::mir::MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSlice),
+                        crate::mir::MirCallableKey::Intrinsic(MirIntrinsicId::PtrFromParts),
                     ))),
                     args: vec![
                         Operand::Copy(Place {
@@ -4985,9 +4978,9 @@ mod tests {
 
         let declaration = contract
             .callable(&crate::mir::MirCallableKey::Intrinsic(
-                MirIntrinsicId::BorrowSlice,
+                MirIntrinsicId::PtrFromParts,
             ))
-            .expect("BorrowSlice intrinsic callable should be registered");
+            .expect("PtrFromParts intrinsic callable should be registered");
         assert_eq!(declaration.signature.params[0].semantic_ty, ptr_id);
         assert_eq!(declaration.signature.params[1].semantic_ty, len_id);
         assert_eq!(declaration.signature.ret.semantic_ty, slice_id);
@@ -5004,7 +4997,7 @@ mod tests {
         let base_id = type_context.intern_type(&Type::I64);
         let ptr_id = type_context.intern_type(&Type::Pointer(Box::new(Type::U8)));
         let len_id = type_context.intern_type(&Type::I64);
-        let slice_id = type_context.intern_type(&Type::Slice(Box::new(Type::U8)));
+        let slice_id = type_context.intern_type(&Type::Pointer(Box::new(Type::Slice(Box::new(Type::U8)))));
         let struct_ty = Type::Struct {
             id: struct_id,
             args: vec![],
@@ -5026,7 +5019,7 @@ mod tests {
                 statements: vec![],
                 terminator: Some(Terminator::Call {
                     func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
-                        crate::mir::MirCallableKey::Intrinsic(MirIntrinsicId::BorrowSlice),
+                        crate::mir::MirCallableKey::Intrinsic(MirIntrinsicId::PtrFromParts),
                     ))),
                     args: vec![
                         Operand::Copy(Place {
@@ -5112,9 +5105,9 @@ mod tests {
 
         let declaration = contract
             .callable(&crate::mir::MirCallableKey::Intrinsic(
-                MirIntrinsicId::BorrowSlice,
+                MirIntrinsicId::PtrFromParts,
             ))
-            .expect("BorrowSlice intrinsic callable should be registered for projected field");
+            .expect("PtrFromParts intrinsic callable should be registered for projected field");
         assert_eq!(declaration.signature.params[0].semantic_ty, ptr_id);
         assert_eq!(declaration.signature.params[1].semantic_ty, len_id);
         assert_eq!(declaration.signature.ret.semantic_ty, slice_id);
@@ -7499,7 +7492,7 @@ mod tests {
                     ("Outer".to_string(), outer_id),
                 ]),
                 traits_by_name: std::collections::HashMap::from([(
-                    "stdlib::drop::Drop".to_string(),
+                    "std::drop::Drop".to_string(),
                     drop_trait_id,
                 )]),
                 ..HirNameTables::default()

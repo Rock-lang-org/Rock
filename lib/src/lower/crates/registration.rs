@@ -32,8 +32,8 @@ impl<'a> LowerCrateRegistration<'a> {
     /// Register functions from external crates in the scope
     ///
     /// Functions are registered with qualified names only
-    /// (e.g., `stdlib::sqrt`, `mycrate::function`).
-    /// Unqualified access must come from normal imports or stdlib prelude injection.
+    /// (e.g., `std::sqrt`, `mycrate::function`).
+    /// Unqualified access must come from normal imports or std prelude injection.
     pub(crate) fn register_crate_functions(&self, lowerer: &mut Lowerer) {
         self.register_crate_resolvers(lowerer);
 

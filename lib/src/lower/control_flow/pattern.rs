@@ -101,9 +101,12 @@ impl Lowerer {
                     }
                     HirPattern::Literal(HirLiteralPattern::String(s.clone()))
                 }
-                ast::LiteralKind::Char(c) => {
-                    HirPattern::Literal(HirLiteralPattern::Char(c.chars().next().unwrap_or('\0')))
-                }
+                ast::LiteralKind::Char(_) => match self.lower_literal(lit).kind {
+                    HirExprKind::CharLiteral(value) => {
+                        HirPattern::Literal(HirLiteralPattern::Char(value))
+                    }
+                    _ => HirPattern::Wildcard,
+                },
                 _ => HirPattern::Wildcard,
             },
             ast::PatternKind::Tuple(pats) => {
@@ -734,6 +737,7 @@ mod tests {
             source_providers: Vec::new(),
             current_crate_name: Some("test".to_string()),
             opt_level: 0,
+            overflow_checks: None,
             emit_llvm: false,
             no_link: true,
             emit_object: None,

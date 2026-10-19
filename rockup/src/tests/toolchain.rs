@@ -3,7 +3,7 @@ use std::fs;
 use crate::{
     constants::{
         BIN_DIR, DEFAULT_TOOLCHAIN_FILE, LIB_DIR, ROCKUP_TOOLCHAIN_ENV, ROCK_BIN_NAME,
-        ROCK_LSP_BIN_NAME, STDLIB_ARTIFACT_NAME, TOOLCHAINS_DIR,
+        ROCK_LSP_BIN_NAME, STD_ARTIFACT_NAME, TOOLCHAINS_DIR,
     },
     layout::host_target_triple,
     selection::active_toolchain_name,
@@ -60,7 +60,7 @@ fn test_install_toolchain_normalizes_cargo_build_dir_layout() {
         .join(LIB_DIR)
         .join("rocklib")
         .join(host_target_triple())
-        .join(STDLIB_ARTIFACT_NAME)
+        .join(STD_ARTIFACT_NAME)
         .exists());
     assert!(home.root.join(BIN_DIR).join(ROCK_BIN_NAME).exists());
     assert!(home

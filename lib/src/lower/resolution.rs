@@ -1185,7 +1185,7 @@ mod tests {
             .insert_structure(test_struct(struct_id, "String"));
         lowerer.resolver.insert_import_alias_with_name(
             "String".to_string(),
-            "stdlib::string::String".to_string(),
+            "std::string::String".to_string(),
             struct_id,
         );
         let impl_id = def_id(0, 76);
@@ -1193,8 +1193,8 @@ mod tests {
             .items
             .insert_impl(HirImpl {
                 id: impl_id,
-                owner: HirImplOwner::Named("stdlib::string::String".to_string()),
-                type_name: "stdlib::string::String".to_string(),
+                owner: HirImplOwner::Named("std::string::String".to_string()),
+                type_name: "std::string::String".to_string(),
                 type_generics: Vec::new(),
                 receiver_pattern: HirImplReceiverPattern::Exact(Type::Struct {
                     id: struct_id,
@@ -1215,7 +1215,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(resolved.value.name, "stdlib::string::String::from");
+        assert_eq!(resolved.value.name, "std::string::String::from");
         assert_eq!(
             resolved.value.target,
             Some(HirVarTarget::Function(method_id))
@@ -1426,7 +1426,7 @@ mod tests {
             [(
                 "Drop".to_string(),
                 ArtifactExport {
-                    source: "stdlib::drop::Drop".to_string(),
+                    source: "std::drop::Drop".to_string(),
                     id: drop_id,
                 },
             )]
@@ -1435,7 +1435,7 @@ mod tests {
         );
         lowerer.resolver.insert_import_alias_with_name(
             "Drop".to_string(),
-            "stdlib::drop::Drop".to_string(),
+            "std::drop::Drop".to_string(),
             drop_id,
         );
 
@@ -1459,7 +1459,7 @@ mod tests {
 
         resolver.insert_import_alias_with_name(
             "map".to_string(),
-            "stdlib::prelude::map".to_string(),
+            "std::prelude::map".to_string(),
             export_id,
         );
         assert!(
@@ -1493,10 +1493,10 @@ mod tests {
         let mut lowerer = Lowerer::new_for_test();
         lowerer
             .items
-            .insert_structure(test_struct(string_id, "stdlib::string::String"));
+            .insert_structure(test_struct(string_id, "std::string::String"));
         lowerer.resolver.insert_import_alias_with_name(
             "String".to_string(),
-            "stdlib::string::String".to_string(),
+            "std::string::String".to_string(),
             string_id,
         );
 

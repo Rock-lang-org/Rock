@@ -1260,7 +1260,7 @@ mod tests {
                 span: Span::test(),
             },
         );
-        let declared = unit_return_function(method_id, "stdlib::from_str");
+        let declared = unit_return_function(method_id, "std::from_str");
         let object_method = InstanceRecord {
             id: method_instance,
             origin: InstanceOrigin::ImplMethod {
@@ -1268,7 +1268,7 @@ mod tests {
                 method: method_id,
             },
             substitution: Vec::new(),
-            symbols: InstanceSymbols::new("stdlib__String_from_str", "stdlib__String_from_str"),
+            symbols: InstanceSymbols::new("std__String_from_str", "std__String_from_str"),
             declared: Some(declared),
             provided_by_object: true,
             is_specialization: false,
@@ -1321,8 +1321,8 @@ mod tests {
                 method: method_id,
             },
             substitution: Vec::new(),
-            symbols: InstanceSymbols::new("stdlib__String_from_str", "stdlib__String_from_str"),
-            declared: Some(unit_return_function(method_id, "stdlib::from_str")),
+            symbols: InstanceSymbols::new("std__String_from_str", "std__String_from_str"),
+            declared: Some(unit_return_function(method_id, "std::from_str")),
             provided_by_object: true,
             is_specialization: false,
         };
@@ -1353,7 +1353,7 @@ mod tests {
                 bounds: std::collections::HashMap::new().into(),
                 methods: HashMap::from([(
                     "from_str".to_string(),
-                    unit_return_function(method_id, "stdlib::from_str"),
+                    unit_return_function(method_id, "std::from_str"),
                 )]),
             },
         );
@@ -1440,7 +1440,7 @@ mod tests {
             .program
             .rebuild_indexes_with_canonical_names(&HashMap::from([
                 (main_id, "main".to_string()),
-                (drop_trait_id, "stdlib::drop::Drop".to_string()),
+                (drop_trait_id, "std::drop::Drop".to_string()),
             ]));
 
         let mut bodies = crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut program);

@@ -23,8 +23,8 @@ fallback. From this repository, use:
 ```console
 $ export LLVM_SYS_180_PREFIX=/usr/lib/llvm-18
 $ cargo build --release
-$ target/release/rockup dev stdlib package \
-    --path stdlib \
+$ target/release/rockup dev std package \
+    --path std \
     --sysroot target/release
 $ target/release/rockup install dev --path target/release
 ```
@@ -241,22 +241,22 @@ when the return carrier implements `FromResidual` for the source residual.
 Missing conversions are not synthesized: implement that exact conversion or
 handle the failure with an explicit `match`.
 
-Strings, characters, and Unicode text handling are byte-oriented and escaped
-literal behavior is not mature. This complete program measures encoded bytes,
-not user-perceived characters:
+Strings support UTF-8 and checked byte-range slicing; character lookup counts
+Unicode scalars. Grapheme segmentation and Unicode normalization are not yet
+provided. This program measures encoded bytes, not user-perceived characters:
 
 ```rock
-> stdlib::eq::Eq
-> stdlib::hash::Hash
+> std::cmp::Eq
+> std::hash::Hash
 
 main = !->
-    text: String = String::from "cafe"
+    text: String = String::from "café"
     length: I64 = text.len!
     length.println!
 ```
 
-Use ASCII protocol data or process a deliberately specified byte encoding until
-Unicode-aware APIs are available. There is no async/await syntax or runtime;
+This prints `5`; see [Strings and Collections](../std/collections.md) for
+scalar lookup and validated byte conversion. There is no async/await syntax or runtime;
 use an ordinary synchronous function or the prototype thread API instead.
 
 There are no top-level global or static values and no stable C-layout
@@ -268,7 +268,9 @@ that a Rock struct has a C representation.
 
 ### Strings and `Vec`
 
-`String` length and indexing are byte-oriented. `Vec` has eager traversal
+`String` lengths and range offsets count bytes; range endpoints must be UTF-8
+boundaries. Use `char_at` for scalar lookup rather than integer indexing.
+`Vec` has eager traversal
 methods such as `for_each` and `map`, but no general lazy iterator API or
 `pop` method. Use `swap_remove` at the last index to remove the final element
 without changing the order of the remaining elements:
@@ -334,7 +336,7 @@ Environment-variable lookup is not available. Pass configuration as explicit
 arguments instead:
 
 ```rock
-> stdlib::env::args
+> std::env::args
 
 main = !->
     arguments: Vec String = args!
@@ -345,10 +347,10 @@ Networking is blocking IPv4 TCP only. It has no TLS, UDP, IPv6, or timeout
 abstraction. This complete program demonstrates the supported bind boundary:
 
 ```rock
-> stdlib::io::IoError
-> stdlib::net::Ipv4Addr
-> stdlib::net::SocketAddrV4
-> stdlib::net::TcpListener
+> std::io::IoError
+> std::io::net::Ipv4Addr
+> std::io::net::SocketAddrV4
+> std::io::net::TcpListener
 
 bind_local = ->
     address: SocketAddrV4 = SocketAddrV4::new Ipv4Addr::localhost!, 0
@@ -367,7 +369,7 @@ thread pools, or async executors. Dropping a `JoinHandle` detaches the thread;
 call `join!` before dropping it when the result or completion matters.
 `spawn_detached` is available for owned unit-returning tasks, but returning
 from `main` does not wait for them; see the complete
-[detached-task example](../stdlib/concurrency.md#detached-tasks).
+[detached-task example](../std/concurrency.md#detached-tasks).
 
 Thread and atomic implementations rely on platform ABI assumptions. Treat
 long-running, memory-intensive, and concurrent applications as experiments
@@ -376,7 +378,7 @@ until cleanup and scheduling gaps close.
 ## Working with the prototype
 
 Keep programs and dependencies pinned to one compiler revision, compile after
-formatting, and prefer tested stdlib APIs over syntax found only in old plans.
+formatting, and prefer tested std APIs over syntax found only in old plans.
 When relying on a new edge case, add a parser test and an integration test.
 Keep unsafe and FFI boundaries small, and report the smallest complete source
 that demonstrates a limitation.

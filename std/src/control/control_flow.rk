@@ -1,0 +1,25 @@
+lang control_flow
+< enum ControlFlow B, C
+    lang break
+    Break B
+    lang continue
+    Continue C
+
+lang try
+< trait Try
+    lang output
+    type Output
+    lang residual
+    type Residual
+    lang branch
+    ~@branch: ControlFlow Self::Residual, Self::Output
+
+lang from_residual
+< trait FromResidual R
+    lang method
+    from_residual: R -> Self
+
+// A residual exits a short-circuiting fold; nested folds preserve the enclosing
+// function's conversion by nesting ControlFlow break values.
+impl FromResidual E for ControlFlow R, C where R: FromResidual E
+    from_residual = residual -> ControlFlow::Break (R::from_residual residual)
