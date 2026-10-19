@@ -30,6 +30,7 @@ pub enum RockError {
     Lexer(LexerError),
     Preservation(LosslessError),
     UnterminatedBlockComment(Span),
+    IndentationTooWide { width: usize, span: Span },
 }
 
 #[derive(Clone, Copy)]
@@ -64,6 +65,7 @@ impl Cursor<'_> {
 
 /// Reads segments directly, without flattening text or treating NUL as EOF.
 /// Physical layout and parser-added terminal tokens belong to A0.06.
+#[derive(Clone, Copy)]
 pub struct RockView<'a> {
     cursor: Cursor<'a>,
 }
@@ -276,6 +278,7 @@ impl<'a> RockView<'a> {
 }
 
 mod delimited;
+pub mod layout;
 
 #[cfg(test)]
 mod tests;
