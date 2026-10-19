@@ -4,6 +4,7 @@ use crate::{
 };
 
 mod and;
+mod cursor;
 mod delimited;
 mod fns;
 mod followed;
@@ -23,6 +24,9 @@ mod tuples;
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod cursor_tests;
 
 pub use and::*;
 pub use delimited::*;
@@ -79,7 +83,7 @@ pub fn reset_best_error() {
 
 #[derive(Clone, Debug)]
 pub struct ParseCtx<'a> {
-    pub tokens: &'a [Token],
+    pub(crate) cursor: cursor::TokenCursor<'a>,
     pub eof_location: Option<(&'a std::path::PathBuf, usize)>,
     pub indent_level: usize,
     pub config: &'a Config,
@@ -108,11 +112,39 @@ impl ParseCtx<'_> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.tokens.is_empty()
+        self.cursor.len() == 0
     }
 
     pub fn len(&self) -> usize {
-        self.tokens.len()
+        self.cursor.len()
+    }
+
+    /// Bound a subparse without exposing a token slice or borrowing past its end.
+    pub fn prefix(&self, count: usize) -> Result<Self, ParseError> {
+        let cursor = self.cursor.prefix(count)
+            .ok_or_else(|| ParseError::UnexpectedEOF(self.eof_span()))?;
+        let eof_location = self.cursor.peek(count)
+            .map(|token| (&token.span.file_path, token.span.start))
+            .or(self.eof_location);
+        Ok(Self { cursor, eof_location, ..*self })
+    }
+
+    pub fn advance(&self, count: usize) -> Result<Self, ParseError> {
+        if let Some((level, span)) = self.invalid_indent {
+            return Err(ParseError::UnexpectedIndent(level, span.clone()));
+        }
+        let cursor = self.cursor.advance(count)
+            .ok_or_else(|| ParseError::UnexpectedEOF(self.eof_span()))?;
+        Ok(Self { cursor, ..*self })
+    }
+
+    /// Restore a saved input range while retaining flags changed by a subparse.
+    pub fn resume_input_from(&self, checkpoint: Self) -> Self {
+        Self { cursor: checkpoint.cursor, eof_location: checkpoint.eof_location, ..*self }
+    }
+
+    pub fn same_remaining(&self, other: &Self) -> bool {
+        self.cursor.same_remaining(&other.cursor)
     }
 
     pub fn consume(&self) -> Result<(Self, Token), ParseError> {
@@ -120,17 +152,8 @@ impl ParseCtx<'_> {
             return Err(ParseError::UnexpectedIndent(level, span.clone()));
         }
 
-        if self.tokens.is_empty() {
-            return Err(ParseError::UnexpectedEOF(self.eof_span()));
-        }
-
-        Ok((
-            ParseCtx {
-                tokens: &self.tokens[1..],
-                ..*self
-            },
-            self.tokens[0].clone(),
-        ))
+        let token = self.seek()?;
+        Ok((self.advance(1)?, token))
     }
 
     pub fn indent(&self) -> Result<Self, ParseError> {
@@ -171,11 +194,7 @@ impl ParseCtx<'_> {
             return Err(ParseError::UnexpectedIndent(level, span.clone()));
         }
 
-        if self.tokens.is_empty() {
-            return Err(ParseError::UnexpectedEOF(self.eof_span()));
-        }
-
-        Ok(self.tokens[0].clone())
+        self.seek_nth(0)
     }
 
     pub fn seek_nth(&self, n: usize) -> Result<Token, ParseError> {
@@ -183,24 +202,21 @@ impl ParseCtx<'_> {
             return Err(ParseError::UnexpectedIndent(level, span.clone()));
         }
 
-        if self.tokens.len() < n {
-            return Err(ParseError::UnexpectedEOF(self.eof_span()));
-        }
-
-        Ok(self.tokens[n].clone())
+        self.cursor.peek(n).cloned()
+            .ok_or_else(|| ParseError::UnexpectedEOF(self.eof_span()))
     }
 
     pub fn from<'a>(tokens: &'a [Token], config: &'a Config) -> ParseCtx<'a> {
-        let (mut indent_step, invalid_indent) = Self::determine_indent_step(tokens, config);
+        let cursor = cursor::TokenCursor::new(tokens);
+        let (mut indent_step, invalid_indent) = Self::determine_indent_step(cursor, config);
 
         if indent_step == 0 {
             indent_step = 4;
         }
 
         ParseCtx {
-            tokens,
-            eof_location: tokens
-                .last()
+            cursor,
+            eof_location: cursor.len().checked_sub(1).and_then(|index| cursor.peek(index))
                 .map(|token| (&token.span.file_path, token.span.end)),
             indent_level: 0,
             indent_step,
@@ -217,13 +233,14 @@ impl ParseCtx<'_> {
     }
 
     fn determine_indent_step<'a>(
-        tokens: &'a [Token],
+        cursor: cursor::TokenCursor<'a>,
         _config: &Config,
     ) -> (usize, Option<(u8, &'a Span)>) {
         let mut indent_step = 0;
         let mut invalid_indent = None;
 
-        for token in tokens {
+        for index in 0..cursor.len() {
+            let Some(token) = cursor.peek(index) else { break };
             if let TokenType::Indent(level) = token.token_type {
                 if level > 0 {
                     if level % 2 != 0 {

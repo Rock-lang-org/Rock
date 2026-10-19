@@ -10,7 +10,10 @@ pub fn repeat_array(stream: Input) -> IResult<(Expression, usize)> {
     let mut bracket_depth = 0;
     let mut paren_depth = 0;
     let mut separator = None;
-    for (index, token) in stream.tokens.iter().enumerate() {
+    let mut lookahead = stream;
+    let mut index = 0;
+    while !lookahead.is_empty() {
+        let (next, token) = lookahead.consume()?;
         match &token.token_type {
             TokenType::OpenBracket => bracket_depth += 1,
             TokenType::CloseBracket if bracket_depth > 0 => bracket_depth -= 1,
@@ -25,24 +28,20 @@ pub fn repeat_array(stream: Input) -> IResult<(Expression, usize)> {
             }
             _ => {}
         }
+        lookahead = next;
+        index += 1;
     }
     let Some(separator) = separator else {
         return Err(ParseError::Fail);
     };
 
-    let value_stream = Input {
-        tokens: &stream.tokens[..separator],
-        ..stream
-    };
+    let value_stream = stream.prefix(separator)?;
     let (value_rest, value) = expression(value_stream)?;
-    if !value_rest.tokens.is_empty() {
+    if !value_rest.is_empty() {
         return Err(ParseError::Fail);
     }
 
-    let separator_stream = Input {
-        tokens: &stream.tokens[separator..],
-        ..value_rest
-    };
+    let separator_stream = value_rest.resume_input_from(stream.advance(separator)?);
     let (stream, _) = TokenType::Operator(";".to_string())
         .or(TokenType::StuckOperator(";".to_string()))
         .process(separator_stream)?;

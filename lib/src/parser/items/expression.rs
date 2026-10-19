@@ -18,7 +18,7 @@ pub fn expression(stream: Input) -> IResult<Expression> {
 
     while !stream.inside_argument_list
         && matches!(
-            stream.tokens.first().map(|token| &token.token_type),
+            stream.seek().ok().map(|token| token.token_type),
             Some(TokenType::SpacedDot)
         )
     {
@@ -359,7 +359,7 @@ pub fn secondary(stream: Input) -> IResult<SecondaryExpr> {
         // it for the caller before parsing any following operator or suffix.
         // Delimited expressions and nested bodies establish their own context.
         if matches!(
-            stream.tokens.first().map(|token| &token.token_type),
+        stream.seek().ok().map(|token| token.token_type),
             Some(TokenType::Interogation)
         ) {
             return Err(ParseError::ShortCircuit);
@@ -439,10 +439,10 @@ pub fn arguments(stream: Input) -> IResult<Vec<Argument>> {
 }
 
 fn not_inline_call_operator(stream: Input) -> IResult<()> {
-    let first_token = stream.tokens.first();
-    let second_token = stream.tokens.get(1);
-    let first = first_token.map(|token| &token.token_type);
-    let second = second_token.map(|token| &token.token_type);
+    let first_token = stream.seek().ok();
+    let second_token = stream.seek_nth(1).ok();
+    let first = first_token.as_ref().map(|token| &token.token_type);
+    let second = second_token.as_ref().map(|token| &token.token_type);
     if matches!(
         first,
         Some(TokenType::DoubleDot | TokenType::DoubleDotEqual)
@@ -450,8 +450,8 @@ fn not_inline_call_operator(stream: Input) -> IResult<()> {
         return Err(ParseError::Fail);
     }
     let starts_shared_reference = matches!(first, Some(TokenType::Ampersand))
-        && first_token
-            .zip(second_token)
+        && first_token.as_ref()
+            .zip(second_token.as_ref())
             .is_some_and(|(ampersand, operand)| ampersand.span.end == operand.span.start);
     let starts_mut_reference = matches!(
         (first, second),

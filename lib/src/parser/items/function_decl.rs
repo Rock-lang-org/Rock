@@ -160,7 +160,7 @@ pub fn prefix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
     if !other_remaining_tokens.is_empty() {
         return Err(ParseError::UnexpectedToken(
             TokenType::CloseParen.discriminant().to_string(),
-            other_remaining_tokens.tokens[0].clone(),
+            other_remaining_tokens.seek()?,
         ));
     }
 
@@ -230,7 +230,7 @@ pub fn suffix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
     if !other_remaining_tokens.is_empty() {
         return Err(ParseError::UnexpectedToken(
             TokenType::CloseParen.discriminant().to_string(),
-            other_remaining_tokens.tokens[0].clone(),
+            other_remaining_tokens.seek()?,
         ));
     }
 

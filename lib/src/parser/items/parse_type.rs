@@ -601,8 +601,5 @@ fn peek_token(stream: &Input) -> Option<TokenType> {
 }
 
 fn peek_nth(stream: &Input, index: usize) -> Option<TokenType> {
-    stream
-        .tokens
-        .get(index)
-        .map(|token| token.token_type.clone())
+    stream.seek_nth(index).ok().map(|token| token.token_type)
 }

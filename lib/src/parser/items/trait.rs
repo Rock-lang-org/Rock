@@ -180,7 +180,7 @@ fn trait_generic_params(mut stream: Input) -> IResult<Vec<crate::ast::GenericPar
         } else if matches!(stream.seek()?.token_type, TokenType::OpenParen) {
             parse_parenthesized_constructor_param
         } else if matches!(
-            stream.tokens.get(1).map(|token| &token.token_type),
+            stream.seek_nth(1).ok().map(|token| token.token_type),
             Some(TokenType::Underscore)
         ) {
             parse_constructor_param

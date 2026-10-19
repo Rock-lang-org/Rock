@@ -10,7 +10,7 @@ fn parse_type_text(input: &str) -> ParseType {
     let (rest, ty) = parse_type
         .process(ParseCtx::from(&tokens, &config))
         .expect("type should parse");
-    assert!(rest.is_empty(), "unparsed tokens: {:?}", rest.tokens);
+    assert!(rest.is_empty(), "unparsed input: {:?}", rest);
     ty
 }
 

@@ -62,18 +62,6 @@ pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
         .process(stream)
 }
 
-fn parse_macro_head_recursive(stream: Input<'_>) -> IResult<'_, Vec<MacroFragment>> {
-    let (defs, tokens) = parse_macro_head_recursive_inner(stream.tokens, stream)?;
-
-    Ok((Input { tokens, ..stream }, defs))
-}
-
-fn parse_macro_block_recursive(stream: Input<'_>) -> IResult<'_, Vec<MacroFragment>> {
-    let (block, tokens) = parse_macro_block_recursive_inner(stream.tokens, stream)?;
-
-    Ok((Input { tokens, ..stream }, block))
-}
-
 fn incomplete_macro_head(message: &str, token: &Token) -> ParseError {
     ParseError::HardError(
         format!("Incomplete macro head: {}", message),
@@ -81,48 +69,41 @@ fn incomplete_macro_head(message: &str, token: &Token) -> ParseError {
     )
 }
 
-fn parse_macro_head_recursive_inner<'a>(
-    tokens: &'a [Token],
-    parse_ctx: ParseCtx,
-) -> Result<(Vec<MacroFragment>, &'a [Token]), ParseError> {
+fn parse_macro_head_recursive<'a>(
+    mut stream: Input<'a>,
+) -> IResult<'a, Vec<MacroFragment>> {
     let mut defs = Vec::new();
-    let mut remaining_tokens = tokens;
 
-    let mut skip_until = 0;
-    while let Some(token) = remaining_tokens.first() {
-        if skip_until > 0 {
-            skip_until -= 1;
-            remaining_tokens = &remaining_tokens[1..];
-            continue;
-        }
+    while !stream.is_empty() {
+        let token = stream.seek()?;
         match &token.token_type {
             TokenType::MacroVar(name) => {
-                let Some(colon_token) = remaining_tokens.get(1) else {
+                let Ok(colon_token) = stream.seek_nth(1) else {
                     return Err(incomplete_macro_head(
                         "expected ':' after macro variable",
-                        token,
+                        &token,
                     ));
                 };
                 if colon_token.token_type == TokenType::Eof {
                     return Err(incomplete_macro_head(
                         "expected ':' after macro variable",
-                        colon_token,
+                        &colon_token,
                     ));
                 }
                 if colon_token.token_type != TokenType::Colon {
                     return Err(ParseError::UnexpectedToken(
                         TokenType::Colon.discriminant().to_string(),
-                        colon_token.clone(),
+                        colon_token,
                         // vec![TokenType::Colon],
                     ));
                 }
-                let Some(kind_token) = remaining_tokens.get(2) else {
-                    return Err(incomplete_macro_head("expected macro fragment kind", token));
+                let Ok(kind_token) = stream.seek_nth(2) else {
+                    return Err(incomplete_macro_head("expected macro fragment kind", &token));
                 };
                 if kind_token.token_type == TokenType::Eof {
                     return Err(incomplete_macro_head(
                         "expected macro fragment kind",
-                        kind_token,
+                        &kind_token,
                     ));
                 }
 
@@ -144,7 +125,7 @@ fn parse_macro_head_recursive_inner<'a>(
                 } else {
                     return Err(ParseError::UnexpectedToken(
                         TokenType::Ident(String::new()).discriminant().to_string(),
-                        kind_token.clone(),
+                        kind_token,
                         /* vec![
                             TokenType::Ident("ident".to_string()),
                             TokenType::Ident("expr".to_string()),
@@ -153,41 +134,40 @@ fn parse_macro_head_recursive_inner<'a>(
                     ));
                 }
 
-                skip_until = 3;
+                stream = stream.advance(3)?;
 
                 continue;
             }
             TokenType::MacroRepeatOpen => {
-                let (inner_block, new_remaining_tokens) =
-                    parse_macro_head_recursive_inner(&remaining_tokens[1..], parse_ctx)?;
+                let (remaining, inner_block) =
+                    parse_macro_head_recursive(stream.advance(1)?)?;
 
-                remaining_tokens = new_remaining_tokens;
+                stream = remaining;
                 defs.push(MacroFragment::Repetition(inner_block));
             }
             TokenType::MacroRepeatClose => {
-                return Ok((defs, &remaining_tokens[1..]));
+                return Ok((stream.advance(1)?, defs));
             }
             TokenType::FatArrow => {
-                return Ok((defs, remaining_tokens));
+                return Ok((stream, defs));
             }
             _ => {
-                defs.push(MacroFragment::Token(token.clone()));
-                remaining_tokens = &remaining_tokens[1..];
+                defs.push(MacroFragment::Token(token));
+                stream = stream.advance(1)?;
             }
         }
     }
 
-    Ok((defs, remaining_tokens))
+    Ok((stream, defs))
 }
 
-fn parse_macro_block_recursive_inner<'a>(
-    tokens: &'a [Token],
-    parse_ctx: ParseCtx,
-) -> Result<(Vec<MacroFragment>, &'a [Token]), ParseError> {
+fn parse_macro_block_recursive<'a>(
+    mut stream: Input<'a>,
+) -> IResult<'a, Vec<MacroFragment>> {
     let mut block = Vec::new();
-    let mut remaining_tokens = tokens;
 
-    while let Some(token) = remaining_tokens.first() {
+    while !stream.is_empty() {
+        let token = stream.seek()?;
         match &token.token_type {
             TokenType::MacroVar(name) => {
                 let ident = MacroFragment::Ident(Ident {
@@ -195,31 +175,31 @@ fn parse_macro_block_recursive_inner<'a>(
                     span: token.span.clone(),
                 });
                 block.push(ident);
-                remaining_tokens = &remaining_tokens[1..];
+                stream = stream.advance(1)?;
             }
             TokenType::MacroRepeatOpen => {
-                let (inner_block, new_remaining_tokens) =
-                    parse_macro_block_recursive_inner(&remaining_tokens[1..], parse_ctx)?;
+                let (remaining, inner_block) =
+                    parse_macro_block_recursive(stream.advance(1)?)?;
 
-                remaining_tokens = new_remaining_tokens;
+                stream = remaining;
                 block.push(MacroFragment::Repetition(inner_block));
             }
             TokenType::MacroRepeatClose => {
-                return Ok((block, &remaining_tokens[1..]));
+                return Ok((stream.advance(1)?, block));
             }
             _ => {
-                let mut token = token.clone();
+                let mut token = token;
 
                 // fix the indentation for the parser
                 if let TokenType::Indent(level) = token.token_type {
-                    if level == 0 || level == parse_ctx.indent_step as u8 {
+                    if level == 0 || level == stream.indent_step as u8 {
                         // the definition is over
-                        return Ok((block, remaining_tokens));
+                        return Ok((stream, block));
                     }
                     if level % 2 != 0 {
                         return Err(ParseError::UnexpectedIndent(level, token.span.clone()));
                     }
-                    let Some(base_indent) = (parse_ctx.indent_step as u8).checked_mul(2) else {
+                    let Some(base_indent) = (stream.indent_step as u8).checked_mul(2) else {
                         return Err(ParseError::UnexpectedIndent(level, token.span.clone()));
                     };
                     let Some(adjusted_indent) = level.checked_sub(base_indent) else {
@@ -229,10 +209,10 @@ fn parse_macro_block_recursive_inner<'a>(
                 }
 
                 block.push(MacroFragment::Token(token));
-                remaining_tokens = &remaining_tokens[1..];
+                stream = stream.advance(1)?;
             }
         }
     }
 
-    Ok((block, remaining_tokens))
+    Ok((stream, block))
 }

@@ -6,7 +6,7 @@ pub fn not<P: Parser>(mut parser: P) -> impl FnMut(Input) -> IResult<()> {
         if let Ok((stream, _)) = parser.process(stream) {
             Err(ParseError::UnexpectedToken(
                 "not".to_string(),
-                stream.tokens[0].clone(),
+                stream.seek()?,
             ))
         } else {
             Ok((stream, ()))

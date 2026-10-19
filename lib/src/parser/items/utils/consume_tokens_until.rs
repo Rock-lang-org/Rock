@@ -5,29 +5,18 @@ use crate::parser::engine::*;
 pub fn consume_tokens_until(token_type: TokenType) -> impl Fn(Input) -> IResult<Vec<Token>> {
     move |stream: Input| {
         let mut tokens = Vec::new();
-        let mut remaining_tokens = stream.tokens;
+        let mut remaining = stream;
 
-        while let Some(token) = remaining_tokens.first() {
+        while !remaining.is_empty() {
+            let token = remaining.seek()?;
             if token.token_type == token_type {
-                return Ok((
-                    Input {
-                        tokens: remaining_tokens,
-                        ..stream
-                    },
-                    tokens,
-                ));
+                return Ok((remaining, tokens));
             }
 
-            tokens.push(token.clone());
-            remaining_tokens = &remaining_tokens[1..];
+            tokens.push(token);
+            remaining = remaining.advance(1)?;
         }
 
-        Ok((
-            Input {
-                tokens: remaining_tokens,
-                ..stream
-            },
-            tokens,
-        ))
+        Ok((remaining, tokens))
     }
 }
