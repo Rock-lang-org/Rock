@@ -13,12 +13,16 @@ fn scan(source: &str) -> LosslessStream {
         .unwrap()
 }
 
+fn text(stream: &LosslessStream) -> String {
+    stream.runs().iter().map(|run| run.text()).collect()
+}
+
 #[test]
 fn macro_a0_02_runs_cover_original_utf8_bytes_and_layout() {
     let source = "a \té\r\n🦀\0";
     let stream = scan(source);
-    assert_eq!(stream.text(), source);
-    assert_eq!(stream.file_path(), std::path::Path::new(SOURCE_PATH));
+    assert_eq!(text(&stream), source);
+    assert_eq!(stream.start_span().file_path, PathBuf::from(SOURCE_PATH));
     let expected = [
         (RunKind::Text, 0..1, "a"),
         (RunKind::Whitespace, 1..3, " \t"),
@@ -57,8 +61,8 @@ fn assert_coverage(source: &str) {
         assert!(source.is_char_boundary(range.start));
         assert!(source.is_char_boundary(range.end));
         assert_eq!(run.text(), &source[range.clone()]);
-        assert_eq!(run.text().as_ptr(), stream.text()[range.clone()].as_ptr());
-        assert!(std::sync::Arc::ptr_eq(&stream.source, &run.source));
+        assert_eq!(run.text().as_ptr(), run.source.text[range.clone()].as_ptr());
+        assert!(std::sync::Arc::ptr_eq(&stream.anchor.source, &run.source));
         end = range.end;
     }
     assert_eq!(end, source.len());
@@ -113,7 +117,7 @@ fn macro_a0_02_each_physical_line_ending_remains_separate() {
         vec!["\r", "\r\n", "\n", "\n", "\r"],
     );
     assert!(stream.runs().iter().all(|run| run.kind() == RunKind::LineEnding));
-    assert_coverage(stream.text());
+    assert_coverage(&text(&stream));
 }
 
 #[test]
@@ -121,7 +125,7 @@ fn macro_a0_02_empty_input_needs_no_runs_or_synthetic_eof() {
     let stream = LosslessStream::from_bytes(
         SOURCE_PATH.into(), Vec::new(), ScanLimits { max_source_bytes: 0, max_runs: 0 },
     ).unwrap();
-    assert_eq!(stream.text(), "");
+    assert_eq!(text(&stream), "");
     assert!(stream.runs().is_empty());
 }
 
@@ -130,7 +134,7 @@ fn macro_a0_02_input_spelling_is_owned_without_copying() {
     let bytes = "é 🦀\0\r\n".as_bytes().to_vec();
     let original_pointer = bytes.as_ptr();
     let stream = LosslessStream::from_bytes(SOURCE_PATH.into(), bytes, LIMITS).unwrap();
-    assert_eq!(stream.text().as_ptr(), original_pointer);
+    assert_eq!(stream.anchor.source.text.as_ptr(), original_pointer);
     let run = stream.runs()[0].clone();
     drop(stream);
     assert_eq!(run.text(), "é");

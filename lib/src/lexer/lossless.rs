@@ -1,6 +1,6 @@
 //! Source preservation only; Rock syntax is an optional, separate interpretation.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::Span;
@@ -25,6 +25,23 @@ impl RunKind {
     }
 }
 
+/// Binding authority is independent of source locations. Ordinary source starts
+/// in ROOT; only the later hygiene owner may allocate expansion contexts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SyntaxContext(u32);
+
+impl SyntaxContext {
+    pub const ROOT: Self = Self(0);
+}
+
+/// A splice is a lexical boundary even if its printed neighbours could touch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoinBoundary {
+    Separate,
+    /// Explicitly restore adjacency of contiguous slices of the same snapshot.
+    SourceAdjacent,
+}
+
 /// Both retained spelling and run metadata count toward preservation budgets.
 #[derive(Debug, Clone, Copy)]
 pub struct ScanLimits {
@@ -39,6 +56,12 @@ pub enum LosslessError {
     InvalidUtf8 { valid_up_to: usize, error_len: Option<usize> },
     TooManyRuns { offset: usize, limit: usize },
     AllocationFailed { offset: usize },
+    InvalidRange { start: usize, end: usize, len: usize },
+    NotCharBoundary { offset: usize },
+    NotSourceAdjacent,
+    LengthOverflow,
+    EmptyBindingRange,
+    ConflictingContexts { offset: usize, left: SyntaxContext, right: SyntaxContext },
 }
 
 #[derive(Debug)]
@@ -53,6 +76,8 @@ pub struct LosslessRun {
     source: Arc<SourceSnapshot>,
     kind: RunKind,
     range: std::ops::Range<usize>,
+    context: SyntaxContext,
+    boundary: JoinBoundary,
 }
 
 impl LosslessRun {
@@ -64,8 +89,16 @@ impl LosslessRun {
         self.range.clone()
     }
 
+    pub fn context(&self) -> SyntaxContext {
+        self.context
+    }
+
+    pub fn boundary(&self) -> JoinBoundary {
+        self.boundary
+    }
+
     pub fn text(&self) -> &str {
-        // Only the scanner constructs ranges, at validated UTF-8 boundaries.
+        // Scanning and checked slicing are the only range constructors.
         &self.source.text[self.range.clone()]
     }
 
@@ -74,11 +107,21 @@ impl LosslessRun {
     }
 }
 
-/// Complete source coverage; no synthetic EOF/layout and no Rock interpretation.
+#[derive(Debug, Clone)]
+struct SourcePosition {
+    source: Arc<SourceSnapshot>,
+    offset: usize,
+    context: SyntaxContext,
+}
+
+/// Ordered source segments; logical byte offsets need not be source offsets.
+/// Reconstruction is inspection only, never a syntax-forwarding mechanism.
 #[derive(Debug, Clone)]
 pub struct LosslessStream {
-    source: Arc<SourceSnapshot>,
     runs: Vec<LosslessRun>,
+    len_bytes: usize,
+    /// Retains a precise location/context even for an empty source or slice.
+    anchor: SourcePosition,
 }
 
 impl LosslessStream {
@@ -139,18 +182,16 @@ impl LosslessStream {
                 source: Arc::clone(&source),
                 kind,
                 range: start..end,
+                context: SyntaxContext::ROOT,
+                boundary: JoinBoundary::SourceAdjacent,
             });
         }
 
-        Ok(Self { source, runs })
-    }
-
-    pub fn file_path(&self) -> &Path {
-        &self.source.file_path
-    }
-
-    pub fn text(&self) -> &str {
-        &self.source.text
+        Ok(Self {
+            len_bytes: source.text.len(),
+            anchor: SourcePosition { source, offset: 0, context: SyntaxContext::ROOT },
+            runs,
+        })
     }
 
     pub fn runs(&self) -> &[LosslessRun] {
@@ -158,5 +199,10 @@ impl LosslessStream {
     }
 }
 
+mod splice;
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod splice_tests;
