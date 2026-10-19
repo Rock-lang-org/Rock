@@ -374,6 +374,65 @@ Expression execution/opaque expression forwarding and capture-aware relative
 layout remain A.06. Formatting is still deferred; no formatter/check, Clippy, or
 separate build gate ran. Beads remains unavailable.
 
+### A.06 delivery receipt (2026-10-20)
+
+Root function-body declarative calls now use the same matcher, template engine,
+and requested-category parser as item calls. Captured expressions retain opaque
+range boundaries over their original stream bytes, not printed substitutions or
+stored compiler tokens/ASTs. Slicing, splicing, origin tagging, and wire transport
+carry those boundaries; bounded ordinary parsing revalidates their contents.
+Nested emitted calls expand outside-in, and discarded input is never executed.
+
+Capture parsing retains the original header margin and rebases Rock layout with
+checked subtraction; ordinary dedented closing wrappers remain legal. Physical
+block scans skip captured-expression internals without imposing Rock layout on
+DSL payload bytes. Moving a capture under generated layout preserves its nested
+DSL input exactly. Invalid relative margins reject instead of clamping to zero.
+Opaque repeated-array values currently reject structurally rather than silently
+turning the repeat separator into an ordinary operator. Expression substitution
+introduces grouping, not a lambda, so caller-owned `return` and `break` retain
+their behavior under normal compilation.
+
+The stream format is now `RKLOSS02` and worker protocol 4; previous streams reject
+without a compatibility reader. Transport rejects empty, non-UTF-8-boundary,
+crossing, duplicate, unordered, and excessively nested expression ranges.
+
+- Initial `cargo test -p rock-lib --lib macro_a_06_ -- --nocapture` was RED at
+  compilation because expression boundaries/shared category dispatch did not
+  exist. After those interfaces landed it observed two passes/four failures:
+  execution was unsupported and opaque repeated arrays parsed incorrectly.
+- The same runner reached six passes. Added multiline/physical-layout controls
+  observed seven passes/three failures before capture-aware scanning and bounded
+  source-prefix matching were repaired, then ten passes. Transport/literal
+  matcher controls brought acceptance to twelve passes.
+- Initial `cargo test -p rock-lib --test integration macro_a_06_ -- --nocapture`
+  exposed parser stack growth; boxing the interpreted fragment view repaired it.
+  The exact exploratory command
+  `cargo test -p rock-lib --test integration macro_a_06_generated_do_keeps_break_in_the_callers_loop -- --exact --nocapture`
+  then confirmed ordinary `do` forbids escaping control flow. Fixtures now use
+  ordinary `if` blocks and unit-valued loops rather than assuming different
+  language semantics. The focused runner subsequently passed three tests.
+- Adjacent `cargo test -p rock-lib --lib macro_expansion:: -- --nocapture`
+  initially passed 82/84; expected expression grouping and the worker-version
+  assertion were updated. The parser runner passed 568 tests.
+- An intermediate `cargo test -p rock-lib` passed 2,546 units before cancellation
+  during integration tests to add stronger layout/precedence controls (archive
+  `e032111936f6a137`); this is not a completed full-suite receipt.
+- The added checked-margin control observed thirteen passes/one failure with
+  the focused unit runner, proving an invalid dedented `else` had been clamped.
+  Checked rebasing repairs it; final focused units pass fourteen tests, adjacent
+  macro/parser runners pass 91/568 tests.
+- Final `cargo test -p rock-lib` passes 2,548 units, 792 main integrations, and
+  one parser integration; one doctest is ignored (archive `94ba1fdbf1c55086`).
+  The final focused integration runner also passes all three tests, including
+  unparenthesized caller-expression forwarding. No functional edits follow
+  these gates. Existing optional-group warnings remain unchanged.
+
+Scoped identities/resolution, all-module/all-field traversal, aggregate budgets,
+and binding hygiene remain the subsequent A slices. Procedural expression calls
+still reject explicitly. Formatting remains deferred; no formatter/check, Clippy,
+or separate build gate ran. Beads remains unavailable.
+
 ### Ab. Scope and schedule the same engine across modules
 
 | Slice | Implement only | Focused acceptance | Runner |

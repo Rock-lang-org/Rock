@@ -6,6 +6,16 @@ use super::{PieceKind, RockError, RockView};
 use crate::lexer::lossless::{LosslessStream, SyntaxContext};
 use crate::lexer::{Span, Token, TokenType};
 
+impl RockView<'_> {
+    pub(crate) fn header_indent(&self, initial: Option<usize>) -> usize {
+        let mut line = physical_line_start(self.cursor);
+        if line.offset == 0 {
+            if let Some(indent) = initial { return indent; }
+        }
+        physical_indent(&mut line)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayoutOrigin {
     Source(Range<usize>),
@@ -49,6 +59,7 @@ pub struct LayoutView<'a> {
     last_was_eol: bool,
     last_was_indent: bool,
     capture_separator: bool,
+    relative_indent: Option<usize>,
 }
 
 impl<'a> LayoutView<'a> {
@@ -64,7 +75,17 @@ impl<'a> LayoutView<'a> {
             last_was_eol: false,
             last_was_indent: false,
             capture_separator: false,
+            relative_indent: None,
         }
+    }
+
+    pub(crate) fn with_relative_indent(mut self, header_indent: usize) -> Self {
+        self.relative_indent = Some(header_indent);
+        self
+    }
+
+    pub(crate) fn header_indent(&self) -> usize {
+        self.view.header_indent(self.relative_indent)
     }
 
     pub fn offset(&self) -> usize {
@@ -76,15 +97,14 @@ impl<'a> LayoutView<'a> {
     pub fn capture_indented_block(&mut self, limits: crate::lexer::lossless::ScanLimits)
         -> Result<Option<CapturedBlock>, RockError>
     {
-        let mut line = physical_line_start(self.view.cursor);
-        let header_indent = physical_indent(&mut line);
+        let header_indent = self.header_indent();
         let mut cursor = self.view.cursor;
         physical_indent(&mut cursor);
         if cursor.current() == Some('/') {
             let slash = cursor;
             cursor.bump();
             if cursor.current() != Some('/') || cursor.ends_token(slash) { return Ok(None); }
-            while !matches!(cursor.current(), None | Some('\n')) { cursor.bump(); }
+            while !matches!(cursor.current(), None | Some('\n')) { physical_bump(&mut cursor); }
         }
         if cursor.current() != Some('\n') { return Ok(None); }
         cursor.bump();
@@ -99,7 +119,7 @@ impl<'a> LayoutView<'a> {
                 Some(_) => {
                     if width <= header_indent { break line_start; }
                     body_indent.get_or_insert(width);
-                    while !matches!(cursor.current(), None | Some('\n')) { cursor.bump(); }
+                    while !matches!(cursor.current(), None | Some('\n')) { physical_bump(&mut cursor); }
                     if cursor.current() == Some('\n') { cursor.bump(); }
                 }
             }
@@ -169,7 +189,9 @@ impl<'a> LayoutView<'a> {
 
     fn indentation(&mut self) -> Result<Option<LayoutToken>, RockError> {
         let start = self.view.cursor;
-        self.view.take_while(start, |ch| ch.is_whitespace() && ch != '\n');
+        if self.view.cursor.stream.expression_end_at(start.offset).is_none() {
+            self.view.take_while(start, |ch| ch.is_whitespace() && ch != '\n');
+        }
         let bytes = self.view.offset() - start.offset;
         let comment = self.view.peek(start, 0) == Some('/')
             && matches!(self.view.peek(start, 1), Some('/' | '*'));
@@ -184,7 +206,23 @@ impl<'a> LayoutView<'a> {
             return Ok(None);
         }
         // Blank lines do not select an indentation step, even with many spaces.
-        let width = if self.view.peek(start, 0) == Some('\n') { 0 } else { bytes };
+        let width = if self.view.peek(start, 0) == Some('\n') { 0 } else {
+            match self.relative_indent {
+                Some(_) if physical_line_start(start).offset == 0 => 0,
+                Some(base) => match bytes.checked_sub(base) {
+                    Some(width) => width,
+                    // Closing wrappers can be dedented below their opener in
+                    // ordinary Rock; never clamp code-bearing continuation lines.
+                    None if matches!(self.view.cursor.current(), Some(')' | ']' | '}')) => 0,
+                    None => {
+                        let span = self.view.span(start, bytes);
+                        self.view.cursor = start;
+                        return Err(RockError::InvalidRelativeIndent { width: bytes, base, span });
+                    }
+                },
+                None => bytes,
+            }
+        };
         let span = self.view.span(start, bytes);
         let level = match u8::try_from(width) {
             Ok(level) => level,
@@ -271,8 +309,17 @@ impl<'a> LayoutView<'a> {
 
 fn physical_indent(cursor: &mut super::Cursor<'_>) -> usize {
     let start = cursor.offset;
-    while cursor.current().is_some_and(|ch| ch.is_whitespace() && ch != '\n') { cursor.bump(); }
+    while cursor.stream.expression_end_at(cursor.offset).is_none()
+        && cursor.current().is_some_and(|ch| ch.is_whitespace() && ch != '\n') { cursor.bump(); }
     cursor.offset - start
+}
+
+fn physical_bump(cursor: &mut super::Cursor<'_>) {
+    if let Some(end) = cursor.stream.expression_end_at(cursor.offset) {
+        while cursor.offset < end { cursor.bump(); }
+    } else {
+        cursor.bump();
+    }
 }
 
 fn physical_line_start(mut cursor: super::Cursor<'_>) -> super::Cursor<'_> {
@@ -283,6 +330,12 @@ fn physical_line_start(mut cursor: super::Cursor<'_>) -> super::Cursor<'_> {
         }
         let Some(run) = cursor.stream.runs().get(cursor.run) else { return cursor; };
         if let Some(lf) = run.text()[..cursor.byte].rfind('\n') {
+            let offset = cursor.offset - (cursor.byte - lf);
+            if let Some(start) = cursor.stream.expression_start_containing(offset) {
+                cursor = super::Cursor { stream: cursor.stream, run: 0, byte: 0, offset: 0 };
+                while cursor.offset < start { cursor.bump(); }
+                continue;
+            }
             cursor.offset -= cursor.byte - lf - 1;
             cursor.byte = lf + 1;
             if cursor.byte == run.text().len() { cursor.run += 1; cursor.byte = 0; }

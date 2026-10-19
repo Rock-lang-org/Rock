@@ -257,6 +257,12 @@ pub fn primary_expr(stream: Input) -> IResult<PrimaryExpr> {
 }
 
 pub fn operand(stream: Input) -> IResult<Operand> {
+    if let Ok(token) = stream.seek() {
+        if let TokenType::ExpressionFragment(fragment) = token.token_type {
+            let expression = crate::parser::parse_expression_fragment(&fragment, stream.config, stream.expansion_parent)?;
+            return Ok((stream.advance(1)?, Operand::Expression(Box::new(expression))));
+        }
+    }
     super::macro_expression.map(Operand::MacroInvoc)
         .or(super::do_expression)
         .or(reset_inside_argument_list(parse_if)

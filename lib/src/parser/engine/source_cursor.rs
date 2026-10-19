@@ -65,6 +65,12 @@ impl<'a> SourceInput<'a> {
     pub fn new(stream: &'a LosslessStream, terminal_layout: bool, limits: SourceLimits)
         -> Result<Self, SourceError>
     {
+        Self::with_layout(stream, terminal_layout, limits, None)
+    }
+
+    pub(crate) fn with_layout(stream: &'a LosslessStream, terminal_layout: bool, limits: SourceLimits, relative_indent: Option<usize>)
+        -> Result<Self, SourceError>
+    {
         if limits.max_branches == 0 {
             return Err(SourceError::LimitExceeded { resource: "branches", span: stream.start_span() });
         }
@@ -72,7 +78,10 @@ impl<'a> SourceInput<'a> {
         reserve(&mut branches, 0)?;
         branches.push(Branch {
             entries: Vec::new(),
-            tail: Checkpoint { view: LayoutView::new(stream, terminal_layout), indent_step: None },
+            tail: Checkpoint { view: match relative_indent {
+                Some(indent) => LayoutView::new(stream, terminal_layout).with_relative_indent(indent),
+                None => LayoutView::new(stream, terminal_layout),
+            }, indent_step: None },
             stopped: false,
         });
         Ok(Self {
@@ -225,6 +234,10 @@ impl SourceCursor<'_> {
 
     pub fn offset(&self) -> Result<usize, SourceError> {
         Ok(self.input.checkpoint(self.branch, self.start)?.view.offset())
+    }
+
+    pub(crate) fn header_indent(&self) -> Result<usize, SourceError> {
+        Ok(self.input.checkpoint(self.branch, self.start)?.view.header_indent())
     }
 
     pub fn slice_until(&self, end: Self, limits: ScanLimits) -> Result<LosslessStream, SourceError> {

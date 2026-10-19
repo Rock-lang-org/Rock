@@ -83,6 +83,22 @@ pub fn reset_best_error() {
     });
 }
 
+/// Nested fragment interpretation must neither inherit speculative outer errors
+/// nor replace the enclosing parse's error tracker on return.
+pub(crate) struct ErrorScope(Option<ParseError>);
+
+impl ErrorScope {
+    pub(crate) fn new() -> Self {
+        Self(BEST_ERROR.with(|best| best.borrow_mut().take()))
+    }
+}
+
+impl Drop for ErrorScope {
+    fn drop(&mut self) {
+        BEST_ERROR.with(|best| *best.borrow_mut() = self.0.take());
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ParseCtx<'a> {
     pub(crate) cursor: cursor::TokenCursor<'a>,
@@ -104,6 +120,13 @@ pub struct ParseCtx<'a> {
 }
 
 impl ParseCtx<'_> {
+    pub(crate) fn header_indent(&self) -> Result<usize, ParseError> {
+        match self.cursor {
+            cursor::TokenCursor::Source(source) => source.header_indent().map_err(|error| source_error(error, self.eof_span())),
+            _ => Ok(self.indent_level * self.indent_step),
+        }
+    }
+
     pub fn eof_span(&self) -> Span {
         if let cursor::TokenCursor::Source(source) = self.cursor {
             // Prefix construction has already checked its endpoint; unbounded

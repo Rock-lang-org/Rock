@@ -44,7 +44,7 @@ pub fn parse_lossless_source(
     config: &Config,
     expansion_parent: Option<crate::macro_expansion::ExpansionId>,
 ) -> Result<Module, ParseError> {
-    parse_lossless(stream, config, expansion_parent, module_inline).map(|mut module| {
+    parse_lossless(stream, config, expansion_parent, None, module_inline).map(|mut module| {
         module.filepath = Some(stream.start_span().file_path);
         module
     })
@@ -55,7 +55,39 @@ pub fn parse_lossless_expression(
     config: &Config,
     expansion_parent: Option<crate::macro_expansion::ExpansionId>,
 ) -> Result<Expression, ParseError> {
-    parse_lossless(stream, config, expansion_parent, expression_fragment)
+    parse_lossless(stream, config, expansion_parent, None, expression_fragment)
+}
+
+pub(crate) fn parse_expression_fragment(
+    fragment: &crate::lexer::lossless::ExpressionFragment,
+    config: &Config,
+    expansion_parent: Option<crate::macro_expansion::ExpansionId>,
+) -> Result<Expression, ParseError> {
+    parse_lossless(&fragment.input, config, expansion_parent, Some(fragment.header_indent), expression_fragment)
+}
+
+pub(crate) fn operand_prefix(stream: &LosslessStream, config: &Config, header_indent: usize)
+    -> Result<usize, ParseError>
+{
+    retained_prefix(stream, config, header_indent, operand)
+}
+
+pub(crate) fn expression_prefix(stream: &LosslessStream, config: &Config, header_indent: usize)
+    -> Result<usize, ParseError>
+{
+    retained_prefix(stream, config, header_indent, expression)
+}
+
+fn retained_prefix<P: Parser>(stream: &LosslessStream, config: &Config, header_indent: usize, mut parser: P)
+    -> Result<usize, ParseError>
+{
+    let _scope = engine::ErrorScope::new();
+    let input = source_cursor::SourceInput::with_layout(stream, true, CURSOR_LIMITS, Some(header_indent))
+        .map_err(|error| engine::source_error(error, stream.start_span()))?;
+    let ctx = ParseCtx::from_source(&input, config);
+    let (ctx, _) = indent.process(ctx)?;
+    let (rest, _) = parser.process(ctx)?;
+    rest.source_offset()?.ok_or_else(|| ParseError::HardError("macro fragment has no retained boundary".into(), stream.start_span()))
 }
 
 fn expression_fragment(stream: Input) -> IResult<Expression> {
@@ -72,12 +104,12 @@ fn parse_lossless<P: Parser>(
     stream: &LosslessStream,
     config: &Config,
     expansion_parent: Option<crate::macro_expansion::ExpansionId>,
+    relative_indent: Option<usize>,
     mut parser: P,
 ) -> Result<P::Output, ParseError> {
-    let input = source_cursor::SourceInput::new(stream, true, CURSOR_LIMITS)
+    let _scope = engine::ErrorScope::new();
+    let input = source_cursor::SourceInput::with_layout(stream, true, CURSOR_LIMITS, relative_indent)
         .map_err(|error| engine::source_error(error, stream.start_span()))?;
-    // Reset the best error tracker at the start of parsing
-    engine::reset_best_error();
 
     let ctx = ParseCtx { expansion_parent, ..ParseCtx::from_source(&input, config) };
     let result = parser.process(ctx).and_then(|(rest, value)| {

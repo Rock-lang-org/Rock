@@ -87,10 +87,10 @@ fn macro_a_01_ast_invocation_and_template_keep_trivia_and_original_margins() {
     let TopLevel::MacroDecl(decl) = &program.module.top_levels[0] else { panic!("expected macro") };
     assert_eq!(text(&decl.entries[0].input), "    $v:expr =>\r\n        /* retained */ $v\r\n");
     assert_eq!(text(&invocation(&program).args), "  1 /* caller */ +  2\r\n");
-    let (tokens, ranges) = macro_arg_matcher::rock_arguments(&invocation(&program).args).unwrap();
+    let (tokens, ranges) = macro_arg_matcher::rock_arguments(&invocation(&program).args, &config, 0).unwrap();
     let context = MacroExpansionContext::new(&config);
     let compiled = DeclarativeMacro::from_ast(decl);
-    let captures = MacroArgMatcher::new(&tokens, &invocation(&program).args, &ranges,
+    let captures = MacroArgMatcher::new(&tokens, &invocation(&program).args, 0, &ranges,
         compiled.arms[0].matcher.fragments.clone(), decl.name.span.clone(), invocation(&program).span.clone(), &context,
     ).run().unwrap();
     assert_eq!(text(&captures.entries["v"][0]), "1 /* caller */ +  2");
@@ -128,7 +128,7 @@ fn macro_a_01_worker_receives_lossless_input_and_invocation_metadata() {
     let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
     expand_macros_with_context(program, &context).unwrap();
     let request = proc_macro::decode_request(&std::fs::read(request_file).unwrap()).unwrap();
-    assert_eq!(request.protocol_version, 3);
+    assert_eq!(request.protocol_version, proc_macro::PROC_MACRO_PROTOCOL_VERSION);
     assert_eq!(request.invocation_id, invocation.id);
     assert_eq!(request.parent, None);
     assert_eq!(request.output_category, MacroOutputCategory::Items);

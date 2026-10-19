@@ -31,6 +31,7 @@ pub enum RockError {
     Preservation(LosslessError),
     UnterminatedBlockComment(Span),
     IndentationTooWide { width: usize, span: Span },
+    InvalidRelativeIndent { width: usize, base: usize, span: Span },
     InvalidCaptureBoundary { span: Span },
 }
 
@@ -48,8 +49,9 @@ impl Cursor<'_> {
     }
 
     fn ends_token(&self, start: Self) -> bool {
-        self.current().is_none() || (self.offset > start.offset && self.byte == 0
-            && self.stream.runs()[self.run].boundary() == JoinBoundary::Separate)
+        self.current().is_none() || (self.offset > start.offset && (
+            self.stream.expression_end_at(self.offset).is_some()
+            || (self.byte == 0 && self.stream.runs()[self.run].boundary() == JoinBoundary::Separate)))
     }
 
     fn bump(&mut self) -> Option<char> {
@@ -78,6 +80,15 @@ impl<'a> RockView<'a> {
 
     pub fn offset(&self) -> usize {
         self.cursor.offset
+    }
+
+    pub(crate) fn advance_to(&mut self, end: usize) -> Result<(), RockError> {
+        if end < self.cursor.offset || end > self.cursor.stream.len_bytes() {
+            return Err(RockError::Preservation(LosslessError::InvalidRange { start: self.cursor.offset, end, len: self.cursor.stream.len_bytes() }));
+        }
+        while self.cursor.offset < end { self.cursor.bump(); }
+        if self.cursor.offset != end { return Err(RockError::Preservation(LosslessError::NotCharBoundary { offset: end })); }
+        Ok(())
     }
 
     fn peek(&self, start: Cursor<'a>, distance: usize) -> Option<char> {
@@ -167,6 +178,11 @@ impl<'a> RockView<'a> {
 
     fn scan_piece(&mut self) -> Result<Option<RockPiece>, RockError> {
         let start = self.cursor;
+        if let Some((end, fragment)) = start.stream.expression_at(start.offset,
+            crate::macro_expansion::token_tree::MACRO_LIMITS).map_err(RockError::Preservation)? {
+            self.advance_to(end)?;
+            return self.finish(start, PieceKind::Token(TokenType::ExpressionFragment(Box::new(fragment)))).map(Some);
+        }
         let Some(character) = self.peek(start, 0) else { return Ok(None) };
         if character == ' ' && self.peek(start, 1) == Some('.')
             && !matches!(self.peek(start, 2), Some('.' | ' '))

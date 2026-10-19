@@ -1,7 +1,7 @@
 use crate::{
     diagnostic::Diagnostics,
     lexer::{Span, Token, TokenType},
-    parser::{expression, ParseCtx, ParseError, Parser},
+    parser::ParseError,
 };
 
 use super::{
@@ -46,6 +46,7 @@ pub struct MacroArgMatcher<'args, 'ctx, 'cfg> {
     must_be_completed: bool,
     args: &'args [Token],
     input: &'args TokenStream,
+    header_indent: usize,
     ranges: &'args [std::ops::Range<usize>],
     macro_span: Span,
     invoc_span: Span,
@@ -56,6 +57,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
     pub fn new(
         args: &'args [Token],
         input: &'args TokenStream,
+        header_indent: usize,
         ranges: &'args [std::ops::Range<usize>],
         thread: Vec<MatcherFragment>,
         macro_span: Span,
@@ -70,6 +72,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
             }],
             args,
             input,
+            header_indent,
             ranges,
             must_be_completed: false,
             macro_span,
@@ -89,13 +92,18 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
         Ok(correspondances)
     }
 
-    fn capture(&self, args: &[Token], count: usize) -> Result<TokenStream, Diagnostics> {
+    fn capture(&self, args: &[Token], count: usize, expression: bool) -> Result<TokenStream, Diagnostics> {
         let offset = self.args.len() - args.len();
         let retained = self.ranges.get(offset..offset.saturating_add(count))
             .filter(|ranges| !ranges.is_empty())
             .ok_or_else(|| Diagnostics::from(ParseError::HardError("macro capture made no progress".into(), self.invoc_span.clone())))?;
         let range = retained[0].start..retained[retained.len() - 1].end;
-        self.input.slice(range, MACRO_LIMITS).map_err(|error| ParseError::HardError(
+        let mut view = crate::lexer::interpretation::RockView::new(self.input);
+        view.advance_to(range.start).map_err(|error| ParseError::HardError(format!("invalid capture position: {error:?}"), self.invoc_span.clone()))?;
+        let header_indent = view.header_indent(Some(self.header_indent));
+        self.input.slice(range, MACRO_LIMITS).and_then(|input| {
+            if expression { input.expression_fragment(header_indent, MACRO_LIMITS) } else { Ok(input) }
+        }).map_err(|error| ParseError::HardError(
             format!("invalid macro capture: {error:?}"), self.invoc_span.clone(),
         ).into())
     }
@@ -136,7 +144,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                                 if let TokenType::Ident(_) = arg.token_type {
                                     thread
                                         .correspondances
-                                        .insert_direct(name.clone(), self.capture(thread.args, 1)?);
+                                        .insert_direct(name.clone(), self.capture(thread.args, 1, false)?);
 
                                     new_threads.push(MacroThread {
                                         args: &thread.args[1..],
@@ -153,16 +161,23 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                                 }
                             }
                             CaptureKind::Expr => {
-                                if let Ok((remaining_tokens, _)) = expression
-                                    .process(ParseCtx::from(thread.args, self.context.config))
-                                {
+                                let offset = self.args.len() - thread.args.len();
+                                let start = self.ranges[offset].start;
+                                let mut view = crate::lexer::interpretation::RockView::new(self.input);
+                                view.advance_to(start).map_err(|error| ParseError::HardError(format!("invalid expression position: {error:?}"), self.invoc_span.clone()))?;
+                                let margin = view.header_indent(Some(self.header_indent));
+                                let remaining = self.input.slice(start..self.input.len_bytes(), MACRO_LIMITS)
+                                    .map_err(|error| ParseError::HardError(format!("invalid expression input: {error:?}"), self.invoc_span.clone()))?;
+                                if let Ok(bytes) = crate::parser::expression_prefix(&remaining, self.context.config, margin) {
+                                    let end = start.checked_add(bytes).ok_or_else(|| ParseError::HardError("expression extent overflow".into(), self.invoc_span.clone()))?;
+                                    let count = self.ranges[offset..].iter().take_while(|range| range.end <= end).count();
+                                    if count == 0 { return Err(ParseError::HardError("macro expression capture made no progress".into(), self.invoc_span.clone()).into()); }
                                     thread.correspondances.insert_direct(
                                         name.clone(),
-                                        self.capture(thread.args, thread.args.len() - remaining_tokens.len())?,
+                                        self.capture(thread.args, count, true)?,
                                     );
 
-                                    thread.args =
-                                        &thread.args[thread.args.len() - remaining_tokens.len()..];
+                                    thread.args = &thread.args[count..];
 
                                     new_threads.push(MacroThread {
                                         args: thread.args,
@@ -181,7 +196,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                                 if let TokenType::Type(_) = arg.token_type {
                                     thread
                                         .correspondances
-                                        .insert_direct(name.clone(), self.capture(thread.args, 1)?);
+                                        .insert_direct(name.clone(), self.capture(thread.args, 1, false)?);
 
                                     new_threads.push(MacroThread {
                                         args: &thread.args[1..],
@@ -229,6 +244,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                                 let mut matcher = MacroArgMatcher::new(
                                     repeated_args,
                                     self.input,
+                                    self.header_indent,
                                     &self.ranges[self.args.len() - repeated_args.len()..],
                                     repetition.clone(),
                                     self.macro_span.clone(),
@@ -296,7 +312,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
 /// this temporary Rock view discards trivia; captures slice the retained input
 /// from the first significant piece through the last, including internal trivia.
 /// Spacing-sensitive Rock token kinds remain distinct during literal matching.
-pub(super) fn rock_arguments(input: &TokenStream) -> Result<(Vec<Token>, Vec<std::ops::Range<usize>>), Diagnostics> {
+pub(super) fn rock_arguments(input: &TokenStream, config: &crate::Config, header_indent: usize) -> Result<(Vec<Token>, Vec<std::ops::Range<usize>>), Diagnostics> {
     use crate::lexer::interpretation::{PieceKind, RockView};
     let mut view = RockView::new(input);
     let mut tokens = Vec::new();
@@ -304,9 +320,30 @@ pub(super) fn rock_arguments(input: &TokenStream) -> Result<(Vec<Token>, Vec<std
     while let Some(piece) = view.next_piece().map_err(|error| ParseError::HardError(
         format!("invalid Rock macro arguments: {error:?}"), input.start_span(),
     ))? {
-        if let PieceKind::Token(token_type) = piece.kind {
-            tokens.push(Token { token_type, span: piece.span });
-            ranges.push(piece.range);
+        if let PieceKind::Token(mut token_type) = piece.kind {
+            let mut range = piece.range;
+            let mut span = piece.span;
+            if matches!(token_type, TokenType::MacroInvoc(_)) {
+                let margin = view.header_indent(Some(header_indent));
+                let remaining = input.slice(range.start..input.len_bytes(), MACRO_LIMITS)
+                    .map_err(|error| ParseError::HardError(format!("invalid nested macro input: {error:?}"), span.clone()))?;
+                if let Ok(bytes) = crate::parser::operand_prefix(&remaining, config, margin) {
+                    let end = range.start.checked_add(bytes).filter(|end| *end >= view.offset() && *end <= input.len_bytes())
+                        .ok_or_else(|| ParseError::HardError("nested macro input made no progress".into(), span.clone()))?;
+                    let fragment = input.slice(range.start..end, MACRO_LIMITS)
+                        .map_err(|error| ParseError::HardError(format!("invalid nested macro range: {error:?}"), span.clone()))?;
+                    if fragment.runs().iter().any(|run| run.kind() == crate::lexer::lossless::RunKind::LineEnding) {
+                        range.end = end;
+                        span.end = fragment.end_span().end;
+                        token_type = TokenType::ExpressionFragment(Box::new(crate::lexer::lossless::ExpressionFragment { input: fragment, header_indent: margin }));
+                        view.advance_to(range.end).map_err(|error| ParseError::HardError(format!("invalid nested macro boundary: {error:?}"), span.clone()))?;
+                    }
+                }
+                // An unsuccessful probe does not globally validate literal
+                // matcher input as an expression or a balanced group.
+            }
+            tokens.push(Token { token_type, span });
+            ranges.push(range);
         }
     }
     Ok((tokens, ranges))
@@ -373,14 +410,14 @@ mod tests {
         let config = test_config();
         let context = MacroExpansionContext::new(&config);
         let input = super::super::token_tree::source("main");
-        let (args, ranges) = rock_arguments(&input).unwrap();
+        let (args, ranges) = rock_arguments(&input, &config, 0).unwrap();
         let matcher = vec![MatcherFragment::Capture {
             name: "name".to_string(),
             kind: CaptureKind::Ident,
         }];
 
         let correspondance =
-            MacroArgMatcher::new(&args, &input, &ranges, matcher, Span::test(), Span::test(), &context)
+            MacroArgMatcher::new(&args, &input, 0, &ranges, matcher, Span::test(), Span::test(), &context)
                 .run()
                 .unwrap();
 

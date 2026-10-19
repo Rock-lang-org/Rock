@@ -370,6 +370,8 @@ impl std::fmt::Display for MacroLexeme {
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct MacroInvoc {
+    /// Physical margin of the invocation header, retained for bounded captures.
+    pub header_indent: usize,
     pub id: super::InvocationId,
     pub parent: Option<crate::macro_expansion::ExpansionId>,
     pub output: super::MacroOutputCategory,

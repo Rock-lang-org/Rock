@@ -64,6 +64,7 @@ pub enum LosslessError {
     LengthOverflow,
     EmptyBindingRange,
     ConflictingContexts { offset: usize, left: SyntaxContext, right: SyntaxContext },
+    InvalidExpressionFragment,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,6 +154,7 @@ pub struct LosslessStream {
     len_bytes: usize,
     /// Retains a precise location/context even for an empty source or slice.
     anchor: SourcePosition,
+    expressions: Vec<fragments::ExpressionRange>,
 }
 
 impl LosslessStream {
@@ -223,6 +225,7 @@ impl LosslessStream {
             len_bytes: source.text.len(),
             anchor: SourcePosition { source, offset: 0, context: SyntaxContext::ROOT, origin: None },
             runs,
+            expressions: Vec::new(),
         })
     }
 
@@ -234,6 +237,9 @@ impl LosslessStream {
 mod splice;
 mod wire;
 mod origin;
+mod fragments;
+
+pub use fragments::ExpressionFragment;
 
 #[cfg(test)]
 mod tests;

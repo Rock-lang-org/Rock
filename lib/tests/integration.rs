@@ -3474,6 +3474,24 @@ fn test_declarative_macro_expands_user_program() {
 }
 
 #[test]
+fn macro_a_06_grouped_expression_forwarding_runs_normally() {
+    let output = compile_and_run("macro id\n    $value:expr =>\n        $value\nmacro times\n    $value:expr =>\n        %id ($value * 3)\nmain = !->\n    result = %times 1 + 2\n    result.println!\n");
+    assert_eq!(output, "9\n");
+}
+
+#[test]
+fn macro_a_06_generated_block_keeps_return_in_the_callers_function() {
+    let output = compile_and_run("macro early\n    =>\n        if true\n            return 7\n        else\n            0\nwork = ->\n    %early!\n    99\nmain = !->\n    work! .println!\n");
+    assert_eq!(output, "7\n");
+}
+
+#[test]
+fn macro_a_06_generated_block_keeps_break_in_the_callers_loop() {
+    let output = compile_and_run("macro stop\n    =>\n        if true\n            break\n        else\n            ()\nmain = !->\n    loop\n        %stop!\n        99.println!\n    7.println!\n");
+    assert_eq!(output, "7\n");
+}
+
+#[test]
 fn test_declarative_macro_can_produce_call_argument_holes() {
     let output = compile_and_run(
         r#"macro make_main

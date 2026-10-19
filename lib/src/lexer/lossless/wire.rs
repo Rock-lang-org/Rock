@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{JoinBoundary, LosslessRun, LosslessStream, RunKind, SourcePosition, SourceSnapshot, SyntaxContext};
 
-const MAGIC: [u8; 8] = *b"RKLOSS01";
+const MAGIC: [u8; 8] = *b"RKLOSS02";
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RUNS: usize = 1024 * 1024;
 
@@ -37,6 +37,7 @@ struct WireRef<'a> {
     sources: Vec<&'a SourceSnapshot>,
     runs: Vec<WireRun>,
     anchor: WireAnchor,
+    expressions: &'a [super::fragments::ExpressionRange],
 }
 
 #[derive(Serialize, Deserialize)]
@@ -45,6 +46,7 @@ struct WireOwned {
     sources: Vec<SourceSnapshot>,
     runs: Vec<WireRun>,
     anchor: WireAnchor,
+    expressions: Vec<super::fragments::ExpressionRange>,
 }
 
 impl Serialize for LosslessStream {
@@ -72,7 +74,7 @@ impl Serialize for LosslessStream {
             };
             runs.push(WireRun { source, range: run.range.clone(), kind: run.kind, context: run.context.0, boundary: run.boundary, origin: run.origin.clone() });
         }
-        WireRef { magic: MAGIC, sources, runs, anchor: WireAnchor { source: 0, offset: self.anchor.offset, context: self.anchor.context.0, origin: self.anchor.origin.clone() } }
+        WireRef { magic: MAGIC, sources, runs, anchor: WireAnchor { source: 0, offset: self.anchor.offset, context: self.anchor.context.0, origin: self.anchor.origin.clone() }, expressions: &self.expressions }
             .serialize(serializer)
     }
 }
@@ -81,7 +83,7 @@ impl<'de> Deserialize<'de> for LosslessStream {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let wire = WireOwned::deserialize(deserializer)?;
         if wire.magic != MAGIC { return Err(serde::de::Error::custom("unsupported lossless stream wire format")) }
-        if wire.sources.is_empty() || wire.sources.len() > MAX_RUNS || wire.runs.len() > MAX_RUNS {
+        if wire.sources.is_empty() || wire.sources.len() > MAX_RUNS || wire.runs.len() > MAX_RUNS || wire.expressions.len() > MAX_RUNS {
             return Err(serde::de::Error::custom("lossless source/run limit exceeded"));
         }
         let mut bytes = 0usize;
@@ -121,7 +123,9 @@ impl<'de> Deserialize<'de> for LosslessStream {
             if len_bytes > MAX_BYTES { return Err(serde::de::Error::custom("lossless stream byte limit exceeded")) }
             runs.push(LosslessRun { source: Arc::clone(source), range: run.range, kind: run.kind, context: SyntaxContext::ROOT, boundary: run.boundary, origin: run.origin });
         }
-        Ok(Self { runs, len_bytes, anchor })
+        let stream = Self { runs, len_bytes, anchor, expressions: wire.expressions };
+        stream.validate_expressions().map_err(|error| serde::de::Error::custom(format!("invalid expression fragments: {error:?}")))?;
+        Ok(stream)
     }
 }
 
@@ -135,6 +139,7 @@ mod tests {
             sources: vec![SourceSnapshot { file_path: "/wire.rk".into(), text: "é a".into() }],
             runs: vec![WireRun { source: 0, range: 0..2, kind: RunKind::Text, context: 0, boundary: JoinBoundary::SourceAdjacent, origin: None }],
             anchor: WireAnchor { source: 0, offset: 0, context: 0, origin: None },
+            expressions: Vec::new(),
         }
     }
 
@@ -167,5 +172,21 @@ mod tests {
         wire.sources[0].text = "\n\n".into();
         wire.runs[0].kind = RunKind::LineEnding;
         rejects(wire);
+    }
+
+    #[test]
+    fn macro_a_06_wire_rejects_invalid_expression_boundaries_and_old_streams() {
+        use super::super::fragments::ExpressionRange;
+        let fragment = |range| ExpressionRange { range, header_indent: 0 };
+        let mut wire = valid(); wire.magic = *b"RKLOSS01"; rejects(wire);
+        for ranges in [vec![0..0], vec![1..2], vec![0..3], vec![0..2, 0..2]] {
+            let mut wire = valid(); wire.expressions = ranges.into_iter().map(fragment).collect(); rejects(wire);
+        }
+        for ranges in [vec![0..4, 2..6], vec![2..4, 0..6]] {
+            let mut wire = valid(); wire.sources[0].text = "abcdef".into(); wire.runs[0].range = 0..6;
+            wire.expressions = ranges.into_iter().map(fragment).collect(); rejects(wire);
+        }
+        let mut wire = valid(); wire.sources[0].text = "a".repeat(129); wire.runs[0].range = 0..129;
+        wire.expressions = (1..=129).rev().map(|end| fragment(0..end)).collect(); rejects(wire);
     }
 }

@@ -38,7 +38,7 @@ impl LosslessStream {
         }
     }
 
-    fn checked_range(&self, range: &Range<usize>) -> Result<(), LosslessError> {
+    pub(super) fn checked_range(&self, range: &Range<usize>) -> Result<(), LosslessError> {
         if range.start > range.end || range.end > self.len_bytes {
             return Err(LosslessError::InvalidRange {
                 start: range.start,
@@ -103,7 +103,18 @@ impl LosslessStream {
                 break;
             }
         }
-        Ok(Self { runs, len_bytes, anchor })
+        let mut expressions = Vec::new();
+        for fragment in self.expressions.iter().filter(|fragment| {
+            fragment.range.start >= range.start && fragment.range.end <= range.end
+        }) {
+            if expressions.len() >= limits.max_runs { return Err(LosslessError::InvalidExpressionFragment); }
+            expressions.try_reserve(1).map_err(|_| LosslessError::AllocationFailed { offset: fragment.range.start })?;
+            expressions.push(super::fragments::ExpressionRange {
+                range: fragment.range.start - range.start..fragment.range.end - range.start,
+                header_indent: fragment.header_indent,
+            });
+        }
+        Ok(Self { runs, len_bytes, anchor, expressions })
     }
 
     /// Splicing preserves segments; it does not guess gaps or re-lex spelling.
@@ -152,7 +163,16 @@ impl LosslessStream {
         } else {
             self.anchor.clone()
         };
-        Ok(Self { runs, len_bytes, anchor })
+        let count = self.expressions.len().checked_add(right.expressions.len()).ok_or(LosslessError::LengthOverflow)?;
+        if count > limits.max_runs { return Err(LosslessError::InvalidExpressionFragment); }
+        let mut expressions = Vec::new();
+        expressions.try_reserve_exact(count).map_err(|_| LosslessError::AllocationFailed { offset: self.len_bytes })?;
+        expressions.extend(self.expressions.iter().cloned());
+        expressions.extend(right.expressions.iter().map(|fragment| super::fragments::ExpressionRange {
+            range: self.len_bytes + fragment.range.start..self.len_bytes + fragment.range.end,
+            header_indent: fragment.header_indent,
+        }));
+        Ok(Self { runs, len_bytes, anchor, expressions })
     }
 
     /// A future identifier view must request context agreement across its range;

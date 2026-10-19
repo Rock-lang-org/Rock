@@ -83,12 +83,26 @@ pub fn monoline_array(stream: Input) -> IResult<Vec<Expression>> {
 }
 
 pub fn array(stream: Input) -> IResult<Array> {
-    delimited(
+    let (stream, array) = delimited(
         TokenType::OpenBracket,
         multiline_array.or(monoline_array),
         TokenType::CloseBracket,
     )
     .map(|elements| Array { elements })
     .process(stream)
-    .map_err(|e| e.with_context("array"))
+    .map_err(|e| e.with_context("array"))?;
+    for element in &array.elements {
+        let mut value = element;
+        while let Expression::BinopExpr(_, operator, right) = value {
+            if operator.value == ";" {
+                // `;` is an array repeat delimiter here, not an operator fallback
+                // when the bounded repeat probe cannot capture an opaque body.
+                return Err(ParseError::HardError(
+                    "unsupported array repeat value or non-integer repeat length".into(), operator.span.clone(),
+                ));
+            }
+            value = right;
+        }
+    }
+    Ok((stream, array))
 }

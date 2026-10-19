@@ -20,6 +20,7 @@ mod correspondances;
 pub mod declarative;
 pub mod generated_parser;
 mod macro_arg_matcher;
+mod expression;
 pub mod proc_macro;
 pub mod registry;
 pub mod source_map;
@@ -30,6 +31,9 @@ mod storage_tests;
 
 #[cfg(test)]
 mod matcher_contract_tests;
+
+#[cfg(test)]
+mod expression_tests;
 
 pub use context::MacroExpansionContext;
 pub use source_map::{
@@ -98,6 +102,7 @@ pub fn expand_macros_with_context(
         }
     }
 
+    expression::expand_function_bodies(&mut module, context)?;
     program.module = module;
 
     struct PendingExpressions { diagnostics: Diagnostics }
@@ -171,8 +176,19 @@ fn expand_top_level(
     invocation: &MacroInvoc,
     context: &MacroExpansionContext<'_>,
 ) -> Result<Vec<TopLevel>, Diagnostics> {
+    match expand_declarative(macro_decl, invocation, context)? {
+        generated_parser::GeneratedSyntax::Items(module) => Ok(module.top_levels),
+        generated_parser::GeneratedSyntax::Expression(_) => Err(proc_macro_error("expected generated items", invocation.span.clone())),
+    }
+}
+
+fn expand_declarative(
+    macro_decl: &MacroDecl,
+    invocation: &MacroInvoc,
+    context: &MacroExpansionContext<'_>,
+) -> Result<generated_parser::GeneratedSyntax, Diagnostics> {
     let invoc_span = invocation.span.clone();
-    let (args, ranges) = macro_arg_matcher::rock_arguments(&invocation.args)?;
+    let (args, ranges) = macro_arg_matcher::rock_arguments(&invocation.args, context.config, invocation.header_indent)?;
     let parent = invocation.parent;
     let expansion_id = context.record_expansion(MacroExpansionRecord {
         invocation: invocation.id,
@@ -188,6 +204,7 @@ fn expand_top_level(
         let mut macro_matcher = MacroArgMatcher::new(
             &args,
             &invocation.args,
+            invocation.header_indent,
             &ranges,
             arm.matcher.fragments.clone(),
             macro_decl.name.span.clone(),
@@ -220,9 +237,10 @@ fn expand_top_level(
             }
         };
 
-        return parse_generated_top_levels(
+        return parse_generated_result(
             body,
             context,
+            invocation.output,
             Some(expansion_id),
         );
     }
@@ -323,7 +341,20 @@ fn parse_generated_top_levels(
     context: &MacroExpansionContext<'_>,
     expansion_id: Option<ExpansionId>,
 ) -> Result<Vec<TopLevel>, Diagnostics> {
-    let parsed = generated_parser::parse_generated_source(&stream, context.config, crate::ast::MacroOutputCategory::Items, expansion_id).map_err(
+    let anchor = stream.start_span();
+    match parse_generated_result(stream, context, crate::ast::MacroOutputCategory::Items, expansion_id)? {
+        generated_parser::GeneratedSyntax::Items(module) => Ok(module.top_levels),
+        generated_parser::GeneratedSyntax::Expression(_) => Err(proc_macro_error("expected generated items", anchor)),
+    }
+}
+
+fn parse_generated_result(
+    stream: TokenStream,
+    context: &MacroExpansionContext<'_>,
+    category: crate::ast::MacroOutputCategory,
+    expansion_id: Option<ExpansionId>,
+) -> Result<generated_parser::GeneratedSyntax, Diagnostics> {
+    generated_parser::parse_generated_source(&stream, context.config, category, expansion_id).map_err(
         |mut diags| {
             if let Some(expansion_id) = expansion_id {
                 context.map_generated_diagnostics(&mut diags, expansion_id);
@@ -332,14 +363,7 @@ fn parse_generated_top_levels(
                 diags
             }
         },
-    )?;
-
-    match parsed {
-        generated_parser::GeneratedSyntax::Items(module) => Ok(module.top_levels),
-        generated_parser::GeneratedSyntax::Expression(_) => Err(Diagnostics(vec![Diagnostic::new(
-            "generated item request returned an expression".into(), stream.start_span(),
-        ).with_code(crate::diagnostic::DiagnosticCode::Macro)])),
-    }
+    )
 }
 
 fn with_expansion_trace(
@@ -902,7 +926,7 @@ two = -> value"#;
         };
 
         let expanded = template.expand(&captures).unwrap();
-        let (tokens, _) = macro_arg_matcher::rock_arguments(&expanded).unwrap();
+        let (tokens, _) = macro_arg_matcher::rock_arguments(&expanded, &crate::Config::default(), 0).unwrap();
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[0].token_type, crate::lexer::TokenType::Ident("first".into()));
         assert_eq!(tokens[1].token_type, crate::lexer::TokenType::Ident("second".into()));
@@ -1107,7 +1131,7 @@ a = -> 1"#;
         let expected = r#"macro mymacro
     $a:expr =>
         main = -> $a
-main = -> 1 + 2"#;
+main = -> (1 + 2)"#;
 
         let config = test_config();
 

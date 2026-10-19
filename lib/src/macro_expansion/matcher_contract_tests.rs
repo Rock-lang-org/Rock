@@ -17,8 +17,8 @@ fn matches(head: &str, input: &TokenStream) -> Result<Correspondance, Diagnostic
     let program = crate::parser::parse_string(&format!("macro m\n    {head} =>\n        main = -> 0\n"), &config).unwrap();
     let TopLevel::MacroDecl(decl) = &program.module.top_levels[0] else { panic!("expected declaration") };
     let compiled = DeclarativeMacro::from_ast(decl);
-    let (tokens, ranges) = macro_arg_matcher::rock_arguments(input)?;
-    MacroArgMatcher::new(&tokens, input, &ranges, compiled.arms[0].matcher.fragments.clone(),
+    let (tokens, ranges) = macro_arg_matcher::rock_arguments(input, &config, 0)?;
+    MacroArgMatcher::new(&tokens, input, 0, &ranges, compiled.arms[0].matcher.fragments.clone(),
         decl.name.span.clone(), input.start_span(), &MacroExpansionContext::new(&config)).run()
         .map_err(macro_arg_matcher::MatchError::into_diagnostics)
 }

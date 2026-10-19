@@ -32,6 +32,7 @@ pub fn macro_entry(stream: Input) -> IResult<MacroEntry> {
 }
 
 pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
+    let header_indent = stream.header_indent()?;
     let (stream, (span, path)) = macro_path(stream)?;
     let (stream, args, block) = if let Some((stream, captured)) = stream.capture_indented_block()? {
         let (stream, _) = TokenType::Eol.process(stream)?;
@@ -46,6 +47,7 @@ pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
     let id = crate::ast::InvocationId::fresh()
         .map_err(|message| ParseError::HardError(message.into(), span.clone()))?;
     Ok((stream, MacroInvoc {
+            header_indent,
             id,
             parent: stream.expansion_parent,
             output: crate::ast::MacroOutputCategory::Items,
@@ -74,10 +76,12 @@ pub(super) fn macro_path(stream: Input) -> IResult<(crate::lexer::Span, crate::a
 }
 
 pub fn macro_expression(stream: Input) -> IResult<MacroInvoc> {
+    let header_indent = stream.header_indent()?;
     let (start, (span, path)) = macro_path(stream)?;
     if let Some((stream, captured)) = start.capture_indented_block()? {
         let id = crate::ast::InvocationId::fresh().map_err(|message| ParseError::HardError(message.into(), span.clone()))?;
         return Ok((stream, MacroInvoc {
+            header_indent,
             id, parent: stream.expansion_parent, output: crate::ast::MacroOutputCategory::Expression,
             path, span, args: captured.input, arguments: Vec::new(),
             block: Some(crate::ast::MacroBlockInput {
@@ -102,7 +106,7 @@ pub fn macro_expression(stream: Input) -> IResult<MacroInvoc> {
         }
     }).collect::<Result<Vec<_>, _>>()?;
     let id = crate::ast::InvocationId::fresh().map_err(|message| ParseError::HardError(message.into(), span.clone()))?;
-    Ok((stream, MacroInvoc { id, parent: stream.expansion_parent, output: crate::ast::MacroOutputCategory::Expression, path, span, args, arguments, block: None }))
+    Ok((stream, MacroInvoc { header_indent, id, parent: stream.expansion_parent, output: crate::ast::MacroOutputCategory::Expression, path, span, args, arguments, block: None }))
 }
 
 fn required_macro_input(error: ParseError, message: &str, span: crate::lexer::Span) -> ParseError {

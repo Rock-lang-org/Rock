@@ -15,6 +15,7 @@ fn token_type_description(tt: &TokenType) -> String {
         TokenType::Keyword(s) => format!("keyword '{}'", s),
         TokenType::MacroVar(_) => "macro variable".to_string(),
         TokenType::MacroInvoc(_) => "macro invocation".to_string(),
+        TokenType::ExpressionFragment(_) => "captured expression".into(),
         TokenType::MacroRepeatOpen => "'$('".to_string(),
         TokenType::MacroRepeatClose => "')'".to_string(),
         TokenType::Equal => "'='".to_string(),

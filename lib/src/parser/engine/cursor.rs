@@ -115,6 +115,7 @@ pub(crate) fn source_error(error: SourceError, fallback: Span) -> ParseError {
             RockError::Lexer(error) => ParseError::Lexer(error),
             RockError::UnterminatedBlockComment(span) => ParseError::HardError("unterminated Rock block comment".into(), span),
             RockError::IndentationTooWide { width, span } => ParseError::HardError(format!("indentation width {width} exceeds 255 bytes"), span),
+            RockError::InvalidRelativeIndent { width, base, span } => ParseError::HardError(format!("indentation width {width} is below expression capture margin {base}"), span),
             RockError::InvalidCaptureBoundary { span } => ParseError::HardError("capture must use physical line boundaries".into(), span),
             RockError::Preservation(error) => ParseError::HardError(format!("source preservation failed: {error:?}"), fallback),
         },
