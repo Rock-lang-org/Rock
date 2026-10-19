@@ -257,3 +257,26 @@ fn macro_a0_03_every_utf8_cut_round_trips_without_losing_origin_segments() {
         assert_eq!(joined.end_span(), source.end_span());
     }
 }
+
+#[test]
+fn macro_a0_04_identifier_interpretation_cannot_remint_a_conflicting_context() {
+    use crate::lexer::interpretation::{RockError, RockView};
+
+    let source = scan("foobar");
+    let left = source.slice(0..3, LIMITS).unwrap();
+    let mut right = source.slice(3..6, LIMITS).unwrap();
+    right.runs[0].context = SyntaxContext(8);
+    let mixed = left.join(&right, JoinBoundary::SourceAdjacent, LIMITS).unwrap();
+    let mut view = RockView::new(&mixed);
+    assert!(matches!(
+        view.next_piece(),
+        Err(RockError::Preservation(LosslessError::ConflictingContexts {
+            offset: 3, left: SyntaxContext::ROOT, right: SyntaxContext(8),
+        })),
+    ));
+    assert_eq!(view.offset(), 0);
+    let separated = left.join(&right, JoinBoundary::Separate, LIMITS).unwrap();
+    let mut view = RockView::new(&separated);
+    assert_eq!(view.next_piece().unwrap().unwrap().context, Some(SyntaxContext::ROOT));
+    assert_eq!(view.next_piece().unwrap().unwrap().context, Some(SyntaxContext(8)));
+}
