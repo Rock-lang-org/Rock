@@ -9,7 +9,7 @@ fn test_parse_macro_invoc() {
     let program = parse_string(input, &config).unwrap();
     let TopLevel::MacroInvoc(macro_invoc) = &program.module.top_levels[0] else { panic!("expected invocation") };
 
-    assert_eq!(macro_invoc.name.name, "mymacro");
+    assert_eq!(macro_invoc.path_name(), "mymacro");
     assert_eq!(macro_invoc.args.runs().iter().map(|run| run.text()).collect::<String>(), "\n    a\n    b");
     assert_eq!(program.module.top_levels.len(), 1);
 }

@@ -254,7 +254,7 @@ impl<'a> FormatTrivia<'a> {
             TopLevel::Impl(impl_) => Self::parse_type_span(&impl_.name),
         TopLevel::NewType(inner, _, _) => Some(&inner.span),
             TopLevel::MacroDecl(decl) => Some(&decl.name.span),
-            TopLevel::MacroInvoc(invoc) => Some(&invoc.name.span),
+            TopLevel::MacroInvoc(invoc) => Some(&invoc.span),
         }
     }
 

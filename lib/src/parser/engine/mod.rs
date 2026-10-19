@@ -89,6 +89,7 @@ pub struct ParseCtx<'a> {
     pub eof_location: Option<(&'a std::path::PathBuf, usize)>,
     pub indent_level: usize,
     pub config: &'a Config,
+    pub expansion_parent: Option<crate::macro_expansion::ExpansionId>,
     pub indent_step: usize,
     // Borrowed from the token stream so parser contexts remain cheap Copy values;
     // ParseError takes an owned clone when the error escapes the parser.
@@ -224,6 +225,7 @@ impl ParseCtx<'_> {
             indent_step,
             invalid_indent,
             config,
+            expansion_parent: None,
             disallowed_multiline_fn_call: false,
             inside_argument_list: false,
             inside_inline_argument_list: false,
@@ -275,6 +277,23 @@ impl ParseCtx<'_> {
                 .map_err(|error| cursor::source_error(error, start.source_eof())),
             _ => Err(ParseError::HardError("macro syntax requires retained lossless source".into(), self.eof_span())),
         }
+    }
+
+    pub fn source_offset(&self) -> Result<Option<usize>, ParseError> {
+        match self.cursor {
+            cursor::TokenCursor::Source(source) => source.offset().map(Some)
+                .map_err(|error| cursor::source_error(error, source.source_eof())),
+            _ => Ok(None),
+        }
+    }
+
+    pub fn source_token_start(&self) -> Result<Option<usize>, ParseError> {
+        let cursor::TokenCursor::Source(source) = self.cursor else { return Ok(None) };
+        let token = source.peek(0).map_err(|error| cursor::source_error(error, source.source_eof()))?;
+        Ok(token.and_then(|token| match token.origin {
+            crate::lexer::interpretation::layout::LayoutOrigin::Source(range) => Some(range.start),
+            _ => None,
+        }))
     }
 
     pub fn disallow_multiline_fn_call(&self) -> Result<Self, ParseError> {

@@ -74,7 +74,10 @@ impl TopLevel {
             TopLevel::EnumDecl(ed) => Some(&ed.name.name),
             TopLevel::Impl(i) => i.name.named_inner().map(|name| &name.name),
             TopLevel::MacroDecl(md) => Some(&md.name.name),
-            TopLevel::MacroInvoc(mi) => Some(&mi.name.name),
+            TopLevel::MacroInvoc(mi) => mi.path.path.last().and_then(|part| match part {
+                IdentOrType::Ident(ident) => Some(&ident.name),
+                IdentOrType::Type(_) => None,
+            }),
             TopLevel::FunctionSig(fs) => Some(&fs.name.name),
             TopLevel::NewType(nt, _, _) => Some(&nt.name),
             _ => None,
@@ -370,8 +373,19 @@ pub struct MacroInvoc {
     pub id: super::InvocationId,
     pub parent: Option<crate::macro_expansion::ExpansionId>,
     pub output: super::MacroOutputCategory,
-    pub name: Ident,
+    pub path: IdentifierPath,
+    pub span: Span,
     pub args: crate::lexer::lossless::LosslessStream,
+    pub arguments: Vec<std::ops::Range<usize>>,
+}
+
+impl MacroInvoc {
+    pub fn path_name(&self) -> String {
+        self.path.path.iter().map(|part| match part {
+            IdentOrType::Ident(ident) => ident.name.clone(),
+            IdentOrType::Type(ty) => ty.type_name(),
+        }).collect::<Vec<_>>().join("::")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -476,6 +490,7 @@ pub struct PrimaryExpr {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Operand {
+    MacroInvoc(MacroInvoc),
     Literal(Literal),
     Ident(IdentifierPath),
     CallHole(Span),

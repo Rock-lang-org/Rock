@@ -257,7 +257,8 @@ pub fn primary_expr(stream: Input) -> IResult<PrimaryExpr> {
 }
 
 pub fn operand(stream: Input) -> IResult<Operand> {
-    super::do_expression
+    super::macro_expression.map(Operand::MacroInvoc)
+        .or(super::do_expression)
         .or(reset_inside_argument_list(parse_if)
             .map(Box::new)
             .map(Operand::If))
@@ -414,13 +415,24 @@ pub fn secondary(stream: Input) -> IResult<SecondaryExpr> {
 }
 
 pub fn arguments(stream: Input) -> IResult<Vec<Argument>> {
+    call_arguments(stream).map(|(stream, arguments)| (stream, arguments.into_iter().map(|argument| argument.argument).collect()))
+}
+
+/// Shared ordinary-call grammar. Macros retain ranges while normal calls retain
+/// the parsed expressions; neither path guesses boundaries from rendered ASTs.
+pub(super) struct CallArgument {
+    pub argument: Argument,
+    pub range: Option<std::ops::Range<usize>>,
+}
+
+pub(super) fn call_arguments(stream: Input) -> IResult<Vec<CallArgument>> {
     TokenType::StuckOperator("!".to_string())
         .map(|_| vec![])
         .or(TokenType::Operator("!".to_string()).map(|_| vec![]))
         .or(preceded(
             not_inline_call_operator,
             inside_inline_argument_list(separated1(
-                call_argument_expression.map(|arg| Argument { arg }),
+                ranged_call_argument,
                 TokenType::Coma,
             )),
         ))
@@ -475,6 +487,14 @@ fn call_argument_expression(stream: Input) -> IResult<Expression> {
     call_hole_expression.or(expression).process(stream)
 }
 
+fn ranged_call_argument(stream: Input) -> IResult<CallArgument> {
+    let start = stream.source_token_start()?;
+    let (stream, arg) = call_argument_expression(stream)?;
+    let end = stream.source_offset()?;
+    let range = start.zip(end).map(|(start, end)| start..end);
+    Ok((stream, CallArgument { argument: Argument { arg }, range }))
+}
+
 fn call_hole_expression(stream: Input) -> IResult<Expression> {
     (
         get_span,
@@ -500,7 +520,7 @@ struct ExpressionWithIndentRestore {
 }
 
 impl Parser for ExpressionWithIndentRestore {
-    type Output = Argument;
+    type Output = CallArgument;
 
     fn process<'a>(&mut self, mut stream: Input<'a>) -> IResult<'a, Self::Output> {
         // Restore the indent level before checking indent
@@ -508,15 +528,15 @@ impl Parser for ExpressionWithIndentRestore {
         stream.indent_level = self.target_indent;
 
         let (stream, _) = indent.process(stream)?;
-        let (mut stream, expr) = call_hole_expression.or(expression).process(stream)?;
+        let (mut stream, argument) = ranged_call_argument(stream)?;
 
         // Restore again after parsing the expression
         stream.indent_level = self.target_indent;
-        Ok((stream, Argument { arg: expr }))
+        Ok((stream, argument))
     }
 }
 
-pub fn multiline_arguments_context_aware(stream: Input) -> IResult<Vec<Argument>> {
+fn multiline_arguments_context_aware(stream: Input) -> IResult<Vec<CallArgument>> {
     // Smart argument parsing that prevents ambiguous syntax
     // Arguments must be indented MORE than the current context to avoid ambiguity
 

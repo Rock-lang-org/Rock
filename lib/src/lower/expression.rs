@@ -32,6 +32,7 @@ fn ast_expr_operand_span(operand: &AstExprOperand<'_>) -> Option<Span> {
 
     fn operand_span(operand: &ast::Operand) -> Option<Span> {
         match operand {
+            ast::Operand::MacroInvoc(invocation) => Some(invocation.span.clone()),
             ast::Operand::Literal(literal) => Some(literal.span.clone()),
             ast::Operand::Ident(path) => path_span(&path.path),
             ast::Operand::CallHole(span) => Some(span.clone()),
@@ -2009,6 +2010,10 @@ impl Lowerer {
 
     fn lower_operand_with_use(&mut self, operand: &ast::Operand, use_kind: ExprUse) -> HirExpr {
         match operand {
+            ast::Operand::MacroInvoc(invocation) => {
+                self.diagnostics.push_with_span("unexpanded expression macro reached lowering".into(), invocation.span.clone());
+                self.error_expression_at(invocation.span.clone())
+            }
             ast::Operand::Literal(lit) => self.lower_literal(lit),
             ast::Operand::Ident(path) => self.lower_identifier_path(path),
             ast::Operand::CallHole(span) => {

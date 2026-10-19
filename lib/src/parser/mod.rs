@@ -32,20 +32,24 @@ pub fn parse_source(
     bytes.extend_from_slice(source.as_bytes());
     let stream = LosslessStream::from_bytes(file_path, bytes, SOURCE_LIMITS)
         .map_err(|error| ParseError::HardError(format!("source preservation failed: {error:?}"), anchor))?;
-    parse_lossless_source(&stream, config)
+    parse_lossless_source(&stream, config, None)
 }
 
 const SOURCE_LIMITS: ScanLimits = ScanLimits { max_source_bytes: 16 * 1024 * 1024, max_runs: 1024 * 1024 };
 const CURSOR_LIMITS: source_cursor::SourceLimits = source_cursor::SourceLimits { max_entries: 1024 * 1024, max_branches: 65536 };
 
 /// Ordinary and generated source share one preservation/interpretation boundary.
-pub fn parse_lossless_source(stream: &LosslessStream, config: &Config) -> Result<Module, ParseError> {
+pub fn parse_lossless_source(
+    stream: &LosslessStream,
+    config: &Config,
+    expansion_parent: Option<crate::macro_expansion::ExpansionId>,
+) -> Result<Module, ParseError> {
     let input = source_cursor::SourceInput::new(stream, true, CURSOR_LIMITS)
         .map_err(|error| engine::source_error(error, stream.start_span()))?;
     // Reset the best error tracker at the start of parsing
     engine::reset_best_error();
 
-    let ctx = ParseCtx::from_source(&input, config);
+    let ctx = ParseCtx { expansion_parent, ..ParseCtx::from_source(&input, config) };
     let result = module_inline.process(ctx);
 
     if config.has_debug_print(DebugPrint::Tokens) {

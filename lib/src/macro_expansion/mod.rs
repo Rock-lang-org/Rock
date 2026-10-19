@@ -54,7 +54,7 @@ pub fn expand_macros_with_context(
 
         for (i, top_level) in module.top_levels.iter().enumerate() {
             if let TopLevel::MacroInvoc(invocation) = &top_level {
-                if let Some(decl) = registry.declaration(&invocation.name.name) {
+                if let Some(decl) = registry.declaration(&invocation.path_name()) {
                     decls.insert(
                         i,
                         (decl.clone(), invocation.clone()),
@@ -62,7 +62,7 @@ pub fn expand_macros_with_context(
                     continue;
                 }
 
-                if let Some(entry) = registry.proc_macro(&invocation.name.name) {
+                if let Some(entry) = registry.proc_macro(&invocation.path_name()) {
                     proc_macros.insert(
                         i,
                         (entry.clone(), invocation.clone()),
@@ -79,7 +79,7 @@ pub fn expand_macros_with_context(
             let invocation = first_macro_invocation(&module)
                 .expect("remaining macro invocation must retain its source span");
             let trace_expansion = invocation.parent;
-            let mut diagnostic = context.depth_exceeded_diagnostic(invocation.name.span.clone());
+            let mut diagnostic = context.depth_exceeded_diagnostic(invocation.span.clone());
             if let Some(expansion_id) = trace_expansion {
                 diagnostic = diagnostic.with_labels(context.trace_labels(expansion_id));
             }
@@ -89,6 +89,19 @@ pub fn expand_macros_with_context(
     }
 
     program.module = module;
+
+    struct PendingExpressions { diagnostics: Diagnostics }
+    impl<'ast> crate::ast::visit::Visitor<'ast> for PendingExpressions {
+        fn visit_macro_invoc(&mut self, invocation: &'ast MacroInvoc) {
+            if invocation.output == crate::ast::MacroOutputCategory::Expression {
+                self.diagnostics.push(Diagnostic::new("expression macro expansion is not implemented".into(), invocation.span.clone())
+                    .with_code(crate::diagnostic::DiagnosticCode::Macro));
+            }
+        }
+    }
+    let mut pending = PendingExpressions { diagnostics: Diagnostics::default() };
+    program.visit(&mut pending);
+    if !pending.diagnostics.0.is_empty() { return Err(pending.diagnostics); }
 
     Ok(program)
 }
@@ -133,7 +146,7 @@ fn expand_top_level(
     invocation: &MacroInvoc,
     context: &MacroExpansionContext<'_>,
 ) -> Result<Vec<TopLevel>, Diagnostics> {
-    let invoc_span = invocation.name.span.clone();
+    let invoc_span = invocation.span.clone();
     let (args, ranges) = macro_arg_matcher::rock_arguments(&invocation.args)?;
     let parent = invocation.parent;
     let expansion_id = context.record_expansion(MacroExpansionRecord {
@@ -201,7 +214,7 @@ fn expand_proc_macro_top_level(
     invocation: &MacroInvoc,
     context: &MacroExpansionContext<'_>,
 ) -> Result<Vec<TopLevel>, Diagnostics> {
-    let invoc_span = invocation.name.span.clone();
+    let invoc_span = invocation.span.clone();
     let args = &invocation.args;
     let parent = invocation.parent;
     let expansion_id = context.record_expansion(MacroExpansionRecord {
@@ -289,7 +302,7 @@ fn parse_generated_top_levels(
     context: &MacroExpansionContext<'_>,
     expansion_id: Option<ExpansionId>,
 ) -> Result<Vec<TopLevel>, Diagnostics> {
-    let mut module = generated_parser::parse_generated_source(&stream, context.config).map_err(
+    let module = generated_parser::parse_generated_source(&stream, context.config, expansion_id).map_err(
         |mut diags| {
             if let Some(expansion_id) = expansion_id {
                 context.map_generated_diagnostics(&mut diags, expansion_id);
@@ -299,14 +312,6 @@ fn parse_generated_top_levels(
             }
         },
     )?;
-
-    if let Some(expansion_id) = expansion_id {
-        for top_level in &mut module.top_levels {
-            if let TopLevel::MacroInvoc(invocation) = top_level {
-                invocation.parent = Some(expansion_id);
-            }
-        }
-    }
 
     Ok(module.top_levels)
 }
@@ -613,7 +618,7 @@ macro repeat_b
         let (artifact, temp_dir) = proc_macro_artifact_with_response("broken", response);
         let input_program = parse_string("%broken", &config).unwrap();
         let invocation_span = match &input_program.module.top_levels[0] {
-            TopLevel::MacroInvoc(invocation) => invocation.name.span.clone(),
+            TopLevel::MacroInvoc(invocation) => invocation.span.clone(),
             other => panic!("expected macro invocation, got {other:?}"),
         };
         let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
@@ -739,8 +744,8 @@ macro outer
             .top_levels
             .iter()
             .filter_map(|top_level| match top_level {
-                TopLevel::MacroInvoc(invocation) if invocation.name.name == "outer" => {
-                    Some(invocation.name.span.clone())
+                TopLevel::MacroInvoc(invocation) if invocation.path_name() == "outer" => {
+                    Some(invocation.span.clone())
                 }
                 _ => None,
             })

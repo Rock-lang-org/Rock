@@ -1299,6 +1299,7 @@ fn ast_expression_span(expression: &ast::Expression) -> Option<Span> {
         ast::Expression::UnaryExpr(unary) => match unary {
             ast::UnaryExpr::UnaryExpr(operator, _) => Some(operator.span.clone()),
             ast::UnaryExpr::PrimaryExpr(primary) => match &primary.operand {
+                ast::Operand::MacroInvoc(invocation) => Some(invocation.span.clone()),
                 ast::Operand::Literal(literal) => Some(literal.span.clone()),
                 ast::Operand::Ident(path) => path.path.first().map(|segment| match segment {
                     ast::IdentOrType::Ident(ident) => ident.span.clone(),

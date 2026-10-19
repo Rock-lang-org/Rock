@@ -5,8 +5,9 @@ use crate::{parser, Config};
 pub fn parse_generated_source(
     stream: &crate::lexer::lossless::LosslessStream,
     config: &Config,
+    expansion_parent: Option<super::ExpansionId>,
 ) -> Result<Module, Diagnostics> {
-    parser::parse_lossless_source(stream, config).map_err(Diagnostics::from)
+    parser::parse_lossless_source(stream, config, expansion_parent).map_err(Diagnostics::from)
 }
 
 #[cfg(test)]
@@ -44,7 +45,7 @@ mod tests {
         let stream = source("main = -> 0");
         let config = test_config();
 
-        let module = parse_generated_source(&stream, &config).unwrap();
+        let module = parse_generated_source(&stream, &config, None).unwrap();
 
         assert_eq!(module.top_levels.len(), 1);
     }
@@ -54,7 +55,7 @@ mod tests {
         let stream = source("macro make\n    $name");
         let config = test_config();
 
-        let parse_error = parser::parse_lossless_source(&stream, &config)
+        let parse_error = parser::parse_lossless_source(&stream, &config, None)
             .expect_err("incomplete macro head should fail before diagnostics conversion");
         match parse_error {
             ParseError::HardError(message, _) => {
@@ -63,7 +64,7 @@ mod tests {
             other => panic!("expected incomplete macro head error, got {other:?}"),
         }
 
-        let diagnostics = parse_generated_source(&stream, &config).unwrap_err();
+        let diagnostics = parse_generated_source(&stream, &config, None).unwrap_err();
         assert!(diagnostics
             .0
             .iter()

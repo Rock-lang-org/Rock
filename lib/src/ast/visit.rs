@@ -387,6 +387,7 @@ pub fn walk_operator<'a, V: Visitor<'a>>(_visitor: &mut V, _operator: &'a Operat
 
 pub fn walk_operand<'a, V: Visitor<'a>>(visitor: &mut V, operand: &'a Operand) {
     match &operand {
+        Operand::MacroInvoc(invocation) => visitor.visit_macro_invoc(invocation),
         Operand::Literal(l) => visitor.visit_literal(l),
         Operand::Ident(i) => visitor.visit_identifier_path(i),
         Operand::CallHole(_) => {}
@@ -638,6 +639,7 @@ pub fn walk_trait_decl<'a, V: Visitor<'a>>(visitor: &mut V, t: &'a TraitDecl) {
 
 pub fn walk_macro_decl<'a, V: Visitor<'a>>(_visitor: &mut V, _m: &'a MacroDecl) {}
 
+// Macro paths and retained inputs are not ordinary value references.
 pub fn walk_macro_invoc<'a, V: Visitor<'a>>(_visitor: &mut V, _m: &'a MacroInvoc) {}
 
 pub fn walk_program<'a, V: Visitor<'a>>(visitor: &mut V, program: &'a Program) {

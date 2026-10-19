@@ -15,13 +15,25 @@ fn invocation(program: &Program) -> &MacroInvoc {
 }
 
 #[test]
+fn macro_a_02_generated_expression_invocations_keep_the_explicit_parent() {
+    let config = crate::Config::default();
+    let context = MacroExpansionContext::new(&config);
+    let parent = ExpansionId(42);
+    let items = parse_generated_top_levels(token_tree::source("main = -> %later!\n"), &context, Some(parent)).unwrap();
+    let TopLevel::FunctionDecl(function) = &items[0] else { panic!("expected function") };
+    let crate::ast::Statement::Expression(crate::ast::Expression::UnaryExpr(crate::ast::UnaryExpr::PrimaryExpr(primary))) = &function.lambda.body.statements[0] else { panic!("expected primary") };
+    let crate::ast::Operand::MacroInvoc(invocation) = &primary.operand else { panic!("expected invocation") };
+    assert_eq!(invocation.parent, Some(parent));
+}
+
+#[test]
 fn macro_a_01_equal_spans_have_distinct_node_identities() {
     let config = crate::Config::default();
     let left = parse_string("%same input", &config).unwrap();
     let right = parse_string("%same input", &config).unwrap();
     let left = invocation(&left);
     let right = invocation(&right);
-    assert_eq!(left.name.span, right.name.span);
+    assert_eq!(left.span, right.span);
     assert_ne!(left.id, right.id);
     assert_eq!(left.id, left.clone().id);
     assert_eq!(left.output, MacroOutputCategory::Items);
@@ -43,7 +55,7 @@ fn macro_a_01_generated_equal_span_nodes_keep_explicit_parent_edges() {
     let left = parse_generated_top_levels(output.clone(), &context, Some(first)).unwrap();
     let right = parse_generated_top_levels(output, &context, Some(second)).unwrap();
     let (TopLevel::MacroInvoc(left), TopLevel::MacroInvoc(right)) = (&left[0], &right[0]) else { panic!("expected children") };
-    assert_eq!(left.name.span, right.name.span);
+    assert_eq!(left.span, right.span);
     assert_ne!(left.id, right.id);
     assert_eq!(left.parent, Some(first));
     assert_eq!(right.parent, Some(second));
@@ -79,7 +91,7 @@ fn macro_a_01_ast_invocation_and_template_keep_trivia_and_original_margins() {
     let context = MacroExpansionContext::new(&config);
     let compiled = DeclarativeMacro::from_ast(decl);
     let captures = MacroArgMatcher::new(&tokens, &invocation(&program).args, &ranges,
-        compiled.arms[0].matcher.fragments.clone(), decl.name.span.clone(), invocation(&program).name.span.clone(), &context,
+        compiled.arms[0].matcher.fragments.clone(), decl.name.span.clone(), invocation(&program).span.clone(), &context,
     ).run().unwrap();
     assert_eq!(text(&captures.entries["v"][0]), "1 /* caller */ +  2");
 }

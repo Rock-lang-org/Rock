@@ -43,17 +43,17 @@ fn macro_a0_10_generated_and_ordinary_source_use_identical_spans_and_eof_rules()
     let config = Config::default();
     for text in ["main = -> 42", "main = !->\r\n  42\r\n", "main = -> 42 // eof"] {
         let stream = scan(text);
-        let generated = crate::macro_expansion::generated_parser::parse_generated_source(&stream, &config).unwrap();
+    let generated = crate::macro_expansion::generated_parser::parse_generated_source(&stream, &config, None).unwrap();
         let source = parse_source(stream.start_span().file_path, text, &config).unwrap();
         assert_eq!(format!("{generated:?}"), format!("{source:?}"));
     }
     let original = scan("prefix main = -> 42 suffix");
     let bounded = original.slice(7..19, STORAGE).unwrap();
-    let module = crate::macro_expansion::generated_parser::parse_generated_source(&bounded, &config).unwrap();
+    let module = crate::macro_expansion::generated_parser::parse_generated_source(&bounded, &config, None).unwrap();
     let crate::ast::TopLevel::FunctionDecl(function) = &module.top_levels[0] else { panic!("expected function") };
     assert_eq!(function.name.span.start..function.name.span.end, 7..11);
     let broken = scan("main = -> \"bad");
-    let diagnostics = crate::macro_expansion::generated_parser::parse_generated_source(&broken, &config).unwrap_err();
+    let diagnostics = crate::macro_expansion::generated_parser::parse_generated_source(&broken, &config, None).unwrap_err();
     assert!(diagnostics.0.iter().any(|diagnostic| {
         matches!(&diagnostic.location, crate::diagnostic::DiagnosticLocation::Source(span)
             if span.start == 10 && span.end == broken.len_bytes())

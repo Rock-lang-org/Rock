@@ -216,6 +216,47 @@ policy, or authorize worker-created hygiene/provenance; those remain in their
 own slices. `bd ready --json` still fails because `bd` is unavailable. Formatting
 remains deferred; no formatter/check, Clippy, or separate build gate was run.
 
+### A.02 delivery receipt (2026-10-19)
+
+Expression operands now retain qualified macro paths, requested expression output,
+and exact logical argument ranges into the same lossless invocation stream. Both
+ordinary and macro calls use the same comma/grouping/postfix argument parser;
+the temporary parsed argument expressions validate syntax without resolving names
+or expanding nested input. `%m!` retains empty input. AST traversal, source spans,
+observers, and the lowering rejection boundary recognize the new operand.
+Expression execution still returns a structured macro diagnostic before lowering.
+
+- Initial `cargo test -p rock-lib --lib macro_a_02_ -- --nocapture` was RED
+  because the expression operand and path/range fields did not exist. The first
+  implemented run passed eight tests.
+- The added lexical-diagnostic control first failed to compile due to a moved
+  test binding, then observed RED: an unterminated argument string was replaced
+  by a generic macro-header error. Required macro-input diagnostics now preserve
+  lexical/layout errors and their original spans; the focused runner passes all
+  nine parser tests.
+- The first full `cargo test -p rock-lib` passed 2,502 units, 789 main
+  integrations, and one parser integration; one doctest was ignored (archive
+  `8a436a98ec22b5cd`). A subsequent ancestry control observed RED because the
+  new expression invocation inside generated items had no parent edge. Generated
+  parsing now carries the explicit parent in its parse context and records it
+  when constructing either invocation category, rather than patching only root
+  item invocations afterward.
+- Final focused `cargo test -p rock-lib --lib macro_a_02_ -- --nocapture`
+  passes ten tests. Adjacent `cargo test -p rock-lib --lib parser::` and
+  `cargo test -p rock-lib --lib macro_expansion:: -- --nocapture` pass 549 and
+  60 tests.
+- Final `cargo test -p rock-lib` passes 2,503 units, 789 main integrations,
+  and one parser integration; one doctest remains ignored (archive
+  `9cef8f9ac3d43fd9`). The ten focused tests pass again after moving the new
+  ancestry test below the imports. No functional edits follow the final full
+  gate. Warnings remain the 13 unused optional-group library interfaces and
+  two group-error-field warnings in library tests.
+
+Block capture, generated expression parsing/expansion, and scoped macro resolution
+remain in A.03 and later slices. `bd ready --json` still reports command not found.
+Formatting remains deferred; no formatter/check, Clippy, or separate build gate
+was run.
+
 ### Ab. Scope and schedule the same engine across modules
 
 | Slice | Implement only | Focused acceptance | Runner |

@@ -146,6 +146,7 @@ impl FormatNode for PrimaryExpr {
 impl FormatNode for Operand {
     fn fmt_with<W: Write>(&self, context: &mut FormatContext, f: &mut W) -> fmt::Result {
         match self {
+            Operand::MacroInvoc(invocation) => invocation.fmt_with(context, f),
             Operand::Literal(lit) => lit.fmt_with(context, f),
             Operand::Ident(ident) => ident.fmt_with(context, f),
             Operand::CallHole(_) => write!(f, "_"),

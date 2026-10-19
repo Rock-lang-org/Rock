@@ -14,6 +14,7 @@ mod empty_self_ident;
 mod error_propagation_chain;
 mod indice_expression;
 mod interogation;
+mod macro_calls;
 mod multiline_arguments_in_method_chain;
 mod multiline_arguments_with_nested_multiline_dots;
 mod multiline_dot;

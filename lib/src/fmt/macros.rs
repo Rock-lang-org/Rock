@@ -153,8 +153,13 @@ impl HeadMacroFragment {
 impl FormatNode for MacroInvoc {
     fn fmt_with<W: Write>(&self, context: &mut FormatContext, f: &mut W) -> fmt::Result {
         write!(f, "%")?;
-        self.name.fmt_with(context, f)?;
+        self.path.fmt_with(context, f)?;
 
+        if self.output == crate::ast::MacroOutputCategory::Expression {
+            if self.arguments.is_empty() { return write!(f, "!"); }
+            for run in self.args.runs() { f.write_str(run.text())?; }
+            return Ok(());
+        }
         let mut view = crate::lexer::interpretation::layout::LayoutView::new(&self.args, false);
         while let Some(piece) = view.next_token().map_err(|_| fmt::Error)? {
             if !matches!(piece.token.token_type, TokenType::Indent(_) | TokenType::Eol | TokenType::Eof) {
