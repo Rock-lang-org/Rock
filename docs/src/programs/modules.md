@@ -9,7 +9,7 @@ Each example below is a separate project. In each project root, add this `rock.t
 name = "module_demo"
 version = "0.1.0"
 
-[lib]
+[[bin]]
 path = "main.rk"
 ```
 

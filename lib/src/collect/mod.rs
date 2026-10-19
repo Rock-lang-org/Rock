@@ -2815,9 +2815,9 @@ mod tests {
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/dep"),
@@ -2992,9 +2992,9 @@ mod tests {
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/dep"),
@@ -3057,9 +3057,9 @@ mod tests {
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/dep"),
@@ -3148,9 +3148,9 @@ mod tests {
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/dep"),
@@ -3174,9 +3174,9 @@ mod tests {
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/dep"),
@@ -3216,9 +3216,9 @@ mod tests {
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/dep"),
@@ -3481,9 +3481,9 @@ mod tests {
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/dep"),
@@ -3864,9 +3864,9 @@ mod tests {
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             std::path::PathBuf::from("/dep"),
@@ -4828,9 +4828,9 @@ mod tests {
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/dep"),
@@ -5640,9 +5640,9 @@ lang index_mut
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/app"),
@@ -5685,9 +5685,9 @@ lang index_mut
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/app"),
@@ -5765,9 +5765,9 @@ lang index_mut
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: crate::crate_system::LibConfig {
+                targets: vec![crate::crate_system::CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/app"),

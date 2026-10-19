@@ -1,12 +1,227 @@
 use std::fs;
 
-use crate::build::{build_project, run_project};
+use super::support::{build_project, run_project};
 use crate::package::BuildProfile;
 
 use super::support::{
-    assert_executable_exit_code, load_dependency_package, run_isolated_test, temp_test_dir, write_package,
+    assert_executable_exit_code, load_dependency_package, load_package, run_command_output, run_isolated_test, temp_test_dir, write_package,
     write_package_with_options,
 };
+
+fn write_multi_target_package(root: &std::path::Path, library: bool) {
+    fs::write(root.join("rock.toml"), format!(
+        "[crate]\nname = \"mixed\"\nversion = \"0.1.0\"\nno_std = true\n\n{}\n[[bin]]\nname = \"server\"\npath = \"server/main.rk\"\n\n[[bin]]\nname = \"client\"\npath = \"client/main.rk\"\n",
+        if library { "[lib]\npath = \"src/lib.rk\"\n" } else { "" },
+    )).unwrap();
+    if library {
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/lib.rk"), "< answer = -> 40\n< other = -> 41\n").unwrap();
+    }
+    for (name, value, function) in [("server", 40, "answer"), ("client", 41, "other")] {
+        fs::create_dir_all(root.join(name)).unwrap();
+        let source = if library {
+            format!("> mixed::{}\nmain = -> {}!\n", function, function)
+        } else {
+            format!("main = -> {}\n", value)
+        };
+        fs::write(root.join(name).join("main.rk"), source).unwrap();
+    }
+}
+
+#[test]
+fn test_multiple_binaries_with_or_without_a_library_build_in_both_profiles() {
+    for library in [false, true] {
+        let root = temp_test_dir("multiple_targets");
+        write_multi_target_package(&root, library);
+        for profile in [BuildProfile::Debug, BuildProfile::Release] {
+            let products = crate::build::build_project(&root, profile).unwrap();
+            assert_eq!(products.library.is_some(), library);
+            assert_eq!(products.binaries.len(), 2);
+            for (binary, expected) in products.binaries.iter().zip([40, 41]) {
+                assert_eq!(binary.path, root.join("build").join(profile.directory()).join(&binary.name));
+                assert_executable_exit_code(&binary.path, expected);
+                assert_eq!(crate::build::run_project(&root, profile, &[], Some(&binary.name)).unwrap(), expected);
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn test_run_requires_a_known_binary_when_multiple_targets_exist() {
+    let root = temp_test_dir("multiple_target_selection");
+    write_multi_target_package(&root, true);
+    for (name, message) in [(None, "rock run --bin <name>"), (Some("unknown"), "No binary named 'unknown'")] {
+        let error = crate::build::run_project(&root, BuildProfile::Debug, &[], name).unwrap_err();
+        assert!(error.contains(message), "{error}");
+        assert!(!root.join("build").exists());
+    }
+    fs::write(root.join("client/main.rk"), "main = -> missing_name\n").unwrap();
+    assert_eq!(crate::build::run_project(&root, BuildProfile::Debug, &[], Some("server")).unwrap(), 40);
+    assert!(!root.join("build/debug/client").exists());
+    assert!(crate::build::build_project(&root, BuildProfile::Debug).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_mixed_dependency_only_builds_its_library() {
+    let root = temp_test_dir("mixed_dependency");
+    let dep = root.join("dep");
+    fs::create_dir_all(&dep).unwrap();
+    write_multi_target_package(&dep, true);
+    fs::write(dep.join("server/main.rk"), "main = -> missing_name\n").unwrap();
+    let app = root.join("app");
+    write_package_with_options(
+        &app, "app", "src/main.rk", &[("mixed", dep.display().to_string())],
+        "> mixed::answer\nmain = -> answer!\n", true,
+    );
+    let executable = build_project(&app, BuildProfile::Debug).unwrap();
+    assert_executable_exit_code(&executable, 40);
+    let package = load_dependency_package(dep.clone(), &app);
+    assert!(package.artifact_path().exists());
+    assert!(!package.build_dir().join("server").exists());
+    assert!(!dep.join("build").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_mixed_package_with_one_binary_runs_without_a_selector() {
+    let root = temp_test_dir("mixed_one_binary");
+    write_package_with_options(&root, "mixed", "src/lib.rk", &[], "< answer = -> 42\n", true);
+    let manifest = root.join("rock.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(manifest, format!("{}\n[[bin]]\n", text)).unwrap();
+    fs::write(root.join("src/main.rk"), "> mixed::answer\nmain = -> answer!\n").unwrap();
+    assert_eq!(run_project(&root, BuildProfile::Debug, &[]).unwrap(), 42);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_cli_build_lists_all_products_and_run_selects_a_binary() {
+    let root = temp_test_dir("multi_target_cli");
+    write_multi_target_package(&root, true);
+    crate::rockc::ensure_dev_binary_built("rock").unwrap();
+    let rock = rock_shared::process::dev_target_binary_from_current_exe("rock").unwrap();
+    let output = run_command_output(std::process::Command::new(&rock).current_dir(&root).arg("build"));
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let paths = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(paths.lines().collect::<Vec<_>>(), [
+        load_package(root.clone()).artifact_path().display().to_string(),
+        root.join("build/debug/server").display().to_string(),
+        root.join("build/debug/client").display().to_string(),
+    ]);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("3/3 crates · 100%"));
+    let output = run_command_output(std::process::Command::new(&rock).current_dir(&root).args(["run", "--bin", "client"]));
+    assert_eq!(output.status.code(), Some(41), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("2/2 crates · 100%"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_library_builds_and_runs_without_linking_in_both_profiles() {
+    let root = temp_test_dir("library_build_profiles");
+    let dep = root.join("dep");
+    let library = root.join("library");
+    write_package_with_options(&dep, "dep", "src/lib.rk", &[], "< answer = -> 42\n", true);
+    write_package_with_options(
+        &library, "library", "src/lib.rk", &[("dep", dep.display().to_string())],
+        "> dep::answer\n< relay = -> answer!\n", true,
+    );
+    for profile in [BuildProfile::Debug, BuildProfile::Release] {
+        let mut package = load_package(library.clone());
+        package.profile = profile;
+        let artifact = build_project(&library, profile).unwrap();
+        assert_eq!(artifact, package.artifact_path());
+        assert!(artifact.is_file());
+        assert!(package.object_path().is_file());
+        assert!(!package.build_dir().join("lib").exists());
+        let modified = fs::metadata(&artifact).unwrap().modified().unwrap();
+        assert_eq!(run_project(&library, profile, &["unused".to_string()]).unwrap(), 0);
+        assert_eq!(fs::metadata(&artifact).unwrap().modified().unwrap(), modified);
+        let mut dependency = load_dependency_package(dep.clone(), &library);
+        dependency.profile = profile;
+        assert!(dependency.artifact_path().is_file());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_library_run_cli_builds_and_reports_no_binary() {
+    let root = temp_test_dir("run_library_cli");
+    write_package_with_options(&root, "library", "src/lib.rk", &[], "< answer = -> 42\n", true);
+    crate::rockc::ensure_dev_binary_built("rock").unwrap();
+    let rock = rock_shared::process::dev_target_binary_from_current_exe("rock").unwrap();
+    let output = run_command_output(std::process::Command::new(rock)
+        .current_dir(&root)
+        .args(["run", "--release", "--", "unused"]));
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("there is no binary to execute"));
+    let mut package = load_package(root.clone());
+    package.profile = BuildProfile::Release;
+    assert!(package.artifact_path().is_file());
+    assert!(package.object_path().is_file());
+    assert!(!package.build_dir().join("lib").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_library_run_propagates_build_failure() {
+    let root = temp_test_dir("run_invalid_library");
+    write_package_with_options(&root, "library", "src/lib.rk", &[], "< answer = -> undefined!\n", true);
+    assert!(run_project(&root, BuildProfile::Debug, &[]).is_err());
+    assert!(!load_package(root.clone()).artifact_path().exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_binary_crate_cannot_be_used_as_a_dependency() {
+    let root = temp_test_dir("binary_dependency");
+    let dep = root.join("dep");
+    let app = root.join("app");
+    write_package_with_options(&dep, "dep", "src/main.rk", &[], "main = -> 42\n", true);
+    write_package_with_options(
+        &app, "app", "src/main.rk", &[("dep", dep.display().to_string())], "main = -> 0\n", true,
+    );
+    let error = build_project(&app, BuildProfile::Debug).unwrap_err();
+    assert!(error.contains("has no library target and cannot be used as a dependency"), "{error}");
+    assert!(!load_dependency_package(dep, &app).artifact_path().exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_default_target_entries_build_and_missing_entries_fail() {
+    for (section, path, source) in [
+        ("bin", "src/main.rk", "main = -> 23\n"),
+        ("lib", "src/lib.rk", "< answer = -> 23\n"),
+    ] {
+        let root = temp_test_dir("default_target_entry");
+        fs::write(root.join("rock.toml"), format!(
+            "[crate]\nname = \"example\"\nversion = \"0.1.0\"\nno_std = true\n\n{}\n", if section == "bin" { "[[bin]]" } else { "[lib]" },
+        )).unwrap();
+        let error = build_project(&root, BuildProfile::Debug).unwrap_err();
+        assert!(error.contains(path), "{error}");
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join(path), source).unwrap();
+        let output = build_project(&root, BuildProfile::Debug).unwrap();
+        assert!(output.is_file());
+        if section == "bin" {
+            assert_executable_exit_code(&output, 23);
+        } else {
+            assert_eq!(output, load_package(root.clone()).artifact_path());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn test_binary_target_requires_main_function() {
+    let root = temp_test_dir("binary_missing_main");
+    write_package_with_options(&root, "app", "src/main.rk", &[], "< answer = -> 42\n", true);
+    let error = build_project(&root, BuildProfile::Debug).unwrap_err();
+    assert!(error.contains("main"), "{error}");
+    assert!(!root.join("build/debug/app").exists());
+    fs::remove_dir_all(root).unwrap();
+}
 
 #[test]
 fn test_rock_cargo_toml_does_not_depend_on_rock_lib() {
@@ -35,7 +250,7 @@ fn test_debug_and_release_builds_keep_transitive_dependency_caches_separate() {
     let mut cached_products = Vec::new();
     for profile in [BuildProfile::Debug, BuildProfile::Release] {
         let executable = build_project(&app, profile).unwrap();
-        assert_eq!(executable, app.join("build").join(profile.directory()).join("main"));
+        assert_eq!(executable, app.join("build").join(profile.directory()).join("app"));
         assert_executable_exit_code(&executable, 42);
         for root in [&dep_a, &dep_b] {
             let mut package = load_dependency_package(root.clone(), &app);

@@ -2,7 +2,7 @@
 name = "book_http_server"
 version = "0.1.0"
 
-[lib]
+[[bin]]
 path = "src/main.rk"
 
 [dependencies]

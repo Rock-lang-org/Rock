@@ -80,11 +80,10 @@ The command creates a `rock.toml` manifest:
 name = "hello-rock"
 version = "0.1.0"
 
-[lib]
-path = "src/main.rk"
+[[bin]]
 ```
 
-The manifest names the package and its entry file. The package version is your application's version, not the compiler version. The current project format uses `[lib]` for the entry even when you run a program containing `main`.
+The manifest names the package and declares a binary target with `[[bin]]`, using the package name and `src/main.rk` by default. The package version is your application's version, not the compiler version. A package can also declare one `[lib]`, using `src/lib.rk`, and any number of named `[[bin]]` targets. `rock build` builds them all; `rock run --bin <name>` selects a binary when there are several. A library-only package builds and reports that there is no binary to execute. Each target can override its entry with `path = "..."`.
 
 It also creates `.gitignore` to exclude `/build/` and `src/main.rk` with this program:
 

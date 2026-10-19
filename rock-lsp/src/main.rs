@@ -52,7 +52,7 @@ struct Document {
 struct State {
     documents: HashMap<Url, Document>,
     analyses: HashMap<Url, Arc<Analysis>>,
-    projects: HashMap<PathBuf, rock::project::AnalysisProject>,
+    projects: HashMap<(PathBuf, PathBuf), rock::project::AnalysisProject>,
 }
 
 struct Backend {
@@ -92,6 +92,7 @@ impl Backend {
             return;
         };
         let project_root = rock::project::find_project_root(&path);
+        let project_key = project_root.as_ref().map(|root| (root.clone(), path.clone()));
         tokio::time::sleep(std::time::Duration::from_millis(75)).await;
         let current = self
             .state
@@ -107,16 +108,16 @@ impl Backend {
         let settings = self.settings.clone();
         let cached_project = {
             let state = self.state.read().await;
-            project_root
+            project_key
                 .as_ref()
-                .and_then(|root| state.projects.get(root))
+                .and_then(|key| state.projects.get(key))
                 .cloned()
         };
         let task_project_root = project_root.clone();
         let task = tokio::task::spawn_blocking(move || {
             let project = match (cached_project, task_project_root.as_deref()) {
                 (Some(project), _) => Some(project),
-                (None, Some(root)) => match rock::project::resolve_analysis_project(root) {
+                (None, Some(root)) => match rock::project::resolve_analysis_project_for_source(root, &path) {
                     Ok(project) => Some(project),
                     Err(error) => {
                         let mut diagnostics = Diagnostics::default();
@@ -153,8 +154,8 @@ impl Backend {
             return;
         }
 
-        if let (Some(root), Some(project)) = (project_root, resolved_project) {
-            self.state.write().await.projects.insert(root, project);
+        if let (Some(key), Some(project)) = (project_key, resolved_project) {
+            self.state.write().await.projects.insert(key, project);
         }
 
         match analysis {
@@ -263,7 +264,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
         if let Ok(path) = uri.to_file_path() {
             if let Some(root) = rock::project::find_project_root(&path) {
-                self.state.write().await.projects.remove(&root);
+            self.state.write().await.projects.retain(|(project_root, _), _| project_root != &root);
             }
         }
         self.refresh(uri).await;
@@ -367,7 +368,7 @@ fn analysis_config(
             .unwrap_or(source_path),
         source_providers: providers,
         extern_artifacts: artifacts.into_iter().collect(),
-        current_crate_name: project.map(|project| project.crate_name.clone()),
+        current_crate_name: project.and_then(|project| project.current_crate_name.clone()),
         no_prelude: settings.no_prelude
             || project
                 .map(|project| project.no_prelude)
@@ -549,6 +550,32 @@ mod tests {
     use super::{analysis_config, byte_offset, diagnostic_to_lsp, position_at, Settings};
 
     #[test]
+    fn mixed_package_binary_entries_analyze_with_their_own_library() {
+        let root = std::env::temp_dir().join(format!("rock_lsp_multi_target_{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src/bin")).unwrap();
+        std::fs::write(root.join("rock.toml"), concat!(
+            "[crate]\nname = \"mixed\"\nversion = \"0.1.0\"\nno_std = true\n\n",
+            "[lib]\n\n[[bin]]\n\n[[bin]]\nname = \"other\"\n",
+        )).unwrap();
+        std::fs::write(root.join("src/lib.rk"), "< answer = -> 42\n").unwrap();
+        let settings = Settings { extern_artifacts: Vec::new(), no_prelude: false };
+        for entry in ["src/main.rk", "src/bin/other.rk"] {
+            let path = root.join(entry);
+            std::fs::write(&path, "> mixed::answer\nmain = -> answer!\n").unwrap();
+            let project = rock::project::resolve_analysis_project_for_source(&root, &path).unwrap();
+            assert_eq!(project.entry_file, path);
+            assert!(project.extern_artifacts.iter().any(|(name, _)| name == "mixed"));
+            let config = analysis_config(path, Vec::new(), &settings, Some(&project));
+            let result = rock_lib::analyze(&config);
+            assert!(result.is_ok(), "{:?}", result.err());
+        }
+        let project = rock::project::resolve_analysis_project(&root).unwrap();
+        assert_eq!(project.entry_file, root.join("src/lib.rk"));
+        assert!(!project.extern_artifacts.iter().any(|(name, _)| name == "mixed"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn runtime_analyzes_nested_source_on_blocking_worker() {
         super::runtime().unwrap().block_on(async {
             tokio::task::spawn_blocking(|| {
@@ -600,7 +627,7 @@ mod tests {
         let project = rock::project::AnalysisProject {
             root_dir: PathBuf::from("/project"),
             entry_file: PathBuf::from("/project/src/main.rk"),
-            crate_name: "app".to_string(),
+            current_crate_name: Some("app".to_string()),
             extern_artifacts: vec![
                 ("dep".to_string(), PathBuf::from("/project/build/dep.rkca")),
                 (

@@ -329,7 +329,7 @@ fn build_product_artifact_with_extern_artifacts(
     extern_artifacts: Vec<(String, PathBuf)>,
 ) -> PathBuf {
     let manifest = CrateContext::load_manifest(&crate_dir.join("rock.toml")).unwrap();
-    let entry_file = crate_dir.join(&manifest.lib.path);
+    let entry_file = crate_dir.join(manifest.primary_target().path());
     let output_dir = crate_dir.join("build").join("products");
     let object_path = output_dir.join(format!("{}.o", crate_name));
     fs::create_dir_all(&output_dir).unwrap();
@@ -471,7 +471,7 @@ fn cached_std_product_artifact(std_dir: &PathBuf, artifact_dir: &PathBuf) -> Pat
     // Build in the private cache, never in the checked-out std/build directory.
     let manifest = rock_shared::manifest::load_manifest(&std_dir.join("rock.toml")).unwrap();
     let output = crate::compile_with_products(&Config {
-        entry_file: std_dir.join(&manifest.lib.path),
+        entry_file: std_dir.join(manifest.primary_target().path()),
         output_dir: artifact_dir.clone(),
         current_crate_name: Some("std".to_string()),
         no_std: true,

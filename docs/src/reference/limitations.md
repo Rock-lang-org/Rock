@@ -51,7 +51,7 @@ path = "lib.rk"
 name = "app"
 version = "0.1.0"
 
-[lib]
+[[bin]]
 path = "main.rk"
 
 [dependencies]

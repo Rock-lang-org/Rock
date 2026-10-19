@@ -31,7 +31,7 @@ Save this manifest as `rock.toml` in a new project directory:
 name = "fizzbuzz"
 version = "0.1.0"
 
-[lib]
+[[bin]]
 path = "main.rk"
 ```
 

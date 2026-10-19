@@ -1,12 +1,11 @@
-use std::{path::PathBuf, time::Instant};
+use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
 use crate::{
-    artifact::{ensure_artifact, ArtifactBuildState},
     build::{build_project, run_project},
     commands::{clean_project, expand_project, format_project, new_project},
-    package::{BuildProfile, Package},
+    package::BuildProfile,
     progress,
 };
 
@@ -26,22 +25,14 @@ pub fn run() -> Result<CliOutcome, String> {
             Ok(CliOutcome::Success)
         }
         Command::Build { profile } => {
-            let executable = build_project(&current_project_root()?, profile.selected())?;
-            println!("{}", executable.display());
+            let products = build_project(&current_project_root()?, profile.selected())?;
+            for path in products.paths() {
+                println!("{}", path.display());
+            }
             Ok(CliOutcome::Success)
         }
-        Command::Run { profile, args } => run_project(&current_project_root()?, profile.selected(), &args).map(CliOutcome::Exit),
+        Command::Run { profile, args, bin } => run_project(&current_project_root()?, profile.selected(), &args, bin.as_deref()).map(CliOutcome::Exit),
         Command::Expand => expand_project().map(|_| CliOutcome::Success),
-        Command::Artifact { profile } => {
-            let started = Instant::now();
-            let mut package = Package::load(current_project_root()?)?;
-            package.profile = profile.selected();
-            let mut state = ArtifactBuildState::for_package(&package)?;
-            let artifact = ensure_artifact(&package.root_dir, &mut state)?;
-            progress::finished(profile.selected(), started.elapsed(), &state.progress);
-            println!("{}", artifact.display());
-            Ok(CliOutcome::Success)
-        }
     }
 }
 
@@ -70,21 +61,22 @@ pub(crate) enum Command {
     Format,
     /// Remove this project's build directory, including dependency artifacts
     Clean,
+    /// Build the library and all binaries declared in rock.toml
     Build {
         #[command(flatten)]
         profile: ProfileArgs,
     },
+    /// Build the crate and execute it if it is a binary
     Run {
         #[command(flatten)]
         profile: ProfileArgs,
+        /// Select a binary target by name
+        #[arg(long)]
+        bin: Option<String>,
         #[arg(last = true)]
         args: Vec<String>,
     },
     Expand,
-    Artifact {
-        #[command(flatten)]
-        profile: ProfileArgs,
-    },
 }
 
 #[derive(Args, Debug)]

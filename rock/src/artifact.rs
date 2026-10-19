@@ -42,11 +42,11 @@ impl ArtifactBuildState {
         }
     }
 
-    pub(crate) fn for_package(package: &Package) -> Result<Self, String> {
+    pub(crate) fn for_targets(package: &Package, root_targets: usize) -> Result<Self, String> {
         let mut roots = HashSet::new();
         collect_package_roots(package, &mut roots)?;
         Ok(Self {
-            progress: progress::BuildProgress::new(roots.len()),
+            progress: progress::BuildProgress::new(roots.len() - 1 + root_targets),
             ..Self::new(package)
         })
     }
@@ -183,6 +183,13 @@ pub(crate) fn ensure_artifact(
 
     let result = (|| {
         let mut package = Package::load(canonical_root.clone())?;
+        let Some(library) = package.manifest.library() else {
+            return Err(format!(
+                "Package '{}' has no library target and cannot be used as a dependency; add a [lib] target",
+                package.manifest.crate_.name
+            ));
+        };
+        package.target = library.clone();
         package.profile = state.profile;
         package.use_project_build(&state.project_root);
         let mut implicit_artifact_inputs = if package_requires_sysroot_std(&package) {
@@ -264,7 +271,7 @@ pub(crate) fn ensure_artifact(
                 &package,
                 Some(&state.progress),
                 &format!(
-                    "dependency artifact for crate '{}'",
+                    "library artifact for crate '{}'",
                     package.manifest.crate_.name
                 ),
             )?;

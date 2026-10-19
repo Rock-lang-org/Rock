@@ -127,8 +127,8 @@ mod tests {
     use crate::collect::resolver::ResolverTables;
     use crate::crate_artifact::ArtifactCrateInterface;
     use crate::crate_system::{
-        CrateConfig, CrateContext, CrateManifest, ExternCrateBodies, ExternCrateLink,
-        ExternCrateMetadata, ExternCrateRecord, LibConfig,
+        CrateConfig, CrateContext, CrateManifest, CrateTarget, ExternCrateBodies, ExternCrateLink,
+        ExternCrateMetadata, ExternCrateRecord,
     };
     use crate::hir::{HirBlock, HirFunction, HirImpl, HirImplOwner};
     use crate::ids::{CrateId, DefId, LocalDefId};
@@ -146,9 +146,9 @@ mod tests {
                     version: "0.1.0".to_string(),
                     no_std: false,
                 },
-                lib: LibConfig {
+                targets: vec![CrateTarget::Lib {
                     path: "lib.rk".to_string(),
-                },
+                }],
                 dependencies: None,
             },
             PathBuf::from("/dep"),

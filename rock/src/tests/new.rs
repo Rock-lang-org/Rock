@@ -1,8 +1,8 @@
 use std::{fs, process::Command};
 
-use crate::{build::build_project, commands::new_project, package::{BuildProfile, Package}};
+use crate::{commands::new_project, package::{BuildProfile, Package}};
 
-use super::support::{run_command_output, temp_test_dir};
+use super::support::{build_project, run_command_output, temp_test_dir};
 
 #[test]
 fn test_new_project_scaffolds_manifest_and_source() {
@@ -12,7 +12,7 @@ fn test_new_project_scaffolds_manifest_and_source() {
     assert_eq!(package.manifest.crate_.name, "hello-rock_2");
     assert_eq!(package.manifest.crate_.version, "0.1.0");
     assert!(!package.manifest.crate_.no_std);
-    assert_eq!(package.manifest.lib.path, "src/main.rk");
+    assert_eq!(package.manifest.targets, vec![rock_shared::manifest::CrateTarget::Bin { name: "hello-rock_2".to_string(), path: "src/main.rk".to_string() }]);
     assert_eq!(
         fs::read_to_string(package.entry_file()).unwrap(),
         "main = !->\n    \"Hello, Rock!\".println!\n"

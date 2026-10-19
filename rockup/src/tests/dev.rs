@@ -197,6 +197,16 @@ fn test_std_package_invocation_uses_rockc_product_outputs() {
 }
 
 #[test]
+fn test_std_packaging_rejects_a_binary_target() {
+    let root = temp_test_dir("std_binary_target");
+    fs::write(root.join("rock.toml"), "[crate]\nname = \"std\"\nversion = \"0.1.0\"\n\n[[bin]]\n").unwrap();
+    let layout = crate::layout::ToolchainLayout::new(root.join("sysroot"));
+    let error = crate::dev::build_std_package_invocation(PathBuf::from("rockc"), &root, &layout).unwrap_err();
+    assert!(error.contains("must declare a [lib] target"), "{error}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_packaged_std_artifact_remains_valid_after_target_component_relocation() {
     let temp_dir = temp_test_dir("package_dev_std_relocatable");
     let source_sysroot = temp_dir.join("source-sysroot");

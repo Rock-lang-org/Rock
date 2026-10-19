@@ -43,11 +43,11 @@ impl CurrentCrateSource {
         self.ast
             .filepath
             .clone()
-            .unwrap_or_else(|| self.root_dir.join(&self.manifest.lib.path))
+            .unwrap_or_else(|| self.root_dir.join(self.manifest.primary_target().path()))
     }
 
     pub(crate) fn lib_path(&self) -> PathBuf {
-        self.root_dir.join(&self.manifest.lib.path)
+        self.root_dir.join(self.manifest.primary_target().path())
     }
 
     pub(crate) fn build_module_tree(&self) -> Result<ModuleTree, String> {

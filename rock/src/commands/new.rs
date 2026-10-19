@@ -25,7 +25,7 @@ pub(crate) fn new_project(parent: &Path, name: &str) -> Result<PathBuf, String> 
         )
     })?;
     let manifest = format!(
-        "[crate]\nname = \"{}\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"src/main.rk\"\n",
+        "[crate]\nname = \"{}\"\nversion = \"0.1.0\"\n\n[[bin]]\n",
         name
     );
     fs::create_dir(root.join("src")).map_err(|e| {

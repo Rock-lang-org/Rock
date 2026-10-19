@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rock_shared::manifest::{self, CrateManifest};
+use rock_shared::manifest::{self, CrateManifest, CrateTarget};
 
 pub(crate) const BUILD_DIR: &str = "build";
 pub(crate) const ARTIFACTS_DIR: &str = "artifacts";
@@ -38,6 +38,7 @@ pub(crate) struct Package {
     pub(crate) root_dir: PathBuf,
     pub(crate) manifest: CrateManifest,
     pub(crate) profile: BuildProfile,
+    pub(crate) target: CrateTarget,
     build_root: PathBuf,
     dependency_key: Option<String>,
 }
@@ -54,11 +55,13 @@ impl Package {
         let manifest_path = canonical_root.join("rock.toml");
         let manifest = manifest::load_manifest(&manifest_path)?;
 
+        let target = manifest.primary_target().clone();
         Ok(Self {
             build_root: canonical_root.join(BUILD_DIR),
             dependency_key: None,
             root_dir: canonical_root,
             manifest,
+            target,
             profile: BuildProfile::default(),
         })
     }
@@ -109,7 +112,19 @@ impl Package {
     }
 
     pub(crate) fn entry_file(&self) -> PathBuf {
-        self.root_dir.join(&self.manifest.lib.path)
+        self.root_dir.join(self.target.path())
+    }
+
+    pub(crate) fn binary_build_dir(&self) -> PathBuf {
+        match &self.target {
+            CrateTarget::Bin { name, .. } => self.build_dir().join("bins").join(name),
+            CrateTarget::Lib { .. } => self.build_dir(),
+        }
+    }
+
+    pub(crate) fn executable_path(&self, name: &str) -> PathBuf {
+        let filename = if cfg!(target_os = "windows") { format!("{}.exe", name) } else { name.to_string() };
+        self.build_dir().join(filename)
     }
 }
 

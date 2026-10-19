@@ -13,7 +13,7 @@ Complete [Installation](installation.md), then create a directory with these two
 name = "diagnostics_demo"
 version = "0.1.0"
 
-[lib]
+[[bin]]
 path = "main.rk"
 ```
 

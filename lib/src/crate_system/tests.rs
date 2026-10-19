@@ -21,9 +21,9 @@ fn empty_manifest(name: &str) -> CrateManifest {
             version: "0.1.0".to_string(),
             no_std: false,
         },
-        lib: LibConfig {
+        targets: vec![CrateTarget::Lib {
             path: "lib.rk".to_string(),
-        },
+        }],
         dependencies: None,
     }
 }
@@ -88,7 +88,7 @@ path = "src/lib.rk"
 
     let manifest = crate::crate_system::CrateContext::parse_rock_toml(content).unwrap();
     assert_eq!(manifest.crate_.name, "test_crate");
-    assert_eq!(manifest.lib.path, "src/lib.rk");
+    assert_eq!(manifest.primary_target().path(), "src/lib.rk");
 }
 
 #[test]
@@ -107,9 +107,9 @@ fn test_crate_context_register() {
             version: "0.1.0".to_string(),
             no_std: false,
         },
-        lib: LibConfig {
+        targets: vec![CrateTarget::Lib {
             path: "lib.rk".to_string(),
-        },
+        }],
         dependencies: None,
     };
     let module = Module {
@@ -785,9 +785,9 @@ fn test_compilation_order_no_deps() {
             version: "0.1.0".to_string(),
             no_std: false,
         },
-        lib: LibConfig {
+        targets: vec![CrateTarget::Lib {
             path: "lib.rk".to_string(),
-        },
+        }],
         dependencies: None,
     };
 
@@ -813,9 +813,9 @@ fn test_compilation_order_with_deps() {
             version: "0.1.0".to_string(),
             no_std: false,
         },
-        lib: LibConfig {
+        targets: vec![CrateTarget::Lib {
             path: "lib.rk".to_string(),
-        },
+        }],
         dependencies: None,
     };
     let module_a = Module {
@@ -832,9 +832,9 @@ fn test_compilation_order_with_deps() {
             version: "0.1.0".to_string(),
             no_std: false,
         },
-        lib: LibConfig {
+        targets: vec![CrateTarget::Lib {
             path: "lib.rk".to_string(),
-        },
+        }],
         dependencies: {
             let mut deps = BTreeMap::new();
             deps.insert(

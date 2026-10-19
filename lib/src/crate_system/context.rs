@@ -88,7 +88,7 @@ impl CrateContext {
         let manifest_path = crate_dir.join("rock.toml");
         let manifest = Self::load_manifest(&manifest_path).map_err(toolchain_diagnostics)?;
 
-        let lib_path = crate_dir.join(&manifest.lib.path);
+        let lib_path = crate_dir.join(manifest.primary_target().path());
         let source_config = Config {
             entry_file: lib_path.clone(),
             no_prelude: true,

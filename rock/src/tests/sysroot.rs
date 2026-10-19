@@ -1,7 +1,7 @@
 use std::fs;
 use std::process::Command as ProcessCommand;
 
-use crate::build::build_project;
+use super::support::build_project;
 use crate::bundled_sysroot::STD_CRATE_NAME;
 use crate::package::BuildProfile;
 

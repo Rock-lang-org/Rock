@@ -11,7 +11,7 @@ pub struct Dependency {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CrateManifest {
     pub crate_: CrateConfig,
-    pub lib: LibConfig,
+    pub targets: Vec<CrateTarget>,
     pub dependencies: Option<BTreeMap<String, Dependency>>,
 }
 
@@ -23,10 +23,36 @@ pub struct CrateConfig {
     pub no_std: bool,
 }
 
+/// A library or named binary declared by a package manifest.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LibConfig {
-    pub path: String,
+pub enum CrateTarget {
+    Bin { name: String, path: String },
+    Lib { path: String },
+}
+
+impl CrateTarget {
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Bin { path, .. } | Self::Lib { path } => path,
+        }
+    }
+}
+
+impl CrateManifest {
+    pub fn library(&self) -> Option<&CrateTarget> {
+        self.targets.iter().find(|target| matches!(target, CrateTarget::Lib { .. }))
+    }
+
+    pub fn binaries(&self) -> impl Iterator<Item = &CrateTarget> {
+        self.targets.iter().filter(|target| matches!(target, CrateTarget::Bin { .. }))
+    }
+
+    pub fn primary_target(&self) -> &CrateTarget {
+        // Manifest parsing guarantees at least one target; source-only compiler
+        // fixtures must uphold the same invariant when constructing manifests.
+        self.library().or_else(|| self.targets.first()).expect("manifest must have a target")
+    }
 }
 
 pub fn load_manifest(manifest_path: &Path) -> Result<CrateManifest, String> {
@@ -67,18 +93,42 @@ pub fn parse_rock_toml(content: &str) -> Result<CrateManifest, String> {
         .transpose()?
         .unwrap_or(false);
 
-    let lib_table = parsed
-        .get("lib")
-        .ok_or("rock.toml missing [lib] section")?
-        .as_table()
-        .ok_or("[lib] section must be a table")?;
-
-    let lib_path = lib_table
-        .get("path")
-        .ok_or("rock.toml missing lib.path")?
-        .as_str()
-        .ok_or("lib.path must be a string")?
-        .to_string();
+    let mut targets = Vec::new();
+    if let Some(lib) = parsed.get("lib") {
+        let table = lib.as_table().ok_or("[lib] section must be a table")?;
+        targets.push(CrateTarget::Lib {
+            path: target_string(table, "path", "src/lib.rk", "lib")?,
+        });
+    }
+    if let Some(bins) = parsed.get("bin") {
+        let bins = bins.as_array().ok_or("binary targets must use [[bin]] sections")?;
+        let mut names = std::collections::HashSet::new();
+        for bin in bins {
+            let table = bin.as_table().ok_or("each [[bin]] entry must be a table")?;
+            let bin_name = target_string(table, "name", &name, "bin")?;
+            if !bin_name.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_')) {
+                return Err("bin.name must contain only ASCII letters, digits, '-' or '_'".to_string());
+            }
+            if matches!(bin_name.as_str(), "artifacts" | "objects" | "deps" | "bins") {
+                return Err(format!("binary target name '{}' is reserved for build output directories", bin_name));
+            }
+            if !names.insert(bin_name.clone()) {
+                return Err(format!("duplicate binary target '{}'; give each [[bin]] a unique name", bin_name));
+            }
+            let default_path = if bin_name == name {
+                "src/main.rk".to_string()
+            } else {
+                format!("src/bin/{}.rk", bin_name)
+            };
+            targets.push(CrateTarget::Bin {
+                name: bin_name,
+                path: target_string(table, "path", &default_path, "bin")?,
+            });
+        }
+    }
+    if targets.is_empty() {
+        return Err("rock.toml requires a [lib] or at least one [[bin]] target".to_string());
+    }
 
     let dependencies = if let Some(deps_table) = parsed.get("dependencies") {
         let deps = deps_table
@@ -113,14 +163,101 @@ pub fn parse_rock_toml(content: &str) -> Result<CrateManifest, String> {
             version,
             no_std,
         },
-        lib: LibConfig { path: lib_path },
+        targets,
         dependencies,
     })
+}
+
+fn target_string(
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+    default: &str,
+    section: &str,
+) -> Result<String, String> {
+    let value = table.get(key)
+        .map(|value| value.as_str().ok_or_else(|| format!("{}.{} must be a string", section, key)))
+        .transpose()?
+        .unwrap_or(default);
+    if value.is_empty() {
+        return Err(format!("{}.{} must not be empty", section, key));
+    }
+    Ok(value.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const CRATE_HEADER: &str = "[crate]\nname = \"example\"\nversion = \"0.1.0\"\n";
+
+    #[test]
+    fn test_binary_and_library_default_entries() {
+        for (section, expected) in [
+            ("[[bin]]", CrateTarget::Bin { name: "example".to_string(), path: "src/main.rk".to_string() }),
+            ("[lib]", CrateTarget::Lib { path: "src/lib.rk".to_string() }),
+        ] {
+            let manifest = parse_rock_toml(&format!("{}\n{}\n", CRATE_HEADER, section)).unwrap();
+            assert_eq!(manifest.targets, vec![expected]);
+        }
+    }
+
+    #[test]
+    fn test_binary_custom_entry() {
+        let manifest = parse_rock_toml(&format!("{}\n[[bin]]\npath = \"main.rk\"\n", CRATE_HEADER)).unwrap();
+        assert_eq!(manifest.targets, vec![CrateTarget::Bin { name: "example".to_string(), path: "main.rk".to_string() }]);
+    }
+
+    #[test]
+    fn test_manifest_requires_at_least_one_target() {
+        for suffix in ["", "\nbin = []\n"] {
+            let error = parse_rock_toml(&format!("{}{}", suffix, CRATE_HEADER)).unwrap_err();
+            assert!(error.contains("requires a [lib] or at least one [[bin]]"), "{error}");
+        }
+    }
+
+    #[test]
+    fn test_manifest_rejects_invalid_target_configuration() {
+        for (section, header) in [("bin", "[[bin]]"), ("lib", "[lib]")] {
+            for (suffix, message) in [
+                (format!("{}\npath = 42\n", header), format!("{}.path must be a string", section)),
+                (format!("{}\npath = \"\"\n", header), format!("{}.path must not be empty", section)),
+            ] {
+                let error = parse_rock_toml(&format!("{}\n{}", suffix, CRATE_HEADER)).unwrap_err();
+                assert!(error.contains(&message), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_library_and_multiple_named_binaries() {
+        let manifest = parse_rock_toml(&format!(
+            "{}\n[lib]\n[[bin]]\nname = \"server\"\n[[bin]]\nname = \"client\"\npath = \"tools/main.rk\"\n", CRATE_HEADER,
+        )).unwrap();
+        assert_eq!(manifest.targets, vec![
+            CrateTarget::Lib { path: "src/lib.rk".to_string() },
+            CrateTarget::Bin { name: "server".to_string(), path: "src/bin/server.rk".to_string() },
+            CrateTarget::Bin { name: "client".to_string(), path: "tools/main.rk".to_string() },
+        ]);
+        assert_eq!(manifest.binaries().count(), 2);
+    }
+
+    #[test]
+    fn test_invalid_or_duplicate_binary_names_are_rejected() {
+        for (suffix, message) in [
+            ("[[bin]]\nname = \"\"\n", "bin.name must not be empty"),
+            ("[[bin]]\nname = 42\n", "bin.name must be a string"),
+            ("[[bin]]\nname = \"../escape\"\n", "bin.name must contain only"),
+            ("[[bin]]\nname = \"deps\"\n", "reserved for build output directories"),
+            ("[[bin]]\n[[bin]]\n", "duplicate binary target"),
+            ("[[bin]]\nname = \"same\"\n[[bin]]\nname = \"same\"\n", "duplicate binary target"),
+            ("[bin]\n", "must use [[bin]]"),
+            ("[[lib]]\n", "[lib] section must be a table"),
+            ("[lib]\n[lib]\n", "Failed to parse"),
+        ] {
+            let error = parse_rock_toml(&format!("{}\n{}", CRATE_HEADER, suffix)).unwrap_err();
+            assert!(error.contains(message), "{error}");
+        }
+    }
 
     #[test]
     fn test_parse_rock_toml() {
@@ -137,7 +274,7 @@ path = "lib.rk"
         assert_eq!(manifest.crate_.name, "std");
         assert_eq!(manifest.crate_.version, "0.1.0");
         assert!(!manifest.crate_.no_std);
-        assert_eq!(manifest.lib.path, "lib.rk");
+        assert_eq!(manifest.targets, vec![CrateTarget::Lib { path: "lib.rk".to_string() }]);
     }
 
     #[test]

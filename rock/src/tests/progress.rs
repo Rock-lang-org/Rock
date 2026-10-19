@@ -60,7 +60,7 @@ fn test_cli_progress_reports_rebuilds_in_dependency_order_on_stderr() {
         assert!(stderr.contains("4/4 crates · 100%"), "{stderr}");
         assert!(stderr.lines().any(|line| line.contains("✓ ready") && line.ends_with('s')), "{stderr}");
         assert!(!stderr.contains('\x1b'));
-        assert_eq!(String::from_utf8(output.stdout).unwrap(), format!("{}\n", app.join("build").join(directory).join("main").display()));
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), format!("{}\n", app.join("build").join(directory).join("app").display()));
 
         let cached = run_rock(&app, "build", profile);
         let stderr = String::from_utf8(cached.stderr).unwrap();
@@ -136,12 +136,12 @@ fn test_overall_terminal_progress_counts_shared_crates_cache_hits_and_failures()
 }
 
 #[test]
-fn test_cli_progress_for_artifact_cache_and_run_keeps_stdout_clean() {
+fn test_cli_progress_for_library_cache_and_run_keeps_stdout_clean() {
     let root = temp_test_dir("cli_artifact_run_progress");
-    write_package_with_options(&root, "app", "src/main.rk", &[], "main = !-> ()\n", true);
+    write_package_with_options(&root, "app", "src/lib.rk", &[], "< answer = -> 42\n", true);
 
     for expected in [vec!["app"], vec![]] {
-        let output = run_rock(&root, "artifact", "--debug");
+        let output = run_rock(&root, "build", "--debug");
         let stderr = String::from_utf8(output.stderr).unwrap();
         assert!(output.status.success(), "{stderr}");
         assert_eq!(compiling_crates(&stderr), expected);
@@ -151,6 +151,15 @@ fn test_cli_progress_for_artifact_cache_and_run_keeps_stdout_clean() {
     }
 
     let output = run_rock(&root, "run", "--debug");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(output.status.success(), "{stderr}");
+    assert!(compiling_crates(&stderr).is_empty());
+    assert!(stderr.contains("✓ ready   debug · unoptimized · "));
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), "Crate 'app' is a library; there is no binary to execute.\n");
+
+    let binary = root.join("binary");
+    write_package_with_options(&binary, "app", "src/main.rk", &[], "main = !-> ()\n", true);
+    let output = run_rock(&binary, "run", "--debug");
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(output.status.success(), "{stderr}");
     assert_eq!(compiling_crates(&stderr), ["app"]);
@@ -170,6 +179,8 @@ fn test_cli_live_progress_in_a_terminal_preserves_output_and_clears_on_failure()
     let compiler = root.join("mock-rockc");
     fs::write(&compiler, concat!(
         "#!/bin/sh\n",
+        "while [ $# -gt 0 ]; do if [ \"$1\" = --output-dir ]; then shift; output=$1; fi; shift; done\n",
+        ": > \"$output/main\"\n",
         "printf 'compiler-stdout\\n'\n",
         "sleep 0.1\n",
         "printf 'warning: ' >&2\n",
@@ -221,7 +232,7 @@ fn test_cli_live_progress_in_a_terminal_preserves_output_and_clears_on_failure()
         if exit == 0 {
             assert!(terminal.contains("✓ ready"), "{terminal}");
             assert!(terminal.contains("1/1 crates · 100%"), "{terminal}");
-            assert!(stdout.ends_with(&format!("{}\n", root.join("build/debug/main").display())));
+            assert!(stdout.ends_with(&format!("{}\n", root.join("build/debug/app").display())));
         } else {
             assert!(!terminal.contains("✓ ready"), "{terminal}");
             assert!(terminal.contains("\r\x1b[2KError: rockc failed"), "{terminal}");

@@ -59,17 +59,15 @@ pub(crate) fn write_package_with_options(
     source: &str,
     no_std: bool,
 ) {
+    let target = if Path::new(lib_path).file_name() == Some(OsStr::new("main.rk")) {
+        "[[bin]]"
+    } else {
+        "[lib]"
+    };
     let mut manifest = format!(
-        "[crate]\nname = \"{}\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"{}\"\n",
-        name, lib_path
+        "[crate]\nname = \"{}\"\nversion = \"0.1.0\"\nno_std = {}\n\n{}\npath = \"{}\"\n",
+        name, no_std, target, lib_path
     );
-
-    if no_std {
-        manifest = format!(
-            "[crate]\nname = \"{}\"\nversion = \"0.1.0\"\nno_std = true\n\n[lib]\npath = \"{}\"\n",
-            name, lib_path
-        );
-    }
 
     if !deps.is_empty() {
         manifest.push_str("\n[dependencies]\n");
@@ -86,6 +84,17 @@ pub(crate) fn write_package_with_options(
         fs::create_dir_all(parent).unwrap();
     }
     fs::write(lib_file, source).unwrap();
+}
+
+pub(crate) fn build_project(root: &Path, profile: crate::package::BuildProfile) -> Result<PathBuf, String> {
+    let products = crate::build::build_project(root, profile)?;
+    let paths = products.paths().cloned().collect::<Vec<_>>();
+    assert_eq!(paths.len(), 1, "single-target fixture must have one build output");
+    Ok(paths[0].clone())
+}
+
+pub(crate) fn run_project(root: &Path, profile: crate::package::BuildProfile, args: &[String]) -> Result<i32, String> {
+    crate::build::run_project(root, profile, args, None)
 }
 
 pub(super) fn assert_sysroot_std_files_exist() {

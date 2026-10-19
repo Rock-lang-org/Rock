@@ -11,7 +11,7 @@ Create a project directory containing this `rock.toml`:
 name = "rock_book_project"
 version = "0.1.0"
 
-[lib]
+[[bin]]
 path = "main.rk"
 ```
 
@@ -22,7 +22,7 @@ main = !->
     "rock-book-project".println!
 ```
 
-The manifest's `[lib].path` selects the source entry even when that source contains an executable `main` function.
+`[[bin]]` declares a binary target; an omitted `name` defaults to the package name. That binary defaults to `src/main.rk`; the explicit `path` above selects a file beside the manifest. A differently named binary defaults to `src/bin/<name>.rk`. A package may declare one `[lib]`, defaulting to `src/lib.rk`, and any number of `[[bin]]` targets. At least one target is required, binary names must be unique, and each target may override `path`.
 
 ## Everyday commands
 
@@ -31,32 +31,30 @@ $ rock format
 $ rock build
 $ rock run -- 7
 $ rock expand
-$ rock artifact
 $ rock clean
 ```
 
-`format` rewrites the configured source. Inspect formatter changes before committing them, then compile again.
+`format` rewrites the library entry, or the first binary entry when there is no library. Inspect formatter changes before committing them, then compile again.
 
-`build` resolves the manifest and path dependencies, then writes products below the project's `build/` directory. It prints the linked executable path on success.
+`build` resolves the manifest and path dependencies, then builds the library and all binaries. It writes a reusable `.rkca` artifact and object for the library, and one executable per binary, printing each output path. Binaries require `main`; the library does not. Executables are named after their binary targets, and intermediate outputs are isolated per target even when several entry files are called `main.rk`.
 
-`run` builds and executes the project. Values after `--` are application arguments rather than options to the build tool.
+`run` builds and executes the only binary, or selects one with `rock run --bin <name> -- <arguments>`. With several binaries and no selection, it lists the choices and fails rather than choosing arbitrarily. Only the selected binary, the package library, and their dependencies are built. For a library-only package, it builds, reports that there is no binary to execute, and exits successfully. A failed build still fails the command. Values after `--` are application arguments rather than options to the build tool.
 
-`expand` prints macro-expanded source. It is useful when a diagnostic points into generated declarations or when a repetition does not produce the expected items.
+`expand` prints macro-expanded source for the package's library, or its first binary when there is no library. It is useful when a diagnostic points into generated declarations or when a repetition does not produce the expected items.
 
-`artifact` materializes a reusable crate artifact. Normal path-dependent builds create and reuse dependency artifacts automatically, so most applications do not need to invoke it directly.
+Path dependencies must provide a library target. Their binaries are not built when they are used as dependencies. A package's binaries can import its own library using the package name, just like an external dependency.
 
 There is no `rock test` command. Use a complete Rock executable as an application smoke test, or use the Rust integration suite when changing the compiler itself.
 
 ## Debug and release builds
 
-`rock build`, `rock run`, and `rock artifact` use the debug profile by default. This profile disables optimization; you can also select it explicitly with `--debug`. Use `--release` to enable full optimization for the project and its source-built dependencies:
+`rock build` and `rock run` use the debug profile by default for both binary and library crates. This profile disables optimization; you can also select it explicitly with `--debug`. Use `--release` to enable full optimization for the project and its source-built dependencies:
 
 ```console
 $ rock build
 $ rock build --debug
 $ rock build --release
 $ rock run --release -- 7
-$ rock artifact --release
 ```
 
 Debug outputs live in `build/debug/`, and release outputs live in `build/release/`. Each profile has its own dependency artifacts and objects, so switching profiles does not reuse products built with different optimization settings. The toolchain's precompiled standard library is shared between profiles. `--debug` and `--release` cannot be combined.

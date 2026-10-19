@@ -147,7 +147,7 @@ pub(crate) fn build_root_invocation(
         .arg("--entry-file")
         .arg(package.entry_file())
         .arg("--output-dir")
-        .arg(package.build_dir());
+        .arg(package.binary_build_dir());
 
     if package.manifest.crate_.no_std || package.manifest.crate_.name == STD_CRATE_NAME {
         invocation = invocation.arg("--no-std");
@@ -363,7 +363,7 @@ mod tests {
             pair[0] == "--entry-file" && pair[1] == package.entry_file().to_string_lossy().as_ref()
         }));
         assert!(args.windows(2).any(|pair| {
-            pair[0] == "--output-dir" && pair[1] == package.build_dir().to_string_lossy().as_ref()
+            pair[0] == "--output-dir" && pair[1] == package.binary_build_dir().to_string_lossy().as_ref()
         }));
         assert!(!args.contains(&"--extern-product-artifact".to_string()));
         assert!(args

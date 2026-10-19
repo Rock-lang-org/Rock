@@ -1,7 +1,7 @@
 use std::fs;
 
 use crate::artifact::{collect_dependency_artifacts, ensure_artifact, ArtifactBuildState};
-use crate::build::build_project;
+use super::support::build_project;
 use crate::package::BuildProfile;
 
 use super::support::{
@@ -117,7 +117,7 @@ fn test_collect_dependency_artifacts_includes_transitive_dependencies() {
 }
 
 #[test]
-fn test_rock_artifact_command_builds_cache_file() {
+fn test_library_build_creates_artifact_and_object() {
     let temp_dir = temp_test_dir("artifact_command");
     write_package(
         &temp_dir,
@@ -127,8 +127,7 @@ fn test_rock_artifact_command_builds_cache_file() {
         "identity = x -> x\n< identity\n",
     );
 
-    let mut state = ArtifactBuildState::new(&load_package(temp_dir.clone()));
-    let artifact_path = ensure_artifact(&temp_dir, &mut state).unwrap();
+    let artifact_path = build_project(&temp_dir, BuildProfile::Debug).unwrap();
 
     assert!(artifact_path.exists());
     assert!(load_package(temp_dir.clone()).object_path().exists());
@@ -270,7 +269,7 @@ fn test_ensure_artifact_reuses_dependency_artifacts_after_dependency_sources_are
     write_package(
         &app,
         "app",
-        "src/main.rk",
+        "src/lib.rk",
         &[("dep", dep.display().to_string())],
         "> dep::answer\n\nmain = -> answer!\n",
     );
@@ -304,7 +303,7 @@ fn test_ensure_artifact_loads_sysroot_std_for_no_std_root_with_std_using_depende
     write_package_with_options(
         &app,
         "app",
-        "src/main.rk",
+        "src/lib.rk",
         &[("dep", dep.display().to_string())],
         "> dep::answer\n\nmain = -> 0\n",
         true,

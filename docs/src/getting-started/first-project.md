@@ -17,7 +17,7 @@ Create a project manifest as `rock.toml`:
 name = "fizzbuzz"
 version = "0.1.0"
 
-[lib]
+[[bin]]
 path = "main.rk"
 ```
 

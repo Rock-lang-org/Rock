@@ -31,8 +31,8 @@ fn test_run_command_parses_trailing_args() {
 }
 
 #[test]
-fn test_build_profiles_parse_for_build_run_and_artifact() {
-    for command in ["build", "run", "artifact"] {
+fn test_build_profiles_parse_for_build_and_run() {
+    for command in ["build", "run"] {
         for (flags, expected) in [
             (vec![], BuildProfile::Debug),
             (vec!["--debug"], BuildProfile::Debug),
@@ -42,7 +42,7 @@ fn test_build_profiles_parse_for_build_run_and_artifact() {
             args.extend(flags);
             let config = <Config as clap::Parser>::try_parse_from(args).unwrap();
             let profile = match config.command {
-                Command::Build { profile } | Command::Run { profile, .. } | Command::Artifact { profile } => profile,
+                Command::Build { profile } | Command::Run { profile, .. } => profile,
                 other => panic!("Expected build profile, got {other:?}"),
             };
             assert_eq!(profile.selected(), expected);
@@ -60,7 +60,7 @@ fn test_build_profiles_parse_for_build_run_and_artifact() {
         "rock", "run", "--release", "--", "--debug", "--release",
     ]).unwrap();
     match config.command {
-        Command::Run { profile, args } => {
+        Command::Run { profile, args, .. } => {
             assert_eq!(profile.selected(), BuildProfile::Release);
             assert_eq!(args, ["--debug", "--release"]);
         }
@@ -69,8 +69,23 @@ fn test_build_profiles_parse_for_build_run_and_artifact() {
 }
 
 #[test]
+fn test_run_selects_a_named_binary_and_preserves_trailing_arguments() {
+    let config = <Config as clap::Parser>::try_parse_from([
+        "rock", "run", "--bin", "server", "--release", "--", "--bin", "client",
+    ]).unwrap();
+    match config.command {
+        Command::Run { profile, bin, args } => {
+            assert_eq!(profile.selected(), BuildProfile::Release);
+            assert_eq!(bin.as_deref(), Some("server"));
+            assert_eq!(args, ["--bin", "client"]);
+        }
+        other => panic!("expected run command, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_numeric_optimization_flags_are_unknown() {
-    for command in [None, Some("build"), Some("run"), Some("artifact")] {
+    for command in [None, Some("build"), Some("run")] {
         for flags in [
             vec!["-O"],
             vec!["-O", "0"],
@@ -103,6 +118,13 @@ fn test_numeric_optimization_flags_are_unknown() {
 #[test]
 fn test_unimplemented_test_command_is_not_exposed() {
     assert!(<Config as clap::Parser>::try_parse_from(["rock", "test"]).is_err());
+}
+
+#[test]
+fn test_artifact_command_is_not_exposed() {
+    assert!(<Config as clap::Parser>::try_parse_from(["rock", "artifact"]).is_err());
+    let cli = <Config as clap::CommandFactory>::command();
+    assert!(!cli.get_subcommands().any(|command| command.get_name() == "artifact"));
 }
 
 #[test]

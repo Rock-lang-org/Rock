@@ -56,14 +56,14 @@ The following listings are the two files of this project, not independent single
 name = "book_http_server"
 version = "0.1.0"
 
-[lib]
+[[bin]]
 path = "src/main.rk"
 
 [dependencies]
 rock_http = { path = "../../../../rock_http" }
 ```
 
-The current manifest format uses `[lib].path` for the application's entry file too. Dependency paths are relative to the directory containing that manifest, not the shell's current directory. From `docs/examples/http-server`, four parent steps reach the directory containing both checkouts. If you place the application elsewhere, adjust the path to the actual `rock_http` directory.
+The application declares `[[bin]]`, while its `rock_http` dependency provides a `[lib]` target. Dependency paths are relative to the directory containing that manifest, not the shell's current directory. From `docs/examples/http-server`, four parent steps reach the directory containing both checkouts. If you place the application elsewhere, adjust the path to the actual `rock_http` directory.
 
 Do not replace this path with a registry version or Git dependency: those manifest dependency sources are not implemented. The explicit checkout above pins the library revision instead. Do not add a second local `std` dependency for this tutorial either; `rock` supplies the selected toolchain's standard-library artifact to both packages.
 

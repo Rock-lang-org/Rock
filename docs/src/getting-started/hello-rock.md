@@ -16,11 +16,10 @@ The generated `rock.toml` manifest is:
 name = "hello"
 version = "0.1.0"
 
-[lib]
-path = "src/main.rk"
+[[bin]]
 ```
 
-The generated `src/main.rk` contains this complete program:
+`[[bin]]` declares a binary target named after the package and defaults to `src/main.rk`. The generated source contains this complete program:
 
 ```rock
 main = !->
