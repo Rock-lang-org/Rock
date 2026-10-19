@@ -12,6 +12,8 @@ publish=${2-}
 [[ -z $publish || $publish == --publish ]] || die 'Unknown option'
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
+notes=$root/docs/release-notes/$tag.md
+[[ -s $notes ]] || die "Missing release notes: $notes"
 target=x86_64-unknown-linux-gnu
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || die "Only $target is supported"
 for tool in cargo cc tar gzip sha256sum git ldd; do
@@ -27,7 +29,7 @@ fi
 export LLVM_SYS_180_PREFIX
 LLVM_SYS_180_PREFIX=$("$llvm_config" --prefix)
 # Keep --version output consistent with the release tag.
-for package in rock rockc rockup rock-lsp; do
+for package in rock rockc rockup rock-lsp lib rock-shared; do
     version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$package/Cargo.toml" | head -n 1)
     [[ $version == "${tag#v}" ]] || die "$package/Cargo.toml version $version does not match $tag"
 done
@@ -103,6 +105,5 @@ mv "$assets" "$out"
 printf 'Packaged and smoke-tested %s\n' "$out"
 if [[ $publish == --publish ]]; then
     gh release create "$tag" "$out"/* --repo Rock-lang-org/Rock --verify-tag --draft \
-        --title "Rock $tag" --generate-notes \
-        --notes 'Linux x86_64 GNU only. LLVM 18 is statically linked; no LLVM installation required. Requires glibc 2.39+ and a C linker (Ubuntu 24.04: apt install build-essential curl ca-certificates). Install with the attached install.sh. Experimental release; review before publishing.'
+        --title "Rock $tag" --notes-file "$notes"
 fi
