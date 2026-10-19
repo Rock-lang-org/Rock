@@ -3,6 +3,13 @@ use crate::diagnostic::Diagnostics;
 use crate::macro_expansion::TokenStream;
 use crate::{parser, Config};
 
+pub fn parse_generated_source(
+    stream: &crate::lexer::lossless::LosslessStream,
+    config: &Config,
+) -> Result<Module, Diagnostics> {
+    parser::parse_lossless_source(stream, config).map_err(Diagnostics::from)
+}
+
 pub fn parse_generated_module(
     stream: &TokenStream,
     config: &Config,

@@ -30,6 +30,7 @@ pub(crate) mod tests;
 mod cursor_tests;
 
 pub use and::*;
+pub(crate) use cursor::source_error;
 pub use delimited::*;
 pub use followed::*;
 pub use indented::*;
@@ -253,6 +254,17 @@ impl ParseCtx<'_> {
         };
         let (resumed, captured) = source.capture_to(end, limits)
             .map_err(|error| cursor::source_error(error, source.source_eof()))?;
+        BEST_ERROR.with(|best| {
+            let mut best = best.borrow_mut();
+            if best.as_ref().and_then(ParseError::source_span).is_some_and(|span| {
+                captured.runs().iter().any(|run| {
+                    let origin = run.span();
+                    span.file_path == origin.file_path && origin.start <= span.start && span.start < origin.end
+                })
+            }) {
+                *best = None;
+            }
+        });
         Ok((Self { cursor: cursor::TokenCursor::Source(resumed), ..*self }, captured))
     }
 

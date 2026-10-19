@@ -85,6 +85,23 @@ impl<'a> SourceInput<'a> {
         SourceCursor { input: self, branch: 0, start: 0, end: None }
     }
 
+    /// Debug observers read already requested tokens, never trigger interpretation.
+    pub(crate) fn tokens_debug(&'a self) -> impl std::fmt::Debug + 'a {
+        struct Tokens<'a, 'b>(&'b SourceInput<'a>);
+        impl std::fmt::Debug for Tokens<'_, '_> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let cache = self.0.cache.borrow();
+                f.debug_list().entries(cache.branches.iter().flat_map(|branch| {
+                    branch.entries.iter().filter_map(|entry| match &entry.result {
+                        Ok(Some(piece)) => Some(&piece.token),
+                        _ => None,
+                    })
+                })).finish()
+            }
+        }
+        Tokens(self)
+    }
+
     fn peek(&self, branch: usize, index: usize) -> Result<Option<LayoutToken>, SourceError> {
         let mut cache = self.cache.borrow_mut();
         loop {

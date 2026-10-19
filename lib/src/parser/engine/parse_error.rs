@@ -31,6 +31,37 @@ pub enum ParseError {
 }
 
 impl ParseError {
+    fn is_source_failure(&self) -> bool {
+        match self {
+            Self::Lexer(_) | Self::UnexpectedIndent(_, _) => true,
+            Self::WithContext { error, .. } => error.is_source_failure(),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn source_span(&self) -> Option<&Span> {
+        match self {
+            Self::Lexer(crate::lexer::LexerError::UnknownToken(_, span))
+            | Self::UnexpectedIndent(_, span) | Self::UnexpectedEOF(span)
+            | Self::ExpectedOneOrMore(span) | Self::HardError(_, span) => Some(span),
+            Self::UnexpectedToken(_, token) => Some(&token.span),
+            Self::WithContext { error, .. } => error.source_span(),
+            _ => None,
+        }
+    }
+
+    /// Lexical/layout errors already identify the offending source, rather than
+    /// an enclosing grammar production that happened to request its view.
+    pub(crate) fn without_source_context(self) -> Self {
+        match self {
+            Self::WithContext { context, error } => match error.without_source_context() {
+                error @ (Self::Lexer(_) | Self::UnexpectedIndent(_, _) | Self::HardError(_, _)) => error,
+                error => Self::WithContext { context, error: Box::new(error) },
+            },
+            error => error,
+        }
+    }
+
     pub fn discriminant(&self) -> &'static str {
         match self {
             ParseError::UnexpectedToken(_, _) => "UnexpectedToken",
@@ -165,6 +196,14 @@ impl ParseError {
             (_, ParseError::ShortCircuit) => return self,
             (ParseError::Fail, _) => return other,
             (_, ParseError::Fail) => return self,
+            _ => {}
+        }
+
+        // A deferred source failure must not be hidden by a speculative grammar
+        // failure at a later token or by the EOF fallback of an empty production.
+        match (self.is_source_failure(), other.is_source_failure()) {
+            (true, false) => return self,
+            (false, true) => return other,
             _ => {}
         }
 

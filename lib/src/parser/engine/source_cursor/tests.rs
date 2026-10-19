@@ -216,7 +216,9 @@ fn macro_a0_09_lossless_backing_runs_existing_grammar_without_source_entrypoint_
         let context = ParseCtx::from_source(&input, &config);
         let expected = crate::parser::parse_source(stream.start_span().file_path.clone(), text, &config);
         crate::parser::reset_best_error();
-        let actual = crate::parser::module_inline.process(context).map(|(_, mut module)| {
+        let actual = crate::parser::module_inline.process(context).map_err(|error| {
+            crate::parser::get_best_error(error).without_source_context()
+        }).map(|(_, mut module)| {
             module.filepath = Some(stream.start_span().file_path.clone());
             module
         });

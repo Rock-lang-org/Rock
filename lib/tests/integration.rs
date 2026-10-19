@@ -25,6 +25,37 @@ mod callable;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn macro_a0_10_compiles_utf8_and_terminal_comments_through_lossless_source() {
+    assert_eq!(compile_and_run("main = !->\r\n  \"🦀\".println!\r\n// EOF comment"), "🦀\n");
+}
+
+#[test]
+fn macro_a0_10_source_failures_reach_compiler_diagnostics_with_exact_spans() {
+    use rock_lib::diagnostic::DiagnosticLocation;
+
+    for (source, expected) in [
+        ("main = -> 42\0ignored", 12..13),
+        ("main = -> \"🦀", 10..15),
+        ("main = ->\n   42\n", 10..13),
+        ("main = -> 42 /* broken", 13..22),
+    ] {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = test_temp_dir(id);
+        fs::create_dir_all(&dir).unwrap();
+        let _cleanup = TestDirCleanup(dir.clone());
+        let entry = dir.join("bad.rk");
+        fs::write(&entry, source).unwrap();
+        let errors = rock_lib::compile(&rock_lib::Config {
+            entry_file: entry.clone(), output_dir: dir, no_link: true,
+            no_std: true, no_prelude: true, ..Default::default()
+        }).unwrap_err();
+        assert!(errors.0.iter().any(|diagnostic| matches!(&diagnostic.location,
+            DiagnosticLocation::Source(span) if span.file_path == entry && (span.start..span.end) == expected
+        )), "{source:?}: {errors:?}");
+    }
+}
+
+#[test]
 fn test_ordinary_constant_integer_arithmetic_is_diagnosed() {
     for expression in [
         "(127 as I8) + (1 as I8)",

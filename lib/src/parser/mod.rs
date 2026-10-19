@@ -4,13 +4,17 @@ mod items;
 #[cfg(test)]
 mod conformance_tests;
 
+#[cfg(test)]
+mod source_pipeline_tests;
+
 use std::path::PathBuf;
 
 pub use engine::*;
 pub use items::*;
 
 use crate::ast::tree::*;
-use crate::lexer::{Lexer, TokenType};
+use crate::lexer::lossless::{LosslessStream, ScanLimits};
+use crate::lexer::{Span, TokenType};
 use crate::{Config, DebugPrint};
 
 pub fn parse_source(
@@ -18,29 +22,45 @@ pub fn parse_source(
     source: &str,
     config: &Config,
 ) -> Result<Module, ParseError> {
-    let file_path_for_result = file_path.clone();
-    let mut lexer = Lexer::new(file_path, source).map_err(ParseError::Lexer)?;
-    let tokens = lexer.collect().map_err(ParseError::Lexer)?;
-
-    if config.has_debug_print(DebugPrint::Tokens) {
-        println!("{:#?}", tokens);
+    let anchor = Span::new(file_path.clone(), 0, 0);
+    if source.len() > SOURCE_LIMITS.max_source_bytes {
+        return Err(ParseError::HardError("parser source byte limit exceeded".into(), anchor));
     }
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(source.len())
+        .map_err(|_| ParseError::HardError("cannot allocate parser source".into(), anchor.clone()))?;
+    bytes.extend_from_slice(source.as_bytes());
+    let stream = LosslessStream::from_bytes(file_path, bytes, SOURCE_LIMITS)
+        .map_err(|error| ParseError::HardError(format!("source preservation failed: {error:?}"), anchor))?;
+    parse_lossless_source(&stream, config)
+}
 
+const SOURCE_LIMITS: ScanLimits = ScanLimits { max_source_bytes: 16 * 1024 * 1024, max_runs: 1024 * 1024 };
+const CURSOR_LIMITS: source_cursor::SourceLimits = source_cursor::SourceLimits { max_entries: 1024 * 1024, max_branches: 65536 };
+
+/// Ordinary and generated source share one preservation/interpretation boundary.
+pub fn parse_lossless_source(stream: &LosslessStream, config: &Config) -> Result<Module, ParseError> {
+    let input = source_cursor::SourceInput::new(stream, true, CURSOR_LIMITS)
+        .map_err(|error| engine::source_error(error, stream.start_span()))?;
     // Reset the best error tracker at the start of parsing
     engine::reset_best_error();
 
-    let ctx = ParseCtx::from(&tokens, config);
+    let ctx = ParseCtx::from_source(&input, config);
     let result = module_inline.process(ctx);
+
+    if config.has_debug_print(DebugPrint::Tokens) {
+        println!("{:#?}", input.tokens_debug());
+    }
 
     match result {
         Ok((_, mut program)) => {
             // Set the filepath on the module
-            program.filepath = Some(file_path_for_result);
+            program.filepath = Some(stream.start_span().file_path);
             Ok(program)
         }
         Err(e) => {
             // Return the best error we've seen during parsing
-            Err(engine::get_best_error(e))
+            Err(engine::get_best_error(e).without_source_context())
         }
     }
 }

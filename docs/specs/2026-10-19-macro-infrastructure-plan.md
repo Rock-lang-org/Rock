@@ -118,6 +118,35 @@ regressions, and `cargo test -p rock-lib` serially. Record actual failures and
 warnings. The public block-invocation grammar arrives in A.03; A0 proves the
 capture mechanism, not a usable HTML macro or self-hosted compiler.
 
+### A0 delivery receipt (2026-10-19)
+
+A0.01–A0.09 were delivered in separate commits, from `c4abe1b` through
+`86b9669`; A0.10 completes the production source-entry switch and scanner removal.
+Source and generated-source text now use the same lossless parser boundary.
+Existing interpreted-token compiler APIs remain for macro matching/output until
+their storage migration in A.01; the token fixture adapter is test-only and uses
+the replacement views, not another scanner.
+
+- A0.09: initial RED for missing cursor APIs, then 12 focused tests and all 2,479
+  library unit tests passed; capture/backtracking/cache and indentation checks pass.
+- A0.10: initial RED demonstrated NUL being accepted as forged EOF. Wiring the new
+  entry point exposed three lost lexical-error diagnostics, repaired by source-error
+  prioritization and capture-scoped speculative-error cleanup. Final focused
+  `macro_a0_10_` runners passed six unit and two compiler integration tests.
+- Serialized A0 gate: `cargo test -p rock-lib --lib macro_a0_ -- --nocapture`
+  passed 112 tests; the corresponding `--test integration` runner passed two.
+  Adjacent `--lib lexer::` and `--lib parser::` runners passed 86 and 540 tests.
+- Final `cargo test -p rock-lib` passed 2,485 unit tests, 789 main integration
+  tests, and one parser integration test; one doctest remains ignored.
+- Final gate warnings: 13 library dead-code warnings for optional group interfaces
+  not yet used in production, plus two group-error-field warnings in library tests.
+  No gate failures remain. Formatting is still explicitly deferred; no formatter,
+  formatting check, Clippy, or separate build gate was run for these slices.
+
+This closes the lossless frontend foundation only; public block invocation syntax,
+macro storage/protocol migration, hygiene, authoring workflows, and library policies
+remain in the following stages.
+
 ## A. Common invocation, expansion, and hygiene
 
 Primary owners: `lib/src/ast/`, parser macro/expression items,

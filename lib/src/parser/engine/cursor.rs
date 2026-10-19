@@ -103,7 +103,7 @@ impl<'a> TokenCursor<'a> {
     }
 }
 
-pub(super) fn source_error(error: SourceError, fallback: Span) -> ParseError {
+pub(crate) fn source_error(error: SourceError, fallback: Span) -> ParseError {
     use crate::lexer::interpretation::RockError;
 
     match error {
