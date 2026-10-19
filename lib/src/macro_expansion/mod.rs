@@ -35,6 +35,9 @@ mod matcher_contract_tests;
 #[cfg(test)]
 mod expression_tests;
 
+#[cfg(test)]
+mod resolution_tests;
+
 pub use context::MacroExpansionContext;
 pub use source_map::{
     ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, TokenOrigin,
@@ -51,30 +54,19 @@ pub fn expand_macros_with_context(
     let mut module = program.module;
 
     validate_macro_definitions(&module)?;
+    registry::MacroRegistry::build(&module, context)?;
     while module.has_macro_invoc() {
         let mut decls = HashMap::new();
         let mut proc_macros = HashMap::new();
-        let mut registry = registry::MacroRegistry::from_module(&module);
-
-        for artifact in &context.proc_macro_artifacts {
-            registry.add_proc_macro_artifact(artifact.clone());
-        }
+        let registry = registry::MacroRegistry::build(&module, context)?;
 
         for (i, top_level) in module.top_levels.iter().enumerate() {
             if let TopLevel::MacroInvoc(invocation) = &top_level {
-                if let Some(decl) = registry.declaration(&invocation.path_name()) {
-                    decls.insert(
-                        i,
-                        (decl.clone(), invocation.clone()),
-                    );
-                    continue;
-                }
-
-                if let Some(entry) = registry.proc_macro(&invocation.path_name()) {
-                    proc_macros.insert(
-                        i,
-                        (entry.clone(), invocation.clone()),
-                    );
+                if let Some(entry) = registry.resolve(&[], &invocation.path_name(), &invocation.span)? {
+                    match &entry.definition {
+                        registry::MacroDefinition::Declarative(declaration) => { decls.insert(i, (declaration.clone(), invocation.clone())); }
+                        registry::MacroDefinition::Procedural(procedural) => { proc_macros.insert(i, (procedural.clone(), invocation.clone())); }
+                    }
                 } else if invocation.block.is_some() {
                     return Err(Diagnostics(vec![Diagnostic::new(
                         "block macro expansion is not implemented for unresolved macro paths".into(),
@@ -647,7 +639,7 @@ macro repeat_b
             output: proc_macro::encode_stream(&generated_tokens).unwrap(),
         };
         let (artifact, temp_dir) = proc_macro_artifact_with_response("make_main", response);
-        let input_program = parse_string("%make_main", &config).unwrap();
+        let input_program = parse_string("%test_macros::make_main", &config).unwrap();
         let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
 
         let expanded = expand_macros_with_context(input_program, &context).unwrap();
@@ -666,7 +658,7 @@ macro repeat_b
             output: proc_macro::encode_stream(&generated_tokens).unwrap(),
         };
         let (artifact, temp_dir) = proc_macro_artifact_with_response("broken", response);
-        let input_program = parse_string("%broken", &config).unwrap();
+        let input_program = parse_string("%test_macros::broken", &config).unwrap();
         let invocation_span = match &input_program.module.top_levels[0] {
             TopLevel::MacroInvoc(invocation) => invocation.span.clone(),
             other => panic!("expected macro invocation, got {other:?}"),
@@ -696,7 +688,7 @@ macro repeat_b
                 messages: vec!["boom".to_string()],
             },
         );
-        let input_program = parse_string("%fail_macro", &config).unwrap();
+        let input_program = parse_string("%test_macros::fail_macro", &config).unwrap();
         let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
 
         let diagnostics = expand_macros_with_context(input_program, &context)
@@ -725,7 +717,7 @@ macro repeat_b
                 messages: vec!["boom".to_string()],
             },
         );
-        let input_program = parse_string("%fail_macro", &config).unwrap();
+        let input_program = parse_string("%test_macros::fail_macro", &config).unwrap();
         let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
 
         let diagnostics = expand_macros_with_context(input_program, &context)
@@ -835,7 +827,7 @@ macro outer
                 output: proc_macro::encode_stream(&generated_tokens).unwrap(),
             },
         );
-        let input_program = parse_string("%make_main", &config).unwrap();
+        let input_program = parse_string("%test_macros::make_main", &config).unwrap();
         let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
 
         let expanded = expand_macros_with_context(input_program, &context).unwrap();

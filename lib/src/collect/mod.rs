@@ -32,6 +32,7 @@ use crate::lower::ResolveError;
 pub use declarations::DeclarationItems;
 pub(crate) use scope::DeclarationScope;
 pub use scope::DeclarationTypeVars;
+pub(crate) use context::{collect_exports, path_names};
 
 /// All top-level declarations gathered during the first pass.
 /// Consumed by `lower::lower()`.

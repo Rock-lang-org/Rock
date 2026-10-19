@@ -20473,7 +20473,7 @@ fn test_function_like_proc_macro_expands_through_public_macro_api() {
     };
     let (artifact, temp_dir) = proc_macro_host_with_response(response);
     let expanded = (|| {
-        let input_program = rock_lib::parser::parse_string("%make_main", &config).unwrap();
+        let input_program = rock_lib::parser::parse_string("%integration_macros::make_main", &config).unwrap();
         let context = rock_lib::macro_expansion::MacroExpansionContext::new(&config)
             .with_proc_macro_artifact(artifact);
 

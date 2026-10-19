@@ -119,7 +119,7 @@ fn macro_a_01_old_token_payloads_and_requests_reject() {
 #[test]
 fn macro_a_01_worker_receives_lossless_input_and_invocation_metadata() {
     let config = crate::Config::default();
-    let program = parse_string("%native  1 /* trivia */ + 2", &config).unwrap();
+    let program = parse_string("%test_macros::native  1 /* trivia */ + 2", &config).unwrap();
     let invocation = invocation(&program).clone();
     let (artifact, directory) = super::tests::proc_macro_artifact_with_response("native", ProcMacroResponse::Expand {
         output: proc_macro::encode_stream(&source("main = -> 0")).unwrap(),

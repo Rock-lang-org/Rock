@@ -442,6 +442,60 @@ or separate build gate ran. Beads remains unavailable.
 | A.09 | Interleave generated item/module/import discovery to a deterministic fixed point, then expand expressions outside-in before ordinary collection. | Generated modules and macro imports become available before bodies are diagnosed. Each invocation executes once; forward definitions and no-progress/import-cycle failures are stable independent of map registration order. | U, I |
 | A.10 | Enforce aggregate expansion/source-discovery/matching budgets and ID-based ancestry through those rounds. | Direct/mutual recursion, many siblings, repeated spans, non-progress matching, wide generated modules, and spelling/trivia-heavy streams terminate with the right invocation trace; no unexpanded success reaches collection/lowering. | U |
 
+### A.07 delivery receipt (2026-10-20)
+
+Macro discovery now builds a separate, module-scoped namespace from parsed root,
+inline, and already loaded file modules, without ordinary declaration collection
+or worker execution. Source definitions have node-backed canonical identities;
+proc identities combine the supplying crate identity and export identity.
+Dependency aliases select a declared surface without changing that identity.
+The frontend supplies the loader's source-module set and the artifact's declared
+dependency name; filesystem paths and export registration order are not binding
+authorities. Existing AST path extraction and explicit export collection are
+reused rather than running the ordinary collector early.
+
+Local forward references, explicit macro imports, imported module aliases,
+qualified source/proc calls, and nested direct proc surfaces resolve through
+those identities. Same-spelled values do not compete in this namespace. Duplicate
+declarations, conflicting explicit imports/providers, duplicate proc surfaces,
+private macros, and private nested modules diagnose instead of overwriting a
+binding or choosing an implementation kind. Module alias discovery is bounded
+by the number of explicit imports and accepts forward alias references.
+
+No loaded proc export is injected unqualified. Native worker fixtures now name
+their supplying dependency explicitly. Macro globs, facade/re-export uses, and
+external declarative publication diagnose without implementing those deferred
+features. Ordinary value-only imports/re-exports/globs remain inert during macro
+discovery; deferred macro bindings diagnose only when a macro use requests them.
+
+- Initial `cargo test -p rock-lib --lib macro_a_07_ -- --nocapture` observed RED
+  at compilation because scoped resolution/canonical identity APIs did not exist
+  (archive `a6615e57d22e5c7d`). Once implemented it passed six/eight tests; two
+  item fixtures were corrected to use existing item invocation syntax rather
+  than expression-only `!` parsing. The runner then passed eight tests.
+- Added conflict/facade/descriptor/native-worker controls observed twelve
+  passes/two failures, exposing an undiagnosed facade import and conflicting
+  duplicate proc surface. Repairs brought the runner to fourteen passes.
+- A forward module-alias control observed fourteen passes/one failure; bounded
+  alias discovery repaired it and the runner passed fifteen tests.
+- An intermediate `cargo test -p rock-lib` was cancelled during units to add the
+  value-only facade-import control (archive `411e7c8a709dda9d`); this is not a
+  completed gate. The first fixture passed without exercising sorted-scope
+  order; moving its consumer after the facade exposed fifteen passes/one failure.
+  Deferring facade lookup until macro use repairs that ordering dependency.
+- Final focused units pass sixteen tests. Adjacent
+  `cargo test -p rock-lib --lib macro_expansion:: -- --nocapture` and
+  `cargo test -p rock-lib --lib parser:: -- --nocapture` pass 105/568 tests.
+- Final `cargo test -p rock-lib` passes 2,562 units, 792 main integrations,
+  and one parser integration; one doctest is ignored (archive
+  `41ee2ccd271bc724`). No functional edits follow this gate.
+
+Expansion traversal remains root function/item scoped until A.08; discovery of a
+loaded module is not a claim that its bodies are expanded. Fixed-point generated
+module discovery, aggregate budgets, binding hygiene, and Rock package authoring
+remain later slices. Formatting is deferred; no formatter/check, Clippy, or
+separate build gate ran. Beads remains unavailable.
+
 ### Ac. Carry binding identity all the way to normal checking
 
 | Slice | Implement only | Focused acceptance | Runner |

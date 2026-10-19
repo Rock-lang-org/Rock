@@ -187,9 +187,10 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
         debug_ast(&ast);
     }
 
-    let mut macro_context = macro_expansion::MacroExpansionContext::new(config);
-    for artifact in ctx.proc_macro_artifacts() {
-        macro_context = macro_context.with_proc_macro_artifact(artifact.clone());
+    let mut macro_context = macro_expansion::MacroExpansionContext::new(config)
+        .with_source_modules(source_graph.source_modules());
+    for (name, artifact) in ctx.proc_macro_artifacts() {
+        macro_context = macro_context.with_named_proc_macro_artifact(name.to_string(), artifact.clone());
     }
     let ast = macro_expansion::expand_macros_with_context(ast, &macro_context)
         .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;

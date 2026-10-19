@@ -11,9 +11,15 @@ pub struct InvocationId(pub NodeId);
 
 impl InvocationId {
     pub fn fresh() -> Result<Self, &'static str> {
+        NodeId::fresh().map(Self)
+    }
+}
+
+impl NodeId {
+    pub fn fresh() -> Result<Self, &'static str> {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
-            .map(|id| Self(NodeId(id))).map_err(|_| "AST node identity limit exceeded")
+            .map(Self).map_err(|_| "AST node identity limit exceeded")
     }
 }
 

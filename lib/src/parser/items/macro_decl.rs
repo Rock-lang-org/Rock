@@ -6,14 +6,16 @@ use crate::{
 use super::{consume_tokens_until, empty_lines, get_span, ident, indent, macro_invoc_token};
 
 pub fn macro_decl(stream: Input) -> IResult<MacroDecl> {
-    (
+    let (stream, (_, name, _, entries)) = (
         TokenType::Keyword("macro".to_string()),
         ident,
         TokenType::Eol,
         indented(many(macro_entry)),
     )
-        .map(|(_, name, _, entries)| MacroDecl { name, entries })
-        .process(stream)
+        .process(stream)?;
+    let id = crate::ast::NodeId::fresh()
+        .map_err(|message| ParseError::HardError(message.into(), name.span.clone()))?;
+    Ok((stream, MacroDecl { id, name, entries }))
 }
 
 pub fn macro_entry(stream: Input) -> IResult<MacroEntry> {

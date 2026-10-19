@@ -1,12 +1,12 @@
 use crate::ast::*;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
 
-use super::{expand_declarative, generated_parser::GeneratedSyntax, registry::MacroRegistry, with_expansion_trace, MacroExpansionContext};
+use super::{expand_declarative, generated_parser::GeneratedSyntax, registry::{MacroDefinition, MacroRegistry}, with_expansion_trace, MacroExpansionContext};
 
 /// A.06 establishes ordinary function-body expression substitution. Loaded
 /// modules and the remaining declaration-owned expression fields are A.08.
 pub(super) fn expand_function_bodies(module: &mut Module, context: &MacroExpansionContext<'_>) -> Result<(), Diagnostics> {
-    let registry = MacroRegistry::from_module(module);
+    let registry = MacroRegistry::build(module, context)?;
     let expander = Expressions { registry: &registry, context };
     for item in &mut module.top_levels {
         if let TopLevel::FunctionDecl(function) = item {
@@ -80,7 +80,8 @@ impl Expressions<'_, '_> {
                 if depth >= self.context.max_depth {
                     return Err(failure(self.context.depth_exceeded_diagnostic(invocation.span.clone())));
                 }
-                let Some(declaration) = self.registry.declaration(&invocation.path_name()) else {
+                let resolved = self.registry.resolve(&[], &invocation.path_name(), &invocation.span)?;
+                let Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. }) = resolved else {
                     return Err(failure(Diagnostic::new("expression macro expansion is not implemented for unresolved or procedural macro paths".into(), invocation.span.clone())
                         .with_code(DiagnosticCode::Macro)));
                 };

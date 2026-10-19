@@ -9,11 +9,18 @@ use crate::{
 
 use super::{ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap};
 
+#[derive(Debug, Clone)]
+pub struct ProcMacroDependency {
+    pub name: String,
+    pub artifact: ProcMacroArtifact,
+}
+
 #[derive(Debug)]
 pub struct MacroExpansionContext<'a> {
     pub config: &'a Config,
     pub max_depth: usize,
-    pub proc_macro_artifacts: Vec<ProcMacroArtifact>,
+    pub proc_macro_artifacts: Vec<ProcMacroDependency>,
+    pub source_modules: crate::source_loader::SourceModuleSet,
     source_map: RefCell<MacroSourceMap>,
     latest_expansion: RefCell<Option<ExpansionId>>,
 }
@@ -24,6 +31,7 @@ impl<'a> MacroExpansionContext<'a> {
             config,
             max_depth: 100,
             proc_macro_artifacts: Vec::new(),
+            source_modules: crate::source_loader::SourceModuleSet::default(),
             source_map: RefCell::new(MacroSourceMap::new()),
             latest_expansion: RefCell::new(None),
         }
@@ -34,8 +42,17 @@ impl<'a> MacroExpansionContext<'a> {
         self
     }
 
-    pub fn with_proc_macro_artifact(mut self, artifact: ProcMacroArtifact) -> Self {
-        self.proc_macro_artifacts.push(artifact);
+    pub fn with_proc_macro_artifact(self, artifact: ProcMacroArtifact) -> Self {
+        self.with_named_proc_macro_artifact(artifact.crate_identity.clone(), artifact)
+    }
+
+    pub fn with_named_proc_macro_artifact(mut self, name: String, artifact: ProcMacroArtifact) -> Self {
+        self.proc_macro_artifacts.push(ProcMacroDependency { name, artifact });
+        self
+    }
+
+    pub fn with_source_modules(mut self, modules: crate::source_loader::SourceModuleSet) -> Self {
+        self.source_modules = modules;
         self
     }
 

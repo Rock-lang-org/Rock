@@ -197,9 +197,9 @@ impl CrateContext {
             .any(|dep| dep.provides_dependency_impl_body(imp))
     }
 
-    pub(crate) fn proc_macro_artifacts(&self) -> impl Iterator<Item = &ProcMacroArtifact> + '_ {
+    pub(crate) fn proc_macro_artifacts(&self) -> impl Iterator<Item = (&str, &ProcMacroArtifact)> + '_ {
         self.extern_crates()
-            .flat_map(|dep| dep.metadata().proc_macros().iter())
+            .flat_map(|dep| dep.metadata().proc_macros().iter().map(move |artifact| (dep.name(), artifact)))
     }
 
     pub(crate) fn has_extern_crate(&self, name: &str) -> bool {

@@ -330,6 +330,7 @@ pub struct TypeHole {
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct MacroDecl {
+    pub id: super::NodeId,
     pub name: Ident,
     pub entries: Vec<MacroEntry>,
 }
