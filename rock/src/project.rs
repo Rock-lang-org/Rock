@@ -41,6 +41,7 @@ pub fn resolve_analysis_project_for_source(project_root: &Path, source_path: &Pa
 
 fn resolve_project(project_root: &Path, source_path: Option<&Path>) -> Result<AnalysisProject, String> {
     let mut package = Package::load(project_root.to_path_buf())?;
+    package.require_runtime_target()?;
     if let Some(source_path) = source_path {
         let source_path = source_path.canonicalize().unwrap_or_else(|_| source_path.to_path_buf());
         if let Some(target) = package.manifest.targets.iter().find(|target| {
@@ -63,7 +64,7 @@ fn resolve_project(project_root: &Path, source_path: Option<&Path>) -> Result<An
     // Match binary builds: the package name belongs to the reusable library,
     // not to the binary's local source crate, which may import that library.
     let current_crate_name = match package.target {
-        CrateTarget::Lib { .. } => Some(crate_name.clone()),
+        CrateTarget::Lib { .. } | CrateTarget::ProcMacro { .. } => Some(crate_name.clone()),
         CrateTarget::Bin { .. } => None,
     };
 

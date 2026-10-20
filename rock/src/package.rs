@@ -84,6 +84,18 @@ impl Package {
         };
     }
 
+    // Until the host-product build path is wired, never compile a proc library
+    // as an ordinary reusable runtime object (including analysis builds).
+    pub(crate) fn require_runtime_target(&self) -> Result<(), String> {
+        if self.target.role() == manifest::TargetRole::ProcMacro {
+            return Err(format!(
+                "Package '{}' is a host-only procedural macro library; host-product building is not implemented yet",
+                self.manifest.crate_.name,
+            ));
+        }
+        Ok(())
+    }
+
     pub(crate) fn build_dir(&self) -> PathBuf {
         let directory = self.build_root.join(self.profile.directory());
         match &self.dependency_key {
@@ -120,7 +132,7 @@ impl Package {
     pub(crate) fn binary_build_dir(&self) -> PathBuf {
         match &self.target {
             CrateTarget::Bin { name, .. } => self.build_dir().join("bins").join(name),
-            CrateTarget::Lib { .. } => self.build_dir(),
+            CrateTarget::Lib { .. } | CrateTarget::ProcMacro { .. } => self.build_dir(),
         }
     }
 

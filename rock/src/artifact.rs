@@ -192,6 +192,7 @@ pub(crate) fn ensure_artifact(
             ));
         };
         package.target = library.clone();
+        package.require_runtime_target()?;
         package.profile = state.profile;
         package.no_proc_execution = state.no_proc_execution;
         package.use_project_build(&state.project_root);

@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use crate::products::ProductCrateIdentity;
 
-pub use rock_shared::manifest::{CrateConfig, CrateManifest, CrateTarget, Dependency};
+pub use rock_shared::manifest::{CrateConfig, CrateManifest, CrateTarget, Dependency, TargetRole};
 
 #[allow(unused_imports)]
 pub(crate) use extern_store::{

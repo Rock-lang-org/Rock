@@ -29,19 +29,36 @@ pub struct CrateConfig {
 pub enum CrateTarget {
     Bin { name: String, path: String },
     Lib { path: String },
+    ProcMacro { path: String },
+}
+
+/// The product role is independent of the source path or package spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TargetRole {
+    Binary,
+    Library,
+    ProcMacro,
 }
 
 impl CrateTarget {
     pub fn path(&self) -> &str {
         match self {
-            Self::Bin { path, .. } | Self::Lib { path } => path,
+            Self::Bin { path, .. } | Self::Lib { path } | Self::ProcMacro { path } => path,
+        }
+    }
+
+    pub fn role(&self) -> TargetRole {
+        match self {
+            Self::Bin { .. } => TargetRole::Binary,
+            Self::Lib { .. } => TargetRole::Library,
+            Self::ProcMacro { .. } => TargetRole::ProcMacro,
         }
     }
 }
 
 impl CrateManifest {
     pub fn library(&self) -> Option<&CrateTarget> {
-        self.targets.iter().find(|target| matches!(target, CrateTarget::Lib { .. }))
+        self.targets.iter().find(|target| matches!(target, CrateTarget::Lib { .. } | CrateTarget::ProcMacro { .. }))
     }
 
     pub fn binaries(&self) -> impl Iterator<Item = &CrateTarget> {
@@ -96,8 +113,15 @@ pub fn parse_rock_toml(content: &str) -> Result<CrateManifest, String> {
     let mut targets = Vec::new();
     if let Some(lib) = parsed.get("lib") {
         let table = lib.as_table().ok_or("[lib] section must be a table")?;
-        targets.push(CrateTarget::Lib {
-            path: target_string(table, "path", "src/lib.rk", "lib")?,
+        let proc_macro = table.get("proc_macro")
+            .map(|value| value.as_bool().ok_or("lib.proc_macro must be a boolean"))
+            .transpose()?
+            .unwrap_or(false);
+        let path = target_string(table, "path", "src/lib.rk", "lib")?;
+        targets.push(if proc_macro {
+            CrateTarget::ProcMacro { path }
+        } else {
+            CrateTarget::Lib { path }
         });
     }
     if let Some(bins) = parsed.get("bin") {
@@ -105,6 +129,9 @@ pub fn parse_rock_toml(content: &str) -> Result<CrateManifest, String> {
         let mut names = std::collections::HashSet::new();
         for bin in bins {
             let table = bin.as_table().ok_or("each [[bin]] entry must be a table")?;
+            if table.contains_key("proc_macro") {
+                return Err("proc_macro is only allowed in [lib], not [[bin]]".to_string());
+            }
             let bin_name = target_string(table, "name", &name, "bin")?;
             if !bin_name.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_')) {
                 return Err("bin.name must contain only ASCII letters, digits, '-' or '_'".to_string());
@@ -128,6 +155,11 @@ pub fn parse_rock_toml(content: &str) -> Result<CrateManifest, String> {
     }
     if targets.is_empty() {
         return Err("rock.toml requires a [lib] or at least one [[bin]] target".to_string());
+    }
+    if targets.iter().any(|target| target.role() == TargetRole::ProcMacro)
+        && targets.iter().any(|target| target.role() == TargetRole::Binary)
+    {
+        return Err("a [lib] with proc_macro = true cannot be combined with [[bin]] targets".to_string());
     }
 
     let dependencies = if let Some(deps_table) = parsed.get("dependencies") {
@@ -189,6 +221,56 @@ mod tests {
     use super::*;
 
     const CRATE_HEADER: &str = "[crate]\nname = \"example\"\nversion = \"0.1.0\"\n";
+
+    #[test]
+    fn proc_library_retains_ordinary_dependency_and_entry_metadata() {
+        for (setting, path) in [("", "src/lib.rk"), ("path = \"macros.rk\"\n", "macros.rk")] {
+            let manifest = parse_rock_toml(&format!(
+                "{CRATE_HEADER}\n[lib]\nproc_macro = true\n{setting}\n[dependencies]\nsdk = {{ path = \"../sdk\" }}\n",
+            )).unwrap();
+            assert_eq!(manifest.targets, vec![CrateTarget::ProcMacro { path: path.to_string() }]);
+            assert_eq!(manifest.primary_target().role(), TargetRole::ProcMacro);
+            assert_eq!(manifest.library(), Some(manifest.primary_target()));
+            assert_eq!(manifest.primary_target().path(), path);
+            assert_eq!(manifest.binaries().count(), 0);
+            assert_eq!(manifest.dependencies.unwrap()["sdk"].path.as_deref(), Some("../sdk"));
+        }
+    }
+
+    #[test]
+    fn omitted_and_false_proc_flags_preserve_ordinary_targets() {
+        let ordinary = parse_rock_toml(&format!("{CRATE_HEADER}\n[lib]\n[[bin]]\n")).unwrap();
+        let explicit = parse_rock_toml(&format!("{CRATE_HEADER}\n[lib]\nproc_macro = false\n[[bin]]\n")).unwrap();
+        assert_eq!(ordinary, explicit);
+        assert_eq!(ordinary.library().unwrap().role(), TargetRole::Library);
+        assert_eq!(ordinary.binaries().next().unwrap().role(), TargetRole::Binary);
+    }
+
+    #[test]
+    fn proc_flag_requires_a_boolean_in_the_library_table() {
+        for value in ["\"true\"", "1", "0", "[]", "[true]", "{}", "{ enabled = true }", "1.0"] {
+            let error = parse_rock_toml(&format!("{CRATE_HEADER}\n[lib]\nproc_macro = {value}\n")).unwrap_err();
+            assert!(error.contains("lib.proc_macro must be a boolean"), "{value}: {error}");
+        }
+        for value in ["true", "false", "\"true\""] {
+            let error = parse_rock_toml(&format!("{CRATE_HEADER}\n[[bin]]\nproc_macro = {value}\n")).unwrap_err();
+            assert!(error.contains("only allowed in [lib]"), "{error}");
+        }
+    }
+
+    #[test]
+    fn proc_libraries_cannot_declare_binaries() {
+        for targets in [
+            "[lib]\nproc_macro = true\n[[bin]]\n",
+            "[[bin]]\nname = \"helper\"\n[lib]\nproc_macro = true\n",
+            "[lib]\nproc_macro = true\n[[bin]]\nname = \"one\"\n[[bin]]\nname = \"two\"\n",
+        ] {
+            let error = parse_rock_toml(&format!("{CRATE_HEADER}\n{targets}")).unwrap_err();
+            assert!(error.contains("cannot be combined with [[bin]]"), "{error}");
+        }
+        let empty = parse_rock_toml(&format!("bin = []\n{CRATE_HEADER}\n[lib]\nproc_macro = true\n")).unwrap();
+        assert_eq!(empty.primary_target().role(), TargetRole::ProcMacro);
+    }
 
     #[test]
     fn test_binary_and_library_default_entries() {

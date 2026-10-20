@@ -1549,6 +1549,73 @@ export workflow; it is not permission to require authors to write a dispatcher.
 | B.16 | Wire host SDK/dispatcher build, packaging, and direct proc artifact inputs through real `rock build`/`rock run`. | Build/run an ordinary consumer importing the Rock identity macro from a direct dependency. Check root/qualified/aliased imports, invocation-only execution, missing runtime helper dependencies, and no source/bare-executable dependency injection into `rockc`. | R, I |
 | B.17 | Complete role-sensitive freshness, relocation, and source-free package acceptance. | Rebuild on provider/SDK/dependency/executable changes without sharing host/target objects. Move the package and consume artifacts after removing fixture provider sources; relative paths and content checks work, provider bytes stay unchanged, obsolete/corrupt versions reject, and no worker runs on inspection. | R, K, I |
 
+### B.11 delivery receipt (2026-10-20)
+
+The existing `[lib]` parser accepts a boolean `proc_macro` flag and records true
+as `CrateTarget::ProcMacro { path }`, with explicit `TargetRole` metadata for
+binary, ordinary library and proc library products. Library/primary-target
+selection includes proc libraries; binary selection does not. Default/custom
+entry paths and ordinary dependencies are unchanged. Omitted/false flags produce
+the same ordinary target model as before. No export list, new manifest section,
+macro dependency table or SDK-name special case is introduced.
+
+Four new shared manifest tests cover default/custom proc entries with explicit
+ordinary dependencies, unchanged ordinary library/binary combinations, eight
+nonboolean flag shapes, misplaced binary flags, and forbidden proc/bin mixes in
+both section orders and multiple-bin packages. An empty binary array declares no
+binary and remains valid. The compiler re-exports the same shared target roles.
+The appended target variant leaves existing ordinary target serialization shapes
+unchanged; no worker/protocol/product schema change is needed for this metadata.
+
+Until B.15/B.16 connect host products, build/run/dependency-artifact/analysis entry
+points explicitly reject proc libraries instead of compiling them as runtime
+objects. One new CLI test uses deliberately invalid source to prove role rejection
+precedes compiler execution and creates no build output for root/dependency cases
+in both profiles. This fail-closed boundary is not host-building acceptance.
+
+The initial complete CLI run passed 90 tests and failed the existing missing-rockc
+override fixture: a changed compiler stamp required development std provisioning,
+so the override failed there before the root process spawn the test intended to
+check. The fixture now explicitly uses no_std and retains both original root-spawn
+assertions, adding error text on assertion failure. The exact regression and
+complete rerun pass; no production spawn/sysroot behavior was changed.
+
+Verification evidence (all logs under `/tmp/opencode/`):
+
+- Focused manifest 15/15: `cargo test -p rock-shared manifest::tests`,
+  `macro-b11-manifest-test.log`, SHA-256
+  `b2153ce9bcaf1dd0873e73cb2455ef6014eda5d6e0e9d9495b38eecc26506839`.
+- Focused role test passes: `cargo test -p rock proc_library_role_never_falls_through_to_runtime_builds`,
+  `macro-b11-role-test.log`, SHA-256
+  `9017e3b9fbeea95f66a9a7e4e92b0a6d2bc8e56239c02ce37715e97dc01a0772`.
+- `cargo test -p rock-shared --all-features`: 30 units and one doctest pass,
+  `macro-b11-shared-test.log`, SHA-256
+  `cda39461e66d91feeabcc48220fa24c3f86ab82b9385cd30030c13bc5be0ec45`.
+- Initial CLI failure retained in `macro-b11-rock-test.log`, SHA-256
+  `a726b599cde4e7211c758ed59222ac80b04c6f6206e36b0fc20bb9651673c07a`.
+  Exact root-spawn regression passes via `cargo test -p rock --lib tests::build::test_build_project_reports_missing_rockc_override -- --exact`,
+  `macro-b11-spawn-test.log`, SHA-256
+  `f0b7e1ce57f1993fc660a2a8569acb1f048a29fc209ecf52fe945d3346a4458a`.
+- `cargo test -p rock`: 91 units pass; zero binary/doctests,
+  `macro-b11-rock-final.log`, SHA-256
+  `603addb47526cf4e7f2426db6ac1e36d8ac6eef8fe9269786053aa46e2eac4a3`.
+- `cargo test -p rockc`: 52 tests pass, `macro-b11-rockc-test.log`, SHA-256
+  `7c977b452e663bb3eda4aa471b2599fb2c35d2d9a6a9709f29718df58fde672c`.
+- Workspace/all-targets check and Clippy pass with existing warnings and no warning
+  in changed files. `macro-b11-check.log`, SHA-256
+  `caa01893c32f9e0eeaadebe6ccec33bb8c3fe1b009acff9d287fcedc5438a082`;
+  `macro-b11-clippy.log`, SHA-256
+  `52c3e9f59ee48f6b8555787a1970d48a7891e5b713f9df37d4aa1e8349e666e3`.
+- `cargo test -p rock-lib` passes: 2,699 units, 806 main integrations, six
+  diagnostic integrations, 14 native-process integrations, one SDK integration
+  (169.30 seconds) and one parser integration; one doctest ignored.
+  `macro-b11-acceptance.log`, SHA-256
+  `d47264d7fb234b399e41eab98b805e789e0582b8aa0e8694d99919416af96837`.
+
+Formatting remains deferred. `bd ready --json` still fails because bd is absent;
+unrelated work is untouched. No source export/dispatcher/build-role work is claimed.
+No functional edits follow these final gates.
+
 Do not widen `rock`'s dependency on compiler internals to generate semantic data:
 `rock` orchestrates `rockc`, which delegates compilation/discovery/checking to
 `lib`. Proc-only artifact emission must stop assuming every emitted artifact has

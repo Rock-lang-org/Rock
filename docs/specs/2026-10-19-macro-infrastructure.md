@@ -527,6 +527,13 @@ macro library; reject a nonboolean flag and combinations with `[[bin]]` for this
 delivery. Keep macro implementations separate from runtime helpers. No separate
 target table, dependency table, or manifest export registry is needed.
 
+The manifest model records this distinction as `CrateTarget::ProcMacro` with
+`TargetRole::ProcMacro`; it remains a library for entry/dependency selection,
+not a binary or an ordinary runtime library. Omitted/false flags select the
+unchanged ordinary library role. The flag is invalid on `[[bin]]`. Until the
+host-product build path is connected, build/analysis entry points reject this
+role explicitly rather than treating a host implementation as a target object.
+
 Example proposed macro package `demo_macros/rock.toml`:
 
 ```toml

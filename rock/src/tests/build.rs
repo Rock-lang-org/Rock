@@ -29,6 +29,40 @@ fn write_multi_target_package(root: &std::path::Path, library: bool) {
 }
 
 #[test]
+fn proc_library_role_never_falls_through_to_runtime_builds() {
+    let root = temp_test_dir("proc_library_role");
+    let provider = root.join("provider");
+    write_package_with_options(&provider, "provider", "src/lib.rk", &[], "not valid Rock\n", true);
+    fs::write(provider.join("rock.toml"),
+        "[crate]\nname = \"provider\"\nversion = \"0.1.0\"\nno_std = true\n\n[lib]\nproc_macro = true\n",
+    ).unwrap();
+    let package = load_package(provider.clone());
+    assert_eq!(package.target.role(), rock_shared::manifest::TargetRole::ProcMacro);
+    assert_eq!(package.entry_file(), provider.join("src/lib.rk"));
+    for profile in [BuildProfile::Debug, BuildProfile::Release] {
+        for error in [
+            crate::build::build_project(&provider, profile, false).unwrap_err(),
+            crate::build::run_project(&provider, profile, &[], None, false).unwrap_err(),
+            crate::project::resolve_analysis_project(&provider).unwrap_err(),
+        ] {
+            assert!(error.contains("host-only procedural macro library"), "{error}");
+        }
+        let consumer = root.join(profile.directory());
+        write_package_with_options(&consumer, "app", "src/main.rk",
+            &[("provider", provider.display().to_string())], "main = -> 0\n", true);
+        for error in [
+            crate::build::build_project(&consumer, profile, false).unwrap_err(),
+            crate::project::resolve_analysis_project(&consumer).unwrap_err(),
+        ] {
+            assert!(error.contains("host-only procedural macro library"), "{error}");
+        }
+        assert!(!consumer.join("build").exists());
+    }
+    assert!(!provider.join("build").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_multiple_binaries_with_or_without_a_library_build_in_both_profiles() {
     for library in [false, true] {
         let root = temp_test_dir("multiple_targets");
@@ -405,12 +439,15 @@ fn test_no_std_root_with_no_std_dependency_does_not_load_explicit_empty_sysroot(
 #[test]
 fn test_build_project_reports_missing_rockc_override() {
     let temp_dir = temp_test_dir("missing_rockc_override");
-    write_package(
+    // Test root process spawning, not development sysroot provisioning (which
+    // may itself need rockc after a compiler rebuild).
+    write_package_with_options(
         &temp_dir,
         "missing_rockc",
         "src/main.rk",
         &[],
         "main = -> 0\n",
+        true,
     );
     if run_isolated_test(
         "tests::build::test_build_project_reports_missing_rockc_override",
@@ -422,8 +459,8 @@ fn test_build_project_reports_missing_rockc_override() {
     let result = build_project(&temp_dir, BuildProfile::Debug);
 
     let error = result.unwrap_err();
-    assert!(error.contains("Failed to spawn rockc"));
-    assert!(error.contains("root executable for crate 'missing_rockc'"));
+    assert!(error.contains("Failed to spawn rockc"), "{error}");
+    assert!(error.contains("root executable for crate 'missing_rockc'"), "{error}");
 
     let _ = fs::remove_dir_all(temp_dir);
 }
