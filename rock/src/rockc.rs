@@ -170,6 +170,34 @@ pub(crate) fn build_root_invocation(
     invocation
 }
 
+pub(crate) fn discover_proc_macro_sdk(executable: &Path, artifacts: &[ExternArtifact]) -> Result<String, String> {
+    let mut invocation = RockcInvocation::new(executable.to_path_buf()).arg("--print").arg("proc-macro-sdks");
+    for artifact in artifacts {
+        invocation = invocation.arg("--extern-artifact").arg(RockcInvocation::name_path_arg(&artifact.name, &artifact.path));
+    }
+    let output = invocation.into_command().output().map_err(|error| format!("failed to inspect explicit SDK artifacts: {error}"))?;
+    if !output.status.success() { return Err(format!("SDK artifact inspection failed: {}", String::from_utf8_lossy(&output.stderr))); }
+    let names = std::str::from_utf8(&output.stdout).map_err(|error| format!("invalid SDK inspection output: {error}"))?;
+    let candidates: Vec<_> = names.lines().filter(|line| !line.is_empty()).collect();
+    match candidates.as_slice() {
+        [sdk] => Ok((*sdk).into()),
+        [] => Err("procedural macro provider requires an explicit ordinary SDK dependency exporting the host contract".into()),
+        _ => Err(format!("ambiguous procedural macro SDK dependencies: {}", candidates.join(", "))),
+    }
+}
+
+pub(crate) fn build_proc_artifact_invocation(executable: PathBuf, package: &Package, artifacts: &[ExternArtifact], sdk: &str) -> RockcInvocation {
+    let mut invocation = build_root_invocation(executable, package, artifacts)
+        .arg("--crate-name").arg(&package.manifest.crate_.name)
+        .arg("--proc-macro-sdk").arg(sdk)
+        .arg("--emit-artifact").arg(package.artifact_path());
+    // The normal root invocation's single output directory is replaced, not duplicated.
+    if let Some(index) = invocation.args.iter().position(|value| value == "--output-dir") {
+        invocation.args[index + 1] = package.worker_dir().into_os_string();
+    }
+    invocation
+}
+
 pub(crate) fn run_invocation(
     invocation: RockcInvocation,
     package: &Package,
@@ -353,6 +381,22 @@ mod tests {
         }));
 
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn macro_b_16_proc_host_invocation_supplies_only_artifacts_and_explicit_sdk() {
+        let root = temp_test_dir("proc_host_invocation");
+        write_package(&root, "provider", "lib.rk", &[], "not parsed by orchestration");
+        let package = load_package(root.clone());
+        let invocation = build_proc_artifact_invocation("rockc".into(), &package,
+            &[ExternArtifact { name: "chosen_sdk".into(), path: "/supplied/chosen_sdk.rkca".into() }], "chosen_sdk");
+        let args = args_as_strings(&invocation);
+        assert!(args.windows(2).any(|pair| pair == ["--proc-macro-sdk", "chosen_sdk"]));
+        assert!(args.windows(2).any(|pair| pair == ["--extern-artifact", "chosen_sdk=/supplied/chosen_sdk.rkca"]));
+        assert!(args.windows(2).any(|pair| pair[0] == "--output-dir" && pair[1] == package.worker_dir().to_string_lossy()));
+        assert_eq!(args.iter().filter(|arg| arg.as_str() == "--output-dir").count(), 1);
+        assert!(!args.iter().any(|arg| matches!(arg.as_str(), "--no-link" | "--emit-object" | "--extern-crate" | "--proc-macro")));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

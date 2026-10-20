@@ -132,8 +132,8 @@ normalize block indentation or interpret DSL text.
   static phase messages go only to ordinary `std::io::traits::stderr`.
 - The native compiler host still validates the final response and clean exit.
   Native acceptance uses parser-produced inline-expression/block invocation data
-  through that host; it does not claim procedural expression dispatch, block
-  margin rewriting, or the complete package-build workflow.
+  through that host. Both item and expression dispatch are implemented; block
+  margin rewriting and deferred fragment materialization remain separate work.
 
 ## Source declarations and discovery
 
@@ -198,8 +198,65 @@ consumer target inputs, even on a native build. Provider ordinary identities
 declare available definition-side handles; a handle used in emitted runtime code
 must resolve to the consumer's own explicitly supplied dependency identity and
 public exports. Host SDK/std objects are never added implicitly to the consumer.
-Application package workflows will use `rock build`/`rock run` once package
-execution and freshness/relocation integration land in B.16–B.17.
+`rock build` and `rock run` now build proc dependencies automatically. SDK
+selection inspects public contract exports in explicit dependency artifacts, not
+the package spelling. There must be exactly one candidate; missing or ambiguous
+SDK dependencies diagnose. Freshness/relocation completion remains B.17.
+
+## Application workflow
+
+Assume sibling directories `rock_macro/` (this SDK), `provider/`, and `consumer/`.
+In `provider/rock.toml`, declare an ordinary SDK dependency and a proc library:
+
+```toml
+[crate]
+name = "provider"
+version = "0.1.0"
+no_std = true
+
+[lib]
+path = "src/lib.rk"
+proc_macro = true
+
+[dependencies]
+rock_macro = { path = "../rock_macro" }
+```
+
+The complete `provider/src/lib.rk` needs no handwritten dispatcher:
+
+```rock
+> rock_macro::MacroResult
+< macro identity = context, input -> MacroResult::Expand input
+```
+
+In `consumer/rock.toml`, use an ordinary dependency again:
+
+```toml
+[crate]
+name = "consumer"
+version = "0.1.0"
+
+[[bin]]
+name = "consumer"
+path = "src/main.rk"
+
+[dependencies]
+provider = { path = "../provider" }
+```
+
+The complete `consumer/src/main.rk` uses the normal std prelude:
+
+```rock
+> provider::identity
+main = !->
+    answer = %identity 42
+    answer.println!
+```
+
+Run `rock build` in `provider/` to check its host contract, or run `rock run` in
+`consumer/` to build both packages and print `42`. `rock build --no-proc-execution`
+permits unused macro imports but rejects actual proc invocations. Runtime helper
+crates used by generated code must also be declared by the consumer.
 
 The Rust wire specification is
 [`docs/specs/2026-10-19-macro-worker-wire.md`](../docs/specs/2026-10-19-macro-worker-wire.md).

@@ -15,7 +15,8 @@ use crate::{
     package::{BuildProfile, Package},
     progress,
     rockc::{
-        build_dependency_artifact_invocation, resolve_rockc_path, run_invocation, ExternArtifact,
+        build_dependency_artifact_invocation, build_proc_artifact_invocation, discover_proc_macro_sdk,
+        resolve_rockc_path, run_invocation, ExternArtifact,
     },
 };
 
@@ -97,24 +98,19 @@ pub(crate) fn collect_root_artifacts(
         })
         .collect::<Vec<_>>();
 
-    if package_requires_sysroot_std(package) {
+    if package_requires_sysroot_std(package) && !artifacts.iter().any(|artifact| artifact.name == STD_CRATE_NAME) {
         let layout = ensure_sysroot_std_available(package.no_proc_execution)?;
         artifacts.push(ExternArtifact {
             name: STD_CRATE_NAME.to_string(),
             path: layout.std_artifact,
         });
     }
-    if state.dependency_artifacts_use_std(&dependency_artifacts) {
+    if state.dependency_artifacts_use_std(&dependency_artifacts) && !artifacts.iter().any(|artifact| artifact.name == STD_CRATE_NAME) {
         let std_artifact = ensure_sysroot_std_available(package.no_proc_execution)?.std_artifact;
-        if !artifacts
-            .iter()
-            .any(|artifact| artifact.path == std_artifact)
-        {
-            artifacts.push(ExternArtifact {
-                name: STD_CRATE_NAME.to_string(),
-                path: std_artifact,
-            });
-        }
+        artifacts.push(ExternArtifact {
+            name: STD_CRATE_NAME.to_string(),
+            path: std_artifact,
+        });
     }
 
     Ok(artifacts)
@@ -147,11 +143,13 @@ fn ensure_planned_artifact(id: &BuildUnitId, plan: &BuildPlan, state: &mut Artif
         if plan.units[id].runtime_inputs.iter().any(|input| input.platform != id.platform) {
             return Err("runtime inputs cross the host/target boundary".into());
         }
-        package.require_runtime_target()?;
+        let procedural = id.role() == rock_shared::manifest::TargetRole::ProcMacro;
         if id.triple != rock_shared::sysroot::host_target_triple() {
             return Err(format!("native compiler cannot build requested platform triple '{}'", id.triple));
         }
-        let mut implicit_artifact_inputs = if package_requires_sysroot_std(&package) {
+        let supplied_std = plan.units[id].compiler_inputs.iter().any(|dependency|
+            plan.units[dependency].package.manifest.crate_.name == STD_CRATE_NAME);
+        let mut implicit_artifact_inputs = if package_requires_sysroot_std(&package) && !supplied_std {
             vec![ensure_sysroot_std_available(package.no_proc_execution)?.std_artifact.clone()]
         } else {
             Vec::new()
@@ -170,7 +168,7 @@ fn ensure_planned_artifact(id: &BuildUnitId, plan: &BuildPlan, state: &mut Artif
         dependency_artifacts.sort();
         dependency_artifacts.dedup();
 
-        if dependencies_use_std {
+        if dependencies_use_std && !supplied_std {
             let std_artifact = ensure_sysroot_std_available(package.no_proc_execution)?.std_artifact;
             if !implicit_artifact_inputs.contains(&std_artifact) {
                 implicit_artifact_inputs.push(std_artifact);
@@ -215,8 +213,11 @@ fn ensure_planned_artifact(id: &BuildUnitId, plan: &BuildPlan, state: &mut Artif
                 name: STD_CRATE_NAME.to_string(),
                 path: path.clone(),
             }));
-            let invocation =
-                build_dependency_artifact_invocation(resolve_rockc_path()?, &package, &artifacts);
+            let executable = resolve_rockc_path()?;
+            let invocation = if procedural {
+                let sdk = discover_proc_macro_sdk(&executable, &artifacts)?;
+                build_proc_artifact_invocation(executable, &package, &artifacts, &sdk)
+            } else { build_dependency_artifact_invocation(executable, &package, &artifacts) };
             progress::compiling(&package);
             run_invocation(
                 invocation,
@@ -235,7 +236,7 @@ fn ensure_planned_artifact(id: &BuildUnitId, plan: &BuildPlan, state: &mut Artif
         state.packages.insert(package.root_dir.clone(), package.clone());
         state.uses_std.insert(
             artifact_path.clone(),
-            package_requires_sysroot_std(&package) || dependencies_use_std,
+            !procedural && (package_requires_sysroot_std(&package) || dependencies_use_std),
         );
         state.progress.complete();
         Ok(artifact_path)
@@ -248,7 +249,7 @@ fn artifact_is_fresh(
     dependency_artifacts: &[(String, PathBuf)],
     implicit_artifact_inputs: &[PathBuf],
 ) -> Result<bool, String> {
-    let object_path = package.object_path();
+    let object_path = if package.target.role() == rock_shared::manifest::TargetRole::ProcMacro { package.worker_path() } else { package.object_path() };
     if !artifact_path.exists() || !object_path.exists() {
         return Ok(false);
     }

@@ -30,6 +30,7 @@ macro publish
             "> rock_macro::MacroResult\nwrap = input -> MacroResult::Expand input\n< macro identity = context, input -> wrap input\n".into() },
     ];
     let sdk = ProcMacroSdk { dependency: "rock_macro".into() };
+    assert_eq!(rock_lib::macro_expansion::host::discover_sdks(&host.extern_artifacts).unwrap(), ["rock_macro"]);
     let output = rock_lib::compile_proc_macro_with_products(&host, &sdk).unwrap_or_else(|errors| panic!("generated host: {errors:?}"));
     let mut products = output.products.unwrap();
     assert_eq!(products.role(), rock_lib::products::ProductRole::ProcMacro);
@@ -133,6 +134,10 @@ macro publish
     for (name, path) in &mut renamed.extern_artifacts {
         if name == "rock_macro" { *name = "renamed_sdk".into(); *path = artifact.clone(); }
     }
+    assert_eq!(rock_lib::macro_expansion::host::discover_sdks(&renamed.extern_artifacts).unwrap(), ["renamed_sdk"]);
+    let mut ambiguous = renamed.extern_artifacts.clone();
+    ambiguous.extend(host.extern_artifacts.iter().filter(|(name, _)| name == "rock_macro").cloned());
+    assert_eq!(rock_lib::macro_expansion::host::discover_sdks(&ambiguous).unwrap(), ["renamed_sdk", "rock_macro"]);
     for provider in &mut renamed.source_providers {
         if let SourceProvider::Virtual { text, .. } = provider { *text = text.replace("rock_macro::", "renamed_sdk::"); }
     }

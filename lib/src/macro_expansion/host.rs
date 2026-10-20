@@ -26,6 +26,20 @@ pub struct ProcMacroSdk {
     pub dependency: String,
 }
 
+const SDK_EXPORTS: [&str; 6] = ["MacroContext", "TokenStream", "MacroResult", "run_worker", "is_function_like", "unknown_entry"];
+
+/// Inspect explicitly supplied ordinary artifact interfaces, without running workers.
+pub fn discover_sdks(artifacts: &[(String, PathBuf)]) -> Result<Vec<String>, Diagnostics> {
+    let mut crates = CrateContext::new();
+    crate::load_extern_artifacts(&mut crates, artifacts, PathBuf::from("<sdk-discovery>"))
+        .map_err(|error| Diagnostics(vec![error]))?;
+    let mut candidates: Vec<_> = crates.extern_crates().filter(|provider| provider.metadata().proc_macros().is_empty()
+        && SDK_EXPORTS.iter().all(|name| provider.root_exports().contains_key(*name)))
+        .map(|provider| provider.name().to_string()).collect();
+    candidates.sort();
+    Ok(candidates)
+}
+
 struct Entry {
     id: NodeId,
     name: String,
@@ -166,7 +180,7 @@ pub(crate) fn install(ast: &mut Program, graph: &mut ModuleGraph, context: &Macr
     }
     let provider = crates.extern_crate(&sdk.dependency)
         .ok_or_else(|| failure(format!("SDK dependency '{}' is not an ordinary loaded library", sdk.dependency)))?;
-    for required in ["MacroContext", "TokenStream", "MacroResult", "run_worker", "is_function_like", "unknown_entry"] {
+    for required in SDK_EXPORTS {
         if !provider.root_exports().contains_key(required) {
             return Err(failure(format!("SDK '{}' has no public contract export '{required}'", sdk.dependency)));
         }

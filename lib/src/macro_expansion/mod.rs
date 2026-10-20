@@ -282,6 +282,17 @@ fn expand_proc_macro_top_level(
     invocation: &MacroInvoc,
     context: &MacroExpansionContext<'_>,
 ) -> Result<Vec<TopLevel>, Diagnostics> {
+    match expand_procedural(entry, invocation, context)? {
+        generated_parser::GeneratedSyntax::Items(module) => Ok(module.top_levels),
+        generated_parser::GeneratedSyntax::Expression(_) => Err(proc_macro_error("expected generated items", invocation.span.clone())),
+    }
+}
+
+fn expand_procedural(
+    entry: &ProcMacroRegistryEntry,
+    invocation: &MacroInvoc,
+    context: &MacroExpansionContext<'_>,
+) -> Result<generated_parser::GeneratedSyntax, Diagnostics> {
     let invoc_span = invocation.span.clone();
     let args = &invocation.args;
     let parent = invocation.parent;
@@ -377,9 +388,10 @@ fn expand_proc_macro_top_level(
         return Err(with_expansion_trace(diagnostics, context, expansion_id));
     }
     context.reports.borrow_mut().merge(diagnostics);
-    parse_generated_top_levels(stream, context, Some(expansion_id))
+    parse_generated_result(stream, context, invocation.output, Some(expansion_id))
 }
 
+#[cfg(test)]
 fn parse_generated_top_levels(
     stream: TokenStream,
     context: &MacroExpansionContext<'_>,

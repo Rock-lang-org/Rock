@@ -154,6 +154,7 @@ fn same_directory(left: &std::path::Path, right: &std::path::Path) -> bool {
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 enum PrintValue {
     ArtifactDeps,
+    ProcMacroSdks,
     Sysroot,
     TargetLibdir,
     TargetTriple,
@@ -274,6 +275,11 @@ fn print_request_output(config: &Config) -> Result<Option<String>, Diagnostics> 
 
     let output = match print_value {
         PrintValue::ArtifactDeps => print_artifact_deps(config)?,
+        PrintValue::ProcMacroSdks => {
+            let artifacts = config.extern_artifact.iter().map(|value| parse_name_path(value, "extern-artifact"))
+                .collect::<Result<Vec<_>, _>>()?;
+            rock_lib::macro_expansion::host::discover_sdks(&artifacts)?.join("\n")
+        }
         PrintValue::Sysroot => resolved_sysroot_layout(config)?
             .sysroot
             .display()
@@ -888,6 +894,14 @@ mod tests {
             print_request_output(&config).unwrap(),
             Some(rock_lib::sysroot::host_target_triple())
         );
+    }
+
+    #[test]
+    fn macro_b_16_sdk_inspection_requires_only_explicit_artifacts_not_sources() {
+        let config = Config::try_parse_from(["rockc", "--print", "proc-macro-sdks", "--no-proc-execution"]).unwrap();
+        assert_eq!(super::print_request_output(&config).unwrap(), Some(String::new()));
+        let config = Config::try_parse_from(["rockc", "--print", "proc-macro-sdks", "--extern-artifact", "not-an-artifact"]).unwrap();
+        assert!(super::print_request_output(&config).is_err());
     }
 
     #[test]

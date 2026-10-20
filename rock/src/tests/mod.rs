@@ -1,5 +1,6 @@
 mod artifact;
 mod build;
+mod macro_packages;
 mod cli;
 mod clean;
 mod new;

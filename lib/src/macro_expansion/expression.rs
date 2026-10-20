@@ -203,11 +203,13 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                     return Err(failure(Diagnostic::new("procedural macro execution is disabled (--no-proc-execution)".into(), invocation.span.clone())
                         .with_code(DiagnosticCode::Macro)));
                 }
-                let Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. }) = resolved else {
-                    return Err(failure(Diagnostic::new("expression macro expansion is not implemented for unresolved or procedural macro paths".into(), invocation.span.clone())
-                        .with_code(DiagnosticCode::Macro)));
+                let result = match resolved.map(|entry| &entry.definition) {
+                    Some(MacroDefinition::Declarative(declaration)) => expand_declarative(declaration, invocation, self.context)?,
+                    Some(MacroDefinition::Procedural(entry)) => super::expand_procedural(entry, invocation, self.context)?,
+                    _ => return Err(failure(Diagnostic::new("unresolved expression macro path".into(), invocation.span.clone())
+                        .with_code(DiagnosticCode::Macro))),
                 };
-                let GeneratedSyntax::Expression(mut generated) = expand_declarative(declaration, invocation, self.context)? else {
+                let GeneratedSyntax::Expression(mut generated) = result else {
                     return Err(failure(Diagnostic::new("expected an expression macro result".into(), invocation.span.clone()).with_code(DiagnosticCode::Macro)));
                 };
                 // Execute only the emitted tree, never the invocation's input.

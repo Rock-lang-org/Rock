@@ -41,7 +41,6 @@ pub(crate) fn build_project(project_root: &Path, profile: BuildProfile, no_proc_
 }
 
 fn build_targets(mut package: Package, binaries: Vec<CrateTarget>) -> Result<BuildProducts, String> {
-    package.require_runtime_target()?;
     let started = Instant::now();
     let has_library = package.manifest.library().is_some();
     let mut state = ArtifactBuildState::for_targets(&package, usize::from(has_library) + binaries.len())?;

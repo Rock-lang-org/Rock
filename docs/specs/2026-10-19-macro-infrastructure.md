@@ -574,7 +574,8 @@ is not compiler-known. Ordinary artifact crate-name validation is unchanged.
 The compiler generates an isolated dispatcher/bootstrap, retains implementation
 ASTs in their original scopes, and checks their signatures through the normal
 compiler pipeline. Metadata discovery still generates no wrapper. Proc-only
-artifact publication is implemented in B.14; real package building remains B.15–B.17.
+artifact publication is implemented in B.14 and real package building in B.16;
+role-sensitive freshness/relocation acceptance remains B.17.
 
 The function-like/derive forms are allowed only in a proc library (derive remains reserved).
 They declare ordinary host function bodies with SDK entry contracts plus macro
@@ -624,7 +625,7 @@ main = !->
     answer.println!
 ```
 
-The proposed authoring workflow is `rock build` in the macro package, then
+The authoring workflow is `rock build` in the macro package, then
 `rock run` in the consumer, using the normal CLI's std selection policy. SDK
 dependencies and host std artifacts are still explicitly supplied to `rockc`
 by the build orchestrator; the compiler does not discover either itself.
@@ -680,6 +681,26 @@ The current compiler is native-only: simulated host/target triples validate the
 planner, while execution refuses a foreign triple rather than silently producing
 native code. B.16 connects proc-host package execution; B.17 completes role-aware
 freshness and relocation. These are not yet cross-compilation claims.
+
+B.16 wires the planned host libraries, SDK selection, generated dispatcher and
+proc-only packaging through `rock build` and `rock run`, for root providers and
+direct consumer dependencies. `rock` asks `rockc --print proc-macro-sdks` to inspect
+the explicitly supplied ordinary artifact interfaces without running a worker;
+exactly one SDK contract must be present. Missing/ambiguous contracts diagnose,
+and the selected dependency is passed through `--proc-macro-sdk`. The normal
+compiler pipeline still checks its actual types/signatures. Only `--extern-artifact`
+inputs cross the compiler boundary; neither source dependencies nor bare worker
+executables are injected. A provider has a linked worker and metadata, not an
+ordinary target object. Ordinary transitive std artifacts already supplied in
+the planned closure are reused instead of adding a second implicit std identity.
+
+Both item and expression invocations use the same one-shot execution, output
+authority and category-aware parsing path. Retained leading call-separator trivia
+does not create a top-level indentation scope for an expression; token offsets
+and ordinary item indentation rules remain unchanged. Imports alone never execute
+workers, including with `--no-proc-execution`; a real invocation under that flag
+diagnoses. A generated helper path requires the consumer's declared runtime
+artifact, not the provider's host copy.
 
 The generated executable contains a dispatcher and SDK transport runner; authors
 do not implement framing, stdin/stdout handling, or a handwritten export table.

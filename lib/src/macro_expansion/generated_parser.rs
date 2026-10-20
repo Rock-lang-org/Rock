@@ -101,6 +101,16 @@ mod tests {
     }
 
     #[test]
+    fn macro_b_16_forwarded_expression_separator_keeps_retained_token_offsets() {
+        let stream = source("prefix  42 suffix").slice(6..10, super::super::token_tree::MACRO_LIMITS).unwrap();
+        let GeneratedSyntax::Expression(crate::ast::Expression::UnaryExpr(crate::ast::UnaryExpr::PrimaryExpr(primary))) =
+            parse_generated_source(&stream, &test_config(), MacroOutputCategory::Expression, None).unwrap() else { panic!("expected expression") };
+        let crate::ast::Operand::Literal(literal) = primary.operand else { panic!("expected retained literal") };
+        assert_eq!(literal.span.start..literal.span.end, 8..10);
+        assert!(generated("  main = -> 42", MacroOutputCategory::Items).is_err(), "item indentation rules are unchanged");
+    }
+
+    #[test]
     fn macro_a_04_item_lists_allow_empty_and_multiple_items() {
         use crate::ast::MacroOutputCategory;
         for (text, count) in [("", 0), ("// empty\n", 0), ("first = !-> 1\nsecond = !-> 2\n", 2)] {

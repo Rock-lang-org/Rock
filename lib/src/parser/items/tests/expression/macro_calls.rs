@@ -56,7 +56,7 @@ fn macro_a_02_argument_names_and_nested_calls_need_no_resolution_or_execution() 
     let config = Config::default();
     let context = MacroExpansionContext::new(&config);
     let diagnostics = expand_macros_with_context(program, &context).unwrap_err();
-    assert!(diagnostics.0.iter().any(|diagnostic| diagnostic.message.contains("expression macro expansion is not implemented")));
+    assert!(diagnostics.0.iter().any(|diagnostic| diagnostic.message.contains("unresolved expression macro path")));
     assert!(!diagnostics.0.iter().any(|diagnostic| diagnostic.message.contains("inner")));
 }
 

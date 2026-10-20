@@ -55,7 +55,9 @@ pub fn parse_lossless_expression(
     config: &Config,
     expansion_parent: Option<crate::macro_expansion::ExpansionId>,
 ) -> Result<Expression, ParseError> {
-    parse_lossless(stream, config, expansion_parent, None, expression_fragment)
+    // An expression fragment may start with retained call-separator trivia;
+    // its first line is not a new top-level indentation scope.
+    parse_lossless(stream, config, expansion_parent, Some(0), expression_fragment)
 }
 
 pub(crate) fn parse_expression_fragment(

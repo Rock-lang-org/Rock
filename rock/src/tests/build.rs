@@ -43,10 +43,10 @@ fn proc_library_role_never_falls_through_to_runtime_builds() {
         for error in [
             crate::build::build_project(&provider, profile, false).unwrap_err(),
             crate::build::run_project(&provider, profile, &[], None, false).unwrap_err(),
-            crate::project::resolve_analysis_project(&provider).unwrap_err(),
         ] {
-            assert!(error.contains("host-only procedural macro library"), "{error}");
+            assert!(error.contains("explicit ordinary SDK dependency"), "{error}");
         }
+        assert!(crate::project::resolve_analysis_project(&provider).unwrap_err().contains("host-only procedural macro library"));
         let consumer = root.join(profile.directory());
         write_package_with_options(&consumer, "app", "src/main.rk",
             &[("provider", provider.display().to_string())], "main = -> 0\n", true);
@@ -54,11 +54,11 @@ fn proc_library_role_never_falls_through_to_runtime_builds() {
             crate::build::build_project(&consumer, profile, false).unwrap_err(),
             crate::project::resolve_analysis_project(&consumer).unwrap_err(),
         ] {
-            assert!(error.contains("host-only procedural macro library"), "{error}");
+            assert!(error.contains("explicit ordinary SDK dependency"), "{error}");
         }
-        assert!(!consumer.join("build").exists());
+        assert!(!consumer.join("build").join(profile.directory()).join("app").exists());
     }
-    assert!(!provider.join("build").exists());
+    assert!(!package.object_path().exists(), "missing SDK never falls through to runtime object emission");
     fs::remove_dir_all(root).unwrap();
 }
 

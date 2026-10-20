@@ -1982,6 +1982,96 @@ Verification evidence (logs under `/tmp/opencode/`):
 No functional edits follow the final focused/check/Clippy gates. Formatting
 remains deferred, Beads unavailable, and unrelated work untouched.
 
+### B.16 delivery receipt (2026-10-20)
+
+Real `rock build`/`rock run` now consume the B.15 plan to build host SDK/ordinary
+libraries, discover the explicit SDK contract, compile the generated dispatcher,
+and publish proc-only artifacts for root providers and direct consumer inputs.
+`rockc --print proc-macro-sdks` inspects supplied ordinary public interfaces without
+executing workers; the orchestrator requires exactly one candidate and passes it
+through `--proc-macro-sdk`. Contract names are shared with B.13's wrapper check;
+there is no SDK package-spelling special case. Actual signature/type checking
+remains in the normal compiler pipeline. Native SDK acceptance checks original,
+renamed and two-candidate discovery against real artifacts.
+
+Host invocation construction reuses ordinary compiler flags/dependency artifact
+inputs but emits a linked worker and proc-only product, not no-link/runtime object
+outputs. No source or bare-executable dependency option is passed to `rockc`.
+Proc roots select the host layout at package load, and their basic freshness check
+requires the worker rather than a dummy object. Proc artifacts do not propagate
+host std requirements into target compilation. An explicit ordinary std already
+in the compiler-input closure is reused rather than adding a second implicit
+identity. Role-sensitive freshness and relocation completion remain B.17.
+
+The existing expression-proc placeholder blocked the real identity example.
+Item and expression calls now share the same execution/output reconstruction
+function and category-specific lossless parser. An identity result forwarding
+the inline call-separator space also exposed root-expression indentation handling:
+the ordinary expression-fragment entry now treats its first line as a fragment,
+preserving retained token offsets and subsequent layout, without changing ordinary
+item indentation or printing/re-lexing captured syntax. A local regression keeps
+the retained literal's exact original range and the ordinary item-indent negative.
+The parser's existing unresolved-outer/no-inner-execution observer now expects an
+unresolved-path diagnostic instead of the retired unimplemented-placeholder text;
+all its source and semantic assertions remain unchanged.
+
+The new real CLI test builds/imports the source identity macro via short, qualified
+and module-import alias paths, runs each consumer to exit 42, proves unused imports
+build with execution disabled and actual invocations diagnose, then emits a runtime
+helper path. Missing consumer runtime dependencies diagnose with `runtime@0.1.0`;
+adding that ordinary dependency runs successfully. It verifies that actual host
+and target helper artifact/object files both exist at separate paths, and that
+the provider has a worker but no ordinary runtime object. An invocation unit
+checks exact SDK/artifact flags and absence of source/bare-worker/object options.
+The original invalid-source proc-role observer still proves no runtime fallthrough;
+its build boundary now diagnoses missing SDK before source compilation, while
+runtime-only provider analysis points to `rock build` rather than claiming host
+building is unimplemented.
+
+The first focused RED hits the old host-only build guard. Follow-up fixture runs
+exposed unsupported inline file-module indentation, the actual expression-trivia
+bug above, a diagnostic assertion reading stderr instead of compiler stdout, and
+an attempted import of std's private prelude module. The fixture now uses a real
+module file and ordinary explicit std artifacts with normal prelude injection.
+No compiler-owned std loading or observer weakening was introduced. A macro-only
+run also caught the stale unimplemented-diagnostic observer before the final gates.
+
+Verification evidence (logs under `/tmp/opencode/`):
+
+- `cargo test -p rock --lib macro_b_16` initial RED: `macro-b16-red.log`, SHA-256
+  `325d13e4c7909023151488e005ce4e084e60f9d89c5aeb36275791177c991200`.
+  The first two-control GREEN is `macro-b16-package-verified.log`, SHA-256
+  `08f5f66e0d59d45126f84c66f3a923c176cd5c4b040b21b45612111b47475965`;
+  final broader gates include the subsequent closure-std/path assertions.
+- `cargo test -p rock-lib`: 2,719 units, 806 main integrations, six diagnostic,
+  14 process, one SDK (236.03 seconds) and one parser integration pass; one doctest
+  ignored. `macro-b16-acceptance.log`, SHA-256
+  `6d63541a26987bbdf959d003b0937837edc4955b1cabbe3f82bae1a7a7308908`.
+- `cargo test -p rock`: 95 pass including the real CLI native controls; zero
+  binary/doctests. `macro-b16-rock.log`, SHA-256
+  `ee761c49582471dffa7411e55ae066024bf067f5f6607a889ead51d77478c8df`.
+- `cargo test -p rockc`: 56 pass; `macro-b16-rockc.log`, SHA-256
+  `03d7cde52786997fae265616c82e72e6bf473c9050802d1778b99428144b4f71`.
+- `cargo test -p rock-shared --all-features`: 30 units and one doctest pass;
+  `macro-b16-shared.log`, SHA-256
+  `b2421faa67e816f07aa007fb158757302f2ffc26624c0938f0eb6abd27de2282`.
+- Workspace/all-targets check and Clippy pass with warnings;
+  `macro-b16-check.log`, SHA-256
+  `b9c7dbdc870a904cab1c03f61b70c89d72f19cba95a5a764146f5aacf2246e2c`;
+  `macro-b16-clippy.log`, SHA-256
+  `807b8a3a814ef4ba9af75b268146c793a07de4b4062371dbd67a1e0ec8e3c3d1`.
+- The complete README provider/consumer source examples were exercised in
+  `macro-b16-doc/`, with only the SDK locator made absolute. Root `rock build
+  --debug --no-proc-execution` passes (`macro-b16-doc-provider.log`, SHA-256
+  `b4f61b44a5af90e41564a0a60961bcdb2998ae0ebff298d870950c83aed36041`),
+  and consumer `rock run --debug` prints `42` with exit 0
+  (`macro-b16-doc-consumer.log`, SHA-256
+  `06ed9e39f1297245d263c8d7ff405e7c222a711afe4775e965b57a1cd64e0e39`).
+
+Product format 54, protocol 7 and `RKLOSS04` remain unchanged. No functional edits
+follow the final gates. Formatting remains deferred, Beads unavailable, unrelated
+work untouched. B.17 and the nontrivial consumer/derive stages remain unfinished.
+
 Do not widen `rock`'s dependency on compiler internals to generate semantic data:
 `rock` orchestrates `rockc`, which delegates compilation/discovery/checking to
 `lib`. Proc-only artifact emission now uses host metadata rather than a target

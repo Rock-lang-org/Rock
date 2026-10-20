@@ -59,13 +59,16 @@ impl Package {
         let manifest = manifest::load_manifest(&manifest_path)?;
 
         let target = manifest.primary_target().clone();
+        let platform = if target.role() == manifest::TargetRole::ProcMacro {
+            crate::dependency_plan::BuildPlatform::Host
+        } else { crate::dependency_plan::BuildPlatform::Target };
         Ok(Self {
             build_root: canonical_root.join(BUILD_DIR),
             dependency_key: None,
             root_dir: canonical_root,
             manifest,
             target,
-            platform: crate::dependency_plan::BuildPlatform::Target,
+            platform,
             target_triple: rock_shared::sysroot::host_target_triple(),
             profile: BuildProfile::default(),
             no_proc_execution: false,
@@ -91,12 +94,11 @@ impl Package {
         };
     }
 
-    // Until the host-product build path is wired, never compile a proc library
-    // as an ordinary reusable runtime object (including analysis builds).
+    // Runtime analysis must not treat provider implementations as target code.
     pub(crate) fn require_runtime_target(&self) -> Result<(), String> {
         if self.target.role() == manifest::TargetRole::ProcMacro {
             return Err(format!(
-                "Package '{}' is a host-only procedural macro library; host-product building is not implemented yet",
+                "Package '{}' is a host-only procedural macro library; use `rock build` to check and build its host contract",
                 self.manifest.crate_.name,
             ));
         }
@@ -127,6 +129,12 @@ impl Package {
 
     pub(crate) fn object_dir(&self) -> PathBuf {
         self.build_dir().join(OBJECTS_DIR)
+    }
+
+    pub(crate) fn worker_dir(&self) -> PathBuf { self.build_dir().join("worker") }
+
+    pub(crate) fn worker_path(&self) -> PathBuf {
+        crate::compile::output_executable_path(&self.worker_dir(), &self.entry_file())
     }
 
     pub(crate) fn object_path(&self) -> PathBuf {
