@@ -3,7 +3,53 @@
 use std::collections::HashMap;
 
 use crate::ids::HirLocalId;
+use crate::lexer::lossless::SyntaxContext;
 use crate::types::Type;
+
+/// Local identity before lowering assigns a canonical `HirLocalId`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct LocalName {
+    pub spelling: String,
+    pub context: SyntaxContext,
+}
+
+impl LocalName {
+    pub(crate) fn new(spelling: String, context: SyntaxContext) -> Self {
+        Self { spelling, context }
+    }
+
+    pub(crate) fn from_segment(segment: &crate::ast::IdentOrType) -> Option<Self> {
+        match segment {
+            crate::ast::IdentOrType::Ident(ident) => Some(ident.into()),
+            crate::ast::IdentOrType::Type(crate::ast::ParseType::Type(ty)) => {
+                Some(Self::new(ty.name.clone(), ty.context))
+            }
+            _ => None,
+        }
+    }
+}
+
+impl From<String> for LocalName {
+    fn from(spelling: String) -> Self { Self::new(spelling, SyntaxContext::ROOT) }
+}
+
+impl From<&str> for LocalName {
+    fn from(spelling: &str) -> Self { spelling.to_string().into() }
+}
+
+impl From<&String> for LocalName {
+    fn from(spelling: &String) -> Self { spelling.as_str().into() }
+}
+
+impl From<&crate::ast::Ident> for LocalName {
+    fn from(ident: &crate::ast::Ident) -> Self {
+        Self::new(ident.name.clone(), ident.context)
+    }
+}
+
+impl From<&LocalName> for LocalName {
+    fn from(name: &LocalName) -> Self { name.clone() }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScopeBinding {
@@ -18,22 +64,26 @@ pub struct ScopeBinding {
 #[derive(Clone)]
 pub struct Scope {
     /// Stack of variable bindings.
-    vars: Vec<HashMap<String, ScopeBinding>>,
+    vars: Vec<HashMap<LocalName, ScopeBinding>>,
+    locals: Vec<HashMap<HirLocalId, (String, ScopeBinding)>>,
 }
 
 impl Scope {
     pub fn new() -> Self {
         Self {
             vars: vec![HashMap::new()],
+            locals: vec![HashMap::new()],
         }
     }
 
     pub fn push(&mut self) {
         self.vars.push(HashMap::new());
+        self.locals.push(HashMap::new());
     }
 
     pub fn pop(&mut self) {
         self.vars.pop();
+        self.locals.pop();
     }
 
     pub fn define(&mut self, name: String, ty: Type, mutable: bool) {
@@ -42,7 +92,7 @@ impl Scope {
 
     pub fn define_local_without_id(&mut self, name: String, ty: Type, mutable: bool) {
         self.insert(
-            name,
+            name.into(),
             ScopeBinding {
                 ty,
                 mutable,
@@ -55,7 +105,7 @@ impl Scope {
 
     pub fn define_top_level(&mut self, name: String, ty: Type, mutable: bool) {
         self.insert(
-            name,
+            name.into(),
             ScopeBinding {
                 ty,
                 mutable,
@@ -66,9 +116,9 @@ impl Scope {
         );
     }
 
-    pub fn define_local(&mut self, name: String, ty: Type, mutable: bool, local_id: HirLocalId) {
+    pub(crate) fn define_local(&mut self, name: impl Into<LocalName>, ty: Type, mutable: bool, local_id: HirLocalId) {
         self.insert(
-            name,
+            name.into(),
             ScopeBinding {
                 ty,
                 mutable,
@@ -81,7 +131,7 @@ impl Scope {
 
     pub fn define_alias(&mut self, name: String, ty: Type, mutable: bool) {
         self.insert(
-            name,
+            name.into(),
             ScopeBinding {
                 ty,
                 mutable,
@@ -98,7 +148,7 @@ impl Scope {
         };
 
         self.insert(
-            name,
+            name.into(),
             ScopeBinding {
                 ty: existing.ty,
                 mutable: false,
@@ -110,28 +160,38 @@ impl Scope {
         true
     }
 
-    fn insert(&mut self, name: String, binding: ScopeBinding) {
+    fn insert(&mut self, name: LocalName, binding: ScopeBinding) {
+        if let (Some(id), Some(locals)) = (binding.local_id, self.locals.last_mut()) {
+            locals.insert(id, (name.spelling.clone(), binding.clone()));
+        }
         if let Some(scope) = self.vars.last_mut() {
             scope.insert(name, binding);
         }
     }
 
-    pub fn lookup(&self, name: &str) -> Option<&ScopeBinding> {
+    pub(crate) fn lookup(&self, name: impl Into<LocalName>) -> Option<&ScopeBinding> {
+        let name = name.into();
         for scope in self.vars.iter().rev() {
-            if let Some(entry) = scope.get(name) {
+            if let Some(entry) = scope.get(&name) {
                 return Some(entry);
             }
         }
         None
     }
 
-    pub fn binding_scope_index(&self, name: &str) -> Option<usize> {
+    pub(crate) fn binding_scope_index(&self, name: impl Into<LocalName>) -> Option<usize> {
+        let name = name.into();
         for (index, scope) in self.vars.iter().enumerate().rev() {
-            if scope.contains_key(name) {
+            if scope.contains_key(&name) {
                 return Some(index);
             }
         }
         None
+    }
+
+    pub(crate) fn local_binding(&self, id: HirLocalId) -> Option<(&str, &ScopeBinding)> {
+        self.locals.iter().rev().find_map(|locals| locals.get(&id))
+            .map(|(name, binding)| (name.as_str(), binding))
     }
 
     pub fn binding_is_alias(&self, name: &str) -> bool {

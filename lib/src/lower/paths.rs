@@ -1519,7 +1519,7 @@ impl Lowerer {
     ) -> Vec<HirClosureCapture> {
         let mut defined = std::collections::HashSet::new();
         for param in params {
-            defined.insert(param.name.clone());
+            defined.insert(param.local_id);
         }
 
         let mut used = Vec::new();
@@ -1535,20 +1535,13 @@ impl Lowerer {
         let mut captures = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
-        for name in used {
-            if !seen.insert(name.clone()) {
+        for id in used {
+            if !seen.insert(id) {
                 continue;
             }
 
-            if let Some(binding) = self.scope.lookup(&name) {
-                if binding.is_top_level && matches!(&binding.ty, Type::Function { .. }) {
-                    continue;
-                }
-
-                let Some(local_id) = binding.local_id else {
-                    continue;
-                };
-                let kind = capture_kinds.remove(&name).unwrap_or_else(|| {
+            if let Some((name, binding)) = self.scope.local_binding(id) {
+                let kind = capture_kinds.remove(&id).unwrap_or_else(|| {
                     if binding.mutable {
                         HirClosureCaptureKind::MutableBorrow
                     } else {
@@ -1556,8 +1549,8 @@ impl Lowerer {
                     }
                 });
                 captures.push(HirClosureCapture {
-                    name,
-                    local_id,
+                    name: name.to_string(),
+                    local_id: id,
                     kind,
                     mutable: binding.mutable,
                     ty: binding.ty.clone(),
@@ -1570,11 +1563,11 @@ impl Lowerer {
 
     fn define_capture_pattern(
         pattern: &HirPattern,
-        defined: &mut std::collections::HashSet<String>,
+        defined: &mut std::collections::HashSet<crate::ids::HirLocalId>,
     ) {
         match pattern {
-            HirPattern::Binding { name, .. } => {
-                defined.insert(name.clone());
+            HirPattern::Binding { local_id, .. } => {
+                defined.insert(*local_id);
             }
             HirPattern::Tuple(patterns)
             | HirPattern::Or(patterns)
@@ -1595,14 +1588,14 @@ impl Lowerer {
     fn collect_lambda_captures_block(
         &self,
         block: &HirBlock,
-        defined: &mut std::collections::HashSet<String>,
-        used: &mut Vec<String>,
-        capture_kinds: &mut std::collections::HashMap<String, HirClosureCaptureKind>,
+        defined: &mut std::collections::HashSet<crate::ids::HirLocalId>,
+        used: &mut Vec<crate::ids::HirLocalId>,
+        capture_kinds: &mut std::collections::HashMap<crate::ids::HirLocalId, HirClosureCaptureKind>,
         current_kind: HirClosureCaptureKind,
     ) {
         for stmt in &block.stmts {
             match stmt {
-                HirStmt::Let { name, value, .. } => {
+                HirStmt::Let { local_id, value, .. } => {
                     self.collect_lambda_captures_expr(
                         value,
                         defined,
@@ -1613,7 +1606,7 @@ impl Lowerer {
                             current_kind,
                         ),
                     );
-                    defined.insert(name.clone());
+                    defined.insert(*local_id);
                 }
                 HirStmt::Expr(expr) => self.collect_lambda_captures_expr(
                     expr,
@@ -1653,27 +1646,22 @@ impl Lowerer {
     fn collect_lambda_captures_expr(
         &self,
         expr: &HirExpr,
-        defined: &mut std::collections::HashSet<String>,
-        used: &mut Vec<String>,
-        capture_kinds: &mut std::collections::HashMap<String, HirClosureCaptureKind>,
+        defined: &mut std::collections::HashSet<crate::ids::HirLocalId>,
+        used: &mut Vec<crate::ids::HirLocalId>,
+        capture_kinds: &mut std::collections::HashMap<crate::ids::HirLocalId, HirClosureCaptureKind>,
         current_kind: HirClosureCaptureKind,
     ) {
         match &expr.kind {
-            HirExprKind::Var(name) => {
-                self.record_lambda_capture(name, current_kind, defined, used, capture_kinds);
-            }
-            HirExprKind::ResolvedVar(reference)
-                if matches!(reference.target, HirVarTarget::Local(_)) =>
-            {
+            HirExprKind::ResolvedVar(HirVarRef { target: HirVarTarget::Local(id), .. }) => {
                 self.record_lambda_capture(
-                    &reference.name,
+                    *id,
                     current_kind,
                     defined,
                     used,
                     capture_kinds,
                 );
             }
-            HirExprKind::ResolvedVar(_) => {}
+            HirExprKind::Var(_) | HirExprKind::ResolvedVar(_) => {}
             HirExprKind::FieldAccess(base, _, _) => {
                 self.collect_lambda_captures_expr(base, defined, used, capture_kinds, current_kind)
             }
@@ -1879,11 +1867,11 @@ impl Lowerer {
                 );
             }
             HirExprKind::For {
-                var, iter, body, ..
+                local_id, iter, body, ..
             } => {
                 self.collect_lambda_captures_expr(iter, defined, used, capture_kinds, current_kind);
                 let mut nested_defined = defined.clone();
-                nested_defined.insert(var.clone());
+                nested_defined.insert(*local_id);
                 self.collect_lambda_captures_block(
                     body,
                     &mut nested_defined,
@@ -1895,7 +1883,7 @@ impl Lowerer {
             HirExprKind::Lambda { params, body, .. } => {
                 let mut nested_defined = defined.clone();
                 for param in params {
-                    nested_defined.insert(param.name.clone());
+                    nested_defined.insert(param.local_id);
                 }
                 self.collect_lambda_captures_block(
                     body,
@@ -1951,25 +1939,25 @@ impl Lowerer {
 
     fn record_lambda_capture(
         &self,
-        name: &str,
+        id: crate::ids::HirLocalId,
         kind: HirClosureCaptureKind,
-        defined: &std::collections::HashSet<String>,
-        used: &mut Vec<String>,
-        capture_kinds: &mut std::collections::HashMap<String, HirClosureCaptureKind>,
+        defined: &std::collections::HashSet<crate::ids::HirLocalId>,
+        used: &mut Vec<crate::ids::HirLocalId>,
+        capture_kinds: &mut std::collections::HashMap<crate::ids::HirLocalId, HirClosureCaptureKind>,
     ) {
-        if defined.contains(name) {
+        if defined.contains(&id) {
             return;
         }
 
-        match capture_kinds.get_mut(name) {
+        match capture_kinds.get_mut(&id) {
             Some(existing) => {
                 if Self::capture_kind_rank(kind) > Self::capture_kind_rank(*existing) {
                     *existing = kind;
                 }
             }
             None => {
-                used.push(name.to_string());
-                capture_kinds.insert(name.to_string(), kind);
+                used.push(id);
+                capture_kinds.insert(id, kind);
             }
         }
     }
@@ -1989,8 +1977,9 @@ impl Lowerer {
             if let Some(name) = seg_name(&path.path[0]) {
                 let name = &name;
 
-                if let Some(resolved) = crate::lower::resolution::LowerResolutionContext::new(self)
-                    .resolve_identifier_value(name)
+                if let Some(resolved) = crate::lower::scope::LocalName::from_segment(&path.path[0])
+                    .and_then(|key| crate::lower::resolution::LowerResolutionContext::new(self)
+                        .resolve_identifier_value(key))
                 {
                     let target = resolved.target.clone();
                     let ty = self.instantiate_resolved_value_type(&resolved, span.clone());
@@ -2605,7 +2594,7 @@ impl Lowerer {
                 .unwrap_or(inferred_ty);
             let local_id = self.fresh_local_id();
             self.scope
-                .define_local(name.clone(), ty.clone(), mutable, local_id);
+                .define_local(Self::pattern_local_name(param_pat).unwrap_or_else(|| name.clone().into()), ty.clone(), mutable, local_id);
             if let Some(owner) = self.current_body_def_id() {
                 let span =
                     Self::pattern_binding_span(param_pat).unwrap_or_else(|| lambda.span.clone());
@@ -2687,7 +2676,7 @@ impl Lowerer {
             .unwrap_or(inferred_ty);
         let local_id = self.fresh_local_id();
         self.scope
-            .define_local(name.clone(), ty.clone(), mutable, local_id);
+            .define_local(Self::pattern_local_name(&params[0]).unwrap_or_else(|| name.clone().into()), ty.clone(), mutable, local_id);
         if let Some(owner) = self.current_body_def_id() {
             let param_span = Self::pattern_binding_span(&params[0]).unwrap_or_else(|| span.clone());
             self.source_map.insert_local_in_scope(

@@ -572,6 +572,7 @@ mod tests {
 
         for (self_receiver, expected) in cases {
             let sig = FunctionSig {
+                self_context: Default::default(),
                 name: ident("a"),
                 sig: ParseType::Unit(crate::lexer::Span::test()),
                 where_clauses: vec![],
@@ -595,6 +596,7 @@ mod tests {
 
         for (self_receiver, expected) in cases {
             let decl = FunctionDecl {
+                self_context: Default::default(),
                 name: ident("a"),
                 lambda: LambdaDecl {
                     parameters: vec![],

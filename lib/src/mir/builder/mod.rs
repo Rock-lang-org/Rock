@@ -41,6 +41,8 @@ pub struct MirBuilder<'a> {
     locals: Vec<LocalDecl>,
     current_block: Option<BasicBlockId>,
     var_map: HashMap<String, Local>,
+    /// Resolved source locals never use diagnostic spellings for storage lookup.
+    source_locals: HashMap<crate::ids::HirLocalId, Local>,
     loop_stack: Vec<LoopTargets>,
     scope_locals: Vec<Vec<Local>>,
     moved_places: HashSet<Place>,
@@ -214,6 +216,7 @@ impl<'a> MirBuilder<'a> {
             locals: Vec::new(),
             current_block: None,
             var_map: HashMap::new(),
+            source_locals: HashMap::new(),
             loop_stack: Vec::new(),
             scope_locals: Vec::new(),
             moved_places: HashSet::new(),
@@ -1352,7 +1355,7 @@ impl<'a> MirBuilder<'a> {
         captures
             .iter()
             .filter_map(|capture| {
-                let mut local = self.var_map.get(&capture.name).copied()?;
+                let mut local = self.source_locals.get(&capture.local_id).copied()?;
                 let span = self.locals.get(local.0).and_then(|decl| decl.span.clone());
                 let mut kind = MirClosureCaptureKind::from(capture.kind);
                 if let Some(place) = self.place_for_borrowed_binding_value(local, &capture.ty) {
@@ -1868,9 +1871,7 @@ impl<'a> MirBuilder<'a> {
                 projection: vec![],
             }),
             HirExprKind::ResolvedVar(reference) => {
-                self.var_map
-                    .get(&reference.name)
-                    .copied()
+                self.local_for_target(&reference.target)
                     .map(|local| Place {
                         local,
                         projection: vec![],
@@ -2310,6 +2311,7 @@ impl<'a> MirBuilder<'a> {
                 param_span,
             );
             self.var_map.insert(param.name.clone(), local);
+            self.source_locals.insert(param.local_id, local);
             let borrowed_self_param = index == 0
                 && matches!(
                     func.self_receiver,
@@ -2365,6 +2367,7 @@ impl<'a> MirBuilder<'a> {
                 capture_span.clone(),
             );
             self.var_map.insert(capture.name.clone(), local);
+            self.source_locals.insert(capture.local_id, local);
             self.closure_captures.push(MirClosureCapture {
                 name: capture.name,
                 local,
@@ -2448,6 +2451,13 @@ impl<'a> MirBuilder<'a> {
             .collect()
     }
 
+    fn local_for_target(&self, target: &HirVarTarget) -> Option<Local> {
+        match target {
+            HirVarTarget::Local(id) => self.source_locals.get(id).copied(),
+            _ => None,
+        }
+    }
+
     fn lower_place(&mut self, expr: &HirExpr) -> Option<Place> {
         match &expr.kind {
             HirExprKind::Var(name) => {
@@ -2460,9 +2470,8 @@ impl<'a> MirBuilder<'a> {
             HirExprKind::ResolvedVar(reference)
                 if matches!(reference.target, HirVarTarget::Local(_)) =>
             {
-                self.var_map
-                    .get(&reference.name)
-                    .map(|local| self.place_for_local_expr(*local, &expr.ty))
+                self.local_for_target(&reference.target)
+                    .map(|local| self.place_for_local_expr(local, &expr.ty))
             }
             HirExprKind::Deref(base) => {
                 let mut place = if let Some(place) = self.lower_place(base) {
@@ -2591,7 +2600,7 @@ impl<'a> MirBuilder<'a> {
         restored_bindings: &mut Vec<(String, Option<Local>)>,
     ) {
         match pattern {
-            HirPattern::Binding { name, mutable, .. } => {
+            HirPattern::Binding { name, local_id, mutable } => {
                 let borrowed_payload =
                     enum_payload && scrutinee_mode == MatchScrutineeMode::Borrowed;
                 if enum_payload && !borrowed_payload && !TypeFacts::is_copy(source_ty) {
@@ -2625,6 +2634,7 @@ impl<'a> MirBuilder<'a> {
                     scope_locals.push(local);
                 }
                 restored_bindings.push((name.clone(), self.var_map.insert(name.clone(), local)));
+                self.source_locals.insert(*local_id, local);
                 let dest = Place {
                     local,
                     projection: vec![],
@@ -4569,6 +4579,7 @@ mod tests {
             source: crate::mir::LocalSource::UserBinding,
         });
         builder.var_map.insert(name.to_string(), Local(0));
+        builder.source_locals.insert(crate::ids::HirLocalId(0), Local(0));
         builder
     }
 
@@ -9658,6 +9669,7 @@ mod tests {
             source: crate::mir::LocalSource::UserBinding,
         });
         builder.var_map.insert("outer".to_string(), Local(0));
+        builder.source_locals.insert(crate::ids::HirLocalId(0), Local(0));
 
         let lambda = HirExpr {
             kind: HirExprKind::Lambda {

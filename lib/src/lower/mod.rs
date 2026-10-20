@@ -366,6 +366,19 @@ impl Lowerer {
             .record_reference_in_scope(span, target, owner, scope_id);
     }
 
+    pub(crate) fn pattern_local_name(pattern: &ast::Pattern) -> Option<scope::LocalName> {
+        if let Some(binding) = &pattern.binding {
+            return Some(binding.into());
+        }
+        match &pattern.kind {
+            ast::PatternKind::Ident(binding) => Some((&binding.name).into()),
+            ast::PatternKind::Nested(pattern) | ast::PatternKind::Reference { pattern, .. } => {
+                Self::pattern_local_name(pattern)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn pattern_binding_span(pattern: &ast::Pattern) -> Option<Span> {
         match &pattern.kind {
             ast::PatternKind::Ident(binding) => Some(binding.name.span.clone()),

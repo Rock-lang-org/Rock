@@ -1896,6 +1896,7 @@ mod tests {
         arrow_kind: LambdaArrowKind,
     ) -> FunctionDecl {
         FunctionDecl {
+            self_context: Default::default(),
             name: ident(name),
             lambda: LambdaDecl {
                 parameters: params.iter().map(|name| ident_pattern(name)).collect(),
@@ -1916,6 +1917,7 @@ mod tests {
         where_clauses: Vec<WhereClause>,
     ) -> FunctionSig {
         FunctionSig {
+            self_context: Default::default(),
             name: ident(name),
             sig,
             where_clauses,

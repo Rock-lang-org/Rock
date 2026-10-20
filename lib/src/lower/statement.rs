@@ -121,11 +121,12 @@ impl Lowerer {
                 type_annotation,
             } => {
                 let (name, mutable) = self.extract_pattern_binding(pattern);
+                let local_name = Self::pattern_local_name(pattern).unwrap_or_else(|| name.clone().into());
 
                 // Check if variable already exists in scope (reassignment vs new binding)
-                if type_annotation.is_none() && self.scope.lookup(&name).is_some() {
+                if type_annotation.is_none() && self.scope.lookup(&local_name).is_some() {
                     // Reassignment to existing variable
-                    let binding = self.scope.lookup(&name).cloned();
+                    let binding = self.scope.lookup(&local_name).cloned();
                     let lhs_ty = binding
                         .as_ref()
                         .map(|binding| binding.ty.clone())
@@ -191,7 +192,7 @@ impl Lowerer {
                     );
                 }
                 self.scope
-                    .define_local(name.clone(), ty.clone(), mutable, local_id);
+                    .define_local(local_name, ty.clone(), mutable, local_id);
 
                 HirStmt::Let {
                     name,
@@ -250,8 +251,6 @@ impl Lowerer {
         let tmp_name = format!("__tuple_tmp_{}", uid);
         let tmp_ty = rhs_expr.ty.clone();
         let tmp_local_id = self.fresh_local_id();
-        self.scope
-            .define_local(tmp_name.clone(), tmp_ty.clone(), false, tmp_local_id);
         stmts.push(HirStmt::Let {
             name: tmp_name.clone(),
             local_id: tmp_local_id,
@@ -291,7 +290,7 @@ impl Lowerer {
 
             let local_id = self.fresh_local_id();
             self.scope
-                .define_local(name.clone(), elem_ty.clone(), mutable, local_id);
+                .define_local(Self::pattern_local_name(sub_pat).unwrap_or_else(|| name.clone().into()), elem_ty.clone(), mutable, local_id);
             stmts.push(HirStmt::Let {
                 name,
                 local_id,

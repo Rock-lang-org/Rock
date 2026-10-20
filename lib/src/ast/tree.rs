@@ -405,6 +405,8 @@ pub struct FunctionSig {
     pub sig: ParseType,
     pub where_clauses: Vec<WhereClause>,
     pub self_receiver: Option<SelfReceiverMode>,
+    /// The implicit `self` binder belongs to the receiver marker, not the method name.
+    pub self_context: crate::lexer::lossless::SyntaxContext,
     pub is_unsafe: bool,
     pub exported: bool,
 }
@@ -414,6 +416,8 @@ pub struct FunctionDecl {
     pub name: Ident,
     pub lambda: LambdaDecl,
     pub self_receiver: Option<SelfReceiverMode>,
+    /// The implicit `self` binder belongs to the receiver marker, not the method name.
+    pub self_context: crate::lexer::lossless::SyntaxContext,
     pub is_unsafe: bool,
     pub exported: bool,
 }

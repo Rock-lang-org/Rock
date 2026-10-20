@@ -793,6 +793,7 @@ mod tests {
 
     fn unit_signature(name: &str) -> FunctionSig {
         FunctionSig {
+            self_context: Default::default(),
             name: ident(name),
             sig: ParseType::Unit(crate::lexer::Span::test()),
             where_clauses: vec![],
@@ -812,6 +813,7 @@ mod tests {
 
     fn generic_identity_signature(name: &str) -> FunctionSig {
         FunctionSig {
+            self_context: Default::default(),
             name: ident(name),
             sig: ParseType::Function(vec![named_type("T"), named_type("T")]),
             where_clauses: vec![],
@@ -833,6 +835,7 @@ mod tests {
 
     fn single_param_function_decl(name: &str, param: &str) -> FunctionDecl {
         FunctionDecl {
+            self_context: Default::default(),
             name: ident(name),
             lambda: LambdaDecl {
                 parameters: vec![binding_pattern(param)],
@@ -852,6 +855,7 @@ mod tests {
         self_receiver: SelfReceiverMode,
     ) -> FunctionDecl {
         FunctionDecl {
+            self_context: Default::default(),
             name: ident(name),
             lambda: LambdaDecl {
                 parameters: vec![binding_pattern(param)],
@@ -874,6 +878,7 @@ mod tests {
         let mut lowerer = Lowerer::new_for_test();
         let signature_id = def_id(30);
         let sig = FunctionSig {
+            self_context: Default::default(),
             name: ident("is_valid"),
             sig: named_type("Bool"),
             where_clauses: vec![],
@@ -921,6 +926,7 @@ mod tests {
     fn lower_method_signature_injects_mut_and_move_self_receiver_types() {
         let mut lowerer = Lowerer::new_for_test();
         let mut_sig = FunctionSig {
+            self_context: Default::default(),
             name: ident("set"),
             sig: ParseType::Function(vec![
                 named_type("I64"),
@@ -932,6 +938,7 @@ mod tests {
             exported: false,
         };
         let move_sig = FunctionSig {
+            self_context: Default::default(),
             name: ident("consume"),
             sig: named_type("Bool"),
             where_clauses: vec![],

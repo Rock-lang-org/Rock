@@ -3519,6 +3519,23 @@ fn macro_a_06_generated_block_keeps_break_in_the_callers_loop() {
 }
 
 #[test]
+fn macro_a_12_forwarded_caller_capture_and_tuple_destructuring_run() {
+    let output = compile_and_run("macro duplicate\n    $value:expr =>\n        ($value, $value)\nmacro closure\n    $value:expr =>\n        -> $value\nmain = !->\n    value = 21\n    (left, right) = %duplicate value\n    f = %closure left + right\n    f! .println!\n");
+    assert_eq!(output, "42\n");
+}
+
+#[test]
+fn macro_a_12_forwarded_mutable_reference_closure_updates_caller_owner() {
+    let output = compile_and_run("macro setter\n    $loan:expr =>\n        !-> *($loan) = 7\nmain = !->\n    mut value = 1\n    loan = &mut value\n    mut update = %setter loan\n    update!\n    value.println!\n");
+    assert_eq!(output, "7\n");
+}
+
+#[test]
+fn macro_a_12_forwarding_does_not_hide_a_conflicting_caller_loan() {
+    compile_should_fail("macro assign\n    $place:ident =>\n        if true\n            $place = 3\n        else\n            ()\nmain = !->\n    mut value = 1\n    loan = &mut value\n    %assign value\n    *loan = 4\n", "borrow");
+}
+
+#[test]
 fn test_declarative_macro_can_produce_call_argument_holes() {
     let output = compile_and_run(
         r#"macro make_main

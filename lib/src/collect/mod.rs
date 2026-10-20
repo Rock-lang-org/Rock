@@ -1451,6 +1451,7 @@ mod tests {
         expr: crate::ast::Expression,
     ) -> crate::ast::FunctionDecl {
         crate::ast::FunctionDecl {
+            self_context: Default::default(),
             name: ident(name),
             lambda: crate::ast::LambdaDecl {
                 parameters: vec![],
@@ -1468,6 +1469,7 @@ mod tests {
 
     fn function_decl(name: &str) -> FunctionDecl {
         FunctionDecl {
+            self_context: Default::default(),
             name: ident(name),
             lambda: LambdaDecl {
                 parameters: vec![],
@@ -1502,6 +1504,7 @@ mod tests {
 
     fn function_sig(name: &str, sig: ParseType) -> FunctionSig {
         FunctionSig {
+            self_context: Default::default(),
             name: ident(name),
             sig,
             where_clauses: vec![],
@@ -1513,6 +1516,7 @@ mod tests {
 
     fn single_param_function_decl(name: &str, param: &str) -> FunctionDecl {
         FunctionDecl {
+            self_context: Default::default(),
             name: ident(name),
             lambda: LambdaDecl {
                 parameters: vec![ident_pattern(param)],
@@ -3410,6 +3414,7 @@ mod tests {
             name: None,
             top_levels: vec![
                 TopLevel::FunctionDecl(FunctionDecl {
+                    self_context: Default::default(),
                     name: ident("identity"),
                     lambda: LambdaDecl {
                         parameters: vec![],
@@ -4871,6 +4876,7 @@ mod tests {
                 name: None,
                 top_levels: vec![
                     TopLevel::FunctionDecl(crate::ast::FunctionDecl {
+                        self_context: Default::default(),
                         name: ident("sum"),
                         lambda: crate::ast::LambdaDecl {
                             parameters: vec![],
@@ -4887,6 +4893,7 @@ mod tests {
                     })),
                     TopLevel::InfixOperator(7, "++".to_string()),
                     TopLevel::FunctionSig(crate::ast::FunctionSig {
+                        self_context: Default::default(),
                         name: ident("declared_only"),
                         sig: crate::ast::ParseType::Unit(crate::lexer::Span::test()),
                         where_clauses: vec![],
@@ -4916,6 +4923,7 @@ mod tests {
                 name: None,
                 top_levels: vec![
                     TopLevel::FunctionSig(FunctionSig {
+                        self_context: Default::default(),
                         name: ident("identity"),
                         sig: ParseType::Function(vec![
                             ParseType::Type(type_inner("T")),
@@ -4927,6 +4935,7 @@ mod tests {
                         exported: false,
                     }),
                     TopLevel::FunctionDecl(FunctionDecl {
+                        self_context: Default::default(),
                         name: ident("identity"),
                         lambda: LambdaDecl {
                             parameters: vec![Pattern {
@@ -5392,6 +5401,7 @@ mod tests {
                             exported: false,
                         }),
                         TopLevel::FunctionDecl(crate::ast::FunctionDecl {
+                            self_context: Default::default(),
                             name: ident("sum"),
                             lambda: crate::ast::LambdaDecl {
                                 parameters: vec![],

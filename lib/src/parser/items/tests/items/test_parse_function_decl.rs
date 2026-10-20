@@ -15,6 +15,7 @@ fn test_parse_function_decl() {
     assert_eq!(
         function_decl,
         FunctionDecl {
+            self_context: Default::default(),
             name: Ident { context: Default::default(),
                 name: "a".to_string(),
                 span: Span {

@@ -322,7 +322,8 @@ impl Lowerer {
                     );
                 }
                 lowerer.scope.define_local(
-                    param.name.clone(),
+                    fd.lambda.parameters.get(index).and_then(Lowerer::pattern_local_name)
+                        .unwrap_or_else(|| param.name.clone().into()),
                     param.ty.clone(),
                     param.mutable,
                     local_id,
@@ -538,7 +539,11 @@ impl Lowerer {
                     let _ = self.engine.unify(&func.params[0].ty, &actual_self_ty);
                     func.params[0].ty = actual_self_ty.clone();
                     self.scope.define_local(
-                        "self".to_string(),
+                        crate::lower::scope::LocalName::new("self".to_string(), if fd.self_receiver.is_some() {
+                            fd.self_context
+                        } else {
+                            explicit_sig.map(|sig| sig.self_context).unwrap_or_default()
+                        }),
                         actual_self_ty,
                         matches!(self_receiver, crate::types::ReceiverMode::Mut),
                         func.params[0].local_id,
@@ -547,9 +552,10 @@ impl Lowerer {
 
                 // Register parameters in scope
                 let start = if func.self_receiver.is_some() { 1 } else { 0 };
-                for param in &func.params[start..] {
+                for (index, param) in func.params[start..].iter().enumerate() {
                     self.scope.define_local(
-                        param.name.clone(),
+                        fd.lambda.parameters.get(index).and_then(Lowerer::pattern_local_name)
+                            .unwrap_or_else(|| param.name.clone().into()),
                         param.ty.clone(),
                         param.mutable,
                         param.local_id,
@@ -754,6 +760,7 @@ mod tests {
 
     fn empty_function_decl(name: &str) -> FunctionDecl {
         FunctionDecl {
+            self_context: Default::default(),
             name: ident(name),
             lambda: LambdaDecl {
                 parameters: Vec::new(),
@@ -1136,6 +1143,7 @@ mod tests {
             methods: HashMap::from([(
                 ident("new"),
                 FunctionDecl {
+                    self_context: Default::default(),
                     name: ident("new"),
                     lambda: LambdaDecl {
                         parameters: Vec::new(),
@@ -1236,6 +1244,7 @@ mod tests {
             methods: HashMap::from([(
                 ident("value"),
                 FunctionDecl {
+                    self_context: Default::default(),
                     name: ident("value"),
                     lambda: LambdaDecl {
                         parameters: Vec::new(),
@@ -1369,6 +1378,7 @@ mod tests {
             signatures: HashMap::from([(
                 ident("take"),
                 crate::ast::FunctionSig {
+                    self_context: Default::default(),
                     name: ident("take"),
                     sig: ast::ParseType::Function(vec![parse_type("T", Vec::new())]),
                     where_clauses: Vec::new(),
@@ -1479,6 +1489,7 @@ mod tests {
             methods: HashMap::from([(
                 ident("get"),
                 FunctionDecl {
+                    self_context: Default::default(),
                     name: ident("get"),
                     lambda: LambdaDecl {
                         parameters: Vec::new(),
@@ -1583,6 +1594,7 @@ mod tests {
             methods: HashMap::from([(
                 ident("is_some"),
                 FunctionDecl {
+                    self_context: Default::default(),
                     name: ident("is_some"),
                     lambda: LambdaDecl {
                         parameters: Vec::new(),

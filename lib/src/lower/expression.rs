@@ -825,7 +825,7 @@ impl Lowerer {
 
         // Flatten the right-recursive BinopExpr chain into a list
         let mut operands: Vec<AstExprOperand<'_>> = Vec::new();
-        let mut operators: Vec<String> = Vec::new();
+        let mut operators: Vec<crate::lower::scope::LocalName> = Vec::new();
 
         self.flatten_binop(expr, &mut operands, &mut operators);
 
@@ -842,12 +842,12 @@ impl Lowerer {
         &mut self,
         expr: &'a ast::Expression,
         operands: &mut Vec<AstExprOperand<'a>>,
-        operators: &mut Vec<String>,
+        operators: &mut Vec<crate::lower::scope::LocalName>,
     ) {
         match expr {
             ast::Expression::BinopExpr(lhs, op, rhs) => {
                 operands.push(AstExprOperand::Unary(lhs));
-                operators.push(op.value.clone());
+                operators.push(crate::lower::scope::LocalName::new(op.value.clone(), op.context));
                 self.flatten_binop(rhs, operands, operators);
             }
             ast::Expression::UnaryExpr(unary) => {
@@ -882,7 +882,7 @@ impl Lowerer {
     fn build_precedence_tree_with_use(
         &mut self,
         operands: &[AstExprOperand<'_>],
-        operators: &[String],
+        operators: &[crate::lower::scope::LocalName],
         start: usize,
         end: usize,
         use_kind: ExprUse,
@@ -894,7 +894,7 @@ impl Lowerer {
         let mut min_prec = u8::MAX;
         let mut split_at = start;
         for i in start..end {
-            let prec = match self.op_precedence(&operators[i]) {
+            let prec = match self.op_precedence(&operators[i].spelling) {
                 Ok(prec) => prec,
                 Err(error) => {
                     let Some(span) = ast_expr_operand_span(&operands[start]) else {
@@ -912,7 +912,7 @@ impl Lowerer {
         }
 
         let op = &operators[split_at];
-        let (left_use, right_use) = if op == "=" {
+        let (left_use, right_use) = if op.spelling == "=" {
             (ExprUse::AssignmentPlace, ExprUse::Value)
         } else {
             (ExprUse::Value, ExprUse::Value)
@@ -930,7 +930,7 @@ impl Lowerer {
     pub(crate) fn build_precedence_tree(
         &mut self,
         operands: &[HirExpr],
-        operators: &[String],
+        operators: &[crate::lower::scope::LocalName],
         start: usize,
         end: usize,
     ) -> HirExpr {
@@ -947,7 +947,7 @@ impl Lowerer {
         let mut split_at = op_start;
 
         for i in op_start..op_end {
-            let prec = match self.op_precedence(&operators[i]) {
+            let prec = match self.op_precedence(&operators[i].spelling) {
                 Ok(p) => p,
                 Err(e) => {
                     let span = operands[start].span.clone();
@@ -964,7 +964,7 @@ impl Lowerer {
         let left = self.build_precedence_tree(operands, operators, start, split_at);
         let right = self.build_precedence_tree(operands, operators, split_at + 1, end);
 
-        let op_str = &operators[split_at];
+        let op_str = &operators[split_at].spelling;
 
         // Assignment operator: special handling
         if op_str == "=" {
@@ -1175,7 +1175,7 @@ impl Lowerer {
         }
 
         let func_binding = crate::lower::resolution::LowerResolutionContext::new(self)
-            .resolve_identifier_value(op_str.as_str())
+            .resolve_identifier_value(&operators[split_at])
             .map(|resolved| {
                 let func_ty = self.instantiate_resolved_value_type(&resolved, left.span.clone());
                 (func_ty, resolved.name, resolved.target)
@@ -2775,7 +2775,7 @@ mod tests {
             kind: HirExprKind::IntLiteral(2),
             span: Span::test(),
         };
-        let hir = lowerer.build_precedence_tree(&[left, right], &["%%".to_string()], 0, 1);
+        let hir = lowerer.build_precedence_tree(&[left, right], &["%%".into()], 0, 1);
 
         match hir.kind {
             HirExprKind::MethodCall(_, _, _, _, Some(target)) => {
@@ -2855,7 +2855,7 @@ mod tests {
             kind: HirExprKind::IntLiteral(2),
             span: Span::test(),
         };
-        let hir = lowerer.build_precedence_tree(&[left, right], &["<&>".to_string()], 0, 1);
+        let hir = lowerer.build_precedence_tree(&[left, right], &["<&>".into()], 0, 1);
 
         match hir.kind {
             HirExprKind::MethodCall(_, _, _, _, Some(target)) => {
@@ -3040,7 +3040,7 @@ mod tests {
             span: Span::test(),
         };
 
-        let hir = lowerer.build_precedence_tree(&[left, right], &["%%".to_string()], 0, 1);
+        let hir = lowerer.build_precedence_tree(&[left, right], &["%%".into()], 0, 1);
 
         assert_eq!(hir.ty, Type::Error);
         assert!(lowerer.diagnostics.errors().iter().any(|error| {

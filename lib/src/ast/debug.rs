@@ -334,6 +334,7 @@ mod tests {
             signatures: HashMap::from([(
                 signature_name.clone(),
                 FunctionSig {
+                    self_context: Default::default(),
                     name: signature_name,
                     sig: ParseType::Unit(crate::lexer::Span::test()),
                     where_clauses: vec![],

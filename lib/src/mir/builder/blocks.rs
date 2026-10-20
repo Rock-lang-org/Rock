@@ -489,6 +489,7 @@ impl<'a> MirBuilder<'a> {
                     // when this lexical block ends, including after shadowing.
                     restored_bindings
                         .push((name.clone(), self.var_map.insert(name.clone(), local)));
+                    self.source_locals.insert(*local_id, local);
                 }
                 HirStmt::Expr(expr) => {
                     if is_last && !matches!(block.ty, Type::Unit) {

@@ -25,7 +25,8 @@ pub fn function_decl(stream: Input<'_>) -> IResult<'_, FunctionDecl> {
             |(is_unsafe, self_receiver, ident, _, lambda, _)| FunctionDecl {
                 name: ident,
                 lambda,
-                self_receiver,
+                self_context: self_receiver.map(|(_, context)| context).unwrap_or_default(),
+                self_receiver: self_receiver.map(|(mode, _)| mode),
                 is_unsafe: is_unsafe.is_some(),
                 exported: false,
             },
@@ -266,7 +267,8 @@ pub fn function_sig(stream: Input) -> IResult<FunctionSig> {
                 name,
                 sig,
                 where_clauses: where_clauses.unwrap_or_default(),
-                self_receiver,
+                self_context: self_receiver.map(|(_, context)| context).unwrap_or_default(),
+                self_receiver: self_receiver.map(|(mode, _)| mode),
                 is_unsafe: is_unsafe.is_some(),
                 exported: false,
             },
@@ -274,14 +276,20 @@ pub fn function_sig(stream: Input) -> IResult<FunctionSig> {
         .process(stream)
 }
 
-fn self_receiver_mode(stream: Input) -> IResult<SelfReceiverMode> {
+fn self_receiver_mode(stream: Input) -> IResult<(SelfReceiverMode, crate::lexer::lossless::SyntaxContext)> {
+    fn marker(stream: Input) -> IResult<crate::lexer::lossless::SyntaxContext> {
+        let context = stream.seek()?.context;
+        let (stream, _) = TokenType::Arobase.process(stream)?;
+        Ok((stream, context))
+    }
+
     (
         TokenType::Caret
             .map(|_| SelfReceiverMode::Mut)
             .or(TokenType::Tilde.map(|_| SelfReceiverMode::Move))
             .opt(),
-        TokenType::Arobase,
+        marker,
     )
-        .map(|(mode, _)| mode.unwrap_or(SelfReceiverMode::Shared))
+        .map(|(mode, context)| (mode.unwrap_or(SelfReceiverMode::Shared), context))
         .process(stream)
 }

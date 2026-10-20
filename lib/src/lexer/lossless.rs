@@ -252,3 +252,6 @@ mod wire_tests;
 
 #[cfg(test)]
 mod context_delivery_tests;
+
+#[cfg(test)]
+mod local_resolution_tests;

@@ -2145,6 +2145,7 @@ mod tests {
 
     fn function_decl(name: &str) -> FunctionDecl {
         FunctionDecl {
+            self_context: Default::default(),
             name: ident(name),
             lambda: LambdaDecl {
                 parameters: vec![],
@@ -2160,6 +2161,7 @@ mod tests {
 
     fn function_sig(name: &str) -> FunctionSig {
         FunctionSig {
+            self_context: Default::default(),
             name: ident(name),
             sig: ParseType::Unit(crate::lexer::Span::test()),
             where_clauses: vec![],

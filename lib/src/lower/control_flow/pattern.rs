@@ -64,7 +64,7 @@ impl Lowerer {
                     );
                 }
                 self.scope
-                    .define_local(ident_pat.name.name.clone(), ty, ident_pat.mut_, local_id);
+                    .define_local(&ident_pat.name, ty, ident_pat.mut_, local_id);
                 HirPattern::Binding {
                     name: ident_pat.name.name.clone(),
                     local_id,

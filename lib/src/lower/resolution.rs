@@ -413,15 +413,28 @@ impl<'a> LowerResolutionContext<'a> {
         }
     }
 
-    pub(crate) fn resolve_identifier_value(&self, name: &str) -> Option<LowerResolvedValue> {
-        if let Some(binding) = self.lowerer.scope.lookup(name).cloned() {
+    pub(crate) fn resolve_identifier_value(&self, name: impl Into<crate::lower::scope::LocalName>) -> Option<LowerResolvedValue> {
+        let key = name.into();
+        let name = key.spelling.as_str();
+        // Context mismatch must never fall back to a caller local. Item and alias
+        // environments remain the separate module-resolution authority.
+        let binding_key = if self.lowerer.scope.lookup(&key).is_some() {
+            key.clone()
+        } else {
+            name.into()
+        };
+        if let Some(binding) = self.lowerer.scope.lookup(&binding_key)
+            .filter(|binding| binding_key == key || binding.is_top_level || binding.is_alias)
+            .cloned()
+        {
+            let scope_index = self.lowerer.scope.binding_scope_index(&binding_key);
             if let Some(local_id) = binding.local_id {
                 return Some(LowerResolvedValue {
                     name: name.to_string(),
                     ty: binding.ty,
                     target: Some(HirVarTarget::Local(local_id)),
                     is_alias: binding.is_alias,
-                    scope_index: self.lowerer.scope.binding_scope_index(name),
+                    scope_index,
                     should_instantiate: false,
                 });
             }
@@ -436,7 +449,7 @@ impl<'a> LowerResolutionContext<'a> {
                             ty: self.top_level_value_type(id).unwrap_or(binding.ty),
                             target: Some(target),
                             is_alias: true,
-                            scope_index: self.lowerer.scope.binding_scope_index(name),
+                            scope_index,
                             should_instantiate: true,
                         });
                     }
@@ -453,7 +466,7 @@ impl<'a> LowerResolutionContext<'a> {
                             ty: self.top_level_value_type(id).unwrap_or(binding.ty),
                             target: Some(target),
                             is_alias: false,
-                            scope_index: self.lowerer.scope.binding_scope_index(name),
+                            scope_index,
                             should_instantiate: true,
                         });
                     }
@@ -466,7 +479,7 @@ impl<'a> LowerResolutionContext<'a> {
                 ty: binding.ty,
                 target: None,
                 is_alias: binding.is_alias,
-                scope_index: self.lowerer.scope.binding_scope_index(name),
+                scope_index,
                 should_instantiate,
             });
         }

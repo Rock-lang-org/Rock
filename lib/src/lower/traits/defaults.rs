@@ -193,7 +193,12 @@ impl Lowerer {
                 if let Some(self_receiver) = func.self_receiver {
                     let self_ty = func.params[0].ty.clone();
                     lowerer.scope.define_local(
-                        "self".to_string(),
+                        crate::lower::scope::LocalName::new("self".to_string(), if fd.self_receiver.is_some() {
+                            fd.self_context
+                        } else {
+                            td.signatures.iter().find(|(ident, _)| ident.name == method_name)
+                                .map(|(_, sig)| sig.self_context).unwrap_or_default()
+                        }),
                         self_ty,
                         matches!(self_receiver, crate::types::ReceiverMode::Mut),
                         func.params[0].local_id,
@@ -202,9 +207,10 @@ impl Lowerer {
 
                 // Register other parameters
                 let start = if func.self_receiver.is_some() { 1 } else { 0 };
-                for param in &func.params[start..] {
+                for (index, param) in func.params[start..].iter().enumerate() {
                     lowerer.scope.define_local(
-                        param.name.clone(),
+                        fd.lambda.parameters.get(index).and_then(Lowerer::pattern_local_name)
+                            .unwrap_or_else(|| param.name.clone().into()),
                         param.ty.clone(),
                         param.mutable,
                         param.local_id,
@@ -320,6 +326,7 @@ mod tests {
 
     fn literal_default_decl(name: &str, kind: LiteralKind) -> FunctionDecl {
         FunctionDecl {
+            self_context: Default::default(),
             name: ident(name),
             lambda: LambdaDecl {
                 parameters: Vec::new(),
@@ -480,6 +487,7 @@ mod tests {
             methods: HashMap::from([(
                 ident("default"),
                 FunctionDecl {
+                    self_context: Default::default(),
                     name: ident("default"),
                     lambda: LambdaDecl {
                         parameters: Vec::new(),
@@ -497,6 +505,7 @@ mod tests {
             signatures: HashMap::from([(
                 ident("set"),
                 FunctionSig {
+                    self_context: Default::default(),
                     name: ident("set"),
                     sig: named_type("Bool"),
                     where_clauses: Vec::new(),

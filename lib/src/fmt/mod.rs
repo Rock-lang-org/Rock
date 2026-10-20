@@ -522,6 +522,7 @@ mod tests {
         let formatted_module = module(
             true,
             vec![TopLevel::FunctionDecl(FunctionDecl {
+                self_context: Default::default(),
                 name: ident("main"),
                 lambda: LambdaDecl {
                     parameters: vec![],
@@ -549,6 +550,7 @@ mod tests {
         let formatted_module = module(
             true,
             vec![TopLevel::FunctionDecl(FunctionDecl {
+                self_context: Default::default(),
                 name: ident("main"),
                 lambda: LambdaDecl {
                     parameters: vec![],
@@ -843,6 +845,7 @@ mod tests {
             module: module(
                 true,
                 vec![TopLevel::FunctionSig(FunctionSig {
+                    self_context: Default::default(),
                     name: ident("main"),
                     sig: ParseType::Function(vec![named_type("I64")]),
                     where_clauses: vec![],
@@ -875,6 +878,7 @@ mod tests {
         let function_type_module = module(
             true,
             vec![TopLevel::FunctionSig(FunctionSig {
+                self_context: Default::default(),
                 name: ident("map"),
                 sig: ParseType::Function(vec![
                     named_type("I64"),

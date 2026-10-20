@@ -727,6 +727,63 @@ A.14. Worker transport continues rejecting unauthorized non-root wire contexts;
 this slice does not grant new authoring permissions. Formatting remains deferred;
 no formatter/check, Clippy, or separate build gate ran. Beads remains unavailable.
 
+### A.12 delivery receipt (2026-10-20)
+
+Local scope keys now pair spelling with syntax context. Source bindings,
+reassignments, tuple destructuring, match patterns, array-loop bindings, ordinary
+and curried lambda parameters, function parameters, and method parameters retain
+that authority until lowering selects a canonical `HirLocalId`. A context mismatch
+cannot fall back to a same-spelled caller local. Binary-operator flattening keeps
+the operator context for local-callee lookup; function-dependency collection uses
+contextual local shadowing without changing module lookup policy.
+
+Implicit `self` binds in the receiver marker's context, independently of a
+captured/public method name. The parser retains that context on function
+declarations/signatures; existing synthetic expected-AST constructors explicitly
+use root without changing their Rock fixtures or semantic assertions.
+
+Closure capture discovery, deduplication, and capture-kind joining now use local
+IDs, not spellings. Scope metadata retains hidden IDs until their lexical frame
+ends. End-to-end ownership acceptance exposed an additional MIR name-lookup
+defect: a caller-local write was redirected to a same-spelled generated local,
+incorrectly accepting a conflicting loan. MIR now maps resolved reads, places,
+move sources, and captures through canonical local IDs, registering parameters,
+capture slots, bindings, match patterns, and loop variables. Existing unresolved
+synthetic `Var` handling is unchanged; resolved locals never fall back to it.
+
+- Initial focused compilation caught test-helper API mistakes; adding receiver
+  context also required root-context fields in existing expected-AST constructors.
+  The first seven focused cases passed. Extended acceptance initially passed
+  eight/failed five: four fixture issues (curried arrow spelling, an omitted
+  receiver marker, an expected implicit dereference, and an immutable `FnMut`
+  binding) plus the real MIR loan bypass described above. After repairs, the
+  fifteen-case runner passed; two additional ownership controls passed in the
+  final macro-family gate.
+- `cargo test -p rock-lib --lib lower::` passes 319 tests; serial
+  `cargo test -p rock-lib --lib mir::builder::` passes 87 tests.
+- `cargo test -p rock-lib --test integration macro_a_12_ -- --nocapture`
+  passes three tests: caller-expression/closure forwarding with destructuring,
+  a captured mutable-reference update, and rejection of a conflicting caller loan.
+  Its first run passed one/failed two because the new fixtures used a stuck `*$`
+  operator and an assignment where an expression result was required; the final
+  fixtures use ordinary `*($loan)` syntax and an identifier capture inside `if`.
+- `cargo test -p rock-lib --lib macro_a_ -- --nocapture` passes all 138 tests,
+  including all seventeen A.12 synthetic-context cases. They cover independent
+  assignments, shadows/destructuring, ordinary/curried/nested lambdas, duplicate
+  references and same-spelled distinct captures, mutable-reference ownership,
+  match/loop bindings, receiver markers, operators, function-dependency ordering,
+  and both conflicting and independent-loan controls through finalized HIR/MIR.
+- Final `cargo test -p rock-lib` passes 2,617 units, 797 main integrations,
+  and one parser integration; one doctest is ignored (archive
+  `bc89866781371c0d`). No functional edits follow this gate.
+
+This completes local-context/ID plumbing, not fresh macro-name construction.
+Non-root authorities remain test-only; module/type/generic/definition environments
+remain A.13 and production freshness/procedural permissions remain A.14. Native
+runtime fixtures exercise ordinary forwarding, not yet fresh template allocation.
+Formatting remains deferred; no formatter/check, Clippy, or separate build gate
+ran. Beads remains unavailable.
+
 **A gate:** run all `macro_a_` families and existing declarative/proc/module
 regressions, then `cargo test -p rock-lib` and affected CLI tests serially.
 Synthetic/native worker tests prove compiler semantics only; they are not evidence

@@ -80,7 +80,7 @@ impl Lowerer {
                     );
                 }
                 self.scope
-                    .define_local(var_name.clone(), elem_ty, false, local_id);
+                    .define_local(Self::pattern_local_name(pattern).unwrap_or_else(|| var_name.clone().into()), elem_ty, false, local_id);
                 self.fold_loop_stack.push(None);
                 let body = self.lower_block(body);
                 self.fold_loop_stack.pop();

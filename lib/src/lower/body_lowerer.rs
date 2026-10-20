@@ -3,6 +3,7 @@ use crate::collect::item_index::ModuleKind;
 use crate::ids::{DefId, ModuleId};
 use crate::lower::module_context::ModuleLoweringContext;
 use crate::lower::Lowerer;
+use crate::lower::scope::LocalName;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 pub(crate) struct BodyLowerer<'a> {
@@ -132,7 +133,7 @@ impl<'a> BodyLowerer<'a> {
 
 struct FunctionReferenceCollector {
     paths: Vec<Vec<String>>,
-    scopes: Vec<HashSet<String>>,
+    scopes: Vec<HashSet<LocalName>>,
     top_level_functions: HashSet<String>,
 }
 
@@ -147,9 +148,10 @@ impl<'ast> ast::visit::Visitor<'ast> for FunctionReferenceCollector {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        let shadowed = names
+        let shadowed = path.path
             .first()
-            .is_some_and(|name| self.scopes.iter().rev().any(|scope| scope.contains(name)));
+            .and_then(LocalName::from_segment)
+            .is_some_and(|name| self.scopes.iter().rev().any(|scope| scope.contains(&name)));
         let is_qualified = names.len() > 1;
         let known_top_level = names
             .first()
@@ -174,7 +176,7 @@ impl<'ast> ast::visit::Visitor<'ast> for FunctionReferenceCollector {
             .scopes
             .iter()
             .rev()
-            .any(|scope| scope.contains(&operator.value))
+            .any(|scope| scope.contains(&LocalName::new(operator.value.clone(), operator.context)))
         {
             self.paths.push(vec![operator.value.clone()]);
         }
@@ -250,13 +252,13 @@ impl<'ast> ast::visit::Visitor<'ast> for FunctionReferenceCollector {
     }
 }
 
-fn collect_pattern_bindings(pattern: &ast::Pattern, bindings: &mut HashSet<String>) {
+fn collect_pattern_bindings(pattern: &ast::Pattern, bindings: &mut HashSet<LocalName>) {
     if let Some(binding) = &pattern.binding {
-        bindings.insert(binding.name.clone());
+        bindings.insert(binding.into());
     }
     match &pattern.kind {
         ast::PatternKind::Ident(ident) => {
-            bindings.insert(ident.name.name.clone());
+            bindings.insert((&ident.name).into());
         }
         ast::PatternKind::Tuple(patterns) => {
             for pattern in patterns {
@@ -270,7 +272,7 @@ fn collect_pattern_bindings(pattern: &ast::Pattern, bindings: &mut HashSet<Strin
                         collect_pattern_bindings(pattern, bindings)
                     }
                     ast::ArrayPattern::Rest(ident) => {
-                        bindings.insert(ident.name.name.clone());
+                        bindings.insert((&ident.name).into());
                     }
                 }
             }

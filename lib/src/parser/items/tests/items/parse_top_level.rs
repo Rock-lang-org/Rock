@@ -268,6 +268,7 @@ fn parse_top_level() {
     assert_eq!(
         top_level,
         TopLevel::FunctionDecl(FunctionDecl {
+            self_context: Default::default(),
             name: Ident { context: Default::default(),
                 name: "a".to_string(),
                 span: Span {

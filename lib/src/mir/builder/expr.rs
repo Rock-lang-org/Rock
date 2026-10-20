@@ -154,8 +154,7 @@ impl<'a> MirBuilder<'a> {
                         Rvalue::Use(Operand::Constant(Constant::Callable(callable))),
                         span,
                     );
-                } else if let Some(local) = self.var_map.get(&reference.name) {
-                    let local = *local;
+                } else if let Some(local) = self.local_for_target(&reference.target) {
                     let operand = if let Some(src_place) =
                         self.place_for_borrowed_binding_value(local, &expr.ty)
                     {
@@ -512,6 +511,8 @@ impl<'a> MirBuilder<'a> {
                         .map(|(_, loop_local)| *loop_local)
                         .unwrap_or(loop_local),
                 );
+                self.source_locals.insert(*local_id, iter_place.as_ref()
+                    .map(|(_, loop_local)| *loop_local).unwrap_or(loop_local));
 
                 self.current_block = Some(cond_block);
                 let cond_temp =
