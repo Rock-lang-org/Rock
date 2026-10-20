@@ -106,10 +106,25 @@ Input=1 (range), or Output=2 (range). There are no worker-provided filesystem
 paths or unchecked compiler IDs in diagnostic locations. Output locations require
 output and must fit its expanded spelling; labels use the same validation.
 
-Source/literal descriptors are schema-level output data in B.01. Canonical
-literal-view preparation is implemented in B.18; deferred compiler scanning
-remains B.19. Until B.19, executable invocations using deferred descriptors fail
-explicitly rather than silently dropping or prematurely interpreting them.
+Source/literal descriptors are materialized only after worker exit. Source parts
+undergo neutral scanning and normal construction-context authorization; literal
+parts select the compiler-owned decoded view and receive invocation-site context.
+Captured Stream parts retain their snapshots, contexts and opaque expression
+ranges without printing/re-lexing. Every part is joined with an emission boundary.
+Normal capture-aware generated parsing diagnoses invalid Rock afterward.
+
+Decoded literal scalars retain their original input extents using existing
+Generated provenance records. The compiler alone registers their fresh snapshot
+identities for literal diagnostic mapping; this set is neither worker-controlled
+nor binding/adjacency authority. Equal-width mappings are linear; an escaped
+scalar maps to its complete spelling. Mixed extents map back only when their
+source pieces are contiguous. Forwarded projected spans retain ancestry, so a
+second expansion does not turn decoded byte indices into guessed source offsets.
+No wire layout or additional SDK decoding service is needed for this policy.
+Fragment scans, mapping/slice walks and splice work use the shared expansion work
+budget; output bytes/units, opaque nesting and invocation ancestry retain their
+normal aggregate limits. The response envelope/output spelling bounds still
+apply before reconstruction.
 
 ## Bounds and golden messages
 

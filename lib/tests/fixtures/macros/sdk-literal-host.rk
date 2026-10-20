@@ -43,3 +43,27 @@ reject = context ->
                 end: 0)
                 Result::Ok output => MacroResult::Expand output
                 Result::Err _ => reject context
+
+< macro hole = context, input ->
+    mut parts: Vec OutputPart = Vec::new!
+    parts.push (OutputPart::Literal (LiteralFragment
+        view: 0
+        range: ByteRange
+            start: 3
+            end: context.views.literals[0].decoded.len! as U64))
+    MacroResult::Report (MacroReport
+        output: Option::Some (MacroOutput
+            parts: parts)
+        diagnostics: Vec::new!)
+
+< macro define = context, input ->
+    mut parts: Vec OutputPart = Vec::new!
+    parts.push (OutputPart::Source (SourceFragment
+        text: String::from "generated = -> 41\n"
+        context: ConstructionContext
+            invocation: context.invocation
+            kind: ConstructionKind::CallSite))
+    MacroResult::Report (MacroReport
+        output: Option::Some (MacroOutput
+            parts: parts)
+        diagnostics: Vec::new!)

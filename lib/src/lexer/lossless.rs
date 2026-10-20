@@ -111,7 +111,8 @@ impl SourceSnapshot {
     }
 }
 
-/// An immutable UTF-8 byte range backed by a retained source, never decoded text.
+/// An immutable UTF-8 byte range in one retained snapshot. Literal fragments use
+/// a new decoded snapshot rather than rewriting their caller's retained source.
 #[derive(Debug, Clone)]
 pub struct LosslessRun {
     source: Arc<SourceSnapshot>,
@@ -134,6 +135,7 @@ impl PartialEq for LosslessRun {
 impl Eq for LosslessRun {}
 
 impl LosslessRun {
+    pub(crate) fn snapshot_identity(&self) -> u64 { self.source.identity }
     pub(crate) fn has_construction_request(&self) -> bool { self.construction.is_some() }
 
     pub fn origin(&self) -> crate::macro_expansion::TokenOrigin {
@@ -283,6 +285,7 @@ mod wire;
 mod origin;
 mod fragments;
 mod construction;
+pub(crate) use construction::LiteralSourceRange;
 
 pub use fragments::ExpressionFragment;
 

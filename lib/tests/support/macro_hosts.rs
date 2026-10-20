@@ -184,4 +184,17 @@ main = -> %inspect "é\n雪", '🦀', "", 42
     assert_eq!(output.status.code(), Some(42), "{output:?}");
     assert!(output.stdout.is_empty() && output.stderr.is_empty());
     eprintln!("SDK acceptance: B.18 real literal/opaque-block views passed");
+    let mut fragments = consumer.clone();
+    let source = "> literal_provider::hole\n> literal_provider::define\n%define!\nmain = ->\n    local = 42\n    %hole \"é\\nlocal\"\n";
+    fragments.source_providers = vec![SourceProvider::Virtual { path: fragments.entry_file.clone(), text: source.into() }];
+    rock_lib::compile(&fragments).unwrap_or_else(|errors| panic!("real deferred fragments: {errors:?}"));
+    let output = super::run_client(&fragments.output_dir.join("consumer"));
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
+    let source = source.replace("é\\nlocal", "é\\nmissing");
+    let missing = source.find("missing").unwrap();
+    fragments.source_providers = vec![SourceProvider::Virtual { path: fragments.entry_file.clone(), text: source }];
+    let errors = rock_lib::analyze(&fragments).unwrap_err();
+    assert!(errors.0.iter().any(|error| error.primary.as_ref().is_some_and(|label|
+        label.span.file_path == fragments.entry_file && label.span.start == missing && label.span.end == missing + 7)), "{errors:?}");
+    eprintln!("SDK acceptance: B.19 real deferred source/literal/caller-local/error-span controls passed");
 }

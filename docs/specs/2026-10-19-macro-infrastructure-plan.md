@@ -2224,6 +2224,77 @@ Stage C is unfinished. Formatting remains deferred, Beads unavailable, and
 unrelated work untouched. No protocol, lossless transport or product schema
 change was needed for these parser-side ranges and existing literal records.
 
+### B.19 delivery receipt — authorized deferred fragments
+
+The common procedural item/expression path now materializes validated Stream,
+Source and Literal parts after worker exit. Source fragments use the existing
+neutral scanner and construction authorization. Literal fragments select only
+compiler-owned canonical view ranges, retain per-scalar escape/source extents,
+and use invocation-site context. Captured streams retain snapshot identities,
+contexts and opaque expression ranges without printing/re-lexing; emission
+boundaries never grant adjacency. Ordinary generated parsing and expansion
+ancestry remain authoritative, and aggregate work/output limits cover fragments.
+
+Literal snapshots use existing Generated provenance with exact source extents;
+only the compiler can register the fresh snapshot identities for literal
+diagnostic projection. Registration grants neither binding nor adjacency and
+is not serialized worker data. Source-map projection supports indivisible escaped
+scalars and proved contiguous mixed-width extents, including later forwarding.
+Protocol 7, `RKLOSS04` and product format 54 remain unchanged.
+
+Two initial `macro_b_19` tests reproduced the unsupported-fragment diagnostic
+before implementation (`macro-b19-red-runtime.log`; the preceding attempt had
+a missing test import and is not a behavioral RED). Seven focused units now
+pass, covering generated items, literal holes after escape/Unicode prefixes,
+nonlinear escaped spans and diagnostics, nested declarative forwarding,
+capture snapshot/context/opacity preservation, anti-gluing, bad handles/ranges/
+construction authority/Rock, and shared work/output budgets. Real `rockc`
+provider publication and consumer compilation also pass with only the provider
+artifact supplied to the consumer; an unknown literal-derived name is diagnosed
+at its exact caller substring. The complete library/native SDK gate passes.
+
+Workspace/all-targets check and Clippy pass; the full library run precedes only
+four Clippy-only removals of needless closure borrows, stronger negative-message
+assertions and documentation updates.
+No functional edits follow that gate's source snapshot. The final seven-test
+focused rerun and terminal workspace/all-targets Clippy pass cover those
+cleanups/assertions before committing B.19.
+
+Commands and logs under `/tmp/opencode/`:
+
+- RED: `cargo test -p rock-lib --lib macro_b_19`, two unsupported-fragment
+  failures in `macro-b19-red-runtime.log`, SHA-256
+  `231de8852dbc006423b7891a475967d42f6f4995f58edbd1fb537cd304a44dde`.
+- Final focused GREEN: same command, seven pass in
+  `macro-b19-final-snapshot.log`, SHA-256
+  `20ff740c648457956f36fee19b685dfd39d4cb5d9355cae74d717a1c2adf43af`.
+- `cargo test -p rock-lib`: 2,731 units, 806 main integrations, six diagnostic
+  integrations, 14 process integrations, one SDK integration and one parser
+  integration pass; one doctest is ignored. The native SDK gate retains all
+  existing cross-language/host/worker controls and now emits deferred source
+  items and literal expressions from a real Rock provider, executes the caller-
+  local consumer with exit status 42, and diagnoses an unknown literal-derived
+  name at its precise escaped/Unicode caller substring.
+  `macro-b19-acceptance.log`, SHA-256
+  `818d13c33dcfaaf70449b1da03f3834e094e71b5dac8ddbc0aa37e819510e659`.
+- `cargo check --workspace --all-targets`: pass, `macro-b19-check.log`, SHA-256
+  `023a0321bae9e6d690632e28b12d1f818de85e294f64faf94efe7b5416495f6e`.
+- `cargo clippy --workspace --all-targets`: pass with existing warnings,
+  `macro-b19-clippy-terminal.log`, SHA-256
+  `05085e6914da41a0079cee13f2c6e4247fe3ae9bef1a5640ff4128501bce86f5`.
+- `cargo build --release`: pass with existing warnings,
+  `macro-b19-release-build.log`, SHA-256
+  `434c5a4af62a7ed79ecf31f418a5c5228432e5f75281541f054308063c1564c8`.
+- Manual real-worker CLI positives and exact unknown-name rejection use
+  `/tmp/opencode/macro-b19-{consumer,missing}.rk` and the explicitly published
+  `macro-b19-host/literal_provider.rkca`. `macro-b19-consumer.log`, SHA-256
+  `f8d1155bec9a28f90e27ca559d35def4a5a86e1f974293c094d81fea59cc7e09`;
+  expected exit-1 `macro-b19-missing.log`, SHA-256
+  `4aa8fb5ae0254904689b4db091b7aa231cc73ae6d77a3ac71efa447ee7775675`.
+
+B.19 is implemented and verified. B.20–B.22 and Stage C remain unfinished;
+formatting remains deferred, Beads unavailable, and unrelated work untouched.
+
 **B gate:** all `macro_b_` families, the real SDK cross-language goldens, existing
 process/build/artifact tests, and the formatting/DSL proofs pass. Run the broader
 serialized gates below. A Rust-only worker, protocol round trip, or manifest flag

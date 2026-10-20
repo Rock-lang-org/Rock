@@ -360,25 +360,11 @@ fn expand_procedural(
                 )
             })?;
 
-    let mut output = args.slice(0..0, token_tree::MACRO_LIMITS).map_err(|error|
-        proc_macro_error(format!("Failed to anchor macro output: {error:?}"), invoc_span.clone()))?;
-    if let Some(result) = &response.output {
-        for part in &result.parts {
-            let proc_macro::ProcMacroPart::Stream(bytes) = part else {
-                return Err(with_expansion_trace(proc_macro_error("deferred procedural output fragments are not implemented", invoc_span), context, expansion_id));
-            };
-            let stream = proc_macro::decode_stream(bytes).map_err(|error|
-                with_expansion_trace(proc_macro_error(format!("Failed to decode proc macro output: {error}"), invoc_span.clone()), context, expansion_id))?;
-            output = output.join(&stream, crate::lexer::lossless::JoinBoundary::Separate, token_tree::MACRO_LIMITS)
-                .map_err(|error| proc_macro_error(format!("Failed to join proc output parts: {error:?}"), invoc_span.clone()))?;
-        }
-    }
     let generated_source = context
         .generated_source_id(expansion_id)
         .unwrap_or(GeneratedSourceId(0));
-    let stream = output.resolve_proc_output(args, invocation.id, expansion_id, generated_source,
-        |request| context.construction_context(request, invocation, &entry.artifact.definition_dependencies))
-        .map_err(|message| with_expansion_trace(proc_macro_error(message, invocation.span.clone()), context, expansion_id))?;
+    let stream = proc_macro::materialize(&request, &response, invocation, context, expansion_id, generated_source)
+        .map_err(|diagnostics| with_expansion_trace(diagnostics, context, expansion_id))?;
     let projected = context.project_output(&stream, expansion_id);
     let diagnostics = response.diagnostics_at(&request, invoc_span, Some(&projected));
     if diagnostics.0.iter().any(|diagnostic| diagnostic.severity == crate::diagnostic::DiagnosticSeverity::Error) {

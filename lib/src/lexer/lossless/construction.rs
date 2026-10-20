@@ -5,7 +5,46 @@ use super::{ConstructionContext, LosslessError, LosslessStream, ScanLimits, Sour
 use crate::ast::InvocationId;
 use crate::macro_expansion::{ExpansionId, GeneratedSourceId, TokenOrigin, TokenProvenance};
 
+pub(crate) struct LiteralSourceRange {
+    pub decoded: std::ops::Range<usize>,
+    pub source: crate::lexer::Span,
+}
+
 impl LosslessStream {
+    /// Neutral scanning only. Scalar splits retain exact escape source extents
+    /// while adjacency still comes exclusively from this new retained snapshot.
+    pub(crate) fn mapped_literal(
+        text: String, mappings: Vec<LiteralSourceRange>, context: SyntaxContext,
+        expansion: ExpansionId, generated_source: GeneratedSourceId, limits: ScanLimits,
+    ) -> Result<Self, String> {
+        let mut stream = Self::from_bytes("<macro-literal>".into(), text.into_bytes(), limits)
+            .map_err(|error| format!("literal fragment preservation: {error:?}"))?;
+        let mut runs = Vec::new();
+        let mut raw = 0;
+        let mut end = 0;
+        for mapping in mappings {
+            if mapping.decoded.start != end || mapping.decoded.is_empty()
+                || !stream.anchor.source.text.get(mapping.decoded.clone()).is_some_and(|text| text.chars().count() == 1) {
+                return Err("invalid canonical literal source mapping".into());
+            }
+            while raw < stream.runs.len() && stream.runs[raw].range.end <= mapping.decoded.start { raw += 1; }
+            let mut run = stream.runs.get(raw).filter(|run| mapping.decoded.end <= run.range.end)
+                .ok_or("invalid literal scalar boundary")?.clone();
+            if runs.len() == limits.max_runs { return Err("literal fragment unit limit exceeded".into()); }
+            end = mapping.decoded.end;
+            run.range = mapping.decoded;
+            run.context = context;
+            run.boundary = super::JoinBoundary::SourceAdjacent;
+            run.origin = Some(TokenProvenance::Generated { expansion, generated_source, definition_span: mapping.source }.into());
+            runs.push(run);
+        }
+        if end != stream.len_bytes { return Err("incomplete literal source mapping".into()); }
+        stream.anchor.context = context;
+        if let Some(first) = runs.first() { stream.anchor.origin = first.origin.clone(); }
+        stream.runs = runs;
+        Ok(stream)
+    }
+
     /// Retain generated UTF-8 without granting binding or source-file authority.
     pub fn source_fragment(text: String, context: ConstructionContext, limits: ScanLimits) -> Result<Self, LosslessError> {
         let mut stream = Self::from_bytes("<macro-construction>".into(), text.into_bytes(), limits)?;

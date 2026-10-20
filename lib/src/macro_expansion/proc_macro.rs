@@ -10,6 +10,10 @@ use super::{ExpansionId, TokenStream};
 
 mod schema;
 mod literals;
+mod fragments;
+pub(super) use fragments::materialize;
+#[cfg(test)]
+mod fragment_tests;
 mod transport;
 mod artifact;
 pub use artifact::{ProcMacroFileIdentity, ProcMacroHostFile};

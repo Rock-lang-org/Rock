@@ -219,6 +219,10 @@ impl<'a> MacroExpansionContext<'a> {
 
     pub fn source_map(&self) -> MacroSourceMap { self.source_map.borrow().clone() }
 
+    pub(super) fn register_literal_source(&self, stream: &super::TokenStream) {
+        self.source_map.borrow_mut().register_literal_source(stream);
+    }
+
     pub(super) fn project_output(&self, stream: &super::TokenStream, id: ExpansionId) -> super::TokenStream {
         self.source_map.borrow_mut().record_output(id, stream);
         stream.project_output(id, self.generated_source_id(id).unwrap_or(GeneratedSourceId(0)), self.source_map.borrow().namespace())

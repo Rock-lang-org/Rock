@@ -89,6 +89,8 @@ pub struct MacroSourceMap {
     records: Vec<MacroExpansionRecord>,
     generated_sources: Vec<GeneratedSourceId>,
     outputs: std::collections::BTreeMap<ExpansionId, OutputSource>,
+    /// Compiler-created decoded snapshots only; never worker-supplied authority.
+    literal_sources: std::collections::BTreeSet<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +104,39 @@ struct OutputSegment {
 struct OutputSource {
     text: String,
     segments: Vec<OutputSegment>,
+}
+
+impl OutputSource {
+    /// Equal-width spans are linear; a decoded escape is one indivisible scalar.
+    /// Multiple pieces map only when their original extents are contiguous.
+    fn map_span(&self, span: &Span, captured_only: bool) -> Option<Span> {
+        if span.start > span.end { return None; }
+        let first = self.segments.partition_point(|segment| segment.range.start <= span.start).checked_sub(1)?;
+        let mut mapped: Option<Span> = None;
+        let mut covered = span.start;
+        for segment in &self.segments[first..] {
+            if segment.range.start > covered || (captured_only && segment.generated) { return None; }
+            let end = span.end.min(segment.range.end);
+            if end < covered { return None; }
+            let source = if segment.source.end - segment.source.start == segment.range.len() {
+                Span::new(segment.source.file_path.clone(), segment.source.start + covered - segment.range.start,
+                    segment.source.start + end - segment.range.start)
+            } else if covered == segment.range.start && end == segment.range.end {
+                segment.source.clone()
+            } else if covered == end && (covered == segment.range.start || covered == segment.range.end) {
+                let point = if covered == segment.range.start { segment.source.start } else { segment.source.end };
+                Span::new(segment.source.file_path.clone(), point, point)
+            } else { return None; };
+            match &mut mapped {
+                Some(previous) if previous.file_path == source.file_path && previous.end == source.start => previous.end = source.end,
+                None => mapped = Some(source),
+                _ => return None,
+            }
+            covered = end;
+            if covered == span.end { return mapped; }
+        }
+        None
+    }
 }
 
 impl MacroSourceMap {
@@ -123,19 +158,25 @@ impl MacroSourceMap {
         self.outputs.get(&expansion).map(|output| output.text.as_str())
     }
 
+    pub(crate) fn register_literal_source(&mut self, stream: &super::TokenStream) {
+        self.literal_sources.extend(stream.runs().iter().map(|run| run.snapshot_identity()));
+    }
+
     pub(crate) fn record_output(&mut self, expansion: ExpansionId, stream: &super::TokenStream) {
         let mut output = OutputSource { text: String::with_capacity(stream.len_bytes()), segments: Vec::new() };
         for run in stream.runs() {
             let start = output.text.len();
             output.text.push_str(run.text());
             let origin = run.origin();
-            let generated = matches!(&origin.provenance, TokenProvenance::Generated { .. });
+            let generated = matches!(&origin.provenance, TokenProvenance::Generated { .. })
+                && !self.literal_sources.contains(&run.snapshot_identity());
             let source = match origin.provenance {
                 TokenProvenance::Generated { definition_span, .. } if origin.projection.is_none() => definition_span,
                 _ => run.span(),
             };
             if let Some(previous) = output.segments.last_mut() {
-                if previous.generated == generated && previous.source.file_path == source.file_path && previous.source.end == source.start {
+                if previous.generated == generated && previous.source.file_path == source.file_path && previous.source.end == source.start
+                    && previous.source.end - previous.source.start == previous.range.len() && source.end - source.start == run.text().len() {
                     previous.range.end = output.text.len(); previous.source.end = source.end;
                     continue;
                 }
@@ -160,13 +201,10 @@ impl MacroSourceMap {
         for _ in 0..self.records.len() {
             let Some(id) = self.expansion_at(&span) else { break; };
             let Some(output) = self.outputs.get(&id) else { break; };
-            let end = output.segments.partition_point(|segment| segment.range.start <= span.start);
-            let Some(segment) = end.checked_sub(1).and_then(|index| output.segments.get(index)).filter(|segment|
-                span.end <= segment.range.end && segment.source.end - segment.source.start == segment.range.len()) else { break; };
+            let Some(original) = output.map_span(&span, false) else { break; };
             // Proc-constructed fragments have no original source snapshot.
-            if segment.source.file_path == std::path::Path::new("<macro-construction>") { break; }
-            span = Span::new(segment.source.file_path.clone(), segment.source.start + span.start - segment.range.start,
-                segment.source.start + span.end - segment.range.start);
+            if original.file_path == std::path::Path::new("<macro-construction>") { break; }
+            span = original;
         }
         span
     }
@@ -176,13 +214,8 @@ impl MacroSourceMap {
         for _ in 0..self.records.len() {
             let Some(id) = self.expansion_at(&span) else { break; };
             let Some(output) = self.outputs.get(&id) else { break; };
-            let end = output.segments.partition_point(|segment| segment.range.start <= span.start);
-            let captured = end.checked_sub(1).and_then(|index| output.segments.get(index)).filter(|segment|
-                !segment.generated && span.end <= segment.range.end
-                    && segment.source.end - segment.source.start == segment.range.len());
-            span = match captured {
-                Some(segment) => Span::new(segment.source.file_path.clone(), segment.source.start + span.start - segment.range.start,
-                    segment.source.start + span.end - segment.range.start),
+            span = match output.map_span(&span, true) {
+                Some(original) => original,
                 None => match self.record(id) { Some(record) => record.invocation_span.clone(), None => break },
             };
         }
