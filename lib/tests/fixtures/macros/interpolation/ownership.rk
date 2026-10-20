@@ -1,0 +1,54 @@
+> weave::weave
+> ink_runtime::Paint
+
+struct Mark
+    < id: I64
+
+impl Paint for Mark
+    @paint = ->
+        "paint".println!
+        self.id.println!
+        self.id.show!
+
+impl Drop for Mark
+    ~@drop = !->
+        "drop".println!
+        self.id.println!
+
+make = id ->
+    "make".println!
+    id.println!
+    Mark
+        id: id
+
+macro_proof = !->
+    result = %weave "{make 1}{make 2}"
+    result.println!
+    held = make 3
+    (%weave "{held}{held}").println!
+    held.id.println!
+    name = String::from "Ada"
+    (%weave "{name}{name}").println!
+    name.println!
+    ink_runtime = 23
+    value = 13
+    text = 17
+    concat = 19
+    (%weave "{ink_runtime}{value}{text}{concat}").println!
+
+direct_proof = !->
+    result = (ink_runtime::text "").concat (ink_runtime::value &(make 1)).concat (ink_runtime::text "").concat (ink_runtime::value &(make 2)).concat (ink_runtime::text "")
+    result.println!
+    held = make 3
+    ((ink_runtime::text "").concat (ink_runtime::value &held).concat (ink_runtime::text "").concat (ink_runtime::value &held).concat (ink_runtime::text "")).println!
+    held.id.println!
+    name = String::from "Ada"
+    ((ink_runtime::text "").concat (ink_runtime::value &name).concat (ink_runtime::text "").concat (ink_runtime::value &name).concat (ink_runtime::text "")).println!
+    name.println!
+    "23131719".println!
+
+main = !->
+    "macro".println!
+    macro_proof!
+    "direct".println!
+    direct_proof!

@@ -65,6 +65,28 @@ pub fn verify(config: &Config) {
     let errors = rock_lib::analyze(&consumer).unwrap_err();
     let report = format!("{errors:?}");
     assert!(report.contains("Paint") && report.contains("Unsupported"), "{report}");
+    let source = include_str!("../fixtures/macros/interpolation/ownership.rk");
+    consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(), text: source.into() }];
+    rock_lib::compile(&consumer).unwrap_or_else(|errors| panic!("interpolation ownership/evaluation: {errors:?}"));
+    let output = super::run_client(&consumer.output_dir.join("consumer"));
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8(output.stdout).unwrap();
+    let (macro_run, direct_run) = text.strip_prefix("macro\n").unwrap().split_once("direct\n").unwrap();
+    assert_eq!(macro_run, direct_run);
+    assert!(macro_run.starts_with("make\n1\npaint\n1\nmake\n2\npaint\n2\n"), "{text}");
+    for id in 1..=3 {
+        assert_eq!(macro_run.matches(&format!("make\n{id}\n")).count(), 1, "{text}");
+        assert_eq!(macro_run.matches(&format!("drop\n{id}\n")).count(), 1, "{text}");
+    }
+    assert!(macro_run.contains("33\n3\nAdaAda\nAda\n23131719\n"), "{text}");
+    let source = include_str!("../fixtures/macros/interpolation/consuming.rk");
+    consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(), text: source.into() }];
+    let errors = rock_lib::compile(&consumer).unwrap_err();
+    let moved = source.find("take owned").unwrap() + 5;
+    assert!(errors.0.iter().any(|error| error.code == Some(rock_lib::diagnostic::DiagnosticCode::Borrow)
+        && error.message.contains("moved value") && error.secondary.iter().any(|label|
+            label.span.file_path == consumer.entry_file && label.span.start == moved && label.span.end == moved + 5)), "{errors:?}");
+    eprintln!("SDK acceptance: B.22 once/left-to-right/borrowed names/temporary destruction/hygiene/consuming-call controls passed");
     let source = include_str!("../fixtures/macros/interpolation/consumer.rk").to_string();
     consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(), text: source }];
     consumer.extern_artifacts.retain(|(name, _)| name != "ink_runtime");

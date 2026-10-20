@@ -1,0 +1,11 @@
+> block_dsl::render
+> weave::weave
+main = !->
+    count = %render
+        <panel value=41>
+          It's "open [ { (
+          <!-- DSL comment: ] } ) -->
+          /* unclosed Rock comment
+         `雪🦀`	  spacing
+        </panel>
+    (%weave "source-free {count + 1}").println!

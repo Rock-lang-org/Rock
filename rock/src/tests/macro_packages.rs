@@ -224,3 +224,82 @@ fn macro_b_21_external_interpolation_resolves_caller_holes_and_runtime_authority
     assert!(report.contains("Paint") && report.contains("Unsupported"), "{report}");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn macro_b_22_nontrivial_consumers_execute_from_relocated_source_free_bundle() {
+    fn copy_tree(from: &Path, to: &Path) {
+        fs::create_dir_all(to).unwrap();
+        for entry in fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap(); let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() { copy_tree(&entry.path(), &target); }
+            else { fs::copy(entry.path(), target).unwrap(); }
+        }
+    }
+    let root = temp_test_dir("macro_b22_bundle");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let std = root.join("std"); let sdk = root.join("sdk"); let runtime = root.join("runtime");
+    let provider = root.join("provider"); let dsl = root.join("dsl"); let app = root.join("app");
+    write_package_with_options(&std, "std", "src/lib.rk", &[], "", true);
+    copy_tree(&workspace.join("std/src"), &std.join("src"));
+    write_package_with_options(&sdk, "rock_macro", "src/lib.rk", &[("std", std.display().to_string())], "", true);
+    copy_tree(&workspace.join("rock_macro/src"), &sdk.join("src"));
+    write_package_with_options(&runtime, "ink_runtime", "src/lib.rk", &[("std", std.display().to_string())],
+        include_str!("../../../lib/tests/fixtures/macros/interpolation/runtime/src/lib.rk"), false);
+    write_package_with_options(&provider, "weave", "src/lib.rk", &[
+        ("rock_macro", sdk.display().to_string()), ("ink_runtime", runtime.display().to_string()),
+    ], include_str!("../../../lib/tests/fixtures/macros/interpolation/provider/src/lib.rk"), false);
+    write_package_with_options(&dsl, "block_dsl", "src/lib.rk", &[("rock_macro", sdk.display().to_string())],
+        include_str!("../../../lib/tests/fixtures/macros/block_dsl/src/lib.rk"), false);
+    for package in [&provider, &dsl] {
+        let manifest = package.join("rock.toml");
+        fs::write(&manifest, fs::read_to_string(&manifest).unwrap().replace("[lib]", "[lib]\nproc_macro = true")).unwrap();
+    }
+    write_package_with_options(&app, "app", "src/main.rk", &[
+        ("weave", provider.display().to_string()), ("block_dsl", dsl.display().to_string()),
+        ("ink_runtime", runtime.display().to_string()), ("std", std.display().to_string()),
+    ], include_str!("../../../lib/tests/fixtures/macros/interpolation/packaged.rk"), false);
+    let output = rock(&app, &["run", "--debug"]); success(&output);
+    assert_eq!(output.stdout, b"source-free 42\n");
+    let plan = crate::dependency_plan::BuildPlan::new(&super::support::load_package(app.clone()), crate::dependency_plan::BuildTriples::native()).unwrap();
+    let bundle = root.join("bundle");
+    let mut expected = Vec::new();
+    let mut names = Vec::new();
+    for unit in plan.units.values().filter(|unit|
+        unit.id.role() == rock_shared::manifest::TargetRole::ProcMacro
+            || (unit.id.platform == crate::dependency_plan::BuildPlatform::Target && unit.id.role() == rock_shared::manifest::TargetRole::Library)) {
+        let name = &unit.package.manifest.crate_.name;
+        names.push(name.clone());
+        let relative = Path::new(name).join("artifacts").join(format!("{name}.rkca"));
+        fs::create_dir_all(bundle.join(&relative).parent().unwrap()).unwrap();
+        fs::copy(unit.package.artifact_path(), bundle.join(&relative)).unwrap();
+        expected.push((relative, fs::read(unit.package.artifact_path()).unwrap()));
+        let (original, relative) = if unit.id.role() == rock_shared::manifest::TargetRole::ProcMacro {
+            (unit.package.worker_path(), Path::new(name).join("worker/lib"))
+        } else {
+            (unit.package.object_path(), Path::new(name).join("objects/lib.o"))
+        };
+        fs::create_dir_all(bundle.join(&relative).parent().unwrap()).unwrap();
+        fs::copy(&original, bundle.join(&relative)).unwrap();
+        expected.push((relative, fs::read(original).unwrap()));
+    }
+    names.sort(); assert_eq!(names, ["block_dsl", "ink_runtime", "std", "weave"]);
+    let moved = root.join("relocated"); fs::rename(&bundle, &moved).unwrap();
+    for package in [&provider, &dsl, &sdk, &runtime, &std] {
+        fs::remove_dir_all(package.join("src")).unwrap();
+        fs::remove_file(package.join("rock.toml")).unwrap();
+    }
+    fs::remove_dir_all(app.join("build")).unwrap();
+    let source = root.join("packaged.rk");
+    fs::write(&source, include_str!("../../../lib/tests/fixtures/macros/interpolation/packaged.rk")).unwrap();
+    let output_dir = root.join("source-free-output");
+    let mut command = Command::new(resolve_rockc_path().unwrap());
+    command.args(["--entry-file", source.to_str().unwrap(), "--output-dir", output_dir.to_str().unwrap(), "--no-std"]);
+    for name in &names {
+        command.args(["--extern-artifact", &format!("{name}={}", moved.join(name).join("artifacts").join(format!("{name}.rkca")).display())]);
+    }
+    success(&run_command_output(&mut command));
+    let output = run_command_output(&mut Command::new(output_dir.join("packaged")));
+    success(&output); assert_eq!(output.stdout, b"source-free 42\n");
+    for (relative, bytes) in expected { assert_eq!(fs::read(moved.join(relative)).unwrap(), bytes, "source-free consumption changed a bundled product"); }
+    fs::remove_dir_all(root).unwrap();
+}

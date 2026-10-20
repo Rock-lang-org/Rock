@@ -53,5 +53,21 @@ cargo test -p rock-lib --test macro_sdk -- --nocapture
 ```
 
 B.21 establishes interpolation, binding, dependency and diagnostic boundaries.
-Evaluation order, borrowing/consumption/destruction, hygiene collisions and
-relocated source-free consumers are the separate B.22 acceptance step.
+B.22 adds `ownership.rk`, comparing macro output to equivalent ordinary helper
+calls: effectful holes execute once left-to-right, named values remain usable,
+each tracked temporary is destroyed once, and caller names can collide with
+helper/module spellings. `consuming.rk` must fail borrow checking because a call
+inside a hole still consumes its argument.
+
+`packaged.rk` combines a raw block DSL expression and interpolation with a normal
+runtime helper. CLI acceptance copies only proc artifacts/workers and target
+artifacts/objects into a bundle, relocates it, deletes all copied provider, SDK,
+runtime and std sources plus the original build tree, and compiles/runs the
+consumer against those products alone. Bundled bytes must remain unchanged.
+
+```sh
+cargo test -p rock macro_b_22 -- --nocapture
+```
+
+The source-free test invokes `rockc` directly because it is testing the artifact
+boundary after the source-based package planner has no sources to rebuild.

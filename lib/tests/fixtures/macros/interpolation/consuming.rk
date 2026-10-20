@@ -1,0 +1,7 @@
+> weave::weave
+take: String -> I64
+take = value -> value.len!
+main = !->
+    owned = String::from "consumed"
+    (%weave "{take owned}").println!
+    owned.println!

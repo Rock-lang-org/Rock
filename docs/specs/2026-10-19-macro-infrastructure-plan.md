@@ -2462,7 +2462,82 @@ the compiler regression baseline. B.22 evaluation/ownership/source-free proofs
 and Stage C remain unfinished. Formatting remains deferred, Beads unavailable,
 and unrelated work untouched.
 
-**B gate:** all `macro_b_` families, the real SDK cross-language goldens, existing
+### B.22 delivery receipt — evaluation, ownership and source-free consumers
+
+The interpolation fixture now compares an effectful macro consumer against
+equivalent ordinary helper calls. Both execute each hole once left-to-right,
+paint borrowed named values repeatedly while retaining their later uses, and
+destroy each tracked temporary exactly once with identical observable traces.
+Caller locals named `ink_runtime`, `value`, `text`, and `concat` resolve inside
+holes without capturing definition-side helper paths. A call inside a hole still
+consumes its String argument; the ordinary Borrow diagnostic maps its move label
+to the original literal substring and rejects the later use.
+
+The new CLI packaged consumer combines raw HTML-shaped block DSL input with an
+interpolated arithmetic hole and a real runtime helper. Acceptance first runs
+the source-backed packages, copies exactly two proc artifacts/workers and two
+target artifacts/objects (std and ink_runtime), relocates the bundle, deletes all
+copied provider/DSL/SDK/runtime/std source trees/manifests and the original build
+tree, then compiles/runs the consumer with only explicit bundled artifacts.
+The result is `source-free 42`; all bundled metadata, workers and objects retain
+identical bytes. No SDK or host dependency objects are supplied to the target.
+
+Final serialized gates and logs under `/tmp/opencode/`:
+
+- `cargo test -p rock-lib`: 2,731 units, 806 main integrations, six diagnostic
+  integrations, 14 process integrations, one native SDK integration and one
+  parser integration pass; one doctest is ignored. This includes all B.18–B.22
+  consumers and the new ownership/consuming-call controls. `macro-b22-library.log`,
+  SHA-256 `921ed82b6994dceedc889cf7e1e8c36028693ef86259ceb0e762990e67ca5746`.
+- `cargo test -p rock -p rockc -p rock-shared`: 99 application CLI, 57 compiler
+  CLI and 30 shared units plus one shared doctest pass. This includes existing
+  worker/process/build/freshness/host-target identity controls and all new DSL,
+  interpolation and source-free package tests. `macro-b22-cli-shared.log`, SHA-256
+  `f43fbeb530056b5aefbf7587005293f3c1042155a31761f55d09d16c044c50f1`.
+- Focused `cargo test -p rock macro_b_22 -- --nocapture`: one passes,
+  `macro-b22-cli.log`, SHA-256
+  `de75e43ce3895d92404f0c55f49dd4daa9d4456be7f968ac040e4dd520ece706`.
+- `cargo check --workspace --all-targets`: pass, `macro-b22-check.log`, SHA-256
+  `ebd2f7740b762de18bb6c7697add38ad45273e47d3ab07f3b7d3e57488b4c178`.
+- `cargo clippy --workspace --all-targets`: pass with existing warnings,
+  `macro-b22-clippy.log`, SHA-256
+  `e593409e9998ab50dba82a8a647f9fdf5c828ee2c7d9f933652917ade387d8d2`.
+- `cargo build --release`: pass, `macro-b22-release-build.log`, SHA-256
+  `7e4b9810c8909b8e34e0be5aff57552a57bb1fe531998d4c0a0c873892f36322`.
+- Direct `cargo run -p rockc -- --entry-file .../consuming.rk ...` rejects the
+  later use with `borrow of moved value owned`, including the original hole's
+  exact move range. Expected exit-1 `macro-b22-consuming.log`, SHA-256
+  `f24c09ed9d2ca51ac446d46bd92b391ec43368a04db5315d8599c9c9f73f22db`.
+
+Authoring/verification corrections are retained, not acceptance failures hidden
+by narrowed observers. Direct ownership compilation first found a private field
+in the fixture (`macro-b22-ownership-build.log`, SHA-256
+`e095d2b6a6b0808f9af0dd8ed39ec4272af24537767eb7911e4e027b01f0f081`),
+then a reference-to-temporary error in direct comparison expressions that stored
+intermediate results unlike the immediate-print macro expressions
+(`macro-b22-ownership-build-final.log`, despite its name failed, SHA-256
+`a00234171d631d260ecb97e9ba727cb93bc51f92102602a1cd375040eb4bf76a`).
+Matching the immediate-use scopes compiles (`macro-b22-ownership-build-3.log`,
+SHA-256 `6407befa5529fad9560b18fbc0ec4ef81e4ed97d8a477c9f29a2ebbe718c69a4`).
+The first native attempt passed the execution/trace checks but incorrectly used
+frontend-only `analyze` to expect a MIR Borrow failure. The final gate uses
+`compile` and checks the moved-value diagnostic and precise move label. Failed
+`macro-b22-sdk.log`, SHA-256
+`ddb16c228f1c579120ec9432410ed7efd99bd1d9ca1bb1d8dcd74af3568b63ca`.
+
+Runnable foreign-target acceptance was not exercised. `command -v` probes found
+neither an AArch64 linker/emulator nor a MinGW cross compiler (Wine is present);
+`macro-b22-cross-tools.log`, SHA-256
+`339e78ad215a963fe262af2b9774a8d2b98a21a0a0a5892cabd0a7d379a0a5b6`.
+Unconditional simulated host/target identity tests pass in the shared/CLI gate.
+No cross toolchain installation or unsupported target execution is claimed.
+
+B.22 and the native Stage B gate are implemented and verified. No functional
+edits follow the final gates; compiler/SDK/schema bytes remain unchanged in
+B.20–B.22. Stage C remains unimplemented. Formatting remains deferred, Beads
+unavailable, and unrelated work untouched.
+
+**B gate (native evidence above):** all `macro_b_` families, the real SDK cross-language goldens, existing
 process/build/artifact tests, and the formatting/DSL proofs pass. Run the broader
 serialized gates below. A Rust-only worker, protocol round trip, or manifest flag
 alone is not Stage B completion. Runnable foreign-target acceptance is required
