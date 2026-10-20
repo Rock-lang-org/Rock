@@ -109,6 +109,9 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
     }
 
     fn match_threads(&mut self) -> Result<(Correspondance, &'args [Token]), MatchError> {
+        for thread in &self.threads {
+            self.context.charge_matching(thread.tokens.len().saturating_add(thread.args.len()), &self.invoc_span)?;
+        }
         let mut threads = self.threads.clone();
         let mut most_advanced_arg_idx = 0;
         let mut solution = None;
@@ -117,6 +120,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
             let mut new_threads = vec![];
 
             for thread in &mut threads {
+                self.context.charge_matching(1usize.saturating_add(thread.tokens.len()).saturating_add(thread.args.len()), &self.invoc_span)?;
                 if remaining_is_all_repetition_or_empty(&thread.tokens)
                     && (!self.must_be_completed || thread.args.is_empty())
                 {

@@ -39,12 +39,16 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                 if let TopLevel::MacroInvoc(invocation) = &item {
                     match self.registry.resolve(&self.scope, &invocation.path_name(), &invocation.span) {
                         Ok(Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. })) => {
-                            output.extend(super::expand_top_level(declaration, invocation, self.context)?);
+                            let emitted = super::expand_top_level(declaration, invocation, self.context)?;
+                            self.context.note_source_modules(&emitted, &self.scope, invocation.id);
+                            output.extend(emitted);
                             self.executed += 1;
                             continue;
                         }
                         Ok(Some(super::registry::MacroEntry { definition: MacroDefinition::Procedural(entry), .. })) => {
-                            output.extend(super::expand_proc_macro_top_level(entry, invocation, self.context)?);
+                            let emitted = super::expand_proc_macro_top_level(entry, invocation, self.context)?;
+                            self.context.note_source_modules(&emitted, &self.scope, invocation.id);
+                            output.extend(emitted);
                             self.executed += 1;
                             continue;
                         }
@@ -177,9 +181,6 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                     let diagnostics = Diagnostics(vec![diagnostic]);
                     invocation.parent.map(|parent| with_expansion_trace(diagnostics.clone(), self.context, parent)).unwrap_or(diagnostics)
                 };
-                if depth >= self.context.max_depth {
-                    return Err(failure(self.context.depth_exceeded_diagnostic(invocation.span.clone())));
-                }
                 let resolved = self.registry.resolve(&self.scope, &invocation.path_name(), &invocation.span)?;
                 let Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. }) = resolved else {
                     return Err(failure(Diagnostic::new("expression macro expansion is not implemented for unresolved or procedural macro paths".into(), invocation.span.clone())

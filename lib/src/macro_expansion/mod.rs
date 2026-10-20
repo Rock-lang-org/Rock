@@ -44,6 +44,12 @@ mod traversal_tests;
 #[cfg(test)]
 mod scheduling_tests;
 
+#[cfg(test)]
+mod budget_tests;
+
+mod budget;
+pub use budget::ExpansionLimits;
+
 pub use context::MacroExpansionContext;
 pub use source_map::{
     ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, TokenOrigin,
@@ -71,21 +77,29 @@ pub fn expand_macros_in_graph(
     let mut program = Program { module: graph.root_module().clone() };
     let mut modules = graph.modules().cloned().collect::<Vec<_>>();
     expand_forest(&mut program.module, &mut modules, context, &mut |root, modules| {
-        publish_forest(graph, root, modules);
+        publish_forest(graph, root, modules, context);
         let count = graph.modules().count();
-        source_db.load_module_declarations(graph, root, context.config.current_crate_name.as_deref(), context.config)
+        source_db.load_module_declarations_with_budget(graph, root, context.config.current_crate_name.as_deref(), context.config,
+            &mut |path, qualified, bytes| context.charge_source(bytes)
+                .map_err(|message| context.source_budget_diagnostic(path, qualified, message)))
             .map_err(crate::source_load_errors_to_diagnostics)?;
         *modules = graph.modules().cloned().collect();
         Ok(graph.modules().count() != count)
     })?;
-    publish_forest(graph, &program.module, &modules);
+    publish_forest(graph, &program.module, &modules, context);
     Ok(program)
 }
 
-fn publish_forest(graph: &mut crate::source_loader::ModuleGraph, root: &Module, modules: &[crate::source_loader::LoadedModule]) {
+fn is_forest_root(root: &Module, module: &crate::source_loader::LoadedModule, context: &MacroExpansionContext<'_>) -> bool {
+    context.config.current_crate_name.as_deref() == Some(module.qualified_name.as_str())
+        && root.filepath.as_ref() == Some(&module.path)
+}
+
+fn publish_forest(graph: &mut crate::source_loader::ModuleGraph, root: &Module, modules: &[crate::source_loader::LoadedModule], context: &MacroExpansionContext<'_>) {
     *graph.root_module_mut() = root.clone();
     let expanded: std::collections::HashMap<_, _> = modules.iter().map(|module| (&module.qualified_name, &module.module)).collect();
     for target in graph.modules_mut() {
+        if is_forest_root(root, target, context) { target.module = root.clone(); continue; }
         if let Some(module) = expanded.get(&target.qualified_name) { target.module = (*module).clone(); }
     }
 }
@@ -96,9 +110,11 @@ fn expand_forest(
     context: &MacroExpansionContext<'_>,
     discover: &mut impl FnMut(&Module, &mut Vec<crate::source_loader::LoadedModule>) -> Result<bool, Diagnostics>,
 ) -> Result<(), Diagnostics> {
-    let mut depth = 0;
     loop {
         let discovered = discover(root, modules)?;
+        // A named source graph also indexes the root as a loaded module. It is
+        // one AST identity, not a second executable copy of the entry program.
+        modules.retain(|module| !is_forest_root(root, module, context));
         modules.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
         validate_macro_definitions(root)?;
         for loaded in modules.iter() { validate_macro_definitions(&loaded.module)?; }
@@ -112,6 +128,8 @@ fn expand_forest(
                 visitor.set_scope(&loaded.qualified_name);
                 visitor.module(&mut loaded.module)?;
             }
+            validate_no_invocations(root)?;
+            for loaded in modules.iter() { validate_no_invocations(&loaded.module)?; }
             return Ok(());
         }
         let mut visitor = expression::ExpansionVisitor::new(&registry, context, expression::Phase::Items);
@@ -130,18 +148,19 @@ fn expand_forest(
                 return Err(invocation.parent.map(|parent| with_expansion_trace(diagnostics.clone(), context, parent)).unwrap_or(diagnostics));
             }
         }
-        depth += 1;
-        if let Some(invocation) = first_forest_invocation(root, modules).filter(|_| depth > context.max_depth) {
-            let mut diagnostics = Diagnostics::default();
-            let trace_expansion = invocation.parent;
-            let mut diagnostic = context.depth_exceeded_diagnostic(invocation.span.clone());
-            if let Some(expansion_id) = trace_expansion {
-                diagnostic = diagnostic.with_labels(context.trace_labels(expansion_id));
-            }
-            diagnostics.push(diagnostic);
-            return Err(diagnostics);
+    }
+}
+
+fn validate_no_invocations(module: &Module) -> Result<(), Diagnostics> {
+    struct Pending(Diagnostics);
+    impl<'ast> crate::ast::visit::Visitor<'ast> for Pending {
+        fn visit_macro_invoc(&mut self, invocation: &'ast MacroInvoc) {
+            self.0.merge(proc_macro_error("unexpanded macro at expansion/collection boundary", invocation.span.clone()));
         }
     }
+    let mut pending = Pending(Diagnostics::default());
+    crate::ast::visit::walk_module(&mut pending, module);
+    if pending.0.0.is_empty() { Ok(()) } else { Err(pending.0) }
 }
 
 fn validate_macro_definitions(module: &Module) -> Result<(), Diagnostics> {
@@ -176,15 +195,18 @@ fn expand_declarative(
     context: &MacroExpansionContext<'_>,
 ) -> Result<generated_parser::GeneratedSyntax, Diagnostics> {
     let invoc_span = invocation.span.clone();
-    let (args, ranges) = macro_arg_matcher::rock_arguments(&invocation.args, context.config, invocation.header_indent)?;
     let parent = invocation.parent;
-    let expansion_id = context.record_expansion(MacroExpansionRecord {
+    let expansion_id = context.begin_expansion(MacroExpansionRecord {
         invocation: invocation.id,
         macro_name: macro_decl.name.name.clone(),
         invocation_span: invoc_span.clone(),
         definition_span: Some(macro_decl.name.span.clone()),
         parent,
-    });
+    })?;
+    context.charge_matching(invocation.args.len_bytes(), &invoc_span)
+        .map_err(|diagnostics| with_expansion_trace(diagnostics, context, expansion_id))?;
+    let (args, ranges) = macro_arg_matcher::rock_arguments(&invocation.args, context.config, invocation.header_indent)
+        .map_err(|diagnostics| with_expansion_trace(diagnostics, context, expansion_id))?;
     let declarative_macro = DeclarativeMacro::from_ast(macro_decl);
     let mut diagnostics = Diagnostics::default();
 
@@ -244,13 +266,13 @@ fn expand_proc_macro_top_level(
     let invoc_span = invocation.span.clone();
     let args = &invocation.args;
     let parent = invocation.parent;
-    let expansion_id = context.record_expansion(MacroExpansionRecord {
+    let expansion_id = context.begin_expansion(MacroExpansionRecord {
         invocation: invocation.id,
         macro_name: entry.export.name.clone(),
         invocation_span: invoc_span.clone(),
         definition_span: None,
         parent,
-    });
+    })?;
 
     if entry.export.kind != ProcMacroKind::FunctionLike {
         return Err(with_expansion_trace(
@@ -342,6 +364,8 @@ fn parse_generated_result(
     category: crate::ast::MacroOutputCategory,
     expansion_id: Option<ExpansionId>,
 ) -> Result<generated_parser::GeneratedSyntax, Diagnostics> {
+    context.charge_output(&stream).map_err(|diagnostics| expansion_id
+        .map(|id| with_expansion_trace(diagnostics.clone(), context, id)).unwrap_or(diagnostics))?;
     generated_parser::parse_generated_source(&stream, context.config, category, expansion_id).map_err(
         |mut diags| {
             if let Some(expansion_id) = expansion_id {

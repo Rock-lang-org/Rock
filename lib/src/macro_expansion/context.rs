@@ -23,6 +23,7 @@ pub struct MacroExpansionContext<'a> {
     pub source_modules: crate::source_loader::SourceModuleSet,
     source_map: RefCell<MacroSourceMap>,
     latest_expansion: RefCell<Option<ExpansionId>>,
+    budget: RefCell<super::budget::Budget>,
 }
 
 impl<'a> MacroExpansionContext<'a> {
@@ -34,12 +35,115 @@ impl<'a> MacroExpansionContext<'a> {
             source_modules: crate::source_loader::SourceModuleSet::default(),
             source_map: RefCell::new(MacroSourceMap::new()),
             latest_expansion: RefCell::new(None),
+            budget: RefCell::new(super::budget::Budget::default()),
         }
     }
 
     pub fn with_max_depth(mut self, max_depth: usize) -> Self {
         self.max_depth = max_depth;
         self
+    }
+
+    pub fn with_limits(self, limits: super::ExpansionLimits) -> Self {
+        self.budget.borrow_mut().limits = limits;
+        self
+    }
+
+    pub(super) fn begin_expansion(&self, record: MacroExpansionRecord) -> Result<ExpansionId, Diagnostics> {
+        let failure = |message: String| {
+            let diagnostics = super::proc_macro_error(message, record.invocation_span.clone());
+            record.parent.map(|parent| super::with_expansion_trace(diagnostics.clone(), self, parent)).unwrap_or(diagnostics)
+        };
+        let mut depth = 1usize;
+        let mut parent = record.parent;
+        let map = self.source_map.borrow();
+        let mut visited = std::collections::HashSet::new();
+        while let Some(id) = parent {
+            if !visited.insert(id) { return Err(failure("invalid cyclic macro invocation ancestry".into())); }
+            let Some(ancestor) = map.record(id) else { return Err(failure("unknown macro expansion parent".into())); };
+            depth = depth.checked_add(1).ok_or_else(|| failure("macro ancestry depth overflow".into()))?;
+            parent = ancestor.parent;
+        }
+        drop(map);
+        if depth > self.max_depth { return Err(failure("Macro expansion depth exceeded".into())); }
+        let budget = self.budget.borrow();
+        if budget.executed.contains_key(&record.invocation) { return Err(failure("macro invocation ID already executed".into())); }
+        if budget.executed.len() >= budget.limits.max_invocations || budget.executed.len() >= u32::MAX as usize {
+            return Err(failure("macro invocation budget exceeded".into()));
+        }
+        let invocation = record.invocation;
+        drop(budget);
+        let expansion = self.record_expansion(record);
+        self.budget.borrow_mut().executed.insert(invocation, expansion);
+        Ok(expansion)
+    }
+
+    pub(super) fn note_source_modules(&self, items: &[crate::ast::TopLevel], scope: &[String], invocation: crate::ast::InvocationId) {
+        let Some(parent) = self.budget.borrow().executed.get(&invocation).copied() else { return; };
+        self.note_source_module_items(items, scope, parent);
+    }
+
+    fn note_source_module_items(&self, items: &[crate::ast::TopLevel], scope: &[String], parent: ExpansionId) {
+        for item in items {
+            match item {
+                crate::ast::TopLevel::Mod(name, _) => {
+                    let mut path = scope.to_vec(); path.push(name.name.clone());
+                    self.budget.borrow_mut().source_parents.entry(path).or_insert(parent);
+                }
+                crate::ast::TopLevel::Module(child) => {
+                    let mut path = scope.to_vec();
+                    if let Some(name) = &child.0.name { path.push(name.name.clone()); }
+                    self.budget.borrow_mut().source_parents.entry(path.clone()).or_insert(parent);
+                    self.note_source_module_items(&child.0.top_levels, &path, parent);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    pub(super) fn source_budget_diagnostic(&self, path: &std::path::Path, qualified: Option<&str>, message: String) -> Diagnostic {
+        let mut diagnostic = Diagnostic::new(message, Span::new(path.into(), 0, 0))
+            .with_code(crate::diagnostic::DiagnosticCode::Macro);
+        let mut scope: Vec<_> = qualified.unwrap_or("").split("::").filter(|name| !name.is_empty()).map(String::from).collect();
+        if scope.first().map(String::as_str) == self.config.current_crate_name.as_deref() && !scope.is_empty() { scope.remove(0); }
+        loop {
+            if let Some(parent) = self.budget.borrow().source_parents.get(&scope).copied() {
+                diagnostic = diagnostic.with_labels(self.trace_labels(parent));
+                break;
+            }
+            if scope.pop().is_none() { break; }
+        }
+        diagnostic
+    }
+
+    pub(super) fn charge_matching(&self, amount: usize, span: &Span) -> Result<(), Diagnostics> {
+        let mut budget = self.budget.borrow_mut();
+        let limit = budget.limits.max_matching_work;
+        super::budget::charge(&mut budget.matching_work, amount, limit, "matching work")
+            .map_err(|message| super::proc_macro_error(message, span.clone()))
+    }
+
+    pub(super) fn charge_output(&self, stream: &super::TokenStream) -> Result<(), Diagnostics> {
+        let mut budget = self.budget.borrow_mut();
+        let bytes = budget.limits.max_output_bytes;
+        let units = budget.limits.max_output_units;
+        super::budget::charge(&mut budget.output_bytes, stream.len_bytes(), bytes, "output byte")
+            .and_then(|_| super::budget::charge(&mut budget.output_units, stream.runs().len(), units, "output unit"))
+            .map_err(|message| super::proc_macro_error(message, stream.start_span()))
+    }
+
+    pub(super) fn charge_source(&self, bytes: Option<usize>) -> Result<(), String> {
+        let mut budget = self.budget.borrow_mut();
+        match bytes {
+            None => {
+                let limit = budget.limits.max_source_discovery_work;
+                super::budget::charge(&mut budget.source_work, 1, limit, "source discovery")
+            }
+            Some(bytes) => {
+                let limit = budget.limits.max_source_bytes;
+                super::budget::charge(&mut budget.source_bytes, bytes, limit, "source byte")
+            }
+        }
     }
 
     pub fn with_proc_macro_artifact(self, artifact: ProcMacroArtifact) -> Self {

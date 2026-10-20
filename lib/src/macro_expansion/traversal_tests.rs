@@ -120,33 +120,39 @@ fn macro_a_08_synthetic_pattern_literals_and_enum_defaults_have_no_unvisited_fie
     // where the current surface pattern grammar is deliberately more limited.
     let mut input = parse(&format!("{ID}main = -> %id 42\nstruct Point\n    value: Int = %id 7\nenum Choice\n    One\n"));
     let TopLevel::FunctionDecl(function) = &mut input.module.top_levels[1] else { panic!("function") };
-    let Statement::Expression(value) = function.lambda.body.statements[0].clone() else { panic!("expression") };
+    let value = || {
+        let mut parsed = parse("fresh = -> %id 42\n");
+        let TopLevel::FunctionDecl(mut function) = parsed.module.top_levels.remove(0) else { panic!("function") };
+        let Statement::Expression(value) = function.lambda.body.statements.remove(0) else { panic!("expression") };
+        value
+    };
     let span = function.name.span.clone();
-    let pattern = Pattern {
+    let pattern = || Pattern {
         binding: None,
-        kind: PatternKind::Literal(Literal { span: span.clone(), kind: LiteralKind::ArrayRepeat { value: Box::new(value.clone()), len: 2 } }),
+        kind: PatternKind::Literal(Literal { span: span.clone(), kind: LiteralKind::ArrayRepeat { value: Box::new(value()), len: 2 } }),
     };
     let nested = Pattern { binding: None, kind: PatternKind::Reference {
-        mutable: false, pattern: Box::new(Pattern { binding: None, kind: PatternKind::Nested(Box::new(pattern.clone())) }),
+        mutable: false, pattern: Box::new(Pattern { binding: None, kind: PatternKind::Nested(Box::new(pattern())) }),
     } };
     function.lambda.parameters = vec![Pattern { binding: None, kind: PatternKind::Tuple(vec![nested]) }];
     function.lambda.body.statements.push(Statement::Assignment(Assignment {
-        lhs: AssignmentLHS::Pattern { pattern: Pattern { binding: None, kind: PatternKind::Array(vec![ArrayPattern::Pattern(pattern.clone())]) }, type_annotation: None },
-        rhs: value.clone(),
+        lhs: AssignmentLHS::Pattern { pattern: Pattern { binding: None, kind: PatternKind::Array(vec![ArrayPattern::Pattern(pattern())]) }, type_annotation: None },
+        rhs: value(),
     }));
     let instance = Pattern { binding: None, kind: PatternKind::Instance(InstancePattern {
         name: TypePath { path: Vec::new() }, args: FieldsPatternOrArgumentsPattern::Fields(vec![FieldPattern {
-            name: Ident { name: "value".into(), span: span.clone() }, pattern: pattern.clone(),
+            name: Ident { name: "value".into(), span: span.clone() }, pattern: pattern(),
         }]),
     }) };
     function.lambda.body.statements.push(Statement::Expression(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
         operand: Operand::If(Box::new(If {
-            condition: Condition { pattern: Some(instance), expression: value.clone() },
-            then: Block { statements: vec![Statement::Expression(value)] }, else_: None,
+            condition: Condition { pattern: Some(instance), expression: value() },
+            then: Block { statements: vec![Statement::Expression(value())] }, else_: None,
         })), secondaries: None, type_annotation: None,
     }))));
     let TopLevel::StructDecl(point) = &input.module.top_levels[2] else { panic!("struct") };
-    let fields = point.fields.clone();
+    let mut fields = point.fields.clone();
+    fields[0].default = Some(value());
     let TopLevel::EnumDecl(choice) = &mut input.module.top_levels[3] else { panic!("enum") };
     choice.variants[0].fields = NamedFieldsOrTypesList::NamedFields(fields);
     assert_eq!(pending(&input.module), 9);

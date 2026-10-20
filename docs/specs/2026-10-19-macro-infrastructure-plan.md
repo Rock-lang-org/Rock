@@ -601,6 +601,62 @@ hygiene, authoring workflows, and library policies remain later slices.
 Formatting is deferred; no formatter/check, Clippy, or separate build gate ran.
 Beads remains unavailable.
 
+### A.10 delivery receipt (2026-10-20)
+
+Expansion now shares compiler-controlled aggregate limits across siblings,
+modules, matcher arms/repetition submatches, and discovery rounds: 10,000
+invocations, 64 MiB output spelling/trivia, 4,194,304 stored output units,
+33,554,432 matching-work units, 100,000 source-discovery visits, and 64 MiB newly
+discovered source bytes. Tests override these limits without changing production
+defaults. Stored-run and full-byte accounting cannot be bypassed by exposing an
+opaque expression/DSL as one interpreted atom. Output is charged before generated
+parsing; matcher-budget exhaustion is fatal, not ordinary arm fallthrough.
+
+Execution records are checked against invocation IDs before a worker or
+declarative arm runs. Reusing an executed ID rejects; distinct IDs at identical
+spans remain independent. Explicit parent chains must exist and be acyclic;
+their depth, not total scheduler rounds or the latest sibling, enforces the
+recursion limit. Direct/mutual recursion and sibling-budget failures carry the
+correct trace. Generated source declarations record their producing expansion
+by invocation ID and structural module scope, so source-budget diagnostics keep
+that ancestry without looking it up by source position.
+
+The loader accepts a resource callback for file/inline visits and source-byte
+preflight, stops discovery after exhaustion, charges file growth after preflight,
+and caps physical reads at the existing ordinary-parser source limit. This does
+not introduce an alternate loader or std-specific discovery. A strict semantic
+AST check rejects any remaining invocation before collection.
+
+The new executed-ID check exposed a pre-existing duplicate-root seam: named
+graphs index the entry module both as root and as a loaded-module record. The
+scheduler now executes one root authority and publishes its result to both graph
+views instead of executing the same invocation twice.
+
+- Initial `cargo test -p rock-lib --lib macro_a_10_ -- --nocapture` observed RED
+  at compilation because limits/state did not exist. A subsequent compile caught
+  a resource-error conversion arm returning the wrong type; it was repaired.
+- The focused runner then observed five passes/one failure (twice while exposing
+  its diagnostic): the named graph root executed the same invocation ID twice
+  before source-budget exhaustion. Deduplicating root execution brought it to
+  six passes, then source-byte and forged/cyclic-parent controls to eight passes.
+- Initial adjacent `cargo test -p rock-lib --lib macro_expansion:: -- --nocapture`
+  observed 128 passes/one failure: the A.08 synthetic-container fixture cloned
+  one invocation ID into multiple executable positions. It now creates distinct
+  parsed occurrences while retaining all nine field/container expectations;
+  the adjacent runner subsequently passed 131 tests.
+- Added strict-boundary and single-root controls bring final focused acceptance
+  to ten tests. Adjacent `cargo test -p rock-lib --lib parser:: -- --nocapture`
+  and `cargo test -p rock-lib --lib source_loader:: -- --nocapture` pass 569/16
+  tests respectively.
+- Final `cargo test -p rock-lib` passes 2,591 units, 794 main integrations,
+  and one parser integration; one doctest is ignored (archive
+  `fc62516a22dbf398`). No functional edits follow this gate.
+
+Binding contexts/resolution remain A.11–A.14; diagnostic propagation through
+normal checking remains A.15. Procedural expression calls still reject explicitly.
+Formatting remains deferred; no formatter/check, Clippy, or separate build gate
+ran. Beads remains unavailable.
+
 ### Ac. Carry binding identity all the way to normal checking
 
 | Slice | Implement only | Focused acceptance | Runner |

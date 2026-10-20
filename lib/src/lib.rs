@@ -551,6 +551,7 @@ pub fn source_load_errors_to_diagnostics(
     let mut diagnostics = Diagnostics::default();
     for error in errors {
         match error {
+            source_loader::SourceLoadError::Resource { diagnostic } => { diagnostics.push(diagnostic); }
             source_loader::SourceLoadError::Io { path, message } => {
                 diagnostics.push(diagnostic::Diagnostic::for_file(
                     format!("Failed to read source file {}: {}", path.display(), message),

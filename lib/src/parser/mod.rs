@@ -35,7 +35,7 @@ pub fn parse_source(
     parse_lossless_source(&stream, config, None)
 }
 
-const SOURCE_LIMITS: ScanLimits = ScanLimits { max_source_bytes: 16 * 1024 * 1024, max_runs: 1024 * 1024 };
+pub(crate) const SOURCE_LIMITS: ScanLimits = ScanLimits { max_source_bytes: 16 * 1024 * 1024, max_runs: 1024 * 1024 };
 const CURSOR_LIMITS: source_cursor::SourceLimits = source_cursor::SourceLimits { max_entries: 1024 * 1024, max_branches: 65536 };
 
 /// Ordinary and generated source share one preservation/interpretation boundary.

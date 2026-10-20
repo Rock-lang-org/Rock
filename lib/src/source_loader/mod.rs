@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::ast;
@@ -69,6 +70,7 @@ pub struct SourceModuleSet {
 
 #[derive(Debug, Clone)]
 pub enum SourceLoadError {
+    Resource { diagnostic: crate::diagnostic::Diagnostic },
     Io {
         path: PathBuf,
         message: String,
@@ -343,10 +345,23 @@ impl SourceDatabase {
         root_prefix: Option<&str>,
         config: &Config,
     ) -> Result<(), Vec<SourceLoadError>> {
+        self.load_module_declarations_with_budget(graph, module, root_prefix, config, &mut |_, _, _| Ok(()))
+    }
+
+    /// Charge module visits (`None`) and source bytes (`Some`) before parsing.
+    /// A file that grows after preflight charges its additional bytes afterward.
+    pub fn load_module_declarations_with_budget(
+        &mut self,
+        graph: &mut ModuleGraph,
+        module: &ast::Module,
+        root_prefix: Option<&str>,
+        config: &Config,
+        budget: &mut dyn FnMut(&Path, Option<&str>, Option<usize>) -> Result<(), crate::diagnostic::Diagnostic>,
+    ) -> Result<(), Vec<SourceLoadError>> {
         graph.root_module = module.clone();
         let mut stack = Vec::new();
         let mut errors = Vec::new();
-        self.load_children(module, root_prefix, config, &mut stack, graph, &mut errors);
+        self.load_children(module, root_prefix, config, &mut stack, graph, &mut errors, budget);
 
         if errors.is_empty() {
             Ok(())
@@ -389,6 +404,7 @@ impl SourceDatabase {
             &mut stack,
             &mut graph,
             &mut errors,
+            &mut |_, _, _| Ok(()),
         );
 
         if let Some(root_module) = root_module {
@@ -410,7 +426,12 @@ impl SourceDatabase {
         stack: &mut Vec<PathBuf>,
         graph: &mut ModuleGraph,
         errors: &mut Vec<SourceLoadError>,
+        budget: &mut dyn FnMut(&Path, Option<&str>, Option<usize>) -> Result<(), crate::diagnostic::Diagnostic>,
     ) -> Option<ast::Module> {
+        if let Err(diagnostic) = budget(&path, qualified_name.as_deref(), None) {
+            errors.push(SourceLoadError::Resource { diagnostic });
+            return None;
+        }
         let canonical_path = match self.canonical_key(&path) {
             Ok(path) => path,
             Err(error) => {
@@ -437,7 +458,7 @@ impl SourceDatabase {
             let module = loaded.module.clone();
             self.load_states.insert(canonical_path.clone(), ModuleLoadState::Loading);
             stack.push(path);
-            self.load_children(&module, qualified_name.as_deref(), config, stack, graph, errors);
+            self.load_children(&module, qualified_name.as_deref(), config, stack, graph, errors, budget);
             stack.pop();
             self.load_states.insert(canonical_path, ModuleLoadState::Loaded);
             return Some(module);
@@ -465,6 +486,7 @@ impl SourceDatabase {
                 stack,
                 graph,
                 errors,
+                budget,
             );
             stack.pop();
             self.load_states
@@ -476,6 +498,17 @@ impl SourceDatabase {
             .insert(canonical_path.clone(), ModuleLoadState::Loading);
         stack.push(path.clone());
 
+        let size = self.files.get(&canonical_path).map(|source| source.text.len())
+            .or_else(|| self.registered_sources.get(&canonical_path).or_else(|| self.registered_sources.get(&path)).map(|source| source.text.len()))
+            .or_else(|| std::fs::metadata(&path).ok().and_then(|metadata| usize::try_from(metadata.len()).ok()));
+        if let Some(size) = size {
+            if let Err(diagnostic) = budget(&path, qualified_name.as_deref(), Some(size)) {
+                errors.push(SourceLoadError::Resource { diagnostic });
+                stack.pop();
+                self.load_states.remove(&canonical_path);
+                return None;
+            }
+        }
         let source = match self.read_source_file(path.clone(), canonical_path.clone()) {
             Ok(source) => source,
             Err(error) => {
@@ -486,6 +519,12 @@ impl SourceDatabase {
             }
         };
 
+        if let Err(diagnostic) = budget(&path, qualified_name.as_deref(), Some(source.text.len().saturating_sub(size.unwrap_or(0)))) {
+            errors.push(SourceLoadError::Resource { diagnostic });
+            stack.pop();
+            self.load_states.remove(&canonical_path);
+            return None;
+        }
         let module = match parser::parse_source(path.clone(), &source.text, config) {
             Ok(module) => module,
             Err(error) => {
@@ -523,6 +562,7 @@ impl SourceDatabase {
             stack,
             graph,
             errors,
+            budget,
         );
         stack.pop();
         self.load_states
@@ -568,11 +608,16 @@ impl SourceDatabase {
             return Ok(file);
         }
 
-        let text =
-            std::fs::read_to_string(&original_path).map_err(|error| SourceLoadError::Io {
+        let mut text = String::new();
+        std::fs::File::open(&original_path)
+            .and_then(|file| file.take(parser::SOURCE_LIMITS.max_source_bytes as u64 + 1).read_to_string(&mut text))
+            .map_err(|error| SourceLoadError::Io {
                 path: original_path.clone(),
                 message: error.to_string(),
             })?;
+        if text.len() > parser::SOURCE_LIMITS.max_source_bytes {
+            return Err(SourceLoadError::Io { path: original_path, message: "source byte limit exceeded".into() });
+        }
         let file = SourceFile {
             original_path: original_path.clone(),
             canonical_path: canonical_path.clone(),
@@ -626,8 +671,10 @@ impl SourceDatabase {
         stack: &mut Vec<PathBuf>,
         graph: &mut ModuleGraph,
         errors: &mut Vec<SourceLoadError>,
+        budget: &mut dyn FnMut(&Path, Option<&str>, Option<usize>) -> Result<(), crate::diagnostic::Diagnostic>,
     ) {
         for top_level in &module.top_levels {
+            if errors.iter().any(|error| matches!(error, SourceLoadError::Resource { .. })) { break; }
             match top_level {
                 ast::TopLevel::Module(ast::ModuleDecl(inline)) => {
                     let next_prefix = inline.name.as_ref().map(|name| {
@@ -639,6 +686,12 @@ impl SourceDatabase {
                     if inline.filepath.is_none() {
                         inline.filepath = module.filepath.clone();
                     }
+                    if let Some(path) = &inline.filepath {
+                        if let Err(diagnostic) = budget(path, next_prefix.as_deref(), None) {
+                            errors.push(SourceLoadError::Resource { diagnostic });
+                            break;
+                        }
+                    }
                     self.load_children(
                         &inline,
                         next_prefix.as_deref(),
@@ -646,6 +699,7 @@ impl SourceDatabase {
                         stack,
                         graph,
                         errors,
+                        budget,
                     );
                 }
                 ast::TopLevel::Mod(ident, _) => {
@@ -666,6 +720,7 @@ impl SourceDatabase {
                         stack,
                         graph,
                         errors,
+                        budget,
                     );
                 }
                 _ => {}
@@ -1012,6 +1067,7 @@ mod tests {
             &mut stack,
             &mut graph,
             &mut errors,
+            &mut |_, _, _| Ok(()),
         );
 
         assert!(errors.is_empty(), "expected no load errors, got {errors:?}");
