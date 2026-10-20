@@ -892,6 +892,60 @@ and is not acceptance. Native tests exercise compiler construction permissions,
 not Rock-authored proc packages; that authoring workflow remains B. Formatting
 remains deferred and Beads is unavailable.
 
+### A.15 delivery receipt (2026-10-20)
+
+The shared frontend now owns dependency loading, generated-file discovery and
+expansion for both normal compilation and `rock_lib::expand`; `rockc --expand`
+passes its actual dependency/name/permission configuration into that API instead
+of rebuilding a dependency-free context. Inspection stops before collection and
+typing, includes loaded file modules, and never reparses printed expansion text.
+The existing `rock expand` launcher uses this compiler path.
+
+Expanded parsing projects spans into per-expansion logical output snapshots while
+retaining physical source snapshots, original provenance, contexts, join boundaries
+and opaque capture ranges. Projection addresses are namespaced by compilation
+source/name so an imported body's expansion number cannot alias a consumer's.
+Worker forwarding validates projection metadata alongside the original provenance.
+The retained map follows the AST through analysis, lowering, inference,
+monomorphization, borrow checking and codegen error conversion: caller captures
+map back to caller ranges; generated primary errors point at their invocation,
+with nested ancestry, definition ranges and inspectable output labels. Mixed
+source extents remain explicit output snapshots rather than guessed source ranges.
+Diagnostic codes and non-source backend/toolchain failures remain unchanged.
+`TokenOrigin` separates provenance from projection; lossless wire `RKLOSS04`,
+worker protocol 6 and product format 52 require rebuilt dependencies, with no
+compatibility decoder.
+
+Acceptance on the final functional snapshot:
+
+- `cargo test -p rock-lib`: 2,688 units, 803 main integrations, six macro
+  diagnostic integrations, and one parser integration pass; one doctest ignored.
+  `/tmp/opencode/macro-a15-acceptance-terminal.log`, SHA-256
+  `f9a42d07679c832588f134c86c5d090dc4d98a49a92731c95fe207e2c0a448a3`.
+- `cargo test -p rock-lib macro_a_`: 209 units, 14 main integrations and six
+  diagnostic integrations pass. `/tmp/opencode/macro-a15-family-terminal.log`,
+  SHA-256 `91d89f418f9efe83d62445ca8524ac97e489ac4f44bb040d1568b100ce8f27fe`.
+- `cargo test -p rockc -p rock-shared`: 50 compiler CLI units, 26 shared units,
+  and one shared doctest pass. `/tmp/opencode/macro-a15-compiler-cli.log`, SHA-256
+  `088c3322c2c6d1d89ba65224241d0520c4d33884763a6fc4d7425f22cbe0fc72`.
+- `cargo test -p rock -p rock-lsp`: 86 application CLI and five LSP units
+  pass, using current `ROCKC` and std rebuilt with `rockup dev std package` in
+  `/tmp/opencode/macro-a15-sysroot` via explicit `ROCK_SYSROOT`.
+  `/tmp/opencode/macro-a15-user-cli.log`, SHA-256
+  `8891aa4af7dd8ff8954ea64713a731ebf6c5b283cf616a7d4239d31560626d2d`.
+
+No functional edits follow these gates.
+
+The new runtime control compares handwritten and expanded `return`/`break`
+with user destructors; unsafe calls and conflicting loans still reject. Nested
+type/resolution/parse errors and secondary ownership labels have retained source
+snapshots. Codegen diagnostic remapping is exercised directly with a source-coded
+backend diagnostic; no deliberate compiler backend defect is claimed as an
+end-to-end codegen failure. Early candidate runs exposed a missing test-source
+snapshot, a stale equal-diagnostic-span assertion, and a fixture incorrectly
+assuming loops return break values; final gates above supersede those attempts.
+Formatting remains deferred and Beads remains unavailable.
+
 **A gate:** run all `macro_a_` families and existing declarative/proc/module
 regressions, then `cargo test -p rock-lib` and affected CLI tests serially.
 Synthetic/native worker tests prove compiler semantics only; they are not evidence

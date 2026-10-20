@@ -55,7 +55,7 @@ fn macro_a_01_generated_equal_span_nodes_keep_explicit_parent_edges() {
     let left = parse_generated_top_levels(output.clone(), &context, Some(first)).unwrap();
     let right = parse_generated_top_levels(output, &context, Some(second)).unwrap();
     let (TopLevel::MacroInvoc(left), TopLevel::MacroInvoc(right)) = (&left[0], &right[0]) else { panic!("expected children") };
-    assert_eq!(left.span, right.span);
+    assert_eq!(context.source_map().original_span(&left.span), context.source_map().original_span(&right.span));
     assert_ne!(left.id, right.id);
     assert_eq!(left.parent, Some(first));
     assert_eq!(right.parent, Some(second));

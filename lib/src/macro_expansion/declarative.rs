@@ -231,7 +231,7 @@ mod tests {
     use super::*;
     use super::super::token_tree::source;
     use crate::lexer::interpretation::layout::LayoutView;
-    use crate::macro_expansion::TokenOrigin;
+    use crate::macro_expansion::TokenProvenance;
 
     fn template(fragments: Vec<TemplateFragment>) -> MacroTemplate {
         MacroTemplate { input: source(""), fragments }
@@ -282,8 +282,8 @@ mod tests {
         captures.insert_direct("name".into(), captured.captured(expansion, &invocation));
         let expanded = template(vec![capture("name"), TemplateFragment::Input(definition)])
             .expand_with_origins(&captures, expansion, generated_source, |context| Ok(context)).unwrap();
-        assert!(matches!(expanded.runs()[0].origin(), TokenOrigin::Captured { expansion: id, capture_span, .. } if id == expansion && capture_span.start == 8 && capture_span.end == 12));
-        assert!(matches!(expanded.runs()[1].origin(), TokenOrigin::Generated { expansion: id, generated_source: source, definition_span } if id == expansion && source == generated_source && definition_span.start == 20 && definition_span.end == 21));
+        assert!(matches!(expanded.runs()[0].origin().provenance, TokenProvenance::Captured { expansion: id, capture_span, .. } if id == expansion && capture_span.start == 8 && capture_span.end == 12));
+        assert!(matches!(expanded.runs()[1].origin().provenance, TokenProvenance::Generated { expansion: id, generated_source: source, definition_span } if id == expansion && source == generated_source && definition_span.start == 20 && definition_span.end == 21));
     }
 
     #[test]

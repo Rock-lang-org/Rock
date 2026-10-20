@@ -209,6 +209,11 @@ pub enum DiagnosticValidationError {
 }
 
 impl DiagnosticSourceMap {
+    pub(crate) fn insert_virtual(&mut self, path: PathBuf, text: String) {
+        self.by_path.insert(path.clone(), DiagnosticSource { display_path: path, text,
+            origin: DiagnosticSourceOrigin::Virtual, related: BTreeMap::new() });
+    }
+
     pub fn from_source_database(database: &crate::source_loader::SourceDatabase) -> Self {
         let mut sources = Self::default();
         for file in database.source_files() {

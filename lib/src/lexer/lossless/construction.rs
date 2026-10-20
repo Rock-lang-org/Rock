@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::{ConstructionContext, LosslessError, LosslessStream, ScanLimits, SourcePosition, SourceSnapshot, SyntaxContext};
 use crate::ast::InvocationId;
-use crate::macro_expansion::{ExpansionId, GeneratedSourceId, TokenOrigin};
+use crate::macro_expansion::{ExpansionId, GeneratedSourceId, TokenOrigin, TokenProvenance};
 
 impl LosslessStream {
     /// Retain generated UTF-8 without granting binding or source-file authority.
@@ -82,8 +82,11 @@ impl LosslessStream {
                 }
                 output.source = Arc::clone(allowed);
                 output.context = original.context;
-                output.origin = Some(TokenOrigin::Captured {
-                    expansion, invocation_span: input.start_span(), capture_span: original.span(),
+                output.origin = Some(TokenOrigin {
+                    projection: original.origin.as_ref().and_then(|origin| origin.projection),
+                    provenance: TokenProvenance::Captured {
+                        expansion, invocation_span: input.start_span(), capture_span: original.span(),
+                    },
                 });
             }
         }
@@ -174,5 +177,17 @@ mod tests {
             Ok(SyntaxContext::allocated(id + 1))
         }).unwrap();
         assert!(matches!(output.binding_context(0..10), Err(LosslessError::ConflictingContexts { .. })));
+    }
+
+    #[test]
+    fn macro_a_15_worker_cannot_forge_a_forwarded_diagnostic_projection() {
+        let invocation = InvocationId::fresh().unwrap();
+        let input = source("name").project_output(ExpansionId(1), GeneratedSourceId(1), 0);
+        let wire = bincode::serialize(&input).unwrap();
+        let mut forwarded: LosslessStream = bincode::deserialize(&wire).unwrap();
+        let resolve = |output: &LosslessStream| output.resolve_proc_output(&input, invocation, ExpansionId(2), GeneratedSourceId(2), |_| unreachable!());
+        assert!(resolve(&forwarded).is_ok());
+        forwarded.runs[0].origin.as_mut().unwrap().projection.as_mut().unwrap().output_start += 1;
+        assert!(resolve(&forwarded).is_err());
     }
 }

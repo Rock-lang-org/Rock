@@ -37,7 +37,7 @@ impl<'a> MacroExpansionContext<'a> {
             source_modules: crate::source_loader::SourceModuleSet::default(),
             binding_environments: RefCell::new(super::binding_environment::BindingEnvironments::default()),
             hygiene: RefCell::new(super::hygiene::Hygiene::default()),
-            source_map: RefCell::new(MacroSourceMap::new()),
+            source_map: RefCell::new(MacroSourceMap::for_config(config)),
             latest_expansion: RefCell::new(None),
             budget: RefCell::new(super::budget::Budget::default()),
         }
@@ -187,10 +187,18 @@ impl<'a> MacroExpansionContext<'a> {
         self.source_map.borrow().trace_labels(id)
     }
 
+    pub fn source_map(&self) -> MacroSourceMap { self.source_map.borrow().clone() }
+
+    pub(super) fn project_output(&self, stream: &super::TokenStream, id: ExpansionId) -> super::TokenStream {
+        self.source_map.borrow_mut().record_output(id, stream);
+        stream.project_output(id, self.generated_source_id(id).unwrap_or(GeneratedSourceId(0)), self.source_map.borrow().namespace())
+    }
+
     /// Generated parser spans use a virtual path when the macro host does not
     /// provide source locations. Point those diagnostics at the invocation so
     /// the compilation source database can attach the real source snapshot.
     pub fn map_generated_diagnostics(&self, diagnostics: &mut Diagnostics, id: ExpansionId) {
+        *diagnostics = self.source_map.borrow().map_diagnostics(std::mem::take(diagnostics));
         let Some(invocation_span) = self
             .source_map
             .borrow()
@@ -206,9 +214,10 @@ impl<'a> MacroExpansionContext<'a> {
             if span
                 .file_path
                 .to_string_lossy()
-                .starts_with("<macro-expansion:")
+                .starts_with("<macro-expansion:") || span.file_path.to_string_lossy().starts_with("<macro-output:")
             {
                 diagnostic.location = DiagnosticLocation::Source(invocation_span.clone());
+                diagnostic.source = None;
                 if let Some(primary) = &mut diagnostic.primary {
                     primary.span = invocation_span.clone();
                 }
@@ -217,7 +226,7 @@ impl<'a> MacroExpansionContext<'a> {
                         .span
                         .file_path
                         .to_string_lossy()
-                        .starts_with("<macro-expansion:")
+                        .starts_with("<macro-expansion:") || label.span.file_path.to_string_lossy().starts_with("<macro-output:")
                     {
                         label.span = invocation_span.clone();
                     }

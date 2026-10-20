@@ -3594,6 +3594,16 @@ fn macro_a_14_definition_helpers_and_repeated_private_names_run() {
 }
 
 #[test]
+fn macro_a_15_return_break_and_drop_timing_match_handwritten_control_flow() {
+    let common = "struct Tracked\n    < value: I64\nimpl Drop for Tracked\n    ~@drop = !-> self.value.println!\n";
+    let direct = "finish = ->\n    held = Tracked value: 11\n    if true\n        return 42\n    else\n        0\n    0\nleave = !->\n    loop\n        held = Tracked value: 22\n        if true\n            break\n        else\n            ()\n    7.println!\nmain = !->\n    finish! .println!\n    leave!\n";
+    let expanded = "macro exit\n    $value:expr =>\n        if true\n            return $value\n        else\n            0\nmacro stop\n    =>\n        if true\n            break\n        else\n            ()\nfinish = ->\n    held = Tracked value: 11\n    %exit 42\n    0\nleave = !->\n    loop\n        held = Tracked value: 22\n        %stop!\n    7.println!\nmain = !->\n    finish! .println!\n    leave!\n";
+    let expected = compile_and_run(&format!("{common}{direct}"));
+    assert_eq!(expected, "11\n42\n22\n7\n");
+    assert_eq!(compile_and_run(&format!("{common}{expanded}")), expected);
+}
+
+#[test]
 fn test_declarative_macro_can_produce_call_argument_holes() {
     let output = compile_and_run(
         r#"macro make_main

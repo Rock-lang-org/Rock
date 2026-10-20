@@ -12,7 +12,7 @@ use crate::lexer::Span;
 use crate::ast::{InvocationId, MacroOutputCategory};
 use super::{ExpansionId, TokenStream};
 
-pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 5;
+pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 6;
 pub const MAX_PROC_MACRO_MESSAGE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn proc_macro_protocol_version_tracks_enriched_request_shape() {
-        assert_eq!(PROC_MACRO_PROTOCOL_VERSION, 5);
+        assert_eq!(PROC_MACRO_PROTOCOL_VERSION, 6);
     }
 
     #[test]

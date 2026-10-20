@@ -19,6 +19,8 @@ mod context;
 mod hygiene;
 #[cfg(test)]
 mod proc_hygiene_tests;
+#[cfg(test)]
+mod diagnostic_tests;
 pub(crate) mod binding_environment;
 mod correspondances;
 pub mod declarative;
@@ -56,7 +58,7 @@ pub use budget::ExpansionLimits;
 
 pub use context::MacroExpansionContext;
 pub use source_map::{
-    ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, TokenOrigin,
+    ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, OutputProjection, TokenOrigin, TokenProvenance,
 };
 pub use crate::lexer::groups::Delimiter;
 pub use crate::lexer::lossless::{ConstructionContext, ConstructionKind, ScanLimits};
@@ -373,6 +375,7 @@ fn parse_generated_result(
 ) -> Result<generated_parser::GeneratedSyntax, Diagnostics> {
     context.charge_output(&stream).map_err(|diagnostics| expansion_id
         .map(|id| with_expansion_trace(diagnostics.clone(), context, id)).unwrap_or(diagnostics))?;
+    let stream = expansion_id.map(|id| context.project_output(&stream, id)).unwrap_or(stream);
     generated_parser::parse_generated_source(&stream, context.config, category, expansion_id).map_err(
         |mut diags| {
             if let Some(expansion_id) = expansion_id {

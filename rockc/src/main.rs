@@ -656,21 +656,12 @@ fn format_config(config: Config) -> Result<(), Diagnostics> {
 }
 
 fn expand_config(config: Config) -> Result<(), Diagnostics> {
-    let entry_file = config
-        .entry_file
-        .ok_or_else(|| diagnostics_from_message("Missing required --entry-file for --expand"))?;
-    let rockc_config = rock_lib::Config {
-        entry_file,
-        ..rock_lib::Config::default()
-    };
-
-    let (program, source_db) = load_program_with_source_database(&rockc_config)?;
-    let diagnostic_sources =
-        rock_lib::diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
-    let macro_context = rock_lib::macro_expansion::MacroExpansionContext::new(&rockc_config);
-    let expanded = rock_lib::macro_expansion::expand_macros_with_context(program, &macro_context)
-        .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
-    expanded.visit(&mut ModulePrinter);
+    if config.entry_file.is_none() {
+        return Err(diagnostics_from_message("Missing required --entry-file for --expand"));
+    }
+    let expanded = rock_lib::expand(&config.into_compiler_config()?)?;
+    expanded.ast.visit(&mut ModulePrinter);
+    for module in &expanded.modules { ModulePrinter.visit_module(&module.module); }
     Ok(())
 }
 
@@ -1764,6 +1755,28 @@ mod tests {
         assert!(!output_dir.join("main").exists());
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn macro_a_15_expand_discovers_generated_file_modules_with_the_selected_crate_name() {
+        let base = std::env::temp_dir().join(format!("rockc_expand_generated_{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        let entry = base.join("main.rk");
+        std::fs::write(&entry, "macro setup\n    $name:ident =>\n        mod $name\n%setup tools\nmain = -> %app::tools::number!\n").unwrap();
+        std::fs::write(base.join("tools.rk"), "< number\nmacro number\n    =>\n        missing\n").unwrap();
+        let config = Config::try_parse_from(["rockc", "--entry-file", entry.to_str().unwrap(),
+            "--crate-name", "app", "--no-std", "--no-prelude", "--expand"]).unwrap();
+        run_config(config).unwrap();
+        assert!(!base.join("main").exists());
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn macro_a_15_expand_validates_explicit_dependency_artifacts() {
+        let config = Config::try_parse_from(["rockc", "--entry-file", "/macro-a15/main.rk",
+            "--extern-artifact", "provider=/macro-a15/missing.rkca", "--no-std", "--expand"]).unwrap();
+        let diagnostics = run_config(config).unwrap_err();
+        assert!(diagnostics.0.iter().any(|diagnostic| diagnostic.code == Some(rock_lib::diagnostic::DiagnosticCode::Artifact)), "{diagnostics:?}");
     }
 
     #[test]

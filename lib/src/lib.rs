@@ -147,7 +147,35 @@ struct FrontendOutput {
     effective_current_crate_name: String,
 }
 
-fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
+/// Expanded syntax for inspection, not text to reparse as a hygienic program.
+#[derive(Debug)]
+pub struct Expansion {
+    pub ast: Program,
+    pub modules: Vec<source_loader::LoadedModule>,
+    pub source_map: macro_expansion::MacroSourceMap,
+}
+
+/// Use exactly compilation's dependency loading, discovery and expansion engine,
+/// stopping before collection, inference, or code generation.
+pub fn expand(config: &Config) -> Result<Expansion, Diagnostics> {
+    let expanded = expand_frontend(config)?;
+    let modules = expanded.source_graph.modules().filter(|module|
+        Some(&module.path) != expanded.ast.module.filepath.as_ref()).cloned().collect();
+    Ok(Expansion { ast: expanded.ast, modules, source_map: expanded.macro_source_map })
+}
+
+struct ExpandedFrontend {
+    ast: Program,
+    ctx: CrateContext,
+    source_graph: source_loader::ModuleGraph,
+    source_db: source_loader::SourceDatabase,
+    diagnostic_sources: diagnostic::DiagnosticSourceMap,
+    macro_source_map: macro_expansion::MacroSourceMap,
+    binding_environments: macro_expansion::binding_environment::BindingEnvironments,
+    effective_current_crate_name: String,
+}
+
+fn expand_frontend(config: &Config) -> Result<ExpandedFrontend, Diagnostics> {
     let effective_current_crate_name = config
         .current_crate_name
         .clone()
@@ -191,12 +219,23 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
         macro_context = macro_context.with_named_proc_macro_artifact(name.to_string(), artifact.clone());
     }
     let expanded = macro_expansion::expand_macros_in_graph(&mut source_graph, &mut source_db, &macro_context);
-    let diagnostic_sources = diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
-    let ast = expanded.map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
+    let mut diagnostic_sources = diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
+    let macro_source_map = macro_context.source_map();
+    macro_source_map.attach_sources(&mut diagnostic_sources);
+    let ast = expanded.map_err(|diagnostics| macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources))?;
 
     if config.has_debug_print(DebugPrint::Expanded) {
         println!("{:#?}", ast);
     }
+
+    let binding_environments = macro_context.binding_environments.borrow().clone();
+    Ok(ExpandedFrontend { ast, ctx, source_graph, source_db, diagnostic_sources, macro_source_map,
+        binding_environments, effective_current_crate_name })
+}
+
+fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
+    let ExpandedFrontend { ast, ctx, source_graph, source_db, diagnostic_sources, macro_source_map,
+        binding_environments, effective_current_crate_name } = expand_frontend(config)?;
 
     let declarations = collect::collect_with_binding_environments(
         &ast,
@@ -204,9 +243,9 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
         &ctx,
         !config.no_prelude,
         config.current_crate_name.as_deref(),
-        &macro_context.binding_environments.borrow(),
+        &binding_environments,
     )
-    .map_err(|errors| Diagnostics::from_resolve_errors(errors).with_sources(&diagnostic_sources))?;
+    .map_err(|errors| macro_source_map.map_diagnostics(Diagnostics::from_resolve_errors(errors)).with_sources(&diagnostic_sources))?;
     let loaded_prelude_export_ids = declarations.loaded_prelude_export_ids.clone();
     let infix_precedence = declarations.infix_precedence.clone();
     let fingerprint_source_files = source_graph.loaded_files().to_vec();
@@ -217,9 +256,9 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
     )
     .with_overflow_checks(config.overflow_checks.unwrap_or(config.opt_level == 0))
     .lower_from_declarations(declarations)
-    .map_err(|errors| Diagnostics::from_resolve_errors(errors).with_sources(&diagnostic_sources))?;
+    .map_err(|errors| macro_source_map.map_diagnostics(Diagnostics::from_resolve_errors(errors)).with_sources(&diagnostic_sources))?;
     let hir = infer::finalize_with_crates(partial_hir, &ctx).map_err(|errors| {
-        Diagnostics::from_resolve_errors(errors).with_sources(&diagnostic_sources)
+        macro_source_map.map_diagnostics(Diagnostics::from_resolve_errors(errors)).with_sources(&diagnostic_sources)
     })?;
 
     if config.has_debug_print(DebugPrint::Hir) {
@@ -227,7 +266,7 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
     }
 
     Ok(FrontendOutput {
-        analysis: analysis::Analysis { ast, hir },
+        analysis: analysis::Analysis { ast, hir, macro_source_map },
         crate_ctx: ctx,
         diagnostic_sources,
         loaded_prelude_export_ids,
@@ -240,7 +279,7 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
 
 fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, Diagnostics> {
     let FrontendOutput {
-        analysis: analysis::Analysis { ast, hir },
+        analysis: analysis::Analysis { ast, hir, macro_source_map },
         crate_ctx: ctx,
         diagnostic_sources,
         loaded_prelude_export_ids,
@@ -294,7 +333,7 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
 
     // Phase 5: Monomorphization
     let mut monomorphized = mono::monomorphize_with_crates(hir, crate_ctx, compilation_identity)
-        .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
+        .map_err(|diagnostics| macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources))?;
     let mut instance_bodies =
         mir::builder::MirBuilder::take_mir_instance_bodies(&mut monomorphized);
     let _dce_report = dce::prune_unreachable_instances(&mut monomorphized, &mut instance_bodies);
@@ -307,7 +346,7 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
         println!("{:#?}", mir_program);
     }
     if let Err(diagnostics) = mir::borrowck::BorrowChecker::run(&mir_program) {
-        return Err(diagnostics.with_sources(&diagnostic_sources));
+        return Err(macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources));
     }
     let agreement = mir::agreement::check_mir_runtime_agreement(&mir_program);
     if !agreement.is_clean() {
@@ -335,7 +374,7 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
     if let Err(e) = codegen.compile_program_from_mir(&mir_program) {
         let mut diagnostics = Diagnostics::default();
         diagnostics.push(e.into_diagnostic());
-        let diagnostics = diagnostics.with_sources(&diagnostic_sources);
+        let diagnostics = macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources);
         return Err(diagnostics);
     }
     attach_product_link_records(

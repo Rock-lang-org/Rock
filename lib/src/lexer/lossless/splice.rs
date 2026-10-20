@@ -9,10 +9,11 @@ use crate::lexer::Span;
 
 impl SourcePosition {
     fn span(&self) -> Span {
-        let path = match &self.origin {
-            Some(crate::macro_expansion::TokenOrigin::Generated { expansion, .. }) => format!("<macro-expansion:{}>", expansion.0).into(),
-            Some(crate::macro_expansion::TokenOrigin::Captured { capture_span, .. }) => capture_span.file_path.clone(),
-            Some(crate::macro_expansion::TokenOrigin::Source(span)) => span.file_path.clone(),
+        if let Some(span) = self.origin.as_ref().and_then(|origin| origin.output_span(self.offset, self.offset)) { return span; }
+        let path = match self.origin.as_ref().map(|origin| &origin.provenance) {
+            Some(crate::macro_expansion::TokenProvenance::Generated { expansion, .. }) => format!("<macro-expansion:{}>", expansion.0).into(),
+            Some(crate::macro_expansion::TokenProvenance::Captured { capture_span, .. }) => capture_span.file_path.clone(),
+            Some(crate::macro_expansion::TokenProvenance::Source(span)) => span.file_path.clone(),
             _ => self.source.file_path.clone(),
         };
         Span::new(path, self.offset, self.offset)
@@ -26,14 +27,14 @@ impl LosslessStream {
 
     pub fn start_span(&self) -> Span {
         match self.runs.first() {
-            Some(run) => Span::new(run.span().file_path, run.range.start, run.range.start),
+            Some(run) => { let span = run.span(); Span::new(span.file_path, span.start, span.start) },
             None => self.anchor.span(),
         }
     }
 
     pub fn end_span(&self) -> Span {
         match self.runs.last() {
-            Some(run) => Span::new(run.span().file_path, run.range.end, run.range.end),
+            Some(run) => { let span = run.span(); Span::new(span.file_path, span.end, span.end) },
             None => self.anchor.span(),
         }
     }

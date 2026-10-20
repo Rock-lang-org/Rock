@@ -9,9 +9,17 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{JoinBoundary, LosslessRun, LosslessStream, RunKind, SourcePosition, SourceSnapshot, SyntaxContext};
 
-const MAGIC: [u8; 8] = *b"RKLOSS03";
+const MAGIC: [u8; 8] = *b"RKLOSS04";
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RUNS: usize = 1024 * 1024;
+
+fn valid_projection(origin: &Option<crate::macro_expansion::TokenOrigin>, start: usize, end: usize) -> bool {
+    match origin.as_ref().and_then(|origin| origin.projection) {
+        Some(projection) => projection.expansion.0 != 0 && projection.generated_source.0 != 0
+            && origin.as_ref().and_then(|origin| origin.output_span(start, end)).is_some_and(|span| span.end <= MAX_BYTES),
+        _ => true,
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct WireRun {
@@ -98,7 +106,8 @@ impl<'de> Deserialize<'de> for LosslessStream {
             sources.push(Arc::new(source));
         }
         let source = sources.get(wire.anchor.source).ok_or_else(|| serde::de::Error::custom("invalid anchor source"))?;
-        if wire.anchor.offset > source.text.len() || !source.text.is_char_boundary(wire.anchor.offset) {
+        if wire.anchor.offset > source.text.len() || !source.text.is_char_boundary(wire.anchor.offset)
+            || !valid_projection(&wire.anchor.origin, wire.anchor.offset, wire.anchor.offset) {
             return Err(serde::de::Error::custom("invalid lossless anchor"));
         }
         let anchor = SourcePosition { source: Arc::clone(source), offset: wire.anchor.offset, context: SyntaxContext(wire.anchor.context), origin: wire.anchor.origin };
@@ -109,6 +118,7 @@ impl<'de> Deserialize<'de> for LosslessStream {
             let source = sources.get(run.source).ok_or_else(|| serde::de::Error::custom("invalid run source"))?;
             let Some(text) = source.text.get(run.range.clone()) else { return Err(serde::de::Error::custom("invalid lossless range")) };
             if text.is_empty() || !text.chars().all(|ch| RunKind::of(ch) == run.kind)
+                || !valid_projection(&run.origin, run.range.start, run.range.end)
                 || (run.kind == RunKind::LineEnding && !matches!(text, "\r" | "\n" | "\r\n"))
             {
                 return Err(serde::de::Error::custom("invalid lossless run"));
@@ -187,5 +197,21 @@ mod tests {
         }
         let mut wire = valid(); wire.sources[0].text = "a".repeat(129); wire.runs[0].range = 0..129;
         wire.expressions = (1..=129).rev().map(|end| fragment(0..end)).collect(); rejects(wire);
+    }
+
+    #[test]
+    fn macro_a_15_wire_rejects_invalid_diagnostic_projections() {
+        use crate::macro_expansion::{ExpansionId, GeneratedSourceId, OutputProjection, TokenOrigin, TokenProvenance};
+        for (source_start, output_start, expansion) in [(1, 0, 1), (0, usize::MAX, 1), (0, MAX_BYTES, 1), (0, 0, 0)] {
+            let mut wire = valid();
+            wire.runs[0].origin = Some(TokenOrigin { provenance: TokenProvenance::Source(crate::lexer::Span::new("/wire.rk".into(), 0, 2)),
+                projection: Some(OutputProjection { namespace: 0, expansion: ExpansionId(expansion), generated_source: GeneratedSourceId(1), source_start, output_start }) });
+            rejects(wire);
+        }
+        let mut wire = valid();
+        wire.anchor.origin = Some(TokenOrigin { provenance: TokenProvenance::Source(crate::lexer::Span::new("/wire.rk".into(), 0, 0)),
+            projection: Some(OutputProjection { namespace: 0, expansion: ExpansionId(1), generated_source: GeneratedSourceId(1), source_start: 1, output_start: 0 }) });
+        rejects(wire);
+        let mut wire = valid(); wire.magic = *b"RKLOSS03"; rejects(wire);
     }
 }

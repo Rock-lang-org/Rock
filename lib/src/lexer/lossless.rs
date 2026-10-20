@@ -127,7 +127,7 @@ impl LosslessRun {
     pub(crate) fn has_construction_request(&self) -> bool { self.construction.is_some() }
 
     pub fn origin(&self) -> crate::macro_expansion::TokenOrigin {
-        self.origin.clone().unwrap_or_else(|| crate::macro_expansion::TokenOrigin::Source(self.span()))
+        self.origin.clone().unwrap_or_else(|| crate::macro_expansion::TokenProvenance::Source(self.span()).into())
     }
 
     pub fn kind(&self) -> RunKind {
@@ -152,10 +152,11 @@ impl LosslessRun {
     }
 
     pub fn span(&self) -> Span {
-        let path = match &self.origin {
-            Some(crate::macro_expansion::TokenOrigin::Generated { expansion, .. }) => format!("<macro-expansion:{}>", expansion.0).into(),
-            Some(crate::macro_expansion::TokenOrigin::Captured { capture_span, .. }) => capture_span.file_path.clone(),
-            Some(crate::macro_expansion::TokenOrigin::Source(span)) => span.file_path.clone(),
+        if let Some(span) = self.origin.as_ref().and_then(|origin| origin.output_span(self.range.start, self.range.end)) { return span; }
+        let path = match self.origin.as_ref().map(|origin| &origin.provenance) {
+            Some(crate::macro_expansion::TokenProvenance::Generated { expansion, .. }) => format!("<macro-expansion:{}>", expansion.0).into(),
+            Some(crate::macro_expansion::TokenProvenance::Captured { capture_span, .. }) => capture_span.file_path.clone(),
+            Some(crate::macro_expansion::TokenProvenance::Source(span)) => span.file_path.clone(),
             _ => self.source.file_path.clone(),
         };
         Span::new(path, self.range.start, self.range.end)

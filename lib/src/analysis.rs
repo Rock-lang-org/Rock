@@ -15,6 +15,7 @@ use crate::types::{GenericParamDecl, GenericParamId, Type};
 pub struct Analysis {
     pub ast: Program,
     pub hir: ResolvedHirProgram,
+    pub macro_source_map: crate::macro_expansion::MacroSourceMap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
