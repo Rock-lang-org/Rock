@@ -3480,6 +3480,33 @@ fn macro_a_06_grouped_expression_forwarding_runs_normally() {
 }
 
 #[test]
+fn macro_a_09_generated_inline_import_and_expression_calls_run_after_item_discovery() {
+    let output = compile_and_run("> tools::make\n%make\nmacro setup\n    =>\n        mod tools\n            < make\n            < number\n            macro make\n                =>\n                    main = !->\n                        (%tools::number!).println!\n            macro number\n                =>\n                    42\n%setup\n");
+    assert_eq!(output, "42\n");
+}
+
+#[test]
+fn macro_a_09_generated_file_modules_and_transitive_generated_children_run() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let mut config = test_config(dir.join("main.rk"), dir.clone());
+    config.current_crate_name = Some("app".into());
+    config.extern_artifacts.clear();
+    config.no_prelude = true;
+    config.no_std = true;
+    config.source_providers = vec![
+        rock_lib::SourceProvider::Virtual { path: dir.join("main.rk"), text: "> tools::make\n%make\nmacro setup\n    =>\n        mod tools\n%setup\n".into() },
+        rock_lib::SourceProvider::Virtual { path: dir.join("tools.rk"), text: "< make\nmacro make\n    =>\n        main = -> tools::work!\nmacro setup\n    =>\n        mod inner\n%setup\n< work = -> inner::answer!\n".into() },
+        rock_lib::SourceProvider::Virtual { path: dir.join("inner.rk"), text: "< answer = -> 42\n".into() },
+    ];
+    rock_lib::compile(&config).unwrap();
+    let output = run_test_command(&mut Command::new(dir.join("main")));
+    assert_eq!(output.status.code(), Some(42));
+}
+
+#[test]
 fn macro_a_06_generated_block_keeps_return_in_the_callers_function() {
     let output = compile_and_run("macro early\n    =>\n        if true\n            return 7\n        else\n            0\nwork = ->\n    %early!\n    99\nmain = !->\n    work! .println!\n");
     assert_eq!(output, "7\n");

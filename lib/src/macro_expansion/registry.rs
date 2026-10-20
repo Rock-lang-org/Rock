@@ -64,6 +64,14 @@ impl MacroRegistry {
     }
 
     pub(super) fn build_with_modules(module: &Module, sources: &crate::source_loader::SourceModuleSet, context: &MacroExpansionContext<'_>) -> Result<Self, Diagnostics> {
+        Self::build_scopes(module, sources, context, true)
+    }
+
+    pub(super) fn build_for_expansion(module: &Module, sources: &crate::source_loader::SourceModuleSet, context: &MacroExpansionContext<'_>) -> Result<Self, Diagnostics> {
+        Self::build_scopes(module, sources, context, false)
+    }
+
+    fn build_scopes(module: &Module, sources: &crate::source_loader::SourceModuleSet, context: &MacroExpansionContext<'_>, strict: bool) -> Result<Self, Diagnostics> {
         let mut registry = Self { current_crate: context.config.current_crate_name.clone(), ..Self::default() };
         registry.index_module(module, Vec::new())?;
         // These are source-module identities from the loader, not pathname-based
@@ -121,7 +129,7 @@ impl MacroRegistry {
                 }
             }
         }
-        registry.bind_imports()?;
+        registry.bind_imports(strict)?;
         Ok(registry)
     }
 
@@ -169,7 +177,7 @@ impl MacroRegistry {
         Ok(())
     }
 
-    fn bind_imports(&mut self) -> Result<(), Diagnostics> {
+    fn bind_imports(&mut self, strict: bool) -> Result<(), Diagnostics> {
         let imports: Vec<_> = self.scopes.iter().flat_map(|(scope, data)| data.imports.iter()
             .map(move |(path, span)| (scope.clone(), path.clone(), span.clone()))).collect();
         // Module aliases are ordinary explicit module imports. They never
@@ -178,7 +186,10 @@ impl MacroRegistry {
             let mut changed = false;
             for (scope, path, span) in &imports {
                 if let Some(target) = self.module_target(scope, path) {
-                    self.check_module_access(scope, &target, span)?;
+                    if let Err(diagnostics) = self.check_module_access(scope, &target, span) {
+                        if strict { return Err(diagnostics); }
+                        continue;
+                    }
                     let Some(alias) = path.last() else { continue; };
                     let data = self.scopes.get_mut(scope).ok_or_else(|| proc_macro_error("unknown macro scope", span.clone()))?;
                     match data.module_aliases.get(alias) {
@@ -191,7 +202,12 @@ impl MacroRegistry {
             if !changed { break; }
         }
         for (scope, path, span) in imports {
-            if let Some(identity) = self.resolve_identity(&scope, &path, &span, false)? {
+            let resolved = match self.resolve_identity(&scope, &path, &span, false) {
+                Ok(resolved) => resolved,
+                Err(diagnostics) if strict => return Err(diagnostics),
+                Err(_) => continue,
+            };
+            if let Some(identity) = resolved {
                 let Some(alias) = path.last() else { continue; };
                 let data = self.scopes.get_mut(&scope).ok_or_else(|| proc_macro_error("unknown macro scope", span.clone()))?;
                 if let Some(previous) = data.bindings.insert(alias.clone(), identity.clone()) {
@@ -205,6 +221,9 @@ impl MacroRegistry {
     pub fn resolve(&self, scope: &[String], path: &str, span: &Span) -> Result<Option<&MacroEntry>, Diagnostics> {
         let names: Vec<_> = path.split("::").map(String::from).collect();
         if let Some(identity) = self.resolve_identity(scope, &names, span, true)? { return Ok(self.entries.get(&identity)); }
+        if let Some(cycle) = self.import_cycle(scope, &names) {
+            return Err(proc_macro_error(format!("macro import cycle: {}", cycle.join(" -> ")), span.clone()));
+        }
         if names.len() == 1 {
             if let Some(data) = self.scopes.get(scope) {
                 for glob in &data.globs {
@@ -216,6 +235,23 @@ impl MacroRegistry {
             }
         }
         Ok(None)
+    }
+
+    fn import_cycle(&self, scope: &[String], path: &[String]) -> Option<Vec<String>> {
+        let data = self.scopes.get(scope)?;
+        let mut current = path.first()?.clone();
+        let mut chain = Vec::new();
+        for _ in 0..=data.imports.len() {
+            if data.bindings.contains_key(&current) || data.module_aliases.contains_key(&current) { return None; }
+            if let Some(start) = chain.iter().position(|name| name == &current) {
+                chain.push(current);
+                return Some(chain[start..].to_vec());
+            }
+            chain.push(current.clone());
+            let (import, _) = data.imports.iter().find(|(import, _)| import.len() > 1 && import.last() == Some(&current))?;
+            current = import[0].clone();
+        }
+        None
     }
 
     fn resolve_identity(&self, scope: &[String], path: &[String], span: &Span, macro_request: bool) -> Result<Option<MacroIdentity>, Diagnostics> {

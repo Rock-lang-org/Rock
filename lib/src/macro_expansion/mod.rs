@@ -41,6 +41,9 @@ mod resolution_tests;
 #[cfg(test)]
 mod traversal_tests;
 
+#[cfg(test)]
+mod scheduling_tests;
+
 pub use context::MacroExpansionContext;
 pub use source_map::{
     ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, TokenOrigin,
@@ -54,36 +57,55 @@ pub fn expand_macros_with_context(
     context: &MacroExpansionContext<'_>,
 ) -> Result<Program, Diagnostics> {
     let mut modules = context.source_modules.modules().cloned().collect::<Vec<_>>();
-    expand_forest(&mut program.module, &mut modules, context)?;
+    expand_forest(&mut program.module, &mut modules, context, &mut |_, _| Ok(false))?;
     Ok(program)
 }
 
 /// Expand the loaded forest and publish the same trees to collection's graph.
-/// The graph is authoritative; no file is rediscovered or read by this pass.
+/// Source discovery is interleaved through the ordinary source loader only.
 pub fn expand_macros_in_graph(
     graph: &mut crate::source_loader::ModuleGraph,
+    source_db: &mut crate::source_loader::SourceDatabase,
     context: &MacroExpansionContext<'_>,
 ) -> Result<Program, Diagnostics> {
     let mut program = Program { module: graph.root_module().clone() };
     let mut modules = graph.modules().cloned().collect::<Vec<_>>();
-    expand_forest(&mut program.module, &mut modules, context)?;
-    *graph.root_module_mut() = program.module.clone();
-    for (target, expanded) in graph.modules_mut().zip(modules) { *target = expanded; }
+    expand_forest(&mut program.module, &mut modules, context, &mut |root, modules| {
+        publish_forest(graph, root, modules);
+        let count = graph.modules().count();
+        source_db.load_module_declarations(graph, root, context.config.current_crate_name.as_deref(), context.config)
+            .map_err(crate::source_load_errors_to_diagnostics)?;
+        *modules = graph.modules().cloned().collect();
+        Ok(graph.modules().count() != count)
+    })?;
+    publish_forest(graph, &program.module, &modules);
     Ok(program)
+}
+
+fn publish_forest(graph: &mut crate::source_loader::ModuleGraph, root: &Module, modules: &[crate::source_loader::LoadedModule]) {
+    *graph.root_module_mut() = root.clone();
+    let expanded: std::collections::HashMap<_, _> = modules.iter().map(|module| (&module.qualified_name, &module.module)).collect();
+    for target in graph.modules_mut() {
+        if let Some(module) = expanded.get(&target.qualified_name) { target.module = (*module).clone(); }
+    }
 }
 
 fn expand_forest(
     root: &mut Module,
-    modules: &mut [crate::source_loader::LoadedModule],
+    modules: &mut Vec<crate::source_loader::LoadedModule>,
     context: &MacroExpansionContext<'_>,
+    discover: &mut impl FnMut(&Module, &mut Vec<crate::source_loader::LoadedModule>) -> Result<bool, Diagnostics>,
 ) -> Result<(), Diagnostics> {
     let mut depth = 0;
     loop {
+        let discovered = discover(root, modules)?;
+        modules.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
         validate_macro_definitions(root)?;
         for loaded in modules.iter() { validate_macro_definitions(&loaded.module)?; }
         let sources = crate::source_loader::SourceModuleSet::from_modules(modules.iter().cloned());
-        let registry = registry::MacroRegistry::build_with_modules(root, &sources, context)?;
+        let registry = registry::MacroRegistry::build_for_expansion(root, &sources, context)?;
         if first_forest_invocation(root, modules).is_none() {
+            let registry = registry::MacroRegistry::build_with_modules(root, &sources, context)?;
             let mut visitor = expression::ExpansionVisitor::new(&registry, context, expression::Phase::Expressions);
             visitor.module(root)?;
             for loaded in modules.iter_mut() {
@@ -97,6 +119,16 @@ fn expand_forest(
         for loaded in modules.iter_mut() {
             visitor.set_scope(&loaded.qualified_name);
             visitor.module(&mut loaded.module)?;
+        }
+        if visitor.executed == 0 && !discovered {
+            // Reject only at a stable frontier: another item's output may add
+            // the definition, import, or export needed by this invocation.
+            registry::MacroRegistry::build_with_modules(root, &sources, context)?;
+            if let Some(diagnostics) = visitor.deferred { return Err(diagnostics); }
+            if let Some(invocation) = first_forest_invocation(root, modules) {
+                let diagnostics = proc_macro_error(format!("macro resolution made no progress: unresolved macro path '{}'", invocation.path_name()), invocation.span.clone());
+                return Err(invocation.parent.map(|parent| with_expansion_trace(diagnostics.clone(), context, parent)).unwrap_or(diagnostics));
+            }
         }
         depth += 1;
         if let Some(invocation) = first_forest_invocation(root, modules).filter(|_| depth > context.max_depth) {

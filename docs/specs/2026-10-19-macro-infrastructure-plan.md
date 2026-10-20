@@ -549,6 +549,58 @@ budgets and complete ID-based progress/ancestry enforcement remain A.10.
 Procedural expression calls still reject explicitly. Formatting remains deferred;
 no formatter/check, Clippy, or separate build gate ran. Beads remains unavailable.
 
+### A.09 delivery receipt (2026-10-20)
+
+The same expansion visitor now runs against a deterministic discovery frontier:
+publish current bodies, discover generated file declarations through the ordinary
+source loader, rebuild the macro-only namespace, and expand available item calls.
+Loaded modules execute in canonical qualified-name order. Generated inline
+modules/definitions/imports/exports and transitive generated file declarations
+become available on subsequent rounds before expression bodies are expanded or
+ordinary collection begins. Successful item invocations are replaced immediately
+and are not executed again while another invocation waits for resolution.
+
+Provisional namespace discovery postpones import access failures that generated
+exports/modules can repair; declaration/import identity conflicts remain errors.
+The final frontier uses strict import validation. A frontier with neither a new
+module nor an executed invocation diagnoses unresolved macro paths rather than
+spending the recursion limit. Unresolved explicit module-alias cycles diagnose
+at the macro use without adding facade/glob resolution. Root-only inspection
+shares the scheduler but cannot discover files without a supplied loader.
+
+The frontend refreshes diagnostic source snapshots after expansion/discovery,
+including on failure, so errors in newly discovered files retain their text and
+origin. The old final one-shot source-discovery pass is removed; collection sees
+the fixed-point graph, not a second independently rebuilt graph.
+
+- Initial `cargo test -p rock-lib --lib macro_a_09_ -- --nocapture` observed two
+  passes/four failures: generated file discovery was absent, a generated export
+  could not repair premature privacy rejection, unknown calls consumed the
+  depth budget, and loaded registration order changed worker execution order.
+- Interleaved discovery, provisional access validation, stable module ordering,
+  and no-progress/import-cycle diagnostics brought the same runner to six
+  passes. Added newly discovered diagnostic-source and native one-time execution
+  controls bring the final focused runner to eight passes.
+- `cargo test -p rock-lib --test integration macro_a_09_ -- --nocapture` passes
+  two runtime tests: generated inline imports print `42`, and generated file
+  modules with transitive generated children return status `42` without std.
+- Adjacent `cargo test -p rock-lib --lib macro_expansion:: -- --nocapture` and
+  `cargo test -p rock-lib --lib source_loader:: -- --nocapture` pass 123/16 tests.
+- Initial `cargo test -p rock-lib` observed 2,580 unit passes/one failure
+  (archive `f5187116b5fd2a0c`): the A.03 unresolved-block control still expected
+  the pre-scheduler unsupported-execution wording. Its assertion now requires
+  the stalled-resolution diagnostic and macro path; parser input/opacity
+  expectations are unchanged. The adjacent parser runner passes all 569 tests.
+- Final `cargo test -p rock-lib` passes 2,581 units, 794 main integrations,
+  and one parser integration; one doctest is ignored (archive
+  `e2cb1028a3c217d9`). No functional edits follow this gate.
+
+Aggregate matching/expansion/source-discovery budgets and complete ID-based
+ancestry enforcement remain A.10. Procedural expression execution, binding
+hygiene, authoring workflows, and library policies remain later slices.
+Formatting is deferred; no formatter/check, Clippy, or separate build gate ran.
+Beads remains unavailable.
+
 ### Ac. Carry binding identity all the way to normal checking
 
 | Slice | Implement only | Focused acceptance | Runner |

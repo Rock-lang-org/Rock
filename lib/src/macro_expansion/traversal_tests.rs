@@ -40,7 +40,7 @@ fn macro_a_08_inline_and_loaded_file_modules_use_their_own_macro_scopes() {
     sources.add_virtual_source("/macro-traversal/main.rk".into(), "mod tools\nmod inline\n    macro local\n        =>\n            9\n    inner = -> %local!\nmain = -> %tools::local!\n");
     sources.add_virtual_source("/macro-traversal/tools.rk".into(), "< local\nmacro local\n    =>\n        42\nmacro item\n    =>\n        made = -> %local!\n%item\nwork = -> %local!\nmod nested\n    > app::tools::local\n    run = -> %local!\n");
     let mut graph = sources.load_entry("/macro-traversal/main.rk".into(), &config).unwrap();
-    let expanded = super::expand_macros_in_graph(&mut graph, &MacroExpansionContext::new(&config)).unwrap();
+    let expanded = super::expand_macros_in_graph(&mut graph, &mut sources, &MacroExpansionContext::new(&config)).unwrap();
     assert_eq!(pending(&expanded.module), 0);
     assert_eq!(pending(graph.root_module()), 0);
     let tools = graph.module_by_qualified_name("app::tools").unwrap();
@@ -82,7 +82,7 @@ fn macro_a_08_unused_loaded_declaration_errors_are_not_skipped() {
     sources.add_virtual_source("/macro-traversal-errors/main.rk".into(), "mod tools\nmain = -> 0\n");
     sources.add_virtual_source("/macro-traversal-errors/tools.rk".into(), "struct Point\n    value: Int = %missing!\n");
     let mut graph = sources.load_entry("/macro-traversal-errors/main.rk".into(), &config).unwrap();
-    let diagnostics = super::expand_macros_in_graph(&mut graph, &MacroExpansionContext::new(&config)).unwrap_err();
+    let diagnostics = super::expand_macros_in_graph(&mut graph, &mut sources, &MacroExpansionContext::new(&config)).unwrap_err();
     assert!(format!("{diagnostics:?}").contains("tools.rk"));
 }
 
@@ -166,7 +166,7 @@ fn macro_a_08_loaded_procedural_item_executes_once_and_discarded_inputs_never_ru
     sources.add_virtual_source("/macro-traversal-worker/main.rk".into(), "mod tools\nmain = -> 0\n");
     sources.add_virtual_source("/macro-traversal-worker/tools.rk".into(), "> provider::make\n%make\nmacro discard\n    $value:expr =>\n        7\nstruct Point\n    value: Int = %discard (%provider::make!)\n");
     let mut graph = sources.load_entry("/macro-traversal-worker/main.rk".into(), &config).unwrap();
-    let result = super::expand_macros_in_graph(&mut graph, &context);
+    let result = super::expand_macros_in_graph(&mut graph, &mut sources, &context);
     std::fs::remove_dir_all(directory).unwrap();
     result.unwrap();
     let tools = &graph.module_by_qualified_name("app::tools").unwrap().module;

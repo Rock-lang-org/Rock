@@ -107,7 +107,7 @@ fn macro_a_03_ordinary_multiline_calls_still_parse_and_block_execution_diagnoses
     let config = Config::default();
     let context = MacroExpansionContext::new(&config);
     let diagnostics = expand_macros_with_context(program, &context).unwrap_err();
-    assert!(diagnostics.0.iter().any(|diagnostic| diagnostic.message.contains("block macro expansion is not implemented")));
+    assert!(diagnostics.0.iter().any(|diagnostic| diagnostic.message.contains("no progress") && diagnostic.message.contains("dsl")));
 }
 
 #[test]

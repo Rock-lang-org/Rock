@@ -16,11 +16,13 @@ pub(super) struct ExpansionVisitor<'a, 'cfg> {
     context: &'a MacroExpansionContext<'cfg>,
     phase: Phase,
     scope: Vec<String>,
+    pub(super) executed: usize,
+    pub(super) deferred: Option<Diagnostics>,
 }
 
 impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
     pub(super) fn new(registry: &'a MacroRegistry, context: &'a MacroExpansionContext<'cfg>, phase: Phase) -> Self {
-        Self { registry, context, phase, scope: Vec::new() }
+        Self { registry, context, phase, scope: Vec::new(), executed: 0, deferred: None }
     }
 
     pub(super) fn set_scope(&mut self, qualified_name: &str) {
@@ -35,19 +37,19 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
         for mut item in std::mem::take(&mut module.top_levels) {
             if self.phase == Phase::Items {
                 if let TopLevel::MacroInvoc(invocation) = &item {
-                    match self.registry.resolve(&self.scope, &invocation.path_name(), &invocation.span)? {
-                        Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. }) => {
+                    match self.registry.resolve(&self.scope, &invocation.path_name(), &invocation.span) {
+                        Ok(Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. })) => {
                             output.extend(super::expand_top_level(declaration, invocation, self.context)?);
+                            self.executed += 1;
                             continue;
                         }
-                        Some(super::registry::MacroEntry { definition: MacroDefinition::Procedural(entry), .. }) => {
+                        Ok(Some(super::registry::MacroEntry { definition: MacroDefinition::Procedural(entry), .. })) => {
                             output.extend(super::expand_proc_macro_top_level(entry, invocation, self.context)?);
+                            self.executed += 1;
                             continue;
                         }
-                        None if invocation.block.is_some() => return Err(super::proc_macro_error(
-                            "block macro expansion is not implemented for unresolved macro paths", invocation.span.clone(),
-                        )),
-                        None => {}
+                        Err(diagnostics) if self.deferred.is_none() => self.deferred = Some(diagnostics),
+                        Ok(None) | Err(_) => {}
                     }
                 }
             }

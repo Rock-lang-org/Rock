@@ -175,7 +175,6 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
         Ok(graph) => graph,
         Err(errors) => return Err(source_load_errors_to_diagnostics(errors)),
     };
-    let mut diagnostic_sources = diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
     let ast = Program {
         module: source_graph.root_module().clone(),
     };
@@ -191,22 +190,13 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
     for (name, artifact) in ctx.proc_macro_artifacts() {
         macro_context = macro_context.with_named_proc_macro_artifact(name.to_string(), artifact.clone());
     }
-    let ast = macro_expansion::expand_macros_in_graph(&mut source_graph, &macro_context)
-        .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
+    let expanded = macro_expansion::expand_macros_in_graph(&mut source_graph, &mut source_db, &macro_context);
+    let diagnostic_sources = diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
+    let ast = expanded.map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
 
     if config.has_debug_print(DebugPrint::Expanded) {
         println!("{:#?}", ast);
     }
-
-    if let Err(errors) = source_db.load_module_declarations(
-        &mut source_graph,
-        &ast.module,
-        config.current_crate_name.as_deref(),
-        config,
-    ) {
-        return Err(source_load_errors_to_diagnostics(errors));
-    }
-    diagnostic_sources = diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
 
     let declarations = collect::collect_with_source_graph(
         &ast,
