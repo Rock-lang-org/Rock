@@ -121,8 +121,17 @@ only for that developer context, never for syntax or wire input.
 Every invocation has a private process group. The runner observes leader exit
 without reaping it, terminates its group while the group ID is still reserved,
 then reaps the leader and closes the pipes. Unsupported hosts reject execution
-before spawning, instead of using an unbounded fallback. Explicit cancellation
-and dedicated descendant-cleanup acceptance are B.03. Native macro code remains
+before spawning, instead of using an unbounded fallback. The native runner accepts
+an optional host-owned atomic cancellation flag; expansion contexts accept the
+same flag through `with_cancellation`. Pre-cancelled requests spawn nothing.
+Cancellation is checked before spawning and throughout IO/validation, and uses
+the same group termination, leader reaping and pipe closure as other failures.
+Dedicated native process integration checks exercise descendants retaining pipes
+on success, malformed response, timeout, broken request and cancellation. A
+separate-process Linux repetition check measures stable descriptor/thread counts
+without racing unrelated compiler tests. Each failing fixture has an independent
+watchdog and worker alarm, and checks that no recorded process survives.
+Native macro code remains
 trusted host code, not sandboxed code; intentionally escaping the process group
 is not a supported worker lifecycle.
 

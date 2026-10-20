@@ -3,6 +3,7 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use super::{decode_response, ProcMacroArtifact, ProcMacroRequest, ProcMacroResponse, MAX_PROC_MACRO_MESSAGE_BYTES};
@@ -84,9 +85,10 @@ fn stderr_context(error: String, stderr: &[u8]) -> String {
 }
 
 #[cfg(unix)]
-pub(super) fn run(artifact: &ProcMacroArtifact, request: &ProcMacroRequest, bytes: &[u8], started: Instant, timeout: Duration) -> Result<ProcMacroResponse, String> {
+pub(super) fn run(artifact: &ProcMacroArtifact, request: &ProcMacroRequest, bytes: &[u8], started: Instant, timeout: Duration, cancellation: Option<&AtomicBool>) -> Result<ProcMacroResponse, String> {
     use std::os::unix::process::CommandExt;
 
+    if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) { return Err("proc macro cancelled before spawn".into()); }
     if started.elapsed() >= timeout { return Err("proc macro timed out before spawn".into()); }
     let child = Command::new(&artifact.executable).process_group(0)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
@@ -108,6 +110,7 @@ pub(super) fn run(artifact: &ProcMacroArtifact, request: &ProcMacroRequest, byte
         let mut err_closed = false;
         let mut status = None;
         loop {
+            if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) { return Err("proc macro cancelled during request/response IO or shutdown".into()); }
             if started.elapsed() >= timeout { return Err("proc macro timed out during request/response IO or shutdown".into()); }
             if let Some(pipe) = &mut stdin {
                 let end = bytes.len().min(written + 8192);
@@ -132,6 +135,7 @@ pub(super) fn run(artifact: &ProcMacroArtifact, request: &ProcMacroRequest, byte
                 if out_closed && err_closed && stdin.is_none() {
                     let response = decode_response(&out).map_err(|error| format!("malformed proc macro response: {error}"))?;
                     response.validate_for(request)?;
+                    if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) { return Err("proc macro cancelled validating response".into()); }
                     if started.elapsed() >= timeout { return Err("proc macro timed out validating response".into()); }
                     return Ok(response);
                 }
@@ -143,7 +147,7 @@ pub(super) fn run(artifact: &ProcMacroArtifact, request: &ProcMacroRequest, byte
 }
 
 #[cfg(not(unix))]
-pub(super) fn run(_: &ProcMacroArtifact, _: &ProcMacroRequest, _: &[u8], _: Instant, _: Duration) -> Result<ProcMacroResponse, String> {
+pub(super) fn run(_: &ProcMacroArtifact, _: &ProcMacroRequest, _: &[u8], _: Instant, _: Duration, _: Option<&AtomicBool>) -> Result<ProcMacroResponse, String> {
     Err("bounded proc macro execution is unsupported on this host".into())
 }
 

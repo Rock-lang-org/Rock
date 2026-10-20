@@ -1075,6 +1075,51 @@ fragmented-IO fixture and error-identity wording; terminal gates above cover
 those changes. No functional edits follow the terminal gates. Formatting remains
 deferred and Beads unavailable.
 
+### B.03 delivery receipt (2026-10-20)
+
+Native execution accepts an optional host-owned atomic cancellation flag;
+`MacroExpansionContext::with_cancellation` carries it to the runner. Checks before
+encoding/spawn, throughout the nonblocking IO loop and after validation use the
+same ownership guard as deadline/IO/decode failures. Pre-cancelled expansion
+spawns no worker. No wire metadata, package discovery, compiler-global signal
+handler, detached IO thread or cancellation-specific process framework is added.
+The B.02 private process-group cleanup still precedes leader reaping; unsupported
+execution hosts reject before spawn. Protocol 7/product format 53 are unchanged.
+
+Native process tests now live in `lib/tests/macro_process.rs`, exercising the
+public API rather than a compiler-only unit seam. Alongside the five existing
+B.02 native cases, six B.03 integrations cover descendants retaining stdout/stderr
+on success, malformed response, timeout, broken request and cancellation;
+pre-cancelled expansion; cancellation during blocked input, response and shutdown;
+and isolated repeated cleanup with stable Linux descriptor/thread counts. Every
+recorded direct worker must be gone and reaped, and every recorded descendant
+must disappear within a bounded check. Independent three-second per-run
+watchdogs, worker alarms and a 20-second isolated-resource watchdog bound regressions.
+Native code remains trusted host code; intentionally escaping the process group
+is outside the supported worker lifecycle.
+
+Final functional snapshot acceptance:
+
+- `cargo test -p rock-lib --test macro_process`: all 11 integrations pass,
+  including the isolated repeated-run child. Log
+  `/tmp/opencode/macro-b03-process-candidate.log`, SHA-256
+  `87518cfb492b1ac3abacb3896547f13b92e11804677c2444e18f277b7de2f43d`.
+- `cargo test -p rock-lib`: 2,698 units, 803 main integrations, six diagnostic
+  integrations, 11 native-process integrations and one parser integration pass;
+  one doctest ignored. Five B.02 native units moved to the integration target,
+  accounting for the lower unit count. Log
+  `/tmp/opencode/macro-b03-acceptance.log`, SHA-256
+  `21b02767100a7a51b8bfa480ba0c391b97cb27f568be701dca0c1a9a20227743`.
+- `cargo test -p rockc -p rock -p rock-shared -p rock-lsp`: 50 compiler CLI,
+  86 application CLI, 26 shared and five LSP units plus one shared doctest pass,
+  using rebuilt current `ROCKC` and unchanged format-53 std through explicit
+  `ROCK_SYSROOT=/tmp/opencode/macro-b01-sysroot`. Log
+  `/tmp/opencode/macro-b03-cli.log`, SHA-256
+  `6b7850aff5e936574a5ab08332f07c787d72329fc9ea8dc5ff4b53769e79c90e`.
+
+No functional edits follow these gates. Formatting remains deferred and Beads
+unavailable; unrelated untracked work remains untouched.
+
 ### Bb. Bootstrap the SDK without macros or compiler callbacks
 
 | Slice | Implement only | Focused acceptance | Runner |

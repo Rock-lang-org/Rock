@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use bincode::Options;
@@ -146,16 +147,16 @@ fn check_version(bytes: &[u8]) -> Result<(), bincode::Error> {
 
 #[cfg(test)]
 mod wire_tests;
-#[cfg(test)]
-mod process_tests;
 
 pub fn run_proc_macro_process(
     artifact: &ProcMacroArtifact,
     request: &ProcMacroRequest,
     timeout: Duration,
+    cancellation: Option<&AtomicBool>,
 ) -> Result<ProcMacroResponse, String> {
     let started = Instant::now();
     let describe = |cause| format!("Proc macro '{}' ({}): {cause}", request.macro_name, request.macro_identity);
+    if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) { return Err(describe("proc macro cancelled before spawn".into())); }
     if artifact.protocol_version != PROC_MACRO_PROTOCOL_VERSION || request.protocol_version != PROC_MACRO_PROTOCOL_VERSION {
         return Err(describe(format!(
                 "protocol version mismatch: artifact={}, request={}",
@@ -164,7 +165,7 @@ pub fn run_proc_macro_process(
     }
 
     let request_bytes = encode_request(request).map_err(|err| describe(format!("failed to encode request: {err}")))?;
-    transport::run(artifact, request, &request_bytes, started, timeout).map_err(describe)
+    transport::run(artifact, request, &request_bytes, started, timeout, cancellation).map_err(describe)
 }
 
 #[cfg(test)]
@@ -340,7 +341,7 @@ mod tests {
             definition_dependencies: Vec::new(),
         };
 
-        let error = run_proc_macro_process(&artifact, &request, Duration::from_millis(10))
+        let error = run_proc_macro_process(&artifact, &request, Duration::from_millis(10), None)
             .expect_err("protocol mismatch must reject before spawn");
 
         assert!(
@@ -376,7 +377,7 @@ mod tests {
             definition_dependencies: Vec::new(),
         };
 
-        let err = run_proc_macro_process(&artifact, &request, Duration::from_millis(10))
+        let err = run_proc_macro_process(&artifact, &request, Duration::from_millis(10), None)
             .expect_err("oversized request should fail during encoding");
 
         assert!(err.contains("the size limit has been reached"), "{err}");

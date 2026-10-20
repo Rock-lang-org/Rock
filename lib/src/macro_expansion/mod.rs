@@ -324,7 +324,7 @@ fn expand_proc_macro_top_level(
     };
 
     let response =
-        proc_macro::run_proc_macro_process(&entry.artifact, &request, Duration::from_secs(10))
+        proc_macro::run_proc_macro_process(&entry.artifact, &request, Duration::from_secs(10), context.cancellation.as_deref())
             .map_err(|err| {
                 with_expansion_trace(
                     proc_macro_error(err, invoc_span.clone()),

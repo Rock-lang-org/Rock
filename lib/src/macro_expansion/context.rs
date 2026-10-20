@@ -17,6 +17,7 @@ pub struct ProcMacroDependency {
 
 #[derive(Debug)]
 pub struct MacroExpansionContext<'a> {
+    pub(crate) cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub(crate) reports: RefCell<Diagnostics>,
     pub config: &'a Config,
     pub max_depth: usize,
@@ -32,6 +33,7 @@ pub struct MacroExpansionContext<'a> {
 impl<'a> MacroExpansionContext<'a> {
     pub fn new(config: &'a Config) -> Self {
         Self {
+            cancellation: None,
             reports: RefCell::new(Diagnostics::default()),
             config,
             max_depth: 100,
@@ -163,6 +165,13 @@ impl<'a> MacroExpansionContext<'a> {
 
     pub fn with_source_modules(mut self, modules: crate::source_loader::SourceModuleSet) -> Self {
         self.source_modules = modules;
+        self
+    }
+
+    /// Cooperatively cancel native workers without leaving IO or descendants
+    /// behind; this flag is host control, never data supplied by a worker.
+    pub fn with_cancellation(mut self, cancellation: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+        self.cancellation = Some(cancellation);
         self
     }
 

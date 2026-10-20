@@ -32,6 +32,18 @@ int main(int argc, char **argv) {
     fclose(pid);
     const char *mode = strrchr(argv[0], '/');
     mode = mode ? mode + 1 : argv[0];
+    if (!strncmp(mode, "descendant-", 11)) {
+        pid_t descendant = fork();
+        if (descendant < 0) return 15;
+        if (!descendant) { close(0); alarm(4); for (;;) pause(); }
+        snprintf(path, sizeof(path), "%s.desc.pid", argv[0]);
+        FILE *marker = fopen(path, "w");
+        if (!marker) return 16;
+        fprintf(marker, "%d", (int)descendant);
+        fclose(marker);
+        if (!strcmp(mode, "descendant-timeout")) for (;;) pause();
+        if (!strcmp(mode, "descendant-broken")) { close(0); for (;;) pause(); }
+    }
     if (!strcmp(mode, "blocked-stdin")) for (;;) pause();
     if (!strcmp(mode, "broken-pipe")) {
         close(0);
@@ -43,6 +55,11 @@ int main(int argc, char **argv) {
     while ((count = read(0, buffer, !strcmp(mode, "partial") ? 257 : sizeof(buffer))) > 0) {
         if (!strcmp(mode, "partial")) usleep(500);
     }
+    snprintf(path, sizeof(path), "%s.read", argv[0]);
+    FILE *read_marker = fopen(path, "w");
+    if (!read_marker) return 17;
+    fclose(read_marker);
+    if (!strcmp(mode, "descendant-cancel")) for (;;) pause();
     if (!strcmp(mode, "blocked-stdout")) {
         emit(1, "\7", 1);
         for (;;) pause();
@@ -53,7 +70,7 @@ int main(int argc, char **argv) {
         for (int i = 0; i < 257; i++) emit(fd, buffer, sizeof(buffer));
         return 0;
     }
-    if (!strcmp(mode, "malformed")) { emit(1, "invalid", 7); emit(2, "bad wire", 8); return 0; }
+    if (!strcmp(mode, "malformed") || !strcmp(mode, "descendant-malformed")) { emit(1, "invalid", 7); emit(2, "bad wire", 8); return 0; }
     if (!strcmp(mode, "crash")) { emit(2, "crash marker", 12); raise(SIGSEGV); return 11; }
     snprintf(path, sizeof(path), "%s.response", argv[0]);
     FILE *response = fopen(path, "rb");
@@ -63,6 +80,10 @@ int main(int argc, char **argv) {
         if (!strcmp(mode, "partial")) usleep(500);
     }
     fclose(response);
+    snprintf(path, sizeof(path), "%s.written", argv[0]);
+    FILE *written_marker = fopen(path, "w");
+    if (!written_marker) return 18;
+    fclose(written_marker);
     if (!strcmp(mode, "nonzero")) { emit(2, "nonzero marker", 14); return 7; }
     if (!strcmp(mode, "blocked-shutdown")) for (;;) pause();
     return 0;
