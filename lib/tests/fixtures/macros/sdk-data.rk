@@ -1,0 +1,180 @@
+> rock_macro::*
+
+make_stream: String -> TokenStream
+make_stream = text ->
+    length = text.len!
+    mut sources: Vec SourceSnapshot = Vec::new!
+    sources.push (SourceSnapshot
+        identity: 1
+        file_path: String::from "caller.rk"
+        text: text)
+    mut segments: Vec Segment = Vec::new!
+    if length > 0
+        segments.push (Segment
+            source: 0
+            range: ByteRange
+                start: 0
+                end: length as U64
+            kind: SegmentKind::Text
+            context: SyntaxContext
+                handle: 42
+            boundary: JoinBoundary::Separate
+            origin: Option::None
+            construction: Option::None)
+    TokenStream
+        sources: sources
+        segments: segments
+        anchor: StreamAnchor
+            source: 0
+            offset: 0
+            context: SyntaxContext
+                handle: 42
+            origin: Option::None
+        expressions: Vec::new!
+
+identity: MacroContext -> TokenStream -> MacroResult
+identity = context, input -> MacroResult::Expand input
+
+context = ->
+    MacroContext
+        protocol_version: 7
+        compiler_version: String::from "0.7.0"
+        macro_name: String::from "identity"
+        macro_identity: String::from "example::identity"
+        source_module: Option::None
+        expansion: Option::Some (2 as U32)
+        invocation: 9
+        parent: Option::Some (1 as U32)
+        output_category: OutputCategory::Expression
+        kind: MacroKind::FunctionLike
+        header_indent: 0
+        block_base: Option::None
+        definition_dependencies: Vec::new!
+        views: InputViews
+            arguments: Option::None
+            groups: Vec::new!
+            literals: Vec::new!
+
+span = ->
+    Span
+        file_path: String::from "caller.rk"
+        range: ByteRange
+            start: 0
+            end: 3
+
+inspect_origin: TokenOrigin -> ()
+inspect_origin = origin !->
+    match origin.provenance
+        TokenProvenance::Source source => (source.range.end as I64).println!
+        TokenProvenance::Captured captured => (captured.expansion as I64).println!
+        TokenProvenance::Generated generated => (generated.generated_source as I64).println!
+
+inspect: MacroResult -> ()
+inspect = result !->
+    match result
+        MacroResult::Expand retained =>
+            retained.sources[0].text.len!.println!
+            retained.segments.len!.println!
+            (retained.anchor.context.handle as I64).println!
+            retained.sources[0].text.println!
+        MacroResult::Error reports => reports[0].message.println!
+        MacroResult::Report report => report.diagnostics[0].message.println!
+
+main = !->
+    inspect (identity context!, (make_stream (String::from "")))
+    inspect (identity context!, (make_stream (String::from "雪{'é")))
+    mut labels: Vec DiagnosticLabel = Vec::new!
+    labels.push (DiagnosticLabel
+        message: String::from "input range"
+        location: DiagnosticLocation::Input (ByteRange
+            start: 0
+            end: 3))
+    mut reports: Vec Diagnostic = Vec::new!
+    reports.push (Diagnostic
+        severity: DiagnosticSeverity::Warning
+        message: String::from "warning alongside output"
+        primary: DiagnosticLocation::Invocation
+        labels: labels
+        notes: Vec::new!
+        help: Vec::new!)
+    mut parts: Vec OutputPart = Vec::new!
+    parts.push (OutputPart::Source (SourceFragment
+        text: String::from "unmatched{"
+        context: ConstructionContext
+            invocation: 9
+            kind: ConstructionKind::Fresh 1))
+    parts.push (OutputPart::Literal (LiteralFragment
+        view: 0
+        range: ByteRange
+            start: 0
+            end: 3))
+    parts.push (OutputPart::Stream (make_stream (String::from "雪")))
+    inspect (MacroResult::Report (MacroReport
+        output: Option::Some (MacroOutput
+            parts: parts)
+        diagnostics: reports))
+    mut errors: Vec Diagnostic = Vec::new!
+    errors.push (Diagnostic
+        severity: DiagnosticSeverity::Error
+        message: String::from "structured error"
+        primary: DiagnosticLocation::Invocation
+        labels: Vec::new!
+        notes: Vec::new!
+        help: Vec::new!)
+    inspect (MacroResult::Error errors)
+    inspect_origin (TokenOrigin
+        provenance: TokenProvenance::Source span!
+        projection: Option::None)
+    inspect_origin (TokenOrigin
+        provenance: TokenProvenance::Captured (CapturedOrigin
+            expansion: 4
+            invocation_span: span!
+            capture_span: span!)
+        projection: Option::None)
+    inspect_origin (TokenOrigin
+        provenance: TokenProvenance::Generated (GeneratedOrigin
+            expansion: 4
+            generated_source: 5
+            definition_span: span!)
+        projection: Option::Some (OutputProjection
+            namespace: 1
+            expansion: 4
+            generated_source: 5
+            source_start: 0
+            output_start: 10))
+    mut mappings: Vec LiteralMapping = Vec::new!
+    mappings.push (LiteralMapping
+        decoded: ByteRange
+            start: 0
+            end: 3
+        source: ByteRange
+            start: 1
+            end: 4)
+    mut literals: Vec LiteralView = Vec::new!
+    literals.push (LiteralView
+        source: ByteRange
+            start: 0
+            end: 5
+        decoded: String::from "雪"
+        mapping: mappings)
+    views = InputViews
+        arguments: Option::Some (ArgumentView
+            ranges: Vec::new!)
+        groups: Vec::new!
+        literals: literals
+    views.literals[0].decoded.println!
+    (views.literals[0].mapping[0].source.start as I64).println!
+    dependency = DependencyIdentity
+        name: String::from "helper"
+        version: String::from "0.1.0"
+        target_triple: Option::None
+        format_version: 53
+        source_fingerprint: SourceFingerprint
+            manifest_hash: Option::None
+            source_hash: Option::None
+            loaded_files: Vec::new!
+    dependency.name.println!
+    request = MacroRequest
+        context: context!
+        input: make_stream (String::from "雪")
+    (request.context.invocation as I64).println!

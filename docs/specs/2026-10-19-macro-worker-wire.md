@@ -160,3 +160,22 @@ forwarded spelling, all construction kinds, a literal fragment, and structured
 warning/error results. Invocation and snapshot handles are fixed to 1 solely
 for these test messages. The future Rock SDK must consume/produce these same
 bytes; compiler-only tests do not establish Rock-authored worker usability.
+
+## Ordinary Rock data model
+
+`rock_macro/src/lib.rk` supplies the owned SDK data types as an ordinary library
+with an explicit `std` dependency. `TokenStream` retains source snapshots,
+segments, anchor and opaque expression ranges; it is not printed source or a
+compiler AST. `MacroContext` contains the remaining request facts, so an ordinary
+entry has the `MacroContext, TokenStream -> MacroResult` contract. UTF-8 byte
+ranges and host-sized transport indices use `U64`; context/version handles use
+their declared `U32` widths. Struct layout is not the wire encoding.
+
+`MacroResult::Expand` and `MacroResult::Error` are authoring conveniences;
+`MacroResult::Report` carries optional ordered output parts and diagnostics
+together. The future encoder normalizes all three into the single B.01 response
+record. All provenance, optional views, dependency identities, construction
+requests and fragment descriptors are ordinary typed data. They grant no compiler
+authority merely by being constructed locally. Local operations and checked IO/
+serialization are B.06–B.10; the data-model runtime test is not worker or binary
+interoperability acceptance.

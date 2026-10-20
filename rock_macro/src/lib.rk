@@ -1,0 +1,214 @@
+// Ordinary owned SDK data for worker protocol 7 and RKLOSS04.
+// Handles are transport values, never permission to mint compiler authority.
+// Local operations and checked binary transport are separate staged work.
+
+> std::collections::vec::Vec
+> std::control::option::Option
+> std::string::owned::String
+
+< struct ByteRange
+    < start: U64
+    < end: U64
+
+< struct Span
+    < file_path: String
+    < range: ByteRange
+
+< struct SyntaxContext
+    < handle: U32
+
+< enum ConstructionKind
+    Fresh U32
+    CallSite
+    Dependency U32
+
+< struct ConstructionContext
+    < invocation: U64
+    < kind: ConstructionKind
+
+< struct CapturedOrigin
+    < expansion: U32
+    < invocation_span: Span
+    < capture_span: Span
+
+< struct GeneratedOrigin
+    < expansion: U32
+    < generated_source: U32
+    < definition_span: Span
+
+< enum TokenProvenance
+    Source Span
+    Captured CapturedOrigin
+    Generated GeneratedOrigin
+
+< struct OutputProjection
+    < namespace: U64
+    < expansion: U32
+    < generated_source: U32
+    < source_start: U64
+    < output_start: U64
+
+< struct TokenOrigin
+    < provenance: TokenProvenance
+    < projection: Option OutputProjection
+
+< enum SegmentKind
+    Text
+    Whitespace
+    LineEnding
+
+< enum JoinBoundary
+    Separate
+    SourceAdjacent
+
+< struct SourceSnapshot
+    < identity: U64
+    < file_path: String
+    < text: String
+
+// Snapshot indices retain aliasing; equal text or paths do not imply adjacency.
+< struct Segment
+    < source: U64
+    < range: ByteRange
+    < kind: SegmentKind
+    < context: SyntaxContext
+    < boundary: JoinBoundary
+    < origin: Option TokenOrigin
+    < construction: Option ConstructionContext
+
+< struct StreamAnchor
+    < source: U64
+    < offset: U64
+    < context: SyntaxContext
+    < origin: Option TokenOrigin
+
+< struct ExpressionRange
+    < range: ByteRange
+    < header_indent: U64
+
+// The only input representation: retained UTF-8, segments and opaque captures.
+< struct TokenStream
+    < sources: Vec SourceSnapshot
+    < segments: Vec Segment
+    < anchor: StreamAnchor
+    < expressions: Vec ExpressionRange
+
+< enum OutputCategory
+    Items
+    Expression
+
+< enum MacroKind
+    FunctionLike
+    AttributeLike
+    DeriveLike
+
+< enum Delimiter
+    Paren
+    Bracket
+    Brace
+
+< struct ArgumentView
+    < ranges: Vec ByteRange
+
+< struct GroupView
+    < delimiter: Delimiter
+    < range: ByteRange
+
+< struct LiteralMapping
+    < decoded: ByteRange
+    < source: ByteRange
+
+< struct LiteralView
+    < source: ByteRange
+    < decoded: String
+    < mapping: Vec LiteralMapping
+
+< struct InputViews
+    < arguments: Option ArgumentView
+    < groups: Vec GroupView
+    < literals: Vec LiteralView
+
+< struct SourceFingerprint
+    < manifest_hash: Option String
+    < source_hash: Option String
+    < loaded_files: Vec String
+
+< struct DependencyIdentity
+    < name: String
+    < version: String
+    < target_triple: Option String
+    < format_version: U32
+    < source_fingerprint: SourceFingerprint
+
+// These are compiler-supplied invocation facts, not AST/declaration projections.
+< struct MacroContext
+    < protocol_version: U32
+    < compiler_version: String
+    < macro_name: String
+    < macro_identity: String
+    < source_module: Option String
+    < expansion: Option U32
+    < invocation: U64
+    < parent: Option U32
+    < output_category: OutputCategory
+    < kind: MacroKind
+    < header_indent: U64
+    < block_base: Option U64
+    < definition_dependencies: Vec DependencyIdentity
+    < views: InputViews
+
+< struct MacroRequest
+    < context: MacroContext
+    < input: TokenStream
+
+< enum DiagnosticSeverity
+    Error
+    Warning
+    Info
+    Hint
+
+// Logical UTF-8 ranges only: workers cannot select diagnostic filesystem paths.
+< enum DiagnosticLocation
+    Invocation
+    Input ByteRange
+    Output ByteRange
+
+< struct DiagnosticLabel
+    < message: String
+    < location: DiagnosticLocation
+
+< struct Diagnostic
+    < severity: DiagnosticSeverity
+    < message: String
+    < primary: DiagnosticLocation
+    < labels: Vec DiagnosticLabel
+    < notes: Vec String
+    < help: Vec String
+
+< struct SourceFragment
+    < text: String
+    < context: ConstructionContext
+
+< struct LiteralFragment
+    < view: U32
+    < range: ByteRange
+
+// Fragments are output-only data; their interpretation is owned by the compiler.
+< enum OutputPart
+    Stream TokenStream
+    Source SourceFragment
+    Literal LiteralFragment
+
+< struct MacroOutput
+    < parts: Vec OutputPart
+
+< struct MacroReport
+    < output: Option MacroOutput
+    < diagnostics: Vec Diagnostic
+
+// One authoring result contract. Report permits warnings alongside output;
+// Expand and Error are conveniences normalized by the future result encoder.
+< enum MacroResult
+    Expand TokenStream
+    Error (Vec Diagnostic)
+    Report MacroReport

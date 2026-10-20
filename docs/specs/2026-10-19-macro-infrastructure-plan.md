@@ -1182,6 +1182,61 @@ Formatting remains deferred, Beads unavailable, and unrelated work untouched.
 | B.09 | Implement Rock result/diagnostic/fragment encoding interoperable with Rust validation. | Rock-produced bytes match goldens and Rust decoding for every required result variant. Test errors and empty output as well as success; field order, integer representation, and framing are explicit rather than Rust-memory-layout assumptions. | I |
 | B.10 | Add the generated-runner support function: read one request, call a supplied ordinary entry, write one final response, exit. | A plain Rock identity worker processes real compiler requests using the same ABI for inline/block-shaped input. Two requests are not silently accepted, errors do not contaminate stdout, and process-global state is not reused. | I |
 
+### B.05 delivery receipt (2026-10-20)
+
+`rock_macro/` is an ordinary Rock library with an explicit path dependency on
+`std`, not a compiler-registered SDK or proc target. Its exported owned data
+models the B.01 contract: snapshot-indexed lossless segments/anchor/opaque ranges,
+physical provenance and diagnostic projections, symbolic construction contexts,
+invocation/category/layout/dependency facts, optional group/argument/literal
+views, output-only fragment descriptors, and structured diagnostics/results.
+`MacroResult::Expand`/`Error` and the warning-capable `Report` are one authoring
+result contract, to be normalized by the B.09 encoder into B.01's single result
+record. Transport indices/ranges are explicitly `U64`; narrower handles retain
+their declared widths. There is no raw-string input variant, AST projection,
+quotation facility, worker dispatcher, implicit package discovery or binary codec.
+
+`lib/tests/macro_sdk.rs` builds std and SDK host artifacts explicitly, asserts
+both are ordinary libraries with no proc exports, then compiles/runs a plain
+Rock client through those artifacts with procedural execution disabled. The
+client constructs and inspects empty/Unicode streams, contexts, all provenance
+forms, projections, literal mappings, dependencies, output fragments, warnings
+and errors. Separate negative configurations omit SDK or std rather than relying
+on a sysroot/discovered source package. The fixture uses the ordinary entry
+contract `MacroContext, TokenStream -> MacroResult`, not a macro invocation.
+
+Local operations remain B.06, binary IO/codecs/generated runner support B.07–B.10,
+host-role planning B.15 and source-free package acceptance B.17. This receipt
+does not certify any of those later features or Rust/Rock wire interoperability.
+
+Final functional snapshot acceptance:
+
+- `cargo test -p rock-lib`: 2,698 units, 803 main integrations, six diagnostic
+  integrations, 14 native-process integrations, the new SDK integration and one
+  parser integration pass; one doctest ignored. This includes independently
+  omitting each explicit dependency. `/tmp/opencode/macro-b05-acceptance.log`,
+  SHA-256 `b6a6fd6d1b859ab0cfa560df591f743d109ac0e533e85d6164f509e5568de947`.
+- `cargo check --workspace --all-targets` passes with existing warnings.
+  `/tmp/opencode/macro-b05-check.log`, SHA-256
+  `e97f001b2ec210ad4da248147e0938f47945268d3fb13abf8be32c137de19d27`.
+
+The earlier focused `cargo test -p rock-lib --test macro_sdk` passed before
+strengthening the independent missing-std negative; its log
+`/tmp/opencode/macro-b05-sdk-final.log` has SHA-256
+`31d7487f2951b99ba29d7cbe52dfa9d9bb1bfd70d8124abb7b02da24851fbcc9`.
+Initial fixture attempts exposed the lack of unsigned `Show` impls and contextual
+generic integer payloads defaulting to signed widths (one reached LLVM verifier
+rejection). The fixture now uses explicit protocol widths and signed display
+casts; no compiler numeric-coercion repair is claimed. A standalone probe built
+successfully, but its direct executable launch was blocked by shell policy and
+was not retried or counted as runtime acceptance. Runtime acceptance is the
+standard Cargo integration, including its exact UTF-8 output comparison.
+
+No compiler/CLI production code or artifact/wire format changes belong to this
+slice; B.04 CLI gates remain unchanged, not rerun evidence for new SDK workflows.
+No functional edits follow the final gates. Formatting remains deferred, Beads
+unavailable, and unrelated untracked work untouched.
+
 The first worker is intentionally built from ordinary Rock code and test-provided
 entry functions. This proves the SDK/runtime seam before the source-declared
 export workflow; it is not permission to require authors to write a dispatcher.
