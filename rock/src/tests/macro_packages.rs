@@ -84,3 +84,70 @@ fn macro_b_16_real_rock_build_run_imports_only_execute_invocations() {
     assert!(!provider_unit.package.object_path().exists(), "provider is not an ordinary runtime object");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn macro_b_17_freshness_and_relocated_source_free_proc_bundle() {
+    let root = temp_test_dir("macro_b17_bundle"); let provider = root.join("provider");
+    let sdk = root.join("sdk"); let helper = root.join("helper"); let app = root.join("app");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    write_package_with_options(&sdk, "rock_macro", "src/lib.rk", &[("std", workspace.join("std").display().to_string())], "", true);
+    for entry in fs::read_dir(workspace.join("rock_macro/src")).unwrap() {
+        let entry = entry.unwrap(); if entry.path().extension().is_some_and(|extension| extension == "rk") {
+            fs::copy(entry.path(), sdk.join("src").join(entry.file_name())).unwrap();
+        }
+    }
+    write_package_with_options(&helper, "helper", "lib.rk", &[], "< answer = -> 42\n", true);
+    write_package_with_options(&provider, "provider", "src/lib.rk",
+        &[("rock_macro", sdk.display().to_string()), ("helper", helper.display().to_string())],
+        "> rock_macro::MacroResult\n< macro identity = context, input -> MacroResult::Expand input\n", true);
+    let manifest = provider.join("rock.toml");
+    fs::write(&manifest, fs::read_to_string(&manifest).unwrap().replace("[lib]", "[lib]\nproc_macro = true")).unwrap();
+    write_package_with_options(&app, "app", "src/main.rk", &[("provider", provider.display().to_string())], "main = -> %provider::identity 42\n", true);
+    success(&rock(&app, &["build", "--debug"]));
+    let plan = crate::dependency_plan::BuildPlan::new(&super::support::load_package(app.clone()), crate::dependency_plan::BuildTriples::native()).unwrap();
+    let package = &plan.units.values().find(|unit| unit.package.root_dir == provider).unwrap().package;
+    let artifact = package.artifact_path(); let worker = package.worker_path();
+    let mut modified = fs::metadata(&artifact).unwrap().modified().unwrap();
+    success(&rock(&app, &["build", "--debug"]));
+    assert_eq!(fs::metadata(&artifact).unwrap().modified().unwrap(), modified, "unchanged host is reused");
+    for source in [provider.join("src/lib.rk"), helper.join("lib.rk"), sdk.join("src/lib.rk")] {
+        fs::write(&source, format!("{}\n// freshness input changed\n", fs::read_to_string(&source).unwrap())).unwrap();
+        success(&rock(&app, &["build", "--debug"]));
+        let next = fs::metadata(&artifact).unwrap().modified().unwrap();
+        assert!(next > modified, "provider was not rebuilt for {}", source.display()); modified = next;
+    }
+    let original_worker = fs::read(&worker).unwrap(); let mut corrupt = original_worker.clone(); corrupt.extend_from_slice(b"changed");
+    fs::write(&worker, corrupt).unwrap();
+    success(&rock(&app, &["build", "--debug"]));
+    assert!(fs::metadata(&artifact).unwrap().modified().unwrap() > modified);
+    assert_eq!(fs::read(&worker).unwrap(), original_worker);
+
+    let bundle = root.join("bundle"); fs::create_dir_all(bundle.join("artifacts")).unwrap(); fs::create_dir_all(bundle.join("worker")).unwrap();
+    let bundle_artifact = bundle.join("artifacts/provider.rkca");
+    fs::copy(&artifact, &bundle_artifact).unwrap(); fs::copy(&worker, bundle.join("worker/lib")).unwrap();
+    let bytes = fs::read(&bundle_artifact).unwrap();
+    let moved = root.join("relocated"); fs::rename(bundle, &moved).unwrap();
+    fs::remove_dir_all(provider.join("src")).unwrap(); fs::remove_file(&manifest).unwrap();
+    fs::remove_dir_all(sdk.join("src")).unwrap(); fs::remove_file(sdk.join("rock.toml")).unwrap();
+    for unit in plan.units.values().filter(|unit| unit.id.platform == crate::dependency_plan::BuildPlatform::Host
+        && unit.id.role() == rock_shared::manifest::TargetRole::Library) {
+        fs::remove_file(unit.package.artifact_path()).unwrap(); fs::remove_file(unit.package.object_path()).unwrap();
+    }
+    let artifact = moved.join("artifacts/provider.rkca"); let rockc = resolve_rockc_path().unwrap();
+    let inspect = || run_command_output(Command::new(&rockc).args(["--validate-artifact", artifact.to_str().unwrap(), "--expected-artifact-role", "proc-macro", "--no-proc-execution"]));
+    success(&inspect());
+    let source = root.join("source-free.rk"); fs::write(&source, "main = -> %provider::identity 42\n").unwrap();
+    let output_dir = root.join("source-free-output");
+    let output = run_command_output(Command::new(&rockc).args(["--entry-file", source.to_str().unwrap(), "--output-dir", output_dir.to_str().unwrap(), "--no-std", "--no-prelude", "--extern-artifact", &format!("provider={}", artifact.display())]));
+    success(&output);
+    super::support::assert_executable_exit_code(&output_dir.join("source-free"), 42);
+    assert_eq!(fs::read(&artifact).unwrap(), bytes, "source-free consumption never rewrites provider metadata");
+    let mut obsolete = bytes.clone(); let version = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+    obsolete[8..12].copy_from_slice(&(version - 1).to_le_bytes()); fs::write(&artifact, obsolete).unwrap(); assert!(!inspect().status.success());
+    fs::write(&artifact, b"corrupt product").unwrap(); assert!(!inspect().status.success()); fs::write(&artifact, &bytes).unwrap();
+    let worker = moved.join("worker/lib"); let mut changed = fs::read(&worker).unwrap(); changed.push(0); fs::write(&worker, changed).unwrap();
+    assert!(!inspect().status.success(), "host content identity is checked even without execution");
+    fs::write(&worker, original_worker).unwrap(); success(&inspect());
+    assert_eq!(fs::read(&artifact).unwrap(), bytes);
+    fs::remove_dir_all(root).unwrap();
+}

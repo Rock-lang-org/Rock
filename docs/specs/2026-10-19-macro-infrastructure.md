@@ -574,8 +574,8 @@ is not compiler-known. Ordinary artifact crate-name validation is unchanged.
 The compiler generates an isolated dispatcher/bootstrap, retains implementation
 ASTs in their original scopes, and checks their signatures through the normal
 compiler pipeline. Metadata discovery still generates no wrapper. Proc-only
-artifact publication is implemented in B.14 and real package building in B.16;
-role-sensitive freshness/relocation acceptance remains B.17.
+artifact publication is implemented in B.14, real package building in B.16,
+and role-sensitive freshness/relocation acceptance in B.17.
 
 The function-like/derive forms are allowed only in a proc library (derive remains reserved).
 They declare ordinary host function bodies with SDK entry contracts plus macro
@@ -701,6 +701,22 @@ and ordinary item indentation rules remain unchanged. Imports alone never execut
 workers, including with `--no-proc-execution`; a real invocation under that flag
 diagnoses. A generated helper path requires the consumer's declared runtime
 artifact, not the provider's host copy.
+
+B.17's freshness adapter validates the expected runtime/proc product role without
+workers, includes the compiler executable's modification time, and detects outputs
+changed after publication. Existing manifest/source/dependency inputs and profile/
+platform-specific paths remain in use; proc executable content checks also reject
+tampering. `rockc --expected-artifact-role runtime|proc-macro` constrains artifact
+inspection for the build orchestrator. Ordinary object validation is unchanged.
+
+Published host-file paths are truly relative to the supplying artifact directory,
+including explicit `..` components for sibling worker directories, not sibling
+lookup guesses. A proc artifact/worker bundle can be relocated and consumed
+directly by `rockc` after provider/SDK fixture sources are removed, without their
+host dependency artifacts. Its metadata bytes are not rewritten during consumption.
+Obsolete/corrupt artifacts and changed executable contents reject on inspection.
+This is source-free artifact consumption, not a new source-free manifest locator
+or cross-target compiler backend.
 
 The generated executable contains a dispatcher and SDK transport runner; authors
 do not implement framing, stdin/stdout handling, or a handwritten export table.

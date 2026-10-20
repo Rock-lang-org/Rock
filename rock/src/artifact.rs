@@ -256,8 +256,11 @@ fn artifact_is_fresh(
 
     let artifact_modified = file_modified(artifact_path)?;
     let object_modified = file_modified(&object_path)?;
+    if object_modified > artifact_modified { return Ok(false); }
+    let compiler_modified = file_modified(&resolve_rockc_path()?)?;
+    if compiler_modified > artifact_modified || compiler_modified > object_modified { return Ok(false); }
 
-    if !validate_artifact_with_rockc(artifact_path)? {
+    if !validate_artifact_with_rockc(artifact_path, package.target.role())? {
         return Ok(false);
     }
 
@@ -293,11 +296,13 @@ fn artifact_is_fresh(
     Ok(true)
 }
 
-fn validate_artifact_with_rockc(artifact_path: &Path) -> Result<bool, String> {
+fn validate_artifact_with_rockc(artifact_path: &Path, role: rock_shared::manifest::TargetRole) -> Result<bool, String> {
     let rockc = resolve_rockc_path()?;
     let output = Command::new(&rockc)
         .arg("--validate-artifact")
         .arg(artifact_path)
+        .arg("--expected-artifact-role")
+        .arg(if role == rock_shared::manifest::TargetRole::ProcMacro { "proc-macro" } else { "runtime" })
         .output()
         .map_err(|e| {
             format!(

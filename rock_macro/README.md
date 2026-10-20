@@ -201,7 +201,10 @@ public exports. Host SDK/std objects are never added implicitly to the consumer.
 `rock build` and `rock run` now build proc dependencies automatically. SDK
 selection inspects public contract exports in explicit dependency artifacts, not
 the package spelling. There must be exactly one candidate; missing or ambiguous
-SDK dependencies diagnose. Freshness/relocation completion remains B.17.
+SDK dependencies diagnose. Host freshness includes compiler/source/dependency
+inputs, expected product role, and changed worker contents. Published worker paths
+are artifact-relative, including sibling-directory traversal, so an artifact and
+its worker can be moved together and consumed without provider/SDK source files.
 
 ## Application workflow
 

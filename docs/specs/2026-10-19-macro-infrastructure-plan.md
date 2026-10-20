@@ -2072,6 +2072,72 @@ Product format 54, protocol 7 and `RKLOSS04` remain unchanged. No functional edi
 follow the final gates. Formatting remains deferred, Beads unavailable, unrelated
 work untouched. B.17 and the nontrivial consumer/derive stages remain unfinished.
 
+### B.17 delivery receipt (2026-10-20)
+
+The existing freshness path now validates the expected runtime/proc product role,
+requires the appropriate object/worker output, includes compiler modification
+time, and rejects outputs changed after artifact publication. Existing profile,
+platform/role/source/dependency inputs remain in use; no new cache is introduced.
+Proc executable content checks continue to run before reuse, so a changed worker
+causes a source rebuild instead of accepting stale metadata. Ordinary runtime
+object validation is not weakened. `rockc --expected-artifact-role runtime|proc-macro`
+adds a no-worker role constraint for orchestrator validation.
+
+Proc executable/required-file paths are normalized against the actual artifact
+directory, including explicit `..` components to sibling worker directories.
+There is no fallback sibling guessing. An isolated CLI unit proves the exact
+`../worker/host` result and accepts/rejects ordinary artifacts by expected role.
+The initial unit RED fails before this normalization API exists; a follow-up
+compile caught a missing test-local std::fs import, fixed before final gates.
+
+The new real CLI acceptance fixture copies the ordinary SDK source into its own
+package, builds the provider through `rock`, proves an unchanged host is reused,
+and independently changes provider, helper and SDK sources. Each invalidates the
+provider artifact. It then changes the executable bytes and verifies a successful
+build restores the exact worker bytes. Host/target object isolation continues to
+be covered by the unchanged B.15/B.16 controls.
+
+The fixture copies only the proc artifact and worker into a bundle, relocates
+that bundle, removes fixture provider/SDK source and manifests, and deletes all
+host-library artifacts/objects (including SDK/std/helper). Direct `rockc`
+inspection succeeds with execution disabled; a source-free consumer supplied
+only the relocated proc artifact compiles/runs to exit 42. Provider metadata
+bytes remain unchanged. Synthetic obsolete versions, corrupt products and
+changed worker contents reject on inspection; restoring the original files
+recovers inspection without rewriting metadata. The existing no-worker-marker
+inspection observer is included in the full compiler-CLI gate. This is explicit
+artifact consumption, not a new source-free manifest locator or cross compiler.
+
+Verification evidence (logs under `/tmp/opencode/`):
+
+- `cargo test -p rockc macro_b_17`: initial missing-API RED;
+  `macro-b17-red.log`, SHA-256
+  `cae948962e82b1636d1e250971a34349e3178ccf5b34ca2bcbcc37b9fdc74fd8`.
+  Final one-unit GREEN: `macro-b17-role-final.log`, SHA-256
+  `faa066705427b4b1c7d040b3fbbcf1d767a10d94ddf723b9567b96a1a548fb84`.
+- `cargo test -p rock --lib macro_b_17`: final focused native GREEN, including
+  deletion of all host dependency artifact/object files;
+  `macro-b17-package-final.log`, SHA-256
+  `4a3046937b1f8727ecbdc865ceb0dad3816a0c1c8e4b76c62e9d0e27d63ddda9`.
+- `cargo test -p rock`: 96 pass; binary/doctests zero. This full run precedes
+  only the strengthened fixture cleanup of host-library files; the focused rerun
+  above covers that final assertion boundary. `macro-b17-rock.log`, SHA-256
+  `8b8344db2c544c42dc8b10bab938ec8cef3098efe8d96b9aadb4fb68a9b5348c`.
+- `cargo test -p rockc`: 57 pass; `macro-b17-rockc.log`, SHA-256
+  `3164095cbb607365bbb99ca8045ff2e867191be494e26df433398de5baccfbd8`.
+- Workspace/all-targets check and Clippy pass with warnings;
+  `macro-b17-check.log`, SHA-256
+  `60987dfba53a511471197c3b5cccef13a683d9b9303e3685956854565e434698`;
+  `macro-b17-clippy.log`, SHA-256
+  `000b9aedfa836cd431c205996400168fe8781083ef575f13799265ed60816e5a`.
+
+B.17 changes only CLI/orchestration and their controls; compiler-library sources
+are unchanged from B.16's complete library acceptance. Product format 54,
+protocol 7 and `RKLOSS04` remain unchanged. No functional edits follow final gates;
+the subsequent test-only source-free cleanup strengthening passes its focused
+rerun above. Formatting remains deferred, Beads unavailable, unrelated work
+untouched. B.18–B.22 and Stage C remain unfinished.
+
 Do not widen `rock`'s dependency on compiler internals to generate semantic data:
 `rock` orchestrates `rockc`, which delegates compilation/discovery/checking to
 `lib`. Proc-only artifact emission now uses host metadata rather than a target

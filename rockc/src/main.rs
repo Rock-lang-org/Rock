@@ -45,6 +45,13 @@ fn run_config(config: Config) -> Result<(), Diagnostics> {
     }
 
     if let Some(path) = &config.validate_artifact {
+        if let Some(expected) = config.expected_artifact_role {
+            let header = ProductArtifactHeader::read_from_path_bounded(path).map_err(|error| diagnostics_from_artifact_message(path, error))?;
+            let matches = matches!((expected, header.role),
+                (ArtifactRole::Runtime, rock_lib::products::ProductRole::Runtime) |
+                (ArtifactRole::ProcMacro, rock_lib::products::ProductRole::ProcMacro));
+            if !matches { return Err(diagnostics_from_artifact_message(path, "artifact product role mismatch")); }
+        }
         return validate_artifact(path);
     }
 
@@ -79,9 +86,9 @@ fn run_config(config: Config) -> Result<(), Diagnostics> {
         }
         let artifact_parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
         for artifact in &mut products.proc_macros {
-            if let Some(relative) = relative_to_root(&artifact.executable, artifact_parent) { artifact.executable = relative; }
+            artifact.executable = artifact_relative_host_path(&artifact.executable, artifact_parent).map_err(diagnostics_from_message)?;
             for file in &mut artifact.required_files {
-                if let Some(relative) = relative_to_root(&file.path, artifact_parent) { file.path = relative; }
+                file.path = artifact_relative_host_path(&file.path, artifact_parent).map_err(diagnostics_from_message)?;
             }
         }
         products
@@ -140,6 +147,17 @@ fn relative_to_root(path: &std::path::Path, root: &std::path::Path) -> Option<Pa
         .map(std::path::Path::to_path_buf)
 }
 
+fn artifact_relative_host_path(path: &Path, parent: &Path) -> Result<PathBuf, String> {
+    let path = path.canonicalize().map_err(|error| format!("failed to resolve host file {}: {error}", path.display()))?;
+    let parent = parent.canonicalize().map_err(|error| format!("failed to resolve artifact directory {}: {error}", parent.display()))?;
+    let common = path.components().zip(parent.components()).take_while(|(left, right)| left == right).count();
+    if common == 0 { return Err("host file and artifact directory have no common filesystem root".into()); }
+    let mut relative = PathBuf::new();
+    for _ in common..parent.components().count() { relative.push(".."); }
+    for component in path.components().skip(common) { relative.push(component.as_os_str()); }
+    Ok(relative)
+}
+
 fn same_directory(left: &std::path::Path, right: &std::path::Path) -> bool {
     if left == right {
         return true;
@@ -159,6 +177,9 @@ enum PrintValue {
     TargetLibdir,
     TargetTriple,
 }
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ArtifactRole { Runtime, ProcMacro }
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Rock compiler", long_about = None)]
@@ -222,6 +243,9 @@ pub struct Config {
     /// Validate a product artifact can be loaded and its object path exists
     #[arg(long)]
     validate_artifact: Option<PathBuf>,
+    /// Require an artifact's explicit product role during non-executing validation
+    #[arg(long, requires = "validate_artifact")]
+    expected_artifact_role: Option<ArtifactRole>,
 }
 
 impl Config {
@@ -1201,6 +1225,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         base
+    }
+
+    #[test]
+    fn macro_b_17_host_paths_are_relative_to_artifact_not_its_sibling_guess() {
+        use std::fs;
+        let root = artifact_deps_test_dir("macro_b17_relative");
+        let artifacts = root.join("artifacts"); let worker = root.join("worker");
+        fs::create_dir_all(&artifacts).unwrap(); fs::create_dir_all(&worker).unwrap();
+        let executable = worker.join("host"); fs::write(&executable, "host bytes").unwrap();
+        assert_eq!(super::artifact_relative_host_path(&executable, &artifacts).unwrap(), PathBuf::from("../worker/host"));
+        let artifact = artifacts.join("ordinary.rkca");
+        let products = product_artifact("ordinary", Vec::new(), Default::default());
+        products.write_artifact_to_path(&artifact).unwrap(); fs::write(artifacts.join("ordinary.o"), []).unwrap();
+        let config = Config::try_parse_from(["rockc", "--validate-artifact", artifact.to_str().unwrap(), "--expected-artifact-role", "runtime"]).unwrap();
+        super::run_config(config).unwrap();
+        let config = Config::try_parse_from(["rockc", "--validate-artifact", artifact.to_str().unwrap(), "--expected-artifact-role", "proc-macro"]).unwrap();
+        assert!(format!("{:?}", super::run_config(config).unwrap_err()).contains("role mismatch"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn identity_table_with_dependencies<const N: usize>(
