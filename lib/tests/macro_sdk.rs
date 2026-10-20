@@ -147,6 +147,7 @@ fn macro_b_13_plain_rock_sdk_and_generated_host_use_only_explicit_artifact_depen
     rock_lib::compile(&worker).unwrap_or_else(|diagnostics| panic!("SDK worker: {diagnostics:?}"));
     macro_workers::verify(&root.join("app/main"), &golden, &rich);
     macro_hosts::verify(&config, &golden);
+    macro_hosts::verify_literals(&config);
     let mut missing = config.clone();
     missing.extern_artifacts.retain(|(name, _)| name != "rock_macro");
     assert!(rock_lib::analyze(&missing).is_err(), "SDK is never injected or discovered by spelling");

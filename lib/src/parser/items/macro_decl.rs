@@ -55,15 +55,15 @@ pub fn macro_entry(stream: Input) -> IResult<MacroEntry> {
 pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
     let header_indent = stream.header_indent()?;
     let (stream, (span, path)) = macro_path(stream)?;
-    let (stream, args, block) = if let Some((stream, captured)) = stream.capture_indented_block()? {
+    let (stream, args, literal_ranges, block) = if let Some((stream, captured)) = stream.capture_indented_block()? {
         let (stream, _) = TokenType::Eol.process(stream)?;
-        (stream, captured.input, Some(crate::ast::MacroBlockInput {
+        (stream, captured.input, Vec::new(), Some(crate::ast::MacroBlockInput {
             header_indent: captured.header_indent, body_indent: captured.body_indent,
         }))
     } else {
         let start = stream;
         let (stream, _) = consume_tokens_until(TokenType::Indent(0)).process(stream)?;
-        (stream, start.lossless_until(stream)?, None)
+        (stream, start.lossless_until(stream)?, start.literal_ranges_until(stream)?, None)
     };
     let id = crate::ast::InvocationId::fresh()
         .map_err(|message| ParseError::HardError(message.into(), span.clone()))?;
@@ -76,6 +76,7 @@ pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
             span,
             args,
             arguments: Vec::new(),
+            literal_ranges,
             block,
         }))
 }
@@ -106,6 +107,7 @@ pub fn macro_expression(stream: Input) -> IResult<MacroInvoc> {
             header_indent,
             id, parent: stream.expansion_parent, output: crate::ast::MacroOutputCategory::Expression,
             path, span, args: captured.input, arguments: Vec::new(),
+            literal_ranges: Vec::new(),
             block: Some(crate::ast::MacroBlockInput {
                 header_indent: captured.header_indent, body_indent: captured.body_indent,
             }),
@@ -117,6 +119,7 @@ pub fn macro_expression(stream: Input) -> IResult<MacroInvoc> {
     let (stream, parsed) = super::expression::call_arguments(start)
         .map_err(|error| required_macro_input(error, "expected ordinary macro call arguments or '!'", span.clone()))?;
     let args = if parsed.is_empty() { stream.lossless_until(stream)? } else { start.lossless_until(stream)? };
+    let literal_ranges = if parsed.is_empty() { Vec::new() } else { start.literal_ranges_until(stream)? };
     let offset = start.source_offset()?.ok_or_else(|| ParseError::HardError("macro calls require retained source".into(), span.clone()))?;
     let arguments = parsed.into_iter().map(|argument| {
         let range = argument.range.ok_or_else(|| ParseError::HardError("macro argument has no retained source range".into(), span.clone()))?;
@@ -128,7 +131,7 @@ pub fn macro_expression(stream: Input) -> IResult<MacroInvoc> {
         }
     }).collect::<Result<Vec<_>, _>>()?;
     let id = crate::ast::InvocationId::fresh().map_err(|message| ParseError::HardError(message.into(), span.clone()))?;
-    Ok((stream, MacroInvoc { header_indent, id, parent: stream.expansion_parent, output: crate::ast::MacroOutputCategory::Expression, path, span, args, arguments, block: None }))
+    Ok((stream, MacroInvoc { header_indent, id, parent: stream.expansion_parent, output: crate::ast::MacroOutputCategory::Expression, path, span, args, arguments, literal_ranges, block: None }))
 }
 
 fn required_macro_input(error: ParseError, message: &str, span: crate::lexer::Span) -> ParseError {

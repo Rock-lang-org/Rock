@@ -310,6 +310,14 @@ impl ParseCtx<'_> {
         }
     }
 
+    pub(crate) fn literal_ranges_until(&self, end: Self) -> Result<Vec<std::ops::Range<usize>>, ParseError> {
+        match (self.cursor, end.cursor) {
+            (cursor::TokenCursor::Source(start), cursor::TokenCursor::Source(end)) => start.literal_ranges_until(end)
+                .map_err(|error| cursor::source_error(error, start.source_eof())),
+            _ => Err(ParseError::HardError("macro syntax requires retained lossless source".into(), self.eof_span())),
+        }
+    }
+
     pub fn capture_indented_block(&self)
         -> Result<Option<(Self, crate::lexer::interpretation::layout::CapturedBlock)>, ParseError>
     {

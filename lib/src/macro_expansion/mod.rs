@@ -346,11 +346,8 @@ fn expand_procedural(
         block_base: invocation.block.as_ref().map(|block| block.body_indent),
         input,
         definition_dependencies: entry.artifact.definition_dependencies.clone(),
-        views: proc_macro::ProcMacroViews {
-            arguments: (invocation.block.is_none() && (!invocation.arguments.is_empty() || args.len_bytes() == 0))
-                .then(|| proc_macro::ProcMacroArguments { ranges: invocation.arguments.clone() }),
-            ..Default::default()
-        },
+        views: proc_macro::ProcMacroViews::for_invocation(invocation).map_err(|error|
+            with_expansion_trace(proc_macro_error(format!("Failed to prepare proc macro literal views: {error}"), invoc_span.clone()), context, expansion_id))?,
     };
 
     let response =

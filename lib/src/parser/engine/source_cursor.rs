@@ -1,6 +1,7 @@
 //! Capture-capable lossless backing for parser cursors.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 use crate::lexer::interpretation::layout::{LayoutToken, LayoutView};
 use crate::lexer::interpretation::RockError;
@@ -36,6 +37,8 @@ struct Entry<'a> {
 
 struct Branch<'a> {
     entries: Vec<Entry<'a>>,
+    literals: BTreeMap<usize, (usize, usize)>,
+    parent: Option<(usize, usize)>,
     tail: Checkpoint<'a>,
     stopped: bool,
 }
@@ -78,6 +81,7 @@ impl<'a> SourceInput<'a> {
         reserve(&mut branches, 0)?;
         branches.push(Branch {
             entries: Vec::new(),
+            literals: BTreeMap::new(), parent: None,
             tail: Checkpoint { view: match relative_indent {
                 Some(indent) => LayoutView::new(stream, terminal_layout).with_relative_indent(indent),
                 None => LayoutView::new(stream, terminal_layout),
@@ -142,6 +146,14 @@ impl<'a> SourceInput<'a> {
                 }
                 Ok(token)
             });
+            if let Ok(Some(token)) = &result {
+                if matches!(token.token.token_type, TokenType::String(_) | TokenType::Char(_)) {
+                    if let crate::lexer::interpretation::layout::LayoutOrigin::Source(range) = &token.origin {
+                        let current = &mut cache.branches[branch];
+                        current.literals.insert(range.start, (range.end, current.entries.len()));
+                    }
+                }
+            }
             let current = &mut cache.branches[branch];
             current.stopped = !matches!(result, Ok(Some(_)));
             current.tail = if result.is_err() { before.clone() } else { after };
@@ -167,14 +179,16 @@ impl<'a> SourceInput<'a> {
         }
     }
 
-    fn fork(&self, checkpoint: Checkpoint<'a>) -> Result<usize, SourceError> {
+    fn fork(&self, checkpoint: Checkpoint<'a>, parent: (usize, usize)) -> Result<usize, SourceError> {
         let mut cache = self.cache.borrow_mut();
         if cache.branches.len() == self.limits.max_branches {
             return Err(SourceError::LimitExceeded { resource: "branches", span: self.eof.clone() });
         }
         reserve(&mut cache.branches, checkpoint.view.offset())?;
         let branch = cache.branches.len();
-        cache.branches.push(Branch { entries: Vec::new(), tail: checkpoint, stopped: false });
+        cache.branches.push(Branch {
+            entries: Vec::new(), literals: BTreeMap::new(), parent: Some(parent), tail: checkpoint, stopped: false,
+        });
         Ok(branch)
     }
 
@@ -248,6 +262,31 @@ impl SourceCursor<'_> {
         self.input.stream.slice(self.offset()?..end.offset()?, limits).map_err(SourceError::Preservation)
     }
 
+    /// Inspect cached Rock interpretations only, including branches resumed after
+    /// nested captures. Never request tokens in an opaque captured body.
+    pub(crate) fn literal_ranges_until(&self, end: Self) -> Result<Vec<std::ops::Range<usize>>, SourceError> {
+        if !std::ptr::eq(self.input, end.input) {
+            return Err(SourceError::Rock(RockError::InvalidCaptureBoundary { span: self.input.eof.clone() }));
+        }
+        let start = self.offset()?;
+        let end_offset = end.offset()?;
+        if end_offset < start {
+            return Err(SourceError::Rock(RockError::InvalidCaptureBoundary { span: self.input.eof.clone() }));
+        }
+        let cache = self.input.cache.borrow();
+        let mut branch = Some((end.branch, end.start));
+        let mut ranges = Vec::new();
+        while let Some((index, prefix)) = branch {
+            let current = &cache.branches[index];
+            ranges.extend(current.literals.range(start..end_offset)
+                .filter(|(_, (literal_end, token))| *literal_end <= end_offset && *token < prefix)
+                .map(|(literal_start, (literal_end, _))| literal_start - start..literal_end - start));
+            branch = current.parent;
+        }
+        ranges.sort_unstable_by_key(|range| (range.start, range.end));
+        Ok(ranges)
+    }
+
     pub fn eof_span(&self) -> Result<Span, SourceError> {
         match self.end {
             Some(end) => {
@@ -291,7 +330,7 @@ impl SourceCursor<'_> {
             return Err(SourceError::Rock(RockError::InvalidCaptureBoundary { span: self.eof_span()? }));
         }
         let captured = checkpoint.view.capture_to(end, limits).map_err(SourceError::Rock)?;
-        let branch = self.input.fork(checkpoint)?;
+        let branch = self.input.fork(checkpoint, (self.branch, self.start))?;
         Ok((Self { branch, start: 0, end: None, ..*self }, captured))
     }
 
@@ -303,7 +342,7 @@ impl SourceCursor<'_> {
         let Some(captured) = checkpoint.view.capture_indented_block(limits).map_err(SourceError::Rock)? else {
             return Ok(None);
         };
-        let branch = self.input.fork(checkpoint)?;
+        let branch = self.input.fork(checkpoint, (self.branch, self.start))?;
         Ok(Some((Self { branch, start: 0, end: None, ..*self }, captured)))
     }
 }

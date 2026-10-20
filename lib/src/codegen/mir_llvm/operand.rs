@@ -41,7 +41,7 @@ impl<'ctx> CodeGen<'ctx> {
                 .const_int(*value as u64, false)
                 .into()),
             Constant::String(value) => {
-                let processed = Self::process_escape_sequences(value);
+                let processed = crate::lexer::literal::decode_string(value);
                 let byte_len = processed.len() as u64;
                 // LLVMBuildGlobalStringPtr takes a C string and truncates at NUL.
                 // Build the byte array explicitly to preserve the stored length.

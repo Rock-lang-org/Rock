@@ -390,6 +390,8 @@ pub struct MacroInvoc {
     pub span: Span,
     pub args: crate::lexer::lossless::LosslessStream,
     pub arguments: Vec<std::ops::Range<usize>>,
+    /// Input-relative ranges recognized by the parser, never a scan of opaque DSL text.
+    pub literal_ranges: Vec<std::ops::Range<usize>>,
     pub block: Option<MacroBlockInput>,
 }
 

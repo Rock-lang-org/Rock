@@ -9,6 +9,25 @@ const STORAGE: ScanLimits = ScanLimits { max_source_bytes: 1024 * 1024, max_runs
 const CACHE: SourceLimits = SourceLimits { max_entries: 65536, max_branches: 128 };
 
 #[test]
+fn macro_b_18_literal_views_follow_capture_lineage_without_interpreting_more_source() {
+    let text = "\"before\" %dsl\n    \"opaque\"\n\"after\" \"unterminated";
+    let stream = scan(text);
+    let input = SourceInput::new(&stream, false, CACHE).unwrap();
+    let start = input.cursor();
+    let capture = start.advance(4).unwrap();
+    // A speculative branch sees a valid-looking DSL quote; it cannot supply a
+    // literal view to the branch which physically captures that text instead.
+    assert!(matches!(capture.peek(1).unwrap().unwrap().token.token_type, TokenType::String(_)));
+    let (resumed, _) = capture.capture_to(text.find("\"after\"").unwrap(), STORAGE).unwrap();
+    let end = resumed.advance(2).unwrap();
+    let reads = input.read_count();
+    assert_eq!(start.literal_ranges_until(end).unwrap(), [0..8, 27..34]);
+    assert_eq!(input.read_count(), reads);
+    assert!(end.literal_ranges_until(start).is_err());
+    assert!(end.peek(0).is_err());
+}
+
+#[test]
 fn macro_a_03_nested_capture_ranges_remain_bound_to_one_source_input() {
     let stream = scan("%dsl\n    \"opaque\nnext\n");
     let input = SourceInput::new(&stream, true, CACHE).unwrap();

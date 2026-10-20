@@ -9,6 +9,7 @@ use crate::ast::{InvocationId, MacroOutputCategory};
 use super::{ExpansionId, TokenStream};
 
 mod schema;
+mod literals;
 mod transport;
 mod artifact;
 pub use artifact::{ProcMacroFileIdentity, ProcMacroHostFile};

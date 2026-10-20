@@ -61,6 +61,18 @@ literal's source range. Escape spelling and decoded widths may differ. The
 compiler prepares canonical views only when that interpretation was requested;
 arbitrary DSL quote characters do not force Rock literal interpretation.
 
+B.18 prepares these records from parser-cached string/character ranges, including
+ordinary inline arguments, without a second lexical pass. Indented block inputs
+receive no automatic literal views, even for valid-looking quoted text. The
+shared compiler decoder preserves the existing escapes (`\n`, `\t`, `\r`, `\0`,
+`\\`, `\"`, `\'`) and leaves unknown string escapes verbatim; characters must
+decode to exactly one Unicode scalar. Each mapping covers one decoded scalar,
+with the complete escape spelling or the original UTF-8 scalar as its source
+range. Empty strings have an empty mapping. Source ranges include the enclosing
+quotes, but individual mappings exclude them. Mapping preparation obeys the
+metadata entry limit before appending an entry; workers only read the supplied
+records and never request decoding callbacks.
+
 ## Final response
 
 `ProcMacroResponse` contains protocol version, optional output, and diagnostics.
@@ -94,9 +106,9 @@ Input=1 (range), or Output=2 (range). There are no worker-provided filesystem
 paths or unchecked compiler IDs in diagnostic locations. Output locations require
 output and must fit its expanded spelling; labels use the same validation.
 
-Source/literal descriptors are schema-level output data in B.01. Their deferred
-compiler scanning is B.19, and canonical literal-view preparation is B.18;
-before those steps, executable invocations using deferred descriptors fail
+Source/literal descriptors are schema-level output data in B.01. Canonical
+literal-view preparation is implemented in B.18; deferred compiler scanning
+remains B.19. Until B.19, executable invocations using deferred descriptors fail
 explicitly rather than silently dropping or prematurely interpreting them.
 
 ## Bounds and golden messages

@@ -150,3 +150,38 @@ macro publish
     assert_eq!(decode_response(&output.stdout).unwrap(), ProcMacroResponse::expanded(request.input));
     eprintln!("SDK acceptance: 14 generated-host dispatch/signature/dependency controls passed");
 }
+
+pub fn verify_literals(config: &Config) {
+    let mut host = config.clone();
+    host.current_crate_name = Some("literal_provider".into());
+    host.target_role = TargetRole::ProcMacro;
+    host.no_prelude = false;
+    host.output_dir = config.output_dir.parent().unwrap().join("literal-host");
+    host.source_providers = vec![SourceProvider::Virtual {
+        path: host.entry_file.clone(), text: include_str!("../fixtures/macros/sdk-literal-host.rk").into(),
+    }];
+    let output = rock_lib::compile_proc_macro_with_products(&host, &ProcMacroSdk { dependency: "rock_macro".into() })
+        .unwrap_or_else(|errors| panic!("literal host: {errors:?}"));
+    let artifact = host.output_dir.join("literal_provider.rkca");
+    let mut products = output.products.unwrap();
+    products.proc_macros[0].executable = "main".into();
+    products.write_artifact_to_path(&artifact).unwrap();
+    let entry_file = host.output_dir.join("consumer.rk");
+    let consumer = Config {
+        entry_file: entry_file.clone(), output_dir: host.output_dir.join("consumer"), no_std: true, no_prelude: true,
+        extern_artifacts: vec![("literal_provider".into(), artifact)],
+        source_providers: vec![SourceProvider::Virtual { path: entry_file, text: r#"
+> literal_provider::inspect
+> literal_provider::opaque
+%opaque
+    "valid-looking" '🦀'
+    "unterminated <>{# arbitrary DSL
+main = -> %inspect "é\n雪", '🦀', "", 42
+"#.into() }], ..Default::default()
+    };
+    rock_lib::compile(&consumer).unwrap_or_else(|errors| panic!("real literal invocation: {errors:?}"));
+    let output = super::run_client(&consumer.output_dir.join("consumer"));
+    assert_eq!(output.status.code(), Some(42), "{output:?}");
+    assert!(output.stdout.is_empty() && output.stderr.is_empty());
+    eprintln!("SDK acceptance: B.18 real literal/opaque-block views passed");
+}

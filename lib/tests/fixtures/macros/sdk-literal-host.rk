@@ -1,0 +1,45 @@
+> rock_macro::*
+
+reject = context ->
+    mut diagnostics: Vec Diagnostic = Vec::new!
+    diagnostics.push (context.error (String::from "literal view assertion failed"))
+    MacroResult::Error diagnostics
+
+< macro inspect = context, input ->
+    if context.views.literals.len! != 3
+        return reject context
+    first = &context.views.literals[0]
+    if first.decoded != (String::from "é\n雪") || first.mapping.len! != 3
+        return reject context
+    if first.source.start != (1 as U64) || first.source.end != (10 as U64)
+        return reject context
+    escape = &first.mapping[1]
+    if escape.decoded.start != (2 as U64) || escape.decoded.end != (3 as U64) || escape.source.start != (4 as U64) || escape.source.end != (6 as U64)
+        return reject context
+    unicode = &first.mapping[2]
+    if unicode.decoded.start != (3 as U64) || unicode.decoded.end != (6 as U64) || unicode.source.start != (6 as U64) || unicode.source.end != (9 as U64)
+        return reject context
+    if context.views.literals[1].decoded != (String::from "🦀")
+        return reject context
+    if context.views.literals[2].decoded.len! != 0 || context.views.literals[2].mapping.len! != 0
+        return reject context
+    arguments = &context.views.arguments
+    match *arguments
+        Option::Some arguments =>
+            match input.slice arguments.ranges[3].clone!
+                Result::Ok output => MacroResult::Expand output
+                Result::Err _ => reject context
+        Option::None => reject context
+
+< macro opaque = context, input ->
+    if context.views.literals.len! != 0
+        return reject context
+    arguments = &context.views.arguments
+    match *arguments
+        Option::Some _ => reject context
+        Option::None =>
+            match input.slice (ByteRange
+                start: 0
+                end: 0)
+                Result::Ok output => MacroResult::Expand output
+                Result::Err _ => reject context

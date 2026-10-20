@@ -2153,6 +2153,77 @@ object; ordinary library artifact validation retains its object invariant.
 | B.21 | Add a minimal external interpolation macro/helper fixture using literal views and deferred fragments. | `Hello {name}` and a `count + 1` hole resolve at caller scope; escaped/Unicode error ranges are exact. Missing names, formatting support, or runtime helper dependencies fail normally; provider/trait names are not compiler-recognized. | I, R |
 | B.22 | Close interpolation's evaluation/ownership proof and host artifact acceptance for the nontrivial consumers. | Holes execute once left-to-right, named values are borrowed, temporary destruction is normal, helper/local collisions are hygienic, and calls retain consuming behavior. Repeat source-free packaged consumer tests for DSL/interpolation, not only identity. | I |
 
+### B.18 delivery receipt — canonical literal views
+
+Canonical quoted-literal decoding now lives in `lib/src/lexer/literal.rs` and
+is reused by character lowering, string codegen and procedural literal-view
+preparation. Existing supported escapes and unknown-string-escape behavior are
+unchanged. Each decoded Unicode scalar retains its exact original UTF-8 or
+escape-spelling range; empty strings have empty mappings.
+
+The parser retains input-relative ranges from existing cached interpretations,
+following only the selected capture lineage and its consumed token prefixes.
+No additional token reads or opaque block scanning populate these views;
+speculatively interpreted DSL quotes cannot leak from an abandoned branch.
+Both item and expression procedural requests use the same bounded preparation.
+The SDK receives plain protocol-7 literal records, with no decoder or compiler
+callback added to Rock. Product format 54 and `RKLOSS04` are unchanged.
+
+Five focused `macro_b_18` units pass, covering canonical decoding, precise
+escape/multibyte subranges, empty/character values, metadata bounds, item and
+expression opaque blocks, and branch-lineage/non-reading controls. Workspace
+all-targets check and Clippy pass with existing warnings. The first SDK run was
+interrupted by its two-minute command limit after the data client passed; it
+does not establish SDK acceptance. The longer SDK run passed all existing
+controls, then exposed untyped integer comparisons in the new host fixture.
+Explicit U64 comparisons and borrowed Option inspection fix the fixture, which
+now compiles through `rockc` against the already built ordinary SDK/std artifacts.
+The final complete library acceptance passes, including native execution of the
+corrected fixture. No compiler or fixture edits follow that acceptance.
+
+Completed focused commands (logs under `/tmp/opencode/`):
+
+- `cargo test -p rock-lib --lib macro_b_18`: five pass in
+  `macro-b18-focused-final.log`, SHA-256
+  `71431c0fae467f4e58dfaa6d4fc73c081d8aaab8b418b85ead76a5c15a3115d6`.
+  The first three-test attempt failed on the test's incorrect expected closing
+  quote offset (`1..13` instead of `1..12`); it was not a missing-feature RED.
+- `cargo check --workspace --all-targets`: pass in `macro-b18-check.log`, SHA-256
+  `5c2d6aba40781eeb0c8e6f84d5e5195d70a5d46a492115fb923353722fcd4008`.
+- `cargo clippy --workspace --all-targets`: pass with existing warnings in
+  `macro-b18-clippy-final.log`, SHA-256
+  `08723b516de2e0861500974d25e0b39dec1a37b61d15b6e7343dbcf3bfae17fb`.
+  The final complete suite includes the subsequent fixture-only U64
+  and borrowed Option corrections; the compiler implementation is unchanged.
+- `cargo build --release`: pass with existing warnings in
+  `macro-b18-release-build.log`, SHA-256
+  `cbea0d41dc56cec66c827b496234b56e0d8698e53a497d0f673de636f3367777`.
+- Manual `cargo run -p rockc -- ...` provider publication and consumer compilation
+  pass using the corrected `sdk-literal-host.rk`, its explicit SDK/std artifacts,
+  and `/tmp/opencode/macro-b18-consumer.rk`. The consumer supplies only the
+  provider artifact, exercises real workers for the escaped/Unicode/character/
+  empty-string views and opaque malformed DSL, and links successfully. Program
+  execution is established by the final integration gate, not this CLI check.
+  `macro-b18-host-artifact.log`, SHA-256
+  `fd37dfc28bd68a5b689b4e64e676fba79b6522f424bd48620d3071ebfd5447d4`;
+  `macro-b18-consumer-build.log`, SHA-256
+  `128d346a5d89e3b2eb77104f3d201da9a9ba0df7f101924e08ff782ce0f36194`.
+- `cargo test -p rock-lib`: 2,724 units, 806 main integrations, six diagnostic
+  integrations, 14 process integrations, one SDK integration and one parser
+  integration pass; one doctest is ignored. The SDK integration runs the
+  existing cross-language request/result, one-shot, generated-host and renamed-
+  SDK controls, then checks compiler-prepared escape/Unicode/character/empty
+  literal views in a real Rock worker and the absence of views for an opaque
+  malformed block. Its consumer executes with exit status 42, without target
+  SDK/std dependencies. `macro-b18-acceptance.log`, SHA-256
+  `f945eeded80a9bd45531d4809b3b47cc056f920a165edb11889c3c5d8d5f232e`.
+
+B.18 is implemented and verified. Deferred fragment materialization remains
+B.19; interpolation/DSL policy remains external library work in B.20–B.22.
+Stage C is unfinished. Formatting remains deferred, Beads unavailable, and
+unrelated work untouched. No protocol, lossless transport or product schema
+change was needed for these parser-side ranges and existing literal records.
+
 **B gate:** all `macro_b_` families, the real SDK cross-language goldens, existing
 process/build/artifact tests, and the formatting/DSL proofs pass. Run the broader
 serialized gates below. A Rust-only worker, protocol round trip, or manifest flag

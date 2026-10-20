@@ -2,6 +2,7 @@ mod lexer;
 pub mod groups;
 pub mod interpretation;
 pub mod lossless;
+pub(crate) mod literal;
 mod span;
 mod token;
 

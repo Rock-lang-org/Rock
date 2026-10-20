@@ -2164,19 +2164,7 @@ impl Lowerer {
                 span,
             },
             ast::LiteralKind::Char(c) => {
-                let value = match c.as_str() {
-                    "\\n" => Some('\n'),
-                    "\\t" => Some('\t'),
-                    "\\r" => Some('\r'),
-                    "\\0" => Some('\0'),
-                    "\\\\" => Some('\\'),
-                    "\\'" => Some('\''),
-                    "\\\"" => Some('"'),
-                    _ => {
-                        let mut chars = c.chars();
-                        chars.next().filter(|_| chars.next().is_none())
-                    }
-                };
+                let value = crate::lexer::literal::decode_char(c);
                 let Some(value) = value else {
                     self.diagnostics.push_selection_with_span(
                         "character literal must contain exactly one Unicode scalar or supported escape".to_string(),
