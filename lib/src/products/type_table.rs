@@ -1209,6 +1209,7 @@ impl SerializedCompilerProducts {
             proc_macros: self.proc_macros,
         };
         products.validate_freshness_metadata(&freshness)?;
+        products.validate_role()?;
         Ok(products)
     }
 }

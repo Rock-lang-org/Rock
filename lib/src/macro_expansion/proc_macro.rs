@@ -10,6 +10,10 @@ use super::{ExpansionId, TokenStream};
 
 mod schema;
 mod transport;
+mod artifact;
+pub use artifact::{ProcMacroFileIdentity, ProcMacroHostFile};
+#[cfg(test)]
+mod artifact_tests;
 pub use schema::*;
 
 pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 7;
@@ -45,10 +49,17 @@ pub struct ProcMacroArtifact {
     pub artifact_format_version: u32,
     pub crate_identity: String,
     pub protocol_version: u32,
+    pub compiler_version: String,
     pub host_triple: String,
     pub executable: PathBuf,
+    pub executable_identity: ProcMacroFileIdentity,
+    #[serde(deserialize_with = "crate::serialization::bounded_vec::<'de, _, _, 128>")]
+    pub required_files: Vec<ProcMacroHostFile>,
+    #[serde(deserialize_with = "crate::serialization::bounded_vec::<'de, _, _, 1>")]
     pub capabilities: Vec<ProcMacroCapability>,
+    #[serde(deserialize_with = "crate::serialization::bounded_vec::<'de, _, _, MAX_METADATA_ENTRIES>")]
     pub definition_dependencies: Vec<crate::products::ProductCrateIdentity>,
+    #[serde(deserialize_with = "crate::serialization::bounded_vec::<'de, _, _, MAX_METADATA_ENTRIES>")]
     pub exports: Vec<ProcMacroExport>,
 }
 
@@ -167,6 +178,8 @@ pub fn run_proc_macro_process(
     }
 
     let request_bytes = encode_request(request).map_err(|err| describe(format!("failed to encode request: {err}")))?;
+    if started.elapsed() >= timeout { return Err(describe("proc macro timed out before spawn".into())); }
+    artifact.validate_invocation(request).map_err(describe)?;
     transport::run(artifact, request, &request_bytes, started, timeout, no_proc_execution, cancellation).map_err(describe)
 }
 
@@ -238,6 +251,7 @@ mod tests {
             protocol_version: PROC_MACRO_PROTOCOL_VERSION,
             host_triple: "x86_64-unknown-linux-gnu".to_string(),
             executable: "macro-host".into(),
+            compiler_version: env!("CARGO_PKG_VERSION").into(), executable_identity: Default::default(), required_files: Vec::new(),
             capabilities: vec![ProcMacroCapability::Stdio],
             definition_dependencies: Vec::new(),
             exports: vec![ProcMacroExport {
@@ -272,6 +286,7 @@ mod tests {
             protocol_version: PROC_MACRO_PROTOCOL_VERSION,
             host_triple: "x86_64-unknown-linux-gnu".to_string(),
             executable: "target/proc-macros/make_main".into(),
+            compiler_version: env!("CARGO_PKG_VERSION").into(), executable_identity: Default::default(), required_files: Vec::new(),
             capabilities: vec![ProcMacroCapability::Stdio],
             definition_dependencies: Vec::new(),
             exports: vec![ProcMacroExport {
@@ -323,6 +338,7 @@ mod tests {
             protocol_version: PROC_MACRO_PROTOCOL_VERSION,
             host_triple: "x86_64-unknown-linux-gnu".to_string(),
             executable: "/definitely/not/a/proc/macro".into(),
+            compiler_version: env!("CARGO_PKG_VERSION").into(), executable_identity: Default::default(), required_files: Vec::new(),
             capabilities: vec![ProcMacroCapability::Stdio],
             exports: Vec::new(),
             definition_dependencies: Vec::new(),
@@ -359,6 +375,7 @@ mod tests {
             protocol_version: PROC_MACRO_PROTOCOL_VERSION,
             host_triple: "x86_64-unknown-linux-gnu".to_string(),
             executable: "/definitely/not/a/proc/macro".into(),
+            compiler_version: env!("CARGO_PKG_VERSION").into(), executable_identity: Default::default(), required_files: Vec::new(),
             capabilities: vec![ProcMacroCapability::Stdio],
             exports: Vec::new(),
             definition_dependencies: Vec::new(),

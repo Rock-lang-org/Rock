@@ -574,7 +574,7 @@ is not compiler-known. Ordinary artifact crate-name validation is unchanged.
 The compiler generates an isolated dispatcher/bootstrap, retains implementation
 ASTs in their original scopes, and checks their signatures through the normal
 compiler pipeline. Metadata discovery still generates no wrapper. Proc-only
-artifact publication and real package building remain B.14–B.17.
+artifact publication is implemented in B.14; real package building remains B.15–B.17.
 
 The function-like/derive forms are allowed only in a proc library (derive remains reserved).
 They declare ordinary host function bodies with SDK entry contracts plus macro
@@ -674,6 +674,25 @@ as a general multi-payload framework.
 The macro build packages that artifact plus its executable and required runtime
 files. Source/build orchestration belongs in `rock`; compiler macro semantics,
 validation, and expansion belong in `lib`; manifest definitions in `rock-shared`.
+
+B.14 supplies `compile_proc_macro_with_products` and contributor-facing
+`rockc --proc-macro-sdk dependency_name --emit-artifact path`, without `--no-link`
+or a dummy object. Format 54 has an explicit header `ProductRole`; its payload
+role is canonically determined by its host descriptor, and header/payload roles
+must agree. A proc-only product has exactly one descriptor and no runtime
+interface, HIR bodies, exports, link records, object, precedence or consumer-side
+SDK/std dependencies. Mixed products reject. Ordinary runtime artifact object
+validation is unchanged.
+
+Descriptors record compiler/protocol compatibility, execution host, SHA-256/byte
+identities for the executable and any required host files, capabilities and
+public macro exports. File checks are bounded to 128 required files and 512 MiB
+total content. Relative host paths resolve only from the supplying artifact's
+directory. Loading and `rockc --validate-artifact` validate the host files without
+executing them; invocation revalidates content and selected identity/kind before
+spawn. Hashes establish content integrity, not author trust or a sandbox.
+`--print artifact-deps` treats proc roots as metadata-only, never target objects.
+Host implementation functions are absent from the consumer's runtime namespace.
 
 Descriptors record canonical crate/export identities, kind, protocol/compiler
 compatibility, host triple, executable content identity, and required host files.

@@ -1770,10 +1770,109 @@ Protocol 7, `RKLOSS04` and artifact 53 are unchanged. Formatting remains deferre
 Beads remains unavailable and unrelated work is untouched. No functional edits
 follow the final library/SDK gates; the CLI fixture argument rerun is recorded above.
 
+### B.14 delivery receipt (2026-10-20)
+
+Artifact format 54 adds an explicit `ProductRole` to the bounded header. The
+semantic payload's canonical role follows presence of a proc host descriptor;
+the header must agree. A proc product contains exactly one descriptor and rejects
+all runtime interfaces/bodies, identity exports/aliases, language items, link
+records/objects, precedence and consumer SDK/std dependencies. Its constructor
+retains only provider/source identity and host/export metadata. Ordinary object
+validation is unchanged; no dummy object is used. There is no old-format reader.
+
+`compile_proc_macro_with_products` runs the existing B.13 host compilation and
+publishes this minimal product only after linking the executable. It rejects
+no-link/object publication. `rockc --proc-macro-sdk dependency --emit-artifact path`
+uses that API, records colocated/descendant host paths relative to the artifact,
+and accepts no no-link/object flags. `--validate-artifact` branches on product
+role: proc metadata/files validate without spawning, while ordinary products
+still require their object. Dependency inspection marks proc roots metadata-only
+and rejects requests to obtain runtime bodies/objects from them.
+
+Proc descriptors now carry compiler version, SHA-256/byte executable identity,
+and bounded required host-file identities in addition to host/protocol/kind/export
+metadata. The small sha2 dependency supplies cryptographic content hashing rather
+than introducing a handwritten codec/hash or relying on a shell utility. Host
+files must be regular, have matching identities, and total at most 512 MiB with
+at most 128 required files; Unix opens are nonblocking before regular-file checks.
+Relative paths anchor only at the supplying artifact, never cwd/sibling fallback.
+Loading resolves/checks files before changing crate context. Invocation rechecks
+host/compiler/protocol/format, selected identity/kind, permissions and file
+content before spawn. Public identities remain opaque; dependency aliases do
+not rewrite them. Hashes provide content integrity, not author trust/sandboxing.
+
+The consumer receives an empty runtime extern surface and metadata-only linkage;
+proc imports are seeded into the separate macro binding namespace. Native SDK
+acceptance publishes a real source-generated provider artifact, loads/analyzes it
+without SDK/std/object dependencies, and rejects an implementation-name runtime
+import. Unit controls cover header/payload and unknown roles, mixed runtime
+exports, relative file resolution, required-file changes/removal, and seven
+independent pre-spawn compatibility/content/kind rejections plus unknown identity.
+The CLI's existing no-execution observer now proves object-free validation and
+metadata-only inspection, with unchanged no-worker markers. A CLI role test
+checks proc publication without --no-link.
+
+The initial macro-focused run exposed an overstrict assumption that a canonical
+export identity must equal its crate/name spelling; that check was removed, and
+the original opaque-identity dispatch observer remains unchanged. Process tests
+now capture current host identities. Their deliberate native-format replacement
+recaptures its identity so it still reaches the unchanged OS-format/no-shell
+assertions; separate controls reject stale content. Permission preflight retains
+the OS EACCES cause. Invalid protocol metadata now fails publication, and wrong
+hosts fail loading before the execution-disabled boundary; valid disabled
+invocations retain the original no-spawn assertion. An initial workspace check
+also caught a test-only missing qualification of the dependency inspector.
+
+Verification evidence (logs under `/tmp/opencode/`):
+
+- Initial API RED: `cargo test -p rock-lib --lib macro_b_14` fails before the new
+  host identity/product APIs exist; `macro-b14-red.log`, SHA-256
+  `0b7a097a0d8e41ed36dfa47952b238ccf0f14fd88c11af61a2fbea1aad6e34a6`.
+- Final focused macro units: `cargo test -p rock-lib --lib macro_`, 406 pass;
+  `macro-b14-macros-final.log`, SHA-256
+  `f2b3bfb09e94bb2f21d81f358a2105a05f47b546ef62a9f2efd31232b73003dc`.
+- Process controls: `cargo test -p rock-lib --test macro_process`, 14 pass;
+  `macro-b14-process-final.log`, SHA-256
+  `ea08b34320d4089f2922ce7723a060b7b2ee037ecef19067f8cd488da052f708`.
+- SDK/publication controls: `cargo test -p rock-lib --test macro_sdk -- --nocapture`,
+  one integration passes in 234.76 seconds; `macro-b14-sdk.log`, SHA-256
+  `b2e7bb0a3030ab61044915c387414c2cf08f803a612066dbfba0f863e1db19bd`.
+- Complete library: `cargo test -p rock-lib`, 2,717 units, 806 main integrations,
+  six diagnostic, 14 process, one SDK (241.58 seconds), and one parser integration
+  pass; one doctest ignored. `macro-b14-acceptance.log`, SHA-256
+  `e41bd7f2e01e61497bdb51c30bab9d570765f55286f2a774d116f6239e3a58ec`.
+- `cargo test -p rockc`: 55 pass; `macro-b14-rockc-verified.log`, SHA-256
+  `6440945ed96ab346f7b942c3f22d19851c3bb24d5a96de666a70209c1c6e5a4a`.
+- `cargo test -p rock-shared --all-features`: 30 units and one doctest pass;
+  `macro-b14-shared.log`, SHA-256
+  `dda8e84f176c0d18cf990da314b71e54f73fa3ff00695568277a7a81fd09de19`.
+- `cargo test -p rock`: 91 pass; binary/doctests zero; `macro-b14-rock.log`, SHA-256
+  `f32502704e6ce65a693fc4ec571d19a848e42de9f79006a9204c980655587ecf`.
+- Workspace/all-targets check and Clippy pass with warnings; no new warning in
+  proc artifact/publication code. `macro-b14-check-final.log`, SHA-256
+  `926c28a337630119310d66a3ad571966b1bb6ad120e0b484e368f74db999ca14`;
+  `macro-b14-clippy.log`, SHA-256
+  `acd534ed848ccf3e11ce68a98d68d77d91bd05faec54d6b0949b581733d27bcb`.
+- Real `cargo run -p rockc -- ... --proc-macro-sdk rock_macro --emit-artifact ...`
+  builds `lib/tests/fixtures/macros/sdk-host.rk` against freshly CLI-built format-54
+  std/SDK artifacts in `macro-b14-cli/`. The provider directory contains only
+  `sdk-host` and `cli_provider.rkca`. `macro-b14-cli-provider.log`, SHA-256
+  `7f27790347c5eab375de56ba3d63346e215d7a50f0baf080f1422c5f3fa31ab1`.
+  `--validate-artifact ... --no-proc-execution` passes (`macro-b14-cli-inspect.log`,
+  SHA-256 `426993027bafb56a50506400963ca8afa840b01011cb90e458a1ac1f01db2755`),
+  and `--print artifact-deps --extern-artifact cli_provider=...` reports
+  `metadata=true bodies=false link=metadata-only` (`macro-b14-cli-deps.log`, SHA-256
+  `387e88463db6d92534e94b78143811440c83a117f7085fbe153ef9a884cfb676`).
+
+Protocol 7 and `RKLOSS04` remain unchanged; only product artifacts advance to 54.
+Host/target planning, package building and role-sensitive freshness/relocation
+remain B.15–B.17. Formatting remains deferred, Beads unavailable, unrelated work
+untouched. No functional edits follow the final gates.
+
 Do not widen `rock`'s dependency on compiler internals to generate semantic data:
 `rock` orchestrates `rockc`, which delegates compilation/discovery/checking to
-`lib`. Proc-only artifact emission must stop assuming every emitted artifact has
-a normal target object, while retaining that invariant for ordinary libraries.
+`lib`. Proc-only artifact emission now uses host metadata rather than a target
+object; ordinary library artifact validation retains its object invariant.
 
 ### Bd. Prove the actual consumers, not only an identity macro
 

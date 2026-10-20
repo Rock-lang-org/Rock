@@ -131,6 +131,7 @@ fn macro_b_12_metadata_resolution_never_executes_a_provider() {
         artifact_format_version: crate::products::PRODUCT_ARTIFACT_FORMAT_VERSION,
         crate_identity: "dependency".into(), protocol_version: super::proc_macro::PROC_MACRO_PROTOCOL_VERSION,
         host_triple: "x86_64-unknown-linux-gnu".into(), executable: "/must-not-execute-during-discovery".into(),
+        compiler_version: env!("CARGO_PKG_VERSION").into(), executable_identity: Default::default(), required_files: Vec::new(),
         capabilities: Vec::new(), definition_dependencies: Vec::new(),
         exports: vec![super::proc_macro::ProcMacroExport { name: "remote".into(), identity: "dependency::remote".into(),
             kind: super::proc_macro::ProcMacroKind::FunctionLike, input_shape: super::proc_macro::ProcMacroInputShape::TokenStream }],

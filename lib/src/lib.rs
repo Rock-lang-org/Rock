@@ -138,13 +138,26 @@ pub fn compile_with_products(config: &Config) -> Result<CompileOutput, Diagnosti
 /// Build a source-declared provider with an explicit SDK, ordinary type checking
 /// and native code generation. Proc-only artifact packaging is a separate step.
 pub fn compile_proc_macro(config: &Config, sdk: &macro_expansion::host::ProcMacroSdk) -> Result<CompileOutput, Diagnostics> {
+    compile_proc_macro_impl(config, sdk, false)
+}
+
+/// Build a host and publish only its executable contract, never host runtime HIR.
+pub fn compile_proc_macro_with_products(config: &Config, sdk: &macro_expansion::host::ProcMacroSdk) -> Result<CompileOutput, Diagnostics> {
+    compile_proc_macro_impl(config, sdk, true)
+}
+
+fn compile_proc_macro_impl(config: &Config, sdk: &macro_expansion::host::ProcMacroSdk, products: bool) -> Result<CompileOutput, Diagnostics> {
     if config.target_role != crate_system::TargetRole::ProcMacro {
         return Err(Diagnostics(vec![diagnostic::Diagnostic::new(
             "procedural macro host compilation requires the ProcMacro target role".into(),
             lexer::Span::new(config.entry_file.clone(), 0, 0),
         ).with_code(diagnostic::DiagnosticCode::Macro)]));
     }
-    compile_impl(config, false, Some(sdk))
+    if products && (config.no_link || config.emit_object.is_some()) {
+        return Err(Diagnostics(vec![diagnostic::Diagnostic::for_project(
+            "proc-only publication requires a linked host executable, not --no-link/--emit-object".into(), config.entry_file.clone())]));
+    }
+    compile_impl(config, products, Some(sdk))
 }
 
 /// Run the source frontend through finalized HIR without MIR or code generation.
@@ -357,13 +370,13 @@ fn compile_impl(config: &Config, emit_products: bool, sdk: Option<&macro_expansi
             .collect(),
     );
 
-    let (mut products, product_id_remap) = if emit_products {
+    let (mut products, product_id_remap) = if emit_products && sdk.is_none() {
         let (mut products, product_id_remap) = CompilerProducts::from_resolved_hir_with_remap(
-            current_crate_identity,
+            current_crate_identity.clone(),
             &hir,
             product_dependencies_from_config(config),
             product_dependency_crate_identities_from_context(crate_ctx),
-            source_fingerprint,
+            source_fingerprint.clone(),
             ProductLinkData::default(),
         )
         .map_err(|error| {
@@ -499,6 +512,13 @@ fn compile_impl(config: &Config, emit_products: bool, sdk: Option<&macro_expansi
         }
     }
 
+    if emit_products && sdk.is_some() {
+        let artifact = macro_expansion::proc_macro::ProcMacroArtifact::for_executable(
+            effective_current_crate_name, exe_path, proc_macro_exports.clone());
+        products = Some(artifact.and_then(|artifact| CompilerProducts::for_proc_macro(
+            current_crate_identity, artifact, source_fingerprint)).map_err(|error|
+                Diagnostics(vec![diagnostic::Diagnostic::for_internal(error)]))?);
+    }
     Ok(CompileOutput { ast, products, proc_macro_exports })
 }
 

@@ -1246,9 +1246,12 @@ impl CrateContext {
         context: &mut crate::type_context::TypeContext,
     ) -> Result<(), String> {
         let header = ProductArtifactHeader::read_from_path_bounded(&artifact_path)?;
-        let products =
+        let mut products =
             PortableProductArtifact::read_payload_from_path_bounded(&artifact_path, &header)?
                 .into_products()?;
+        for artifact in &mut products.proc_macros {
+            *artifact = artifact.resolve_for_host(&artifact_path)?;
+        }
         super::language_items::validate_product_language_items(&products)?;
         let mut staged_crate_context = self.clone();
         let remap = ProductIdentityRemap::from_products(&mut staged_crate_context, &products)?;
@@ -1301,7 +1304,7 @@ impl CrateContext {
         header: &ProductArtifactHeader,
         context: &mut crate::type_context::TypeContext,
     ) -> Result<(), String> {
-        let products =
+        let mut products =
             PortableProductArtifact::read_payload_from_path_bounded(&artifact_path, header)?
                 .into_products()?;
         let crate_name = products.crate_identity.name.clone();
@@ -1314,6 +1317,9 @@ impl CrateContext {
             ));
         }
 
+        for artifact in &mut products.proc_macros {
+            *artifact = artifact.resolve_for_host(&artifact_path)?;
+        }
         super::language_items::validate_product_language_items(&products)?;
 
         let mut staged_crate_context = self.clone();

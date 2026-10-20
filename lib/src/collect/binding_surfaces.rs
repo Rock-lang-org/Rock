@@ -29,6 +29,15 @@ impl ResolverTables {
         crates: &CrateContext,
     ) -> Vec<ResolveError> {
         let mut directives = Vec::new();
+        for provider in crates.extern_crates() {
+            for artifact in provider.metadata().proc_macros() {
+                for export in &artifact.exports {
+                    let path = std::iter::once(provider.name()).chain(export.name.split("::"))
+                        .map(|name| (name.to_string(), SyntaxContext::ROOT)).collect();
+                    self.macro_bindings.insert(path);
+                }
+            }
+        }
         self.collect_binding_surfaces(module, root, index, sources, &mut Vec::new(), &mut directives);
         let mut glob_aliases = HashSet::new();
         // Imports and re-exports may precede their providers; only identity-bearing

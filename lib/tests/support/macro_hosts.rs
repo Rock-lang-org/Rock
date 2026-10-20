@@ -30,8 +30,27 @@ macro publish
             "> rock_macro::MacroResult\nwrap = input -> MacroResult::Expand input\n< macro identity = context, input -> wrap input\n".into() },
     ];
     let sdk = ProcMacroSdk { dependency: "rock_macro".into() };
-    let output = rock_lib::compile_proc_macro(&host, &sdk).unwrap_or_else(|errors| panic!("generated host: {errors:?}"));
-    assert!(output.products.is_none(), "proc-only packaging is separate from ordinary runtime products");
+    let output = rock_lib::compile_proc_macro_with_products(&host, &sdk).unwrap_or_else(|errors| panic!("generated host: {errors:?}"));
+    let mut products = output.products.unwrap();
+    assert_eq!(products.role(), rock_lib::products::ProductRole::ProcMacro);
+    assert!(products.link.object_path.is_none() && products.link.records.is_empty());
+    assert!(products.interface.functions.is_empty() && products.bodies.functions.is_empty());
+    assert!(products.identity_table.export_names.is_empty() && products.dependencies.is_empty(), "host SDK/std are not target dependencies");
+    let artifact_path = host.output_dir.join("generated_provider.rkca");
+    products.proc_macros[0].executable = "main".into();
+    products.write_artifact_to_path(&artifact_path).unwrap();
+    assert_eq!(rock_lib::products::ProductArtifactHeader::read_from_path_bounded(&artifact_path).unwrap().role,
+        rock_lib::products::ProductRole::ProcMacro);
+    let mut loaded = rock_lib::crate_system::CrateContext::new();
+    loaded.load_product_artifact_from_path(artifact_path.clone()).unwrap();
+    let mut consumer = Config { entry_file: host.output_dir.join("consumer.rk"), no_std: true, no_prelude: true,
+        no_proc_execution: true, extern_artifacts: vec![("generated_provider".into(), artifact_path.clone())], ..Default::default() };
+    consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(),
+        text: "> generated_provider::identity\nmain = !-> ()\n".into() }];
+    rock_lib::analyze(&consumer).unwrap_or_else(|errors| panic!("proc artifact without SDK or object: {errors:?}"));
+    consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(),
+        text: "> generated_provider::__rock_entry_0\nmain = -> __rock_entry_0!\n".into() }];
+    assert!(rock_lib::analyze(&consumer).is_err(), "host implementation is not a runtime import");
     assert_eq!(output.proc_macro_exports.iter().map(|export| export.name.as_str()).collect::<Vec<_>>(), ["generated", "identity", "tools::identity"]);
     let executable = host.output_dir.join("main");
     for export in &output.proc_macro_exports {
@@ -95,8 +114,9 @@ macro publish
     for provider in &mut renamed.source_providers {
         if let SourceProvider::Virtual { text, .. } = provider { *text = text.replace("rock_macro::", "renamed_sdk::"); }
     }
-    rock_lib::compile_proc_macro(&renamed, &ProcMacroSdk { dependency: "renamed_sdk".into() })
+    let renamed_output = rock_lib::compile_proc_macro(&renamed, &ProcMacroSdk { dependency: "renamed_sdk".into() })
         .unwrap_or_else(|errors| panic!("explicit SDK with a different package name: {errors:?}"));
+    assert!(renamed_output.products.is_none(), "non-publication API does not fabricate runtime products");
     let mut request = golden.clone(); request.macro_identity = "generated_provider::identity".into();
     let output = super::run_client_with_input(&renamed.output_dir.join("main"), &encode_request(&request).unwrap());
     assert!(output.status.success(), "{output:?}");

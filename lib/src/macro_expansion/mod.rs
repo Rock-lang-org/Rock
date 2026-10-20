@@ -554,7 +554,8 @@ mod tests {
             crate_identity: "test_macros".to_string(),
             protocol_version: proc_macro::PROC_MACRO_PROTOCOL_VERSION,
             host_triple: "x86_64-unknown-linux-gnu".to_string(),
-            executable: host,
+            executable_identity: proc_macro::ProcMacroFileIdentity::read(&host).unwrap(), executable: host,
+            compiler_version: env!("CARGO_PKG_VERSION").into(), required_files: Vec::new(),
             capabilities: vec![proc_macro::ProcMacroCapability::Stdio],
             definition_dependencies: Vec::new(),
             exports: vec![proc_macro::ProcMacroExport {

@@ -74,6 +74,7 @@ pub fn verify(path: &Path, golden: &ProcMacroRequest, rich: &ProcMacroRequest) {
         artifact_format_version: rock_lib::products::PRODUCT_ARTIFACT_FORMAT_VERSION,
         crate_identity: "worker".into(), protocol_version: PROC_MACRO_PROTOCOL_VERSION,
         host_triple: "x86_64-unknown-linux-gnu".into(), executable: path.into(),
+        compiler_version: env!("CARGO_PKG_VERSION").into(), executable_identity: ProcMacroFileIdentity::read(path).unwrap(), required_files: Vec::new(),
         capabilities: vec![ProcMacroCapability::Stdio], definition_dependencies: Vec::new(),
         exports: vec![ProcMacroExport { name: "identity".into(), identity: "worker::identity".into(),
             kind: ProcMacroKind::FunctionLike, input_shape: ProcMacroInputShape::TokenStream }],

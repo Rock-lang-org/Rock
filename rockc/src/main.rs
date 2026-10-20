@@ -51,14 +51,16 @@ fn run_config(config: Config) -> Result<(), Diagnostics> {
     let emit_artifact = config.emit_artifact.clone();
     let proc_macro_sdk = config.proc_macro_sdk.clone();
     let compiler_config = config.into_compiler_config()?;
-    if emit_artifact.is_some() && !compiler_config.no_link {
+    if emit_artifact.is_some() && proc_macro_sdk.is_none() && !compiler_config.no_link {
         return Err(diagnostics_from_message(
             "--emit-artifact requires --no-link so the product artifact records an object file",
         ));
     }
 
     if let Some(path) = emit_artifact {
-        let output = rock_lib::compile_with_products(&compiler_config)?;
+        let output = if let Some(dependency) = &proc_macro_sdk {
+            rock_lib::compile_proc_macro_with_products(&compiler_config, &rock_lib::macro_expansion::host::ProcMacroSdk { dependency: dependency.clone() })?
+        } else { rock_lib::compile_with_products(&compiler_config)? };
         let mut products = output.products.ok_or_else(|| {
             diagnostics_from_message("Compiler did not produce product data for artifact emission")
         })?;
@@ -74,6 +76,13 @@ fn run_config(config: Config) -> Result<(), Diagnostics> {
                     err
                 ))
             })?;
+        }
+        let artifact_parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+        for artifact in &mut products.proc_macros {
+            if let Some(relative) = relative_to_root(&artifact.executable, artifact_parent) { artifact.executable = relative; }
+            for file in &mut artifact.required_files {
+                if let Some(relative) = relative_to_root(&file.path, artifact_parent) { file.path = relative; }
+            }
         }
         products
             .write_artifact_to_path(&path)
@@ -198,7 +207,7 @@ pub struct Config {
     #[arg(long)]
     extern_artifact: Vec<String>,
     /// Build a source-declared host provider against this explicit SDK artifact dependency
-    #[arg(long, conflicts_with_all = ["emit_artifact", "format"])]
+    #[arg(long, conflicts_with_all = ["format", "no_link", "emit_object"])]
     proc_macro_sdk: Option<String>,
     /// Format parsed modules in place and print them
     #[arg(long)]
@@ -361,7 +370,7 @@ fn artifact_dependency_root_requests(
 }
 
 impl ArtifactDependencyDiscovery {
-    fn visit(&mut self, request: ArtifactDependencyRequest) -> Result<(), Diagnostics> {
+    fn visit(&mut self, mut request: ArtifactDependencyRequest) -> Result<(), Diagnostics> {
         if let Some(existing) = self.records.get(&request.name) {
             validate_existing_artifact_dependency(&request, existing)?;
             return Ok(());
@@ -375,6 +384,12 @@ impl ArtifactDependencyDiscovery {
         }
 
         let header = read_artifact_dependency_header(&request)?;
+        if header.role == rock_lib::products::ProductRole::ProcMacro {
+            if request.referenced_by.is_some() && (request.capabilities.bodies || request.capabilities.link == ProductDependencyLinkCapability::Object) {
+                return Err(diagnostics_from_artifact_message(&request.path, "proc-only artifact cannot supply runtime bodies or an object"));
+            }
+            request.capabilities = ProductDependencyCapabilities { metadata: true, bodies: false, link: ProductDependencyLinkCapability::MetadataOnly };
+        }
         validate_artifact_dependency_identity(&request, &header.crate_identity)?;
         let dependencies =
             artifact_dependency_requests_from_header(&request.name, &request.path, &header)?;
@@ -695,6 +710,12 @@ fn validate_artifact(path: &std::path::Path) -> Result<(), Diagnostics> {
                 format!("Failed to read artifact payload: {error}"),
             )
         })?;
+    if products.role() == rock_lib::products::ProductRole::ProcMacro {
+        for artifact in &products.proc_macros {
+            artifact.resolve_for_host(path).map_err(|error| diagnostics_from_artifact_message(path, error))?;
+        }
+        return Ok(());
+    }
     let Some(object_path) = products.link.object_path else {
         return Err(diagnostics_from_artifact_message(
             path,
@@ -1213,12 +1234,20 @@ mod tests {
     }
 
     #[test]
-    fn test_proc_macro_host_cannot_emit_runtime_artifact_or_format() {
-        for arguments in [vec!["--emit-artifact", "provider.rkca"], vec!["--format"]] {
+    fn test_proc_macro_host_cannot_emit_object_or_format() {
+        for arguments in [vec!["--no-link"], vec!["--emit-object", "provider.o"], vec!["--format"]] {
             let mut args = vec!["rockc", "--proc-macro-sdk", "chosen_sdk"];
             args.extend(arguments);
             assert!(Config::try_parse_from(args).is_err());
         }
+    }
+
+    #[test]
+    fn macro_b_14_proc_publication_selects_host_role_without_no_link() {
+        let config = Config::try_parse_from(["rockc", "--entry-file", "provider.rk", "--proc-macro-sdk", "sdk", "--emit-artifact", "provider.rkca"]).unwrap();
+        let compiler = config.into_compiler_config().unwrap();
+        assert_eq!(compiler.target_role, rock_lib::crate_system::TargetRole::ProcMacro);
+        assert!(!compiler.no_link);
     }
 
     #[test]
@@ -1842,17 +1871,21 @@ mod tests {
         let mut products = product_artifact("provider", Vec::new(), ProductIdentityTable {
             local_crate: Some(ProductCrateId(1)), ..Default::default()
         });
+        products.link = Default::default();
         products.proc_macros.push(ProcMacroArtifact {
             artifact_format_version: rock_lib::products::PRODUCT_ARTIFACT_FORMAT_VERSION,
             crate_identity: "provider".into(), protocol_version: PROC_MACRO_PROTOCOL_VERSION,
             host_triple: rock_lib::sysroot::host_target_triple(), executable,
+            compiler_version: env!("CARGO_PKG_VERSION").into(), executable_identity: rock_lib::macro_expansion::proc_macro::ProcMacroFileIdentity::read(&base.join("worker")).unwrap(), required_files: Vec::new(),
             capabilities: vec![ProcMacroCapability::Stdio], definition_dependencies: Vec::new(),
             exports: vec![ProcMacroExport { name: "make".into(), identity: "provider::make".into(),
                 kind: ProcMacroKind::FunctionLike, input_shape: ProcMacroInputShape::TokenStream }],
         });
         let artifact = base.join("provider.rkca");
         products.write_artifact_to_path(&artifact).unwrap();
-        fs::write(base.join("provider.o"), []).unwrap();
+        assert!(!base.join("provider.o").exists(), "proc inspection needs no dummy object");
+        let dependencies = super::print_artifact_deps(&artifact_deps_config([("provider", artifact.as_path())])).unwrap();
+        assert!(dependencies.contains("metadata=true bodies=false link=metadata-only"), "{dependencies}");
         for disabled in [false, true] {
             let mut config = Config::try_parse_from(["rockc", "--validate-artifact", artifact.to_str().unwrap(), "--no-proc-execution"]).unwrap();
             config.no_proc_execution = disabled;
@@ -1871,14 +1904,21 @@ mod tests {
         assert!(!marker.exists());
         fs::write(&entry, "%provider::make!\n").unwrap();
         for case in 0..3 {
+            products.proc_macros[0].protocol_version = PROC_MACRO_PROTOCOL_VERSION;
             if case == 1 { products.proc_macros[0].protocol_version = 0; }
             if case == 2 { products.proc_macros[0].host_triple = "different-execution-host".into(); }
+            if case == 1 {
+                assert!(products.write_artifact_to_path(&artifact).unwrap_err().contains("incompatible proc artifact"));
+                assert!(!marker.exists());
+                continue;
+            }
             products.write_artifact_to_path(&artifact).unwrap();
             for expand in [false, true] {
                 let mut config = Config::try_parse_from(args).unwrap();
                 config.expand = expand;
                 let diagnostics = run_config(config).unwrap_err();
-                assert!(format!("{diagnostics:?}").contains("execution is disabled"), "{diagnostics:?}");
+                let expected = if case == 2 { "execution host mismatch" } else { "execution is disabled" };
+                assert!(format!("{diagnostics:?}").contains(expected), "{diagnostics:?}");
                 assert!(!marker.exists());
             }
         }

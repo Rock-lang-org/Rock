@@ -60,7 +60,7 @@ impl From<DefId> for ProductDefId {
     }
 }
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 53;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 54;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;
@@ -126,7 +126,14 @@ impl ProductArtifactPreamble {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProductRole {
+    Runtime,
+    ProcMacro,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductArtifactHeader {
+    pub role: ProductRole,
     pub crate_identity: ProductCrateIdentity,
     pub freshness: ProductFreshnessMetadata,
     pub identity_dependencies: BTreeMap<ProductCrateId, ProductCrateIdentity>,
@@ -140,6 +147,7 @@ pub struct ProductArtifactHeader {
 impl ProductArtifactHeader {
     fn from_products(products: &CompilerProducts) -> Self {
         Self {
+            role: products.role(),
             crate_identity: products.crate_identity.clone(),
             freshness: products.freshness_metadata(),
             identity_dependencies: products.identity_table.dependencies.clone(),
@@ -175,6 +183,7 @@ impl ProductArtifactHeader {
 
     fn matches_products(&self, products: &CompilerProducts) -> bool {
         self.crate_identity == products.crate_identity
+            && self.role == products.role()
             && self.freshness == products.freshness_metadata()
             && self.identity_dependencies == products.identity_table.dependencies
             && self.dependencies == products.dependencies
@@ -207,7 +216,7 @@ impl PortableProductArtifact {
             )
         })?;
         let (preamble, header) = read_product_artifact_header(&mut file, file_len)?;
-        if header.crate_identity != expected_header.crate_identity
+        if header.role != expected_header.role || header.crate_identity != expected_header.crate_identity
             || header.freshness != expected_header.freshness
             || header.identity_dependencies != expected_header.identity_dependencies
             || header.dependencies != expected_header.dependencies
@@ -864,7 +873,48 @@ fn serialized_artifact_from_bytes_for_test(
 }
 
 impl CompilerProducts {
+    /// A proc-only product has exactly one host descriptor and no runtime data.
+    pub fn role(&self) -> ProductRole {
+        if self.proc_macros.is_empty() { ProductRole::Runtime } else { ProductRole::ProcMacro }
+    }
+
+    pub fn for_proc_macro(crate_identity: ProductCrateIdentity,
+        artifact: crate::macro_expansion::proc_macro::ProcMacroArtifact,
+        source_fingerprint: ProductSourceFingerprint) -> Result<Self, String> {
+        let products = Self {
+            crate_identity, source_fingerprint,
+            identity_table: ProductIdentityTable { local_crate: Some(ProductCrateId(0)), ..Default::default() },
+            interface: ProductInterface::default(), bodies: ProductBodies::default(), link: ProductLinkData::default(),
+            dependencies: Vec::new(), infix_precedence: BTreeMap::new(), proc_macros: vec![artifact],
+        };
+        products.validate_role()?;
+        Ok(products)
+    }
+
+    pub(crate) fn validate_role(&self) -> Result<(), String> {
+        if self.role() == ProductRole::Runtime { return Ok(()); }
+        let interface = &self.interface;
+        let identities = &self.identity_table;
+        if self.proc_macros.len() != 1 || self.link.object_path.is_some() || !self.link.records.is_empty()
+            || !self.dependencies.is_empty() || !self.infix_precedence.is_empty()
+            || !identities.dependencies.is_empty() || !identities.display_names.is_empty()
+            || !identities.export_names.is_empty() || !identities.import_alias_names.is_empty()
+            || !identities.module_alias_names.is_empty() || !identities.prelude_export_names.is_empty()
+            || !identities.ambiguous_export_names.is_empty()
+            || !interface.functions.is_empty() || !interface.structs.is_empty() || !interface.enums.is_empty()
+            || !interface.type_aliases.is_empty() || !interface.traits.is_empty() || !interface.impls.is_empty()
+            || !interface.externs.is_empty() || !interface.effective_trait_methods.is_empty()
+            || interface.language_items != ProductLanguageItems::default()
+            || !self.bodies.functions.is_empty() || !self.bodies.generic_impls.is_empty() || !self.bodies.trait_default_methods.is_empty() {
+            return Err("proc-only product contains runtime data or multiple host descriptors".into());
+        }
+        let artifact = &self.proc_macros[0];
+        if artifact.crate_identity != self.crate_identity.name { return Err("proc product/provider identity mismatch".into()); }
+        artifact.validate_metadata()
+    }
+
     pub fn to_artifact_bytes(&self) -> Result<Vec<u8>, String> {
+        self.validate_role()?;
         let artifact = type_table::products_to_artifact(self, PRODUCT_ARTIFACT_FORMAT_VERSION)?;
         let header = ProductArtifactHeader::from_products(self);
         encode_product_artifact(&header, &artifact)
@@ -6902,6 +6952,8 @@ mod tests {
                 protocol_version: crate::macro_expansion::proc_macro::PROC_MACRO_PROTOCOL_VERSION,
                 host_triple: "x86_64-unknown-linux-gnu".to_string(),
                 executable: "macro-host".into(),
+                compiler_version: env!("CARGO_PKG_VERSION").into(),
+                executable_identity: crate::macro_expansion::proc_macro::ProcMacroFileIdentity { bytes: 1, sha256: [1; 32] }, required_files: Vec::new(),
                 capabilities: vec![crate::macro_expansion::proc_macro::ProcMacroCapability::Stdio],
                 definition_dependencies: Vec::new(),
                 exports: vec![crate::macro_expansion::proc_macro::ProcMacroExport {
@@ -7138,7 +7190,7 @@ mod tests {
 
     #[test]
     fn product_artifact_format_version_matches_shared_contract() {
-        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 53);
+        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 54);
         assert_eq!(
             PRODUCT_ARTIFACT_FORMAT_VERSION,
             rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION

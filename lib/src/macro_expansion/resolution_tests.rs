@@ -23,6 +23,7 @@ fn artifact(crate_name: &str) -> proc_macro::ProcMacroArtifact {
         protocol_version: proc_macro::PROC_MACRO_PROTOCOL_VERSION,
         host_triple: "x86_64-unknown-linux-gnu".into(),
         executable: "/never-execute-during-resolution".into(),
+        compiler_version: env!("CARGO_PKG_VERSION").into(), executable_identity: Default::default(), required_files: Vec::new(),
         capabilities: vec![],
         definition_dependencies: Vec::new(),
         exports: vec![proc_macro::ProcMacroExport {

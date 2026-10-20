@@ -20700,7 +20700,8 @@ fn proc_macro_host_with_response(
         crate_identity: "integration_macros".to_string(),
         protocol_version: rock_lib::macro_expansion::proc_macro::PROC_MACRO_PROTOCOL_VERSION,
         host_triple: "x86_64-unknown-linux-gnu".to_string(),
-        executable: host,
+        executable_identity: rock_lib::macro_expansion::proc_macro::ProcMacroFileIdentity::read(&host).unwrap(), executable: host,
+        compiler_version: env!("CARGO_PKG_VERSION").into(), required_files: Vec::new(),
         capabilities: vec![rock_lib::macro_expansion::proc_macro::ProcMacroCapability::Stdio],
         definition_dependencies: Vec::new(),
         exports: vec![rock_lib::macro_expansion::proc_macro::ProcMacroExport {

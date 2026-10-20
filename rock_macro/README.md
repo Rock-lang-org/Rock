@@ -183,9 +183,18 @@ to the same one-shot runtime described above; no second transport path exists.
 
 Compiler contributors can build a host directly with `rockc --proc-macro-sdk
 rock_macro`, supplying std and SDK using ordinary `--extern-artifact name=path`
-arguments. This low-level workflow builds an executable, not a consumer artifact.
+arguments. Add `--emit-artifact provider.rkca` to publish a proc-only artifact
+using `compile_proc_macro_with_products`; do not pass `--no-link`/`--emit-object`.
+The product contains host/export metadata, not ordinary functions, HIR bodies or
+a dummy runtime object. Its SDK/std objects are not consumer dependencies.
+
+Artifact format 54 records the host/compiler/protocol and bounded SHA-256 content
+identities for the executable/required host files. Relative host paths are anchored
+to the artifact directory. Loading or `rockc --validate-artifact` checks metadata
+and files without running the worker; invocation checks them again before spawn.
+Ordinary artifacts still require their ordinary runtime object during validation.
 Application package workflows will use `rock build`/`rock run` once host-aware
-planning, proc-only publication and package integration land in B.14–B.17.
+planning and package integration land in B.15–B.17.
 
 The Rust wire specification is
 [`docs/specs/2026-10-19-macro-worker-wire.md`](../docs/specs/2026-10-19-macro-worker-wire.md).

@@ -4,7 +4,7 @@ This is the compiler/SDK contract for the current one-shot worker, not a stable
 cross-version protocol. Rebuild workers and dependencies after a format change.
 The normative Rust records are `lib/src/macro_expansion/proc_macro/schema.rs`
 and `proc_macro.rs`; the checked lossless transport is
-`lib/src/lexer/lossless/wire.rs`. Product artifacts are format 53. No older
+`lib/src/lexer/lossless/wire.rs`. Product artifacts are format 54. No older
 request, response, or artifact reader is provided.
 
 ## Encoding and framing

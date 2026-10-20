@@ -26,10 +26,9 @@ fn fixture(mode: &str, large_input: bool) -> (ProcMacroArtifact, ProcMacroReques
         kind: ProcMacroKind::FunctionLike, header_indent: 0, block_base: None, input: encode_stream(&input).unwrap(),
         definition_dependencies: Vec::new(), views: Default::default(),
     };
-    let artifact = ProcMacroArtifact { artifact_format_version: compiler::products::PRODUCT_ARTIFACT_FORMAT_VERSION,
-        crate_identity: "fixture".into(), protocol_version: PROC_MACRO_PROTOCOL_VERSION, host_triple: "test-host".into(),
-        executable, capabilities: vec![ProcMacroCapability::Stdio], definition_dependencies: Vec::new(), exports: Vec::new(),
-    };
+    let artifact = ProcMacroArtifact::for_executable("fixture".into(), executable,
+        vec![ProcMacroExport { name: "run".into(), identity: "fixture::run".into(), kind: ProcMacroKind::FunctionLike,
+            input_shape: ProcMacroInputShape::TokenStream }]).unwrap();
     let response = ProcMacroResponse { protocol_version: PROC_MACRO_PROTOCOL_VERSION,
         output: Some(ProcMacroOutput { parts: Vec::new() }), diagnostics: Vec::new() };
     std::fs::write(artifact.executable.with_extension("response"), encode_response(&response).unwrap()).unwrap();
@@ -117,7 +116,7 @@ fn macro_b_02_missing_executable_and_expired_deadline_do_not_spawn() {
     assert!(!artifact.executable.with_extension("pid").exists());
     artifact.executable = directory.join("missing");
     let error = bounded_run(artifact, request, Duration::from_secs(1)).unwrap_err();
-    assert!(error.contains("failed to start") && error.contains("os error"), "{error}");
+    assert!(error.contains("failed to open host file") && error.contains("os error"), "{error}");
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -293,13 +292,14 @@ fn macro_b_04_metadata_and_declarative_expansion_do_not_execute_registered_worke
 #[test]
 fn macro_b_04_enabled_execution_preserves_permission_and_format_errors_without_a_shell() {
     use std::os::unix::fs::PermissionsExt;
-    let (artifact, request, directory) = fixture("partial", false);
+    let (mut artifact, request, directory) = fixture("partial", false);
     std::fs::set_permissions(&artifact.executable, std::fs::Permissions::from_mode(0o600)).unwrap();
     let error = bounded_run(artifact.clone(), request.clone(), Duration::from_secs(1)).unwrap_err();
     assert!(error.contains("os error 13"), "{error}");
     let marker = directory.join("shell-was-run");
     std::fs::write(&artifact.executable, format!("touch '{}'\n", marker.display())).unwrap();
     std::fs::set_permissions(&artifact.executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    artifact.executable_identity = ProcMacroFileIdentity::read(&artifact.executable).unwrap();
     let error = bounded_run(artifact, request, Duration::from_secs(1)).unwrap_err();
     assert!(error.contains("failed to start") && error.contains("os error"), "{error}");
     assert!(!marker.exists(), "invalid native executables must never launch through a shell");
