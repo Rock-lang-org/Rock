@@ -4,7 +4,9 @@
 > std::ffi::libc::read
 > std::ffi::libc::write
 > std::concurrency::arc::Arc
+> std::collections::vec::Vec
 > std::ops::index::Index
+> std::ops::index::IndexMut
 > std::ops::range::Range
 > std::control::result::Result
 > std::show::Show
@@ -72,6 +74,34 @@ impl Stdin
 
 impl Read for Stdin
     ^@read = buf -> self.read_bytes buf
+
+// Read through EOF without trusting a length supplied by the source. Probe one
+// byte beyond the cap so exact-limit input is distinct from oversized input.
+// Negative limits, excess input and invalid read counts return InvalidInput;
+// source errors propagate unchanged. No partial byte vector escapes on failure.
+read_to_end_limited: &mut R -> I64 -> Result (Vec U8), IoError where R: Read
+< read_to_end_limited = source, limit ->
+    if limit < 0
+        failure: Result (Vec U8), IoError = Result::Err IoError::InvalidInput
+        return failure
+    mut output: Vec U8 = Vec::new!
+    mut buffer: [U8; 4096] = [0; 4096]
+    mut done = false
+    while !done
+        remaining = limit - output.len!
+        requested = if remaining >= 4096 then 4096 else remaining + 1
+        count = source.read (&mut buffer[..requested]) ?
+        if count < 0 || count > requested || count > remaining
+            failure: Result (Vec U8), IoError = Result::Err IoError::InvalidInput
+            return failure
+        if count == 0
+            done = true
+        else
+            i = 0
+            while i < count
+                output.push buffer[i]
+                i = i + 1
+    Result::Ok output
 
 copy: &mut R -> &W -> Result I64, IoError where R: Read, W: Write
 < copy = source, target ->

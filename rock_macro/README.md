@@ -54,7 +54,12 @@ materializes arbitrary deferred source/literal fragments. Dependency constructor
 check the supplied index/spelling locally; only the compiler can validate public
 export authority. Public owned data and symbolic requests cannot grant authority.
 
-This is not yet a runnable procedural macro package workflow. Binary IO/codecs,
-generated runners and source export discovery remain staged implementation work.
+The binary IO seam is tested through ordinary `std::io::traits` APIs, including
+`read_to_end_limited` (EOF-terminated bytes with a cap) and `write_all` (short-write
+handling). Input/output are byte collections, never strings or compiler callbacks.
+Negative limits, excess input and invalid read counts yield `IoError::InvalidInput`;
+source IO errors propagate unchanged. This is not yet a runnable procedural macro
+package workflow: codecs, generated runners and source export discovery remain
+staged implementation work.
 The Rust wire specification is
 [`docs/specs/2026-10-19-macro-worker-wire.md`](../docs/specs/2026-10-19-macro-worker-wire.md).

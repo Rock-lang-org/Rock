@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -5,7 +6,19 @@ use std::time::{Duration, Instant};
 use rock_lib::{Config, SourceProvider};
 
 fn run_client(path: &Path) -> Output {
-    let mut child = Command::new(path).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    run_client_with_input(path, &[])
+}
+
+fn run_client_with_input(path: &Path, input: &[u8]) -> Output {
+    assert!(input.len() <= 33, "synchronous test input must stay below pipe capacity");
+    let mut child = Command::new(path).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+    // These controls are at most 33 bytes, below pipe capacity; the Rock side
+    // additionally caps each read at three bytes and each write at two bytes.
+    let mut stdin = child.stdin.take().unwrap();
+    for chunk in input.chunks(2) {
+        stdin.write_all(chunk).unwrap();
+    }
+    drop(stdin);
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         if child.try_wait().unwrap().is_some() {
@@ -35,7 +48,7 @@ fn build_library(entry: PathBuf, name: &str, output: &Path, dependencies: Vec<(S
 }
 
 #[test]
-fn macro_b_06_plain_rock_sdk_data_and_operations_run_with_only_explicit_artifact_dependencies() {
+fn macro_b_07_plain_rock_sdk_and_binary_io_use_only_explicit_artifact_dependencies() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let root = std::env::temp_dir().join(format!("rock-macro-sdk-data-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
@@ -70,5 +83,22 @@ fn macro_b_06_plain_rock_sdk_data_and_operations_run_with_only_explicit_artifact
     missing = config.clone();
     missing.extern_artifacts.retain(|(name, _)| name != "std");
     assert!(rock_lib::analyze(&missing).is_err(), "std is never discovered implicitly");
+    let mut binary_io = config.clone();
+    binary_io.extern_artifacts = vec![("std".into(), std)];
+    binary_io.source_providers = vec![SourceProvider::Virtual { path: binary_io.entry_file.clone(),
+        text: include_str!("fixtures/macros/sdk-io.rk").into() }];
+    rock_lib::compile(&binary_io).unwrap_or_else(|diagnostics| panic!("binary IO: {diagnostics:?}"));
+    let mut binary = "A\0雪é🦀\r\n".as_bytes().to_vec();
+    binary.push(255); // Binary transport must not round-trip through String.
+    for input in [Vec::new(), binary, (0..32).collect::<Vec<u8>>()] {
+        let output = run_client_with_input(&root.join("app/main"), &input);
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, input);
+        assert!(output.stderr.is_empty(), "{output:?}");
+    }
+    let output = run_client_with_input(&root.join("app/main"), &[0; 33]);
+    assert_eq!(output.status.code(), Some(2), "oversized input: {output:?}");
+    assert!(output.stdout.is_empty(), "no partial output on a failed bounded read");
+    assert!(output.stderr.is_empty(), "{output:?}");
     std::fs::remove_dir_all(root).unwrap();
 }

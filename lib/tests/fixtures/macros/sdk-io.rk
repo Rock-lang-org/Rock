@@ -1,0 +1,43 @@
+// Ordinary binary IO only: no SDK, codec, dispatcher or macro invocation.
+> std::io::traits::Read
+> std::io::traits::Write
+> std::io::traits::Stdin
+> std::io::traits::Stdout
+> std::io::traits::IoError
+> std::io::traits::stdin
+> std::io::traits::stdout
+> std::io::traits::read_to_end_limited
+> std::io::traits::write_all
+> std::io::traits::write_str
+
+struct ShortInput
+    < source: Stdin
+
+impl Read for ShortInput
+    ^@read = buf ->
+        requested = if buf.len! < 3 then buf.len! else 3
+        self.source.read (&mut buf[..requested])
+
+struct ShortOutput
+    < target: Stdout
+
+impl Write for ShortOutput
+    @write = buf ->
+        requested = if buf.len! < 2 then buf.len! else 2
+        self.target.write (&buf[..requested])
+    @write_all = buf -> write_all self, buf
+    @write_str = text -> write_str self, text
+
+run: () -> Result I64, IoError
+run = ->
+    mut source = ShortInput
+        source: stdin!
+    bytes = read_to_end_limited (&mut source), 32 ?
+    target = ShortOutput
+        target: stdout!
+    target.write_all bytes.as_slice!
+
+main = !->
+    match run!
+        Result::Ok _ => ()
+        Result::Err _ => exit (2 as I32)

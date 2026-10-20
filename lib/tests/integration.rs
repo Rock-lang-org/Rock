@@ -5839,6 +5839,135 @@ main = ->
 }
 
 #[test]
+fn test_read_to_end_limited_handles_short_reads_eof_limits_and_errors() {
+    let output = compile_and_run(r#"
+> std::io::traits::read_to_end_limited
+> std::io::traits::Read
+> std::io::traits::IoError
+
+struct Source
+    < offset: I64
+    < end: I64
+    < mode: I64
+
+impl Read for Source
+    ^@read = buf ->
+        if self.mode == 4 && self.offset > 0
+            failure: Result I64, IoError = Result::Err (IoError::Os (6 as I32))
+            return failure
+        if self.mode == 1
+            failure: Result I64, IoError = Result::Err (IoError::Os (5 as I32))
+            return failure
+        if self.mode == 2
+            failure: Result I64, IoError = Result::Ok -1
+            return failure
+        if self.mode == 3
+            failure: Result I64, IoError = Result::Ok (buf.len! + 1)
+            return failure
+        remaining = self.end - self.offset
+        count = if remaining < 2 then remaining else 2
+        if count > buf.len!
+            count = buf.len!
+        i = 0
+        while i < count
+            buf[i] = self.offset as U8
+            self.offset = self.offset + 1
+            i = i + 1
+        Result::Ok count
+
+make: I64 -> I64 -> Source
+make = end, mode -> Source
+    offset: 0
+    end: end
+    mode: mode
+
+check: Bool -> ()
+check = condition !->
+    if !condition
+        exit (1 as I32)
+
+invalid: Result (Vec U8), IoError -> Bool
+invalid = result ->
+    match result
+        Result::Err IoError::InvalidInput => true
+        _ => false
+
+main = !->
+    mut exact = make 4, 0
+    match read_to_end_limited (&mut exact), 4
+        Result::Ok bytes =>
+            check (bytes.len! == 4)
+            check (bytes[0] == (0 as U8))
+            check (bytes[3] == (3 as U8))
+        _ => check false
+    mut empty = make 0, 0
+    match read_to_end_limited (&mut empty), 0
+        Result::Ok bytes => check (bytes.len! == 0)
+        _ => check false
+    mut oversized = make 5, 0
+    check (invalid (read_to_end_limited (&mut oversized), 4))
+    check (oversized.offset == 5)
+    mut zero_limit = make 1, 0
+    check (invalid (read_to_end_limited (&mut zero_limit), 0))
+    mut untouched = make 0, 1
+    check (invalid (read_to_end_limited (&mut untouched), -1))
+    mut failing = make 0, 1
+    match read_to_end_limited (&mut failing), 4
+        Result::Err IoError::Os code => check (code == (5 as I32))
+        _ => check false
+    mut partial_failure = make 4, 4
+    match read_to_end_limited (&mut partial_failure), 4
+        Result::Err IoError::Os code => check (code == (6 as I32))
+        _ => check false
+    check (partial_failure.offset == 2)
+    mut negative = make 0, 2
+    check (invalid (read_to_end_limited (&mut negative), 4))
+    mut overreported = make 0, 3
+    check (invalid (read_to_end_limited (&mut overreported), 4))
+    mut huge_cap = make 0, 0
+    match read_to_end_limited (&mut huge_cap), 9223372036854775807
+        Result::Ok bytes => check (bytes.len! == 0)
+        _ => check false
+    "bounded read controls passed".println!
+"#);
+    assert_eq!(output, "bounded read controls passed\n");
+}
+
+#[test]
+fn test_write_all_propagates_errors_after_partial_progress() {
+    let output = compile_and_run(r#"
+> std::io::traits::Write
+> std::io::traits::IoError
+> std::io::traits::write_all
+> std::io::traits::write_str
+
+struct PartialFailure
+
+impl Write for PartialFailure
+    @write = buf ->
+        if buf.len! > 2
+            success: Result I64, IoError = Result::Ok 2
+            success
+        else
+            failure: Result I64, IoError = Result::Err (IoError::Os (5 as I32))
+            failure
+    @write_all = buf -> write_all self, buf
+    @write_str = text -> write_str self, text
+
+main = !->
+    bytes = [0 as U8, 1, 2, 3, 4]
+    sink = PartialFailure
+    match sink.write_all (&bytes)
+        Result::Err IoError::Os code =>
+            if code != (5 as I32)
+                exit (1 as I32)
+        _ => exit (1 as I32)
+    "write error preserved".println!
+"#);
+    assert_eq!(output, "write error preserved\n");
+}
+
+#[test]
 fn test_write_helpers_handle_partial_string_and_zero_writes() {
     let output = compile_and_run(
         r#"

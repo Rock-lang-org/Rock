@@ -1293,6 +1293,53 @@ workflow is added here. Canonical literal preparation and deferred fragment
 materialization remain B.18/B.19. Formatting remains deferred and Beads unavailable.
 No functional edits follow these final gates; unrelated work remains untouched.
 
+### B.07 delivery receipt (2026-10-20)
+
+The ordinary IO seam uses existing `Read`, `Write`, `Stdin`, `Stdout` and `Vec U8`.
+The missing reusable operation is now `std::io::traits::read_to_end_limited`,
+with its own upstream integration test. It reads through EOF with a fixed 4 KiB
+scratch buffer and checks counts before copying into the result. A one-byte probe
+beyond the cap distinguishes exact-limit EOF from oversized input without
+unchecked length arithmetic or allocation based on untrusted input lengths.
+Negative limits, excess input and invalid read counts yield
+`IoError::InvalidInput`; underlying read errors propagate unchanged, including
+after partial progress. Errors do not expose a partially accumulated vector.
+
+The plain `sdk-io.rk` executable depends only on an explicitly supplied std
+artifact. It caps each underlying stdin read at three bytes, then writes through
+the existing `write_all` helper with writes capped at two bytes. The Rust harness
+feeds two-byte fragments and compares exact output for empty input, embedded NUL,
+multibyte UTF-8, a non-UTF-8 byte and an exact 32-byte limit. A 33-byte request must
+exit with status 2 and no partial stdout. The upstream read controls also cover
+short reads, zero/negative/extreme limits, EOF, overreported/negative counts and
+IO failures; separate write controls preserve errors after short-write progress
+and retain the existing zero-write test. No string conversion handles transport.
+
+Verification evidence:
+
+- Focused `cargo test -p rock-lib --test macro_sdk -- --nocapture` passes, including
+  all B.05/B.06 controls and the new binary IO executable (114.72 seconds).
+  `/tmp/opencode/macro-b07-sdk-io.log`, SHA-256
+  `d0f22ab180188758bed324f4c69f1cad37f9949497320dce1ec94567917f5d30`.
+- `cargo test -p rock-lib --test integration test_write_ -- --test-threads=1`
+  passes both partial-progress error and existing short/zero-write controls.
+  `/tmp/opencode/macro-b07-write-controls.log`, SHA-256
+  `f2a5f8acde2e131408fa598273c0c86de7db4b20cfe7c7d734b5c89e97776536`.
+- `cargo check --workspace --all-targets` passes with existing warnings.
+  `/tmp/opencode/macro-b07-check-final.log`, SHA-256
+  `f2175bdd73825ae60e1914c665e75ed9322dc06bc952065898bd0e900de0f848`.
+- `cargo test -p rock-lib` passes: 2,699 units, 805 main integrations, six
+  diagnostic integrations, 14 native-process integrations, one SDK/IO integration
+  (114.68 seconds) and one parser integration; one doctest ignored. This includes
+  the strengthened partial-read-error control and synchronous-input harness bound.
+  `/tmp/opencode/macro-b07-acceptance.log`, SHA-256
+  `f2c4cb1a0a9a079f7dd0563232b83e5de615c3e563f097cb9d19f58a69a7d735`.
+
+No codec, extra IO framework, compiler callback, proc-worker dispatcher or wire-format change is
+introduced. B.08/B.09 remain the request/result codec steps, followed by the
+one-shot runner in B.10. Formatting remains deferred and Beads unavailable.
+No functional edits follow these final gates; unrelated work remains untouched.
+
 The first worker is intentionally built from ordinary Rock code and test-provided
 entry functions. This proves the SDK/runtime seam before the source-declared
 export workflow; it is not permission to require authors to write a dispatcher.
