@@ -40,6 +40,8 @@ pub(crate) struct Package {
     pub(crate) profile: BuildProfile,
     pub(crate) no_proc_execution: bool,
     pub(crate) target: CrateTarget,
+    pub(crate) platform: crate::dependency_plan::BuildPlatform,
+    pub(crate) target_triple: String,
     build_root: PathBuf,
     dependency_key: Option<String>,
 }
@@ -63,6 +65,8 @@ impl Package {
             root_dir: canonical_root,
             manifest,
             target,
+            platform: crate::dependency_plan::BuildPlatform::Target,
+            target_triple: rock_shared::sysroot::host_target_triple(),
             profile: BuildProfile::default(),
             no_proc_execution: false,
         })
@@ -75,6 +79,9 @@ impl Package {
         } else {
             let mut hash = DefaultHasher::new();
             self.root_dir.hash(&mut hash);
+            self.target.hash(&mut hash);
+            self.platform.hash(&mut hash);
+            self.target_triple.hash(&mut hash);
             Some(format!(
                 "{}-{}-{:016x}",
                 filename_component(&self.manifest.crate_.name),
@@ -97,7 +104,13 @@ impl Package {
     }
 
     pub(crate) fn build_dir(&self) -> PathBuf {
-        let directory = self.build_root.join(self.profile.directory());
+        let mut directory = self.build_root.join(self.profile.directory());
+        if self.platform == crate::dependency_plan::BuildPlatform::Host || self.target_triple != rock_shared::sysroot::host_target_triple() {
+            let mut hash = DefaultHasher::new(); self.target_triple.hash(&mut hash);
+            let platform = match self.platform { crate::dependency_plan::BuildPlatform::Host => "host", crate::dependency_plan::BuildPlatform::Target => "target" };
+            let role = match self.target.role() { manifest::TargetRole::Binary => "bin", manifest::TargetRole::Library => "lib", manifest::TargetRole::ProcMacro => "proc" };
+            directory = directory.join(platform).join(format!("{}-{:016x}", filename_component(&self.target_triple), hash.finish())).join(role);
+        }
         match &self.dependency_key {
             Some(key) => directory.join("deps").join(key),
             None => directory,

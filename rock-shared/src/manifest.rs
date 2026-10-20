@@ -25,7 +25,7 @@ pub struct CrateConfig {
 
 /// A library or named binary declared by a package manifest.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CrateTarget {
     Bin { name: String, path: String },
     Lib { path: String },

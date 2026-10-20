@@ -36,6 +36,10 @@ macro publish
     assert!(products.link.object_path.is_none() && products.link.records.is_empty());
     assert!(products.interface.functions.is_empty() && products.bodies.functions.is_empty());
     assert!(products.identity_table.export_names.is_empty() && products.dependencies.is_empty(), "host SDK/std are not target dependencies");
+    assert!(products.proc_macros[0].definition_dependencies.iter().any(|identity| identity.name == "rock_macro"));
+    assert!(products.proc_macros[0].definition_dependencies.iter().any(|identity| identity.name == "std"));
+    assert!(products.proc_macros[0].definition_dependencies.iter().all(|identity| identity.target_triple == Some(rock_lib::sysroot::host_target_triple())),
+        "ordinary host identities declare available handles, not implicit consumer dependencies");
     let artifact_path = host.output_dir.join("generated_provider.rkca");
     products.proc_macros[0].executable = "main".into();
     products.write_artifact_to_path(&artifact_path).unwrap();
@@ -48,6 +52,24 @@ macro publish
     consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(),
         text: "> generated_provider::identity\nmain = !-> ()\n".into() }];
     rock_lib::analyze(&consumer).unwrap_or_else(|errors| panic!("proc artifact without SDK or object: {errors:?}"));
+    consumer.current_crate_name = Some("consumer".into());
+    consumer.output_dir = host.output_dir.join("consumer-products"); consumer.no_link = true;
+    consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(),
+        text: "> generated_provider::identity\n< answer = -> 42\n".into() }];
+    let ordinary = rock_lib::compile_with_products(&consumer).unwrap_or_else(|errors| panic!("ordinary consumer publication: {errors:?}"));
+    let ordinary = ordinary.products.unwrap();
+    assert_eq!(ordinary.crate_identity.target_triple, Some(rock_lib::sysroot::host_target_triple()));
+    assert_eq!(ordinary.dependencies.len(), 1, "provider SDK/std must not leak into consumer products");
+    assert!(ordinary.dependencies[0].capabilities.metadata && !ordinary.dependencies[0].capabilities.bodies);
+    assert_eq!(ordinary.dependencies[0].capabilities.link, rock_lib::products::ProductDependencyLinkCapability::MetadataOnly);
+    let consumer_artifact = consumer.output_dir.join("consumer.rkca"); ordinary.write_artifact_to_path(&consumer_artifact).unwrap();
+    let mut downstream = consumer.clone(); downstream.current_crate_name = Some("downstream".into()); downstream.no_link = false;
+    downstream.output_dir = host.output_dir.join("downstream"); downstream.entry_file = host.output_dir.join("downstream.rk");
+    downstream.extern_artifacts.push(("consumer".into(), consumer_artifact));
+    downstream.source_providers = vec![SourceProvider::Virtual { path: downstream.entry_file.clone(), text: "> consumer::answer\nmain = -> answer!\n".into() }];
+    rock_lib::compile(&downstream).unwrap_or_else(|errors| panic!("link downstream without provider host/SDK/std objects: {errors:?}"));
+    let result = super::run_client_with_input(&downstream.output_dir.join("downstream"), &[]);
+    assert_eq!(result.status.code(), Some(42), "{result:?}");
     consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(),
         text: "> generated_provider::__rock_entry_0\nmain = -> __rock_entry_0!\n".into() }];
     assert!(rock_lib::analyze(&consumer).is_err(), "host implementation is not a runtime import");

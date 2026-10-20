@@ -193,8 +193,13 @@ identities for the executable/required host files. Relative host paths are ancho
 to the artifact directory. Loading or `rockc --validate-artifact` checks metadata
 and files without running the worker; invocation checks them again before spawn.
 Ordinary artifacts still require their ordinary runtime object during validation.
-Application package workflows will use `rock build`/`rock run` once host-aware
-planning and package integration land in B.15–B.17.
+Host/target-aware planning now separates proc-host ordinary dependencies from
+consumer target inputs, even on a native build. Provider ordinary identities
+declare available definition-side handles; a handle used in emitted runtime code
+must resolve to the consumer's own explicitly supplied dependency identity and
+public exports. Host SDK/std objects are never added implicitly to the consumer.
+Application package workflows will use `rock build`/`rock run` once package
+execution and freshness/relocation integration land in B.16–B.17.
 
 The Rust wire specification is
 [`docs/specs/2026-10-19-macro-worker-wire.md`](../docs/specs/2026-10-19-macro-worker-wire.md).

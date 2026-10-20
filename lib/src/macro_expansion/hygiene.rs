@@ -80,14 +80,14 @@ impl MacroExpansionContext<'_> {
         let mut hygiene = self.hygiene.borrow_mut();
         if let Some(context) = hygiene.requests.get(&(invocation.id, request.kind)) { return Ok(*context); }
         let dependency = match request.kind {
-            ConstructionKind::Dependency(index) => Some(dependencies.get(index as usize)
-                .ok_or_else(|| "undeclared definition-side dependency handle".to_string())?),
+            ConstructionKind::Dependency(index) => Some(self.runtime_dependency(dependencies.get(index as usize)
+                .ok_or_else(|| "undeclared definition-side dependency handle".to_string())?)?),
             ConstructionKind::Fresh(_) => None,
             ConstructionKind::CallSite => unreachable!("call-site requests return above"),
         };
         let context = hygiene.allocate()?;
         if let Some(identity) = dependency {
-            self.binding_environments.borrow_mut().record_dependency(context, identity, dependencies)?;
+            self.binding_environments.borrow_mut().record_dependency(context, &identity, std::slice::from_ref(&identity))?;
         }
         hygiene.requests.insert((invocation.id, request.kind), context);
         Ok(context)

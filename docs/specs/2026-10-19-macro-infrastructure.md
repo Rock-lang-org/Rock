@@ -654,6 +654,33 @@ by the build orchestrator; the compiler does not discover either itself.
 - The macro implementation package cannot expand itself using its own not-yet-
   built executable. Diagnose cycles with a dependency chain.
 
+B.15 implements a dependency-unit plan keyed by canonical package root, selected
+source target/role, host-versus-target platform and triple. The normal
+`[dependencies]` graph supplies all edges. Ordinary children inherit the parent's
+platform; proc children switch to the host, including their ordinary SDK/std
+closure and any nested proc libraries. Compiler-input closures stop at proc
+boundaries so a target unit receives proc metadata but not the provider's host
+libraries. Shared native and simulated foreign-triple planning keep host and
+target artifact/object paths distinct, even for the same package. Cycles report
+the involved package/platform/role chain before compilation. Existing in-session
+artifact reuse retains known package metadata after fixture sources are removed.
+
+Compiler-produced identities record the native triple. Runtime products record
+proc dependencies as metadata-only, not body/object dependencies. A requested
+definition-side helper handle comes from the provider's explicitly supplied
+ordinary dependency identities, recorded deterministically in its descriptor.
+That requirement is matched by logical crate name/version/identity
+format to exactly one explicitly supplied consumer ordinary artifact; its target
+identity and public exports supply binding authority. Host triples, host source
+fingerprints and caller aliases are not reused as target authority. Missing or
+ambiguous requirements diagnose with the required crate/version. No SDK or helper
+crate is injected by the compiler.
+
+The current compiler is native-only: simulated host/target triples validate the
+planner, while execution refuses a foreign triple rather than silently producing
+native code. B.16 connects proc-host package execution; B.17 completes role-aware
+freshness and relocation. These are not yet cross-compilation claims.
+
 The generated executable contains a dispatcher and SDK transport runner; authors
 do not implement framing, stdin/stdout handling, or a handwritten export table.
 Bootstrap it using ordinary Rock code and an explicitly available SDK, without

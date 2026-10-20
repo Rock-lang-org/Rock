@@ -257,7 +257,8 @@ fn expand_frontend(config: &Config, sdk: Option<&macro_expansion::host::ProcMacr
         debug_ast(&ast);
     }
 
-    let mut macro_context = macro_expansion::MacroExpansionContext::new(config);
+    let mut macro_context = macro_expansion::MacroExpansionContext::new(config)
+        .with_runtime_dependency_identities(runtime_dependency_identities(&ctx));
     for (name, artifact) in ctx.proc_macro_artifacts() {
         macro_context = macro_context.with_named_proc_macro_artifact(name.to_string(), artifact.clone());
     }
@@ -358,8 +359,9 @@ fn compile_impl(config: &Config, emit_products: bool, sdk: Option<&macro_expansi
 
     let source_fingerprint =
         product_source_fingerprint(config, &source_db, &fingerprint_source_files);
-    let current_crate_identity = ProductCrateIdentity::local(effective_current_crate_name.clone())
+    let mut current_crate_identity = ProductCrateIdentity::local(effective_current_crate_name.clone())
         .with_source_fingerprint(source_fingerprint.clone());
+    current_crate_identity.target_triple = Some(sysroot::host_target_triple());
     let compilation_identity = mono::CompilationIdentityContext::new(
         hir.root_crate_id,
         current_crate_identity.clone(),
@@ -374,7 +376,7 @@ fn compile_impl(config: &Config, emit_products: bool, sdk: Option<&macro_expansi
         let (mut products, product_id_remap) = CompilerProducts::from_resolved_hir_with_remap(
             current_crate_identity.clone(),
             &hir,
-            product_dependencies_from_config(config),
+            product_dependencies_from_config(config, crate_ctx),
             product_dependency_crate_identities_from_context(crate_ctx),
             source_fingerprint.clone(),
             ProductLinkData::default(),
@@ -514,7 +516,10 @@ fn compile_impl(config: &Config, emit_products: bool, sdk: Option<&macro_expansi
 
     if emit_products && sdk.is_some() {
         let artifact = macro_expansion::proc_macro::ProcMacroArtifact::for_executable(
-            effective_current_crate_name, exe_path, proc_macro_exports.clone());
+            effective_current_crate_name, exe_path, proc_macro_exports.clone()).map(|mut artifact| {
+                artifact.definition_dependencies = runtime_dependency_identities(crate_ctx);
+                artifact
+            });
         products = Some(artifact.and_then(|artifact| CompilerProducts::for_proc_macro(
             current_crate_identity, artifact, source_fingerprint)).map_err(|error|
                 Diagnostics(vec![diagnostic::Diagnostic::for_internal(error)]))?);
@@ -765,6 +770,12 @@ pub fn source_load_errors_to_diagnostics(
     diagnostics
 }
 
+fn runtime_dependency_identities(crates: &CrateContext) -> Vec<ProductCrateIdentity> {
+    crates.product_crate_ids.iter().filter_map(|(identity, id)|
+        crates.extern_crates().find(|provider| provider.crate_id() == *id && provider.metadata().proc_macros().is_empty())
+            .map(|_| identity.clone())).collect()
+}
+
 fn module_name_from_entry(entry_file: &std::path::Path) -> String {
     entry_file
         .file_stem()
@@ -773,15 +784,21 @@ fn module_name_from_entry(entry_file: &std::path::Path) -> String {
         .to_string()
 }
 
-fn product_dependencies_from_config(config: &Config) -> Vec<ProductDependencyIdentity> {
+fn product_dependencies_from_config(config: &Config, crates: &CrateContext) -> Vec<ProductDependencyIdentity> {
     config
         .extern_artifacts
         .iter()
         .map(|(name, artifact_path)| {
-            ProductDependencyIdentity::artifact_object(
+            let mut dependency = ProductDependencyIdentity::artifact_object(
                 name.clone(),
                 canonical_product_dependency_artifact_path(artifact_path),
-            )
+            );
+            if crates.extern_crates().any(|provider| provider.name() == name && !provider.metadata().proc_macros().is_empty()) {
+                dependency.capabilities = products::ProductDependencyCapabilities {
+                    metadata: true, bodies: false, link: products::ProductDependencyLinkCapability::MetadataOnly,
+                };
+            }
+            dependency
         })
         .collect()
 }

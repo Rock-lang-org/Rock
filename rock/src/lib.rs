@@ -5,6 +5,7 @@ pub mod cli;
 mod commands;
 mod compile;
 mod deps;
+mod dependency_plan;
 mod package;
 mod progress;
 pub mod project;

@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -11,7 +11,7 @@ use crate::{
     bundled_sysroot::{
         ensure_sysroot_std_available, package_requires_sysroot_std, STD_CRATE_NAME,
     },
-    deps::resolve_dependency_root,
+    dependency_plan::{BuildPlan, BuildTriples, BuildUnitId},
     package::{BuildProfile, Package},
     progress,
     rockc::{
@@ -23,10 +23,10 @@ pub(crate) struct ArtifactBuildState {
     profile: BuildProfile,
     no_proc_execution: bool,
     project_root: PathBuf,
-    artifacts: HashMap<PathBuf, PathBuf>,
-    artifact_dependencies: HashMap<PathBuf, Vec<(String, PathBuf)>>,
+    triples: BuildTriples,
+    artifacts: HashMap<BuildUnitId, PathBuf>,
+    packages: HashMap<PathBuf, Package>,
     uses_std: HashMap<PathBuf, bool>,
-    stack: Vec<PathBuf>,
     pub(crate) progress: progress::BuildProgress,
 }
 
@@ -37,18 +37,17 @@ impl ArtifactBuildState {
             no_proc_execution: package.no_proc_execution,
             project_root: package.root_dir.clone(),
             artifacts: HashMap::new(),
-            artifact_dependencies: HashMap::new(),
+            packages: HashMap::new(),
+            triples: BuildTriples::native(),
             uses_std: HashMap::new(),
-            stack: Vec::new(),
             progress: progress::BuildProgress::default(),
         }
     }
 
     pub(crate) fn for_targets(package: &Package, root_targets: usize) -> Result<Self, String> {
-        let mut roots = HashSet::new();
-        collect_package_roots(package, &mut roots)?;
+        let plan = BuildPlan::new(package, BuildTriples::native())?;
         Ok(Self {
-            progress: progress::BuildProgress::new(roots.len() - 1 + root_targets),
+            progress: progress::BuildProgress::new(plan.units.len() - 1 + root_targets),
             ..Self::new(package)
         })
     }
@@ -68,26 +67,19 @@ impl ArtifactBuildState {
     }
 }
 
-fn collect_package_roots(package: &Package, roots: &mut HashSet<PathBuf>) -> Result<(), String> {
-    roots.insert(package.root_dir.clone());
-    if let Some(dependencies) = &package.manifest.dependencies {
-        for (name, dependency) in dependencies {
-            let root = resolve_dependency_root(&package.root_dir, name, dependency)?;
-            if !roots.contains(&root) {
-                collect_package_roots(&Package::load(root)?, roots)?;
-            }
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn collect_dependency_artifacts(
     package: &Package,
     state: &mut ArtifactBuildState,
 ) -> Result<Vec<(String, PathBuf)>, String> {
     let mut artifacts = BTreeMap::new();
-    let mut visited = HashSet::new();
-    collect_dependency_artifacts_into(package, state, &mut visited, &mut artifacts)?;
+    let plan = BuildPlan::with_known_packages(package, state.triples.clone(), &state.project_root, &state.packages)?;
+    for id in &plan.units[&plan.root].compiler_inputs {
+        let path = ensure_planned_artifact(id, &plan, state)?;
+        let name = plan.units[id].package.manifest.crate_.name.clone();
+        if artifacts.insert(name.clone(), path.clone()).is_some_and(|previous| previous != path) {
+            return Err(format!("conflicting dependency build units for crate '{name}'"));
+        }
+    }
 
     Ok(artifacts.into_iter().collect())
 }
@@ -128,74 +120,37 @@ pub(crate) fn collect_root_artifacts(
     Ok(artifacts)
 }
 
-fn collect_dependency_artifacts_into(
-    package: &Package,
-    state: &mut ArtifactBuildState,
-    visited: &mut HashSet<PathBuf>,
-    artifacts: &mut BTreeMap<String, PathBuf>,
-) -> Result<(), String> {
-    let Some(dependencies) = &package.manifest.dependencies else {
-        return Ok(());
-    };
-
-    for (dep_name, dependency) in dependencies {
-        let dep_root = resolve_dependency_root(&package.root_dir, dep_name, dependency)?;
-        let dep_root = dep_root
-            .canonicalize()
-            .map_err(|e| format!("Failed to resolve crate root {}: {}", dep_root.display(), e))?;
-        if !visited.insert(dep_root.clone()) {
-            continue;
-        }
-
-        let dep_package = Package::load(dep_root.clone())?;
-        let artifact_path = ensure_artifact(&dep_root, state)?;
-        artifacts.insert(dep_package.manifest.crate_.name.clone(), artifact_path);
-        collect_dependency_artifacts_into(&dep_package, state, visited, artifacts)?;
-    }
-
-    Ok(())
-}
-
 pub(crate) fn ensure_artifact(
     crate_root: &Path,
     state: &mut ArtifactBuildState,
 ) -> Result<PathBuf, String> {
-    let canonical_root = crate_root.canonicalize().map_err(|e| {
-        format!(
-            "Failed to resolve crate root {}: {}",
-            crate_root.display(),
-            e
-        )
-    })?;
+    let canonical_root = crate_root.canonicalize().map_err(|error| format!("Failed to resolve crate root {}: {error}", crate_root.display()))?;
+    let mut package = match state.packages.get(&canonical_root) {
+        Some(package) => package.clone(),
+        None => Package::load(canonical_root)?,
+    };
+    package.target = package.manifest.library().cloned().ok_or_else(|| format!(
+        "Package '{}' has no library target and cannot be used as a dependency; add a [lib] target", package.manifest.crate_.name))?;
+    package.profile = state.profile; package.no_proc_execution = state.no_proc_execution;
+    package.platform = crate::dependency_plan::BuildPlatform::Target;
+    let plan = BuildPlan::with_known_packages(&package, state.triples.clone(), &state.project_root, &state.packages)?;
+    ensure_planned_artifact(&plan.root, &plan, state)
+}
 
-    if let Some(existing) = state.artifacts.get(&canonical_root) {
+fn ensure_planned_artifact(id: &BuildUnitId, plan: &BuildPlan, state: &mut ArtifactBuildState) -> Result<PathBuf, String> {
+    if let Some(existing) = state.artifacts.get(id) {
         return Ok(existing.clone());
     }
-
-    if let Some(position) = state.stack.iter().position(|path| path == &canonical_root) {
-        let cycle = state.stack[position..]
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        return Err(format!("Circular dependency detected: {}", cycle));
-    }
-
-    state.stack.push(canonical_root.clone());
-
-    let result = (|| {
-        let mut package = Package::load(canonical_root.clone())?;
-        let Some(library) = package.manifest.library() else {
-            return Err(format!(
-                "Package '{}' has no library target and cannot be used as a dependency; add a [lib] target",
-                package.manifest.crate_.name
-            ));
-        };
-        package.target = library.clone();
+    (|| {
+        let package = plan.units[id].package.clone();
+        debug_assert_eq!(*id, plan.units[id].id);
+        if plan.units[id].runtime_inputs.iter().any(|input| input.platform != id.platform) {
+            return Err("runtime inputs cross the host/target boundary".into());
+        }
         package.require_runtime_target()?;
-        package.profile = state.profile;
-        package.no_proc_execution = state.no_proc_execution;
-        package.use_project_build(&state.project_root);
+        if id.triple != rock_shared::sysroot::host_target_triple() {
+            return Err(format!("native compiler cannot build requested platform triple '{}'", id.triple));
+        }
         let mut implicit_artifact_inputs = if package_requires_sysroot_std(&package) {
             vec![ensure_sysroot_std_available(package.no_proc_execution)?.std_artifact.clone()]
         } else {
@@ -203,21 +158,14 @@ pub(crate) fn ensure_artifact(
         };
         let mut dependency_artifacts = Vec::new();
         let mut dependencies_use_std = false;
-        if let Some(dependencies) = &package.manifest.dependencies {
-            for (dep_name, dependency) in dependencies {
-                let dep_root = resolve_dependency_root(&package.root_dir, dep_name, dependency)?;
-                let artifact = ensure_artifact(&dep_root, state)?;
+        for dependency_id in &plan.units[id].compiler_inputs {
+                let artifact = ensure_planned_artifact(dependency_id, plan, state)?;
+                let dep_name = plan.units[dependency_id].package.manifest.crate_.name.clone();
                 if dep_name != STD_CRATE_NAME {
                     dependencies_use_std |=
                         state.uses_std.get(&artifact).copied().unwrap_or(false);
                 }
-                // Loaded dependencies also require their complete artifact closure.
-                // Retain it in the build state so cached sources need not be re-read.
-                if let Some(transitive) = state.artifact_dependencies.get(&artifact) {
-                    dependency_artifacts.extend(transitive.iter().cloned());
-                }
-                dependency_artifacts.push((dep_name.clone(), artifact));
-            }
+                dependency_artifacts.push((dep_name, artifact));
         }
         dependency_artifacts.sort();
         dependency_artifacts.dedup();
@@ -283,18 +231,15 @@ pub(crate) fn ensure_artifact(
 
         state
             .artifacts
-            .insert(canonical_root.clone(), artifact_path.clone());
-        state.artifact_dependencies.insert(artifact_path.clone(), dependency_artifacts);
+            .insert(id.clone(), artifact_path.clone());
+        state.packages.insert(package.root_dir.clone(), package.clone());
         state.uses_std.insert(
             artifact_path.clone(),
             package_requires_sysroot_std(&package) || dependencies_use_std,
         );
         state.progress.complete();
         Ok(artifact_path)
-    })();
-
-    state.stack.pop();
-    result
+    })()
 }
 
 fn artifact_is_fresh(

@@ -30,7 +30,8 @@ fn expand(program: Program, output: TokenStream, dependencies: Vec<ProductCrateI
     artifact.definition_dependencies = dependencies.clone();
     let request_path = artifact.executable.with_extension("request");
     let config = Config::default();
-    let context = MacroExpansionContext::new(&config).with_named_proc_macro_artifact("provider".into(), artifact);
+    let context = MacroExpansionContext::new(&config).with_named_proc_macro_artifact("provider".into(), artifact)
+        .with_runtime_dependency_identities(dependencies.clone());
     let result = expand_macros_with_context(program, &context);
     let request_bytes = std::fs::read(&request_path).unwrap_or_else(|error| panic!("worker request {request_path:?}: {error}; expansion: {result:?}"));
     let request = super::proc_macro::decode_request(&request_bytes).unwrap();
@@ -151,4 +152,28 @@ fn macro_a_14_construction_fresh_handles_are_invocation_local() {
     }
     assert!(minted.iter().all(|context| *context != SyntaxContext::ROOT));
     assert_ne!(minted[0], minted[1]);
+}
+
+#[test]
+fn macro_b_15_runtime_helper_resolves_consumer_identity_not_host_fingerprint_or_alias() {
+    let (mut crates, mut target, id) = dependency("consumer_alias");
+    crates.product_crate_ids.clear();
+    target.target_triple = Some("target-fixture".into());
+    target.source_fingerprint.source_hash = Some("consumer-content".into());
+    crates.product_crate_ids.insert(target.clone(), id.crate_id);
+    let mut host = target.clone(); host.target_triple = Some("host-fixture".into());
+    host.source_fingerprint.source_hash = Some("host-content".into());
+    let config = Config::default();
+    let invocation = super::tests::first_invocation(&parse("%provider::make\n"));
+    let context = MacroExpansionContext::new(&config).with_runtime_dependency_identities(vec![target.clone()]);
+    let binding = context.construction_context(ConstructionContext { invocation: invocation.id, kind: ConstructionKind::Dependency(0) }, &invocation, &[host.clone()]).unwrap();
+    let environments = context.binding_environments.borrow().resolve(&crates).unwrap();
+    let mut resolver = ResolverTables::default(); resolver.definition_environments = environments;
+    assert_eq!(resolver.resolve_binding_path(None, &[("host_alias".into(), binding), ("helper".into(), binding)]), Some(id));
+    assert_eq!(resolver.resolve_binding_path(None, &[("host_alias".into(), binding), ("private".into(), binding)]), None);
+    for supplied in [vec![], vec![ProductCrateIdentity { version: "99".into(), ..target.clone() }], vec![target.clone(), target.clone()]] {
+        let context = MacroExpansionContext::new(&config).with_runtime_dependency_identities(supplied);
+        let error = context.construction_context(ConstructionContext { invocation: invocation.id, kind: ConstructionKind::Dependency(0) }, &invocation, &[host.clone()]).unwrap_err();
+        assert!(error.contains("runtime") && error.contains("runtime@0.1.0"), "{error}");
+    }
 }

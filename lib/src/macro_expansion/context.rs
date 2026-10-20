@@ -22,6 +22,7 @@ pub struct MacroExpansionContext<'a> {
     pub config: &'a Config,
     pub max_depth: usize,
     pub proc_macro_artifacts: Vec<ProcMacroDependency>,
+    runtime_dependencies: Vec<crate::products::ProductCrateIdentity>,
     pub source_modules: crate::source_loader::SourceModuleSet,
     pub(crate) binding_environments: RefCell<super::binding_environment::BindingEnvironments>,
     pub(super) hygiene: RefCell<super::hygiene::Hygiene>,
@@ -38,6 +39,7 @@ impl<'a> MacroExpansionContext<'a> {
             config,
             max_depth: 100,
             proc_macro_artifacts: Vec::new(),
+            runtime_dependencies: Vec::new(),
             source_modules: crate::source_loader::SourceModuleSet::default(),
             binding_environments: RefCell::new(super::binding_environment::BindingEnvironments::default()),
             hygiene: RefCell::new(super::hygiene::Hygiene::default()),
@@ -50,6 +52,23 @@ impl<'a> MacroExpansionContext<'a> {
     pub fn with_max_depth(mut self, max_depth: usize) -> Self {
         self.max_depth = max_depth;
         self
+    }
+
+    /// Only explicitly supplied consumer-side ordinary products grant runtime authority.
+    pub fn with_runtime_dependency_identities(mut self, dependencies: Vec<crate::products::ProductCrateIdentity>) -> Self {
+        self.runtime_dependencies = dependencies;
+        self
+    }
+
+    pub(super) fn runtime_dependency(&self, required: &crate::products::ProductCrateIdentity) -> Result<crate::products::ProductCrateIdentity, String> {
+        let mut matches = self.runtime_dependencies.iter().filter(|identity|
+            identity.name == required.name && identity.version == required.version && identity.format_version == required.format_version);
+        let identity = matches.next().ok_or_else(|| format!(
+            "required runtime dependency {}@{} was not explicitly supplied by the consumer", required.name, required.version))?;
+        if matches.next().is_some() {
+            return Err(format!("required runtime dependency {}@{} has ambiguous consumer identities", required.name, required.version));
+        }
+        Ok(identity.clone())
     }
 
     pub fn with_limits(self, limits: super::ExpansionLimits) -> Self {

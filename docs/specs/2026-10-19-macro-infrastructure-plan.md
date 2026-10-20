@@ -1869,6 +1869,119 @@ Host/target planning, package building and role-sensitive freshness/relocation
 remain B.15–B.17. Formatting remains deferred, Beads unavailable, unrelated work
 untouched. No functional edits follow the final gates.
 
+### B.15 delivery receipt (2026-10-20)
+
+`rock::dependency_plan` models source target/role and execution platform separately.
+Build units are keyed by canonical root, selected target, platform and triple;
+existing profile/compiler/source/dependency checks remain in the artifact build
+path. Ordinary dependency edges inherit host/target, proc edges switch to host.
+Topological postorder builds nested proc dependencies before their users, and
+cycles name the involved root/platform/role/triple chain. Compiler-input closures
+include ordinary-library dependencies but stop at proc boundaries; runtime input
+sets exclude proc units. No manifest dependency table or SDK package spelling was
+added. The existing artifact builder consumes these planned inputs and keys its
+in-session cache by build unit rather than path alone.
+
+Package artifact/object directories distinguish platform, triple and role (and
+retain profile/selected source target/root identity). Native target layout stays
+unchanged; native host libraries still have separate paths, not shared objects.
+Compiler-produced product identities now record the native triple, using the
+existing identity field without a schema change. Runtime products mark proc
+dependencies metadata-only, with no bodies/target objects. Proc package execution
+continues to fail closed until the B.16 SDK/dispatcher orchestration is wired.
+
+Definition-side runtime helper handles resolve their logical crate name/version/
+identity-format requirement to exactly one explicitly supplied consumer ordinary
+identity, then reuse public-export-only binding environments. A host fingerprint
+or triple is not binding authority in the consumer; missing/wrong-version or
+ambiguous target identities diagnose with the required crate/version. The index
+still must have been declared by the macro descriptor, and neither aliases nor
+private exports gain authority. Only requested helper handles require consumer
+artifacts; an unused host dependency does not become a target dependency.
+Proc publication records the provider's explicitly supplied ordinary identities
+as the deterministic set of available handles, including SDK/std; these are
+requirements only when used, not automatic target artifact dependencies. Native
+acceptance checks that SDK/std handles are published with their host triple while
+remaining absent from the consumer dependency/object list.
+
+Two planner controls cover distinct simulated triples, one package needed in both
+platforms, host SDK/std libraries, nested proc dependencies, topological order,
+proc-boundary closure isolation, native same-triple host/object isolation,
+ordinary/proc role changes for the same source, and host-cycle rejection without
+reading compiler source or producing outputs. A compiler unit covers consumer
+fingerprint/triple rebinding, alias independence, public/private authority, missing,
+wrong-version and ambiguous consumer identities. Extended native SDK acceptance
+publishes an ordinary consumer with a metadata-only proc dependency, then links
+and executes a downstream program (exit 42) with only consumer/proc artifacts,
+without provider host/SDK/std object inputs.
+
+Initial planner and runtime-identity API RED commands failed before the new APIs
+existed. The first full CLI run passed 92 tests but exposed a regression in the
+unchanged in-session artifact reuse observer after deleting a dependency manifest;
+the planner now reuses successfully built package metadata from the same build
+state, preserving source-free reuse without reading deleted sources. Its complete
+rerun passes. No original observer assertion was removed or narrowed.
+
+The existing compiler/toolchain is native-only. Foreign triples are simulated in
+the planner, and the execution adapter explicitly rejects unsupported triples;
+no runnable cross-target acceptance is claimed. B.16 remains real proc package
+SDK/dispatcher execution, B.17 role-sensitive freshness/relocation/source-free
+acceptance. Product format 54, protocol 7 and `RKLOSS04` remain unchanged.
+
+Verification evidence (logs under `/tmp/opencode/`):
+
+- Planner API RED: `cargo test -p rock --lib macro_b_15`, missing planner APIs;
+  `macro-b15-red.log`, SHA-256
+  `f4bc79ea5a7b1c20288b8932c210f34fc0169d4c4a68d9ed56abaaaf285ae940`.
+- Initial planner GREEN: the same command passes two controls;
+  `macro-b15-plan.log`, SHA-256
+  `fe48bd1447699587f7cfe9f5b988cc41d30dad2a3fdf77b49f06323c181b28fd`.
+- Runtime API RED: `cargo test -p rock-lib --lib macro_b_15`, missing consumer
+  dependency API; `macro-b15-runtime-red.log`, SHA-256
+  `03275a8ca14f024e6bdee0fc7450273fe2be8ade7ed9ec67468bb908101dd7a6`.
+- `cargo test -p rock-lib --lib macro_`: 407 pass; `macro-b15-macros.log`, SHA-256
+  `c27974c6a4ba99d7c313408a91e939dc144a4ac7a30360e678948607ac42415f`.
+- `cargo test -p rock`: initial 92 pass/one failed source-deletion reuse control;
+  `macro-b15-rock.log`, SHA-256
+  `a4af946a17a59284245e8457b7aece31a3f54634fea1693e6444bff17eb2f7d8`.
+  After retaining known package metadata, 93 pass, binary/doctests zero;
+  `macro-b15-rock-final.log`, SHA-256
+  `3bb6dfd4d972cb28b1941fa38641674bf424ecfa071c92c4d18b795178ee5aa4`.
+- Native consumer publication/linkage: `cargo test -p rock-lib --test macro_sdk
+  -- --nocapture`, one integration passes in 234.75 seconds;
+  `macro-b15-sdk.log`, SHA-256
+  `60fe817b613d9c44bd12e179d941569e933c82980ef7854cf445c54aca71f515`.
+  This focused run precedes the final automatic publication of the host's
+  available dependency handles; the final SDK rerun below covers those assertions.
+- Workspace/all-targets check and Clippy pass with warnings, with no new
+  planner/runtime-identity warning. `macro-b15-check-final.log`, SHA-256
+  `1e0dc46a29d84b46b29b14f3a7791fe760ca7c341cb575761362e6cffdce76dd`;
+  `macro-b15-clippy-final.log`, SHA-256
+  `3720bd836ce3f9c9abe9500252c6c8722aa92fd15f955a7e755f9f7f089c9cdd`.
+- Full library: `cargo test -p rock-lib`, 2,718 units, 806 main integrations,
+  six diagnostic integrations, 14 process integrations, one SDK (240.01 seconds)
+  and one parser integration pass; one doctest ignored. The run was started
+  before the final descriptor handle publication change; final focused SDK and
+  macro reruns follow below. `macro-b15-acceptance.log`, SHA-256
+  `2297322e33739e9f4a76cf8f8ef79f6c69c9d03d7d16e2a0790944f8d6e87c6d`.
+- Final SDK: `cargo test -p rock-lib --test macro_sdk -- --nocapture`, one
+  integration passes in 233.53 seconds, including the added host handle list
+  assertions and downstream native linkage. `macro-b15-sdk-final.log`, SHA-256
+  `5d6f6d2b3aad81a55c5251f4d2009f2ab66a5579f706673e990cddd593d10764`.
+- Final macro units: `cargo test -p rock-lib --lib macro_`, 407 pass;
+  `macro-b15-macros-final.log`, SHA-256
+  `3bf1a4d41dfb198e39fa4589d5e92c221c11db304482e775ddf72a86016cd0bd`.
+- `cargo test -p rockc`: 55 pass; `macro-b15-rockc.log`, SHA-256
+  `d73aeaa7fa7623476afead1d955a93e234a9bd5bc7ff2c1c0334cef54fbe459c`.
+- `cargo test -p rock-shared --all-features`: 30 units and one doctest pass;
+  `macro-b15-shared.log`, SHA-256
+  `7726bc32dff531ffd5afd5fb172828d6866a78d7e053fdf93e9d9c4bf84b55e7`.
+- `cargo build --workspace`: pass with warnings; `macro-b15-build.log`, SHA-256
+  `8da56ffd5411b1abaa96d5ed8fc55d779cb23273e8a9584ad932a7e6a98583bf`.
+
+No functional edits follow the final focused/check/Clippy gates. Formatting
+remains deferred, Beads unavailable, and unrelated work untouched.
+
 Do not widen `rock`'s dependency on compiler internals to generate semantic data:
 `rock` orchestrates `rockc`, which delegates compilation/discovery/checking to
 `lib`. Proc-only artifact emission now uses host metadata rather than a target
