@@ -220,7 +220,8 @@ impl Lowerer {
 
                                     let Some(variant) =
                                         enum_info.variants.iter().find(|v| v.name == variant_name
-                                            && self.resolver.variant_contexts.get(&(enum_info.id, v.id)).copied().unwrap_or_default() == member_context)
+                                            && self.resolver.member_context_matches(enum_info.id, member_context,
+                                                self.resolver.variant_contexts.get(&(enum_info.id, v.id)).copied().unwrap_or_default()))
                                     else {
                                         self.diagnostics.push_type_with_span(
                                             format!(
@@ -283,7 +284,8 @@ impl Lowerer {
                                             .unwrap_or_else(|| enum_info.name.clone());
                                     if let Some(variant) =
                                         enum_info.variants.iter().find(|v| v.name == type_name
-                                            && self.resolver.variant_contexts.get(&(enum_info.id, v.id)).copied().unwrap_or_default() == member_context)
+                                            && self.resolver.member_context_matches(enum_info.id, member_context,
+                                                self.resolver.variant_contexts.get(&(enum_info.id, v.id)).copied().unwrap_or_default()))
                                     {
                                         let subst: HashMap<GenericParamId, Type> = enum_info
                                             .generic_params
@@ -388,7 +390,8 @@ impl Lowerer {
                                     .variants
                                     .iter()
                                     .find(|variant| variant.name == type_name
-                                        && self.resolver.variant_contexts.get(&(enum_info.id, variant.id)).copied().unwrap_or_default() == member_context)
+                                        && self.resolver.member_context_matches(enum_info.id, member_context,
+                                            self.resolver.variant_contexts.get(&(enum_info.id, variant.id)).copied().unwrap_or_default()))
                                     .cloned()
                                     .map(|variant| {
                                         (
@@ -458,7 +461,8 @@ impl Lowerer {
                                     .variants
                                     .iter()
                                     .find(|variant| variant.name == variant_name
-                                        && self.resolver.variant_contexts.get(&(enum_info.id, variant.id)).copied().unwrap_or_default() == member_context)
+                                        && self.resolver.member_context_matches(enum_info.id, member_context,
+                                            self.resolver.variant_contexts.get(&(enum_info.id, variant.id)).copied().unwrap_or_default()))
                                     .cloned()
                                 else {
                                     self.diagnostics.push_type_with_span(

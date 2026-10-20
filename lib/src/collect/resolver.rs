@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -74,6 +74,8 @@ pub struct ResolverTables {
     #[serde(skip)]
     pub(crate) binding_exports: HashMap<Vec<(String, SyntaxContext)>, DefId>,
     #[serde(skip)]
+    pub(crate) macro_bindings: HashSet<Vec<(String, SyntaxContext)>>,
+    #[serde(skip)]
     pub(crate) definition_binding_paths: HashMap<DefId, Vec<(String, SyntaxContext)>>,
     #[serde(skip)]
     pub(crate) signature_paths: HashMap<Vec<(String, SyntaxContext)>, DefId>,
@@ -92,6 +94,65 @@ pub struct ResolverTables {
 }
 
 impl ResolverTables {
+    pub(crate) fn source_lookup_scopes(&self, scope: Option<ModuleId>, context: SyntaxContext) -> Vec<(Vec<(String, SyntaxContext)>, SyntaxContext)> {
+        let mut scope = scope.and_then(|id| self.module_binding_paths.get(&id)).cloned().unwrap_or_default();
+        let mut context = context;
+        let mut scopes = Vec::new();
+        for _ in 0..=self.definition_environments.len() {
+            scopes.push((scope, context));
+            scopes.push((Vec::new(), context));
+            let Some(crate::macro_expansion::binding_environment::ResolvedDefinitionEnvironment::SourceScope { path, context: original }) = self.definition_environments.get(&context) else { break; };
+            scope = path.clone();
+            context = *original;
+        }
+        scopes
+    }
+
+    pub(crate) fn member_context_matches(&self, owner: DefId, actual: SyntaxContext, declared: SyntaxContext) -> bool {
+        use crate::macro_expansion::binding_environment::ResolvedDefinitionEnvironment;
+        let mut actual = actual;
+        for _ in 0..=self.definition_environments.len() {
+            if actual == declared { return true; }
+            match self.definition_environments.get(&actual) {
+                Some(ResolvedDefinitionEnvironment::SourceScope { context, .. }) => actual = *context,
+                Some(ResolvedDefinitionEnvironment::PublicDependency(exports)) => {
+                    return declared == SyntaxContext::ROOT && exports.values().any(|id| *id == owner);
+                }
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// Macro-only directives are checked by expansion, not assigned ordinary DefIds.
+    pub(crate) fn resolves_macro_directive(&self, scope: Option<ModuleId>, path: &[(String, SyntaxContext)]) -> bool {
+        let mut scope = scope.and_then(|id| self.module_binding_paths.get(&id)).cloned().unwrap_or_default();
+        let mut path = path.to_vec();
+        for _ in 0..=self.definition_environments.len() {
+            let mut qualified = scope.clone();
+            qualified.extend_from_slice(&path);
+            if self.resolve_member_contexts_with(&qualified, |path| self.absolute_macro_binding(path)).is_some()
+                || self.resolve_member_contexts_with(&path, |path| self.absolute_macro_binding(path)).is_some() { return true; }
+            let Some((_, context)) = path.first() else { return false; };
+            let Some(crate::macro_expansion::binding_environment::ResolvedDefinitionEnvironment::SourceScope { path: prefix, context: original }) = self.definition_environments.get(context) else { return false; };
+            if path.iter().any(|(_, other)| *other != SyntaxContext::ROOT && other != context) { return false; }
+            scope = prefix.clone();
+            path = path.iter().map(|(name, current)| (name.clone(), if current == context { *original } else { *current })).collect();
+        }
+        false
+    }
+
+    fn absolute_macro_binding(&self, path: &[(String, SyntaxContext)]) -> Option<()> {
+        if self.macro_bindings.contains(path) { return Some(()); }
+        for split in (1..path.len()).rev() {
+            let Some(id) = self.resolve_absolute_binding_path(&path[..split]) else { continue; };
+            let Some(prefix) = self.definition_binding_paths.get(&id) else { continue; };
+            let mut target = prefix.clone(); target.extend_from_slice(&path[split..]);
+            if self.macro_bindings.contains(&target) { return Some(()); }
+        }
+        None
+    }
+
     pub(crate) fn contextual_scope(&self, scope: Option<ModuleId>) -> bool {
         scope.and_then(|id| self.module_binding_paths.get(&id))
             .is_some_and(|path| path.iter().any(|(_, context)| *context != SyntaxContext::ROOT))
@@ -107,27 +168,35 @@ impl ResolverTables {
         scope: Option<ModuleId>,
         path: &[(String, SyntaxContext)],
     ) -> Option<DefId> {
-        if let Some((_, context)) = path.first() {
-            if let Some(environment) = self.definition_environments.get(context) {
-                use crate::macro_expansion::binding_environment::ResolvedDefinitionEnvironment;
-                // A definition path cannot merge unrelated contextual authorities.
-                if path.iter().any(|(_, other)| *other != SyntaxContext::ROOT && other != context) { return None; }
-                return match environment {
-                    ResolvedDefinitionEnvironment::SourceScope(prefix) => {
-                        if let Some(id) = self.resolve_lexical_binding_path(scope, path) { return Some(id); }
-                        let names = path.iter().map(|(name, _)| (name.clone(), SyntaxContext::ROOT)).collect::<Vec<_>>();
-                        let mut qualified = prefix.clone();
-                        qualified.extend(names.clone());
-                        self.resolve_absolute_binding_path(&qualified).or_else(|| self.resolve_absolute_binding_path(&names))
+        let mut scope = scope;
+        let mut path = path.to_vec();
+        for _ in 0..=self.definition_environments.len() {
+            if let Some((_, context)) = path.first() {
+                if let Some(environment) = self.definition_environments.get(context) {
+                    use crate::macro_expansion::binding_environment::ResolvedDefinitionEnvironment;
+                    // A definition path cannot merge unrelated contextual authorities.
+                    if path.iter().any(|(_, other)| *other != SyntaxContext::ROOT && other != context) { return None; }
+                    match environment {
+                        ResolvedDefinitionEnvironment::SourceScope { path: prefix, context: original } => {
+                            if let Some(id) = self.resolve_lexical_member_contexts(scope, &path) { return Some(id); }
+                            let names = path.iter().map(|(name, current)| (name.clone(), if current == context { *original } else { *current })).collect::<Vec<_>>();
+                            let mut qualified = prefix.clone();
+                            qualified.extend(names.clone());
+                            if let Some(id) = self.resolve_absolute_binding_path(&qualified) { return Some(id); }
+                            path = names;
+                            scope = None;
+                            continue;
+                        }
+                        ResolvedDefinitionEnvironment::PublicDependency(exports) => {
+                            let name = path.iter().skip(1).map(|(name, _)| name.as_str()).collect::<Vec<_>>().join("::");
+                            return exports.get(&name).copied();
+                        }
                     }
-                    ResolvedDefinitionEnvironment::PublicDependency(exports) => {
-                        let name = path.iter().skip(1).map(|(name, _)| name.as_str()).collect::<Vec<_>>().join("::");
-                        exports.get(&name).copied()
-                    }
-                };
+                }
             }
+            return self.resolve_lexical_binding_path(scope, &path);
         }
-        self.resolve_lexical_binding_path(scope, path)
+        None
     }
 
     fn resolve_lexical_binding_path(&self, scope: Option<ModuleId>, path: &[(String, SyntaxContext)]) -> Option<DefId> {
@@ -137,6 +206,30 @@ impl ResolverTables {
             if let Some(id) = self.resolve_absolute_binding_path(&qualified) { return Some(id); }
         }
         self.resolve_absolute_binding_path(path)
+    }
+
+    fn resolve_lexical_member_contexts(&self, scope: Option<ModuleId>, path: &[(String, SyntaxContext)]) -> Option<DefId> {
+        if let Some(prefix) = scope.and_then(|id| self.module_binding_paths.get(&id)) {
+            let mut qualified = prefix.clone(); qualified.extend_from_slice(path);
+            if let Some(id) = self.resolve_member_contexts(&qualified) { return Some(id); }
+        }
+        self.resolve_member_contexts(path)
+    }
+
+    fn resolve_member_contexts(&self, path: &[(String, SyntaxContext)]) -> Option<DefId> {
+        self.resolve_member_contexts_with(path, |path| self.resolve_absolute_binding_path(path))
+    }
+
+    fn resolve_member_contexts_with<T>(&self, path: &[(String, SyntaxContext)], lookup: impl Fn(&[(String, SyntaxContext)]) -> Option<T>) -> Option<T> {
+        let mut path = path.to_vec();
+        for _ in 0..=self.definition_environments.len().saturating_mul(path.len()) {
+            if let Some(value) = lookup(&path) { return Some(value); }
+            let split = (1..path.len()).rev().find(|split| self.resolve_absolute_binding_path(&path[..*split])
+                .is_some_and(|id| self.module_binding_paths.values().any(|module| self.definition_binding_paths.get(&id) == Some(module))))?;
+            let crate::macro_expansion::binding_environment::ResolvedDefinitionEnvironment::SourceScope { context, .. } = self.definition_environments.get(&path[split].1)? else { return None; };
+            path[split].1 = *context;
+        }
+        None
     }
 
     fn resolve_absolute_binding_path(&self, path: &[(String, SyntaxContext)]) -> Option<DefId> {
@@ -355,6 +448,7 @@ pub fn build_resolver_tables(
         binding_paths,
         binding_aliases: HashMap::new(),
         binding_exports: HashMap::new(),
+        macro_bindings: HashSet::new(),
         definition_binding_paths,
         signature_paths,
         module_binding_paths,

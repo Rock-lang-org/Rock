@@ -15,7 +15,7 @@ pub(super) struct ExpansionVisitor<'a, 'cfg> {
     registry: &'a MacroRegistry,
     context: &'a MacroExpansionContext<'cfg>,
     phase: Phase,
-    scope: Vec<String>,
+    scope: super::registry::BindingPath,
     pub(super) executed: usize,
     pub(super) deferred: Option<Diagnostics>,
 }
@@ -26,10 +26,11 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
     }
 
     pub(super) fn set_scope(&mut self, qualified_name: &str) {
-        self.scope = qualified_name.split("::").map(String::from).collect();
-        if self.scope.first().map(String::as_str) == self.context.config.current_crate_name.as_deref() {
+        self.scope = qualified_name.split("::").map(|name| (name.to_string(), Default::default())).collect();
+        if self.scope.first().map(|(name, _)| name.as_str()) == self.context.config.current_crate_name.as_deref() {
             self.scope.remove(0);
         }
+        self.scope = self.registry.loaded_scope(&self.scope.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>());
     }
 
     pub(super) fn module(&mut self, module: &mut Module) -> Result<(), Diagnostics> {
@@ -37,17 +38,18 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
         for mut item in std::mem::take(&mut module.top_levels) {
             if self.phase == Phase::Items {
                 if let TopLevel::MacroInvoc(invocation) = &item {
-                    match self.registry.resolve(&self.scope, &invocation.path_name(), &invocation.span) {
+                    let path = crate::collect::resolver::binding_path(&invocation.path.path).unwrap_or_default();
+                    match self.registry.resolve_contextual(&self.scope, &path, &invocation.span, self.context) {
                         Ok(Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. })) => {
                             let emitted = super::expand_top_level(declaration, invocation, self.context)?;
-                            self.context.note_source_modules(&emitted, &self.scope, invocation.id);
+                            self.context.note_source_modules(&emitted, &self.scope.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>(), invocation.id);
                             output.extend(emitted);
                             self.executed += 1;
                             continue;
                         }
                         Ok(Some(super::registry::MacroEntry { definition: MacroDefinition::Procedural(entry), .. })) => {
                             let emitted = super::expand_proc_macro_top_level(entry, invocation, self.context)?;
-                            self.context.note_source_modules(&emitted, &self.scope, invocation.id);
+                            self.context.note_source_modules(&emitted, &self.scope.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>(), invocation.id);
                             output.extend(emitted);
                             self.executed += 1;
                             continue;
@@ -60,7 +62,7 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
             match &mut item {
                 TopLevel::Module(child) => {
                     let old_scope = self.scope.clone();
-                    if let Some(name) = &child.0.name { self.scope.push(name.name.clone()); }
+                    if let Some(name) = &child.0.name { self.scope.push((name.name.clone(), name.context)); }
                     self.module(&mut child.0)?;
                     self.scope = old_scope;
                 }
@@ -181,7 +183,8 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                     let diagnostics = Diagnostics(vec![diagnostic]);
                     invocation.parent.map(|parent| with_expansion_trace(diagnostics.clone(), self.context, parent)).unwrap_or(diagnostics)
                 };
-                let resolved = self.registry.resolve(&self.scope, &invocation.path_name(), &invocation.span)?;
+                let path = crate::collect::resolver::binding_path(&invocation.path.path).unwrap_or_default();
+                let resolved = self.registry.resolve_contextual(&self.scope, &path, &invocation.span, self.context)?;
                 let Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. }) = resolved else {
                     return Err(failure(Diagnostic::new("expression macro expansion is not implemented for unresolved or procedural macro paths".into(), invocation.span.clone())
                         .with_code(DiagnosticCode::Macro)));

@@ -121,9 +121,7 @@ fn macro_a_01_worker_receives_lossless_input_and_invocation_metadata() {
     let config = crate::Config::default();
     let program = parse_string("%test_macros::native  1 /* trivia */ + 2", &config).unwrap();
     let invocation = invocation(&program).clone();
-    let (artifact, directory) = super::tests::proc_macro_artifact_with_response("native", ProcMacroResponse::Expand {
-        output: proc_macro::encode_stream(&source("main = -> 0")).unwrap(),
-    });
+    let (artifact, directory) = super::tests::proc_macro_artifact_with_response("native", super::tests::constructed_response(&invocation, "main = -> 0"));
     let request_file = artifact.executable.with_extension("request");
     let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
     expand_macros_with_context(program, &context).unwrap();

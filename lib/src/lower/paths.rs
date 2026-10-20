@@ -303,7 +303,8 @@ impl Lowerer {
                     continue;
                 };
 
-            if self.resolver.member_contexts.get(&method_id).copied().unwrap_or_default() != method_context { continue; }
+            if !self.resolver.member_context_matches(trait_def.id, method_context,
+                self.resolver.member_contexts.get(&method_id).copied().unwrap_or_default()) { continue; }
             let mut inherited_generic_params = trait_def
                 .generic_params
                 .iter()
@@ -570,7 +571,8 @@ impl Lowerer {
                     && expected_kind == target_kind
                     && trait_def.methods.get(method_name).map(|member| member.id)
                         .or_else(|| trait_def.signatures.get(method_name).map(|member| member.id))
-                        .is_some_and(|id| self.resolver.member_contexts.get(&id).copied().unwrap_or_default() == method_context))
+                         .is_some_and(|id| self.resolver.member_context_matches(trait_id, method_context,
+                             self.resolver.member_contexts.get(&id).copied().unwrap_or_default())))
                 .then_some(trait_id)
             })
             .collect::<Vec<_>>();
@@ -2009,37 +2011,49 @@ impl Lowerer {
                         )
                     })
                     .collect();
-                for (enum_name, enum_info) in &enum_entries {
-                    for variant in &enum_info.variants {
-                        if variant.name == *name && self.resolver.variant_contexts.get(&(enum_info.id, variant.id)).copied().unwrap_or_default()
-                            == crate::lower::scope::LocalName::from_segment(&path.path[0]).map(|name| name.context).unwrap_or_default() {
-                            if matches!(variant.fields, HirVariantFields::Unit) {
-                                self.record_source_reference(
-                                    span.clone(),
-                                    crate::source_map::SourceSymbol::Variant {
-                                        owner: enum_info.id,
-                                        variant: variant.id,
-                                    },
-                                );
-                                // For generic enums, create fresh type vars
-                                let type_args = self.engine.fresh_generic_args(&enum_info.generic_params, &span);
-                                return HirExpr {
-                                    ty: Type::Enum {
-                                        id: enum_info.id,
-                                        args: type_args,
-                                    },
-                                    kind: HirExprKind::EnumVariant(
-                                        enum_name.to_string(),
-                                        variant.name.clone(),
-                                        vec![],
-                                        Some(HirVariantLocation {
+                let requested_context = crate::lower::scope::LocalName::from_segment(&path.path[0]).map(|name| name.context).unwrap_or_default();
+                let lookups = if requested_context == crate::lexer::lossless::SyntaxContext::ROOT {
+                    vec![(None, requested_context)]
+                } else {
+                    self.resolver.source_lookup_scopes(self.current_module_id, requested_context).into_iter()
+                        .map(|(scope, context)| (Some(scope), context)).collect()
+                };
+                for (lookup_scope, lookup_context) in lookups {
+                    for (enum_name, enum_info) in &enum_entries {
+                        if let Some(scope) = &lookup_scope {
+                            let Some(owner) = self.resolver.definition_binding_paths.get(&enum_info.id) else { continue; };
+                            if owner.get(..owner.len().saturating_sub(1)) != Some(scope.as_slice()) { continue; }
+                        }
+                        for variant in &enum_info.variants {
+                            if variant.name == *name && self.resolver.variant_contexts.get(&(enum_info.id, variant.id)).copied().unwrap_or_default() == lookup_context {
+                                if matches!(variant.fields, HirVariantFields::Unit) {
+                                    self.record_source_reference(
+                                        span.clone(),
+                                        crate::source_map::SourceSymbol::Variant {
                                             owner: enum_info.id,
-                                            variant_id: variant.id,
-                                            name: variant.name.clone(),
-                                        }),
-                                    ),
-                                    span,
-                                };
+                                            variant: variant.id,
+                                        },
+                                    );
+                                    // For generic enums, create fresh type vars
+                                    let type_args = self.engine.fresh_generic_args(&enum_info.generic_params, &span);
+                                    return HirExpr {
+                                        ty: Type::Enum {
+                                            id: enum_info.id,
+                                            args: type_args,
+                                        },
+                                        kind: HirExprKind::EnumVariant(
+                                            enum_name.to_string(),
+                                            variant.name.clone(),
+                                            vec![],
+                                            Some(HirVariantLocation {
+                                                owner: enum_info.id,
+                                                variant_id: variant.id,
+                                                name: variant.name.clone(),
+                                            }),
+                                        ),
+                                        span,
+                                    };
+                                }
                             }
                         }
                     }

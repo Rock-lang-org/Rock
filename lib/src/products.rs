@@ -60,7 +60,7 @@ impl From<DefId> for ProductDefId {
     }
 }
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 50;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 51;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;
@@ -6903,6 +6903,7 @@ mod tests {
                 host_triple: "x86_64-unknown-linux-gnu".to_string(),
                 executable: "macro-host".into(),
                 capabilities: vec![crate::macro_expansion::proc_macro::ProcMacroCapability::Stdio],
+                definition_dependencies: Vec::new(),
                 exports: vec![crate::macro_expansion::proc_macro::ProcMacroExport {
                     name: "make_main".to_string(),
                     identity: "macros::make_main".to_string(),
@@ -7137,7 +7138,7 @@ mod tests {
 
     #[test]
     fn product_artifact_format_version_matches_shared_contract() {
-        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 50);
+        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 51);
         assert_eq!(
             PRODUCT_ARTIFACT_FORMAT_VERSION,
             rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION

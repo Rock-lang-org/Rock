@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{JoinBoundary, LosslessRun, LosslessStream, RunKind, SourcePosition, SourceSnapshot, SyntaxContext};
 
-const MAGIC: [u8; 8] = *b"RKLOSS02";
+const MAGIC: [u8; 8] = *b"RKLOSS03";
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RUNS: usize = 1024 * 1024;
 
@@ -21,6 +21,7 @@ struct WireRun {
     context: u32,
     boundary: JoinBoundary,
     origin: Option<crate::macro_expansion::TokenOrigin>,
+    construction: Option<super::ConstructionContext>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -72,7 +73,7 @@ impl Serialize for LosslessStream {
                     id
                 }
             };
-            runs.push(WireRun { source, range: run.range.clone(), kind: run.kind, context: run.context.0, boundary: run.boundary, origin: run.origin.clone() });
+            runs.push(WireRun { source, range: run.range.clone(), kind: run.kind, context: run.context.0, boundary: run.boundary, origin: run.origin.clone(), construction: run.construction });
         }
         WireRef { magic: MAGIC, sources, runs, anchor: WireAnchor { source: 0, offset: self.anchor.offset, context: self.anchor.context.0, origin: self.anchor.origin.clone() }, expressions: &self.expressions }
             .serialize(serializer)
@@ -97,17 +98,17 @@ impl<'de> Deserialize<'de> for LosslessStream {
             sources.push(Arc::new(source));
         }
         let source = sources.get(wire.anchor.source).ok_or_else(|| serde::de::Error::custom("invalid anchor source"))?;
-        if wire.anchor.offset > source.text.len() || !source.text.is_char_boundary(wire.anchor.offset) || wire.anchor.context != 0 {
+        if wire.anchor.offset > source.text.len() || !source.text.is_char_boundary(wire.anchor.offset) {
             return Err(serde::de::Error::custom("invalid lossless anchor"));
         }
-        let anchor = SourcePosition { source: Arc::clone(source), offset: wire.anchor.offset, context: SyntaxContext::ROOT, origin: wire.anchor.origin };
+        let anchor = SourcePosition { source: Arc::clone(source), offset: wire.anchor.offset, context: SyntaxContext(wire.anchor.context), origin: wire.anchor.origin };
         let mut runs = Vec::<LosslessRun>::new();
         runs.try_reserve_exact(wire.runs.len()).map_err(serde::de::Error::custom)?;
         let mut len_bytes = 0usize;
         for run in wire.runs {
             let source = sources.get(run.source).ok_or_else(|| serde::de::Error::custom("invalid run source"))?;
             let Some(text) = source.text.get(run.range.clone()) else { return Err(serde::de::Error::custom("invalid lossless range")) };
-            if text.is_empty() || run.context != 0 || !text.chars().all(|ch| RunKind::of(ch) == run.kind)
+            if text.is_empty() || !text.chars().all(|ch| RunKind::of(ch) == run.kind)
                 || (run.kind == RunKind::LineEnding && !matches!(text, "\r" | "\n" | "\r\n"))
             {
                 return Err(serde::de::Error::custom("invalid lossless run"));
@@ -121,7 +122,7 @@ impl<'de> Deserialize<'de> for LosslessStream {
             }
             len_bytes = len_bytes.checked_add(text.len()).ok_or_else(|| serde::de::Error::custom("stream length overflow"))?;
             if len_bytes > MAX_BYTES { return Err(serde::de::Error::custom("lossless stream byte limit exceeded")) }
-            runs.push(LosslessRun { source: Arc::clone(source), range: run.range, kind: run.kind, context: SyntaxContext::ROOT, boundary: run.boundary, origin: run.origin });
+            runs.push(LosslessRun { source: Arc::clone(source), range: run.range, kind: run.kind, context: SyntaxContext(run.context), boundary: run.boundary, origin: run.origin, construction: run.construction });
         }
         let stream = Self { runs, len_bytes, anchor, expressions: wire.expressions };
         stream.validate_expressions().map_err(|error| serde::de::Error::custom(format!("invalid expression fragments: {error:?}")))?;
@@ -136,8 +137,8 @@ mod tests {
     fn valid() -> WireOwned {
         WireOwned {
             magic: MAGIC,
-            sources: vec![SourceSnapshot { file_path: "/wire.rk".into(), text: "é a".into() }],
-            runs: vec![WireRun { source: 0, range: 0..2, kind: RunKind::Text, context: 0, boundary: JoinBoundary::SourceAdjacent, origin: None }],
+            sources: vec![SourceSnapshot::new("/wire.rk".into(), "é a".into()).unwrap()],
+            runs: vec![WireRun { source: 0, range: 0..2, kind: RunKind::Text, context: 0, boundary: JoinBoundary::SourceAdjacent, origin: None, construction: None }],
             anchor: WireAnchor { source: 0, offset: 0, context: 0, origin: None },
             expressions: Vec::new(),
         }
@@ -149,14 +150,12 @@ mod tests {
     }
 
     #[test]
-    fn macro_a_01_wire_rejects_invalid_ranges_sources_kinds_and_contexts() {
+    fn macro_a_01_wire_rejects_invalid_ranges_sources_and_kinds() {
         let mut wire = valid(); wire.runs[0].range = 1..2; rejects(wire);
         let mut wire = valid(); wire.runs[0].range = 0..100; rejects(wire);
         let mut wire = valid(); wire.runs[0].range = 0..0; rejects(wire);
         let mut wire = valid(); wire.runs[0].source = 9; rejects(wire);
         let mut wire = valid(); wire.runs[0].kind = RunKind::Whitespace; rejects(wire);
-        let mut wire = valid(); wire.runs[0].context = 1; rejects(wire);
-        let mut wire = valid(); wire.anchor.context = 1; rejects(wire);
         let mut wire = valid(); wire.anchor.offset = 1; rejects(wire);
         let mut wire = valid(); wire.anchor.source = 9; rejects(wire);
         let mut wire = valid(); wire.sources[0].file_path.clear(); rejects(wire);
@@ -166,7 +165,7 @@ mod tests {
     #[test]
     fn macro_a_01_wire_rejects_forged_adjacency_and_multi_line_runs() {
         let mut wire = valid();
-        wire.runs.push(WireRun { source: 0, range: 3..4, kind: RunKind::Text, context: 0, boundary: JoinBoundary::SourceAdjacent, origin: None });
+        wire.runs.push(WireRun { source: 0, range: 3..4, kind: RunKind::Text, context: 0, boundary: JoinBoundary::SourceAdjacent, origin: None, construction: None });
         rejects(wire);
         let mut wire = valid();
         wire.sources[0].text = "\n\n".into();

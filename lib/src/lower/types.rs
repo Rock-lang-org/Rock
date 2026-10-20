@@ -9,6 +9,9 @@ use crate::types::Type;
 use crate::lower::Lowerer;
 
 impl TypeLoweringContext for Lowerer {
+    fn member_context_matches(&self, owner: crate::ids::DefId, actual: SyntaxContext, declared: SyntaxContext) -> bool {
+        self.resolver.member_context_matches(owner, actual, declared)
+    }
     fn current_trait_definition(&self) -> Option<HirTrait> {
         if let Some(id) = self.current_trait_id { return self.trait_by_id(id).cloned(); }
         self.current_trait.as_ref().and_then(|name| self.resolve_trait_type(name, SyntaxContext::ROOT))

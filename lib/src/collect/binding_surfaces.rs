@@ -37,6 +37,12 @@ impl ResolverTables {
             let mut changed = false;
             for directive in directives.iter().filter(|directive| !directive.glob).chain(directives.iter().filter(|directive| directive.glob)) {
                 let prefix = self.module_binding_paths.get(&directive.scope).cloned().unwrap_or_default();
+                if !directive.glob && self.resolves_macro_directive(Some(directive.scope), &directive.path) {
+                    if let Some(name) = directive.path.last() {
+                        let mut alias = prefix.clone(); alias.push(name.clone());
+                        changed |= self.macro_bindings.insert(alias);
+                    }
+                }
                 let targets = self.directive_targets(directive, crates);
                 for (name, id) in targets {
                     let mut alias = prefix.clone();
@@ -61,7 +67,8 @@ impl ResolverTables {
         for directive in &directives {
             if !(self.contextual_scope(Some(directive.scope)) || directive.path.iter().any(|(_, context)| *context != SyntaxContext::ROOT)) { continue; }
             let targets = self.directive_targets(directive, crates);
-            if targets.is_empty() && (!directive.glob || !self.indexed_module_path(Some(directive.scope), &directive.path)) {
+            let macro_only = !directive.glob && self.resolves_macro_directive(Some(directive.scope), &directive.path);
+            if targets.is_empty() && !macro_only && (!directive.glob || !self.indexed_module_path(Some(directive.scope), &directive.path)) {
                 errors.push(ResolveError::with_span("unresolved contextual import or export".into(), directive.span.clone()));
             }
             if directive.glob { continue; }
@@ -115,6 +122,11 @@ impl ResolverTables {
         directives: &mut Vec<Directive>,
     ) {
         for (position, item) in module.top_levels.iter().enumerate() {
+            if let TopLevel::MacroDecl(declaration) = item {
+                let mut path = self.module_binding_paths.get(&scope).cloned().unwrap_or_default();
+                path.push((declaration.name.name.clone(), declaration.name.context));
+                self.macro_bindings.insert(path);
+            }
             let path = match item {
                 TopLevel::Import(path) | TopLevel::Export(path) => Some(match path { ast::Path::Ident(path) => &path.path, ast::Path::Type(path) => &path.path }),
                 TopLevel::GlobImport(path) | TopLevel::GlobExport(path) => Some(path),

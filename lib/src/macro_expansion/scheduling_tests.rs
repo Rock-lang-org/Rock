@@ -10,11 +10,7 @@ fn parse(text: &str) -> Program {
 #[test]
 fn macro_a_09_generated_inline_definitions_and_imports_settle_before_body_errors() {
     let config = Config::default();
-    let input = parse("> tools::make\n%make\nmacro setup\n    =>\n        mod tools\n            < make\n            macro make\n                =>\n                    main = -> %value!\n            macro value\n                =>\n                    42\n%setup\n");
-    // The emitted main is in the caller's module; its free helper name must be
-    // explicit here until definition-side hygiene arrives in A.13/A.14.
-    let mut input = input;
-    input.module.top_levels.extend(parse("macro value\n    =>\n        42\n").module.top_levels);
+    let input = parse("> tools::make\n%make\nmacro setup\n    $module:ident, $name:ident =>\n        mod $module\n            < $name\n            macro $name\n                =>\n                    main = -> %value!\n            macro value\n                =>\n                    42\n%setup tools, make\n");
     let context = MacroExpansionContext::new(&config);
     let output = expand_macros_with_context(input, &context).unwrap();
     assert!(matches!(output.module.top_level_from_ident("main"), Some(TopLevel::FunctionDecl(_))));
@@ -24,7 +20,7 @@ fn macro_a_09_generated_inline_definitions_and_imports_settle_before_body_errors
 #[test]
 fn macro_a_09_generated_exports_can_make_an_initially_private_import_available() {
     let config = Config::default();
-    let input = parse("> tools::make\n%make\nmod tools\n    macro make\n        =>\n            main = -> 42\n    macro publish\n        =>\n            < make\n    %publish\n");
+    let input = parse("> tools::make\n%make\nmod tools\n    macro make\n        =>\n            main = -> 42\n    macro publish\n        $name:ident =>\n            < $name\n    %publish make\n");
     let context = MacroExpansionContext::new(&config);
     assert!(expand_macros_with_context(input, &context).unwrap().module.top_level_from_ident("main").is_some());
     assert_eq!(context.latest_expansion_id(), Some(super::ExpansionId(2)));
@@ -36,8 +32,8 @@ fn macro_a_09_generated_file_modules_are_discovered_and_expanded_before_collecti
         entry_file: "/macro-schedule/main.rk".into(),
         current_crate_name: Some("app".into()), no_prelude: true,
         source_providers: vec![
-            crate::SourceProvider::Virtual { path: "/macro-schedule/main.rk".into(), text: "> tools::make\n%make\nmacro setup\n    =>\n        mod tools\n%setup\n".into() },
-            crate::SourceProvider::Virtual { path: "/macro-schedule/tools.rk".into(), text: "< make\nmacro make\n    =>\n        main = -> tools::work!\nmacro setup\n    =>\n        mod inner\n%setup\n< work = -> inner::answer!\n".into() },
+            crate::SourceProvider::Virtual { path: "/macro-schedule/main.rk".into(), text: "> tools::make\n%make\nmacro setup\n    $name:ident =>\n        mod $name\n%setup tools\n".into() },
+            crate::SourceProvider::Virtual { path: "/macro-schedule/tools.rk".into(), text: "< make\nmacro make\n    =>\n        main = -> work!\nmacro setup\n    $name:ident =>\n        mod $name\n%setup inner\n< work = -> inner::answer!\n".into() },
             crate::SourceProvider::Virtual { path: "/macro-schedule/inner.rk".into(), text: "< answer = -> 42\n".into() },
         ], ..Config::default()
     };
@@ -47,7 +43,7 @@ fn macro_a_09_generated_file_modules_are_discovered_and_expanded_before_collecti
 #[test]
 fn macro_a_09_generated_imports_are_available_before_expression_expansion() {
     let config = Config::default();
-    let input = parse("main = -> %number!\nmacro imports\n    =>\n        > tools::number\n%imports\nmod tools\n    < number\n    macro number\n        =>\n            42\n");
+    let input = parse("main = -> %number!\nmacro imports\n    $module:ident, $name:ident =>\n        > $module::$name\n%imports tools, number\nmod tools\n    < number\n    macro number\n        =>\n            42\n");
     let context = MacroExpansionContext::new(&config);
     expand_macros_with_context(input, &context).unwrap();
     assert_eq!(context.latest_expansion_id(), Some(super::ExpansionId(2)));
@@ -103,11 +99,9 @@ fn macro_a_09_errors_in_newly_discovered_sources_keep_their_source_snapshot() {
 #[test]
 fn macro_a_09_successful_native_calls_are_removed_before_later_resolution_rounds() {
     let config = Config::default();
-    let (provider, directory) = super::tests::proc_macro_artifact_with_response("native", super::proc_macro::ProcMacroResponse::Expand {
-        output: super::proc_macro::encode_stream(&super::token_tree::source("native_result = -> 7\n")).unwrap(),
-    });
+    let input = parse("%provider::native\n%later\nmacro setup\n    $name:ident =>\n        macro $name\n            =>\n                main = -> 42\n%setup later\n");
+    let (provider, directory) = super::tests::proc_macro_artifact_with_response("native", super::tests::constructed_response(&super::tests::first_invocation(&input), "native_result = -> 7\n"));
     let context = MacroExpansionContext::new(&config).with_named_proc_macro_artifact("provider".into(), provider);
-    let input = parse("%provider::native\n%later\nmacro setup\n    =>\n        macro later\n            =>\n                main = -> 42\n%setup\n");
     let result = expand_macros_with_context(input, &context);
     std::fs::remove_dir_all(directory).unwrap();
     let result = result.unwrap();

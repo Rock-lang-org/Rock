@@ -16,6 +16,9 @@ use self::{
 };
 
 mod context;
+mod hygiene;
+#[cfg(test)]
+mod proc_hygiene_tests;
 pub(crate) mod binding_environment;
 mod correspondances;
 pub mod declarative;
@@ -56,7 +59,7 @@ pub use source_map::{
     ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, TokenOrigin,
 };
 pub use crate::lexer::groups::Delimiter;
-pub use crate::lexer::lossless::ScanLimits;
+pub use crate::lexer::lossless::{ConstructionContext, ConstructionKind, ScanLimits};
 pub use token_tree::TokenStream;
 
 pub fn expand_macros_with_context(
@@ -239,7 +242,7 @@ fn expand_declarative(
         let captures = capture_set_from_correspondance(&correspondances, expansion_id, &invoc_span);
         let body = match arm
             .template
-            .expand_with_origins(&captures, expansion_id, generated_source)
+            .expand_with_origins(&captures, expansion_id, generated_source, |original| context.template_context(macro_decl.id, expansion_id, original))
         {
             Ok(expanded) => expanded,
             Err(message) => {
@@ -307,6 +310,7 @@ fn expand_proc_macro_top_level(
         parent: invocation.parent,
         output_category: invocation.output,
         input,
+        definition_dependencies: entry.artifact.definition_dependencies.clone(),
     };
 
     let response =
@@ -343,7 +347,9 @@ fn expand_proc_macro_top_level(
     let generated_source = context
         .generated_source_id(expansion_id)
         .unwrap_or(GeneratedSourceId(0));
-    let stream = output.generated(expansion_id, generated_source);
+    let stream = output.resolve_proc_output(args, invocation.id, expansion_id, generated_source,
+        |request| context.construction_context(request, invocation, &entry.artifact.definition_dependencies))
+        .map_err(|message| with_expansion_trace(proc_macro_error(message, invocation.span.clone()), context, expansion_id))?;
     parse_generated_top_levels(stream, context, Some(expansion_id))
 }
 
@@ -473,19 +479,39 @@ mod tests {
     use super::*;
     use super::token_tree::source;
 
+    pub(super) fn first_invocation(program: &Program) -> MacroInvoc {
+        struct Calls(Vec<MacroInvoc>);
+        impl<'a> crate::ast::visit::Visitor<'a> for Calls {
+            fn visit_macro_invoc(&mut self, invocation: &'a MacroInvoc) { self.0.push(invocation.clone()); }
+        }
+        let mut calls = Calls(Vec::new());
+        crate::ast::visit::walk_module(&mut calls, &program.module);
+        calls.0.into_iter().next().unwrap()
+    }
+
+    pub(super) fn constructed_response(invocation: &MacroInvoc, text: &str) -> proc_macro::ProcMacroResponse {
+        let stream = TokenStream::source_fragment(text.into(), crate::lexer::lossless::ConstructionContext {
+            invocation: invocation.id, kind: crate::lexer::lossless::ConstructionKind::CallSite,
+        }, token_tree::MACRO_LIMITS).unwrap();
+        proc_macro::ProcMacroResponse::Expand { output: proc_macro::encode_stream(&stream).unwrap() }
+    }
+
     pub(super) fn proc_macro_artifact_with_response(
         macro_name: &str,
         response: proc_macro::ProcMacroResponse,
     ) -> (proc_macro::ProcMacroArtifact, PathBuf) {
         let response = proc_macro::encode_response(&response).unwrap();
+        static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let fixture = NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let temp_dir = std::env::temp_dir().join(format!(
-            "rock-proc-macro-test-{}-{}",
+            "rock-proc-macro-test-{}-{}-{}",
             std::process::id(),
-            nonce
+            nonce,
+            fixture,
         ));
         fs::create_dir_all(&temp_dir).unwrap();
         let host = temp_dir.join("proc_macro_host");
@@ -502,6 +528,7 @@ mod tests {
             host_triple: "x86_64-unknown-linux-gnu".to_string(),
             executable: host,
             capabilities: vec![proc_macro::ProcMacroCapability::Stdio],
+            definition_dependencies: Vec::new(),
             exports: vec![proc_macro::ProcMacroExport {
                 name: macro_name.to_string(),
                 identity: format!("test_macros::{macro_name}"),
@@ -660,12 +687,9 @@ macro repeat_b
     #[test]
     fn function_like_proc_macro_expands_top_level_invocation() {
         let config = test_config();
-        let generated_tokens = source("main = -> 0\n");
-        let response = proc_macro::ProcMacroResponse::Expand {
-            output: proc_macro::encode_stream(&generated_tokens).unwrap(),
-        };
-        let (artifact, temp_dir) = proc_macro_artifact_with_response("make_main", response);
         let input_program = parse_string("%test_macros::make_main", &config).unwrap();
+        let response = constructed_response(&first_invocation(&input_program), "main = -> 0\n");
+        let (artifact, temp_dir) = proc_macro_artifact_with_response("make_main", response);
         let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
 
         let expanded = expand_macros_with_context(input_program, &context).unwrap();
@@ -679,12 +703,9 @@ macro repeat_b
     #[test]
     fn generated_parse_errors_point_back_to_macro_invocation_source() {
         let config = test_config();
-        let generated_tokens = source("main = ->");
-        let response = proc_macro::ProcMacroResponse::Expand {
-            output: proc_macro::encode_stream(&generated_tokens).unwrap(),
-        };
-        let (artifact, temp_dir) = proc_macro_artifact_with_response("broken", response);
         let input_program = parse_string("%test_macros::broken", &config).unwrap();
+        let response = constructed_response(&first_invocation(&input_program), "main = ->");
+        let (artifact, temp_dir) = proc_macro_artifact_with_response("broken", response);
         let invocation_span = match &input_program.module.top_levels[0] {
             TopLevel::MacroInvoc(invocation) => invocation.span.clone(),
             other => panic!("expected macro invocation, got {other:?}"),
@@ -846,14 +867,11 @@ macro outer
     #[test]
     fn proc_macro_expansion_supplies_terminal_layout_for_generated_source() {
         let config = test_config();
-        let generated_tokens = source("main = -> 0");
+        let input_program = parse_string("%test_macros::make_main", &config).unwrap();
         let (artifact, temp_dir) = proc_macro_artifact_with_response(
             "make_main",
-            proc_macro::ProcMacroResponse::Expand {
-                output: proc_macro::encode_stream(&generated_tokens).unwrap(),
-            },
+            constructed_response(&first_invocation(&input_program), "main = -> 0"),
         );
-        let input_program = parse_string("%test_macros::make_main", &config).unwrap();
         let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
 
         let expanded = expand_macros_with_context(input_program, &context).unwrap();

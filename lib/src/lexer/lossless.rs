@@ -2,13 +2,14 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
 use super::Span;
 
 /// Storage hints, not Rock token kinds: quotes, comments and groups are just text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RunKind {
     Text,
     /// Unicode whitespace other than the physical line endings CR and LF.
@@ -34,6 +35,21 @@ pub struct SyntaxContext(u32);
 
 impl SyntaxContext {
     pub const ROOT: Self = Self(0);
+    pub(crate) fn allocated(id: u32) -> Self { Self(id) }
+}
+
+/// Worker-side symbolic requests are not compiler binding identities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConstructionContext {
+    pub invocation: crate::ast::InvocationId,
+    pub kind: ConstructionKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ConstructionKind {
+    Fresh(u32),
+    CallSite,
+    Dependency(u32),
 }
 
 /// A splice is a lexical boundary even if its printed neighbours could touch.
@@ -65,12 +81,24 @@ pub enum LosslessError {
     EmptyBindingRange,
     ConflictingContexts { offset: usize, left: SyntaxContext, right: SyntaxContext },
     InvalidExpressionFragment,
+    UnresolvedConstruction,
+    SnapshotIdentityExhausted,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SourceSnapshot {
+    identity: u64,
     file_path: PathBuf,
     text: String,
+}
+
+impl SourceSnapshot {
+    fn new(file_path: PathBuf, text: String) -> Result<Self, LosslessError> {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let identity = NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
+            .map_err(|_| LosslessError::SnapshotIdentityExhausted)?;
+        Ok(Self { identity, file_path, text })
+    }
 }
 
 /// An immutable UTF-8 byte range backed by a retained source, never decoded text.
@@ -82,18 +110,22 @@ pub struct LosslessRun {
     context: SyntaxContext,
     boundary: JoinBoundary,
     origin: Option<crate::macro_expansion::TokenOrigin>,
+    construction: Option<ConstructionContext>,
 }
 
 impl PartialEq for LosslessRun {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.source, &other.source) && self.kind == other.kind
             && self.range == other.range && self.context == other.context && self.boundary == other.boundary && self.origin == other.origin
+            && self.construction == other.construction
     }
 }
 
 impl Eq for LosslessRun {}
 
 impl LosslessRun {
+    pub(crate) fn has_construction_request(&self) -> bool { self.construction.is_some() }
+
     pub fn origin(&self) -> crate::macro_expansion::TokenOrigin {
         self.origin.clone().unwrap_or_else(|| crate::macro_expansion::TokenOrigin::Source(self.span()))
     }
@@ -180,7 +212,7 @@ impl LosslessStream {
                 error_len: error.error_len(),
             }
         })?;
-        let source = Arc::new(SourceSnapshot { file_path, text });
+        let source = Arc::new(SourceSnapshot::new(file_path, text)?);
         let mut runs = Vec::new();
         let mut characters = source.text.char_indices().peekable();
 
@@ -218,6 +250,7 @@ impl LosslessStream {
                 context: SyntaxContext::ROOT,
                 boundary: JoinBoundary::SourceAdjacent,
                 origin: None,
+                construction: None,
             });
         }
 
@@ -238,6 +271,7 @@ mod splice;
 mod wire;
 mod origin;
 mod fragments;
+mod construction;
 
 pub use fragments::ExpressionFragment;
 

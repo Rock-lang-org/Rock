@@ -240,7 +240,8 @@ impl<'a> LowerResolutionContext<'a> {
             .variants
             .iter()
             .find(|variant| variant.name == member.0
-                && self.lowerer.resolver.variant_contexts.get(&(owner.id, variant.id)).copied().unwrap_or_default() == member.1)?
+                && self.lowerer.resolver.member_context_matches(owner.id, member.1,
+                    self.lowerer.resolver.variant_contexts.get(&(owner.id, variant.id)).copied().unwrap_or_default()))?
             .clone();
         let owner_name = self.preferred_nominal_name(owner.id);
 
@@ -293,7 +294,8 @@ impl<'a> LowerResolutionContext<'a> {
                 imp.methods
                     .get(method_name)
                     .filter(|method| !method.is_method || method.self_receiver.is_some())
-                    .filter(|method| self.lowerer.resolver.member_contexts.get(&method.id).copied().unwrap_or_default() == member.1)
+                    .filter(|method| self.lowerer.resolver.member_context_matches(owner_id, member.1,
+                        self.lowerer.resolver.member_contexts.get(&method.id).copied().unwrap_or_default()))
                     .map(|method| (*imp, method))
             })
             .collect::<Vec<_>>();

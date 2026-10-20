@@ -24,6 +24,7 @@ fn artifact(crate_name: &str) -> proc_macro::ProcMacroArtifact {
         host_triple: "x86_64-unknown-linux-gnu".into(),
         executable: "/never-execute-during-resolution".into(),
         capabilities: vec![],
+        definition_dependencies: Vec::new(),
         exports: vec![proc_macro::ProcMacroExport {
             name: "make".into(), identity: format!("{crate_name}::definition-7"),
             kind: proc_macro::ProcMacroKind::FunctionLike,
@@ -193,14 +194,13 @@ fn macro_a_07_private_nested_modules_do_not_gain_visibility_from_macro_exports()
 #[test]
 fn macro_a_07_explicit_proc_import_executes_the_selected_canonical_export() {
     let config = crate::Config::default();
-    let (mut provider, directory) = super::tests::proc_macro_artifact_with_response("make", proc_macro::ProcMacroResponse::Expand {
-        output: proc_macro::encode_stream(&super::token_tree::source("main = -> 42\n")).unwrap(),
-    });
+    let program = Program { module: module("> renamed::make\n%make\n") };
+    let (mut provider, directory) = super::tests::proc_macro_artifact_with_response("make", super::tests::constructed_response(&super::tests::first_invocation(&program), "main = -> 42\n"));
     provider.crate_identity = "canonical-provider".into();
     provider.exports[0].identity = "opaque-definition-identity".into();
     let request_file = provider.executable.with_extension("request");
     let context = MacroExpansionContext::new(&config).with_named_proc_macro_artifact("renamed".into(), provider);
-    let result = expand_macros_with_context(Program { module: module("> renamed::make\n%make\n") }, &context);
+    let result = expand_macros_with_context(program, &context);
     let request = proc_macro::decode_request(&std::fs::read(request_file).unwrap()).unwrap();
     std::fs::remove_dir_all(directory).unwrap();
     assert!(result.unwrap().module.top_level_from_ident("main").is_some());

@@ -59,7 +59,9 @@ fn macro_a_06_nested_opaque_blocks_are_forwarded_without_early_interpretation() 
     let TopLevel::MacroDecl(decl) = &program.module.top_levels[0] else { panic!("expected declaration") };
     let Statement::Expression(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(primary))) = &body(&program).statements[0] else { panic!("expected expression") };
     let Operand::MacroInvoc(invocation) = &primary.operand else { panic!("expected call") };
-    let generated_parser::GeneratedSyntax::Expression(expression) = expand_declarative(decl, invocation, &MacroExpansionContext::new(&config)).unwrap() else { panic!("expected expression result") };
+    let context = MacroExpansionContext::new(&config);
+    registry::MacroRegistry::build(&program.module, &context).unwrap();
+    let generated_parser::GeneratedSyntax::Expression(expression) = expand_declarative(decl, invocation, &context).unwrap() else { panic!("expected expression result") };
     struct Calls(Vec<MacroInvoc>);
     impl<'a> crate::ast::visit::Visitor<'a> for Calls {
         fn visit_macro_invoc(&mut self, invocation: &'a MacroInvoc) { self.0.push(invocation.clone()); }
@@ -150,7 +152,9 @@ fn macro_a_06_relocating_a_capture_under_generated_layout_keeps_dsl_bytes() {
     let TopLevel::MacroDecl(decl) = &program.module.top_levels[0] else { panic!("expected declaration") };
     let Statement::Expression(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(primary))) = &body(&program).statements[0] else { panic!("expected expression") };
     let Operand::MacroInvoc(invocation) = &primary.operand else { panic!("expected call") };
-    let generated_parser::GeneratedSyntax::Expression(expression) = expand_declarative(decl, invocation, &MacroExpansionContext::new(&config)).unwrap() else { panic!("expected expression") };
+    let context = MacroExpansionContext::new(&config);
+    registry::MacroRegistry::build(&program.module, &context).unwrap();
+    let generated_parser::GeneratedSyntax::Expression(expression) = expand_declarative(decl, invocation, &context).unwrap() else { panic!("expected expression") };
     let Expression::UnaryExpr(UnaryExpr::PrimaryExpr(primary)) = expression else { panic!("expected primary") };
     let Operand::If(branch) = primary.operand else { panic!("expected generated branch") };
     struct Calls(Vec<MacroInvoc>);

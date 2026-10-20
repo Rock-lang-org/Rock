@@ -351,6 +351,9 @@ pub(crate) struct LocalCollection {
 }
 
 impl TypeLoweringContext for CollectContext {
+    fn member_context_matches(&self, owner: DefId, actual: SyntaxContext, declared: SyntaxContext) -> bool {
+        self.item_resolution.member_context_matches(owner, actual, declared)
+    }
     fn current_trait_definition(&self) -> Option<HirTrait> {
         if let Some(id) = self.current_trait_id { return self.traits.get_id(id).cloned(); }
         self.current_trait.as_ref().and_then(|name| self.resolve_trait_type(name, SyntaxContext::ROOT))
@@ -471,7 +474,9 @@ impl TypeLoweringContext for CollectContext {
         let owner = self.current_generic_owner?;
         self.current_generic_params.iter().enumerate().find_map(|(index, param)| {
             let id = GenericParamId { owner, index: index as u32 };
-            (param == name && self.generic_context(id) == context).then_some(Type::Generic(id))
+            (param == name && (self.generic_context(id) == context
+                || (name == "Self" && self.member_context_matches(owner, context, self.generic_context(id)))))
+                .then_some(Type::Generic(id))
         })
     }
 
@@ -573,6 +578,15 @@ impl CollectContext {
         self.item_resolution = build_resolver_tables(
             index, root, self.current_crate_name.as_deref(), &HashMap::new(), &HashMap::new(), &HashMap::new(),
         );
+        // Canonical metadata aliases (including an explicitly supplied prelude)
+        // are root bindings too. Definition-site lookup must not depend on the
+        // lowerer's spelling-only alias fallback or override source declarations.
+        for (alias, id) in &self.canonical_import_aliases {
+            let path = alias.split("::").map(|name| (name.to_string(), SyntaxContext::ROOT)).collect::<Vec<_>>();
+            if !self.item_resolution.binding_paths.contains_key(&path) {
+                self.item_resolution.binding_aliases.entry(path).or_insert(*id);
+            }
+        }
         let hidden = index.items().iter().filter(|item|
             index.item_binding_path(item).iter().any(|(_, context)| *context != SyntaxContext::ROOT)
         ).map(|item| item.def_id).collect::<HashSet<_>>();
@@ -909,7 +923,10 @@ impl CollectContext {
             .current_generic_params
             .iter()
             .enumerate()
-            .position(|(index, param)| param == name && self.generic_context(GenericParamId { owner, index: index as u32 }) == context)
+            .position(|(index, param)| {
+                let declared = self.generic_context(GenericParamId { owner, index: index as u32 });
+                param == name && (declared == context || (name == "Self" && self.member_context_matches(owner, context, declared)))
+            })
             .or_else(|| {
                 let mut chars = name.chars();
                 let is_implicit_generic = matches!(chars.next(), Some(ch) if ch.is_ascii_uppercase())
@@ -1549,7 +1566,9 @@ impl CollectContext {
         let Some(last) = segments.last() else { return true; };
         let span = match last { ast::IdentOrType::Ident(name) => name.span.clone(), ast::IdentOrType::Type(ty) => ty.span() };
         let Some(id) = self.item_resolution.resolve_binding_path(self.current_module_id, &names) else {
-            self.push_error_with_span(format!("unknown contextual import '{}'", names.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join("::")), span);
+            if !self.item_resolution.resolves_macro_directive(self.current_module_id, &names) {
+                self.push_error_with_span(format!("unknown contextual import '{}'", names.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join("::")), span);
+            }
             return true;
         };
         let mut alias_path = prefix;
@@ -2128,6 +2147,29 @@ mod tests {
 
     fn def_id(index: u32) -> DefId {
         DefId::new(CrateId(0), LocalDefId(index))
+    }
+
+    #[test]
+    fn macro_a_14_definition_scope_sees_canonical_metadata_aliases_without_source_shadow_leaks() {
+        for source in ["main = -> 1\n", "lift = -> true\nmain = -> 1\n"] {
+            let program = crate::parser::parse_string(source, &crate::Config::default()).unwrap();
+            let mut ids = crate::collect::item_index::IndexingIds::new_root();
+            let index = crate::collect::item_index::index_root_module_items_with_sources(&mut ids, &program.module, None, &HashMap::new());
+            let mut context = CollectContext::new();
+            let external = DefId::new(CrateId(7), LocalDefId(1));
+            context.canonical_import_aliases.insert("lift".into(), external);
+            context.seed_item_resolution(&index, ids.root_module_id());
+            let fresh = SyntaxContext::allocated(87);
+            let mut environments = crate::macro_expansion::binding_environment::BindingEnvironments::default();
+            environments.record_source_scope(fresh, Vec::new(), SyntaxContext::ROOT).unwrap();
+            context.item_resolution.definition_environments = environments.resolve(&CrateContext::new()).unwrap();
+            let selected = context.item_resolution.resolve_binding_path(None, &[("lift".into(), fresh)]).unwrap();
+            if source.starts_with("lift") {
+                assert_ne!(selected, external);
+            } else {
+                assert_eq!(selected, external);
+            }
+        }
     }
 
     #[test]

@@ -3481,7 +3481,7 @@ fn macro_a_06_grouped_expression_forwarding_runs_normally() {
 
 #[test]
 fn macro_a_09_generated_inline_import_and_expression_calls_run_after_item_discovery() {
-    let output = compile_and_run("> tools::make\n%make\nmacro setup\n    =>\n        mod tools\n            < make\n            < number\n            macro make\n                =>\n                    main = !->\n                        (%tools::number!).println!\n            macro number\n                =>\n                    42\n%setup\n");
+    let output = compile_and_run("> tools::make\n%make\nmacro setup\n    $module:ident, $name:ident =>\n        mod $module\n            < $name\n            < number\n            macro $name\n                =>\n                    main = !->\n                        (%number!).println!\n            macro number\n                =>\n                    42\n%setup tools, make\n");
     assert_eq!(output, "42\n");
 }
 
@@ -3497,13 +3497,33 @@ fn macro_a_09_generated_file_modules_and_transitive_generated_children_run() {
     config.no_prelude = true;
     config.no_std = true;
     config.source_providers = vec![
-        rock_lib::SourceProvider::Virtual { path: dir.join("main.rk"), text: "> tools::make\n%make\nmacro setup\n    =>\n        mod tools\n%setup\n".into() },
-        rock_lib::SourceProvider::Virtual { path: dir.join("tools.rk"), text: "< make\nmacro make\n    =>\n        main = -> tools::work!\nmacro setup\n    =>\n        mod inner\n%setup\n< work = -> inner::answer!\n".into() },
+        rock_lib::SourceProvider::Virtual { path: dir.join("main.rk"), text: "> tools::make\n%make\nmacro setup\n    $name:ident =>\n        mod $name\n%setup tools\n".into() },
+        rock_lib::SourceProvider::Virtual { path: dir.join("tools.rk"), text: "< make\nmacro make\n    =>\n        main = -> work!\nmacro setup\n    $name:ident =>\n        mod $name\n%setup inner\n< work = -> inner::answer!\n".into() },
         rock_lib::SourceProvider::Virtual { path: dir.join("inner.rk"), text: "< answer = -> 42\n".into() },
     ];
     rock_lib::compile(&config).unwrap();
     let output = run_test_command(&mut Command::new(dir.join("main")));
     assert_eq!(output.status.code(), Some(42));
+}
+
+#[test]
+fn macro_a_14_private_generated_file_module_keeps_source_member_contexts() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let mut config = test_config(dir.join("main.rk"), dir.clone());
+    config.current_crate_name = Some("app".into());
+    config.extern_artifacts.clear();
+    config.no_prelude = true;
+    config.no_std = true;
+    config.source_providers = vec![
+        rock_lib::SourceProvider::Virtual { path: dir.join("main.rk"), text: "macro setup\n    $entry:ident =>\n        mod tools\n        $entry = -> ~I64Add (%tools::number!), (tools::answer!)\n%setup main\n".into() },
+        rock_lib::SourceProvider::Virtual { path: dir.join("tools.rk"), text: "< number\nmacro number\n    =>\n        42\n< answer = -> 1\n".into() },
+    ];
+    rock_lib::compile(&config).unwrap();
+    let output = run_test_command(&mut Command::new(dir.join("main")));
+    assert_eq!(output.status.code(), Some(43));
 }
 
 #[test]
@@ -3554,6 +3574,23 @@ main = !->
     flag.get! .println!
 "#);
     assert_eq!(output, "42\ntrue\n");
+}
+
+#[test]
+fn macro_a_14_template_locals_cannot_capture_forwarded_closure_values() {
+    let output = compile_and_run("macro keep\n    $value:expr =>\n        if true\n            value = true\n            -> $value\n        else\n            -> $value\nmain = !->\n    value = 42\n    f = %keep value\n    f! .println!\n");
+    assert_eq!(output, "42\n");
+}
+
+#[test]
+fn macro_a_14_template_helper_is_not_callable_by_caller_spelling() {
+    compile_should_fail("macro make\n    =>\n        hidden = -> 1\n%make\nmain = -> hidden!\n", "Unknown");
+}
+
+#[test]
+fn macro_a_14_definition_helpers_and_repeated_private_names_run() {
+    let output = compile_and_run("mod tools\n    helper = -> 42\n    < make\n    macro make\n        $name:ident =>\n            helper = -> true\n            $name = -> (helper!, %answer!)\n    macro answer\n        =>\n            helper!\n%tools::make first\n%tools::make second\nhelper = -> 99\nmain = !->\n    (flag, number) = first!\n    flag.println!\n    number.println!\n    (flag, number) = second!\n    flag.println!\n    number.println!\n");
+    assert_eq!(output, "true\n42\ntrue\n42\n");
 }
 
 #[test]
@@ -20495,6 +20532,7 @@ fn proc_macro_host_with_response(
         host_triple: "x86_64-unknown-linux-gnu".to_string(),
         executable: host,
         capabilities: vec![rock_lib::macro_expansion::proc_macro::ProcMacroCapability::Stdio],
+        definition_dependencies: Vec::new(),
         exports: vec![rock_lib::macro_expansion::proc_macro::ProcMacroExport {
             name: "make_main".to_string(),
             identity: "integration_macros::make_main".to_string(),
@@ -20506,9 +20544,11 @@ fn proc_macro_host_with_response(
     (artifact, temp_dir)
 }
 
-fn encode_generated_main_tokens() -> Vec<u8> {
-    let stream = rock_lib::macro_expansion::TokenStream::from_bytes(
-        "<proc-macro-output>".into(), b"main = -> 0\n".to_vec(),
+fn encode_generated_main_tokens(invocation: rock_lib::ast::InvocationId) -> Vec<u8> {
+    let stream = rock_lib::macro_expansion::TokenStream::source_fragment(
+        "main = -> 0\n".into(), rock_lib::macro_expansion::ConstructionContext {
+            invocation, kind: rock_lib::macro_expansion::ConstructionKind::CallSite,
+        },
         rock_lib::macro_expansion::ScanLimits { max_source_bytes: 65536, max_runs: 4096 },
     ).unwrap();
     rock_lib::macro_expansion::proc_macro::encode_stream(&stream).unwrap()
@@ -20533,12 +20573,13 @@ fn test_function_like_proc_macro_expands_through_public_macro_api() {
         no_std: false,
         sysroot: None,
     };
+    let input_program = rock_lib::parser::parse_string("%integration_macros::make_main", &config).unwrap();
+    let rock_lib::ast::TopLevel::MacroInvoc(invocation) = &input_program.module.top_levels[0] else { panic!("expected invocation") };
     let response = rock_lib::macro_expansion::proc_macro::ProcMacroResponse::Expand {
-        output: encode_generated_main_tokens(),
+        output: encode_generated_main_tokens(invocation.id),
     };
     let (artifact, temp_dir) = proc_macro_host_with_response(response);
     let expanded = (|| {
-        let input_program = rock_lib::parser::parse_string("%integration_macros::make_main", &config).unwrap();
         let context = rock_lib::macro_expansion::MacroExpansionContext::new(&config)
             .with_proc_macro_artifact(artifact);
 

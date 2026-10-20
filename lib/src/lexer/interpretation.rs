@@ -136,15 +136,18 @@ impl<'a> RockView<'a> {
     }
 
     fn finish(&self, start: Cursor<'a>, kind: PieceKind) -> Result<RockPiece, RockError> {
+        let end_run = self.cursor.run + usize::from(self.cursor.byte != 0);
+        if start.stream.runs()[start.run..end_run].iter().any(|run| run.has_construction_request()) {
+            return Err(RockError::Preservation(LosslessError::UnresolvedConstruction));
+        }
         let binding = matches!(&kind, PieceKind::Token(
             TokenType::Ident(_) | TokenType::Type(_) | TokenType::MacroVar(_)
             | TokenType::MacroInvoc(_) | TokenType::NativeOperator(_)
             | TokenType::Operator(_) | TokenType::StuckOperator(_)
             | TokenType::Caret | TokenType::Tilde | TokenType::Ampersand | TokenType::Arobase
-        ));
+        )) || matches!(&kind, PieceKind::Token(TokenType::Keyword(keyword)) if keyword == "do");
         let context = if binding {
             let first = start.stream.runs()[start.run].context();
-            let end_run = self.cursor.run + usize::from(self.cursor.byte != 0);
             let mut offset = start.offset;
             for index in start.run..end_run {
                 let run = &start.stream.runs()[index];

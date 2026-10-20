@@ -9,7 +9,7 @@ use crate::products::ProductCrateIdentity;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DefinitionEnvironment {
-    SourceScope(Vec<(String, SyntaxContext)>),
+    SourceScope { path: Vec<(String, SyntaxContext)>, context: SyntaxContext },
     Dependency(ProductCrateIdentity),
 }
 
@@ -63,7 +63,7 @@ mod tests {
         assert!(environments.record_dependency(context(103), &identity, &[]).is_err());
         assert!(environments.record_dependency(SyntaxContext::ROOT, &identity, &[identity.clone()]).is_err());
         environments.record_dependency(context(103), &identity, &[identity.clone()]).unwrap();
-        assert!(environments.record_source_scope(context(103), Vec::new()).is_err());
+        assert!(environments.record_source_scope(context(103), Vec::new(), SyntaxContext::ROOT).is_err());
         assert!(environments.resolve(&crates).is_ok());
         assert!(environments.resolve(&CrateContext::new()).is_err());
         let mut only_transitive = CrateContext::new();
@@ -77,7 +77,7 @@ mod tests {
         let helper = DefId::new(CrateId(0), LocalDefId(1));
         let generated = DefId::new(CrateId(0), LocalDefId(2));
         let mut environments = BindingEnvironments::default();
-        environments.record_source_scope(binding_context, vec![("tools".into(), SyntaxContext::ROOT)]).unwrap();
+        environments.record_source_scope(binding_context, vec![("tools".into(), SyntaxContext::ROOT)], SyntaxContext::ROOT).unwrap();
         let mut resolver = ResolverTables::default();
         resolver.definition_environments = environments.resolve(&CrateContext::new()).unwrap();
         resolver.binding_paths.insert(vec![("tools".into(), SyntaxContext::ROOT), ("helper".into(), SyntaxContext::ROOT)], helper);
@@ -95,11 +95,20 @@ pub(crate) struct BindingEnvironments {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ResolvedDefinitionEnvironment {
-    SourceScope(Vec<(String, SyntaxContext)>),
+    SourceScope { path: Vec<(String, SyntaxContext)>, context: SyntaxContext },
     PublicDependency(BTreeMap<String, DefId>),
 }
 
 impl BindingEnvironments {
+    pub(crate) fn len(&self) -> usize { self.environments.len() }
+
+    pub(crate) fn source_scope(&self, context: SyntaxContext) -> Option<(Vec<(String, SyntaxContext)>, SyntaxContext)> {
+        match self.environments.get(&context)? {
+            DefinitionEnvironment::SourceScope { path, context } => Some((path.clone(), *context)),
+            DefinitionEnvironment::Dependency(_) => None,
+        }
+    }
+
     fn insert(&mut self, context: SyntaxContext, environment: DefinitionEnvironment) -> Result<(), String> {
         if context == SyntaxContext::ROOT {
             return Err("source root context cannot carry definition-side authority".into());
@@ -111,8 +120,8 @@ impl BindingEnvironments {
         Ok(())
     }
 
-    pub(crate) fn record_source_scope(&mut self, context: SyntaxContext, scope: Vec<(String, SyntaxContext)>) -> Result<(), String> {
-        self.insert(context, DefinitionEnvironment::SourceScope(scope))
+    pub(crate) fn record_source_scope(&mut self, context: SyntaxContext, path: Vec<(String, SyntaxContext)>, original: SyntaxContext) -> Result<(), String> {
+        self.insert(context, DefinitionEnvironment::SourceScope { path, context: original })
     }
 
     pub(crate) fn record_dependency(
@@ -130,7 +139,7 @@ impl BindingEnvironments {
     pub(crate) fn resolve(&self, crates: &CrateContext) -> Result<HashMap<SyntaxContext, ResolvedDefinitionEnvironment>, String> {
         self.environments.iter().map(|(context, environment)| {
             let resolved = match environment {
-                DefinitionEnvironment::SourceScope(path) => ResolvedDefinitionEnvironment::SourceScope(path.clone()),
+                DefinitionEnvironment::SourceScope { path, context } => ResolvedDefinitionEnvironment::SourceScope { path: path.clone(), context: *context },
                 DefinitionEnvironment::Dependency(identity) => {
                     let id = crates.product_crate_ids.get(identity)
                         .ok_or_else(|| "definition-side dependency identity is not loaded".to_string())?;

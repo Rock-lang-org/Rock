@@ -30,6 +30,7 @@ pub(crate) trait TypeLoweringContext {
     fn scoped_generic_type(&mut self, _name: &str, _context: SyntaxContext, _span: crate::lexer::Span) -> Option<Type> { None }
     fn generic_context(&self, _id: GenericParamId) -> SyntaxContext { SyntaxContext::ROOT }
     fn associated_context(&self, _owner: crate::ids::DefId, _id: crate::ids::AssocTypeId) -> SyntaxContext { SyntaxContext::ROOT }
+    fn member_context_matches(&self, _owner: crate::ids::DefId, actual: SyntaxContext, declared: SyntaxContext) -> bool { actual == declared }
     fn populate_type_normalization_env(&self, env: &mut TypeNormalizationEnv);
     fn constructor_params(&self, _id: crate::ids::DefId) -> Option<Vec<GenericParamDecl>> {
         None
@@ -88,6 +89,7 @@ pub(crate) fn lower_param_defaults<C: TypeLoweringContext + ?Sized>(
         }
         fn resolve_trait_type(&self, name: &str, context: SyntaxContext) -> Option<HirTrait> { self.context.resolve_trait_type(name, context) }
         fn associated_context(&self, owner: crate::ids::DefId, id: crate::ids::AssocTypeId) -> SyntaxContext { self.context.associated_context(owner, id) }
+        fn member_context_matches(&self, owner: crate::ids::DefId, actual: SyntaxContext, declared: SyntaxContext) -> bool { self.context.member_context_matches(owner, actual, declared) }
         fn resolve_type_alias(&self, name: &str, context: SyntaxContext) -> Option<HirTypeAlias> {
             if self.syntax.iter().any(|param| param.name.name == name && param.name.context == context) {
                 None
@@ -102,7 +104,8 @@ pub(crate) fn lower_param_defaults<C: TypeLoweringContext + ?Sized>(
         fn scoped_generic_type(&mut self, name: &str, context: SyntaxContext, span: crate::lexer::Span) -> Option<Type> {
             if self.syntax.iter().any(|param| param.name.name == name && param.name.context == context)
                 || self.subject.as_ref().is_some_and(|(subject, param)|
-                    (name == subject || name == "Self") && self.context.generic_context(param.id) == context) {
+                    (name == subject || name == "Self") && (self.context.generic_context(param.id) == context
+                        || (name == "Self" && self.context.member_context_matches(param.id.owner, context, self.context.generic_context(param.id))))) {
                 Some(self.generic_type_for_name(name, context, span))
             } else { None }
         }
@@ -112,7 +115,8 @@ pub(crate) fn lower_param_defaults<C: TypeLoweringContext + ?Sized>(
                 if index < self.index { return Type::Generic(param.id); }
                 self.push_type_error(format!("default cannot reference current or later parameter '{name}'"), span);
             } else if let Some((subject_name, param)) = self.subject {
-                if (name == subject_name || name == "Self") && self.context.generic_context(param.id) == context {
+                if (name == subject_name || name == "Self") && (self.context.generic_context(param.id) == context
+                    || (name == "Self" && self.context.member_context_matches(param.id.owner, context, self.context.generic_context(param.id)))) {
                     return Type::Generic(param.id);
                 }
                 self.push_type_error(format!("unknown type '{name}' in generic default"), span);
@@ -490,7 +494,7 @@ impl TypeLowerer {
                 let Some(assoc_type) = trait_def
                     .associated_types
                     .iter()
-                    .find(|assoc| assoc.name == member.name && context.associated_context(trait_def.id, assoc.id) == member.context)
+                    .find(|assoc| assoc.name == member.name && context.member_context_matches(trait_def.id, member.context, context.associated_context(trait_def.id, assoc.id)))
                     .map(|assoc| AssociatedTypeKey {
                         owner: trait_def.id,
                         assoc_type_id: assoc.id,

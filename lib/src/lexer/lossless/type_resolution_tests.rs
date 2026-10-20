@@ -273,7 +273,7 @@ fn macro_a_13_definition_source_scope_does_not_capture_caller_helper() {
     let program = ast::Program { module: root };
     let crates = crate::crate_system::CrateContext::new();
     let mut environments = crate::macro_expansion::binding_environment::BindingEnvironments::default();
-    environments.record_source_scope(super::SyntaxContext(107), vec![("tools".into(), super::SyntaxContext::ROOT)]).unwrap();
+    environments.record_source_scope(super::SyntaxContext(107), vec![("tools".into(), super::SyntaxContext::ROOT)], super::SyntaxContext::ROOT).unwrap();
     let declarations = crate::collect::collect_with_binding_environments(&program, None, &crates, false, None, &environments).unwrap();
     let partial = crate::lower::pipeline::LoweringPipeline::new(&program, &crates, None).lower_from_declarations(declarations).unwrap();
     let resolved = crate::infer::finalize(partial).unwrap();
@@ -523,7 +523,7 @@ fn macro_a_13_definition_scope_uses_its_import_alias_not_caller_binding() {
         let program = ast::Program { module: root };
         let crates = crate::crate_system::CrateContext::new();
         let mut environments = crate::macro_expansion::binding_environment::BindingEnvironments::default();
-        environments.record_source_scope(super::SyntaxContext(211), vec![("tools".into(), super::SyntaxContext::ROOT)]).unwrap();
+        environments.record_source_scope(super::SyntaxContext(211), vec![("tools".into(), super::SyntaxContext::ROOT)], super::SyntaxContext::ROOT).unwrap();
         let declarations = crate::collect::collect_with_binding_environments(&program, None, &crates, false, None, &environments).unwrap();
         let partial = crate::lower::pipeline::LoweringPipeline::new(&program, &crates, None).lower_from_declarations(declarations).unwrap();
         let resolved = crate::infer::finalize(partial).unwrap();

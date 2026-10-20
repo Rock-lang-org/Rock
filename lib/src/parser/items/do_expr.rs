@@ -15,6 +15,7 @@ use super::{
 /// Expand sequencing while still in the syntax layer. The match supplies a
 /// lexical block without introducing an extra closure or capturing its locals.
 pub fn do_expression(stream: Input) -> IResult<Operand> {
+    let context = stream.seek()?.context;
     let (stream, (span, _)) = (get_span, TokenType::Keyword("do".into())).process(stream)?;
     let (stream, statements) = preceded(
         TokenType::Eol.followed_by(empty_lines),
@@ -61,7 +62,7 @@ pub fn do_expression(stream: Input) -> IResult<Operand> {
             UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(IdentifierPath {
                     path: vec![IdentOrType::Ident(Ident {
-                        context: Default::default(),
+                        context,
                         name: "bind".into(),
                         span: bind_span,
                     })],

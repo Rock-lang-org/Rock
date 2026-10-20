@@ -164,14 +164,13 @@ fn macro_a_08_synthetic_pattern_literals_and_enum_defaults_have_no_unvisited_fie
 #[test]
 fn macro_a_08_loaded_procedural_item_executes_once_and_discarded_inputs_never_run() {
     let config = Config { current_crate_name: Some("app".into()), ..Config::default() };
-    let (provider, directory) = super::tests::proc_macro_artifact_with_response("make", super::proc_macro::ProcMacroResponse::Expand {
-        output: super::proc_macro::encode_stream(&super::token_tree::source("made = -> 42\n")).unwrap(),
-    });
-    let context = MacroExpansionContext::new(&config).with_named_proc_macro_artifact("provider".into(), provider);
     let mut sources = crate::source_loader::SourceDatabase::new();
     sources.add_virtual_source("/macro-traversal-worker/main.rk".into(), "mod tools\nmain = -> 0\n");
     sources.add_virtual_source("/macro-traversal-worker/tools.rk".into(), "> provider::make\n%make\nmacro discard\n    $value:expr =>\n        7\nstruct Point\n    value: Int = %discard (%provider::make!)\n");
     let mut graph = sources.load_entry("/macro-traversal-worker/main.rk".into(), &config).unwrap();
+    let invocation = super::tests::first_invocation(&Program { module: graph.module_by_qualified_name("app::tools").unwrap().module.clone() });
+    let (provider, directory) = super::tests::proc_macro_artifact_with_response("make", super::tests::constructed_response(&invocation, "made = -> 42\n"));
+    let context = MacroExpansionContext::new(&config).with_named_proc_macro_artifact("provider".into(), provider);
     let result = super::expand_macros_in_graph(&mut graph, &mut sources, &context);
     std::fs::remove_dir_all(directory).unwrap();
     result.unwrap();

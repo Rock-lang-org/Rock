@@ -12,7 +12,7 @@ use crate::lexer::Span;
 use crate::ast::{InvocationId, MacroOutputCategory};
 use super::{ExpansionId, TokenStream};
 
-pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 4;
+pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 5;
 pub const MAX_PROC_MACRO_MESSAGE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,6 +48,7 @@ pub struct ProcMacroArtifact {
     pub host_triple: String,
     pub executable: PathBuf,
     pub capabilities: Vec<ProcMacroCapability>,
+    pub definition_dependencies: Vec<crate::products::ProductCrateIdentity>,
     pub exports: Vec<ProcMacroExport>,
 }
 
@@ -63,6 +64,17 @@ pub struct ProcMacroRequest {
     pub parent: Option<ExpansionId>,
     pub output_category: MacroOutputCategory,
     pub input: Vec<u8>,
+    pub definition_dependencies: Vec<crate::products::ProductCrateIdentity>,
+}
+
+impl ProcMacroRequest {
+    pub fn construction_context(&self, kind: crate::lexer::lossless::ConstructionKind) -> crate::lexer::lossless::ConstructionContext {
+        crate::lexer::lossless::ConstructionContext { invocation: self.invocation_id, kind }
+    }
+
+    pub fn source_fragment(&self, text: String, kind: crate::lexer::lossless::ConstructionKind) -> Result<TokenStream, crate::lexer::lossless::LosslessError> {
+        TokenStream::source_fragment(text, self.construction_context(kind), super::token_tree::MACRO_LIMITS)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -264,7 +276,7 @@ mod tests {
 
     #[test]
     fn proc_macro_protocol_version_tracks_enriched_request_shape() {
-        assert_eq!(PROC_MACRO_PROTOCOL_VERSION, 4);
+        assert_eq!(PROC_MACRO_PROTOCOL_VERSION, 5);
     }
 
     #[test]
@@ -280,6 +292,7 @@ mod tests {
             parent: None,
             output_category: MacroOutputCategory::Items,
             input: Vec::new(),
+            definition_dependencies: Vec::new(),
         };
         let encoded = encode_request(&request).unwrap();
         let decoded = decode_request(&encoded).unwrap();
@@ -306,6 +319,7 @@ mod tests {
             parent: Some(ExpansionId(3)),
             output_category: MacroOutputCategory::Expression,
             input: vec![1, 2, 3],
+            definition_dependencies: Vec::new(),
         };
         let decoded = decode_request(&encode_request(&request).unwrap()).unwrap();
         assert_eq!(decoded.macro_identity, "macros::make_main");
@@ -319,6 +333,7 @@ mod tests {
             host_triple: "x86_64-unknown-linux-gnu".to_string(),
             executable: "macro-host".into(),
             capabilities: vec![ProcMacroCapability::Stdio],
+            definition_dependencies: Vec::new(),
             exports: vec![ProcMacroExport {
                 name: "make_main".to_string(),
                 identity: "macros::make_main".to_string(),
@@ -352,6 +367,7 @@ mod tests {
             host_triple: "x86_64-unknown-linux-gnu".to_string(),
             executable: "target/proc-macros/make_main".into(),
             capabilities: vec![ProcMacroCapability::Stdio],
+            definition_dependencies: Vec::new(),
             exports: vec![ProcMacroExport {
                 name: "make_main".to_string(),
                 identity: "macros::make_main".to_string(),
@@ -376,6 +392,7 @@ mod tests {
             parent: None,
             output_category: MacroOutputCategory::Items,
             input: vec![0; OVERSIZED_PAYLOAD_BYTES],
+            definition_dependencies: Vec::new(),
         };
         let encoded = bincode::serialize(&request).unwrap();
 
@@ -402,6 +419,7 @@ mod tests {
             executable: "/definitely/not/a/proc/macro".into(),
             capabilities: vec![ProcMacroCapability::Stdio],
             exports: Vec::new(),
+            definition_dependencies: Vec::new(),
         };
         let request = ProcMacroRequest {
             protocol_version: PROC_MACRO_PROTOCOL_VERSION + 1,
@@ -414,6 +432,7 @@ mod tests {
             parent: None,
             output_category: MacroOutputCategory::Items,
             input: Vec::new(),
+            definition_dependencies: Vec::new(),
         };
 
         let response = run_proc_macro_process(&artifact, &request, Duration::from_millis(10))
@@ -434,6 +453,7 @@ mod tests {
             executable: "/definitely/not/a/proc/macro".into(),
             capabilities: vec![ProcMacroCapability::Stdio],
             exports: Vec::new(),
+            definition_dependencies: Vec::new(),
         };
         let request = ProcMacroRequest {
             protocol_version: PROC_MACRO_PROTOCOL_VERSION,
@@ -446,6 +466,7 @@ mod tests {
             parent: None,
             output_category: MacroOutputCategory::Items,
             input: vec![0; OVERSIZED_PAYLOAD_BYTES],
+            definition_dependencies: Vec::new(),
         };
 
         let err = run_proc_macro_process(&artifact, &request, Duration::from_millis(10))

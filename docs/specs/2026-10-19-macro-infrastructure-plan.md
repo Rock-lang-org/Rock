@@ -844,6 +844,54 @@ remain A.14; the A.13 environment-recording APIs are exercised by synthetic-cont
 tests, not yet by production context minting. Formatting remains deferred; no
 formatter/check, Clippy, or separate build/CLI gate ran. Beads remains unavailable.
 
+### A.14 delivery receipt (2026-10-20)
+
+Declarative templates now allocate compiler-owned fresh contexts per expansion
+and inherited template context; captures retain their input contexts. Recorded
+definition scopes include contextual module paths and inherited environments,
+including nested generated declarations and private source-file modules. Macro
+lookup, explicit imports/exports, module aliases, ordinary item/member lookup,
+prelude metadata aliases, and synthesized `do` sequencing use those identities.
+Generated public names require captured names or explicit call-site construction;
+same-spelled helpers from separate expansions remain private and distinct.
+
+Procedural requests expose invocation-owned symbolic `Fresh`, `CallSite`, and
+declared `Dependency` construction handles. The compiler resolves them before
+generated parsing and rejects cross-invocation requests, raw forged contexts,
+modified/unauthorized forwarded ranges or provenance, and conflicting-context
+identifier merges. Snapshot identities distinguish forwarding from equal printed
+text; validated snapshots are rebound to compiler-owned storage and anchors are
+rebuilt from validated data. Declared dependency handles resolve only through
+supplied product identities and public export IDs, independently of caller aliases.
+The lossless wire is `RKLOSS03`, worker protocol is 5, and both artifact version
+owners are 51; dependencies must be rebuilt, with no compatibility reader.
+
+Acceptance on the final functional snapshot:
+
+- `cargo test -p rock-lib macro_a_`: 204 units and 13 integrations pass;
+  `/tmp/opencode/macro-a14-family-final.log`, SHA-256
+  `bc62586009a9403a868ec3eb57c78b1e563affdc71318adce0154a043dbf9cd9`.
+- `cargo test -p rock-lib`: 2,683 units, 802 main integrations, and one parser
+  integration pass; one doctest remains ignored. Log
+  `/tmp/opencode/macro-a14-acceptance-complete.log`, SHA-256
+  `44a812180640e5f3b9ae2b0cd4ca22457b77405467e3d5f1f498a8eb67ae9c0d`.
+- `cargo test -p rockc -p rock -p rock-shared`: rock 86, rock-shared 26,
+  rockc 48, and the shared doctest pass. The first attempt selected the cached
+  schema-50 sysroot and failed its freshness check; the passing run uses std
+  rebuilt by `rockup dev std package` into `/tmp/opencode/macro-a14-sysroot`,
+  with explicit `ROCK_SYSROOT` and the current `ROCKC`. Log
+  `/tmp/opencode/macro-a14-cli-current-sysroot.log`, SHA-256
+  `778f7d6553b39d92fcabca7e55fb41992cc472db6aa6e581c082b9746e615ab4`.
+
+No functional edits follow these gates.
+
+Earlier gates exposed stale native-worker/source-exposure fixtures and missing
+definition-side prelude/member lookups, including the unchanged `do` integration;
+those are repaired, not waived. An earlier broad run timed out during integrations
+and is not acceptance. Native tests exercise compiler construction permissions,
+not Rock-authored proc packages; that authoring workflow remains B. Formatting
+remains deferred and Beads is unavailable.
+
 **A gate:** run all `macro_a_` families and existing declarative/proc/module
 regressions, then `cargo test -p rock-lib` and affected CLI tests serially.
 Synthetic/native worker tests prove compiler semantics only; they are not evidence

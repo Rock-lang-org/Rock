@@ -117,18 +117,20 @@ impl MacroTemplate {
     #[cfg(test)]
     pub fn expand(&self, captures: &CaptureSet) -> Result<TokenStream, String> {
         self.validate()?;
-        self.expand_fragments(&self.fragments, captures, None, None)
+        self.expand_fragments(&self.fragments, captures, None, None, &mut |context| Ok(context))
     }
 
-    pub fn expand_with_origins(&self, captures: &CaptureSet, expansion: ExpansionId, generated_source: GeneratedSourceId)
+    pub fn expand_with_origins(&self, captures: &CaptureSet, expansion: ExpansionId, generated_source: GeneratedSourceId,
+        mut map_context: impl FnMut(crate::lexer::lossless::SyntaxContext) -> Result<crate::lexer::lossless::SyntaxContext, String>)
         -> Result<TokenStream, String>
     {
         self.validate()?;
-        self.expand_fragments(&self.fragments, captures, None, Some((expansion, generated_source)))
+        self.expand_fragments(&self.fragments, captures, None, Some((expansion, generated_source)), &mut map_context)
     }
 
     fn expand_fragments(&self, fragments: &[TemplateFragment], captures: &CaptureSet, repeated_index: Option<usize>,
-        origin: Option<(ExpansionId, GeneratedSourceId)>) -> Result<TokenStream, String>
+        origin: Option<(ExpansionId, GeneratedSourceId)>,
+        map_context: &mut dyn FnMut(crate::lexer::lossless::SyntaxContext) -> Result<crate::lexer::lossless::SyntaxContext, String>) -> Result<TokenStream, String>
     {
         let mut output = self.input.slice(0..0, MACRO_LIMITS).map_err(|error| format!("invalid template anchor: {error:?}"))?;
         for fragment in fragments {
@@ -146,7 +148,7 @@ impl MacroTemplate {
                 }
                 TemplateFragment::Input(input) => {
                     let input = match origin {
-                        Some((expansion, generated_source)) => input.generated(expansion, generated_source),
+                        Some((expansion, generated_source)) => input.generated(expansion, generated_source).map_contexts(&mut *map_context)?,
                         None => input.clone(),
                     };
                     append(&mut output, &input)?;
@@ -164,7 +166,7 @@ impl MacroTemplate {
                     }
                     if let Some(len) = len {
                         for index in 0..len {
-                            let expanded = self.expand_fragments(inner, captures, Some(index), origin)?;
+                            let expanded = self.expand_fragments(inner, captures, Some(index), origin, map_context)?;
                             append(&mut output, &expanded)?;
                         }
                     }
@@ -279,7 +281,7 @@ mod tests {
         let mut captures = CaptureSet::new();
         captures.insert_direct("name".into(), captured.captured(expansion, &invocation));
         let expanded = template(vec![capture("name"), TemplateFragment::Input(definition)])
-            .expand_with_origins(&captures, expansion, generated_source).unwrap();
+            .expand_with_origins(&captures, expansion, generated_source, |context| Ok(context)).unwrap();
         assert!(matches!(expanded.runs()[0].origin(), TokenOrigin::Captured { expansion: id, capture_span, .. } if id == expansion && capture_span.start == 8 && capture_span.end == 12));
         assert!(matches!(expanded.runs()[1].origin(), TokenOrigin::Generated { expansion: id, generated_source: source, definition_span } if id == expansion && source == generated_source && definition_span.start == 20 && definition_span.end == 21));
     }

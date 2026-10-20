@@ -97,6 +97,14 @@ fn macro_a_11_ordinary_source_names_keep_root_context() {
 }
 
 #[test]
+fn macro_a_14_do_desugaring_retains_the_keyword_binding_context() {
+    let parsed = names(&marked("main = -> do\n    x <- action!\n    pure x\n", 55));
+    let calls = parsed.iter().filter(|name| name.name == "bind").collect::<Vec<_>>();
+    assert!(!calls.is_empty());
+    assert!(calls.iter().all(|name| name.context == SyntaxContext(55)));
+}
+
+#[test]
 fn macro_a_11_retained_macro_payloads_do_not_enlarge_every_expression_frame() {
     assert!(std::mem::size_of::<Operand>() < std::mem::size_of::<MacroInvoc>());
 }
@@ -104,7 +112,7 @@ fn macro_a_11_retained_macro_payloads_do_not_enlarge_every_expression_frame() {
 #[test]
 fn macro_a_11_declarative_forwarding_keeps_captures_separate_from_template_names() {
     let definition = marked("macro duplicate\n    $name:ident =>\n        ($name, $name)\n", 31);
-    let call = marked("main = -> %duplicate ", 37);
+    let call = marked("main = -> ", 37).join(&marked("%duplicate ", 31), JoinBoundary::Separate, LIMITS).unwrap();
     let argument = marked("captured\n", 41);
     let stream = definition.join(&call, JoinBoundary::Separate, LIMITS).unwrap()
         .join(&argument, JoinBoundary::Separate, LIMITS).unwrap();

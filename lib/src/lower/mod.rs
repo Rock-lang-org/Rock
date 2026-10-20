@@ -652,7 +652,9 @@ impl Lowerer {
         let owner = self.current_generic_owner()?;
         self.current_generic_params().iter().enumerate().find_map(|(index, param)| {
             let id = GenericParamId { owner, index: index as u32 };
-            (param == name && self.resolver.generic_context(id) == context).then_some(id)
+            (param == name && (self.resolver.generic_context(id) == context
+                || (name == "Self" && self.resolver.member_context_matches(owner, context, self.resolver.generic_context(id)))))
+                .then_some(id)
         })
     }
 

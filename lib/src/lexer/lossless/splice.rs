@@ -186,6 +186,7 @@ impl LosslessStream {
         let mut base = 0;
         for run in &self.runs {
             let end = base + run.text().len();
+            if base < range.end && end > range.start && run.construction.is_some() { return Err(LosslessError::UnresolvedConstruction); }
             if base < range.end && end > range.start && run.context != first {
                 return Err(LosslessError::ConflictingContexts {
                     offset: base.max(range.start),
