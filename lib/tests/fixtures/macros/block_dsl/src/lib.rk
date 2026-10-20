@@ -1,0 +1,72 @@
+> rock_macro::*
+
+at: &Str -> I64 -> Diagnostic
+at = message, offset ->
+    Diagnostic::new DiagnosticSeverity::Error, (String::from message), (DiagnosticLocation::Input (ByteRange
+        start: offset as U64
+        end: (offset + 1) as U64))
+
+failure: Diagnostic -> Result String, Diagnostic
+failure = diagnostic -> Result::Err diagnostic
+
+// Only the fixture owns this tiny grammar. Quotes/tags/comments in the payload
+// are not Rock syntax, nor does this pretend to implement HTML.
+value_text: &MacroContext -> &TokenStream -> Result String, Diagnostic
+value_text = context, input ->
+    if context.views.literals.len! != 0
+        return failure (context.error (String::from "block input unexpectedly has Rock literal views"))
+    text = match input.spelling!
+        Result::Ok text => text
+        Result::Err _ => return failure (context.error (String::from "invalid block stream"))
+    bytes = text.as_bytes!
+    state = 0
+    digits = 0
+    value = 0
+    i = 0
+    while i < bytes.len!
+        byte = bytes[i] as I64
+        if byte == 64
+            return failure (at "block fixture forbids '@'", i)
+        if state == 0 && byte == 61
+            state = 1
+        else if state == 1
+            if byte >= 48 && byte <= 57
+                if digits == 2
+                    return failure (at "fixture value has at most two digits", i)
+                value = value * 10 + byte - 48
+                digits = digits + 1
+            else
+                if digits == 0
+                    return failure (at "expected decimal digits after '='", i)
+                state = 2
+        i = i + 1
+    if digits == 0
+        return failure (context.error (String::from "block fixture requires a decimal value attribute"))
+    Result::Ok (String::from value)
+
+expand: MacroContext -> TokenStream -> Bool -> MacroResult
+expand = context, input, item ->
+    number = match value_text &context, &input
+        Result::Ok number => number
+        Result::Err error =>
+            mut diagnostics: Vec Diagnostic = Vec::new!
+            diagnostics.push error
+            return MacroResult::Error diagnostics
+    text = if item
+        (String::from "generated = -> ").concat number
+    else
+        number
+    mut parts: Vec OutputPart = Vec::new!
+    parts.push (OutputPart::Source (SourceFragment
+        text: text
+        context: ConstructionContext
+            invocation: context.invocation
+            kind: ConstructionKind::CallSite))
+    MacroResult::Report (MacroReport
+        output: Option::Some (MacroOutput
+            parts: parts)
+        diagnostics: Vec::new!)
+
+< macro render = context, input -> expand context, input, false
+< macro declare = context, input -> expand context, input, true
+< macro raw = context, input -> MacroResult::Expand input

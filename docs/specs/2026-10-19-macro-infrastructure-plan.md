@@ -2295,6 +2295,88 @@ Commands and logs under `/tmp/opencode/`:
 B.19 is implemented and verified. B.20–B.22 and Stage C remain unfinished;
 formatting remains deferred, Beads unavailable, and unrelated work untouched.
 
+### B.20 delivery receipt — external opaque block DSL
+
+`lib/tests/fixtures/macros/block_dsl` is an ordinary external Rock procedural
+package using only the generic SDK. Its deliberately tiny library-owned grammar
+reads a decimal attribute and otherwise treats HTML-shaped contents as opaque;
+it is not a production HTML parser. The three exported entries emit expression
+or item source, or deliberately return uninterpreted DSL for normal Rock output
+rejection. A reserved byte produces a library diagnostic on the exact input
+subrange, including after multibyte text. No compiler policy or schema changes
+are part of this step.
+
+The complete consumers include apostrophes, an unmatched quote and brackets,
+HTML/Rock-comment-looking text, backticks, Unicode, an odd margin, a tab and a
+following dedented function. Native SDK acceptance checks exact retained bytes,
+no block literal views, the following function, both result categories,
+declarative forwarding of a nested opaque block, real execution, exact input
+error ranges and normal rejection of raw DSL output. CLI acceptance builds an
+ordinary provider dependency and runs the same consumers through `rock run`,
+then checks library errors and raw-output rejection through `rock build`.
+
+The initial CLI RED forwards the unprocessed DSL and fails in normal generated
+Rock parsing at `=` (`macro-b20-red.log`). Provider compilation then exposed a
+nonexistent String mutation helper and underconstrained generic early-error
+returns; the fixture now uses ordinary `String::concat` and a concretely typed
+error constructor. These failed authoring attempts are not compiler regressions.
+The corrected native provider publication, final native SDK acceptance and final
+CLI gate pass. Native acceptance also proves an alternate numeric result and
+library-defined missing/invalid/oversized-attribute diagnostics. Its first run
+passed the success cases before a test compared an unprefixed error string to
+the compiler's correctly prefixed message; the final assertion requires the
+exact `Proc macro 'render': ...` message. The provider did not change for that
+assertion correction. B.21–B.22 and Stage C remain unfinished.
+
+Commands/logs under `/tmp/opencode/`:
+
+- `cargo test -p rock macro_b_20 -- --nocapture`: initial forwarding RED,
+  `macro-b20-red.log`, SHA-256
+  `ee75572950e261719ffe2b212f387a419f4e899636f35e45dfdd2c1cd68396af`.
+- Direct provider publication uses `cargo run -p rockc -- --entry-file
+  lib/tests/fixtures/macros/block_dsl/src/lib.rk --crate-name block_dsl ...`
+  with explicit SDK/std artifacts and `--proc-macro-sdk rock_macro`.
+  Failed authoring attempts: `macro-b20-host.log`, SHA-256
+  `b5b6fd7e4ef2e446cbfb84825d4c471e394852e5d22ca37c444e4c7ab10ad1e4`;
+  `macro-b20-host-green.log` (despite its name, failed), SHA-256
+  `56790b9a04819ba5f503e3e52720c9e7b3f17e7c8d5c58ba39aa5d7ddff8bb85`.
+  Corrected publication: `macro-b20-host-final.log`, SHA-256
+  `3acfce5b56cb639ee36b45782a0b8e0da933ba74336e51ca6a8d5d65c5def35d`.
+- `cargo check --workspace --all-targets`: pass, `macro-b20-check.log`, SHA-256
+  `1578104d07807df7878c63b381103a52dc676b3883c9488c39bf2c36606d012e`.
+- `cargo test -p rock-lib --test macro_sdk -- --nocapture`: final one-test native
+  SDK gate passes all existing request/result/worker/host/literal/fragment
+  controls and the new DSL controls. `macro-b20-sdk-final.log`, SHA-256
+  `4fcde34432fe61a88b0e193d692c1a22434dbb77b88fc1c50f7f9fa6072fe799`.
+  Earlier failed assertion run: `macro-b20-sdk.log`, SHA-256
+  `3a73a792945241d598af4c8f38ae01b31bd68f9250c4b14827165e2fd2d27916`.
+- `cargo test -p rock macro_b_20 -- --nocapture`: final one-test CLI gate passes,
+  `macro-b20-cli-final.log`, SHA-256
+  `25ef2257cba51f23639756e7ca997ddfb297c89f43ec8b5d358a79e7ec505594`.
+  Initial GREEN preceded stronger raw-output error assertions:
+  `macro-b20-cli-green.log`, SHA-256
+  `aaeb60ec2991744d10cb7ada9261bed29c0b04cdb37a7ea66b19db4c20a9c0bc`.
+- `cargo clippy --workspace --all-targets`: final pass with existing warnings,
+  `macro-b20-clippy-final.log`, SHA-256
+  `290111134f8321319e063c2a56b34a21885c1199dd1d7dbb24acd36a6a1cf04d`.
+- `cargo build --release`: pass, `macro-b20-release-build.log`, SHA-256
+  `d9326b638deda9351a53ae262003b5089b041523ef741ba4af806428a2dae40a`.
+- Actual checked-in package manifest: `cargo run --manifest-path
+  /home/champii/prog/rust/Rock/Cargo.toml -p rock -- build --debug`, from
+  `lib/tests/fixtures/macros/block_dsl`, passes. This separately validates the
+  fixture's relative SDK dependency and proc-only library role.
+  `macro-b20-fixture-package-final.log`, SHA-256
+  `03295549695e9dec4363f4162f6613eceeab5df5abbac24158ccb7cf82e91b26`.
+  The first manual attempt timed out at 120 seconds during host compilation;
+  it is not acceptance (`macro-b20-fixture-package.log`, SHA-256
+  `9485fec8a9f45a7e905aded1a5e39ed51bec6820e5811c2c0db8115ad80456fd`).
+
+B.20 is implemented and verified; no functional edits follow the final gates.
+Compiler/SDK/schema bytes remain unchanged, so the B.19 complete library receipt
+remains the compiler regression baseline; this step refreshes the affected
+native SDK/CLI suites. Formatting remains deferred, Beads unavailable, and
+unrelated work untouched. B.21–B.22 and Stage C remain unfinished.
+
 **B gate:** all `macro_b_` families, the real SDK cross-language goldens, existing
 process/build/artifact tests, and the formatting/DSL proofs pass. Run the broader
 serialized gates below. A Rust-only worker, protocol round trip, or manifest flag

@@ -1,0 +1,14 @@
+> block_dsl::render
+macro pass
+    $value:expr =>
+        $value
+main = ->
+    %pass (%render
+        <panel value=42>
+          It's "open [ { (
+          <!-- DSL comment: ] } ) -->
+          /* unclosed Rock comment
+         `雪🦀`	  spacing
+        </panel>
+    )
+after = -> 7

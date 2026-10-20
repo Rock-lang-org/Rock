@@ -1,0 +1,7 @@
+> block_dsl::render
+main = ->
+    %render
+        <panel value=42>
+          雪🦀 @reserved
+        </panel>
+after = -> 7

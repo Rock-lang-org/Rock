@@ -1,0 +1,10 @@
+> block_dsl::render
+main = ->
+    %render
+        <panel value=42>
+          It's "open [ { (
+          <!-- DSL comment: ] } ) -->
+          /* unclosed Rock comment
+         `雪🦀`	  spacing
+        </panel>
+after = -> 7

@@ -151,3 +151,36 @@ fn macro_b_17_freshness_and_relocated_source_free_proc_bundle() {
     assert_eq!(fs::read(&artifact).unwrap(), bytes);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn macro_b_20_external_block_dsl_runs_and_diagnoses_through_rock() {
+    let root = temp_test_dir("macro_b20_dsl"); let provider = root.join("provider"); let app = root.join("app");
+    let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("rock_macro");
+    write_package_with_options(&provider, "block_dsl", "src/lib.rk", &[("rock_macro", sdk.display().to_string())],
+        include_str!("../../../lib/tests/fixtures/macros/block_dsl/src/lib.rk"), false);
+    let manifest = provider.join("rock.toml");
+    fs::write(&manifest, fs::read_to_string(&manifest).unwrap().replace("[lib]", "[lib]\nproc_macro = true")).unwrap();
+    write_package_with_options(&app, "app", "src/main.rk", &[("block_dsl", provider.display().to_string())], "", true);
+    for source in [
+        include_str!("../../../lib/tests/fixtures/macros/block_dsl/expression.rk"),
+        include_str!("../../../lib/tests/fixtures/macros/block_dsl/items.rk"),
+        include_str!("../../../lib/tests/fixtures/macros/block_dsl/forward.rk"),
+    ] {
+        fs::write(app.join("src/main.rk"), source).unwrap();
+        let output = rock(&app, &["run", "--debug"]);
+        assert_eq!(output.status.code(), Some(42), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+    }
+    fs::write(app.join("src/main.rk"), include_str!("../../../lib/tests/fixtures/macros/block_dsl/error.rk")).unwrap();
+    let error = rock(&app, &["build", "--debug"]);
+    assert!(!error.status.success());
+    let report = format!("{}{}", String::from_utf8_lossy(&error.stdout), String::from_utf8_lossy(&error.stderr));
+    assert!(report.contains("block fixture forbids '@'") && report.contains("雪🦀 @reserved"), "{report}");
+    let raw = include_str!("../../../lib/tests/fixtures/macros/block_dsl/expression.rk").replace("render", "raw");
+    fs::write(app.join("src/main.rk"), raw).unwrap();
+    let error = rock(&app, &["build", "--debug"]);
+    assert!(!error.status.success(), "uninterpreted DSL is not Rock output");
+    let report = format!("{}{}", String::from_utf8_lossy(&error.stdout), String::from_utf8_lossy(&error.stderr));
+    assert!(report.contains("Unexpected") && report.contains("expanded from macro 'raw'"), "{report}");
+    fs::remove_dir_all(root).unwrap();
+}
