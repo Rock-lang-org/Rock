@@ -122,9 +122,14 @@ impl ResolverTables {
         directives: &mut Vec<Directive>,
     ) {
         for (position, item) in module.top_levels.iter().enumerate() {
-            if let TopLevel::MacroDecl(declaration) = item {
+            let macro_name = match item {
+                TopLevel::MacroDecl(declaration) => Some(&declaration.name),
+                TopLevel::ProcMacroDecl(declaration) => Some(&declaration.function.name),
+                _ => None,
+            };
+            if let Some(name) = macro_name {
                 let mut path = self.module_binding_paths.get(&scope).cloned().unwrap_or_default();
-                path.push((declaration.name.name.clone(), declaration.name.context));
+                path.push((name.name.clone(), name.context));
                 self.macro_bindings.insert(path);
             }
             let path = match item {

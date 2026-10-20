@@ -1,0 +1,3 @@
+> rock_macro::MacroResult
+
+< macro identity = context, input -> MacroResult::Expand input

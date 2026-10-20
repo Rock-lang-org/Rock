@@ -119,8 +119,8 @@ main = !->
     run_worker "0.7.0", identity
 ```
 
-The compiler-generated wrapper will own this bootstrap code; macro authors will
-not need to implement transport or a dispatcher. The version is supplied explicitly,
+The compiler-generated wrapper owns this bootstrap code; macro authors do not
+implement transport or a dispatcher. The version is supplied explicitly,
 not discovered by the SDK. The runner gives the entry deep-owned context/input
 copies and retains the original request for output validation. It does not
 normalize block indentation or interpret DSL text.
@@ -160,7 +160,32 @@ disables workers even if the caller's configuration permits execution. A provide
 cannot invoke its own source proc entries while building itself. Proc facades and
 runtime-target proc declarations diagnose instead of inventing runtime exports.
 
-This is not yet a runnable source-declared package workflow: generated export
-wrappers, signature checking and package/build integration remain staged work.
+## Generated host compilation
+
+The compiler library's `compile_proc_macro(config, sdk)` builds a native host from
+source declarations, with `Config::target_role = TargetRole::ProcMacro` and
+`ProcMacroSdk { dependency: "rock_macro".into() }`. The SDK is an explicitly supplied
+ordinary artifact, never loaded by package spelling. A differently named SDK
+implementing the same contract works too; artifact names must still match their
+declared crate identities.
+
+The compiler generates a private dispatcher and `main`, preserves each source
+implementation AST in its original module, and checks it against
+`MacroContext -> TokenStream -> MacroResult` using ordinary compiler phases.
+Provider-local names cannot shadow the generated SDK bindings. Only discovered
+public identities dispatch; unknown identities/kinds return a structured error.
+Source entries need no handwritten table, bootstrap, or signature annotation.
+
+The SDK's root-level ordinary bootstrap contract exports `MacroContext`,
+`TokenStream`, `MacroResult`, `run_worker`, `is_function_like` and `unknown_entry`.
+The compiler supplies its version to the runner. The root `run_worker` delegates
+to the same one-shot runtime described above; no second transport path exists.
+
+Compiler contributors can build a host directly with `rockc --proc-macro-sdk
+rock_macro`, supplying std and SDK using ordinary `--extern-artifact name=path`
+arguments. This low-level workflow builds an executable, not a consumer artifact.
+Application package workflows will use `rock build`/`rock run` once host-aware
+planning, proc-only publication and package integration land in B.14–B.17.
+
 The Rust wire specification is
 [`docs/specs/2026-10-19-macro-worker-wire.md`](../docs/specs/2026-10-19-macro-worker-wire.md).

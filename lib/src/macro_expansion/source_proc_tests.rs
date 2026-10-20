@@ -157,7 +157,7 @@ fn macro_b_12_facade_publication_stays_rejected() {
 #[test]
 fn macro_b_12_runtime_compilation_cannot_drop_proc_implementations() {
     let errors = crate::compile(&config("< macro identity = context, input -> input\n")).unwrap_err();
-    assert!(format!("{errors:?}").contains("host wrapper generation is not implemented"), "{errors:?}");
+    assert!(format!("{errors:?}").contains("requires an explicitly supplied SDK contract"), "{errors:?}");
 }
 
 #[test]

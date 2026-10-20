@@ -566,11 +566,17 @@ disabled, then exposes direct public declarations in `Expansion::proc_exports`.
 It uses ordinary module/member exports, keeps helper functions out of the macro
 namespace, rejects duplicate macro names, and never executes a source entry to
 discover it. The same-spelled ordinary function remains a distinct binding.
-Self-invocation and proc facade publication diagnose. Host wrapper generation,
-normal signature checking against the supplied SDK, and real package building
-remain the subsequent steps, not implicit behavior of metadata discovery.
+Self-invocation and proc facade publication diagnose. B.13 adds the separate
+`compile_proc_macro(config, sdk)` host-build API and contributor-facing
+`rockc --proc-macro-sdk dependency_name`. The dependency must be an explicitly
+supplied ordinary artifact implementing the SDK contract; its package spelling
+is not compiler-known. Ordinary artifact crate-name validation is unchanged.
+The compiler generates an isolated dispatcher/bootstrap, retains implementation
+ASTs in their original scopes, and checks their signatures through the normal
+compiler pipeline. Metadata discovery still generates no wrapper. Proc-only
+artifact publication and real package building remain B.14–B.17.
 
-The last two forms are proposed new syntax allowed only in a proc library.
+The function-like/derive forms are allowed only in a proc library (derive remains reserved).
 They declare ordinary host function bodies with SDK entry contracts plus macro
 kind/name metadata; no proc macro executes to discover those declarations.
 Discover declarations after source macro expansion, then generate/validate the
@@ -579,7 +585,7 @@ declarations appear in the consumer interface. Duplicate names, wrong signatures
 and invalid export/target combinations are errors. Ordinary helper functions
 remain ordinary functions, not implicitly exported procedural macros.
 
-Proposed complete `demo_macros/src/lib.rk`:
+Complete `demo_macros/src/lib.rk`:
 
 ```rock
 > rock_macro::MacroResult
@@ -590,7 +596,7 @@ macro identity = context, input -> MacroResult::Expand input
 ```
 
 The dispatcher supplies the typed context and shared lossless token stream;
-unused `context` is intentional. The proposed SDK result includes
+unused `context` is intentional. The SDK result includes
 `Expand(TokenStream)` and an error-diagnostics result, expressed using ordinary
 Rock enum construction.
 

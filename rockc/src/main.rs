@@ -49,6 +49,7 @@ fn run_config(config: Config) -> Result<(), Diagnostics> {
     }
 
     let emit_artifact = config.emit_artifact.clone();
+    let proc_macro_sdk = config.proc_macro_sdk.clone();
     let compiler_config = config.into_compiler_config()?;
     if emit_artifact.is_some() && !compiler_config.no_link {
         return Err(diagnostics_from_message(
@@ -77,6 +78,8 @@ fn run_config(config: Config) -> Result<(), Diagnostics> {
         products
             .write_artifact_to_path(&path)
             .map_err(diagnostics_from_message)?;
+    } else if let Some(dependency) = proc_macro_sdk {
+        rock_lib::compile_proc_macro(&compiler_config, &rock_lib::macro_expansion::host::ProcMacroSdk { dependency })?;
     } else {
         rock_lib::compile(&compiler_config)?;
     }
@@ -194,6 +197,9 @@ pub struct Config {
     /// External product artifacts in name=path format
     #[arg(long)]
     extern_artifact: Vec<String>,
+    /// Build a source-declared host provider against this explicit SDK artifact dependency
+    #[arg(long, conflicts_with_all = ["emit_artifact", "format"])]
+    proc_macro_sdk: Option<String>,
     /// Format parsed modules in place and print them
     #[arg(long)]
     format: bool,
@@ -232,7 +238,9 @@ impl Config {
             extern_artifacts,
             source_providers: Vec::new(),
             current_crate_name: config.crate_name,
-            target_role: if config.emit_artifact.is_some() {
+            target_role: if config.proc_macro_sdk.is_some() {
+                rock_lib::crate_system::TargetRole::ProcMacro
+            } else if config.emit_artifact.is_some() {
                 rock_lib::crate_system::TargetRole::Library
             } else {
                 rock_lib::crate_system::TargetRole::Binary
@@ -1193,6 +1201,24 @@ mod tests {
             .map(|diagnostic| diagnostic.message.as_str())
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    #[test]
+    fn test_proc_macro_sdk_selects_explicit_host_target() {
+        let config = Config::try_parse_from(["rockc", "--entry-file", "provider.rk", "--proc-macro-sdk", "chosen_sdk", "--no-std"]).unwrap();
+        assert_eq!(config.proc_macro_sdk.as_deref(), Some("chosen_sdk"));
+        let compiler = config.into_compiler_config().unwrap();
+        assert_eq!(compiler.target_role, rock_lib::crate_system::TargetRole::ProcMacro);
+        assert!(compiler.extern_artifacts.is_empty(), "SDK is not auto-loaded");
+    }
+
+    #[test]
+    fn test_proc_macro_host_cannot_emit_runtime_artifact_or_format() {
+        for arguments in [vec!["--emit-artifact", "provider.rkca"], vec!["--format"]] {
+            let mut args = vec!["rockc", "--proc-macro-sdk", "chosen_sdk"];
+            args.extend(arguments);
+            assert!(Config::try_parse_from(args).is_err());
+        }
     }
 
     #[test]

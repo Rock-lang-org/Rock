@@ -29,6 +29,7 @@ mod macro_arg_matcher;
 mod expression;
 pub mod proc_macro;
 pub mod registry;
+pub mod host;
 pub mod source_map;
 pub mod token_tree;
 

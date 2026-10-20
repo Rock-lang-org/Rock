@@ -1686,6 +1686,90 @@ Protocol 7, `RKLOSS04` and artifact 53 remain unchanged: this is in-memory sourc
 discovery, not proc-only product publication. Formatting remains deferred, Beads
 unavailable, unrelated work untouched. No functional edits follow the final gates.
 
+### B.13 delivery receipt (2026-10-20)
+
+`compile_proc_macro(config, sdk)` requires an explicit ProcMacro target role and
+`ProcMacroSdk::dependency` naming a supplied ordinary SDK artifact. `rockc
+--proc-macro-sdk dependency_name` selects that path and rejects runtime artifact
+emission/formatting combinations. No SDK/std is discovered or injected; ordinary
+artifact crate-name validation is unchanged. Ordinary compilation of a proc role
+without this SDK contract now diagnoses that missing requirement rather than
+claiming wrapper generation is unimplemented.
+
+The compiler parses only bounded compiler-owned bootstrap syntax, installs a
+fresh-context private module plus main in both AST and module graph, and maps
+SDK imports through supplied product identity/public export authority. It inserts
+retained source implementation ASTs as private ordinary functions in their
+original scopes, with SDK signatures whose type contexts bridge to the isolated
+wrapper imports. Author bodies/parameters/locations are not printed, reparsed or
+rewritten. Separate contexts bridge dispatcher calls to the private entries and
+main to its bootstrap; user-spelled wrapper/function/type names cannot capture
+those bindings. Export identity/version values replace AST literal placeholders,
+never interpolate user strings into generated syntax. Template and identity
+bytes are bounded by the existing source budget.
+
+The ordinary collector, inference, MIR and codegen check the generated program.
+The SDK's root facade supplies the same one-shot runner plus function-like-kind
+checking and structured unknown-entry errors. Only discovered public identities
+dispatch; helpers/private declarations are not table entries. Proc-only macro
+imports/exports remain separate from runtime binding surfaces. This step builds
+the native executable and returns discovered export metadata, not runtime
+CompilerProducts or a fabricated object artifact. Proc-only publication remains
+B.14; host-aware package integration remains B.15–B.17.
+
+Three new unit controls check bounded/ordinary bootstrap syntax, unchanged
+implementation/parameter ASTs and signature type contexts, and fresh contexts
+with explicit source/dependency authority. Fourteen native SDK controls cover
+root/file-module/source-generated entries, original-scope private helpers,
+same-spelled ordinary functions and wrapper/type/helper collisions, unknown
+identities/private/ordinary entries and wrong kind, arity/result/ownership
+signature failures, missing/incompatible SDKs, wrong target, and an SDK rebuilt
+under a different package name. No source provider writes a table or main. Two
+compiler-CLI units check explicit host selection without auto-loading and
+incompatible runtime-emission/format flags. The existing SDK artifact harness is
+reused rather than rebuilding std for another integration target.
+
+Initial native attempts exposed normal Rock move/pattern constraints in the SDK
+kind helper; it now matches an ordinary clone. Contextual bootstrap imports then
+exposed qualified-export rather than root-facade names; the SDK now supplies
+actual ordinary root facade functions without changing dependency resolution.
+The first differently-named dependency probe correctly failed the existing
+artifact identity check; final acceptance rebuilds the SDK with the requested
+package identity rather than weakening that invariant. The arity negative uses
+the ordinary Resolve-category non-callable diagnostic; result/ownership failures
+also run through ordinary checking, never a host-specific signature whitelist.
+
+Verification evidence (logs under `/tmp/opencode/`):
+
+- `cargo test -p rock-lib --lib macro_b_13`: three units pass;
+  final post-import-check rerun `macro-b13-units-final.log`, SHA-256
+  `6d77a5f3f0a6f876d8698bd0d2c626f6a7fdc410aae2aa3d362cb1810be00951`.
+- `cargo test -p rock-lib --test macro_sdk -- --nocapture`: one integration passes
+  in 234.56 seconds, including all 14 generated-host controls and prior SDK/worker
+  controls; `macro-b13-sdk-test.log`, SHA-256
+  `1377a5f501706492e9a5069befa89c5f8520136797acbc09076981ac9695a62b`.
+- `cargo test -p rock-lib`: 2,715 units, 806 main integrations, six diagnostic
+  integrations, 14 native-process integrations, one SDK integration (244.92
+  seconds), and one parser integration pass; one doctest ignored.
+  `macro-b13-acceptance.log`, SHA-256
+  `f32021595928a087df9bf99e939d99857e410cdc43f79ee0013bfd605f752121`.
+- `cargo test -p rockc`: 54 tests pass; `macro-b13-rockc-final.log`, SHA-256
+  `729a5820fff4c90f40f1dbb165aa4c95dc919a66d56b750fbb2ba87fe59d805a`.
+  The initial run passed 53 and failed the new host-role fixture because it omitted
+  the ordinary required entry path; only that fixture argument changed.
+  Initial `macro-b13-rockc.log`, SHA-256
+  `72a7326d4392a062dee8b8756c4129da4a568043bf8fa977dd3531044594af93`.
+- `cargo check --workspace --all-targets` passes with warnings;
+  `macro-b13-check.log`, SHA-256
+  `9c2443f0730b5fef68e758ac39e7f530b17f009e1ee7b9ff77d76c346e08050b`.
+- `cargo clippy --workspace --all-targets` passes with warnings, including the
+  new eight-argument host installation boundary; `macro-b13-clippy.log`, SHA-256
+  `18fec5f3b42397711d698e58de441ea238f9e77470528d1548924dc831ebc7ec`.
+
+Protocol 7, `RKLOSS04` and artifact 53 are unchanged. Formatting remains deferred;
+Beads remains unavailable and unrelated work is untouched. No functional edits
+follow the final library/SDK gates; the CLI fixture argument rerun is recorded above.
+
 Do not widen `rock`'s dependency on compiler internals to generate semantic data:
 `rock` orchestrates `rockc`, which delegates compilation/discovery/checking to
 `lib`. Proc-only artifact emission must stop assuming every emitted artifact has

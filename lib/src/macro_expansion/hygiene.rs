@@ -29,6 +29,22 @@ impl Hygiene {
 }
 
 impl MacroExpansionContext<'_> {
+    pub(crate) fn fresh_private_context(&self) -> Result<SyntaxContext, String> {
+        self.hygiene.borrow_mut().allocate()
+    }
+
+    pub(crate) fn fresh_source_context(&self, path: Vec<(String, SyntaxContext)>, original: SyntaxContext) -> Result<SyntaxContext, String> {
+        let context = self.fresh_private_context()?;
+        self.binding_environments.borrow_mut().record_source_scope(context, path, original)?;
+        Ok(context)
+    }
+
+    pub(crate) fn fresh_dependency_context(&self, identity: &ProductCrateIdentity) -> Result<SyntaxContext, String> {
+        let context = self.fresh_private_context()?;
+        self.binding_environments.borrow_mut().record_dependency(context, identity, std::slice::from_ref(identity))?;
+        Ok(context)
+    }
+
     pub(super) fn record_definition_scope(&self, id: NodeId, path: Vec<(String, SyntaxContext)>) -> Result<(), String> {
         let mut hygiene = self.hygiene.borrow_mut();
         if hygiene.definitions.get(&id).is_some_and(|previous| *previous != path) {

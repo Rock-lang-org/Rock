@@ -124,19 +124,32 @@ impl Config {
 pub struct CompileOutput {
     pub ast: Program,
     pub products: Option<CompilerProducts>,
+    pub proc_macro_exports: Vec<macro_expansion::proc_macro::ProcMacroExport>,
 }
 
 pub fn compile(config: &Config) -> Result<Program, Diagnostics> {
-    compile_impl(config, false).map(|output| output.ast)
+    compile_impl(config, false, None).map(|output| output.ast)
 }
 
 pub fn compile_with_products(config: &Config) -> Result<CompileOutput, Diagnostics> {
-    compile_impl(config, true)
+    compile_impl(config, true, None)
+}
+
+/// Build a source-declared provider with an explicit SDK, ordinary type checking
+/// and native code generation. Proc-only artifact packaging is a separate step.
+pub fn compile_proc_macro(config: &Config, sdk: &macro_expansion::host::ProcMacroSdk) -> Result<CompileOutput, Diagnostics> {
+    if config.target_role != crate_system::TargetRole::ProcMacro {
+        return Err(Diagnostics(vec![diagnostic::Diagnostic::new(
+            "procedural macro host compilation requires the ProcMacro target role".into(),
+            lexer::Span::new(config.entry_file.clone(), 0, 0),
+        ).with_code(diagnostic::DiagnosticCode::Macro)]));
+    }
+    compile_impl(config, false, Some(sdk))
 }
 
 /// Run the source frontend through finalized HIR without MIR or code generation.
 pub fn analyze(config: &Config) -> Result<analysis::Analysis, Diagnostics> {
-    compile_frontend(config).map(|frontend| frontend.analysis)
+    compile_frontend(config, None).map(|frontend| frontend.analysis)
 }
 
 struct FrontendOutput {
@@ -149,6 +162,7 @@ struct FrontendOutput {
     fingerprint_source_files: Vec<PathBuf>,
     source_db: source_loader::SourceDatabase,
     effective_current_crate_name: String,
+    proc_macro_exports: Vec<macro_expansion::proc_macro::ProcMacroExport>,
 }
 
 /// Expanded syntax for inspection, not text to reparse as a hygienic program.
@@ -164,7 +178,7 @@ pub struct Expansion {
 /// Use exactly compilation's dependency loading, discovery and expansion engine,
 /// stopping before collection, inference, or code generation.
 pub fn expand(config: &Config) -> Result<Expansion, Diagnostics> {
-    let expanded = expand_frontend(config)?;
+    let expanded = expand_frontend(config, None)?;
     let modules = expanded.source_graph.modules().filter(|module|
         Some(&module.path) != expanded.ast.module.filepath.as_ref()).cloned().collect();
     Ok(Expansion { ast: expanded.ast, modules, source_map: expanded.macro_source_map, diagnostics: expanded.macro_diagnostics,
@@ -191,7 +205,7 @@ struct ExpandedFrontend {
     proc_exports: Vec<macro_expansion::registry::SourceProcMacroExport>,
 }
 
-fn expand_frontend(config: &Config) -> Result<ExpandedFrontend, Diagnostics> {
+fn expand_frontend(config: &Config, sdk: Option<&macro_expansion::host::ProcMacroSdk>) -> Result<ExpandedFrontend, Diagnostics> {
     let effective_current_crate_name = config
         .current_crate_name
         .clone()
@@ -238,12 +252,17 @@ fn expand_frontend(config: &Config) -> Result<ExpandedFrontend, Diagnostics> {
     let mut diagnostic_sources = diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
     let macro_source_map = macro_context.source_map();
     macro_source_map.attach_sources(&mut diagnostic_sources);
-    let ast = expanded.map_err(|diagnostics| macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources))?;
+    let mut ast = expanded.map_err(|diagnostics| macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources))?;
     let sources = source_loader::SourceModuleSet::from_modules(source_graph.modules()
         .filter(|module| Some(&module.path) != ast.module.filepath.as_ref()).cloned());
-    let proc_exports = macro_expansion::registry::MacroRegistry::build_with_modules(&ast.module, &sources, &macro_context)
-        .and_then(|registry| registry.source_proc_exports(&effective_current_crate_name))
+    let registry = macro_expansion::registry::MacroRegistry::build_with_modules(&ast.module, &sources, &macro_context)
         .map_err(|diagnostics| macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources))?;
+    let proc_exports = registry.source_proc_exports(&effective_current_crate_name)
+        .map_err(|diagnostics| macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources))?;
+    if let Some(sdk) = sdk {
+        macro_expansion::host::install(&mut ast, &mut source_graph, &macro_context, &ctx, &registry, sdk, &proc_exports, &mut diagnostic_sources)
+            .map_err(|diagnostics| macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources))?;
+    }
 
     if config.has_debug_print(DebugPrint::Expanded) {
         println!("{:#?}", ast);
@@ -255,15 +274,15 @@ fn expand_frontend(config: &Config) -> Result<ExpandedFrontend, Diagnostics> {
         binding_environments, effective_current_crate_name, macro_diagnostics, proc_exports })
 }
 
-fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
+fn compile_frontend(config: &Config, sdk: Option<&macro_expansion::host::ProcMacroSdk>) -> Result<FrontendOutput, Diagnostics> {
     let ExpandedFrontend { ast, ctx, source_graph, source_db, diagnostic_sources, macro_source_map,
-        binding_environments, effective_current_crate_name, macro_diagnostics, proc_exports: _ } = expand_frontend(config)?;
+        binding_environments, effective_current_crate_name, macro_diagnostics, proc_exports } = expand_frontend(config, sdk)?;
 
-    // Source proc declarations are never silently dropped into runtime products.
-    // The checked host wrapper is the next compilation boundary (B.13).
-    if config.target_role == crate_system::TargetRole::ProcMacro {
+    // Source proc declarations require the explicit checked host-build API;
+    // ordinary compilation must never silently discard their implementations.
+    if config.target_role == crate_system::TargetRole::ProcMacro && sdk.is_none() {
         return Err(Diagnostics(vec![diagnostic::Diagnostic::new(
-            "procedural macro host wrapper generation is not implemented yet".into(),
+            "procedural macro host compilation requires an explicitly supplied SDK contract".into(),
             lexer::Span::new(config.entry_file.clone(), 0, 0),
         ).with_code(diagnostic::DiagnosticCode::Macro)]));
     }
@@ -305,10 +324,11 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
         fingerprint_source_files,
         source_db,
         effective_current_crate_name,
+        proc_macro_exports: proc_exports.into_iter().map(|entry| entry.export).collect(),
     })
 }
 
-fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, Diagnostics> {
+fn compile_impl(config: &Config, emit_products: bool, sdk: Option<&macro_expansion::host::ProcMacroSdk>) -> Result<CompileOutput, Diagnostics> {
     let FrontendOutput {
         analysis: analysis::Analysis { ast, hir, macro_source_map, macro_diagnostics },
         crate_ctx: ctx,
@@ -318,7 +338,8 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
         fingerprint_source_files,
         source_db,
         effective_current_crate_name,
-    } = compile_frontend(config)?;
+        proc_macro_exports,
+    } = compile_frontend(config, sdk)?;
     macro_diagnostics.report();
     let crate_ctx = &ctx;
 
@@ -478,7 +499,7 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
         }
     }
 
-    Ok(CompileOutput { ast, products })
+    Ok(CompileOutput { ast, products, proc_macro_exports })
 }
 
 fn register_configured_sources(source_db: &mut source_loader::SourceDatabase, config: &Config) {

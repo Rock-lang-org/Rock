@@ -5,6 +5,7 @@
 > std::collections::vec::Vec
 > std::control::option::Option
 > std::string::owned::String
+> std::clone::Clone
 
 mod copies
 < mod operations
@@ -221,3 +222,20 @@ mod encode_validation
     Expand TokenStream
     Error (Vec Diagnostic)
     Report MacroReport
+
+// Ordinary SDK facade consumed by compiler-generated provider bootstraps.
+run_worker: &Str -> (MacroContext -> TokenStream -> MacroResult) -> ()
+< run_worker = compiler_version, entry ->
+    rock_macro::runtime::run_worker compiler_version, entry
+
+is_function_like: &MacroContext -> Bool
+< is_function_like = context ->
+    match context.kind.clone!
+        MacroKind::FunctionLike => true
+        _ => false
+
+unknown_entry: MacroContext -> TokenStream -> MacroResult
+< unknown_entry = context, input ->
+    mut diagnostics: Vec Diagnostic = Vec::new!
+    diagnostics.push (context.error (String::from "unknown procedural macro identity or kind"))
+    MacroResult::Error diagnostics
