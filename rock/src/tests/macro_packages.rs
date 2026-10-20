@@ -15,6 +15,7 @@ fn success(output: &std::process::Output) {
 }
 
 #[test]
+#[ignore = "cold package acceptance; run cargo macro-acceptance"]
 fn macro_b_16_real_rock_build_run_imports_only_execute_invocations() {
     let root = temp_test_dir("macro_b16_package"); let provider = root.join("provider"); let app = root.join("app");
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("rock_macro");
@@ -86,6 +87,7 @@ fn macro_b_16_real_rock_build_run_imports_only_execute_invocations() {
 }
 
 #[test]
+#[ignore = "freshness/relocation acceptance; run cargo macro-acceptance"]
 fn macro_b_17_freshness_and_relocated_source_free_proc_bundle() {
     let root = temp_test_dir("macro_b17_bundle"); let provider = root.join("provider");
     let sdk = root.join("sdk"); let helper = root.join("helper"); let app = root.join("app");
@@ -153,6 +155,7 @@ fn macro_b_17_freshness_and_relocated_source_free_proc_bundle() {
 }
 
 #[test]
+#[ignore = "cold package acceptance; run cargo macro-acceptance"]
 fn macro_b_20_external_block_dsl_runs_and_diagnoses_through_rock() {
     let root = temp_test_dir("macro_b20_dsl"); let provider = root.join("provider"); let app = root.join("app");
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("rock_macro");
@@ -186,6 +189,7 @@ fn macro_b_20_external_block_dsl_runs_and_diagnoses_through_rock() {
 }
 
 #[test]
+#[ignore = "cold package acceptance; run cargo macro-acceptance"]
 fn macro_b_21_external_interpolation_resolves_caller_holes_and_runtime_authority() {
     let root = temp_test_dir("macro_b21_interpolation");
     let provider = root.join("provider"); let runtime = root.join("runtime"); let app = root.join("app");
@@ -226,6 +230,7 @@ fn macro_b_21_external_interpolation_resolves_caller_holes_and_runtime_authority
 }
 
 #[test]
+#[ignore = "source-free package acceptance; run cargo macro-acceptance"]
 fn macro_b_22_nontrivial_consumers_execute_from_relocated_source_free_bundle() {
     fn copy_tree(from: &Path, to: &Path) {
         fs::create_dir_all(to).unwrap();

@@ -48,8 +48,8 @@ uses `rock_macro` on the host; the application does not depend on that SDK.
 Contributor acceptance commands, run serially from the repository root:
 
 ```sh
-cargo test -p rock macro_b_21 -- --nocapture
-cargo test -p rock-lib --test macro_sdk -- --nocapture
+cargo test -p rock macro_b_21 -- --ignored --nocapture
+cargo test -p rock-lib --test macro_sdk macro_acceptance_sdk_interpolation_ownership -- --ignored --exact --nocapture
 ```
 
 B.21 establishes interpolation, binding, dependency and diagnostic boundaries.

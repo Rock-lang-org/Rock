@@ -1,0 +1,67 @@
+// Test-only codec driver. This framing is NOT the one-shot worker protocol.
+> std::io::traits::stdin
+> std::io::traits::stdout
+> std::io::traits::read_to_end_limited
+> std::io::traits::write_all
+
+require = condition !->
+    if !condition
+        exit (1 as I32)
+
+expect: Result T, E -> T
+expect = result ->
+    match result
+        Result::Ok data => data
+        Result::Err _ =>
+            exit (1 as I32)
+            loop
+                ()
+
+run: (Vec U8 -> Option (Vec U8)) -> ()
+< run = check_case !->
+    mut input = stdin!
+    bytes = expect (read_to_end_limited (&mut input), 67108864)
+    mut output: Vec U8 = Vec::new!
+    offset = 0
+    count = 0
+    while offset < bytes.len!
+        require (count < 1024 && bytes.len! - offset >= 4)
+        length = 0
+        factor = 1
+        i = 0
+        while i < 4
+            length = length + (bytes[offset + i] as I64) * factor
+            factor = factor * 256
+            i = i + 1
+        offset = offset + 4
+        require (length <= 1048577 && length <= bytes.len! - offset)
+        mut frame: Vec U8 = Vec::new!
+        i = 0
+        while i < length
+            frame.push bytes[offset + i]
+            i = i + 1
+        offset = offset + length
+        result = check_case frame
+        payload = match result
+            Option::Some payload =>
+                output.push (0 as U8)
+                payload
+            Option::None =>
+                output.push (2 as U8)
+                Vec::new!
+        require (payload.len! <= 1048577 && output.len! + 4 + payload.len! <= 67108864)
+        length = payload.len!
+        i = 0
+        while i < 4
+            output.push ((length % 256) as U8)
+            length = length / 256
+            i = i + 1
+        i = 0
+        while i < payload.len!
+            output.push payload[i]
+            i = i + 1
+        count = count + 1
+    target = stdout!
+    match write_all &target, output.as_slice!
+        Result::Ok _ => ()
+        Result::Err _ => exit (1 as I32)

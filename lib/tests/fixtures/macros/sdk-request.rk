@@ -1,8 +1,7 @@
 > rock_macro::*
 > rock_macro::decode::decode_request
 > rock_macro::decode::DecodeErrorKind
-> std::io::traits::stdin
-> std::io::traits::read_to_end_limited
+mod sdk_batch
 
 check: Bool -> ()
 check = condition !->
@@ -202,45 +201,49 @@ rich = request !->
     check (fingerprint.loaded_files.len! == 2)
     check (fingerprint.loaded_files[1] == "雪.rk")
 
+check_request: Vec U8 -> Option (Vec U8)
+check_request = bytes ->
+    length = bytes.len!
+    match decode_request bytes, "0.7.0"
+        Result::Ok request =>
+            check (request.context.protocol_version == (7 as U32))
+            check (request.context.compiler_version == "0.7.0")
+            if request.context.macro_name == "format"
+                golden &request
+            else if request.context.macro_name == "rich"
+                rich &request
+            else
+                check (request.context.macro_name == "empty")
+                check (request.input.segments.len! == 0)
+                expansion = &request.context.expansion
+                match *expansion
+                    Option::None => ()
+                    _ => check false
+                parent = &request.context.parent
+                match *parent
+                    Option::None => ()
+                    _ => check false
+                check (request.context.definition_dependencies.len! == 0)
+                kind = &request.context.kind
+                match *kind
+                    MacroKind::AttributeLike => ()
+                    _ => check false
+            mut output: Vec U8 = Vec::new!
+            text = "request decoded\n".as_bytes!
+            i = 0
+            while i < text.len!
+                output.push text[i]
+                i = i + 1
+            Option::Some output
+        Result::Err error =>
+            if length > 1048576
+                kind = &error.kind
+                match *kind
+                    DecodeErrorKind::LengthLimit => ()
+                    _ => check false
+                check (error.offset == (0 as U64))
+            Option::None
+
 main = !->
     errors!
-    mut source = stdin!
-    // Retain one extra byte here so the decoder's own envelope check, not the
-    // IO seam, rejects the oversized-envelope control. Real runners use 1 MiB.
-    match read_to_end_limited (&mut source), 1048577
-        Result::Ok bytes =>
-            length = bytes.len!
-            match decode_request bytes, "0.7.0"
-                Result::Ok request =>
-                    check (request.context.protocol_version == (7 as U32))
-                    check (request.context.compiler_version == "0.7.0")
-                    if request.context.macro_name == "format"
-                        golden &request
-                    else if request.context.macro_name == "rich"
-                        rich &request
-                    else
-                        check (request.context.macro_name == "empty")
-                        check (request.input.segments.len! == 0)
-                        expansion = &request.context.expansion
-                        match *expansion
-                            Option::None => ()
-                            _ => check false
-                        parent = &request.context.parent
-                        match *parent
-                            Option::None => ()
-                            _ => check false
-                        check (request.context.definition_dependencies.len! == 0)
-                        kind = &request.context.kind
-                        match *kind
-                            MacroKind::AttributeLike => ()
-                            _ => check false
-                    "request decoded".println!
-                Result::Err error =>
-                    if length > 1048576
-                        kind = &error.kind
-                        match *kind
-                            DecodeErrorKind::LengthLimit => ()
-                            _ => check false
-                        check (error.offset == (0 as U64))
-                    exit (2 as I32)
-        Result::Err _ => exit (2 as I32)
+    sdk_batch::run check_request

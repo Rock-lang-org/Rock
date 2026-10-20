@@ -1,0 +1,3 @@
+[alias]
+# Cold package/freshness proofs and native SDK conformance are opt-in locally.
+macro-acceptance = "test -p rock-lib -p rock macro_ -- --ignored --test-threads=1"

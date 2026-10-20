@@ -8,6 +8,14 @@ lto = 'thin'
 opt-level = 0
 debug = 0
 
+# Tests execute the compiler repeatedly; optimize it without disabling checks.
+# The CLI subprocesses use the dev profile, so both paths need this override.
+[profile.test.package.rock-lib]
+opt-level = 2
+
+[profile.dev.package.rock-lib]
+opt-level = 2
+
 [workspace]
 resolver = "2"
 

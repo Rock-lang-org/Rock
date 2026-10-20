@@ -818,6 +818,16 @@ cargo test -p rock-lib
 cargo test -p rockup
 ```
 
+The ordinary compiler suite retains focused macro regressions and a native
+one-shot SDK smoke test. Expensive SDK conformance and cold package, freshness,
+and source-free relocation scenarios run explicitly:
+
+```sh
+cargo macro-acceptance
+```
+
+See [compiler testing](docs/testing.md) for individual groups and fixture reuse.
+
 See the [release maintainer guide](docs/releases.md) for packaging `v0.6.0`, verifying assets, and creating a draft GitHub release. Publishing a release is a separate maintainer action, not a side effect of building the workspace.
 
 ## Keep Exploring

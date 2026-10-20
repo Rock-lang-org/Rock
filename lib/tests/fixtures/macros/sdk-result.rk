@@ -1,10 +1,7 @@
 > rock_macro::*
 > rock_macro::decode::decode_request
 > rock_macro::encode::encode_result
-> std::io::traits::stdin
-> std::io::traits::stdout
-> std::io::traits::read_to_end_limited
-> std::io::traits::write_all
+mod sdk_batch
 
 expect: Result T, E -> T
 expect = result ->
@@ -200,15 +197,12 @@ choose = request ->
     else
         choose_success request
 
-main = !->
-    mut input = stdin!
-    bytes = expect (read_to_end_limited (&mut input), 1048576)
+check_result: Vec U8 -> Option (Vec U8)
+check_result = bytes ->
     request = expect (decode_request bytes, "0.7.0")
     result = choose &request
     match encode_result &request, result
-        Result::Ok bytes =>
-            output = stdout!
-            match write_all &output, (bytes.as_slice!)
-                Result::Ok _ => ()
-                Result::Err _ => exit (1 as I32)
-        Result::Err _ => exit (2 as I32)
+        Result::Ok bytes => Option::Some bytes
+        Result::Err _ => Option::None
+
+main = !-> sdk_batch::run check_result

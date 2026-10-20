@@ -83,6 +83,15 @@ first and supply dependencies as artifacts. Use `rockc`/compiler test helpers
 until the package workflow is delivered; afterward also test real `rock build`
 and `rock run`. Never add compiler-owned SDK/std discovery to make tests pass.
 
+After B.22, native SDK conformance and cold CLI package/freshness/relocation
+acceptance are opt-in via `cargo macro-acceptance`, run manually and serially.
+The former B.13-named SDK monolith is split into `macro_acceptance_sdk_*` groups;
+their commands and prerequisite reuse are documented in [compiler testing](../testing.md).
+Historical receipts below record the commands used at the time; add `--ignored`
+when selecting the now-ignored CLI acceptance tests. Default suites retain
+focused semantic/process regressions and a native one-shot SDK smoke test.
+This test-orchestration change does not begin Stage C or change worker isolation.
+
 ## A0. Lossless frontend foundation
 
 Primary owners: `lib/src/lexer/`, `lib/src/parser/engine/`,

@@ -24,10 +24,11 @@ and tabs have no Rock interpretation inside the block.
 Contributor commands, from the repository root:
 
 ```sh
-cargo test -p rock macro_b_20 -- --nocapture
-cargo test -p rock-lib --test macro_sdk -- --nocapture
+cargo test -p rock macro_b_20 -- --ignored --nocapture
+cargo test -p rock-lib --test macro_sdk macro_acceptance_sdk_block_dsl -- --ignored --exact --nocapture
 ```
 
-Run these suites serially. They rebuild explicit SDK/std dependencies and need
+Run these suites serially. The CLI rebuilds explicit dependencies; SDK tests reuse
+validated immutable SDK/std prerequisites. Both need
 the normal LLVM 18 development environment. No runtime SDK/std dependency is
 supplied to the consumer, and no compiler-owned HTML or DSL policy is added.
