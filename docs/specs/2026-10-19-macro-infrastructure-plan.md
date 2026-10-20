@@ -1340,6 +1340,69 @@ introduced. B.08/B.09 remain the request/result codec steps, followed by the
 one-shot runner in B.10. Formatting remains deferred and Beads unavailable.
 No functional edits follow these final gates; unrelated work remains untouched.
 
+### B.08 delivery receipt (2026-10-20)
+
+The ordinary SDK now exports `decode::decode_request`, taking owned bytes and an
+explicit expected compiler version. The decoder implements only protocol 7's
+declaration-order fields, unsigned bincode varints/options and nested `RKLOSS04`;
+it is not a general serialization framework or a compiler callback. Both the
+envelope and nested payload are capped at 1 MiB, counts are checked against schema
+caps and remaining bytes before allocation, and string conversion validates UTF-8.
+Invalid tags, integer narrowing, truncation, versions and trailing data produce a
+typed `DecodeErrorKind` plus byte offset.
+
+Local validation reuses `TokenStream::len_bytes!` for snapshot/range/adjacency and
+capture invariants, then checks neutral run classification, diagnostic projection
+arithmetic, no input construction requests, invocation/layout handles, duplicate
+dependency identities and input views. View ranges are checked against logical
+UTF-8 boundaries, not capture slicing: a literal/argument view may lie inside an
+opaque captured expression. The Unicode whitespace table follows the Rust
+transport; CR/LF/CRLF remain physical line-ending runs. No binding authority is
+allocated by this library operation.
+
+The explicit-artifact native acceptance now feeds the exact Rust request golden,
+every truncated prefix, enriched source/captured/generated provenance, projection
+and dependency records, all integer widths, all macro kinds/categories, empty
+input, and malformed schema/semantic controls to the Rock decoder. The fixture
+checks decoded fields and typed failure offsets. Test-owned wire mirrors only
+construct malformed lossless messages; they introduce no production alternative
+representation. The harness writes stdin concurrently with its 15-second process
+deadline, including messages above pipe capacity and early worker rejection;
+B.07's two-byte write fragments and exact binary controls remain in that gate.
+
+Verification evidence:
+
+- The first focused native run passes 195 Rust/Rock request controls, preserving
+  B.05/B.06/B.07 acceptance (145.81 seconds).
+  `/tmp/opencode/macro-b08-sdk-test.log`, SHA-256
+  `d5d0ca42f2c5b5ebb434c2ef541e6e0eb74d4029b1d7cfefb4474364f18d7d3a`.
+- `cargo check --workspace --all-targets` passes with existing warnings.
+  `/tmp/opencode/macro-b08-check.log`, SHA-256
+  `a03e9a3774d51a028827e7830871c91b8e1af68df89719041d4d68184baea571`.
+- `cargo test -p rock-lib` passes: 2,699 units, 805 main integrations, six
+  diagnostic integrations, 14 native-process integrations, one SDK integration
+  (149.13 seconds) and one parser integration; one doctest ignored. This includes
+  the additional tag/count/narrowing/optional/error-kind controls.
+  `/tmp/opencode/macro-b08-acceptance.log`, SHA-256
+  `c1eb492f4358803dd87d5ca815cd0bba5e78c976c8d895a1722e214cdd72fd42`.
+- `cargo clippy --workspace --all-targets` passes with existing warnings and no
+  warning in the new SDK test harness/support.
+  `/tmp/opencode/macro-b08-clippy.log`, SHA-256
+  `023d463f7697484faf80526ced52eed8885fc5c52636230b4b2942eff290f8d5`.
+- Final `cargo test -p rock-lib --test macro_sdk -- --nocapture` passes all 206
+  Rust/Rock request controls and preserved SDK/IO controls (147.00 seconds).
+  Only the fixture's oversized-envelope control changed after the full gate:
+  its IO cap retains one extra byte, then asserts the SDK decoder itself returns
+  `LengthLimit` at offset zero. The decoder and all other functional code are
+  unchanged from the full gate.
+  `/tmp/opencode/macro-b08-sdk-final.log`, SHA-256
+  `bd8534511f35fd16e2fcfa44fb0bb134575644a0583cec1ff3a58f64b93254cb`.
+
+No worker runner, result encoder, literal preparation or fragment materialization
+is introduced: those remain B.09/B.10/B.18/B.19. Protocol 7, `RKLOSS04` and product
+artifact 53 are unchanged. Formatting remains deferred and Beads unavailable.
+No functional edits follow the final focused gate; unrelated work remains untouched.
+
 The first worker is intentionally built from ordinary Rock code and test-provided
 entry functions. This proves the SDK/runtime seam before the source-declared
 export workflow; it is not permission to require authors to write a dispatcher.

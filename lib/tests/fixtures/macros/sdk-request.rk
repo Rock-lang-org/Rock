@@ -1,0 +1,246 @@
+> rock_macro::*
+> rock_macro::decode::decode_request
+> rock_macro::decode::DecodeErrorKind
+> std::io::traits::stdin
+> std::io::traits::read_to_end_limited
+
+check: Bool -> ()
+check = condition !->
+    if !condition
+        exit (1 as I32)
+
+errors = !->
+    empty: Vec U8 = Vec::new!
+    match decode_request empty, "0.7.0"
+        Result::Err error =>
+            check (error.offset == (0 as U64))
+            kind = &error.kind
+            match *kind
+                DecodeErrorKind::Truncated => ()
+                _ => check false
+        _ => check false
+    mut version: Vec U8 = Vec::new!
+    version.push (6 as U8)
+    match decode_request version, "0.7.0"
+        Result::Err error =>
+            check (error.offset == (1 as U64))
+            kind = &error.kind
+            match *kind
+                DecodeErrorKind::ProtocolVersion => ()
+                _ => check false
+        _ => check false
+    mut utf8: Vec U8 = Vec::new!
+    utf8.push (7 as U8)
+    utf8.push (1 as U8)
+    utf8.push (255 as U8)
+    match decode_request utf8, "0.7.0"
+        Result::Err error =>
+            check (error.offset == (2 as U64))
+            kind = &error.kind
+            match *kind
+                DecodeErrorKind::InvalidUtf8 => ()
+                _ => check false
+        _ => check false
+
+golden: &MacroRequest -> ()
+golden = request !->
+    context = &request.context
+    check (context.macro_name == "format")
+    check (context.macro_identity == "macros::format")
+    module = &context.source_module
+    match *module
+        Option::Some value => check (value == "app")
+        _ => check false
+    expansion = &context.expansion
+    match *expansion
+        Option::Some value => check (value == (2 as U32))
+        _ => check false
+    check (context.invocation == (1 as U64))
+    parent = &context.parent
+    match *parent
+        Option::Some value => check (value == (1 as U32))
+        _ => check false
+    category = &context.output_category
+    match *category
+        OutputCategory::Expression => ()
+        _ => check false
+    kind = &context.kind
+    match *kind
+        MacroKind::FunctionLike => ()
+        _ => check false
+    check (context.header_indent == (0 as U64))
+    base = &context.block_base
+    match *base
+        Option::None => ()
+        _ => check false
+    match request.input.spelling!
+        Result::Ok text => check (text == "(\"é\\n\", value)")
+        _ => check false
+    check (request.input.sources.len! == 1)
+    check (request.input.sources[0].identity == (1 as U64))
+    check (request.input.sources[0].file_path == "/golden.rk")
+    check (request.input.segments.len! == 3)
+    check (request.input.segments[0].range.end == (8 as U64))
+    check (request.input.segments[1].range.start == (8 as U64))
+    check (request.input.anchor.offset == (0 as U64))
+    check (request.input.expressions.len! == 1)
+    check (request.input.expressions[0].range.end == (15 as U64))
+    check (context.definition_dependencies.len! == 1)
+    check (context.definition_dependencies[0].name == "helper")
+    check (context.definition_dependencies[0].version == "0.1.0")
+    check (context.definition_dependencies[0].format_version == (1 as U32))
+    arguments = &context.views.arguments
+    match *arguments
+        Option::Some value =>
+            check (value.ranges.len! == 2)
+            check (value.ranges[0].start == (1 as U64))
+            check (value.ranges[0].end == (7 as U64))
+            check (value.ranges[1].start == (9 as U64))
+            check (value.ranges[1].end == (14 as U64))
+        _ => check false
+    check (context.views.groups.len! == 1)
+    delimiter = &context.views.groups[0].delimiter
+    match *delimiter
+        Delimiter::Paren => ()
+        _ => check false
+    check (context.views.groups[0].range.end == (15 as U64))
+    check (context.views.literals.len! == 1)
+    literal = &context.views.literals[0]
+    check (literal.source.start == (1 as U64))
+    check (literal.source.end == (7 as U64))
+    check (literal.decoded == "é\n")
+    check (literal.mapping.len! == 2)
+    check (literal.mapping[0].decoded.start == (0 as U64))
+    check (literal.mapping[0].decoded.end == (2 as U64))
+    check (literal.mapping[0].source.start == (2 as U64))
+    check (literal.mapping[0].source.end == (4 as U64))
+    check (literal.mapping[1].decoded.start == (2 as U64))
+    check (literal.mapping[1].decoded.end == (3 as U64))
+    check (literal.mapping[1].source.start == (4 as U64))
+    check (literal.mapping[1].source.end == (6 as U64))
+
+rich: &MacroRequest -> ()
+rich = request !->
+    context = &request.context
+    check (context.macro_name == "rich")
+    check (context.invocation == (18446744073709551615 as U64))
+    check (context.header_indent == (251 as U64))
+    base = &context.block_base
+    match *base
+        Option::Some value => check (value == (65536 as U64))
+        _ => check false
+    category = &context.output_category
+    match *category
+        OutputCategory::Items => ()
+        _ => check false
+    kind = &context.kind
+    match *kind
+        MacroKind::DeriveLike => ()
+        _ => check false
+    check (request.input.sources[0].identity == (18446744073709551615 as U64))
+    check (request.input.segments.len! == 6)
+    check (request.input.segments[0].context.handle == (251 as U32))
+    check (request.input.segments[1].context.handle == (65536 as U32))
+    check (request.input.segments[2].context.handle == (4294967295 as U32))
+    first = &request.input.segments[0].origin
+    match *first
+        Option::Some origin =>
+            provenance = &origin.provenance
+            match *provenance
+                TokenProvenance::Source span =>
+                    check (span.file_path == "/origin.rk")
+                    check (span.range.end == (9 as U64))
+                _ => check false
+        _ => check false
+    second = &request.input.segments[1].origin
+    match *second
+        Option::Some origin =>
+            provenance = &origin.provenance
+            match *provenance
+                TokenProvenance::Captured captured =>
+                    check (captured.expansion == (65536 as U32))
+                    check (captured.invocation_span.file_path == "/origin.rk")
+                    check (captured.capture_span.range.end == (9 as U64))
+                _ => check false
+            projection = &origin.projection
+            match *projection
+                Option::Some value =>
+                    check (value.namespace == (18446744073709551615 as U64))
+                    check (value.expansion == (4294967295 as U32))
+                    check (value.generated_source == (251 as U32))
+                    check (value.source_start == (0 as U64))
+                    check (value.output_start == (65536 as U64))
+                _ => check false
+        _ => check false
+    third = &request.input.segments[2].origin
+    match *third
+        Option::Some origin =>
+            provenance = &origin.provenance
+            match *provenance
+                TokenProvenance::Generated generated =>
+                    check (generated.expansion == (251 as U32))
+                    check (generated.generated_source == (65536 as U32))
+                    check (generated.definition_span.file_path == "/origin.rk")
+                _ => check false
+        _ => check false
+    check (context.definition_dependencies.len! == 2)
+    dependency = &context.definition_dependencies[0]
+    check (dependency.format_version == (65536 as U32))
+    target = &dependency.target_triple
+    match *target
+        Option::Some value => check (value == "host")
+        _ => check false
+    fingerprint = &dependency.source_fingerprint
+    manifest = &fingerprint.manifest_hash
+    match *manifest
+        Option::Some value => check (value == "manifest")
+        _ => check false
+    source = &fingerprint.source_hash
+    match *source
+        Option::Some value => check (value == "source")
+        _ => check false
+    check (fingerprint.loaded_files.len! == 2)
+    check (fingerprint.loaded_files[1] == "雪.rk")
+
+main = !->
+    errors!
+    mut source = stdin!
+    // Retain one extra byte here so the decoder's own envelope check, not the
+    // IO seam, rejects the oversized-envelope control. Real runners use 1 MiB.
+    match read_to_end_limited (&mut source), 1048577
+        Result::Ok bytes =>
+            length = bytes.len!
+            match decode_request bytes, "0.7.0"
+                Result::Ok request =>
+                    check (request.context.protocol_version == (7 as U32))
+                    check (request.context.compiler_version == "0.7.0")
+                    if request.context.macro_name == "format"
+                        golden &request
+                    else if request.context.macro_name == "rich"
+                        rich &request
+                    else
+                        check (request.context.macro_name == "empty")
+                        check (request.input.segments.len! == 0)
+                        expansion = &request.context.expansion
+                        match *expansion
+                            Option::None => ()
+                            _ => check false
+                        parent = &request.context.parent
+                        match *parent
+                            Option::None => ()
+                            _ => check false
+                        check (request.context.definition_dependencies.len! == 0)
+                        kind = &request.context.kind
+                        match *kind
+                            MacroKind::AttributeLike => ()
+                            _ => check false
+                    "request decoded".println!
+                Result::Err error =>
+                    if length > 1048576
+                        kind = &error.kind
+                        match *kind
+                            DecodeErrorKind::LengthLimit => ()
+                            _ => check false
+                        check (error.offset == (0 as U64))
+                    exit (2 as I32)
+        Result::Err _ => exit (2 as I32)

@@ -158,8 +158,9 @@ Byte-exact lowercase hex fixtures live in
 an opaque capture, a group, argument ranges, escape-aware literal mappings,
 forwarded spelling, all construction kinds, a literal fragment, and structured
 warning/error results. Invocation and snapshot handles are fixed to 1 solely
-for these test messages. The future Rock SDK must consume/produce these same
-bytes; compiler-only tests do not establish Rock-authored worker usability.
+for these test messages. B.08's Rock SDK request acceptance consumes `request.hex`
+and Rust-produced enriched/malformed controls; response/error production remains
+B.09. Compiler-only tests do not establish Rock-authored worker usability.
 
 ## Ordinary Rock data model
 
@@ -179,3 +180,11 @@ requests and fragment descriptors are ordinary typed data. They grant no compile
 authority merely by being constructed locally. Local operations and checked IO/
 serialization are B.06–B.10; the data-model runtime test is not worker or binary
 interoperability acceptance.
+
+`rock_macro::decode::decode_request` accepts owned request bytes and an explicitly
+supplied expected compiler version. It checks the envelope and declared lengths
+before payload allocation, uses checked UTF-8 conversion, decodes the nested
+snapshot table, and validates the request's local structural invariants. Errors
+contain a typed kind and byte offset (nested-stream-relative for nested failures,
+end-of-envelope for whole-request semantic failures). No parser callbacks,
+filesystem loading, macro execution or construction authority are introduced.

@@ -1,0 +1,462 @@
+// Protocol 7 / RKLOSS04 only. This is a bounded schema decoder, not a serializer framework.
+> rock_macro::*
+> rock_macro::decode_validation::validate_request
+> std::collections::vec::Vec
+> std::control::option::Option
+> std::control::result::Result
+> std::string::owned::String
+> std::convert::From
+> std::num::arithmetic::Add
+> std::num::arithmetic::Sub
+> std::num::arithmetic::Mul
+> std::cmp::eq::PartialEq
+> std::cmp::ord::PartialOrd
+> std::ops::index::Index
+> std::ops::not::Not
+
+< enum DecodeErrorKind
+    Truncated
+    LengthLimit
+    InvalidTag
+    InvalidUtf8
+    ProtocolVersion
+    CompilerVersion
+    StreamVersion
+    InvalidData
+    TrailingData
+
+< struct DecodeError
+    < kind: DecodeErrorKind
+    < offset: U64
+
+require: Bool -> I64 -> DecodeErrorKind -> Result (), DecodeError
+require = condition, offset, kind ->
+    if condition
+        Result::Ok ()
+    else
+        Result::Err (DecodeError
+            kind: kind
+            offset: offset as U64)
+
+struct Reader
+    bytes: Vec U8
+    offset: I64
+
+impl Reader
+    new: Vec U8 -> Result Reader, DecodeError
+    new = bytes ->
+        require (bytes.len! <= 1048576), 0, DecodeErrorKind::LengthLimit ?
+        Result::Ok (Reader
+            bytes: bytes
+            offset: 0)
+
+    @remaining: I64
+    @remaining = ->
+        length = self.bytes.len!
+        length - self.offset
+
+    ^@byte: Result U8, DecodeError
+    ^@byte = ->
+        require (self.remaining! > 0), (self.offset), DecodeErrorKind::Truncated ?
+        value = self.bytes[self.offset]
+        self.offset = self.offset + 1
+        Result::Ok value
+
+    // Bincode 1 DefaultOptions: unsigned varints, little-endian payloads.
+    ^@uint: Result U64, DecodeError
+    ^@uint = ->
+        tag = (self.byte! ?) as I64
+        if tag < 251
+            success: Result U64, DecodeError = Result::Ok (tag as U64)
+            return success
+        require (tag <= 253), (self.offset - 1), DecodeErrorKind::InvalidTag ?
+        width = if tag == 251 then 2 else if tag == 252 then 4 else 8
+        value: U64 = 0 as U64
+        factor: U64 = 1 as U64
+        i = 0
+        while i < width
+            byte = (self.byte! ?) as U64
+            value = value + byte * factor
+            i = i + 1
+            if i < width
+                factor = factor * (256 as U64)
+        Result::Ok value
+
+    ^@small: Result U32, DecodeError
+    ^@small = ->
+        value = self.uint! ?
+        require (value <= (4294967295 as U64)), (self.offset), DecodeErrorKind::InvalidData ?
+        Result::Ok (value as U32)
+
+    ^@tag: I64 -> Result I64, DecodeError
+    ^@tag = maximum ->
+        value = self.uint! ?
+        require (value <= (maximum as U64)), (self.offset), DecodeErrorKind::InvalidTag ?
+        Result::Ok (value as I64)
+
+    ^@present: Result Bool, DecodeError
+    ^@present = ->
+        value = (self.byte! ?) as I64
+        require (value <= 1), (self.offset - 1), DecodeErrorKind::InvalidTag ?
+        Result::Ok (value == 1)
+
+    // Every sequence element in this schema consumes at least one encoded byte.
+    // Check both the schema cap and remaining bytes before allocating/pushing.
+    ^@length: I64 -> Result I64, DecodeError
+    ^@length = maximum ->
+        value = self.uint! ?
+        require (value <= (maximum as U64)), (self.offset), DecodeErrorKind::LengthLimit ?
+        require (value <= (self.remaining! as U64)), (self.offset), DecodeErrorKind::Truncated ?
+        Result::Ok (value as I64)
+
+    ^@blob: Result (Vec U8), DecodeError
+    ^@blob = ->
+        length = self.length 1048576 ?
+        mut output: Vec U8 = Vec::new!
+        i = 0
+        while i < length
+            output.push self.bytes[self.offset + i]
+            i = i + 1
+        self.offset = self.offset + length
+        Result::Ok output
+
+    ^@text: Result String, DecodeError
+    ^@text = ->
+        length = self.length 1048576 ?
+        start = self.offset
+        self.offset = self.offset + length
+        bytes = self.bytes.as_slice!
+        decoded = String::from_utf8 (&bytes[start..self.offset])
+        match decoded
+            Option::Some text => Result::Ok text
+            Option::None => Result::Err (DecodeError
+                kind: DecodeErrorKind::InvalidUtf8
+                offset: start as U64)
+
+    ^@optional_text: Result (Option String), DecodeError
+    ^@optional_text = ->
+        if self.present! ?
+            text = self.text! ?
+            Result::Ok (Option::Some text)
+        else
+            Result::Ok Option::None
+
+    ^@optional_small: Result (Option U32), DecodeError
+    ^@optional_small = ->
+        if self.present! ?
+            value = self.small! ?
+            Result::Ok (Option::Some value)
+        else
+            Result::Ok Option::None
+
+    ^@optional_uint: Result (Option U64), DecodeError
+    ^@optional_uint = ->
+        if self.present! ?
+            value = self.uint! ?
+            Result::Ok (Option::Some value)
+        else
+            Result::Ok Option::None
+
+    ^@range: Result ByteRange, DecodeError
+    ^@range = ->
+        start = self.uint! ?
+        end = self.uint! ?
+        Result::Ok (ByteRange
+            start: start
+            end: end)
+
+    ^@span: Result Span, DecodeError
+    ^@span = ->
+        path = self.text! ?
+        range = self.range! ?
+        Result::Ok (Span
+            file_path: path
+            range: range)
+
+    ^@origin: Result (Option TokenOrigin), DecodeError
+    ^@origin = ->
+        if !(self.present! ?)
+            empty: Result (Option TokenOrigin), DecodeError = Result::Ok Option::None
+            return empty
+        tag = self.tag 2 ?
+        provenance = if tag == 0
+            span = self.span! ?
+            TokenProvenance::Source span
+        else if tag == 1
+            expansion = self.small! ?
+            invocation = self.span! ?
+            capture = self.span! ?
+            TokenProvenance::Captured (CapturedOrigin
+                expansion: expansion
+                invocation_span: invocation
+                capture_span: capture)
+        else
+            expansion = self.small! ?
+            generated = self.small! ?
+            definition = self.span! ?
+            TokenProvenance::Generated (GeneratedOrigin
+                expansion: expansion
+                generated_source: generated
+                definition_span: definition)
+        projection = if self.present! ?
+            namespace = self.uint! ?
+            expansion = self.small! ?
+            generated = self.small! ?
+            source_start = self.uint! ?
+            output_start = self.uint! ?
+            Option::Some (OutputProjection
+                namespace: namespace
+                expansion: expansion
+                generated_source: generated
+                source_start: source_start
+                output_start: output_start)
+        else
+            Option::None
+        Result::Ok (Option::Some (TokenOrigin
+            provenance: provenance
+            projection: projection))
+
+    ^@construction: Result (Option ConstructionContext), DecodeError
+    ^@construction = ->
+        if !(self.present! ?)
+            empty: Result (Option ConstructionContext), DecodeError = Result::Ok Option::None
+            return empty
+        invocation = self.uint! ?
+        tag = self.tag 2 ?
+        kind = if tag == 0
+            fresh = self.small! ?
+            ConstructionKind::Fresh fresh
+        else if tag == 1
+            ConstructionKind::CallSite
+        else
+            dependency = self.small! ?
+            ConstructionKind::Dependency dependency
+        Result::Ok (Option::Some (ConstructionContext
+            invocation: invocation
+            kind: kind))
+
+    ^@snapshot: Result SourceSnapshot, DecodeError
+    ^@snapshot = ->
+        identity = self.uint! ?
+        path = self.text! ?
+        text = self.text! ?
+        Result::Ok (SourceSnapshot
+            identity: identity
+            file_path: path
+            text: text)
+
+    ^@segment: Result Segment, DecodeError
+    ^@segment = ->
+        source = self.uint! ?
+        range = self.range! ?
+        kind_tag = self.tag 2 ?
+        kind = match kind_tag
+            0 => SegmentKind::Text
+            1 => SegmentKind::Whitespace
+            _ => SegmentKind::LineEnding
+        context = self.small! ?
+        boundary_tag = self.tag 1 ?
+        boundary = if boundary_tag == 0 then JoinBoundary::Separate else JoinBoundary::SourceAdjacent
+        origin = self.origin! ?
+        construction = self.construction! ?
+        Result::Ok (Segment
+            source: source
+            range: range
+            kind: kind
+            context: SyntaxContext
+                handle: context
+            boundary: boundary
+            origin: origin
+            construction: construction)
+
+    ^@anchor: Result StreamAnchor, DecodeError
+    ^@anchor = ->
+        source = self.uint! ?
+        offset = self.uint! ?
+        context = self.small! ?
+        origin = self.origin! ?
+        Result::Ok (StreamAnchor
+            source: source
+            offset: offset
+            context: SyntaxContext
+                handle: context
+            origin: origin)
+
+    ^@stream: Result TokenStream, DecodeError
+    ^@stream = ->
+        magic: [U8; 8] = [82, 75, 76, 79, 83, 83, 48, 52]
+        i = 0
+        while i < 8
+            byte = self.byte! ?
+            require (byte == magic[i]), (self.offset - 1), DecodeErrorKind::StreamVersion ?
+            i = i + 1
+        count = self.length 1048576 ?
+        mut sources: Vec SourceSnapshot = Vec::new!
+        i = 0
+        while i < count
+            source = self.snapshot! ?
+            sources.push source
+            i = i + 1
+        count = self.length 1048576 ?
+        mut segments: Vec Segment = Vec::new!
+        i = 0
+        while i < count
+            segment = self.segment! ?
+            segments.push segment
+            i = i + 1
+        anchor = self.anchor! ?
+        count = self.length 1048576 ?
+        mut expressions: Vec ExpressionRange = Vec::new!
+        i = 0
+        while i < count
+            range = self.range! ?
+            indent = self.uint! ?
+            expressions.push (ExpressionRange
+                range: range
+                header_indent: indent)
+            i = i + 1
+        require (self.remaining! == 0), (self.offset), DecodeErrorKind::TrailingData ?
+        Result::Ok (TokenStream
+            sources: sources
+            segments: segments
+            anchor: anchor
+            expressions: expressions)
+
+    ^@dependency: Result DependencyIdentity, DecodeError
+    ^@dependency = ->
+        name = self.text! ?
+        version = self.text! ?
+        target = self.optional_text! ?
+        format = self.small! ?
+        manifest = self.optional_text! ?
+        source = self.optional_text! ?
+        count = self.length 1048576 ?
+        mut files: Vec String = Vec::new!
+        i = 0
+        while i < count
+            file = self.text! ?
+            files.push file
+            i = i + 1
+        Result::Ok (DependencyIdentity
+            name: name
+            version: version
+            target_triple: target
+            format_version: format
+            source_fingerprint: SourceFingerprint
+                manifest_hash: manifest
+                source_hash: source
+                loaded_files: files)
+
+    ^@views: Result InputViews, DecodeError
+    ^@views = ->
+        arguments = if self.present! ?
+            count = self.length 16384 ?
+            mut ranges: Vec ByteRange = Vec::new!
+            i = 0
+            while i < count
+                range = self.range! ?
+                ranges.push range
+                i = i + 1
+            Option::Some (ArgumentView
+                ranges: ranges)
+        else
+            Option::None
+        count = self.length 16384 ?
+        mut groups: Vec GroupView = Vec::new!
+        i = 0
+        while i < count
+            tag = self.tag 2 ?
+            delimiter = match tag
+                0 => Delimiter::Paren
+                1 => Delimiter::Bracket
+                _ => Delimiter::Brace
+            range = self.range! ?
+            groups.push (GroupView
+                delimiter: delimiter
+                range: range)
+            i = i + 1
+        count = self.length 16384 ?
+        mut literals: Vec LiteralView = Vec::new!
+        i = 0
+        while i < count
+            source = self.range! ?
+            decoded = self.text! ?
+            mapping_count = self.length 16384 ?
+            mut mapping: Vec LiteralMapping = Vec::new!
+            j = 0
+            while j < mapping_count
+                decoded_range = self.range! ?
+                source_range = self.range! ?
+                mapping.push (LiteralMapping
+                    decoded: decoded_range
+                    source: source_range)
+                j = j + 1
+            literals.push (LiteralView
+                source: source
+                decoded: decoded
+                mapping: mapping)
+            i = i + 1
+        Result::Ok (InputViews
+            arguments: arguments
+            groups: groups
+            literals: literals)
+
+    ^@request: &Str -> Result MacroRequest, DecodeError
+    ^@request = expected_compiler ->
+        protocol = self.small! ?
+        require (protocol == (7 as U32)), (self.offset), DecodeErrorKind::ProtocolVersion ?
+        compiler = self.text! ?
+        require (compiler == expected_compiler), (self.offset), DecodeErrorKind::CompilerVersion ?
+        name = self.text! ?
+        identity = self.text! ?
+        module = self.optional_text! ?
+        expansion = self.optional_small! ?
+        invocation = self.uint! ?
+        parent = self.optional_small! ?
+        category_tag = self.tag 1 ?
+        category = if category_tag == 0 then OutputCategory::Items else OutputCategory::Expression
+        kind_tag = self.tag 2 ?
+        kind = match kind_tag
+            0 => MacroKind::FunctionLike
+            1 => MacroKind::AttributeLike
+            _ => MacroKind::DeriveLike
+        indent = self.uint! ?
+        base = self.optional_uint! ?
+        stream_bytes = self.blob! ?
+        mut stream_reader = Reader::new stream_bytes ?
+        input = stream_reader.stream! ?
+        count = self.length 16384 ?
+        mut dependencies: Vec DependencyIdentity = Vec::new!
+        i = 0
+        while i < count
+            dependency = self.dependency! ?
+            dependencies.push dependency
+            i = i + 1
+        views = self.views! ?
+        require (self.remaining! == 0), (self.offset), DecodeErrorKind::TrailingData ?
+        request = MacroRequest
+            context: MacroContext
+                protocol_version: protocol
+                compiler_version: compiler
+                macro_name: name
+                macro_identity: identity
+                source_module: module
+                expansion: expansion
+                invocation: invocation
+                parent: parent
+                output_category: category
+                kind: kind
+                header_indent: indent
+                block_base: base
+                definition_dependencies: dependencies
+                views: views
+            input: input
+        require (validate_request &request), (self.offset), DecodeErrorKind::InvalidData ?
+        Result::Ok request
+
+// The generated runner supplies its compiler version; no compiler callback,
+// package discovery or source-file access participates in decoding.
+decode_request: Vec U8 -> &Str -> Result MacroRequest, DecodeError
+< decode_request = bytes, expected_compiler ->
+    mut reader = Reader::new bytes ?
+    reader.request expected_compiler

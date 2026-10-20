@@ -9,6 +9,8 @@
 mod copies
 < mod operations
 < mod construction
+< mod decode
+mod decode_validation
 
 < struct ByteRange
     < start: U64

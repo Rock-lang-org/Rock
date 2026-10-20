@@ -58,8 +58,27 @@ The binary IO seam is tested through ordinary `std::io::traits` APIs, including
 `read_to_end_limited` (EOF-terminated bytes with a cap) and `write_all` (short-write
 handling). Input/output are byte collections, never strings or compiler callbacks.
 Negative limits, excess input and invalid read counts yield `IoError::InvalidInput`;
-source IO errors propagate unchanged. This is not yet a runnable procedural macro
-package workflow: codecs, generated runners and source export discovery remain
-staged implementation work.
+source IO errors propagate unchanged.
+
+## Request decoding
+
+`decode::decode_request bytes, expected_compiler_version` returns
+`Result MacroRequest, decode::DecodeError`. Supply the runner's compiler package
+version explicitly; the SDK does not discover a compiler or contact one.
+
+- Only protocol 7 and `RKLOSS04` are accepted, with the exact field order and
+  bincode 1 variable-width little-endian encoding; trailing bytes reject.
+- The whole encoded request is capped at 1 MiB, including its nested lossless
+  stream. Declared lengths are checked against schema caps and remaining bytes
+  before strings or collections are allocated. UTF-8 conversion is checked.
+- Validation checks source tables, byte boundaries, run kinds, adjacency,
+  projections, opaque captures, layout, handles, unique dependencies and views.
+  An input construction request is rejected; no bindings are minted by decoding.
+- Failures carry a typed `DecodeErrorKind` and byte offset. Nested-stream errors
+  use an offset within that payload; whole-request semantic failures point at the
+  end of the envelope. Offsets do not designate filesystem locations.
+
+This is not yet a runnable procedural macro package workflow: result encoding,
+generated runners and source export discovery remain staged implementation work.
 The Rust wire specification is
 [`docs/specs/2026-10-19-macro-worker-wire.md`](../docs/specs/2026-10-19-macro-worker-wire.md).

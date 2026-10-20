@@ -1,0 +1,232 @@
+// Local validation of the version-locked request schema, not Rock parsing.
+> rock_macro::*
+> std::collections::vec::Vec
+> std::control::option::Option
+> std::control::result::Result
+> std::string::owned::String
+> std::convert::From
+> std::num::arithmetic::Add
+> std::num::arithmetic::Sub
+> std::cmp::eq::PartialEq
+> std::cmp::ord::PartialOrd
+> std::ops::index::Index
+> std::ops::not::Not
+
+boundary: &String -> U64 -> Bool
+boundary = text, offset ->
+    if offset > (text.len! as U64)
+        return false
+    if offset == (text.len! as U64)
+        return true
+    byte = text.as_bytes![offset as I64] as I64
+    byte < 128 || byte >= 192
+
+in_text: &String -> &ByteRange -> Bool
+in_text = text, range ->
+    range.start <= range.end && (boundary text, (range.start)) && (boundary text, (range.end))
+
+projection_valid: &(Option TokenOrigin) -> U64 -> U64 -> Bool
+projection_valid = origin, start, end ->
+    match *origin
+        Option::None => true
+        Option::Some retained =>
+            projection = &retained.projection
+            match *projection
+                Option::None => true
+                Option::Some value =>
+                    if value.expansion == (0 as U32) || value.generated_source == (0 as U32)
+                        return false
+                    if value.source_start > start || value.output_start > (16777216 as U64)
+                        return false
+                    end - value.source_start <= (16777216 as U64) - value.output_start
+
+// Unicode White_Space, matching the Rust transport's char::is_whitespace;
+// CR and LF are separate physical line-ending units, never whitespace runs.
+space: I64 -> Bool
+space = ch ->
+    (ch >= 9 && ch <= 12) || ch == 32 || ch == 133 || ch == 160 || ch == 5760 || (ch >= 8192 && ch <= 8202) || ch == 8232 || ch == 8233 || ch == 8239 || ch == 8287 || ch == 12288
+
+kind_valid: &String -> &SegmentKind -> Bool
+kind_valid = text, kind ->
+    match *kind
+        SegmentKind::LineEnding => text == "\r" || text == "\n" || text == "\r\n"
+        _ =>
+            whitespace = match *kind
+                SegmentKind::Whitespace => true
+                _ => false
+            mut chars = text.chars!
+            loop
+                match chars.next!
+                    Option::Some ch =>
+                        code = ch as I64
+                        if code == 10 || code == 13 || (space code) != whitespace
+                            return false
+                    Option::None => break
+            true
+
+stream_valid: &TokenStream -> Bool
+stream_valid = stream ->
+    match stream.len_bytes!
+        Result::Err _ => return false
+        Result::Ok _ => ()
+    if !(projection_valid (&stream.anchor.origin), (stream.anchor.offset), (stream.anchor.offset))
+        return false
+    i = 0
+    while i < stream.segments.len!
+        segment = &stream.segments[i]
+        construction = &segment.construction
+        match *construction
+            Option::Some _ => return false
+            Option::None => ()
+        if !(projection_valid (&segment.origin), (segment.range.start), (segment.range.end))
+            return false
+        bytes = stream.sources[segment.source as I64].text.as_bytes!
+        text = String::from (&bytes[(segment.range.start as I64)..(segment.range.end as I64)])
+        if !(kind_valid &text, (&segment.kind))
+            return false
+        i = i + 1
+    true
+
+optional_text_equal: &(Option String) -> &(Option String) -> Bool
+optional_text_equal = left, right ->
+    match *left
+        Option::None =>
+            match *right
+                Option::None => true
+                _ => false
+        Option::Some value =>
+            match *right
+                Option::Some other => value == other
+                _ => false
+
+dependency_equal: &DependencyIdentity -> &DependencyIdentity -> Bool
+dependency_equal = left, right ->
+    if left.name != right.name || left.version != right.version || left.format_version != right.format_version
+        return false
+    if !(optional_text_equal (&left.target_triple), (&right.target_triple))
+        return false
+    a = &left.source_fingerprint
+    b = &right.source_fingerprint
+    if !(optional_text_equal (&a.manifest_hash), (&b.manifest_hash)) || !(optional_text_equal (&a.source_hash), (&b.source_hash))
+        return false
+    if a.loaded_files.len! != b.loaded_files.len!
+        return false
+    i = 0
+    while i < a.loaded_files.len!
+        if a.loaded_files[i] != b.loaded_files[i]
+            return false
+        i = i + 1
+    true
+
+groups_valid: &String -> &(Vec GroupView) -> Bool
+groups_valid = text, groups ->
+    mut ends: Vec U64 = Vec::new!
+    depth = 0
+    last_start: U64 = 0 as U64
+    bytes = text.as_bytes!
+    i = 0
+    while i < groups.len!
+        group = &groups[i]
+        range = &group.range
+        if !(in_text text, range)
+            return false
+        if range.end - range.start < (2 as U64) || range.start < last_start
+            return false
+        delimiter = &group.delimiter
+        expected = match *delimiter
+            Delimiter::Paren => (40, 41)
+            Delimiter::Bracket => (91, 93)
+            Delimiter::Brace => (123, 125)
+        if (bytes[range.start as I64] as I64) != expected.0 || (bytes[(range.end - (1 as U64)) as I64] as I64) != expected.1
+            return false
+        while depth > 0 && ends[depth - 1] <= range.start
+            depth = depth - 1
+        if depth >= 128
+            return false
+        if depth > 0 && ends[depth - 1] < range.end
+            return false
+        if depth == ends.len!
+            ends.push range.end
+        else
+            ends.set depth, range.end
+        depth = depth + 1
+        last_start = range.start
+        i = i + 1
+    true
+
+literal_valid: &String -> &LiteralView -> Bool
+literal_valid = text, literal ->
+    if !(in_text text, (&literal.source))
+        return false
+    decoded_end: U64 = 0 as U64
+    source_end = literal.source.start
+    i = 0
+    while i < literal.mapping.len!
+        mapping = &literal.mapping[i]
+        if mapping.decoded.start != decoded_end || mapping.decoded.start == mapping.decoded.end || !(in_text (&literal.decoded), (&mapping.decoded))
+            return false
+        if !(in_text text, (&mapping.source)) || mapping.source.start == mapping.source.end || mapping.source.start < source_end || mapping.source.end > literal.source.end
+            return false
+        decoded_end = mapping.decoded.end
+        source_end = mapping.source.end
+        i = i + 1
+    decoded_end == (literal.decoded.len! as U64)
+
+validate_request: &MacroRequest -> Bool
+< validate_request = request ->
+    context = &request.context
+    if context.macro_name.len! == 0 || context.macro_identity.len! == 0 || context.invocation == (0 as U64)
+        return false
+    expansion = &context.expansion
+    match *expansion
+        Option::Some value =>
+            if value == (0 as U32)
+                return false
+        Option::None => ()
+    parent = &context.parent
+    match *parent
+        Option::Some value =>
+            if value == (0 as U32)
+                return false
+        Option::None => ()
+    if context.header_indent > (1048576 as U64)
+        return false
+    base = &context.block_base
+    match *base
+        Option::Some value =>
+            if value <= context.header_indent || value > (1048576 as U64)
+                return false
+        Option::None => ()
+    if !(stream_valid (&request.input))
+        return false
+    i = 0
+    while i < context.definition_dependencies.len!
+        j = 0
+        while j < i
+            if dependency_equal (&context.definition_dependencies[i]), (&context.definition_dependencies[j])
+                return false
+            j = j + 1
+        i = i + 1
+    text = match request.input.spelling!
+        Result::Ok text => text
+        Result::Err _ => return false
+    arguments = &context.views.arguments
+    match *arguments
+        Option::Some view =>
+            end: U64 = 0 as U64
+            i = 0
+            while i < view.ranges.len!
+                range = &view.ranges[i]
+                if range.start < end || range.start == range.end || !(in_text &text, range)
+                    return false
+                end = range.end
+                i = i + 1
+        Option::None => ()
+    if !(groups_valid &text, (&context.views.groups))
+        return false
+    i = 0
+    while i < context.views.literals.len!
+        if !(literal_valid &text, (&context.views.literals[i]))
+            return false
+        i = i + 1
+    true
