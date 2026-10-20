@@ -23,6 +23,8 @@
 
 < struct Stdout
 
+< struct Stderr
+
 < last_os_error = ->
     ptr = __errno_location!
     IoError::Os (unsafe *ptr)
@@ -62,6 +64,8 @@ impl Write for Arc W where W: Write
 < stdin = -> Stdin
 
 < stdout = -> Stdout
+
+< stderr = -> Stderr
 
 impl Stdin
     ^@read_bytes: &mut [U8] -> Result I64, IoError
@@ -128,6 +132,17 @@ copy: &mut R -> &W -> Result I64, IoError where R: Read, W: Write
 impl Write for Stdout
     @write = buf ->
         count = write 1, buf.as_ptr!, buf.len!
+        if count < 0
+            Result::Err (last_os_error!)
+        else
+            Result::Ok count
+
+    @write_str = value -> write_str self, value
+    @write_all = buf -> write_all self, buf
+
+impl Write for Stderr
+    @write = buf ->
+        count = write 2, buf.as_ptr!, buf.len!
         if count < 0
             Result::Err (last_os_error!)
         else

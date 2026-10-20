@@ -1,0 +1,45 @@
+> rock_macro::*
+> rock_macro::runtime::run_worker
+> std::io::traits::stderr
+> std::io::traits::Write
+
+extern getpid: () -> I32
+
+mark_entry = !->
+    target = stderr!
+    pid = String::from (getpid! as I64)
+    match target.write_all pid.as_bytes!
+        Result::Ok _ => ()
+        Result::Err _ => exit (1 as I32)
+    match target.write_str "\n"
+        Result::Ok _ => ()
+        Result::Err _ => exit (1 as I32)
+
+entry: MacroContext -> TokenStream -> MacroResult
+entry = mut context, mut input ->
+    mark_entry!
+    if context.macro_name == "reject"
+        mut diagnostics: Vec Diagnostic = Vec::new!
+        diagnostics.push (context.error (String::from "entry rejected"))
+        MacroResult::Error diagnostics
+    else if context.macro_name == "invalid_result"
+        diagnostics: Vec Diagnostic = Vec::new!
+        MacroResult::Error diagnostics
+    else if context.macro_name == "context_copy"
+        // Author-owned mutations must not alter the request retained by runtime.
+        context.views.groups[0].range.end = 0 as U64
+        context.views.literals[0].mapping[0].decoded.end = 1 as U64
+        context.definition_dependencies[0].name = String::from "changed"
+        input.sources[0].text = String::from ""
+        parts: Vec OutputPart = Vec::new!
+        MacroResult::Report (MacroReport
+            output: Option::Some (MacroOutput
+                parts: parts)
+            diagnostics: Vec::new!)
+    else
+        MacroResult::Expand input
+
+main = !->
+    run_worker "0.7.0", entry
+    // The support function must terminate even after successful writing.
+    "runner returned".println!

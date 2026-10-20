@@ -5839,6 +5839,33 @@ main = ->
 }
 
 #[test]
+fn test_stderr_uses_ordinary_write_helpers_without_stdout_contamination() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    let _cleanup = TestDirCleanup(dir.clone());
+    let output = compile_and_run_in_working_dir(r#"
+> std::io::traits::stderr
+> std::io::traits::Write
+> std::io::traits::IoError
+
+run: () -> Result I64, IoError
+run = ->
+    target = stderr!
+    target.write "err".as_bytes! ?
+    target.write_str "or" ?
+    target.write_all "\0雪\n".as_bytes!
+
+main = !->
+    match run!
+        Result::Ok _ => "stdout".println!
+        Result::Err _ => exit (1 as I32)
+"#, &dir);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"stdout\n");
+    assert_eq!(output.stderr, "error\0雪\n".as_bytes());
+}
+
+#[test]
 fn test_read_to_end_limited_handles_short_reads_eof_limits_and_errors() {
     let output = compile_and_run(r#"
 > std::io::traits::read_to_end_limited

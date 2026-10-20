@@ -197,5 +197,15 @@ vector or typed `EncodeError`. It never writes a partial response or invokes a
 parser. Request/input stream validation shares `validation.rk`; output streams
 may retain symbolic construction requests, checked for invocation/dependency
 ownership locally and reauthorized by the compiler on return. The local writer
-does not certify forwarding metadata or interpret deferred fragments. Runner IO
-and entry dispatch remain B.10, canonical literals B.18, materialization B.19.
+does not certify forwarding metadata or interpret deferred fragments. Canonical
+literals remain B.18 and materialization B.19.
+
+`runtime::run_worker` reads one bounded EOF-terminated request, invokes a supplied
+ordinary entry once with deep-owned context/input copies, writes a final encoded
+response and exits. It retains the original request for local output checks.
+Valid structured macro failures are protocol responses; IO/codec failures exit
+nonzero with phase-only stderr messages and no incidental stdout. Concatenation
+rejects as trailing data before entry execution. The native compiler host owns
+process-per-invocation isolation, deadlines and final-response validation. The
+bootstrap runtime is not generated export discovery/dispatch or package building;
+those remain B.11–B.17. It does not normalize preserved DSL/block input into Rock.

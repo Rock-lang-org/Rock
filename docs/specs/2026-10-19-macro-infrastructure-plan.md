@@ -1465,6 +1465,74 @@ remain B.18/B.19. Protocol 7, `RKLOSS04` and artifact 53 are unchanged. Formatti
 remains deferred, Beads unavailable, and unrelated work untouched.
 No functional edits follow these final gates.
 
+### B.10 delivery receipt (2026-10-20)
+
+`runtime::run_worker` now reads one bounded request through ordinary std IO,
+decodes against an explicitly supplied compiler version, invokes one typed
+`MacroContext -> TokenStream -> MacroResult` entry, encodes/writes one final
+response, and exits the process. There is no persistent dispatch loop, compiler
+callback or handwritten export table in the SDK. The private `run_once` propagates
+typed IO/decode/encode failures; the outer function reports only static phase
+messages on stderr and exits nonzero. A valid structured macro error remains a
+normal final protocol response. Input/result codecs run before entry/output IO
+respectively, so invalid requests never invoke the entry and invalid results
+emit no partial protocol response.
+
+The runtime retains the original request for output checks and supplies deep-owned
+context/input copies to the entry. Explicit Clone implementations now cover the
+context's enums, optional facts, dependency fingerprints and input views, using
+the existing owned-copy style. The native mutation control changes nested view
+ranges, dependency names and input source text in author-owned data; the original
+request still validates. Missing stderr IO is added upstream as ordinary
+`std::io::traits::{Stderr, stderr}` implementing existing Write helpers, with its
+own native integration proving NUL/Unicode stderr bytes never mix into stdout.
+
+The native SDK worker's 14 direct controls preserve empty/Unicode/opaque/DSL input,
+inline-expression and block-shaped records, wide metadata and structured errors.
+Repeated identical requests produce distinct PIDs, each entry logs exactly once,
+and a trap after `run_worker` never executes. Empty/truncated/wrong-version,
+concatenated and oversized requests fail before the entry marker. Invalid result
+encoding fails after exactly one marker with clean stdout. Three additional
+controls run through the real Rust compiler host: one golden request and exact
+parser-produced inline-expression/block invocation metadata, checked against the
+returned lossless streams and requested categories. Existing 206 request and 25
+result controls remain intact.
+
+These are worker/ABI proofs, not premature language-dispatch or source-package
+acceptance. Initial expansion probes confirmed the explicit procedural-expression
+placeholder in `expression.rs::operand` and legacy item argument capture of `!`
+in `macro_decl.rs::macro_invoc`. The runner deliberately does not normalize block
+margins or reinterpret identity output as valid Rock; procedural expression/DSL
+consumer integration and obsolete-path removal remain required in B.20/C.12.
+Generated source export wrappers/build roles remain B.11–B.17. No such compiler
+path was changed or silently bypassed to claim this runtime step.
+
+Verification evidence:
+
+- `cargo test -p rock-lib --test integration test_stderr_uses_ordinary_write_helpers_without_stdout_contamination -- --exact`
+  passes (one test). `/tmp/opencode/macro-b10-stderr-test.log`, SHA-256
+  `34473cbd98c85140a82e2ab3a3c3230d61ddab34789ecbc22ab2f48a8786b100`.
+- `cargo test -p rock-lib --test macro_sdk -- --nocapture` passes all prior controls
+  plus 14 direct one-shot and three compiler-host ABI controls (168.92 seconds).
+  `/tmp/opencode/macro-b10-sdk-test.log`, SHA-256
+  `2425d9ec819bae87783294e05ebbbd4eda31b43f8ada08fa4496fd771e394bf3`.
+- `cargo check --workspace --all-targets` passes with existing warnings.
+  `/tmp/opencode/macro-b10-check.log`, SHA-256
+  `5bc3f2a55990292104b9ac0b53e18b10a4f14ba17d746457f96c189005f82e9e`.
+- `cargo clippy --workspace --all-targets` passes with existing warnings and no
+  warning in the SDK Rust harness/support.
+  `/tmp/opencode/macro-b10-clippy.log`, SHA-256
+  `20ec2e692f5393b09bae3e50bc4053b43d2e19019cefe2a47ce88c2750f52f32`.
+- `cargo test -p rock-lib` passes: 2,699 units, 806 main integrations, six
+  diagnostic integrations, 14 native-process integrations, one SDK integration
+  (171.11 seconds) and one parser integration; one doctest ignored.
+  `/tmp/opencode/macro-b10-acceptance.log`, SHA-256
+  `be1c739ac564545673d2078e06c1530045a436b16d852a0869217479940b0547`.
+
+Protocol 7, `RKLOSS04` and artifact 53 are unchanged. Formatting remains deferred,
+Beads unavailable, and unrelated work untouched.
+No functional edits follow these final gates.
+
 The first worker is intentionally built from ordinary Rock code and test-provided
 entry functions. This proves the SDK/runtime seam before the source-declared
 export workflow; it is not permission to require authors to write a dispatcher.

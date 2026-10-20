@@ -102,7 +102,40 @@ severity and fragment forms through Rust decoding/validation, and exercises
 large/wide values and failure paths. Binary stdout is drained concurrently with
 stdin/stderr under the fixture deadline, including output above pipe capacity.
 
-This is not yet a runnable procedural macro package workflow: generated runners
-and source export discovery remain staged implementation work.
+## One-shot runtime
+
+`runtime::run_worker expected_compiler_version, entry` reads one EOF-terminated
+request, calls an ordinary `MacroContext -> TokenStream -> MacroResult` function,
+writes one final response and exits the process. A bootstrap executable can use:
+
+```rock
+> rock_macro::*
+> rock_macro::runtime::run_worker
+
+identity: MacroContext -> TokenStream -> MacroResult
+identity = context, input -> MacroResult::Expand input
+
+main = !->
+    run_worker "0.7.0", identity
+```
+
+The compiler-generated wrapper will own this bootstrap code; macro authors will
+not need to implement transport or a dispatcher. The version is supplied explicitly,
+not discovered by the SDK. The runner gives the entry deep-owned context/input
+copies and retains the original request for output validation. It does not
+normalize block indentation or interpret DSL text.
+
+- Concatenated requests, truncation, invalid versions and excess input reject
+  before the entry is called. There is no second-request loop or persistent state.
+- A structured `MacroResult::Error` is a complete protocol response with normal
+  worker exit. Invalid results, request/response IO and codec failures exit nonzero;
+  static phase messages go only to ordinary `std::io::traits::stderr`.
+- The native compiler host still validates the final response and clean exit.
+  Native acceptance uses parser-produced inline-expression/block invocation data
+  through that host; it does not claim procedural expression dispatch, block
+  margin rewriting, or source-declared package discovery is already complete.
+
+This is not yet a source-declared procedural macro package workflow: generated
+export wrappers and package/build integration remain staged implementation work.
 The Rust wire specification is
 [`docs/specs/2026-10-19-macro-worker-wire.md`](../docs/specs/2026-10-19-macro-worker-wire.md).

@@ -1,0 +1,54 @@
+// One process, one EOF-terminated request, one ordinary entry, one response.
+> rock_macro::*
+> rock_macro::decode::decode_request
+> rock_macro::decode::DecodeError
+> rock_macro::encode::encode_result
+> rock_macro::encode::EncodeError
+> std::clone::Clone
+> std::control::result::Result
+> std::io::traits::IoError
+> std::io::traits::stdin
+> std::io::traits::stdout
+> std::io::traits::stderr
+> std::io::traits::read_to_end_limited
+> std::io::traits::write_all
+> std::ffi::libc::exit
+
+enum WorkerError
+    Read IoError
+    Decode DecodeError
+    Encode EncodeError
+    Write IoError
+
+run_once: &Str -> (MacroContext -> TokenStream -> MacroResult) -> Result (), WorkerError
+run_once = compiler_version, entry ->
+    mut source = stdin!
+    read = read_to_end_limited (&mut source), 1048576
+    bytes = read.map_err (error -> WorkerError::Read error) ?
+    decoded = decode_request bytes, compiler_version
+    request: MacroRequest = decoded.map_err (error -> WorkerError::Decode error) ?
+    // Keep the original compiler-supplied request separate from author-owned data.
+    result = entry (request.context.clone!), (request.input.clone!)
+    encoded = encode_result &request, result
+    bytes = encoded.map_err (error -> WorkerError::Encode error) ?
+    target = stdout!
+    written = write_all &target, (bytes.as_slice!)
+    written.map_err (error -> WorkerError::Write error) ?
+    Result::Ok ()
+
+// The generated wrapper supplies the expected compiler version and typed entry.
+// Exit even on success: there is no persistent dispatcher or second input loop.
+run_worker: &Str -> (MacroContext -> TokenStream -> MacroResult) -> ()
+< run_worker = compiler_version, entry !->
+    match run_once compiler_version, entry
+        Result::Ok _ => exit (0 as I32)
+        Result::Err error =>
+            message = match error
+                WorkerError::Read _ => "macro worker: request IO failed\n"
+                WorkerError::Decode _ => "macro worker: invalid request\n"
+                WorkerError::Encode _ => "macro worker: invalid result\n"
+                WorkerError::Write _ => "macro worker: response IO failed\n"
+            target = stderr!
+            // A broken diagnostic pipe must not turn failure into success.
+            write_all &target, (message.as_bytes!)
+            exit (1 as I32)

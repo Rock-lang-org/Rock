@@ -9,6 +9,8 @@ use rock_lib::{Config, SourceProvider};
 mod macro_requests;
 #[path = "support/macro_results.rs"]
 mod macro_results;
+#[path = "support/macro_workers.rs"]
+mod macro_workers;
 
 fn run_client(path: &Path) -> Output {
     run_client_with_input(path, &[])
@@ -79,7 +81,7 @@ fn build_library(entry: PathBuf, name: &str, output: &Path, dependencies: Vec<(S
 }
 
 #[test]
-fn macro_b_09_plain_rock_sdk_io_and_codecs_use_only_explicit_artifact_dependencies() {
+fn macro_b_10_plain_rock_sdk_and_worker_use_only_explicit_artifact_dependencies() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let root = std::env::temp_dir().join(format!("rock-macro-sdk-data-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
@@ -137,6 +139,11 @@ fn macro_b_09_plain_rock_sdk_io_and_codecs_use_only_explicit_artifact_dependenci
         else { assert!(output.stdout.is_empty(), "failed encoder emitted partial output"); }
     }
     eprintln!("SDK acceptance: {} Rock/Rust result controls passed", results.len());
+    let mut worker = config.clone();
+    worker.source_providers = vec![SourceProvider::Virtual { path: worker.entry_file.clone(),
+        text: include_str!("fixtures/macros/sdk-worker.rk").into() }];
+    rock_lib::compile(&worker).unwrap_or_else(|diagnostics| panic!("SDK worker: {diagnostics:?}"));
+    macro_workers::verify(&root.join("app/main"), &golden, &rich);
     let mut missing = config.clone();
     missing.extern_artifacts.retain(|(name, _)| name != "rock_macro");
     assert!(rock_lib::analyze(&missing).is_err(), "SDK is never injected or discovered by spelling");

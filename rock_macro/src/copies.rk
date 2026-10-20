@@ -118,3 +118,86 @@ impl Clone for TokenStream
         segments: self.segments.map_ref (segment -> segment.clone!)
         anchor: self.anchor.clone!
         expressions: self.expressions.map_ref (expression -> expression.clone!)
+
+clone_option: &(Option T) -> Option T where T: Clone
+clone_option = value ->
+    match *value
+        Option::Some item => Option::Some item.clone!
+        Option::None => Option::None
+
+impl Clone for OutputCategory
+    @clone = ->
+        match *self
+            OutputCategory::Items => OutputCategory::Items
+            OutputCategory::Expression => OutputCategory::Expression
+
+impl Clone for MacroKind
+    @clone = ->
+        match *self
+            MacroKind::FunctionLike => MacroKind::FunctionLike
+            MacroKind::AttributeLike => MacroKind::AttributeLike
+            MacroKind::DeriveLike => MacroKind::DeriveLike
+
+impl Clone for Delimiter
+    @clone = ->
+        match *self
+            Delimiter::Paren => Delimiter::Paren
+            Delimiter::Bracket => Delimiter::Bracket
+            Delimiter::Brace => Delimiter::Brace
+
+impl Clone for ArgumentView
+    @clone = -> ArgumentView
+        ranges: self.ranges.map_ref (range -> range.clone!)
+
+impl Clone for GroupView
+    @clone = -> GroupView
+        delimiter: self.delimiter.clone!
+        range: self.range.clone!
+
+impl Clone for LiteralMapping
+    @clone = -> LiteralMapping
+        decoded: self.decoded.clone!
+        source: self.source.clone!
+
+impl Clone for LiteralView
+    @clone = -> LiteralView
+        source: self.source.clone!
+        decoded: self.decoded.clone!
+        mapping: self.mapping.map_ref (mapping -> mapping.clone!)
+
+impl Clone for InputViews
+    @clone = -> InputViews
+        arguments: clone_option (&self.arguments)
+        groups: self.groups.map_ref (group -> group.clone!)
+        literals: self.literals.map_ref (literal -> literal.clone!)
+
+impl Clone for SourceFingerprint
+    @clone = -> SourceFingerprint
+        manifest_hash: clone_option (&self.manifest_hash)
+        source_hash: clone_option (&self.source_hash)
+        loaded_files: self.loaded_files.map_ref (file -> file.clone!)
+
+impl Clone for DependencyIdentity
+    @clone = -> DependencyIdentity
+        name: self.name.clone!
+        version: self.version.clone!
+        target_triple: clone_option (&self.target_triple)
+        format_version: self.format_version
+        source_fingerprint: self.source_fingerprint.clone!
+
+impl Clone for MacroContext
+    @clone = -> MacroContext
+        protocol_version: self.protocol_version
+        compiler_version: self.compiler_version.clone!
+        macro_name: self.macro_name.clone!
+        macro_identity: self.macro_identity.clone!
+        source_module: clone_option (&self.source_module)
+        expansion: clone_option (&self.expansion)
+        invocation: self.invocation
+        parent: clone_option (&self.parent)
+        output_category: self.output_category.clone!
+        kind: self.kind.clone!
+        header_indent: self.header_indent
+        block_base: clone_option (&self.block_base)
+        definition_dependencies: self.definition_dependencies.map_ref (dependency -> dependency.clone!)
+        views: self.views.clone!
