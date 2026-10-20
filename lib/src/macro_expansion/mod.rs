@@ -16,6 +16,7 @@ use self::{
 };
 
 mod context;
+pub(crate) mod binding_environment;
 mod correspondances;
 pub mod declarative;
 pub mod generated_parser;

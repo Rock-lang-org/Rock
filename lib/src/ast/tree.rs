@@ -49,9 +49,9 @@ pub enum TopLevel {
     Module(ModuleDecl),
     Mod(Ident, bool), // mod name; - loads a .rk file (bool = exported)
     Import(Path),
-    GlobImport(Vec<String>), // > module::path::* - import all exported items into scope
+    GlobImport(Vec<IdentOrType>), // > module::path::* - import all exported items into scope
     Export(Path),
-    GlobExport(Vec<String>), // < module::path::* — re-export all items from a module
+    GlobExport(Vec<IdentOrType>), // < module::path::* — re-export all items from a module
     Extern(FunctionSig),
     InfixOperator(u8, String),
     MacroDecl(MacroDecl),

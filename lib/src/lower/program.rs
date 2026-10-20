@@ -45,6 +45,12 @@ impl Lowerer {
 
     /// Handle import statements: bring a qualified name into scope as an unqualified alias
     pub(crate) fn handle_import(&mut self, path: &ast::Path) {
+        let segments = match path { ast::Path::Ident(path) => &path.path, ast::Path::Type(path) => &path.path };
+        if self.resolver.contextual_scope(self.current_module_id)
+            || crate::collect::resolver::binding_path(segments).is_some_and(|path| path.iter().any(|(_, context)| *context != crate::lexer::lossless::SyntaxContext::ROOT)) {
+            // Collection already published these aliases by identity and context.
+            return;
+        }
         let names = match path {
             ast::Path::Ident(ip) => path_names(&ip.path),
             ast::Path::Type(tp) => path_names(&tp.path),
@@ -274,6 +280,7 @@ impl Lowerer {
         module_prefix: Option<&str>,
         module_id: crate::ids::ModuleId,
     ) {
+        let previous_module_id = self.current_module_id.replace(module_id);
         ModuleLoweringContext::with_qualified_module_context(
             self,
             module,
@@ -343,7 +350,7 @@ impl Lowerer {
                             };
                             let Some(child_module_id) = lowerer
                                 .item_index
-                                .child_module_id(module_id, &module_name.name)
+                                .child_module_for_name(module_id, module_name)
                             else {
                                 lowerer.diagnostics.push_toolchain(format!(
                                     "missing indexed module '{}' while lowering bodies",
@@ -359,7 +366,7 @@ impl Lowerer {
                         }
                         ast::TopLevel::Mod(ident, _) => {
                             let Some(_child_module_id) =
-                                lowerer.item_index.child_module_id(module_id, &ident.name)
+                                lowerer.item_index.child_module_for_name(module_id, ident)
                             else {
                                 lowerer.diagnostics.push_toolchain(format!(
                                     "missing indexed module '{}' while lowering bodies",
@@ -404,6 +411,7 @@ impl Lowerer {
                 }
             },
         );
+        self.current_module_id = previous_module_id;
     }
 
     pub(crate) fn lower_loaded_module_trait_defaults(&mut self) {

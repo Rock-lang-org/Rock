@@ -198,12 +198,13 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
         println!("{:#?}", ast);
     }
 
-    let declarations = collect::collect_with_source_graph(
+    let declarations = collect::collect_with_binding_environments(
         &ast,
-        &source_graph,
+        Some(&source_graph),
         &ctx,
         !config.no_prelude,
         config.current_crate_name.as_deref(),
+        &macro_context.binding_environments.borrow(),
     )
     .map_err(|errors| Diagnostics::from_resolve_errors(errors).with_sources(&diagnostic_sources))?;
     let loaded_prelude_export_ids = declarations.loaded_prelude_export_ids.clone();

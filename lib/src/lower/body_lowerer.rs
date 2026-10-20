@@ -411,7 +411,7 @@ fn collect_module_edges(
         let Some(name) = module_decl.0.name.as_ref() else {
             continue;
         };
-        let Some(child_module_id) = lowerer.item_index.child_module_id(module_id, &name.name)
+        let Some(child_module_id) = lowerer.item_index.child_module_for_name(module_id, name)
         else {
             let _ = ordinal;
             continue;

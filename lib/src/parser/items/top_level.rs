@@ -54,7 +54,9 @@ fn import_top_level(path: crate::ast::Path) -> TopLevel {
         .map(|segment| segment == "*")
         .unwrap_or(false)
     {
-        TopLevel::GlobImport(segments[..segments.len() - 1].to_vec())
+        let mut path = match path { crate::ast::Path::Ident(path) => path.path, crate::ast::Path::Type(path) => path.path };
+        path.pop();
+        TopLevel::GlobImport(path)
     } else {
         TopLevel::Import(path)
     }
@@ -67,7 +69,9 @@ fn export_top_level(path: crate::ast::Path) -> TopLevel {
         .map(|segment| segment == "*")
         .unwrap_or(false)
     {
-        TopLevel::GlobExport(segments[..segments.len() - 1].to_vec())
+        let mut path = match path { crate::ast::Path::Ident(path) => path.path, crate::ast::Path::Type(path) => path.path };
+        path.pop();
+        TopLevel::GlobExport(path)
     } else {
         TopLevel::Export(path)
     }

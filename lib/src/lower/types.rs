@@ -2,12 +2,20 @@
 
 use crate::ast;
 use crate::hir::HirTrait;
+use crate::lexer::lossless::SyntaxContext;
 use crate::type_lowering::{ResolvedNominalType, TypeLowerer, TypeLoweringContext};
 use crate::types::Type;
 
 use crate::lower::Lowerer;
 
 impl TypeLoweringContext for Lowerer {
+    fn current_trait_definition(&self) -> Option<HirTrait> {
+        if let Some(id) = self.current_trait_id { return self.trait_by_id(id).cloned(); }
+        self.current_trait.as_ref().and_then(|name| self.resolve_trait_type(name, SyntaxContext::ROOT))
+    }
+    fn associated_context(&self, owner: crate::ids::DefId, id: crate::ids::AssocTypeId) -> SyntaxContext {
+        self.resolver.associated_contexts.get(&(owner, id)).copied().unwrap_or_default()
+    }
     fn constructor_params(&self, id: crate::ids::DefId) -> Option<Vec<crate::types::GenericParamDecl>> {
         self.items.structures().find(|(_, item)| item.id == id).map(|(_, item)| item.generic_params.clone())
             .or_else(|| self.items.enumerations().find(|(_, item)| item.id == id).map(|(_, item)| item.generic_params.clone()))
@@ -25,31 +33,50 @@ impl TypeLoweringContext for Lowerer {
         self.record_source_reference(span, target);
     }
 
-    fn current_module_prefix(&self) -> Option<String> {
-        Lowerer::current_module_prefix(self)
-    }
-
     fn current_trait_name(&self) -> Option<String> {
         self.current_trait.clone()
     }
 
-    fn resolve_nominal_type(&self, name: &str) -> Option<ResolvedNominalType> {
+    fn resolve_nominal_type(&self, name: &str, context: SyntaxContext) -> Option<ResolvedNominalType> {
+        if let Some(id) = self.resolve_contextual_item(name, context) {
+            return self.items.structure(id).cloned().map(ResolvedNominalType::Struct)
+                .or_else(|| self.items.enumeration(id).cloned().map(ResolvedNominalType::Enum));
+        }
+        if context != SyntaxContext::ROOT || self.resolver.contextual_scope(self.current_module_id) { return None; }
         crate::lower::resolution::LowerResolutionContext::new(self).resolve_nominal_type(name)
     }
 
-    fn resolve_trait_type(&self, name: &str) -> Option<HirTrait> {
+    fn resolve_trait_type(&self, name: &str, context: SyntaxContext) -> Option<HirTrait> {
+        if let Some(id) = self.resolve_contextual_item(name, context) {
+            return self.items.trait_def(id).cloned();
+        }
+        if context != SyntaxContext::ROOT || self.resolver.contextual_scope(self.current_module_id) { return None; }
         crate::lower::resolution::LowerResolutionContext::new(self).resolve_trait_type(name)
     }
 
-    fn resolve_type_alias(&self, name: &str) -> Option<crate::hir::HirTypeAlias> {
+    fn resolve_type_alias(&self, name: &str, context: SyntaxContext) -> Option<crate::hir::HirTypeAlias> {
+        if let Some(id) = self.resolve_contextual_item(name, context) {
+            return self.items.type_alias(id).cloned();
+        }
+        if context != SyntaxContext::ROOT || self.resolver.contextual_scope(self.current_module_id) { return None; }
         let id =
             crate::lower::resolution::LowerResolutionContext::new(self).resolve_item_id(name)?;
         self.items.type_alias(id).cloned()
     }
 
-    fn generic_type_for_name(&mut self, name: &str, span: crate::lexer::Span) -> Type {
-        self.current_generic_type_for_name(name, span)
-            .unwrap_or(Type::Error)
+    fn generic_type_for_name(&mut self, name: &str, context: SyntaxContext, span: crate::lexer::Span) -> Type {
+        self.contextual_generic_type_for_name(name, context, span.clone()).unwrap_or_else(|| {
+            self.diagnostics.push(format!("unknown type '{name}'"), span);
+            Type::Error
+        })
+    }
+
+    fn scoped_generic_type(&mut self, name: &str, context: SyntaxContext, _span: crate::lexer::Span) -> Option<Type> {
+        self.contextual_generic_param_id(name, context).map(Type::Generic)
+    }
+
+    fn generic_context(&self, id: crate::types::GenericParamId) -> crate::lexer::lossless::SyntaxContext {
+        self.resolver.generic_context(id)
     }
 
     fn populate_type_normalization_env(
@@ -131,6 +158,13 @@ impl TypeLoweringContext for Lowerer {
 }
 
 impl Lowerer {
+    pub(crate) fn resolve_contextual_item(&self, name: &str, context: SyntaxContext) -> Option<crate::ids::DefId> {
+        let mut path = name.split("::").map(|name| (name.to_string(), SyntaxContext::ROOT)).collect::<Vec<_>>();
+        path.last_mut()?.1 = context;
+        let scope = self.current_module_id.or_else(|| self.current_module_prefix().and_then(|prefix| self.resolver.module_paths.get(&prefix).copied()));
+        self.resolver.resolve_binding_path(scope, &path)
+    }
+
     pub(crate) fn refresh_inference_normalization_env(&mut self) {
         let mut env = crate::type_services::normalize::TypeNormalizationEnv::new();
         self.populate_type_normalization_env(&mut env);
@@ -421,7 +455,7 @@ mod tests {
             module_id,
         );
 
-        let trait_def = lowerer.resolve_trait_type("Show").unwrap();
+        let trait_def = lowerer.resolve_trait_type("Show", SyntaxContext::ROOT).unwrap();
 
         assert_eq!(trait_def.id, module_id);
     }

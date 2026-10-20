@@ -784,6 +784,66 @@ runtime fixtures exercise ordinary forwarding, not yet fresh template allocation
 Formatting remains deferred; no formatter/check, Clippy, or separate build gate
 ran. Beads remains unavailable.
 
+### A.13 delivery receipt (2026-10-20)
+
+Module, nominal/type-alias, generic, associated-type, enum-variant, and static
+member paths retain spelling/context pairs until canonical identity selection.
+The item index distinguishes contextual module segments and declarations;
+collection payloads are owned once by `DefId`, with spelling indexes used only as
+lookup surfaces. Signature/body pairing, generic defaults and type lambdas,
+constructor applications, impl generic discovery, where/static bounds, receiver
+`Self`, and generic-owner remapping retain their binding authority. Cyclic generic
+remapping snapshots source contexts before assigning destination slots.
+
+Glob import/export AST paths now retain identifiers rather than strings. A
+compilation-local identity surface resolves ordinary imports and re-exports to a
+fixed point, including contextual modules and definition-scope import aliases.
+Glob imports retain member contexts, exclude private members, and do not publish
+generated names in the root context. Explicit aliases take precedence over glob
+aliases; contextual conflicts and unresolved paths reject. Existing spelling-only
+export surfaces expose only root-context names. Macro globs remain deferred;
+this is ordinary value/type import plumbing, not a second macro glob resolver.
+
+Expansion carries compiler-owned definition environments into collection and
+lowering. Source helpers resolve in their recorded module environment rather
+than a same-spelled caller scope; exact generated-item bindings take precedence.
+Dependency environments select explicitly supplied providers by
+`ProductCrateIdentity` and public export IDs, not caller aliases. Undeclared,
+missing/transitive-only, private, conflicting, or mixed-context authorities reject.
+All new resolver context/environment tables are compilation-local (`serde(skip)`),
+not serialized binding authority, and no std/operator meaning was introduced.
+
+- Focused `cargo test -p rock-lib macro_a_13_ --lib` grew from the generic
+  controls to 43 acceptance cases. RED runs exposed constructor/enum path heads
+  lost during application/projection, contextual import aliases and containing
+  modules falling back to root siblings, source-backed declarations lacking their
+  module identity, `Self` projection owners selected by spelling, and generated
+  functions leaking into the root value scope. Each has a regression control.
+- Enum/static-member negative controls finalize inference, since unresolved
+  qualified paths can remain inference variables after partial lowering.
+  Contextual enum-pattern controls cover both owner and member identity.
+- The glob/definition-import runner initially passed 40/failed two because the
+  legacy loader attempted to load indexed inline modules as files. Indexed
+  identity surfaces now handle those globs without filesystem reconstruction;
+  the next 42-case runner passed. An additional conflict/unknown-glob control
+  passes in the final macro-family gate.
+- Final `cargo test -p rock-lib macro_a_ --lib` passes all 181 tests, including
+  all 43 A.13 cases (`/tmp/opencode/macro-a13-family-final.log`).
+- Integration acceptance adds
+  `macro_a_13_captured_nominal_and_generic_binder_survive_generated_impl`;
+  existing enum/string-match, std-frontend, artifact, and ordinary-module controls
+  remain part of the full library gate.
+- Final `cargo test -p rock-lib` passes 2,660 units, 798 main integrations,
+  and one parser integration; one doctest is ignored. The retained log is
+  `/tmp/opencode/macro-a13-acceptance-final.log` (SHA-256
+  `2c4e5f48dcb11aa313377f54af71a53a31703538e2700e33f4422e424a3d655a`).
+  No functional edits follow this gate.
+
+Production fresh-template allocation and procedural construction permissions
+remain A.14; the A.13 environment-recording APIs are exercised by synthetic-context
+tests, not yet by production context minting. Formatting remains deferred; no
+formatter/check, Clippy, or separate build/CLI gate ran. Beads remains unavailable.
+
 **A gate:** run all `macro_a_` families and existing declarative/proc/module
 regressions, then `cargo test -p rock-lib` and affected CLI tests serially.
 Synthetic/native worker tests prove compiler semantics only; they are not evidence

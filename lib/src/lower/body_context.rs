@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use crate::hir::HirGenericBounds;
 use crate::ids::{DefId, HirLocalId, IdGen, Idx};
-use crate::lower::scope::Scope;
+use crate::lexer::lossless::SyntaxContext;
+use crate::lower::scope::{LocalName, Scope};
 use crate::types::{GenericParamId, Type};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,7 +52,7 @@ pub(crate) struct BodyLoweringContext {
     owner: BodyOwner,
     generic_owner: Option<DefId>,
     generic_params: Vec<String>,
-    generic_param_ids: HashMap<String, GenericParamId>,
+    generic_param_ids: HashMap<LocalName, GenericParamId>,
     impl_bounds: HirGenericBounds,
     return_type_override: Option<Type>,
     in_unsafe: bool,
@@ -102,12 +103,12 @@ impl BodyLoweringContext {
         &mut self.generic_params
     }
 
-    pub(crate) fn generic_param_id(&self, name: &str) -> Option<GenericParamId> {
-        self.generic_param_ids.get(name).copied()
+    pub(crate) fn generic_param_id(&self, name: &str, context: SyntaxContext) -> Option<GenericParamId> {
+        self.generic_param_ids.get(&LocalName::new(name.to_string(), context)).copied()
     }
 
-    pub(crate) fn register_generic_param(&mut self, name: impl Into<String>, id: GenericParamId) {
-        self.generic_param_ids.insert(name.into(), id);
+    pub(crate) fn register_generic_param(&mut self, name: String, context: SyntaxContext, id: GenericParamId) {
+        self.generic_param_ids.insert(LocalName::new(name, context), id);
     }
 
     pub(crate) fn replace_generic_context(

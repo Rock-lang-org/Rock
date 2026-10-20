@@ -1,5 +1,6 @@
 use crate::ast;
 use crate::hir::{HirEnum, HirStruct, HirTrait, HirTypeAlias};
+use crate::lexer::lossless::SyntaxContext;
 use crate::type_services::kind::Kind;
 use crate::type_services::normalize::{TypeNormalizationEnv, TypeNormalizer};
 use crate::types::{AssociatedTypeKey, GenericParamDecl, GenericParamId, NominalTypeKind, Type};
@@ -18,13 +19,17 @@ pub(crate) trait TypeLoweringContext {
         _target: crate::source_map::SourceSymbol,
     ) {
     }
-    fn current_module_prefix(&self) -> Option<String>;
     fn current_trait_name(&self) -> Option<String>;
-    fn resolve_nominal_type(&self, name: &str) -> Option<ResolvedNominalType>;
-    fn resolve_trait_type(&self, name: &str) -> Option<HirTrait>;
-    fn resolve_type_alias(&self, name: &str) -> Option<HirTypeAlias>;
-    fn generic_type_for_name(&mut self, name: &str, span: crate::lexer::Span) -> Type;
-    fn scoped_generic_type(&mut self, _name: &str, _span: crate::lexer::Span) -> Option<Type> { None }
+    fn current_trait_definition(&self) -> Option<HirTrait> {
+        self.current_trait_name().and_then(|name| self.resolve_trait_type(&name, SyntaxContext::ROOT))
+    }
+    fn resolve_nominal_type(&self, name: &str, context: SyntaxContext) -> Option<ResolvedNominalType>;
+    fn resolve_trait_type(&self, name: &str, context: SyntaxContext) -> Option<HirTrait>;
+    fn resolve_type_alias(&self, name: &str, context: SyntaxContext) -> Option<HirTypeAlias>;
+    fn generic_type_for_name(&mut self, name: &str, context: SyntaxContext, span: crate::lexer::Span) -> Type;
+    fn scoped_generic_type(&mut self, _name: &str, _context: SyntaxContext, _span: crate::lexer::Span) -> Option<Type> { None }
+    fn generic_context(&self, _id: GenericParamId) -> SyntaxContext { SyntaxContext::ROOT }
+    fn associated_context(&self, _owner: crate::ids::DefId, _id: crate::ids::AssocTypeId) -> SyntaxContext { SyntaxContext::ROOT }
     fn populate_type_normalization_env(&self, env: &mut TypeNormalizationEnv);
     fn constructor_params(&self, _id: crate::ids::DefId) -> Option<Vec<GenericParamDecl>> {
         None
@@ -68,38 +73,48 @@ pub(crate) fn lower_param_defaults<C: TypeLoweringContext + ?Sized>(
     struct DefaultContext<'a, C: ?Sized> {
         context: &'a mut C,
         params: &'a [GenericParamDecl],
+        syntax: &'a [ast::GenericParamDecl],
         index: usize,
         subject: &'a Option<(String, GenericParamDecl)>,
     }
     impl<C: TypeLoweringContext + ?Sized> TypeLoweringContext for DefaultContext<'_, C> {
         fn push_type_error(&mut self, message: String, span: crate::lexer::Span) { self.context.push_type_error(message, span); }
-        fn current_module_prefix(&self) -> Option<String> { self.context.current_module_prefix() }
         fn current_trait_name(&self) -> Option<String> { self.context.current_trait_name() }
-        fn resolve_nominal_type(&self, name: &str) -> Option<ResolvedNominalType> {
-            if self.params.iter().any(|param| param.name == name) { None } else { self.context.resolve_nominal_type(name) }
+        fn current_trait_definition(&self) -> Option<HirTrait> { self.context.current_trait_definition() }
+        fn resolve_nominal_type(&self, name: &str, context: SyntaxContext) -> Option<ResolvedNominalType> {
+            if self.syntax.iter().any(|param| param.name.name == name && param.name.context == context) {
+                None
+            } else { self.context.resolve_nominal_type(name, context) }
         }
-        fn resolve_trait_type(&self, name: &str) -> Option<HirTrait> { self.context.resolve_trait_type(name) }
-        fn resolve_type_alias(&self, name: &str) -> Option<HirTypeAlias> {
-            if self.params.iter().any(|param| param.name == name) { None } else { self.context.resolve_type_alias(name) }
+        fn resolve_trait_type(&self, name: &str, context: SyntaxContext) -> Option<HirTrait> { self.context.resolve_trait_type(name, context) }
+        fn associated_context(&self, owner: crate::ids::DefId, id: crate::ids::AssocTypeId) -> SyntaxContext { self.context.associated_context(owner, id) }
+        fn resolve_type_alias(&self, name: &str, context: SyntaxContext) -> Option<HirTypeAlias> {
+            if self.syntax.iter().any(|param| param.name.name == name && param.name.context == context) {
+                None
+            } else { self.context.resolve_type_alias(name, context) }
         }
         fn constructor_params(&self, id: crate::ids::DefId) -> Option<Vec<GenericParamDecl>> { self.context.constructor_params(id) }
-        fn scoped_generic_type(&mut self, name: &str, span: crate::lexer::Span) -> Option<Type> {
-            if self.params.iter().any(|param| param.name == name)
-                || self.subject.as_ref().is_some_and(|(subject, _)| name == subject || name == "Self") {
-                Some(self.generic_type_for_name(name, span))
-            } else { None }
-        }
         fn populate_type_normalization_env(&self, env: &mut TypeNormalizationEnv) {
             self.context.populate_type_normalization_env(env);
             for param in self.params { env.register_generic_kind(param.id, param.kind.clone()); }
             if let Some((_, param)) = self.subject { env.register_generic_kind(param.id, param.kind.clone()); }
         }
-        fn generic_type_for_name(&mut self, name: &str, span: crate::lexer::Span) -> Type {
-            if let Some((index, param)) = self.params.iter().enumerate().find(|(_, param)| param.name == name) {
+        fn scoped_generic_type(&mut self, name: &str, context: SyntaxContext, span: crate::lexer::Span) -> Option<Type> {
+            if self.syntax.iter().any(|param| param.name.name == name && param.name.context == context)
+                || self.subject.as_ref().is_some_and(|(subject, param)|
+                    (name == subject || name == "Self") && self.context.generic_context(param.id) == context) {
+                Some(self.generic_type_for_name(name, context, span))
+            } else { None }
+        }
+        fn generic_type_for_name(&mut self, name: &str, context: SyntaxContext, span: crate::lexer::Span) -> Type {
+            if let Some((index, param)) = self.params.iter().enumerate().find(|(index, param)|
+                param.name == name && self.syntax[*index].name.context == context) {
                 if index < self.index { return Type::Generic(param.id); }
                 self.push_type_error(format!("default cannot reference current or later parameter '{name}'"), span);
             } else if let Some((subject_name, param)) = self.subject {
-                if name == subject_name || name == "Self" { return Type::Generic(param.id); }
+                if (name == subject_name || name == "Self") && self.context.generic_context(param.id) == context {
+                    return Type::Generic(param.id);
+                }
                 self.push_type_error(format!("unknown type '{name}' in generic default"), span);
             } else {
                 self.push_type_error(format!("unknown type '{name}' in generic default"), span);
@@ -110,7 +125,7 @@ pub(crate) fn lower_param_defaults<C: TypeLoweringContext + ?Sized>(
     let mut default_seen = false;
     let mut names = std::collections::HashSet::new();
     for (index, declaration) in syntax.iter().enumerate() {
-        if !names.insert(&declaration.name.name) {
+        if !names.insert((&declaration.name.name, declaration.name.context)) {
             context.push_type_error(format!("duplicate generic parameter '{}'", declaration.name.name), declaration.name.span.clone());
         }
         let Some(default) = &declaration.default else {
@@ -119,7 +134,7 @@ pub(crate) fn lower_param_defaults<C: TypeLoweringContext + ?Sized>(
         };
         default_seen = true;
         let expected = params[index].kind.clone();
-        let mut scoped = DefaultContext { context, params, index, subject: &subject };
+        let mut scoped = DefaultContext { context, params, syntax, index, subject: &subject };
         let mut env = TypeNormalizationEnv::new();
         scoped.populate_type_normalization_env(&mut env);
         let raw = TypeLowerer::lower_raw(&mut scoped, default, false, &env, &mut Vec::new());
@@ -378,7 +393,7 @@ impl TypeLowerer {
         parse_type: &ast::ParseType,
         allow_bare_slice: bool,
         env: &TypeNormalizationEnv,
-        binders: &mut Vec<Vec<(String, Kind)>>,
+        binders: &mut Vec<Vec<((String, SyntaxContext), Kind)>>,
     ) -> Type {
         match parse_type {
             ast::ParseType::Unit(_) => Type::Unit,
@@ -429,7 +444,7 @@ impl TypeLowerer {
                     .iter()
                     .map(|param| {
                         (
-                            param.name.name.clone(),
+                            (param.name.name.clone(), param.name.context),
                             lower_generic_param_kind(param.kind.as_ref()),
                         )
                     })
@@ -459,7 +474,9 @@ impl TypeLowerer {
                 } else {
                     base.name.clone()
                 };
-                let Some(trait_def) = context.resolve_trait_type(&trait_name) else {
+                let trait_def = if base.name == "Self" { context.current_trait_definition() }
+                    else { context.resolve_trait_type(&trait_name, base.context) };
+                let Some(trait_def) = trait_def else {
                     context.push_type_error(
                         format!("unknown trait '{}' in associated type", trait_name),
                         crate::lexer::Span::new(
@@ -473,7 +490,7 @@ impl TypeLowerer {
                 let Some(assoc_type) = trait_def
                     .associated_types
                     .iter()
-                    .find(|assoc| assoc.name == member.name)
+                    .find(|assoc| assoc.name == member.name && context.associated_context(trait_def.id, assoc.id) == member.context)
                     .map(|assoc| AssociatedTypeKey {
                         owner: trait_def.id,
                         assoc_type_id: assoc.id,
@@ -573,7 +590,7 @@ impl TypeLowerer {
         inner: &ast::ParseTypeInner,
         allow_bare_slice: bool,
         env: &TypeNormalizationEnv,
-        binders: &mut Vec<Vec<(String, Kind)>>,
+        binders: &mut Vec<Vec<((String, SyntaxContext), Kind)>>,
     ) -> Type {
         let generics: Vec<Type> = inner
             .generics
@@ -610,7 +627,7 @@ impl TypeLowerer {
                     binders.iter().rev().enumerate().find_map(|(depth, scope)| {
                         scope
                             .iter()
-                            .position(|(binder, _)| binder == name)
+                            .position(|((binder, context), _)| binder == name && *context == inner.context)
                             .map(|index| (depth as u32, index as u32, scope[index].1.clone()))
                     })
                 {
@@ -623,18 +640,11 @@ impl TypeLowerer {
                         }
                     };
                 }
-                let current_module_name = context
-                    .current_module_prefix()
-                    .map(|prefix| format!("{}::{}", prefix, name));
-
-                if let Some(generic) = context.scoped_generic_type(name, inner.span.clone()) {
+                if let Some(generic) = context.scoped_generic_type(name, inner.context, inner.span.clone()) {
                     return if generics.is_empty() { generic } else { Type::Apply { constructor: Box::new(generic), args: generics } };
                 }
 
-                if let Some(alias) = current_module_name
-                    .as_deref()
-                    .and_then(|name| context.resolve_type_alias(name))
-                    .or_else(|| context.resolve_type_alias(name))
+                if let Some(alias) = context.resolve_type_alias(name, inner.context)
                 {
                     context.record_type_reference(
                         inner.span.clone(),
@@ -644,10 +654,7 @@ impl TypeLowerer {
                         id: alias.id,
                         flavor: NominalTypeKind::Alias,
                     }
-                } else if let Some(nominal) = current_module_name
-                    .as_deref()
-                    .and_then(|name| context.resolve_nominal_type(name))
-                    .or_else(|| context.resolve_nominal_type(name))
+                } else if let Some(nominal) = context.resolve_nominal_type(name, inner.context)
                 {
                     match nominal {
                         ResolvedNominalType::Struct(struct_def) => {
@@ -672,7 +679,7 @@ impl TypeLowerer {
                         }
                     }
                 } else {
-                    let ty = context.generic_type_for_name(name, inner.span.clone());
+                    let ty = context.generic_type_for_name(name, inner.context, inner.span.clone());
                     if let Type::Generic(generic) = ty {
                         context.record_type_reference(
                             inner.span.clone(),
@@ -723,15 +730,12 @@ mod tests {
             self.errors.push(message);
         }
 
-        fn current_module_prefix(&self) -> Option<String> {
-            None
-        }
-
         fn current_trait_name(&self) -> Option<String> {
             self.current_trait.clone()
         }
 
-        fn resolve_nominal_type(&self, name: &str) -> Option<ResolvedNominalType> {
+        fn resolve_nominal_type(&self, name: &str, context: SyntaxContext) -> Option<ResolvedNominalType> {
+            if context != SyntaxContext::ROOT { return None; }
             self.structs
                 .get(name)
                 .cloned()
@@ -739,15 +743,20 @@ mod tests {
                 .or_else(|| self.enums.get(name).cloned().map(ResolvedNominalType::Enum))
         }
 
-        fn resolve_trait_type(&self, name: &str) -> Option<HirTrait> {
+        fn resolve_trait_type(&self, name: &str, context: SyntaxContext) -> Option<HirTrait> {
+            if context != SyntaxContext::ROOT { return None; }
             self.traits.get(name).cloned()
         }
 
-        fn resolve_type_alias(&self, _name: &str) -> Option<HirTypeAlias> {
+        fn resolve_type_alias(&self, _name: &str, _context: SyntaxContext) -> Option<HirTypeAlias> {
             None
         }
 
-        fn generic_type_for_name(&mut self, name: &str, span: crate::lexer::Span) -> Type {
+        fn generic_type_for_name(&mut self, name: &str, context: SyntaxContext, span: crate::lexer::Span) -> Type {
+            if context != SyntaxContext::ROOT {
+                self.push_type_error(format!("unknown type '{name}' in syntax context"), span);
+                return Type::Error;
+            }
             let Some(owner) = self.generic_owner else {
                 self.push_type_error(format!("unknown type '{}'", name), span.clone());
                 return Type::Error;

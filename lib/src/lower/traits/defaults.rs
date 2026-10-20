@@ -17,6 +17,7 @@ impl Lowerer {
         module: &ast::Module,
         module_id: crate::ids::ModuleId,
     ) {
+        let previous_module_id = self.current_module_id.replace(module_id);
         for (ordinal, top_level) in module.top_levels.iter().enumerate() {
             let ast::TopLevel::TraitDecl(td) = top_level else {
                 continue;
@@ -45,7 +46,7 @@ impl Lowerer {
                 };
                 let Some(child_module_id) = self
                     .item_index
-                    .child_module_id(module_id, &module_name.name)
+                    .child_module_for_name(module_id, module_name)
                 else {
                     self.diagnostics.push_toolchain(format!(
                         "missing indexed module '{}' while lowering trait default bodies",
@@ -56,6 +57,7 @@ impl Lowerer {
                 self.lower_trait_default_bodies(&module_decl.0, child_module_id);
             }
         }
+        self.current_module_id = previous_module_id;
     }
 
     pub(crate) fn lower_trait_bodies(&mut self, td: &ast::TraitDecl, trait_id: DefId) {
@@ -183,7 +185,7 @@ impl Lowerer {
                 .chain(trait_def.target.iter())
                 .chain(&func.generic_params)
             {
-                context.register_generic_param(generic.name.clone(), generic.id);
+                context.register_generic_param(generic.name.clone(), self.resolver.generic_context(generic.id), generic.id);
             }
             context.seed_after_existing_locals(func.params.iter().map(|param| param.local_id));
             let body = self.with_body_context(context, |lowerer| {

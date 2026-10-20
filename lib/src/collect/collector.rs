@@ -20,6 +20,7 @@ enum NominalDeclaration {
 struct PendingNominalFields {
     declaration: NominalDeclaration,
     module_path: PathBuf,
+    module_id: Option<ModuleId>,
 }
 
 /// Resolve descriptor dependencies first, then nominal fields. Field cycles do
@@ -63,7 +64,7 @@ fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLevel)> {
                 let segments = match path { ast::Path::Ident(path) => &path.path, ast::Path::Type(path) => &path.path };
                 names.0.push(path_names(segments).join("::"));
             }
-            ast::TopLevel::GlobImport(path) => names.0.push(path.join("::")),
+            ast::TopLevel::GlobImport(path) => names.0.push(path_names(path).join("::")),
             _ => {}
         }
         names.0.into_iter().filter_map(|name| {
@@ -97,6 +98,7 @@ impl LocalCollector {
         self.pending_nominal_fields.insert(id, PendingNominalFields {
             declaration: NominalDeclaration::Struct(sd.clone()),
             module_path: self.context.current_module_path.clone(),
+            module_id: self.context.current_module_id,
         });
         HirStruct {
             id,
@@ -110,6 +112,7 @@ impl LocalCollector {
         self.pending_nominal_fields.insert(id, PendingNominalFields {
             declaration: NominalDeclaration::Enum(ed.clone()),
             module_path: self.context.current_module_path.clone(),
+            module_id: self.context.current_module_id,
         });
         HirEnum {
             id,
@@ -121,10 +124,12 @@ impl LocalCollector {
 
     fn complete_nominal_fields(&mut self) {
         let module_path = self.context.current_module_path.clone();
+        let module_id = self.context.current_module_id;
         // All source modules now expose completed defaults. Keep declaration
         // scope while filling fields, including mutually recursive file modules.
         for (id, pending) in std::mem::take(&mut self.pending_nominal_fields) {
             self.context.current_module_path = pending.module_path;
+            self.context.current_module_id = pending.module_id;
             match pending.declaration {
                 NominalDeclaration::Struct(sd) => {
                     let params = self.context.structs.values().find(|item| item.id == id)
@@ -145,6 +150,7 @@ impl LocalCollector {
             }
         }
         self.context.current_module_path = module_path;
+        self.context.current_module_id = module_id;
     }
 
     #[cfg(test)]
@@ -186,6 +192,7 @@ impl LocalCollector {
         crate_name: &str,
         is_std: bool,
     ) {
+        let previous_module_id = self.context.current_module_id.replace(root_module_id);
         let root_exports = collect_exports(module);
 
         self.predeclare_source_backed_trait_identities(
@@ -417,6 +424,7 @@ impl LocalCollector {
                 _ => {}
             }
         }
+        self.context.current_module_id = previous_module_id;
     }
 
     fn predeclare_nominal_identities(
@@ -524,6 +532,7 @@ impl LocalCollector {
         local_prefix: Option<&str>,
         reference_exports: &HashMap<String, Option<String>>,
     ) {
+        let previous_module_id = self.context.current_module_id.replace(module_id);
         for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
             let ast::TopLevel::NewType(name, params, _) = top_level else {
                 continue;
@@ -830,6 +839,7 @@ impl LocalCollector {
                 _ => {}
             }
         }
+        self.context.current_module_id = previous_module_id;
     }
 
     fn collect_function_signature(&mut self, sig: &ast::FunctionSig, name: String, id: DefId) {
@@ -849,10 +859,20 @@ impl LocalCollector {
         name: String,
         function_id: DefId,
     ) {
-        let func = if let Some(sig) = self.context.function_sigs.get(&name).cloned() {
+        let signature = self.context.current_module_id
+            .and_then(|module| self.context.item_resolution.module_binding_paths.get(&module))
+            .and_then(|scope| {
+                let mut path = scope.clone();
+                path.push((fd.name.name.clone(), fd.name.context));
+                self.context.item_resolution.signature_paths.get(&path)
+            })
+            .and_then(|id| self.context.function_sigs.get_id(*id))
+            .or_else(|| self.context.function_sigs.get(&name).filter(|_| fd.name.context == Default::default()))
+            .cloned();
+        let func = if let Some(sig) = signature {
             let mut func =
                 headers::build_function_header_with_sig(&mut self.context, fd, &sig, function_id);
-            self.context.function_sigs.remove(&name);
+            self.context.function_sigs.remove_id(sig.id);
             func.is_unsafe = func.is_unsafe || sig.is_unsafe;
             func
         } else {
@@ -875,6 +895,7 @@ impl LocalCollector {
         module_id: ModuleId,
         prefix: &str,
     ) {
+        let previous_module_id = self.context.current_module_id.replace(module_id);
         for (top_level_index, top_level) in ordered_headers(module) {
             match top_level {
                 ast::TopLevel::FunctionSig(sig) => {
@@ -954,6 +975,7 @@ impl LocalCollector {
                 _ => {}
             }
         }
+        self.context.current_module_id = previous_module_id;
     }
 
     fn predeclare_source_backed_trait_identities(
@@ -1348,6 +1370,7 @@ impl LocalCollector {
         exports: &HashMap<String, Option<String>>,
         reference_exports: &HashMap<String, Option<String>>,
     ) {
+        let previous_module_id = self.context.current_module_id.replace(module_id);
         for top_level in &module.top_levels {
             match top_level {
                 ast::TopLevel::Import(path) => self.handle_import_in_context(path, prefix),
@@ -1568,6 +1591,7 @@ impl LocalCollector {
         }
 
         self.register_export_aliases(prefix, exports);
+        self.context.current_module_id = previous_module_id;
     }
 
     fn register_export_aliases(&mut self, prefix: &str, exports: &HashMap<String, Option<String>>) {
@@ -1602,6 +1626,7 @@ impl LocalCollector {
     }
 
     fn handle_import(&mut self, path: &ast::Path) {
+        if self.context.handle_contextual_import(path) { return; }
         let canonical_prefix = self.context.current_module_prefix();
         self.context
             .handle_import(path, true, canonical_prefix.as_deref());
@@ -1635,6 +1660,7 @@ impl LocalCollector {
     }
 
     fn handle_import_in_context(&mut self, path: &ast::Path, prefix: &str) {
+        if self.context.handle_contextual_import(path) { return; }
         let original_names = match path {
             ast::Path::Ident(ip) => path_names(&ip.path),
             ast::Path::Type(tp) => path_names(&tp.path),
@@ -1682,7 +1708,10 @@ impl LocalCollector {
         }
     }
 
-    fn handle_glob_import(&mut self, module_path: &[String]) {
+    fn handle_glob_import(&mut self, path: &[ast::IdentOrType]) {
+        if self.context.handled_binding_glob(path) { return; }
+        let names = path_names(path);
+        let module_path = names.as_slice();
         self.context.handle_glob_import(module_path);
 
         if let Some(qualified_module_path) = qualify_local_module_path(&self.context, module_path) {
@@ -1690,7 +1719,10 @@ impl LocalCollector {
         }
     }
 
-    fn handle_glob_import_in_context(&mut self, module_path: &[String], prefix: &str) {
+    fn handle_glob_import_in_context(&mut self, path: &[ast::IdentOrType], prefix: &str) {
+        if self.context.handled_binding_glob(path) { return; }
+        let names = path_names(path);
+        let module_path = names.as_slice();
         let module_label = format!("{}::*", module_path.join("::"));
         match self.context.glob_import_targets(module_path) {
             Ok(targets) => {
@@ -1872,7 +1904,7 @@ impl LocalCollector {
         name: &ast::Ident,
         span: &crate::lexer::Span,
     ) -> Option<ModuleId> {
-        let Some(module_id) = self.id_environment.child_module_id(parent_id, &name.name) else {
+        let Some(module_id) = self.id_environment.child_module_id(parent_id, name) else {
             self.context.push_error_with_span(
                 format!(
                     "missing canonical current-crate module identity for {} under module {:?}",
@@ -2193,6 +2225,7 @@ mod tests {
         id_environment.current_source_items.insert(
             source,
             ItemRecord {
+                name_context: Default::default(),
                 name_span: test_span("Point"),
                 def_id: DefId::new(CrateId(0), LocalDefId(0)),
                 module_id: ModuleId(0),
@@ -2257,6 +2290,7 @@ mod tests {
             id_environment.current_source_items.insert(
                 source,
                 ItemRecord {
+                    name_context: Default::default(),
                     name_span: test_span(name),
                     def_id: DefId::new(CrateId(0), LocalDefId(top_level_index)),
                     module_id: ModuleId(0),

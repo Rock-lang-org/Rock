@@ -53,6 +53,7 @@ use crate::types::{GenericParamId, Type};
 
 /// The main lowering context
 pub struct Lowerer {
+    pub(crate) current_module_id: Option<crate::ids::ModuleId>,
     pub(crate) overflow_checks: bool,
     pub(crate) engine: LowerInferenceService,
     pub(crate) scope: LowerScopeService,
@@ -232,6 +233,7 @@ impl Lowerer {
             root_crate_id: CrateId(0),
             local_def_ids: IdGen::<LocalDefId>::new(),
             item_index: ItemIndex::default(),
+            current_module_id: None,
             language_items: HirLanguageItems::default(),
             imported_effective_trait_methods: HashMap::new(),
             body_context: None,
@@ -635,36 +637,44 @@ impl Lowerer {
         None
     }
 
-    pub(crate) fn current_generic_type_for_name(
-        &mut self,
+    pub(crate) fn contextual_generic_param_id(
+        &self,
         name: &str,
-        _span: crate::lexer::Span,
-    ) -> Option<Type> {
+        context: crate::lexer::lossless::SyntaxContext,
+    ) -> Option<GenericParamId> {
         if let Some(param) = self
             .body_context
             .as_ref()
-            .and_then(|context| context.generic_param_id(name))
+            .and_then(|body| body.generic_param_id(name, context))
         {
-            return Some(Type::Generic(param));
+            return Some(param);
+        }
+        let owner = self.current_generic_owner()?;
+        self.current_generic_params().iter().enumerate().find_map(|(index, param)| {
+            let id = GenericParamId { owner, index: index as u32 };
+            (param == name && self.resolver.generic_context(id) == context).then_some(id)
+        })
+    }
+
+    pub(crate) fn contextual_generic_type_for_name(
+        &mut self,
+        name: &str,
+        context: crate::lexer::lossless::SyntaxContext,
+        _span: crate::lexer::Span,
+    ) -> Option<Type> {
+        if let Some(id) = self.contextual_generic_param_id(name, context) {
+            return Some(Type::Generic(id));
         }
         let owner = self.current_generic_owner()?;
         let params = self.current_generic_params_mut()?;
-        let index = params.iter().position(|param| param == name).or_else(|| {
-            let mut chars = name.chars();
-            let is_implicit_generic = matches!(chars.next(), Some(ch) if ch.is_ascii_uppercase())
-                && chars.next().is_none();
-            if is_implicit_generic {
-                params.push(name.to_string());
-                Some(params.len() - 1)
-            } else {
-                None
-            }
-        })?;
-
-        Some(Type::Generic(crate::types::GenericParamId {
-            owner,
-            index: index as u32,
-        }))
+        let mut chars = name.chars();
+        let is_implicit_generic = matches!(chars.next(), Some(ch) if ch.is_ascii_uppercase())
+            && chars.next().is_none();
+        if !is_implicit_generic { return None; }
+        let id = GenericParamId { owner, index: params.len() as u32 };
+        params.push(name.to_string());
+        self.resolver.generic_contexts.insert(id, context);
+        Some(Type::Generic(id))
     }
 
     pub(crate) fn with_generic_context<T>(
@@ -853,6 +863,8 @@ impl Lowerer {
         let mut function_names: Vec<_> = resolver
             .item_names_by_id
             .iter()
+            .filter(|(id, _)| resolver.definition_binding_paths.get(id)
+                .is_none_or(|path| path.iter().all(|(_, context)| *context == crate::lexer::lossless::SyntaxContext::ROOT)))
             .map(|(id, name)| (name, id))
             .collect();
         function_names.sort_by_key(|(name, _)| *name);
@@ -927,6 +939,8 @@ impl Lowerer {
         let mut extern_names: Vec<_> = resolver
             .item_names_by_id
             .iter()
+            .filter(|(id, _)| resolver.definition_binding_paths.get(id)
+                .is_none_or(|path| path.iter().all(|(_, context)| *context == crate::lexer::lossless::SyntaxContext::ROOT)))
             .filter_map(|(id, name)| {
                 lower_items
                     .extern_def(*id)
@@ -1005,53 +1019,7 @@ pub fn path_names(path: &[ast::IdentOrType]) -> Vec<String> {
 }
 
 pub fn collect_exports(module: &ast::Module) -> HashMap<String, Option<String>> {
-    let mut exports = HashMap::new();
-    for top_level in &module.top_levels {
-        match top_level {
-            ast::TopLevel::Export(path) => {
-                // Re-export (multi-segment) or legacy standalone export (single-segment)
-                let names = match path {
-                    ast::Path::Ident(ip) => path_names(&ip.path),
-                    ast::Path::Type(tp) => path_names(&tp.path),
-                };
-                if let Some(short_name) = names.last().cloned() {
-                    let source = if names.len() > 1 {
-                        Some(names.join("::"))
-                    } else {
-                        None
-                    };
-                    exports.insert(short_name, source);
-                }
-            }
-            // Inline exports via `< name = ...`, `< struct ...`, etc.
-            ast::TopLevel::FunctionDecl(fd) if fd.exported => {
-                exports.insert(fd.name.name.clone(), None);
-            }
-            ast::TopLevel::Extern(sig) if sig.exported => {
-                exports.insert(sig.name.name.clone(), None);
-            }
-            ast::TopLevel::StructDecl(sd) if sd.exported => {
-                exports.insert(sd.name.name.clone(), None);
-            }
-            ast::TopLevel::EnumDecl(ed) if ed.exported => {
-                exports.insert(ed.name.name.clone(), None);
-            }
-            ast::TopLevel::TraitDecl(td) if td.exported => {
-                exports.insert(td.name.name.clone(), None);
-            }
-            ast::TopLevel::Mod(ident, true) => {
-                exports.insert(ident.name.clone(), None);
-            }
-            ast::TopLevel::GlobExport(module_path) => {
-                // Store a sentinel: key = "module::path::*", source = Some("module::path::*")
-                // Callers that have file-loading context will expand this into individual entries.
-                let sentinel = format!("{}::*", module_path.join("::"));
-                exports.insert(sentinel.clone(), Some(sentinel));
-            }
-            _ => {}
-        }
-    }
-    exports
+    crate::collect::collect_exports(module)
 }
 
 #[cfg(test)]

@@ -4,8 +4,10 @@
 //! signatures) without lowering function bodies. Produces `Declarations`
 //! which is consumed by the `lower` stage.
 
+mod binding_surfaces;
 mod collector;
 mod context;
+mod named_items;
 mod declarations;
 mod headers;
 pub mod item_index;
@@ -87,7 +89,7 @@ pub(crate) struct CollectedTraitMemberIds {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CollectedIdEnvironment {
     current_source_items: HashMap<ItemSourceId, ItemRecord>,
-    current_source_module_paths: HashMap<Vec<String>, crate::ids::ModuleId>,
+    current_source_module_paths: HashMap<Vec<(String, crate::lexer::lossless::SyntaxContext)>, crate::ids::ModuleId>,
     trait_member_ids_by_owner: HashMap<crate::ids::DefId, CollectedTraitMemberIds>,
     impl_method_ids_by_owner: HashMap<crate::ids::DefId, HashMap<String, crate::ids::DefId>>,
 }
@@ -107,13 +109,13 @@ impl CollectedIdEnvironment {
     pub(crate) fn child_module_id(
         &self,
         parent_id: crate::ids::ModuleId,
-        name: &str,
+        name: &ast::Ident,
     ) -> Option<crate::ids::ModuleId> {
         let mut path = self
             .current_source_module_paths
             .iter()
             .find_map(|(path, module_id)| (*module_id == parent_id).then(|| path.clone()))?;
-        path.push(name.to_string());
+        path.push((name.name.clone(), name.context));
         self.current_source_module_paths.get(&path).copied()
     }
 
@@ -212,7 +214,7 @@ fn collected_id_environment_from_index(
                 continue;
             };
             let mut path = parent_path;
-            path.push(name.clone());
+            path.push((name.clone(), module.name_context));
             inserted |= current_source_module_paths
                 .insert(path, module.module_id)
                 .is_none();
@@ -310,7 +312,7 @@ fn collect_member_sources_in_module(
                 let inner = &module_decl.0;
                 if let Some(module_name) = &inner.name {
                     let Some(child_module_id) =
-                        item_index.child_module_id(module_id, &module_name.name)
+                        item_index.child_module_for_name(module_id, module_name)
                     else {
                         continue;
                     };
@@ -328,7 +330,7 @@ fn collect_member_sources_in_module(
                 }
             }
             ast::TopLevel::Mod(name, _) => {
-                let Some(child_module_id) = item_index.child_module_id(module_id, &name.name)
+                let Some(child_module_id) = item_index.child_module_for_name(module_id, name)
                 else {
                     continue;
                 };
@@ -642,7 +644,7 @@ pub fn collect(
     inject_prelude: bool,
     current_crate_name: Option<&str>,
 ) -> Result<Declarations, Vec<ResolveError>> {
-    collect_impl(program, None, crate_ctx, inject_prelude, current_crate_name)
+    collect_impl(program, None, crate_ctx, inject_prelude, current_crate_name, None)
 }
 
 pub fn collect_with_source_graph(
@@ -658,7 +660,19 @@ pub fn collect_with_source_graph(
         crate_ctx,
         inject_prelude,
         current_crate_name,
+        None,
     )
+}
+
+pub(crate) fn collect_with_binding_environments(
+    program: &ast::Program,
+    source_graph: Option<&crate::source_loader::ModuleGraph>,
+    crate_ctx: &CrateContext,
+    inject_prelude: bool,
+    current_crate_name: Option<&str>,
+    environments: &crate::macro_expansion::binding_environment::BindingEnvironments,
+) -> Result<Declarations, Vec<ResolveError>> {
+    collect_impl(program, source_graph, crate_ctx, inject_prelude, current_crate_name, Some(environments))
 }
 
 fn collect_impl(
@@ -667,6 +681,7 @@ fn collect_impl(
     crate_ctx: &CrateContext,
     inject_prelude: bool,
     current_crate_name: Option<&str>,
+    binding_environments: Option<&crate::macro_expansion::binding_environment::BindingEnvironments>,
 ) -> Result<Declarations, Vec<ResolveError>> {
     let inject_prelude = inject_prelude && crate_ctx.has_extern_crate("std");
     let mut context = context::CollectContext::bootstrap_for_collection(
@@ -709,6 +724,13 @@ fn collect_impl(
         &source_modules,
     );
     let root_module_id = indexing_ids.root_module_id();
+    context.seed_item_resolution(&item_index, root_module_id);
+    if let Some(environments) = binding_environments {
+        context.item_resolution.definition_environments = environments.resolve(crate_ctx)
+            .map_err(|message| vec![ResolveError::non_source(message)])?;
+    }
+    let binding_errors = context.item_resolution.seed_binding_surfaces(&program.module, root_module_id, &item_index, &source_modules, crate_ctx);
+    context.errors.extend(binding_errors);
     let mut id_environment = collected_id_environment_from_index(&item_index, root_module_id);
     populate_member_id_environment(
         &mut id_environment,
@@ -1191,7 +1213,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::ast::{
-        FunctionDecl, FunctionSig, Ident, Impl, LambdaArrowKind, LambdaDecl, Module, ModuleDecl,
+        FunctionDecl, FunctionSig, Ident, IdentOrType, Impl, LambdaArrowKind, LambdaDecl, Module, ModuleDecl,
         ParseType, ParseTypeInner, Pattern, PatternKind, Program, StructDecl, TopLevel,
     };
     use crate::crate_artifact::{ArtifactCrateInterface, ArtifactExport};
@@ -2691,7 +2713,7 @@ mod tests {
         let program = Program {
             module: Module {
                 name: None,
-                top_levels: vec![TopLevel::GlobImport(vec!["dep".to_string()])],
+                top_levels: vec![TopLevel::GlobImport(vec![IdentOrType::Ident(ident("dep"))])],
                 is_inline: false,
                 filepath: None,
             },
@@ -3087,7 +3109,7 @@ mod tests {
                             exported: true,
                         })],
                     ),
-                    TopLevel::GlobExport(vec!["inline".to_string()]),
+                    TopLevel::GlobExport(vec![IdentOrType::Ident(ident("inline"))]),
                     TopLevel::Impl(inherent_impl("Same", "first")),
                     TopLevel::Impl(inherent_impl("Same", "second")),
                 ],
@@ -3234,10 +3256,10 @@ mod tests {
                         "outer",
                         vec![
                             TopLevel::Mod(ident("inner"), false),
-                            TopLevel::GlobExport(vec!["inner".to_string()]),
+                            TopLevel::GlobExport(vec![IdentOrType::Ident(ident("inner"))]),
                         ],
                     ),
-                    TopLevel::GlobExport(vec!["outer".to_string()]),
+                    TopLevel::GlobExport(vec![IdentOrType::Ident(ident("outer"))]),
                 ],
                 is_inline: false,
                 filepath: Some(PathBuf::from("/dep/lib.rk")),

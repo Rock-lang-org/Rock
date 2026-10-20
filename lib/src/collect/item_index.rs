@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::ast;
 use crate::ids::{CrateId, DefId, IdGen, Idx, LocalDefId, ModuleId};
+use crate::lexer::lossless::SyntaxContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemKind {
@@ -35,6 +36,7 @@ pub struct ItemRecord {
     pub module_id: ModuleId,
     pub source: ItemSourceId,
     pub name: String,
+    pub name_context: SyntaxContext,
     pub kind: ItemKind,
     pub name_span: crate::lexer::Span,
 }
@@ -51,6 +53,7 @@ pub struct ModuleRecord {
     pub module_id: ModuleId,
     pub parent: Option<ModuleId>,
     pub name: Option<String>,
+    pub name_context: SyntaxContext,
     pub kind: ModuleKind,
 }
 
@@ -187,8 +190,34 @@ impl ItemIndex {
     pub fn child_module_id(&self, parent_id: ModuleId, name: &str) -> Option<ModuleId> {
         self.modules
             .iter()
-            .find(|module| module.parent == Some(parent_id) && module.name.as_deref() == Some(name))
+            .find(|module| module.parent == Some(parent_id) && module.name.as_deref() == Some(name)
+                && module.name_context == SyntaxContext::ROOT)
             .map(|module| module.module_id)
+    }
+
+    pub(crate) fn child_module_for_name(&self, parent: ModuleId, name: &ast::Ident) -> Option<ModuleId> {
+        self.modules.iter().find(|module|
+            module.parent == Some(parent) && module.name.as_deref() == Some(name.name.as_str())
+                && module.name_context == name.context
+        ).map(|module| module.module_id)
+    }
+
+    pub(crate) fn module_binding_path(&self, module_id: ModuleId) -> Vec<(String, SyntaxContext)> {
+        let mut result = Vec::new();
+        let mut current = self.get_module(module_id);
+        while let Some(module) = current {
+            if module.kind == ModuleKind::Root { break; }
+            if let Some(name) = &module.name { result.push((name.clone(), module.name_context)); }
+            current = module.parent.and_then(|id| self.get_module(id));
+        }
+        result.reverse();
+        result
+    }
+
+    pub(crate) fn item_binding_path(&self, item: &ItemRecord) -> Vec<(String, SyntaxContext)> {
+        let mut path = self.module_binding_path(item.module_id);
+        path.push((item.name.clone(), item.name_context));
+        path
     }
 
     fn push(&mut self, item: ItemRecord) {
@@ -226,6 +255,7 @@ pub fn index_module_items(
                 top_level_index: top_level_index as u32,
             },
             name,
+            name_context: item_name_context(top_level),
             kind,
             name_span,
         });
@@ -250,6 +280,7 @@ pub fn index_root_module_items_with_sources(
         module_id: root_module_id,
         parent: None,
         name: module.name.as_ref().map(|name| name.name.clone()),
+        name_context: SyntaxContext::ROOT,
         kind: ModuleKind::Root,
     });
 
@@ -416,6 +447,7 @@ fn index_module_contents(
                         top_level_index: top_level_index as u32,
                     },
                     name,
+                    name_context: item_name_context(top_level),
                     kind,
                     name_span,
                 });
@@ -423,6 +455,7 @@ fn index_module_contents(
                     module_id: child_module_id,
                     parent: Some(module_id),
                     name: module_decl.0.name.as_ref().map(|name| name.name.clone()),
+                    name_context: item_name_context(top_level),
                     kind: ModuleKind::Inline,
                 });
                 if let Some(module_name) = &module_decl.0.name {
@@ -451,6 +484,7 @@ fn index_module_contents(
                         top_level_index: top_level_index as u32,
                     },
                     name: name.name.clone(),
+                    name_context: name.context,
                     kind: ItemKind::Module,
                     name_span: name.span.clone(),
                 });
@@ -458,6 +492,7 @@ fn index_module_contents(
                     module_id: child_module_id,
                     parent: Some(module_id),
                     name: Some(name.name.clone()),
+                    name_context: name.context,
                     kind: ModuleKind::SourceBacked,
                 });
 
@@ -487,11 +522,26 @@ fn index_module_contents(
                         top_level_index: top_level_index as u32,
                     },
                     name,
+                    name_context: item_name_context(top_level),
                     kind,
                     name_span,
                 });
             }
         }
+    }
+}
+
+fn item_name_context(top_level: &ast::TopLevel) -> SyntaxContext {
+    match top_level {
+        ast::TopLevel::Module(module) => module.0.name.as_ref().map(|name| name.context).unwrap_or_default(),
+        ast::TopLevel::Mod(name, _) => name.context,
+        ast::TopLevel::FunctionDecl(function) => function.name.context,
+        ast::TopLevel::FunctionSig(signature) | ast::TopLevel::Extern(signature) => signature.name.context,
+        ast::TopLevel::StructDecl(item) => item.name.context,
+        ast::TopLevel::EnumDecl(item) => item.name.context,
+        ast::TopLevel::TraitDecl(item) => item.name.context,
+        ast::TopLevel::NewType(name, _, _) => name.context,
+        _ => SyntaxContext::ROOT,
     }
 }
 

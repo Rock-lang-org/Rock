@@ -2,6 +2,8 @@ use crate::hir::{
     HirEnum, HirFunction, HirImplReceiverPattern, HirMethodCallTarget, HirSelectedTraitMember,
     HirStruct, HirVarTarget, HirVariant,
 };
+use crate::collect::resolver::{binding_path, BindingSegment};
+use crate::lexer::lossless::SyntaxContext;
 use crate::ids::DefId;
 use crate::lower::Lowerer;
 use crate::types::{GenericParamId, Type};
@@ -67,6 +69,36 @@ pub(crate) struct LowerResolutionContext<'a> {
 impl<'a> LowerResolutionContext<'a> {
     pub(crate) fn new(lowerer: &'a Lowerer) -> Self {
         Self { lowerer }
+    }
+
+    fn resolve_syntax_path_id(&self, path: &[(String, SyntaxContext)]) -> Option<DefId> {
+        let scope = self.lowerer.current_module_id;
+        if let Some(id) = self.lowerer.resolver.resolve_binding_path(scope, path) { return Some(id); }
+        if path.iter().any(|(_, context)| *context != SyntaxContext::ROOT) { return None; }
+        let names = path.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
+        if self.has_contextual_scope() && !names.first().is_some_and(|name| self.lowerer.dependency_resolvers.contains_key(name)) { return None; }
+        if names.len() == 1 {
+            if let Some(id) = self.resolve_module_alias_or_item_id(&names[0]) { return Some(id); }
+        }
+        let canonical = self.canonicalize_first_path_segment(&names).join("::");
+        self.resolve_module_alias_or_item_id(&canonical).or_else(|| {
+            self.current_module_prefix().and_then(|prefix| self.resolve_item_id(&format!("{prefix}::{canonical}")))
+        })
+    }
+
+    fn resolved_item_value(&self, id: DefId) -> Option<LowerResolvedValue> {
+        Some(LowerResolvedValue {
+            name: self.canonical_name(id)?.to_string(),
+            ty: self.top_level_value_type(id)?,
+            target: Some(self.top_level_var_target_by_id(id)?),
+            is_alias: false,
+            scope_index: None,
+            should_instantiate: true,
+        })
+    }
+
+    fn has_contextual_scope(&self) -> bool {
+        self.lowerer.resolver.contextual_scope(self.lowerer.current_module_id)
     }
 
     pub(crate) fn resolve_item_id(&self, name: &str) -> Option<DefId> {
@@ -195,23 +227,20 @@ impl<'a> LowerResolutionContext<'a> {
         .collect()
     }
 
-    pub(crate) fn resolve_enum_variant_path(
+    pub(crate) fn resolve_enum_variant_path<S: BindingSegment>(
         &self,
-        segments: &[String],
+        segments: &[S],
     ) -> Option<LowerResolvedEnumVariant> {
-        if segments.len() != 2 {
-            return None;
-        }
-
-        let canonical_segments = self.canonicalize_first_path_segment(segments);
-        let resolved_first = canonical_segments.first().unwrap_or(&segments[0]);
-        let owner = self
-            .resolve_enum_type(resolved_first)
-            .or_else(|| self.resolve_enum_type(&segments[0]))?;
+        let path = binding_path(segments)?;
+        let (member, owner_path) = path.split_last()?;
+        if owner_path.is_empty() { return None; }
+        let id = self.resolve_syntax_path_id(owner_path)?;
+        let owner = self.lowerer.items.enumeration(id)?.clone();
         let variant = owner
             .variants
             .iter()
-            .find(|variant| variant.name == segments[1])?
+            .find(|variant| variant.name == member.0
+                && self.lowerer.resolver.variant_contexts.get(&(owner.id, variant.id)).copied().unwrap_or_default() == member.1)?
             .clone();
         let owner_name = self.preferred_nominal_name(owner.id);
 
@@ -222,19 +251,25 @@ impl<'a> LowerResolutionContext<'a> {
         })
     }
 
-    pub(crate) fn resolve_static_method_path(
-        &self,
-        segments: &[String],
-    ) -> Result<Option<LowerResolvedStaticMethod>, String> {
-        if segments.len() != 2 {
-            return Ok(None);
-        }
+    pub(crate) fn resolve_enum_owner_path<S: BindingSegment>(&self, segments: &[S]) -> Option<HirEnum> {
+        let path = binding_path(segments)?;
+        let (_, owner) = path.split_last()?;
+        self.lowerer.items.enumeration(self.resolve_syntax_path_id(owner)?).cloned()
+    }
 
-        let Some(owner) = self.resolve_static_owner_for_first_path_segment(segments) else {
+    pub(crate) fn resolve_static_method_path<S: BindingSegment>(
+        &self,
+        segments: &[S],
+    ) -> Result<Option<LowerResolvedStaticMethod>, String> {
+        let Some(path) = binding_path(segments) else { return Ok(None); };
+        let Some((member, owner_path)) = path.split_last() else { return Ok(None); };
+        let Some(owner_id) = self.resolve_syntax_path_id(owner_path) else { return Ok(None); };
+        let Some(owner) = self.resolve_static_owner(owner_id) else {
             return Ok(None);
         };
+        let names = path.iter().map(|(name, _)| name.clone()).collect::<Vec<_>>();
         let owner_id = owner.id();
-        let method_name = &segments[1];
+        let method_name = &member.0;
         let owner_impls = self
             .lowerer
             .items
@@ -258,6 +293,7 @@ impl<'a> LowerResolutionContext<'a> {
                 imp.methods
                     .get(method_name)
                     .filter(|method| !method.is_method || method.self_receiver.is_some())
+                    .filter(|method| self.lowerer.resolver.member_contexts.get(&method.id).copied().unwrap_or_default() == member.1)
                     .map(|method| (*imp, method))
             })
             .collect::<Vec<_>>();
@@ -270,14 +306,14 @@ impl<'a> LowerResolutionContext<'a> {
                 }
                 return Err(format!(
                     "static method `{}` has no matching static implementation",
-                    segments.join("::")
+                    names.join("::")
                 ));
             }
             [(imp, method)] => (*imp, *method),
             _ => {
                 return Err(format!(
                     "ambiguous static method `{}`: multiple implementations match",
-                    segments.join("::")
+                    names.join("::")
                 ));
             }
         };
@@ -327,19 +363,13 @@ impl<'a> LowerResolutionContext<'a> {
         }))
     }
 
-    pub(crate) fn resolve_struct_literal_path(
+    pub(crate) fn resolve_struct_literal_path<S: BindingSegment>(
         &self,
-        segments: &[String],
+        segments: &[S],
     ) -> LowerResolvedStructLiteral {
-        let canonical_segments = self.canonicalize_first_path_segment(segments);
-        let fallback_name = canonical_segments.join("::");
-        let structure = self.resolve_struct_type(&fallback_name).or_else(|| {
-            if segments.len() == 1 {
-                self.resolve_struct_type(&segments[0])
-            } else {
-                None
-            }
-        });
+        let path = binding_path(segments).unwrap_or_default();
+        let fallback_name = path.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join("::");
+        let structure = self.resolve_syntax_path_id(&path).and_then(|id| self.lowerer.items.structure(id)).cloned();
         let name = structure
             .as_ref()
             .map(|structure| self.preferred_nominal_name(structure.id))
@@ -348,23 +378,12 @@ impl<'a> LowerResolutionContext<'a> {
         LowerResolvedStructLiteral { name, structure }
     }
 
-    fn resolve_static_owner_for_first_path_segment(
-        &self,
-        segments: &[String],
-    ) -> Option<LowerResolvedStaticOwner> {
-        let first = segments.first()?;
-        let canonical_segments = self.canonicalize_first_path_segment(segments);
-        let resolved_first = canonical_segments.first().unwrap_or(first);
-        let nominal = self
-            .resolve_nominal_type(resolved_first)
-            .or_else(|| self.resolve_nominal_type(first))?;
-        let (id, generic_count, is_struct) = match nominal {
-            crate::type_lowering::ResolvedNominalType::Struct(structure) => {
-                (structure.id, structure.generic_params.len(), true)
-            }
-            crate::type_lowering::ResolvedNominalType::Enum(enum_def) => {
-                (enum_def.id, enum_def.generic_params.len(), false)
-            }
+    fn resolve_static_owner(&self, id: DefId) -> Option<LowerResolvedStaticOwner> {
+        self.canonical_name(id)?;
+        let (generic_count, is_struct) = if let Some(structure) = self.lowerer.items.structure(id) {
+            (structure.generic_params.len(), true)
+        } else {
+            (self.lowerer.items.enumeration(id)?.generic_params.len(), false)
         };
         let args = (0..generic_count)
             .map(|index| {
@@ -416,6 +435,13 @@ impl<'a> LowerResolutionContext<'a> {
     pub(crate) fn resolve_identifier_value(&self, name: impl Into<crate::lower::scope::LocalName>) -> Option<LowerResolvedValue> {
         let key = name.into();
         let name = key.spelling.as_str();
+        if (key.context != SyntaxContext::ROOT || self.has_contextual_scope())
+            && !self.lowerer.scope.lookup(&key).is_some_and(|binding| binding.local_id.is_some()) {
+            if let Some(id) = self.resolve_syntax_path_id(&[(key.spelling.clone(), key.context)]) {
+                if let Some(value) = self.resolved_item_value(id) { return Some(value); }
+            }
+            if key.context != SyntaxContext::ROOT || self.has_contextual_scope() { return None; }
+        }
         // Context mismatch must never fall back to a caller local. Item and alias
         // environments remain the separate module-resolution authority.
         let binding_key = if self.lowerer.scope.lookup(&key).is_some() {
@@ -498,10 +524,16 @@ impl<'a> LowerResolutionContext<'a> {
         })
     }
 
-    pub(crate) fn resolve_qualified_value_path(
+    pub(crate) fn resolve_qualified_value_path<S: BindingSegment>(
         &self,
-        segments: &[String],
+        segments: &[S],
     ) -> Option<LowerResolvedValue> {
+        let path = binding_path(segments)?;
+        if path.iter().any(|(_, context)| *context != SyntaxContext::ROOT) || self.has_contextual_scope() {
+            return self.resolve_syntax_path_id(&path).and_then(|id| self.resolved_item_value(id));
+        }
+        let names = path.into_iter().map(|(name, _)| name).collect::<Vec<_>>();
+        let segments = names.as_slice();
         let canonical_segments = self.canonicalize_first_path_segment(segments);
         let qualified_name = canonical_segments.join("::");
 
@@ -632,10 +664,6 @@ impl<'a> LowerResolutionContext<'a> {
             Type::Reference { inner, .. } => self.canonical_type_name_for_method_lookup(inner),
             _ => crate::lower::Lowerer::get_type_name_for_method_lookup(ty),
         }
-    }
-
-    pub(crate) fn resolve_trait_id(&self, name: &str) -> Option<DefId> {
-        self.resolve_trait_type(name).map(|trait_def| trait_def.id)
     }
 
     pub(crate) fn resolve_struct_type(&self, name: &str) -> Option<crate::hir::HirStruct> {

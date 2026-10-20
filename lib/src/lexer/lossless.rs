@@ -255,3 +255,6 @@ mod context_delivery_tests;
 
 #[cfg(test)]
 mod local_resolution_tests;
+
+#[cfg(test)]
+mod type_resolution_tests;

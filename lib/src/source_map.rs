@@ -1138,14 +1138,15 @@ fn collect_source_modules(
                 let Some(name) = inline.name.as_ref() else {
                     continue;
                 };
-                (name.name.clone(), Some(inline.clone()))
+                (name.clone(), Some(inline.clone()))
             }
-            ast::TopLevel::Mod(name, _) => (name.name.clone(), None),
+            ast::TopLevel::Mod(name, _) => (name.clone(), None),
             _ => continue,
         };
-        let Some(child_id) = index.child_module_id(module_id, &name) else {
+        let Some(child_id) = index.child_module_for_name(module_id, &name) else {
             continue;
         };
+        let name = name.name;
         let child_prefix = if prefix.is_empty() {
             name.clone()
         } else {

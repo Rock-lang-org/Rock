@@ -43,9 +43,12 @@ impl Lowerer {
         owner: DefId,
         generic_params: &[String],
         type_param: &str,
+        context: crate::lexer::lossless::SyntaxContext,
         span: crate::lexer::Span,
     ) -> Option<GenericParamId> {
-        let Some(index) = generic_params.iter().position(|param| param == type_param) else {
+        let Some(index) = generic_params.iter().enumerate().position(|(index, param)|
+            param == type_param && self.resolver.generic_context(GenericParamId { owner, index: index as u32 }) == context
+        ) else {
             self.diagnostics.push_with_span(
                 format!("unknown generic parameter '{}' in where clause", type_param),
                 span,
@@ -133,24 +136,12 @@ impl Lowerer {
     fn receiver_ty_for_self(
         &mut self,
         self_receiver: ast::SelfReceiverMode,
+        context: crate::lexer::lossless::SyntaxContext,
         span: crate::lexer::Span,
     ) -> Type {
-        let base = if let Some(index) = self
-            .current_generic_params()
-            .iter()
-            .position(|param| param == "Self")
-        {
-            self.current_generic_owner()
-                .map(|owner| {
-                    Type::Generic(GenericParamId {
-                        owner,
-                        index: index as u32,
-                    })
-                })
-                .unwrap_or_else(|| self.engine.fresh_type_var_at(span.clone()))
-        } else {
-            self.engine.fresh_type_var_at(span)
-        };
+        let base = self.contextual_generic_param_id("Self", context)
+            .map(Type::Generic)
+            .unwrap_or_else(|| self.engine.fresh_type_var_at(span));
 
         match self_receiver {
             ast::SelfReceiverMode::Shared => Type::Reference {
@@ -168,13 +159,14 @@ impl Lowerer {
     fn build_self_param_with_local_id(
         &mut self,
         self_receiver: ast::SelfReceiverMode,
+        context: crate::lexer::lossless::SyntaxContext,
         local_id: HirLocalId,
         span: crate::lexer::Span,
     ) -> HirParam {
         HirParam {
             name: "self".to_string(),
             local_id,
-            ty: self.receiver_ty_for_self(self_receiver, span),
+            ty: self.receiver_ty_for_self(self_receiver, context, span),
             mutable: matches!(self_receiver, ast::SelfReceiverMode::Mut),
             is_ref: false,
         }
@@ -221,7 +213,7 @@ impl Lowerer {
             if let Some(owner) = self.current_generic_owner() {
                 let ty = self.lower_parse_type(&sig.sig);
                 let receiver_ty = sig.self_receiver.map(|self_receiver| {
-                    self.receiver_ty_for_self(self_receiver, sig.name.span.clone())
+                    self.receiver_ty_for_self(self_receiver, sig.self_context, sig.name.span.clone())
                 });
                 (
                     ty,
@@ -240,7 +232,7 @@ impl Lowerer {
                     self.with_generic_context(owner, params, |lowerer| {
                         let ty = lowerer.lower_parse_type(&sig.sig);
                         let receiver_ty = sig.self_receiver.map(|self_receiver| {
-                            lowerer.receiver_ty_for_self(self_receiver, sig.name.span.clone())
+                            lowerer.receiver_ty_for_self(self_receiver, sig.self_context, sig.name.span.clone())
                         });
                         (ty, receiver_ty)
                     });
@@ -289,8 +281,8 @@ impl Lowerer {
                 );
                 continue;
             };
-            let Some(trait_id) = crate::lower::resolution::LowerResolutionContext::new(self)
-                .resolve_trait_id(&trait_bound.name)
+            let Some(trait_id) = crate::type_lowering::TypeLoweringContext::resolve_trait_type(self, &trait_bound.name, trait_bound.context)
+                .map(|item| item.id)
             else {
                 self.diagnostics.push_with_span(
                     format!("unknown trait '{}' in where clause", trait_bound.name),
@@ -300,7 +292,7 @@ impl Lowerer {
             };
             let declared_param_name = match &clause.subject {
                 ast::ParseType::Type(subject) if subject.generics.is_empty() => {
-                    Some(subject.name.as_str())
+                    Some((subject.name.as_str(), subject.context))
                 }
                 ast::ParseType::Application(application)
                     if application
@@ -310,18 +302,19 @@ impl Lowerer {
                 {
                     match application.constructor.as_ref() {
                         ast::ParseType::Type(subject) if subject.generics.is_empty() => {
-                            Some(subject.name.as_str())
+                            Some((subject.name.as_str(), subject.context))
                         }
                         _ => None,
                     }
                 }
                 _ => None,
             };
-            let subject = if let Some(name) = declared_param_name {
+            let subject = if let Some((name, context)) = declared_param_name {
                 self.where_clause_generic_param_id(
                     generic_owner,
                     &generic_context_params,
                     name,
+                    context,
                     clause.subject.span(),
                 )
                 .map(Type::Generic)
@@ -481,6 +474,7 @@ impl Lowerer {
         if let Some(self_receiver) = fd.self_receiver {
             let self_param = self.build_self_param_with_local_id(
                 self_receiver,
+                fd.self_context,
                 local_ids.fresh(),
                 fd.lambda.span.clone(),
             );
@@ -620,6 +614,9 @@ impl Lowerer {
             }
         }
         public_entries.extend(hidden_entries);
+        crate::collect::resolver::remap_generic_contexts(
+            &mut self.resolver.generic_contexts, &signature_owned_generic_param_ids, id,
+        );
         for generic in public_entries {
             let generic_id = generic.id;
             let remapped = if let Some(index) = signature_owned_generic_param_ids
@@ -650,6 +647,7 @@ impl Lowerer {
             let local_id = local_ids.fresh();
             let mut self_param = self.build_self_param_with_local_id(
                 self_receiver,
+                fd.self_context,
                 local_id,
                 fd.lambda.span.clone(),
             );

@@ -183,7 +183,7 @@ fn collect_language_items_in_module(
                 let Some(name) = &inner.name else {
                     continue;
                 };
-                let Some(child_module_id) = item_index.child_module_id(module_id, &name.name)
+                let Some(child_module_id) = item_index.child_module_for_name(module_id, name)
                 else {
                     continue;
                 };
@@ -200,7 +200,7 @@ fn collect_language_items_in_module(
                 module_path.pop();
             }
             ast::TopLevel::Mod(name, _) => {
-                let Some(child_module_id) = item_index.child_module_id(module_id, &name.name)
+                let Some(child_module_id) = item_index.child_module_for_name(module_id, name)
                 else {
                     continue;
                 };

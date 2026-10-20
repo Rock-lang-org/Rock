@@ -3536,6 +3536,27 @@ fn macro_a_12_forwarding_does_not_hide_a_conflicting_caller_loan() {
 }
 
 #[test]
+fn macro_a_13_captured_nominal_and_generic_binder_survive_generated_impl() {
+    let output = compile_and_run(r#"macro accessor
+    $owner:ty, $param:ty =>
+        impl $owner $param
+            @get: $param
+            @get = -> self.value
+struct Holder A
+    < value: A
+%accessor Holder, T
+main = !->
+    number = Holder
+        value: 42
+    flag = Holder
+        value: true
+    number.get! .println!
+    flag.get! .println!
+"#);
+    assert_eq!(output, "42\ntrue\n");
+}
+
+#[test]
 fn test_declarative_macro_can_produce_call_argument_holes() {
     let output = compile_and_run(
         r#"macro make_main

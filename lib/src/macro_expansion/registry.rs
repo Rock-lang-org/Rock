@@ -160,7 +160,7 @@ impl MacroRegistry {
                         scope.imports.push((names, span));
                     }
                 }
-                TopLevel::GlobImport(path) => scope.globs.push(path.clone()),
+                TopLevel::GlobImport(path) => scope.globs.push(crate::collect::path_names(path)),
                 _ => {}
             }
         }

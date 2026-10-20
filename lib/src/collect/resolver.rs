@@ -4,9 +4,83 @@ use serde::{Deserialize, Serialize};
 
 use crate::collect::item_index::{ItemIndex, ItemKind, ModuleKind};
 use crate::ids::{DefId, ModuleId};
+use crate::lexer::lossless::SyntaxContext;
+use crate::types::GenericParamId;
+
+pub(crate) trait BindingSegment {
+    fn binding_names(&self) -> Option<Vec<(String, SyntaxContext)>>;
+}
+
+impl BindingSegment for String {
+    fn binding_names(&self) -> Option<Vec<(String, SyntaxContext)>> {
+        Some(self.split("::").map(|name| (name.to_string(), SyntaxContext::ROOT)).collect())
+    }
+}
+
+impl BindingSegment for crate::ast::IdentOrType {
+    fn binding_names(&self) -> Option<Vec<(String, SyntaxContext)>> {
+        match self {
+            crate::ast::IdentOrType::Ident(name) => Some(vec![(name.name.clone(), name.context)]),
+            crate::ast::IdentOrType::Type(ty) => ty.binding_names(),
+        }
+    }
+}
+
+impl BindingSegment for crate::ast::ParseType {
+    fn binding_names(&self) -> Option<Vec<(String, SyntaxContext)>> {
+        match self {
+            crate::ast::ParseType::Associated { base, member } => {
+                Some(vec![(base.name.clone(), base.context), (member.name.clone(), member.context)])
+            }
+            crate::ast::ParseType::Type(name) => Some(vec![(name.name.clone(), name.context)]),
+            crate::ast::ParseType::Application(application) => application.constructor.binding_names(),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn binding_path<S: BindingSegment>(segments: &[S]) -> Option<Vec<(String, SyntaxContext)>> {
+    Some(segments.iter().map(BindingSegment::binding_names).collect::<Option<Vec<_>>>()?.into_iter().flatten().collect())
+}
+
+pub(crate) fn remap_generic_contexts(
+    contexts: &mut HashMap<GenericParamId, SyntaxContext>,
+    params: &[GenericParamId],
+    owner: DefId,
+) {
+    // Snapshot before publishing: a permutation can reuse its own source IDs.
+    let remapped = params.iter().enumerate().map(|(index, source)| {
+        let context = contexts.get(source).copied().unwrap_or(SyntaxContext::ROOT);
+        (GenericParamId { owner, index: index as u32 }, context)
+    }).collect::<Vec<_>>();
+    contexts.extend(remapped);
+}
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolverTables {
+    // Compilation-local binding authority; never serialize context integers into artifacts.
+    #[serde(skip)]
+    pub(crate) generic_contexts: HashMap<GenericParamId, SyntaxContext>,
+    #[serde(skip)]
+    pub(crate) associated_contexts: HashMap<(DefId, crate::ids::AssocTypeId), SyntaxContext>,
+    #[serde(skip)]
+    pub(crate) member_contexts: HashMap<DefId, SyntaxContext>,
+    #[serde(skip)]
+    pub(crate) variant_contexts: HashMap<(DefId, crate::ids::VariantId), SyntaxContext>,
+    #[serde(skip)]
+    pub(crate) binding_paths: HashMap<Vec<(String, SyntaxContext)>, DefId>,
+    #[serde(skip)]
+    pub(crate) binding_aliases: HashMap<Vec<(String, SyntaxContext)>, DefId>,
+    #[serde(skip)]
+    pub(crate) binding_exports: HashMap<Vec<(String, SyntaxContext)>, DefId>,
+    #[serde(skip)]
+    pub(crate) definition_binding_paths: HashMap<DefId, Vec<(String, SyntaxContext)>>,
+    #[serde(skip)]
+    pub(crate) signature_paths: HashMap<Vec<(String, SyntaxContext)>, DefId>,
+    #[serde(skip)]
+    pub(crate) module_binding_paths: HashMap<ModuleId, Vec<(String, SyntaxContext)>>,
+    #[serde(skip)]
+    pub(crate) definition_environments: HashMap<SyntaxContext, crate::macro_expansion::binding_environment::ResolvedDefinitionEnvironment>,
     pub module_paths: HashMap<String, ModuleId>,
     pub module_names_by_id: HashMap<ModuleId, String>,
     pub item_paths: HashMap<String, DefId>,
@@ -18,6 +92,70 @@ pub struct ResolverTables {
 }
 
 impl ResolverTables {
+    pub(crate) fn contextual_scope(&self, scope: Option<ModuleId>) -> bool {
+        scope.and_then(|id| self.module_binding_paths.get(&id))
+            .is_some_and(|path| path.iter().any(|(_, context)| *context != SyntaxContext::ROOT))
+    }
+
+    pub(crate) fn indexed_module_path(&self, scope: Option<ModuleId>, path: &[(String, SyntaxContext)]) -> bool {
+        self.resolve_binding_path(scope, path).and_then(|id| self.definition_binding_paths.get(&id))
+            .is_some_and(|path| self.module_binding_paths.values().any(|module| module == path))
+    }
+
+    pub(crate) fn resolve_binding_path(
+        &self,
+        scope: Option<ModuleId>,
+        path: &[(String, SyntaxContext)],
+    ) -> Option<DefId> {
+        if let Some((_, context)) = path.first() {
+            if let Some(environment) = self.definition_environments.get(context) {
+                use crate::macro_expansion::binding_environment::ResolvedDefinitionEnvironment;
+                // A definition path cannot merge unrelated contextual authorities.
+                if path.iter().any(|(_, other)| *other != SyntaxContext::ROOT && other != context) { return None; }
+                return match environment {
+                    ResolvedDefinitionEnvironment::SourceScope(prefix) => {
+                        if let Some(id) = self.resolve_lexical_binding_path(scope, path) { return Some(id); }
+                        let names = path.iter().map(|(name, _)| (name.clone(), SyntaxContext::ROOT)).collect::<Vec<_>>();
+                        let mut qualified = prefix.clone();
+                        qualified.extend(names.clone());
+                        self.resolve_absolute_binding_path(&qualified).or_else(|| self.resolve_absolute_binding_path(&names))
+                    }
+                    ResolvedDefinitionEnvironment::PublicDependency(exports) => {
+                        let name = path.iter().skip(1).map(|(name, _)| name.as_str()).collect::<Vec<_>>().join("::");
+                        exports.get(&name).copied()
+                    }
+                };
+            }
+        }
+        self.resolve_lexical_binding_path(scope, path)
+    }
+
+    fn resolve_lexical_binding_path(&self, scope: Option<ModuleId>, path: &[(String, SyntaxContext)]) -> Option<DefId> {
+        if let Some(prefix) = scope.and_then(|id| self.module_binding_paths.get(&id)) {
+            let mut qualified = prefix.clone();
+            qualified.extend_from_slice(path);
+            if let Some(id) = self.resolve_absolute_binding_path(&qualified) { return Some(id); }
+        }
+        self.resolve_absolute_binding_path(path)
+    }
+
+    fn resolve_absolute_binding_path(&self, path: &[(String, SyntaxContext)]) -> Option<DefId> {
+        if let Some(id) = self.binding_aliases.get(path).or_else(|| self.binding_paths.get(path)) { return Some(*id); }
+        // Module aliases carry the selected module identity, not its printed name.
+        for split in (1..path.len()).rev() {
+            let Some(id) = self.binding_aliases.get(&path[..split]) else { continue; };
+            let Some(prefix) = self.definition_binding_paths.get(id) else { continue; };
+            let mut target = prefix.clone();
+            target.extend_from_slice(&path[split..]);
+            if let Some(id) = self.binding_aliases.get(&target).or_else(|| self.binding_paths.get(&target)) { return Some(*id); }
+        }
+        None
+    }
+
+    pub(crate) fn generic_context(&self, id: GenericParamId) -> SyntaxContext {
+        self.generic_contexts.get(&id).copied().unwrap_or(SyntaxContext::ROOT)
+    }
+
     pub fn resolve_item_or_alias(&self, name: &str) -> Option<DefId> {
         self.item_paths
             .get(name)
@@ -54,6 +192,11 @@ impl ResolverTables {
     }
 
     pub fn merge_global_inputs(&mut self, other: &ResolverTables) {
+        self.generic_contexts.extend(other.generic_contexts.clone());
+        self.associated_contexts.extend(other.associated_contexts.clone());
+        self.member_contexts.extend(other.member_contexts.clone());
+        self.variant_contexts.extend(other.variant_contexts.clone());
+        self.binding_paths.extend(other.binding_paths.clone());
         self.module_paths.extend(other.module_paths.clone());
         self.module_names_by_id
             .extend(other.module_names_by_id.clone());
@@ -100,8 +243,10 @@ pub fn build_resolver_tables(
     let mut canonical_module_paths = HashMap::new();
     let mut canonical_module_names_by_id = HashMap::new();
     let mut module_segments = HashMap::new();
+    let mut module_binding_paths = HashMap::new();
 
     for module in item_index.modules() {
+        module_binding_paths.insert(module.module_id, item_index.module_binding_path(module.module_id));
         let segments = canonical_module_segments(
             item_index,
             root_module_id,
@@ -109,7 +254,8 @@ pub fn build_resolver_tables(
             current_crate_name,
         );
 
-        if module.module_id != root_module_id && !segments.is_empty() {
+        if module.module_id != root_module_id && !segments.is_empty()
+            && item_index.module_binding_path(module.module_id).iter().all(|(_, context)| *context == SyntaxContext::ROOT) {
             let canonical_path = segments.join("::");
             canonical_module_paths.insert(canonical_path.clone(), module.module_id);
             if let Some(alias) = crate_qualified_path_alias(current_crate_name, &canonical_path) {
@@ -124,10 +270,23 @@ pub fn build_resolver_tables(
     let mut canonical_item_paths = HashMap::new();
     let mut canonical_item_names_by_id = HashMap::new();
     let mut scoped_module_aliases: HashMap<String, HashMap<String, DefId>> = HashMap::new();
+    let mut binding_paths = HashMap::new();
+    let mut signature_paths = HashMap::new();
+    let mut definition_binding_paths = HashMap::new();
     for item in item_index.items() {
         if item.kind == ItemKind::Impl {
             continue;
         }
+        let binding_path = item_index.item_binding_path(item);
+        definition_binding_paths.insert(item.def_id, binding_path.clone());
+        if item.kind == ItemKind::FunctionSignature { signature_paths.insert(binding_path.clone(), item.def_id); }
+        binding_paths.insert(binding_path.clone(), item.def_id);
+        if let Some(crate_name) = current_crate_name {
+            let mut qualified = vec![(crate_name.to_string(), SyntaxContext::ROOT)];
+            qualified.extend(binding_path.clone());
+            binding_paths.insert(qualified, item.def_id);
+        }
+        let root_visible = binding_path.iter().all(|(_, context)| *context == SyntaxContext::ROOT);
 
         let canonical_path = if item.kind == ItemKind::Module {
             let Some(canonical_path) = canonical_module_path_for_shell(
@@ -150,7 +309,7 @@ pub fn build_resolver_tables(
             path.join("::")
         };
 
-        if item.kind != ItemKind::Module {
+        if item.kind != ItemKind::Module && root_visible {
             if let Some(module_name) = canonical_module_names_by_id.get(&item.module_id) {
                 scoped_module_aliases
                     .entry(module_name.clone())
@@ -159,9 +318,11 @@ pub fn build_resolver_tables(
             }
         }
 
-        canonical_item_paths.insert(canonical_path.clone(), item.def_id);
-        if let Some(alias) = crate_qualified_path_alias(current_crate_name, &canonical_path) {
-            canonical_item_paths.insert(alias, item.def_id);
+        if root_visible {
+            canonical_item_paths.insert(canonical_path.clone(), item.def_id);
+            if let Some(alias) = crate_qualified_path_alias(current_crate_name, &canonical_path) {
+                canonical_item_paths.insert(alias, item.def_id);
+            }
         }
         canonical_item_names_by_id.insert(item.def_id, canonical_path);
     }
@@ -187,6 +348,17 @@ pub fn build_resolver_tables(
         .collect();
 
     ResolverTables {
+        generic_contexts: HashMap::new(),
+        associated_contexts: HashMap::new(),
+        member_contexts: HashMap::new(),
+        variant_contexts: HashMap::new(),
+        binding_paths,
+        binding_aliases: HashMap::new(),
+        binding_exports: HashMap::new(),
+        definition_binding_paths,
+        signature_paths,
+        module_binding_paths,
+        definition_environments: HashMap::new(),
         module_paths: canonical_module_paths,
         module_names_by_id: canonical_module_names_by_id,
         item_paths: canonical_item_paths,

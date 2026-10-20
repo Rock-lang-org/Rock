@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::ast;
 use crate::collect::item_index::ItemIndex;
+use crate::collect::named_items::NamedItems;
 use crate::collect::resolver::{build_resolver_tables, ResolverTables};
 use crate::collect::{DeclarationScope, DeclarationTypeVars};
 use crate::crate_artifact::ArtifactExport;
@@ -13,6 +14,7 @@ use crate::hir::{
 use crate::ids::{DefId, ModuleId, TypeVarId};
 use crate::language_items::LanguageItems;
 use crate::lexer::Span;
+use crate::lexer::lossless::SyntaxContext;
 use crate::lower::ResolveError;
 use crate::type_lowering::{ResolvedNominalType, TypeLowerer, TypeLoweringContext};
 use crate::types::{GenericParamId, Type};
@@ -131,6 +133,8 @@ pub(crate) fn collect_exports(module: &ast::Module) -> HashMap<String, Option<St
     for top_level in &module.top_levels {
         match top_level {
             ast::TopLevel::Export(path) => {
+                let segments = match path { ast::Path::Ident(path) => &path.path, ast::Path::Type(path) => &path.path };
+                if crate::collect::resolver::binding_path(segments).is_some_and(|path| path.iter().any(|(_, context)| *context != SyntaxContext::ROOT)) { continue; }
                 let names = match path {
                     ast::Path::Ident(ip) => path_names(&ip.path),
                     ast::Path::Type(tp) => path_names(&tp.path),
@@ -144,26 +148,27 @@ pub(crate) fn collect_exports(module: &ast::Module) -> HashMap<String, Option<St
                     exports.insert(short_name, source);
                 }
             }
-            ast::TopLevel::FunctionDecl(fd) if fd.exported => {
+            ast::TopLevel::FunctionDecl(fd) if fd.exported && fd.name.context == SyntaxContext::ROOT => {
                 exports.insert(fd.name.name.clone(), None);
             }
-            ast::TopLevel::Extern(sig) if sig.exported => {
+            ast::TopLevel::Extern(sig) if sig.exported && sig.name.context == SyntaxContext::ROOT => {
                 exports.insert(sig.name.name.clone(), None);
             }
-            ast::TopLevel::StructDecl(sd) if sd.exported => {
+            ast::TopLevel::StructDecl(sd) if sd.exported && sd.name.context == SyntaxContext::ROOT => {
                 exports.insert(sd.name.name.clone(), None);
             }
-            ast::TopLevel::EnumDecl(ed) if ed.exported => {
+            ast::TopLevel::EnumDecl(ed) if ed.exported && ed.name.context == SyntaxContext::ROOT => {
                 exports.insert(ed.name.name.clone(), None);
             }
-            ast::TopLevel::TraitDecl(td) if td.exported => {
+            ast::TopLevel::TraitDecl(td) if td.exported && td.name.context == SyntaxContext::ROOT => {
                 exports.insert(td.name.name.clone(), None);
             }
-            ast::TopLevel::Mod(ident, true) => {
+            ast::TopLevel::Mod(ident, true) if ident.context == SyntaxContext::ROOT => {
                 exports.insert(ident.name.clone(), None);
             }
             ast::TopLevel::GlobExport(module_path) => {
-                let sentinel = format!("{}::*", module_path.join("::"));
+                if crate::collect::resolver::binding_path(module_path).is_some_and(|path| path.iter().any(|(_, context)| *context != SyntaxContext::ROOT)) { continue; }
+                let sentinel = format!("{}::*", path_names(module_path).join("::"));
                 exports.insert(sentinel.clone(), Some(sentinel));
             }
             _ => {}
@@ -285,14 +290,14 @@ fn insert_export_reference(
 pub(crate) struct CollectContext {
     pub(crate) type_vars: DeclarationTypeVars,
     pub(crate) scope: DeclarationScope,
-    pub(crate) structs: HashMap<String, HirStruct>,
-    pub(crate) enums: HashMap<String, HirEnum>,
-    pub(crate) traits: HashMap<String, HirTrait>,
+    pub(crate) structs: NamedItems<HirStruct>,
+    pub(crate) enums: NamedItems<HirEnum>,
+    pub(crate) traits: NamedItems<HirTrait>,
     pub(crate) impls: Vec<HirImpl>,
     pub(crate) externs: Vec<HirExtern>,
-    pub(crate) functions: HashMap<String, HirFunction>,
-    pub(crate) function_sigs: HashMap<String, HirFunctionSig>,
-    pub(crate) type_aliases: HashMap<String, crate::hir::HirTypeAlias>,
+    pub(crate) functions: NamedItems<HirFunction>,
+    pub(crate) function_sigs: NamedItems<HirFunctionSig>,
+    pub(crate) type_aliases: NamedItems<crate::hir::HirTypeAlias>,
     pub(crate) function_type_vars: HashMap<DefId, HashSet<TypeVarId>>,
     pub(crate) errors: Vec<ResolveError>,
     pub(crate) current_function: Option<String>,
@@ -304,10 +309,14 @@ pub(crate) struct CollectContext {
     pub(crate) import_aliases: HashMap<String, String>,
     pub(crate) explicit_import_aliases: HashMap<String, String>,
     pub(crate) current_trait: Option<String>,
+    pub(crate) current_trait_id: Option<DefId>,
     pub(crate) current_trait_generics: Vec<String>,
     pub(crate) current_generic_owner: Option<DefId>,
     pub(crate) current_generic_params: Vec<String>,
     pub(crate) current_generic_kinds: Vec<crate::type_services::kind::Kind>,
+    pub(crate) generic_contexts: HashMap<GenericParamId, SyntaxContext>,
+    pub(crate) item_resolution: ResolverTables,
+    pub(crate) current_module_id: Option<ModuleId>,
     pub(crate) infix_precedence: HashMap<String, u8>,
     pub(crate) loaded_prelude_export_ids: HashMap<String, ArtifactExport>,
     pub(crate) module_file_cache: HashMap<PathBuf, ast::Module>,
@@ -321,14 +330,14 @@ pub(crate) struct CollectContext {
 }
 
 pub(crate) struct LocalCollection {
-    pub(crate) structs: HashMap<String, HirStruct>,
-    pub(crate) enums: HashMap<String, HirEnum>,
-    pub(crate) traits: HashMap<String, HirTrait>,
+    pub(crate) structs: NamedItems<HirStruct>,
+    pub(crate) enums: NamedItems<HirEnum>,
+    pub(crate) traits: NamedItems<HirTrait>,
     pub(crate) impls: Vec<HirImpl>,
     pub(crate) externs: Vec<HirExtern>,
-    pub(crate) functions: HashMap<String, HirFunction>,
-    pub(crate) function_sigs: HashMap<String, HirFunctionSig>,
-    pub(crate) type_aliases: HashMap<String, crate::hir::HirTypeAlias>,
+    pub(crate) functions: NamedItems<HirFunction>,
+    pub(crate) function_sigs: NamedItems<HirFunctionSig>,
+    pub(crate) type_aliases: NamedItems<crate::hir::HirTypeAlias>,
     pub(crate) function_type_vars: HashMap<DefId, HashSet<TypeVarId>>,
     pub(crate) infix_precedence: HashMap<String, u8>,
     pub(crate) loaded_module_paths: Vec<(String, PathBuf)>,
@@ -342,6 +351,13 @@ pub(crate) struct LocalCollection {
 }
 
 impl TypeLoweringContext for CollectContext {
+    fn current_trait_definition(&self) -> Option<HirTrait> {
+        if let Some(id) = self.current_trait_id { return self.traits.get_id(id).cloned(); }
+        self.current_trait.as_ref().and_then(|name| self.resolve_trait_type(name, SyntaxContext::ROOT))
+    }
+    fn associated_context(&self, owner: DefId, id: crate::ids::AssocTypeId) -> SyntaxContext {
+        self.item_resolution.associated_contexts.get(&(owner, id)).copied().unwrap_or_default()
+    }
     fn constructor_params(&self, id: DefId) -> Option<Vec<crate::types::GenericParamDecl>> {
         self.structs.values().find(|item| item.id == id).map(|item| item.generic_params.clone())
             .or_else(|| self.enums.values().find(|item| item.id == id).map(|item| item.generic_params.clone()))
@@ -351,15 +367,16 @@ impl TypeLoweringContext for CollectContext {
         self.push_error_with_span(message, span);
     }
 
-    fn current_module_prefix(&self) -> Option<String> {
-        CollectContext::current_module_prefix(self)
-    }
-
     fn current_trait_name(&self) -> Option<String> {
         self.current_trait.clone()
     }
 
-    fn resolve_nominal_type(&self, name: &str) -> Option<ResolvedNominalType> {
+    fn resolve_nominal_type(&self, name: &str, context: SyntaxContext) -> Option<ResolvedNominalType> {
+        if let Some(id) = self.resolve_contextual_item(name, context) {
+            return self.structs.get_id(id).cloned().map(ResolvedNominalType::Struct)
+                .or_else(|| self.enums.get_id(id).cloned().map(ResolvedNominalType::Enum));
+        }
+        if context != SyntaxContext::ROOT || self.item_resolution.contextual_scope(self.current_module_id) { return None; }
         if let Some(structure) = self.structs.get(name).cloned() {
             return Some(ResolvedNominalType::Struct(structure));
         }
@@ -401,7 +418,11 @@ impl TypeLoweringContext for CollectContext {
         None
     }
 
-    fn resolve_trait_type(&self, name: &str) -> Option<HirTrait> {
+    fn resolve_trait_type(&self, name: &str, context: SyntaxContext) -> Option<HirTrait> {
+        if let Some(id) = self.resolve_contextual_item(name, context) {
+            return self.traits.get_id(id).cloned();
+        }
+        if context != SyntaxContext::ROOT || self.item_resolution.contextual_scope(self.current_module_id) { return None; }
         if let Some(trait_def) = self.traits.get(name).cloned() {
             return Some(trait_def);
         }
@@ -418,7 +439,11 @@ impl TypeLoweringContext for CollectContext {
             .cloned()
     }
 
-    fn resolve_type_alias(&self, name: &str) -> Option<crate::hir::HirTypeAlias> {
+    fn resolve_type_alias(&self, name: &str, context: SyntaxContext) -> Option<crate::hir::HirTypeAlias> {
+        if let Some(id) = self.resolve_contextual_item(name, context) {
+            return self.type_aliases.get_id(id).cloned();
+        }
+        if context != SyntaxContext::ROOT || self.item_resolution.contextual_scope(self.current_module_id) { return None; }
         self.type_aliases
             .get(name)
             .cloned()
@@ -438,8 +463,20 @@ impl TypeLoweringContext for CollectContext {
             })
     }
 
-    fn generic_type_for_name(&mut self, name: &str, span: Span) -> Type {
-        CollectContext::generic_type_for_name(self, name, span)
+    fn generic_type_for_name(&mut self, name: &str, context: SyntaxContext, span: Span) -> Type {
+        self.contextual_generic_type(name, context, span)
+    }
+
+    fn scoped_generic_type(&mut self, name: &str, context: SyntaxContext, _span: Span) -> Option<Type> {
+        let owner = self.current_generic_owner?;
+        self.current_generic_params.iter().enumerate().find_map(|(index, param)| {
+            let id = GenericParamId { owner, index: index as u32 };
+            (param == name && self.generic_context(id) == context).then_some(Type::Generic(id))
+        })
+    }
+
+    fn generic_context(&self, id: GenericParamId) -> SyntaxContext {
+        self.generic_contexts.get(&id).copied().unwrap_or(SyntaxContext::ROOT)
     }
 
     fn populate_type_normalization_env(
@@ -526,6 +563,33 @@ impl TypeLoweringContext for CollectContext {
 }
 
 impl CollectContext {
+    fn resolve_contextual_item(&self, name: &str, context: SyntaxContext) -> Option<DefId> {
+        let mut path = name.split("::").map(|name| (name.to_string(), SyntaxContext::ROOT)).collect::<Vec<_>>();
+        path.last_mut()?.1 = context;
+        self.item_resolution.resolve_binding_path(self.current_module_id, &path)
+    }
+
+    pub(crate) fn seed_item_resolution(&mut self, index: &ItemIndex, root: ModuleId) {
+        self.item_resolution = build_resolver_tables(
+            index, root, self.current_crate_name.as_deref(), &HashMap::new(), &HashMap::new(), &HashMap::new(),
+        );
+        let hidden = index.items().iter().filter(|item|
+            index.item_binding_path(item).iter().any(|(_, context)| *context != SyntaxContext::ROOT)
+        ).map(|item| item.def_id).collect::<HashSet<_>>();
+        self.structs.hide_from_root(&hidden);
+        self.enums.hide_from_root(&hidden);
+        self.traits.hide_from_root(&hidden);
+        self.functions.hide_from_root(&hidden);
+        self.function_sigs.hide_from_root(&hidden);
+        self.type_aliases.hide_from_root(&hidden);
+    }
+
+    pub(crate) fn register_generic_syntax(&mut self, owner: DefId, syntax: &[ast::GenericParamDecl]) {
+        for (index, param) in syntax.iter().enumerate() {
+            self.generic_contexts.insert(GenericParamId { owner, index: index as u32 }, param.name.context);
+        }
+    }
+
     fn cached_module_for_path(&mut self, file_path: &PathBuf) -> Option<ast::Module> {
         let canonical_path = file_path
             .canonicalize()
@@ -589,14 +653,14 @@ impl CollectContext {
         Self {
             type_vars: DeclarationTypeVars::new(),
             scope: DeclarationScope::new(),
-            structs: HashMap::new(),
-            enums: HashMap::new(),
-            traits: HashMap::new(),
+            structs: NamedItems::new(),
+            enums: NamedItems::new(),
+            traits: NamedItems::new(),
             impls: Vec::new(),
             externs: Vec::new(),
-            functions: HashMap::new(),
-            function_sigs: HashMap::new(),
-            type_aliases: HashMap::new(),
+            functions: NamedItems::new(),
+            function_sigs: NamedItems::new(),
+            type_aliases: NamedItems::new(),
             errors: Vec::new(),
             function_type_vars: HashMap::new(),
             current_function: None,
@@ -608,10 +672,14 @@ impl CollectContext {
             import_aliases: HashMap::new(),
             explicit_import_aliases: HashMap::new(),
             current_trait: None,
+            current_trait_id: None,
             current_trait_generics: Vec::new(),
             current_generic_owner: None,
             current_generic_params: Vec::new(),
             current_generic_kinds: Vec::new(),
+            generic_contexts: HashMap::new(),
+            item_resolution: ResolverTables::default(),
+            current_module_id: None,
             infix_precedence: HashMap::new(),
             loaded_prelude_export_ids: HashMap::new(),
             module_file_cache: HashMap::new(),
@@ -705,10 +773,14 @@ impl CollectContext {
             import_aliases: _,
             explicit_import_aliases,
             current_trait: _,
+            current_trait_id: _,
             current_trait_generics: _,
             current_generic_owner: _,
             current_generic_params: _,
             current_generic_kinds: _,
+            generic_contexts,
+            item_resolution,
+            current_module_id: _,
             infix_precedence,
             loaded_prelude_export_ids,
             module_file_cache,
@@ -735,6 +807,18 @@ impl CollectContext {
             &export_aliases,
             &export_function_aliases,
         );
+        resolver.generic_contexts = generic_contexts;
+        resolver.associated_contexts = item_resolution.associated_contexts;
+        resolver.member_contexts = item_resolution.member_contexts;
+        resolver.variant_contexts = item_resolution.variant_contexts;
+        resolver.definition_environments = item_resolution.definition_environments;
+        resolver.binding_aliases = item_resolution.binding_aliases;
+        resolver.binding_exports = item_resolution.binding_exports;
+        for (path, id) in &resolver.binding_aliases {
+            if path.iter().all(|(_, context)| *context == SyntaxContext::ROOT) {
+                resolver.import_aliases.entry(path.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join("::")).or_insert(*id);
+            }
+        }
         for (alias, def_id) in canonical_import_aliases {
             resolver.import_aliases.entry(alias).or_insert(def_id);
         }
@@ -809,7 +893,7 @@ impl CollectContext {
         self.errors.push(ResolveError::with_span(message, span));
     }
 
-    pub(crate) fn generic_type_for_name(&mut self, name: &str, span: Span) -> Type {
+    fn contextual_generic_type(&mut self, name: &str, context: SyntaxContext, span: Span) -> Type {
         let Some(owner) = self.current_generic_owner else {
             self.push_error_with_span(
                 format!(
@@ -824,12 +908,16 @@ impl CollectContext {
         let Some(index) = self
             .current_generic_params
             .iter()
-            .position(|param| param == name)
+            .enumerate()
+            .position(|(index, param)| param == name && self.generic_context(GenericParamId { owner, index: index as u32 }) == context)
             .or_else(|| {
                 let mut chars = name.chars();
                 let is_implicit_generic = matches!(chars.next(), Some(ch) if ch.is_ascii_uppercase())
                     && chars.next().is_none();
                 if is_implicit_generic {
+                    self.generic_contexts.insert(GenericParamId {
+                        owner, index: self.current_generic_params.len() as u32,
+                    }, context);
                     self.current_generic_params.push(name.to_string());
                     self.current_generic_kinds
                         .push(crate::type_services::kind::Kind::Type);
@@ -886,7 +974,8 @@ impl CollectContext {
         debug_assert_eq!(params.len(), kinds.len());
         let mut seen = HashSet::new();
         for (index, param) in params.iter().enumerate() {
-            if !seen.insert(param.clone()) {
+            let context = self.generic_context(GenericParamId { owner, index: index as u32 });
+            if !seen.insert((param.clone(), context)) {
                 if let Some(span) = spans.get(index).cloned() {
                     self.push_error_with_span(
                         format!("duplicate generic parameter '{}'", param),
@@ -925,32 +1014,6 @@ impl CollectContext {
         self.current_generic_params = prev_params;
         self.current_generic_kinds = prev_kinds;
         self.current_generic_owner = prev_owner;
-    }
-
-    pub(crate) fn trait_by_name(&self, name: &str) -> Option<&HirTrait> {
-        if let Some(trait_def) = self.traits.get(name) {
-            return Some(trait_def);
-        }
-
-        let mut by_source_name = self
-            .traits
-            .values()
-            .filter(|trait_def| trait_def.name == name);
-        if let Some(candidate) = by_source_name.next() {
-            if by_source_name.all(|other| other.id == candidate.id) {
-                return Some(candidate);
-            }
-        }
-
-        if let Some(id) = self.canonical_import_aliases.get(name).copied() {
-            if let Some(trait_def) = self.traits.values().find(|trait_def| trait_def.id == id) {
-                return Some(trait_def);
-            }
-        }
-
-        self.import_aliases
-            .get(name)
-            .and_then(|qualified| self.traits.get(qualified))
     }
 
     fn record_canonical_alias(&mut self, alias: String, export: &ArtifactExport) {
@@ -1475,12 +1538,48 @@ impl CollectContext {
         (receiver.type_name(), type_generics, pattern)
     }
 
+    pub(crate) fn handle_contextual_import(&mut self, path: &ast::Path) -> bool {
+        let segments = match path { ast::Path::Ident(path) => &path.path, ast::Path::Type(path) => &path.path };
+        if !self.has_contextual_import_path(segments) { return false; }
+        let Some(names) = crate::collect::resolver::binding_path(segments) else { return false; };
+        let prefix = self.current_module_id.and_then(|id| self.item_resolution.module_binding_paths.get(&id))
+            .cloned().unwrap_or_default();
+        if names.iter().chain(&prefix).all(|(_, context)| *context == SyntaxContext::ROOT) { return false; }
+        let Some(alias) = names.last().cloned() else { return true; };
+        let Some(last) = segments.last() else { return true; };
+        let span = match last { ast::IdentOrType::Ident(name) => name.span.clone(), ast::IdentOrType::Type(ty) => ty.span() };
+        let Some(id) = self.item_resolution.resolve_binding_path(self.current_module_id, &names) else {
+            self.push_error_with_span(format!("unknown contextual import '{}'", names.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join("::")), span);
+            return true;
+        };
+        let mut alias_path = prefix;
+        alias_path.push(alias);
+        if self.item_resolution.binding_aliases.get(&alias_path)
+            .or_else(|| self.item_resolution.binding_paths.get(&alias_path)).is_some_and(|previous| *previous != id) {
+            self.push_error_with_span("conflicting contextual import".into(), span);
+        } else {
+            self.item_resolution.binding_aliases.insert(alias_path, id);
+        }
+        true
+    }
+
+    pub(crate) fn has_contextual_import_path(&self, segments: &[ast::IdentOrType]) -> bool {
+        self.item_resolution.contextual_scope(self.current_module_id)
+            || crate::collect::resolver::binding_path(segments).is_some_and(|path| path.iter().any(|(_, context)| *context != SyntaxContext::ROOT))
+    }
+
+    pub(crate) fn handled_binding_glob(&self, segments: &[ast::IdentOrType]) -> bool {
+        self.has_contextual_import_path(segments) || crate::collect::resolver::binding_path(segments)
+            .is_some_and(|path| self.item_resolution.indexed_module_path(self.current_module_id, &path))
+    }
+
     pub(crate) fn handle_import(
         &mut self,
         path: &ast::Path,
         record_canonical_aliases: bool,
         canonical_prefix: Option<&str>,
     ) {
+        if self.handle_contextual_import(path) { return; }
         let names = match path {
             ast::Path::Ident(path) => path_names(&path.path),
             ast::Path::Type(path) => path_names(&path.path),

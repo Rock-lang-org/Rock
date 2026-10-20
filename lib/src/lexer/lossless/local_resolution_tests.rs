@@ -6,7 +6,7 @@ use crate::lower::Lowerer;
 
 // Synthetic authorities remain confined to lossless tests until A.14 allocates
 // production contexts. Slice one snapshot so diagnostic positions stay intact.
-fn module(parts: &[(&str, u32)]) -> ast::Module {
+pub(super) fn module(parts: &[(&str, u32)]) -> ast::Module {
     let source = crate::macro_expansion::token_tree::source(
         &parts.iter().map(|(text, _)| *text).collect::<String>(),
     );

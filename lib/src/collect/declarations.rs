@@ -89,14 +89,14 @@ impl DeclarationItems {
     }
 
     pub(crate) fn from_named_maps_with_aliases(
-        functions: HashMap<String, HirFunction>,
-        function_sigs: HashMap<String, HirFunctionSig>,
-        structs: HashMap<String, HirStruct>,
-        enums: HashMap<String, HirEnum>,
-        traits: HashMap<String, HirTrait>,
+        functions: impl IntoIterator<Item = (String, HirFunction)>,
+        function_sigs: impl IntoIterator<Item = (String, HirFunctionSig)>,
+        structs: impl IntoIterator<Item = (String, HirStruct)>,
+        enums: impl IntoIterator<Item = (String, HirEnum)>,
+        traits: impl IntoIterator<Item = (String, HirTrait)>,
         impls: Vec<HirImpl>,
         externs: Vec<HirExtern>,
-        type_aliases: HashMap<String, HirTypeAlias>,
+        type_aliases: impl IntoIterator<Item = (String, HirTypeAlias)>,
         canonical_names_by_id: &HashMap<DefId, String>,
     ) -> Result<Self, Vec<ResolveError>> {
         let mut errors = Vec::new();
@@ -447,7 +447,7 @@ impl DeclarationItems {
 }
 
 fn collapse_named_declarations<T, IdOf, Same>(
-    entries: HashMap<String, T>,
+    entries: impl IntoIterator<Item = (String, T)>,
     canonical_names_by_id: &HashMap<DefId, String>,
     id_of: IdOf,
     same_definition: Same,

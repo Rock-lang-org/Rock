@@ -213,7 +213,7 @@ impl FormatNode for TopLevel {
                 path.fmt_with(context, f)?;
                 writeln!(f)
             }
-            TopLevel::GlobImport(segs) => writeln!(f, "> {}::*", segs.join("::")),
+            TopLevel::GlobImport(segs) => writeln!(f, "> {}::*", crate::collect::path_names(segs).join("::")),
             TopLevel::Export(path) => {
                 write!(f, "< ")?;
                 path.fmt_with(context, f)?;
@@ -248,7 +248,7 @@ impl FormatNode for TopLevel {
                 ty.fmt_with(context, f)?;
                 writeln!(f)
             }
-            TopLevel::GlobExport(segs) => writeln!(f, "< {}::*", segs.join("::")),
+            TopLevel::GlobExport(segs) => writeln!(f, "< {}::*", crate::collect::path_names(segs).join("::")),
         }
     }
 }

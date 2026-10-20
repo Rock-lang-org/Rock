@@ -5,6 +5,7 @@ use crate::collect::context::CollectContext;
 use crate::collect::CollectedTraitMemberIds;
 use crate::hir::*;
 use crate::ids::{AssocTypeId, DefId, FieldId, TypeVarId, VariantId};
+use crate::lexer::lossless::SyntaxContext;
 use crate::type_lowering::TypeLoweringContext;
 use crate::types::{GenericParamDecl, GenericParamId, TraitBound, Type};
 
@@ -37,21 +38,19 @@ fn is_builtin_type_name(name: &str) -> bool {
     )
 }
 
-fn collect_generic_names_from_parse_type<F>(
+fn collect_generic_names_from_parse_type(
     ty: &ast::ParseType,
-    generic_params: &mut Vec<String>,
-    is_known_type_name: &F,
-) where
-    F: Fn(&str) -> bool,
-{
+    generic_params: &mut Vec<(String, SyntaxContext)>,
+    is_known_type_name: &dyn Fn(&str, SyntaxContext) -> bool,
+) {
     match ty {
         ast::ParseType::Type(inner) => {
             if inner.generics.is_empty()
                 && !is_builtin_type_name(&inner.name)
-                && !is_known_type_name(&inner.name)
-                && !generic_params.contains(&inner.name)
+                && !is_known_type_name(&inner.name, inner.context)
+                && !generic_params.contains(&(inner.name.clone(), inner.context))
             {
-                generic_params.push(inner.name.clone());
+                generic_params.push((inner.name.clone(), inner.context));
             }
             for generic in &inner.generics {
                 collect_generic_names_from_parse_type(generic, generic_params, is_known_type_name);
@@ -68,7 +67,10 @@ fn collect_generic_names_from_parse_type<F>(
             }
         }
         ast::ParseType::Lambda(lambda) => {
-            collect_generic_names_from_parse_type(&lambda.body, generic_params, is_known_type_name);
+            collect_generic_names_from_parse_type(&lambda.body, generic_params, &|name, context| {
+                lambda.params.iter().any(|param| param.name.name == name && param.name.context == context)
+                    || is_known_type_name(name, context)
+            });
         }
         ast::ParseType::Hole(_) => {}
         ast::ParseType::Associated { base, .. } => {
@@ -93,13 +95,11 @@ fn collect_generic_names_from_parse_type<F>(
     }
 }
 
-fn collect_constructor_generic_kinds<F>(
+fn collect_constructor_generic_kinds(
     ty: &ast::ParseType,
-    kinds: &mut HashMap<String, crate::type_services::kind::Kind>,
-    is_known_type_name: &F,
-) where
-    F: Fn(&str) -> bool,
-{
+    kinds: &mut HashMap<(String, SyntaxContext), crate::type_services::kind::Kind>,
+    is_known_type_name: &dyn Fn(&str, SyntaxContext) -> bool,
+) {
     match ty {
         ast::ParseType::Application(application) => {
             if let ast::ParseType::Type(head) = application.constructor.as_ref() {
@@ -108,9 +108,9 @@ fn collect_constructor_generic_kinds<F>(
                         .args
                         .iter()
                         .all(|arg| matches!(arg, ast::ParseType::Hole(_)))
-                    && !is_known_type_name(&head.name)
+                    && !is_known_type_name(&head.name, head.context)
                 {
-                    kinds.entry(head.name.clone()).or_insert_with(|| {
+                    kinds.entry((head.name.clone(), head.context)).or_insert_with(|| {
                         crate::type_lowering::constructor_kind_from_arity(application.args.len())
                     });
                 }
@@ -126,7 +126,10 @@ fn collect_constructor_generic_kinds<F>(
             }
         }
         ast::ParseType::Lambda(lambda) => {
-            collect_constructor_generic_kinds(&lambda.body, kinds, is_known_type_name);
+            collect_constructor_generic_kinds(&lambda.body, kinds, &|name, context| {
+                lambda.params.iter().any(|param| param.name.name == name && param.name.context == context)
+                    || is_known_type_name(name, context)
+            });
         }
         ast::ParseType::Associated { base, .. } => {
             for generic in &base.generics {
@@ -188,34 +191,32 @@ fn parse_type_name_span(ty: &ast::ParseType, name: &str) -> Option<crate::lexer:
     }
 }
 
-fn collect_declared_generic_kinds<F>(
+fn collect_declared_generic_kinds(
     ty: &ast::ParseType,
-    kinds: &mut HashMap<String, crate::type_services::kind::Kind>,
+    kinds: &mut HashMap<(String, SyntaxContext), crate::type_services::kind::Kind>,
     conflicts: &mut Vec<(
-        String,
+        (String, SyntaxContext),
         crate::type_services::kind::Kind,
         crate::type_services::kind::Kind,
     )>,
-    is_known_type_name: &F,
-) where
-    F: Fn(&str) -> bool,
-{
+    is_known_type_name: &dyn Fn(&str, SyntaxContext) -> bool,
+) {
     fn record(
-        name: &str,
+        name: (String, SyntaxContext),
         kind: crate::type_services::kind::Kind,
-        kinds: &mut HashMap<String, crate::type_services::kind::Kind>,
+        kinds: &mut HashMap<(String, SyntaxContext), crate::type_services::kind::Kind>,
         conflicts: &mut Vec<(
-            String,
+            (String, SyntaxContext),
             crate::type_services::kind::Kind,
             crate::type_services::kind::Kind,
         )>,
     ) {
-        if let Some(declared) = kinds.get(name) {
-            if declared != &kind && !conflicts.iter().any(|(conflict, _, _)| conflict == name) {
-                conflicts.push((name.to_string(), declared.clone(), kind));
+        if let Some(declared) = kinds.get(&name) {
+            if declared != &kind && !conflicts.iter().any(|(conflict, _, _)| conflict == &name) {
+                conflicts.push((name, declared.clone(), kind));
             }
         } else {
-            kinds.insert(name.to_string(), kind);
+            kinds.insert(name, kind);
         }
     }
 
@@ -227,10 +228,10 @@ fn collect_declared_generic_kinds<F>(
                         .args
                         .iter()
                         .all(|arg| matches!(arg, ast::ParseType::Hole(_)))
-                    && !is_known_type_name(&head.name)
+                    && !is_known_type_name(&head.name, head.context)
                 {
                     record(
-                        &head.name,
+                        (head.name.clone(), head.context),
                         crate::type_lowering::constructor_kind_from_arity(application.args.len()),
                         kinds,
                         conflicts,
@@ -244,10 +245,10 @@ fn collect_declared_generic_kinds<F>(
         ast::ParseType::Type(inner) => {
             if inner.generics.is_empty()
                 && !is_builtin_type_name(&inner.name)
-                && !is_known_type_name(&inner.name)
+                && !is_known_type_name(&inner.name, inner.context)
             {
                 record(
-                    &inner.name,
+                    (inner.name.clone(), inner.context),
                     crate::type_services::kind::Kind::Type,
                     kinds,
                     conflicts,
@@ -258,7 +259,10 @@ fn collect_declared_generic_kinds<F>(
             }
         }
         ast::ParseType::Lambda(lambda) => {
-            collect_declared_generic_kinds(&lambda.body, kinds, conflicts, is_known_type_name);
+            collect_declared_generic_kinds(&lambda.body, kinds, conflicts, &|name, context| {
+                lambda.params.iter().any(|param| param.name.name == name && param.name.context == context)
+                    || is_known_type_name(name, context)
+            });
         }
         ast::ParseType::Associated { base, .. } => {
             for generic in &base.generics {
@@ -280,26 +284,8 @@ fn collect_declared_generic_kinds<F>(
     }
 }
 
-fn is_known_nominal_type_name(context: &CollectContext, name: &str) -> bool {
-    if context.structs.contains_key(name) || context.enums.contains_key(name) {
-        return true;
-    }
-
-    if let Some(qualified) = context.import_aliases.get(name) {
-        if context.structs.contains_key(qualified) || context.enums.contains_key(qualified) {
-            return true;
-        }
-    }
-
-    if let Some(id) = context.canonical_import_aliases.get(name) {
-        return context
-            .structs
-            .values()
-            .any(|structure| structure.id == *id)
-            || context.enums.values().any(|enum_def| enum_def.id == *id);
-    }
-
-    false
+fn is_known_nominal_type_name(context: &CollectContext, name: &str, binding_context: SyntaxContext) -> bool {
+    crate::type_lowering::TypeLoweringContext::resolve_nominal_type(context, name, binding_context).is_some()
 }
 
 fn simple_trait_bound(
@@ -337,20 +323,8 @@ fn lower_where_clauses(
             continue;
         };
         let Some(trait_id) = context
-            .trait_by_name(&trait_bound.name)
+            .resolve_trait_type(&trait_bound.name, trait_bound.context)
             .map(|trait_def| trait_def.id)
-            .or_else(|| {
-                let suffix = format!("::{}", trait_bound.name);
-                let mut candidates =
-                    context
-                        .canonical_names_by_id
-                        .iter()
-                        .filter_map(|(id, name)| {
-                            (name == &trait_bound.name || name.ends_with(&suffix)).then_some(*id)
-                        });
-                let candidate = candidates.next()?;
-                candidates.next().is_none().then_some(candidate)
-            })
         else {
             context.push_error_with_span(
                 format!("unknown trait '{}' in where clause", trait_bound.name),
@@ -383,7 +357,7 @@ fn lower_where_clauses(
             .map(|(index, generic)| crate::type_lowering::TypeLowerer::lower_type_argument(context, generic,
                 argument_kinds.get(index).unwrap_or(&crate::type_services::kind::Kind::Type)))
             .collect::<Vec<_>>();
-        if let Some(trait_def) = context.traits.values().find(|item| item.id == trait_id) {
+        if let Some(trait_def) = context.traits.get_id(trait_id) {
             match crate::type_lowering::complete_generic_args(&trait_def.generic_params, type_args.clone(), Some(&subject)) {
                 Ok(completed) => type_args = completed,
                 Err(message) => context.push_error_with_span(message, clause.trait_bound.as_ref().unwrap().span()),
@@ -479,6 +453,7 @@ pub(crate) fn build_nominal_generic_params(
     syntax: &[ast::GenericParamDecl],
     id: DefId,
 ) -> Vec<GenericParamDecl> {
+    context.register_generic_syntax(id, syntax);
     let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, syntax);
     let spans = syntax.iter().map(|param| param.span.clone()).collect::<Vec<_>>();
     let previous = context.push_generic_context_with_kinds_at(
@@ -505,6 +480,7 @@ pub(crate) fn build_struct_with_id(
     id: DefId,
     generic_params: Vec<GenericParamDecl>,
 ) -> HirStruct {
+    context.register_generic_syntax(id, &sd.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect();
@@ -551,6 +527,7 @@ pub(crate) fn build_type_alias_with_id(
     target: &ast::ParseType,
     id: DefId,
 ) -> crate::hir::HirTypeAlias {
+    context.register_generic_syntax(id, params);
     let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, params);
     let generic_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
@@ -624,6 +601,7 @@ pub(crate) fn build_enum_with_id(
     id: DefId,
     generic_params: Vec<GenericParamDecl>,
 ) -> HirEnum {
+    context.register_generic_syntax(id, &ed.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect();
@@ -648,6 +626,7 @@ pub(crate) fn build_enum_with_id(
         .iter()
         .enumerate()
         .map(|(variant_index, v)| {
+            context.item_resolution.variant_contexts.insert((id, VariantId(variant_index as u32)), v.name.context);
             let fields = match &v.fields {
                 ast::NamedFieldsOrTypesList::NamedFields(fields) => HirVariantFields::Named(
                     fields
@@ -696,6 +675,7 @@ pub(crate) fn build_function_sig_with_id(
     sig: &ast::FunctionSig,
     id: DefId,
 ) -> HirFunctionSig {
+    context.item_resolution.member_contexts.insert(id, sig.name.context);
     let fallback_generic_context = context.current_generic_owner.is_none();
     let inherited_generic_param_count = if fallback_generic_context {
         0
@@ -705,8 +685,8 @@ pub(crate) fn build_function_sig_with_id(
     let mut signature_id = id;
     let mut constructor_kinds = HashMap::new();
     for clause in &sig.where_clauses {
-        collect_constructor_generic_kinds(&clause.subject, &mut constructor_kinds, &|name| {
-            is_known_nominal_type_name(context, name)
+        collect_constructor_generic_kinds(&clause.subject, &mut constructor_kinds, &|name, binding_context| {
+            is_known_nominal_type_name(context, name, binding_context)
         });
     }
     let fallback_context = if fallback_generic_context {
@@ -719,28 +699,33 @@ pub(crate) fn build_function_sig_with_id(
             .map(|name| constructor_kinds[name].clone())
             .collect::<Vec<_>>();
         if sig.self_receiver.is_some() {
-            params.push("Self".to_string());
+            params.push(("Self".to_string(), sig.self_context));
             kinds.push(crate::type_services::kind::Kind::Type);
         }
         let spans = vec![sig.sig.span(); params.len()];
+        for (index, (_, binding_context)) in params.iter().enumerate() {
+            context.generic_contexts.insert(GenericParamId { owner, index: index as u32 }, *binding_context);
+        }
+        let params = params.into_iter().map(|(name, _)| name).collect();
         Some(context.push_generic_context_with_kinds_at(owner, params, kinds, &spans))
     } else {
         None
     };
     let nested_context = if fallback_generic_context {
         None
-    } else {
+    } else if let Some(owner) = context.current_generic_owner {
         let previous = (
             context.current_generic_params.clone(),
             context.current_generic_kinds.clone(),
         );
         let mut constructor_params = constructor_kinds.into_iter().collect::<Vec<_>>();
         constructor_params.sort_by(|left, right| left.0.cmp(&right.0));
-        for (name, kind) in constructor_params {
+        for ((name, binding_context), kind) in constructor_params {
             if let Some(index) = context
                 .current_generic_params
                 .iter()
-                .position(|param| param == &name)
+                .enumerate()
+                .position(|(index, param)| param == &name && context.generic_context(GenericParamId { owner, index: index as u32 }) == binding_context)
             {
                 let declared_kind = context.current_generic_kinds[index].clone();
                 if declared_kind != kind {
@@ -757,11 +742,16 @@ pub(crate) fn build_function_sig_with_id(
                     );
                 }
             } else {
+                context.generic_contexts.insert(GenericParamId {
+                    owner, index: context.current_generic_params.len() as u32,
+                }, binding_context);
                 context.current_generic_params.push(name);
                 context.current_generic_kinds.push(kind);
             }
         }
         Some(previous)
+    } else {
+        None
     };
     fn flatten_curried_type(ty: &Type) -> (Vec<Type>, Type) {
         match ty {
@@ -813,6 +803,9 @@ pub(crate) fn build_function_sig_with_id(
     }
     let mut public_signature_generic_params = Vec::new();
     let mut hidden_signature_generic_params = Vec::new();
+    crate::collect::resolver::remap_generic_contexts(
+        &mut context.generic_contexts, &signature_owned_generic_param_ids, signature_id,
+    );
     for (index, param) in signature_owned_generic_param_ids.iter().enumerate() {
         let remapped = GenericParamId {
             owner: signature_id,
@@ -880,6 +873,7 @@ pub(crate) fn build_function_header_with_id(
     fd: &ast::FunctionDecl,
     function_id: DefId,
 ) -> HirFunction {
+    context.item_resolution.member_contexts.insert(function_id, fd.name.context);
     let lambda = &fd.lambda;
     let func_name = fd.name.name.clone();
     let is_curried = matches!(lambda.arrow_kind, ast::LambdaArrowKind::Curried);
@@ -965,6 +959,7 @@ pub(crate) fn build_function_header_with_sig(
     sig: &HirFunctionSig,
     function_id: DefId,
 ) -> HirFunction {
+    context.item_resolution.member_contexts.insert(function_id, fd.name.context);
     let lambda = &fd.lambda;
     let func_name = fd.name.name.clone();
     let is_curried = matches!(lambda.arrow_kind, ast::LambdaArrowKind::Curried);
@@ -1039,6 +1034,9 @@ pub(crate) fn build_function_header_with_sig(
         }
     }
     public_entries.extend(hidden_entries);
+    crate::collect::resolver::remap_generic_contexts(
+        &mut context.generic_contexts, &signature_owned_generic_param_ids, function_id,
+    );
     for generic in public_entries {
         let generic_id = generic.id;
         let remapped = if let Some(index) = signature_owned_generic_param_ids
@@ -1148,12 +1146,18 @@ pub(crate) fn build_trait_with_id(
     id: DefId,
     member_ids: &CollectedTraitMemberIds,
 ) -> HirTrait {
+    context.register_generic_syntax(id, &td.generic_params);
+    context.generic_contexts.insert(
+        GenericParamId { owner: id, index: td.generic_params.len() as u32 },
+        td.for_.as_ref().map(|target| target.name.context).unwrap_or(td.name.context),
+    );
     let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, &td.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect::<Vec<_>>();
 
     let prev_trait = context.current_trait.clone();
+    let prev_trait_id = context.current_trait_id.replace(id);
     let prev_trait_generics = context.current_trait_generics.clone();
     context.current_trait = Some(td.name.name.clone());
     context.current_trait_generics = generic_param_names.clone();
@@ -1204,10 +1208,14 @@ pub(crate) fn build_trait_with_id(
         .associated_types
         .iter()
         .enumerate()
-        .map(|(index, assoc)| HirAssociatedTypeDecl {
-            id: AssocTypeId(index as u32),
-            name: assoc.name.name.clone(),
-            kind: crate::type_lowering::lower_associated_type_kind(assoc.kind.as_ref()),
+        .map(|(index, assoc)| {
+            let assoc_id = AssocTypeId(index as u32);
+            context.item_resolution.associated_contexts.insert((id, assoc_id), assoc.name.context);
+            HirAssociatedTypeDecl {
+                id: assoc_id,
+                name: assoc.name.name.clone(),
+                kind: crate::type_lowering::lower_associated_type_kind(assoc.kind.as_ref()),
+            }
         })
         .collect();
     let target = td.for_.as_ref().map(|target| {
@@ -1258,10 +1266,11 @@ pub(crate) fn build_trait_with_id(
     if let Some(previous_trait) = previous_trait {
         context.traits.insert(td.name.name.clone(), previous_trait);
     } else {
-        context.traits.remove(&td.name.name);
+        context.traits.remove_id(id);
     }
 
     context.current_trait = prev_trait;
+    context.current_trait_id = prev_trait_id;
     context.current_trait_generics = prev_trait_generics;
     context.pop_generic_context_with_kinds(prev_owner, prev_params, prev_kinds);
 
@@ -1395,31 +1404,31 @@ pub(crate) fn build_impl_with_id(
     id: DefId,
     method_ids: &HashMap<String, DefId>,
 ) -> HirImpl {
-    let mut impl_generic_params: Vec<String> = Vec::new();
+    let mut impl_generic_params = Vec::new();
     if let Some(for_type) = imp.for_.as_ref() {
         for generic in for_type.generics() {
-            collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name| {
-                is_known_nominal_type_name(context, name)
+            collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name, binding_context| {
+                is_known_nominal_type_name(context, name, binding_context)
             });
         }
         if !matches!(for_type, ast::ParseType::Type(_)) {
-            collect_generic_names_from_parse_type(for_type, &mut impl_generic_params, &|name| {
-                is_known_nominal_type_name(context, name)
+            collect_generic_names_from_parse_type(for_type, &mut impl_generic_params, &|name, binding_context| {
+                is_known_nominal_type_name(context, name, binding_context)
             });
         }
     } else {
-        collect_generic_names_from_parse_type(&imp.name, &mut impl_generic_params, &|name| {
-            is_known_nominal_type_name(context, name)
+        collect_generic_names_from_parse_type(&imp.name, &mut impl_generic_params, &|name, binding_context| {
+            is_known_nominal_type_name(context, name, binding_context)
         });
     }
     for generic in imp.name.generics() {
-        collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name| {
-            is_known_nominal_type_name(context, name)
+        collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name, binding_context| {
+            is_known_nominal_type_name(context, name, binding_context)
         });
     }
     for clause in &imp.where_clauses {
-        collect_generic_names_from_parse_type(&clause.subject, &mut impl_generic_params, &|name| {
-            is_known_nominal_type_name(context, name)
+        collect_generic_names_from_parse_type(&clause.subject, &mut impl_generic_params, &|name, binding_context| {
+            is_known_nominal_type_name(context, name, binding_context)
         });
     }
     let mut impl_generic_kinds = HashMap::new();
@@ -1429,7 +1438,7 @@ pub(crate) fn build_impl_with_id(
             receiver,
             &mut impl_generic_kinds,
             &mut impl_generic_kind_conflicts,
-            &|name| is_known_nominal_type_name(context, name),
+            &|name, binding_context| is_known_nominal_type_name(context, name, binding_context),
         );
     }
     if imp.for_.is_none() {
@@ -1437,7 +1446,7 @@ pub(crate) fn build_impl_with_id(
             &imp.name,
             &mut impl_generic_kinds,
             &mut impl_generic_kind_conflicts,
-            &|name| is_known_nominal_type_name(context, name),
+            &|name, binding_context| is_known_nominal_type_name(context, name, binding_context),
         );
     }
     for generic in imp.name.generics() {
@@ -1445,7 +1454,7 @@ pub(crate) fn build_impl_with_id(
             generic,
             &mut impl_generic_kinds,
             &mut impl_generic_kind_conflicts,
-            &|name| is_known_nominal_type_name(context, name),
+            &|name, binding_context| is_known_nominal_type_name(context, name, binding_context),
         );
     }
     for clause in &imp.where_clauses {
@@ -1453,10 +1462,10 @@ pub(crate) fn build_impl_with_id(
             &clause.subject,
             &mut impl_generic_kinds,
             &mut impl_generic_kind_conflicts,
-            &|name| is_known_nominal_type_name(context, name),
+            &|name, binding_context| is_known_nominal_type_name(context, name, binding_context),
         );
     }
-    for (name, declared, required) in impl_generic_kind_conflicts {
+    for ((name, _), declared, required) in impl_generic_kind_conflicts {
         context.push_error_with_span(format!(
             "generic parameter '{name}' was declared with kind {declared}, but a later binder requires {required}",
         ), imp.name.span());
@@ -1471,6 +1480,10 @@ pub(crate) fn build_impl_with_id(
         })
         .collect();
     let generic_spans = vec![imp.name.span(); impl_generic_params.len()];
+    for (index, (_, binding_context)) in impl_generic_params.iter().enumerate() {
+        context.generic_contexts.insert(GenericParamId { owner: id, index: index as u32 }, *binding_context);
+    }
+    let impl_generic_params = impl_generic_params.into_iter().map(|(name, _)| name).collect();
     let (prev_owner, prev_params, prev_kinds) = context.push_generic_context_with_kinds_at(
         id,
         impl_generic_params,
@@ -1491,22 +1504,21 @@ pub(crate) fn build_impl_with_id(
         (type_name, type_generics, receiver_pattern, None)
     };
 
-    let trait_generic_names: Vec<String> = imp
+    let trait_generic_names = imp
         .name
         .generics()
         .iter()
         .filter_map(|g| {
             if let ast::ParseType::Type(inner) = g {
-                Some(inner.name.clone())
+                Some((inner.name.clone(), inner.context))
             } else {
                 None
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
     let trait_def = trait_name
         .as_deref()
-        .and_then(|name| context.trait_by_name(name))
-        .cloned();
+        .and_then(|name| context.resolve_trait_type(name, imp.name.named_inner().map(|inner| inner.context).unwrap_or_default()));
     let mut trait_arg_types: Vec<Type> = imp
         .name
         .generics()
@@ -1667,7 +1679,8 @@ pub(crate) fn build_impl_with_id(
     for (index, assoc) in imp.associated_types.iter().enumerate() {
         let declaration = trait_associated_types
             .iter()
-            .find(|decl| decl.name == assoc.name.name);
+            .find(|decl| decl.name == assoc.name.name
+                && trait_id.is_some_and(|owner| context.associated_context(owner, decl.id) == assoc.name.context));
         let id = declaration.map(|decl| decl.id).unwrap_or_else(|| {
             if trait_def.is_some() {
                 context.push_error_with_span(
@@ -1735,10 +1748,11 @@ pub(crate) fn build_impl_with_id(
         .collect::<Vec<_>>();
     let trait_generics = trait_generic_names
         .into_iter()
-        .filter_map(|name| {
+        .filter_map(|(name, binding_context)| {
             all_type_generic_names
                 .iter()
-                .position(|candidate| candidate == &name)
+                .enumerate()
+                .position(|(index, candidate)| candidate == &name && context.generic_context(GenericParamId { owner: id, index: index as u32 }) == binding_context)
                 .map(|index| type_generics[index].clone())
         })
         .collect();
@@ -3151,16 +3165,16 @@ mod tests {
             })
         };
         let mut kinds = HashMap::new();
-        collect_constructor_generic_kinds(&application(generic_type("A")), &mut kinds, &|_| false);
-        assert!(!kinds.contains_key("F"));
+        collect_constructor_generic_kinds(&application(generic_type("A")), &mut kinds, &|_, _| false);
+        assert!(!kinds.contains_key(&("F".to_string(), SyntaxContext::ROOT)));
 
         collect_constructor_generic_kinds(
             &application(ParseType::Hole(ast::TypeHole { span: Span::test() })),
             &mut kinds,
-            &|_| false,
+            &|_, _| false,
         );
         assert_eq!(
-            kinds["F"],
+            kinds[&("F".to_string(), SyntaxContext::ROOT)],
             crate::type_services::kind::Kind::arrow(
                 crate::type_services::kind::Kind::Type,
                 crate::type_services::kind::Kind::Type,

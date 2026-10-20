@@ -105,6 +105,7 @@ fn rehome_static_impl_type_generics(
     func: &mut HirFunction,
     type_generics: &[GenericParamDecl],
     impl_id: DefId,
+    resolver: &crate::collect::resolver::ResolverTables,
 ) {
     let mut generic_ids = HashSet::new();
     for param in &func.params {
@@ -126,7 +127,8 @@ fn rehome_static_impl_type_generics(
         let Some(gen_name) = previous_names.get(&generic_id) else {
             continue;
         };
-        if let Some(impl_param) = type_generics.iter().find(|param| &param.name == gen_name) {
+        if let Some(impl_param) = type_generics.iter().find(|param| &param.name == gen_name
+            && resolver.generic_context(param.id) == resolver.generic_context(generic_id)) {
             let source = Type::Generic(generic_id);
             let target = Type::Generic(impl_param.id);
             substitute_typevars_in_function(func, &source, &target);
@@ -350,26 +352,6 @@ impl Lowerer {
     }
 
     pub(crate) fn lower_impl_bodies(&mut self, imp: &ast::Impl, impl_id: DefId) {
-        let mut impl_generic_params = Vec::new();
-        if let Some(for_type) = imp.for_.as_ref() {
-            for generic in for_type.generics() {
-                collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name| {
-                    is_known_nominal_type_name(self, name)
-                });
-            }
-            collect_generic_names_from_parse_type(for_type, &mut impl_generic_params, &|name| {
-                is_known_nominal_type_name(self, name)
-            });
-        } else {
-            collect_generic_names_from_parse_type(&imp.name, &mut impl_generic_params, &|name| {
-                is_known_nominal_type_name(self, name)
-            });
-        }
-        for generic in imp.name.generics() {
-            collect_generic_names_from_parse_type(generic, &mut impl_generic_params, &|name| {
-                is_known_nominal_type_name(self, name)
-            });
-        }
         let Some(impl_context_params) = self
             .items
             .impl_def(impl_id)
@@ -648,7 +630,7 @@ impl Lowerer {
                     fd.is_unsafe || explicit_sig_is_unsafe,
                 );
                 for generic in type_generics.iter().chain(&func.generic_params) {
-                    body_context.register_generic_param(generic.name.clone(), generic.id);
+                    body_context.register_generic_param(generic.name.clone(), self.resolver.generic_context(generic.id), generic.id);
                 }
                 body_context
                     .seed_after_existing_locals(func.params.iter().map(|param| param.local_id));
@@ -688,7 +670,7 @@ impl Lowerer {
                 }
 
                 if func.self_receiver.is_none() {
-                    rehome_static_impl_type_generics(&mut func, &type_generics, impl_id);
+                    rehome_static_impl_type_generics(&mut func, &type_generics, impl_id, &self.resolver);
 
                     let _ = self.engine.unify(&func.body.ty, &func.ret_type);
                     self.resolve_all_types_in_function(&mut func);
@@ -954,6 +936,7 @@ mod tests {
                 "T",
             )],
             impl_id,
+            &Default::default(),
         );
 
         assert_eq!(
@@ -1015,6 +998,7 @@ mod tests {
             &mut func,
             &[GenericParamDecl::type_param(impl_generic_t, "T")],
             impl_id,
+            &Default::default(),
         );
 
         assert_eq!(func.params[1].ty, Type::Generic(impl_generic_t));

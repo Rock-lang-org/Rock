@@ -130,20 +130,22 @@ impl Lowerer {
             }
             ast::PatternKind::Instance(inst_pat) => {
                 let type_name: String = path_names(&inst_pat.name.path).join("::");
+                let member_context = crate::collect::resolver::binding_path(&inst_pat.name.path)
+                    .and_then(|path| path.last().map(|(_, context)| *context)).unwrap_or_default();
 
                 match &inst_pat.args {
                     ast::FieldsPatternOrArgumentsPattern::Arguments(args) => {
                         if type_name.contains("::") {
                             let parts: Vec<&str> = type_name.split("::").collect();
-                            if parts.len() == 2 {
+                            if parts.len() >= 2 {
                                 'qualified_enum: {
-                                    let enum_name = parts[0].to_string();
-                                    let variant_name = parts[1].to_string();
+                                    let enum_name = parts[..parts.len() - 1].join("::");
+                                    let variant_name = parts[parts.len() - 1].to_string();
                                     let span = identifier_path_span(&inst_pat.name);
 
                                     let Some(enum_info) =
                                         crate::lower::resolution::LowerResolutionContext::new(self)
-                                            .resolve_enum_type(&enum_name)
+                                            .resolve_enum_owner_path(&inst_pat.name.path)
                                     else {
                                         break 'qualified_enum;
                                     };
@@ -217,7 +219,8 @@ impl Lowerer {
                                         .collect();
 
                                     let Some(variant) =
-                                        enum_info.variants.iter().find(|v| v.name == variant_name)
+                                        enum_info.variants.iter().find(|v| v.name == variant_name
+                                            && self.resolver.variant_contexts.get(&(enum_info.id, v.id)).copied().unwrap_or_default() == member_context)
                                     else {
                                         self.diagnostics.push_type_with_span(
                                             format!(
@@ -279,7 +282,8 @@ impl Lowerer {
                                             .map(str::to_string)
                                             .unwrap_or_else(|| enum_info.name.clone());
                                     if let Some(variant) =
-                                        enum_info.variants.iter().find(|v| v.name == type_name)
+                                        enum_info.variants.iter().find(|v| v.name == type_name
+                                            && self.resolver.variant_contexts.get(&(enum_info.id, v.id)).copied().unwrap_or_default() == member_context)
                                     {
                                         let subst: HashMap<GenericParamId, Type> = enum_info
                                             .generic_params
@@ -383,7 +387,8 @@ impl Lowerer {
                                 enum_info
                                     .variants
                                     .iter()
-                                    .find(|variant| variant.name == type_name)
+                                    .find(|variant| variant.name == type_name
+                                        && self.resolver.variant_contexts.get(&(enum_info.id, variant.id)).copied().unwrap_or_default() == member_context)
                                     .cloned()
                                     .map(|variant| {
                                         (
@@ -431,14 +436,14 @@ impl Lowerer {
                     ast::FieldsPatternOrArgumentsPattern::Fields(fields) => {
                         if type_name.contains("::") {
                             let parts: Vec<&str> = type_name.split("::").collect();
-                            if parts.len() == 2 {
-                                let enum_name = parts[0].to_string();
-                                let variant_name = parts[1].to_string();
+                            if parts.len() >= 2 {
+                                let enum_name = parts[..parts.len() - 1].join("::");
+                                let variant_name = parts[parts.len() - 1].to_string();
                                 let span = identifier_path_span(&inst_pat.name);
 
                                 let Some(enum_info) =
                                     crate::lower::resolution::LowerResolutionContext::new(self)
-                                        .resolve_enum_type(&enum_name)
+                                        .resolve_enum_owner_path(&inst_pat.name.path)
                                 else {
                                     self.diagnostics.push_type_with_span(
                                         format!(
@@ -452,7 +457,8 @@ impl Lowerer {
                                 let Some(variant) = enum_info
                                     .variants
                                     .iter()
-                                    .find(|variant| variant.name == variant_name)
+                                    .find(|variant| variant.name == variant_name
+                                        && self.resolver.variant_contexts.get(&(enum_info.id, variant.id)).copied().unwrap_or_default() == member_context)
                                     .cloned()
                                 else {
                                     self.diagnostics.push_type_with_span(
@@ -577,7 +583,7 @@ impl Lowerer {
 
                         let struct_info =
                             crate::lower::resolution::LowerResolutionContext::new(self)
-                                .resolve_struct_type(&type_name);
+                                .resolve_struct_literal_path(&inst_pat.name.path).structure;
                         let resolved_expected_ty = self.engine.resolve(expected_ty);
                         let type_args = match &resolved_expected_ty {
                             Type::Struct {

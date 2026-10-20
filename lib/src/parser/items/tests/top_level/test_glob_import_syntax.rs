@@ -13,7 +13,7 @@ fn test_glob_import_syntax() {
 
     match top_level {
         TopLevel::GlobImport(path) => {
-            assert_eq!(path, vec!["std", "string"]);
+            assert_eq!(crate::collect::path_names(&path), vec!["std", "string"]);
         }
         _ => panic!("Expected glob import, got: {:?}", top_level),
     }

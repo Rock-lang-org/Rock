@@ -80,7 +80,9 @@ impl Lowerer {
                     }
                 }
                 ast::TopLevel::GlobImport(module_path) => {
-                    if let Ok(targets) = self.glob_import_targets(module_path) {
+                    if self.resolver.contextual_scope(self.current_module_id)
+                        || crate::collect::resolver::binding_path(module_path).is_some_and(|path| path.iter().any(|(_, context)| *context != Default::default())) { continue; }
+                    if let Ok(targets) = self.glob_import_targets(&crate::lower::path_names(module_path)) {
                         for (short, qualified) in targets {
                             let qualified = qualify_module_local_target(self, prefix, &qualified);
                             if self

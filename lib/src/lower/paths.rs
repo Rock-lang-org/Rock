@@ -100,50 +100,48 @@ impl Lowerer {
         ty.substitute_generics(&subst)
     }
 
-    fn current_generic_param_id_for_name(&self, name: &str) -> Option<GenericParamId> {
-        let owner = self.current_generic_owner()?;
-        let index = self
-            .current_generic_params()
-            .iter()
-            .position(|param| param == name)?;
-        Some(GenericParamId {
-            owner,
-            index: index as u32,
-        })
+    fn current_generic_param_id_for_name(&self, name: &str, context: crate::lexer::lossless::SyntaxContext) -> Option<GenericParamId> {
+        self.contextual_generic_param_id(name, context)
     }
 
     pub(crate) fn resolve_static_bound_method_path(
         &mut self,
         owner_name: &str,
+        owner_context: crate::lexer::lossless::SyntaxContext,
         method_name: &str,
+        method_context: crate::lexer::lossless::SyntaxContext,
         span: Span,
     ) -> Result<Option<(Type, HirStaticMethodTarget)>, String> {
-        self.resolve_static_bound_member_path(owner_name, None, method_name, span)
+        self.resolve_static_bound_member_path(owner_name, owner_context, None, method_name, method_context, span)
     }
 
     pub(crate) fn resolve_static_qualified_bound_method_path(
         &mut self,
         owner_name: &str,
+        owner_context: crate::lexer::lossless::SyntaxContext,
         trait_name: &str,
+        trait_context: crate::lexer::lossless::SyntaxContext,
         method_name: &str,
+        method_context: crate::lexer::lossless::SyntaxContext,
         span: Span,
     ) -> Result<Option<(Type, HirStaticMethodTarget)>, String> {
-        let trait_id = self
-            .trait_by_name(trait_name)
+        let trait_id = crate::type_lowering::TypeLoweringContext::resolve_trait_type(self, trait_name, trait_context)
             .map(|trait_def| trait_def.id)
             .ok_or_else(|| format!("unknown constructor trait `{trait_name}`"))?;
-        self.resolve_static_bound_member_path(owner_name, Some(trait_id), method_name, span)
+        self.resolve_static_bound_member_path(owner_name, owner_context, Some(trait_id), method_name, method_context, span)
     }
 
     fn resolve_static_bound_member_path(
         &mut self,
         owner_name: &str,
+        owner_context: crate::lexer::lossless::SyntaxContext,
         required_trait_id: Option<crate::ids::DefId>,
         method_name: &str,
+        method_context: crate::lexer::lossless::SyntaxContext,
         operation_span: Span,
     ) -> Result<Option<(Type, HirStaticMethodTarget)>, String> {
         let (owner_ty, bounds) =
-            if let Some(owner_param) = self.current_generic_param_id_for_name(owner_name) {
+            if let Some(owner_param) = self.current_generic_param_id_for_name(owner_name, owner_context) {
                 let owner_ty = Type::Generic(owner_param);
                 let Some(bounds) = self.current_impl_bounds().get(&owner_param) else {
                     return Ok(None);
@@ -153,8 +151,7 @@ impl Lowerer {
                     .trait_bounds_with_supertraits(&owner_ty, bounds);
                 (owner_ty, bounds)
             } else {
-                let Some(nominal) = crate::lower::resolution::LowerResolutionContext::new(self)
-                    .resolve_nominal_type(owner_name)
+                let Some(nominal) = crate::type_lowering::TypeLoweringContext::resolve_nominal_type(self, owner_name, owner_context)
                 else {
                     return Ok(None);
                 };
@@ -306,6 +303,7 @@ impl Lowerer {
                     continue;
                 };
 
+            if self.resolver.member_contexts.get(&method_id).copied().unwrap_or_default() != method_context { continue; }
             let mut inherited_generic_params = trait_def
                 .generic_params
                 .iter()
@@ -512,8 +510,7 @@ impl Lowerer {
                 crate::type_lowering::TypeLowerer::lower_parse_type(self, parse_type),
             ),
             ast::IdentOrType::Ident(ident) => {
-                let nominal = crate::lower::resolution::LowerResolutionContext::new(self)
-                    .resolve_nominal_type(&ident.name)?;
+                let nominal = crate::type_lowering::TypeLoweringContext::resolve_nominal_type(self, &ident.name, ident.context)?;
                 match nominal {
                     crate::type_lowering::ResolvedNominalType::Struct(structure) => {
                         if structure.generic_params.is_empty() {
@@ -551,6 +548,7 @@ impl Lowerer {
         target_ty: &Type,
         required_trait_id: Option<crate::ids::DefId>,
         method_name: &str,
+        method_context: crate::lexer::lossless::SyntaxContext,
         span: Span,
     ) -> Result<Option<crate::selection::SelectedConstructorMember>, String> {
         let target_kind = self.engine.kind_of(target_ty).map_err(|error| {
@@ -570,8 +568,9 @@ impl Lowerer {
                     .unwrap_or(crate::type_services::kind::Kind::Type);
                 (required_trait_id.is_none_or(|required| required == trait_id)
                     && expected_kind == target_kind
-                    && (trait_def.methods.contains_key(method_name)
-                        || trait_def.signatures.contains_key(method_name)))
+                    && trait_def.methods.get(method_name).map(|member| member.id)
+                        .or_else(|| trait_def.signatures.get(method_name).map(|member| member.id))
+                        .is_some_and(|id| self.resolver.member_contexts.get(&id).copied().unwrap_or_default() == method_context))
                 .then_some(trait_id)
             })
             .collect::<Vec<_>>();
@@ -2012,7 +2011,8 @@ impl Lowerer {
                     .collect();
                 for (enum_name, enum_info) in &enum_entries {
                     for variant in &enum_info.variants {
-                        if variant.name == *name {
+                        if variant.name == *name && self.resolver.variant_contexts.get(&(enum_info.id, variant.id)).copied().unwrap_or_default()
+                            == crate::lower::scope::LocalName::from_segment(&path.path[0]).map(|name| name.context).unwrap_or_default() {
                             if matches!(variant.fields, HirVariantFields::Unit) {
                                 self.record_source_reference(
                                     span.clone(),
@@ -2075,12 +2075,17 @@ impl Lowerer {
 
         // Multi-segment path (e.g., Crate::func, Module::func, or Enum::Variant)
         let names = path_names(&path.path);
+        let bindings = crate::collect::resolver::binding_path(&path.path).unwrap_or_default();
+        let context_at = |index: usize| bindings.get(index).map(|(_, context)| *context).unwrap_or_default();
 
         if names.len() == 3 {
             match self.resolve_static_qualified_bound_method_path(
                 &names[0],
+                context_at(0),
                 &names[1],
+                context_at(1),
                 &names[2],
+                context_at(2),
                 span.clone(),
             ) {
                 Ok(Some((ty, target))) => {
@@ -2107,7 +2112,7 @@ impl Lowerer {
                     return self.static_method_value_lambda(callee, target);
                 }
                 Ok(None) => {}
-                Err(message) if self.current_generic_param_id_for_name(&names[0]).is_some() => {
+                Err(message) if self.current_generic_param_id_for_name(&names[0], context_at(0)).is_some() => {
                     self.diagnostics.push_with_span(message, span.clone());
                     return self.error_expression_at(span.clone());
                 }
@@ -2115,12 +2120,13 @@ impl Lowerer {
             }
 
             if let Some(target_ty) = self.constructor_target_for_path_segment(&path.path[0]) {
-                if let Some(trait_id) = self.trait_by_name(&names[1]).map(|trait_def| trait_def.id)
+                if let Some(trait_id) = crate::type_lowering::TypeLoweringContext::resolve_trait_type(self, &names[1], context_at(1)).map(|trait_def| trait_def.id)
                 {
                     match self.select_constructor_static_member(
                         &target_ty,
                         Some(trait_id),
                         &names[2],
+                        context_at(2),
                         span.clone(),
                     ) {
                         Ok(Some(selected)) => {
@@ -2152,7 +2158,7 @@ impl Lowerer {
         if names.len() == 2 {
             // Check for Enum::Variant first
             if let Some(resolved) = crate::lower::resolution::LowerResolutionContext::new(self)
-                .resolve_enum_variant_path(&names)
+                .resolve_enum_variant_path(&path.path)
             {
                 let enum_info = resolved.owner;
                 let variant = resolved.variant;
@@ -2185,7 +2191,8 @@ impl Lowerer {
                 };
             }
 
-            match self.resolve_static_bound_method_path(&names[0], &names[1], span.clone()) {
+            match self.resolve_static_bound_method_path(&names[0],
+                context_at(0), &names[1], context_at(1), span.clone()) {
                 Ok(Some((ty, target))) => {
                     let Some(method_id) = target.method.method_id() else {
                         self.diagnostics.push_with_span(
@@ -2219,7 +2226,7 @@ impl Lowerer {
             // Inherent associated functions retain precedence over trait members.
             let mut static_method_error = None;
             match crate::lower::resolution::LowerResolutionContext::new(self)
-                .resolve_static_method_path(&names)
+                .resolve_static_method_path(&path.path)
             {
                 Ok(Some(resolved)) => match self
                     .instantiate_static_method_value(resolved, span.clone())
@@ -2242,6 +2249,7 @@ impl Lowerer {
                     &target_ty,
                     None,
                     &names[1],
+                    context_at(1),
                     span.clone(),
                 ) {
                     Ok(Some(selected)) => {
@@ -2277,7 +2285,7 @@ impl Lowerer {
 
             // Check for Crate::Function or Module::Function
             if let Some(resolved) = crate::lower::resolution::LowerResolutionContext::new(self)
-                .resolve_qualified_value_path(&names)
+                .resolve_qualified_value_path(&path.path)
             {
                 let ty = self.instantiate_resolved_value_type(&resolved, span.clone());
                 if let Some(target) = resolved.target.as_ref() {
@@ -2298,7 +2306,7 @@ impl Lowerer {
         // Handle longer paths (e.g., crate::module::function)
         if names.len() > 2 {
             if let Some(resolved) = crate::lower::resolution::LowerResolutionContext::new(self)
-                .resolve_qualified_value_path(&names)
+                .resolve_qualified_value_path(&path.path)
             {
                 let ty = self.instantiate_resolved_value_type(&resolved, span.clone());
                 if let Some(target) = resolved.target.as_ref() {
@@ -2358,15 +2366,13 @@ impl Lowerer {
                 span,
             };
         }
-        let segments = path_names(&inst.name.path);
-
         let struct_resolution = crate::lower::resolution::LowerResolutionContext::new(self)
-            .resolve_struct_literal_path(&segments);
+            .resolve_struct_literal_path(&inst.name.path);
         let type_name = struct_resolution.name;
 
         // Check for Enum::Variant pattern (2-segment path where first is an enum)
         if let Some(resolved) = crate::lower::resolution::LowerResolutionContext::new(self)
-            .resolve_enum_variant_path(&segments)
+            .resolve_enum_variant_path(&inst.name.path)
         {
             let enum_info = resolved.owner;
             let variant = resolved.variant;
