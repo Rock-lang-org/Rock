@@ -12,7 +12,7 @@ use crate::{
 };
 
 use super::{
-    enum_decl, function_decl, function_sig, macro_decl, macro_invoc, module, operator, parse_type,
+    enum_decl, function_decl, function_sig, macro_decl, macro_invoc, module, operator, parse_type, proc_macro_decl,
     path, primitives, r#impl, r#trait, struct_decl,
 };
 
@@ -218,6 +218,7 @@ pub fn top_level(stream: Input) -> IResult<TopLevel> {
         language_item_top_level.or(function_decl
             .map(TopLevel::FunctionDecl)
             .or(struct_decl.map(TopLevel::StructDecl))
+            .or(proc_macro_decl.map(TopLevel::ProcMacroDecl))
             .or(macro_decl.map(TopLevel::MacroDecl))
             .or(macro_invoc.map(TopLevel::MacroInvoc))
             .or(enum_decl.map(TopLevel::EnumDecl))
@@ -265,6 +266,14 @@ pub fn top_level(stream: Input) -> IResult<TopLevel> {
             .map(import_top_level))
             // Inline exported declarations: < name = ..., < struct ..., < trait ..., etc.
             // These must be tried before the fallback < path EOL (re-exports).
+            .or(preceded(
+                TokenType::Operator("<".to_string()),
+                proc_macro_decl.map(|mut declaration| {
+                    declaration.function.exported = true;
+                    declaration
+                }),
+            )
+            .map(TopLevel::ProcMacroDecl))
             .or(preceded(
                 TokenType::Operator("<".to_string()),
                 function_decl.map(|mut fd| {

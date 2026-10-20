@@ -252,6 +252,7 @@ ast_printer!(
     Module
     TopLevel
     MacroDecl
+    ProcMacroDecl
     MacroInvoc
     // TraitDecl
     Impl

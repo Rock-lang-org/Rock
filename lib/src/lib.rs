@@ -87,6 +87,7 @@ pub struct Config {
     pub extern_artifacts: Vec<(String, PathBuf)>, // External product artifacts: name=path
     pub source_providers: Vec<SourceProvider>, // Explicit non-filesystem source inputs
     pub current_crate_name: Option<String>,
+    pub target_role: crate_system::TargetRole,
     pub opt_level: u8, // 0-3
     /// None selects development checks / release wrapping.
     pub overflow_checks: Option<bool>,
@@ -157,6 +158,7 @@ pub struct Expansion {
     pub modules: Vec<source_loader::LoadedModule>,
     pub source_map: macro_expansion::MacroSourceMap,
     pub diagnostics: Diagnostics,
+    pub proc_exports: Vec<macro_expansion::registry::SourceProcMacroExport>,
 }
 
 /// Use exactly compilation's dependency loading, discovery and expansion engine,
@@ -165,7 +167,15 @@ pub fn expand(config: &Config) -> Result<Expansion, Diagnostics> {
     let expanded = expand_frontend(config)?;
     let modules = expanded.source_graph.modules().filter(|module|
         Some(&module.path) != expanded.ast.module.filepath.as_ref()).cloned().collect();
-    Ok(Expansion { ast: expanded.ast, modules, source_map: expanded.macro_source_map, diagnostics: expanded.macro_diagnostics })
+    Ok(Expansion { ast: expanded.ast, modules, source_map: expanded.macro_source_map, diagnostics: expanded.macro_diagnostics,
+        proc_exports: expanded.proc_exports })
+}
+
+/// Inspect source-declared exports after declarative expansion, without workers.
+pub fn discover_proc_macros(config: &Config) -> Result<Expansion, Diagnostics> {
+    let mut discovery = config.clone();
+    discovery.no_proc_execution = true;
+    expand(&discovery)
 }
 
 struct ExpandedFrontend {
@@ -178,6 +188,7 @@ struct ExpandedFrontend {
     macro_source_map: macro_expansion::MacroSourceMap,
     binding_environments: macro_expansion::binding_environment::BindingEnvironments,
     effective_current_crate_name: String,
+    proc_exports: Vec<macro_expansion::registry::SourceProcMacroExport>,
 }
 
 fn expand_frontend(config: &Config) -> Result<ExpandedFrontend, Diagnostics> {
@@ -228,6 +239,11 @@ fn expand_frontend(config: &Config) -> Result<ExpandedFrontend, Diagnostics> {
     let macro_source_map = macro_context.source_map();
     macro_source_map.attach_sources(&mut diagnostic_sources);
     let ast = expanded.map_err(|diagnostics| macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources))?;
+    let sources = source_loader::SourceModuleSet::from_modules(source_graph.modules()
+        .filter(|module| Some(&module.path) != ast.module.filepath.as_ref()).cloned());
+    let proc_exports = macro_expansion::registry::MacroRegistry::build_with_modules(&ast.module, &sources, &macro_context)
+        .and_then(|registry| registry.source_proc_exports(&effective_current_crate_name))
+        .map_err(|diagnostics| macro_source_map.map_diagnostics(diagnostics).with_sources(&diagnostic_sources))?;
 
     if config.has_debug_print(DebugPrint::Expanded) {
         println!("{:#?}", ast);
@@ -236,12 +252,21 @@ fn expand_frontend(config: &Config) -> Result<ExpandedFrontend, Diagnostics> {
     let binding_environments = macro_context.binding_environments.borrow().clone();
     let macro_diagnostics = macro_source_map.map_diagnostics(std::mem::take(&mut *macro_context.reports.borrow_mut())).with_sources(&diagnostic_sources);
     Ok(ExpandedFrontend { ast, ctx, source_graph, source_db, diagnostic_sources, macro_source_map,
-        binding_environments, effective_current_crate_name, macro_diagnostics })
+        binding_environments, effective_current_crate_name, macro_diagnostics, proc_exports })
 }
 
 fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
     let ExpandedFrontend { ast, ctx, source_graph, source_db, diagnostic_sources, macro_source_map,
-        binding_environments, effective_current_crate_name, macro_diagnostics } = expand_frontend(config)?;
+        binding_environments, effective_current_crate_name, macro_diagnostics, proc_exports: _ } = expand_frontend(config)?;
+
+    // Source proc declarations are never silently dropped into runtime products.
+    // The checked host wrapper is the next compilation boundary (B.13).
+    if config.target_role == crate_system::TargetRole::ProcMacro {
+        return Err(Diagnostics(vec![diagnostic::Diagnostic::new(
+            "procedural macro host wrapper generation is not implemented yet".into(),
+            lexer::Span::new(config.entry_file.clone(), 0, 0),
+        ).with_code(diagnostic::DiagnosticCode::Macro)]));
+    }
 
     let declarations = collect::collect_with_binding_environments(
         &ast,

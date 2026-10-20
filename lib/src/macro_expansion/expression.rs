@@ -54,6 +54,12 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                             self.executed += 1;
                             continue;
                         }
+                        Ok(Some(super::registry::MacroEntry { definition: MacroDefinition::SourceProcedural(_), .. })) => {
+                            return Err(super::proc_macro_error(
+                                "a source procedural macro cannot execute while building its own provider; use a built dependency",
+                                invocation.span.clone(),
+                            ));
+                        }
                         Err(diagnostics) if self.deferred.is_none() => self.deferred = Some(diagnostics),
                         Ok(None) | Err(_) => {}
                     }
@@ -67,6 +73,7 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                     self.scope = old_scope;
                 }
                 TopLevel::FunctionDecl(function) if self.phase == Phase::Expressions => self.lambda(&mut function.lambda, 0)?,
+                TopLevel::ProcMacroDecl(declaration) if self.phase == Phase::Expressions => self.lambda(&mut declaration.function.lambda, 0)?,
                 TopLevel::StructDecl(declaration) if self.phase == Phase::Expressions => self.fields(&mut declaration.fields)?,
                 TopLevel::EnumDecl(declaration) if self.phase == Phase::Expressions => {
                     for variant in &mut declaration.variants {
@@ -75,7 +82,7 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                 }
                 TopLevel::TraitDecl(declaration) if self.phase == Phase::Expressions => self.methods(&mut declaration.methods)?,
                 TopLevel::Impl(declaration) if self.phase == Phase::Expressions => self.methods(&mut declaration.methods)?,
-                TopLevel::MacroDecl(_) | TopLevel::MacroInvoc(_) | TopLevel::Mod(_, _) | TopLevel::Import(_)
+                TopLevel::MacroDecl(_) | TopLevel::ProcMacroDecl(_) | TopLevel::MacroInvoc(_) | TopLevel::Mod(_, _) | TopLevel::Import(_)
                 | TopLevel::GlobImport(_) | TopLevel::Export(_) | TopLevel::GlobExport(_) | TopLevel::Extern(_)
                 | TopLevel::InfixOperator(_, _) | TopLevel::FunctionSig(_) | TopLevel::NewType(_, _, _)
                 | TopLevel::FunctionDecl(_) | TopLevel::StructDecl(_) | TopLevel::EnumDecl(_)
@@ -185,6 +192,12 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                 };
                 let path = crate::collect::resolver::binding_path(&invocation.path.path).unwrap_or_default();
                 let resolved = self.registry.resolve_contextual(&self.scope, &path, &invocation.span, self.context)?;
+                if matches!(&resolved, Some(super::registry::MacroEntry { definition: MacroDefinition::SourceProcedural(_), .. })) {
+                    return Err(failure(Diagnostic::new(
+                        "a source procedural macro cannot execute while building its own provider; use a built dependency".into(),
+                        invocation.span.clone(),
+                    ).with_code(DiagnosticCode::Macro)));
+                }
                 if self.context.config.no_proc_execution && matches!(&resolved,
                     Some(super::registry::MacroEntry { definition: MacroDefinition::Procedural(_), .. })) {
                     return Err(failure(Diagnostic::new("procedural macro execution is disabled (--no-proc-execution)".into(), invocation.span.clone())

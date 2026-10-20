@@ -220,6 +220,13 @@ impl FormatNode for TopLevel {
                 writeln!(f)
             }
             TopLevel::MacroDecl(decl) => decl.fmt_with(context, f),
+            TopLevel::ProcMacroDecl(declaration) => {
+                if declaration.function.exported { write!(f, "< ")?; }
+                write!(f, "macro ")?;
+                let mut function = declaration.function.clone();
+                function.exported = false;
+                function.fmt_with(context, f)
+            }
             TopLevel::MacroInvoc(invoc) => {
                 invoc.fmt_with(context, f)?;
                 writeln!(f)

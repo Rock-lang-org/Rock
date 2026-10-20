@@ -2811,6 +2811,7 @@ mod tests {
             extern_artifacts: Vec::new(),
             source_providers: Vec::new(),
             current_crate_name: Some("test".to_string()),
+            target_role: crate::crate_system::TargetRole::Binary,
             opt_level: 0,
             overflow_checks: None,
             emit_llvm: false,

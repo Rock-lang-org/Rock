@@ -133,9 +133,34 @@ normalize block indentation or interpret DSL text.
 - The native compiler host still validates the final response and clean exit.
   Native acceptance uses parser-produced inline-expression/block invocation data
   through that host; it does not claim procedural expression dispatch, block
-  margin rewriting, or source-declared package discovery is already complete.
+  margin rewriting, or the complete package-build workflow.
 
-This is not yet a source-declared procedural macro package workflow: generated
-export wrappers and package/build integration remain staged implementation work.
+## Source declarations and discovery
+
+Proc-library source declares entries explicitly in the macro namespace:
+
+```rock
+> rock_macro::*
+
+helper = context, input -> MacroResult::Expand input
+
+< macro identity = context, input -> helper context, input
+```
+
+Only macro declarations exported through `< macro name = ...` or a separate
+`< name` enter the proc export metadata. Ordinary functions, including exported
+ones, are not implicit entries. Helpers/private macros stay private, and exported
+members of private modules do not become public package entries. `derive` is
+reserved for the later derive declaration syntax.
+
+The compiler library's `discover_proc_macros` uses an explicit proc target role,
+expands source declarative macros, then returns `Expansion::proc_exports` with
+source definition identities, public names and function-like entry kinds. It
+disables workers even if the caller's configuration permits execution. A provider
+cannot invoke its own source proc entries while building itself. Proc facades and
+runtime-target proc declarations diagnose instead of inventing runtime exports.
+
+This is not yet a runnable source-declared package workflow: generated export
+wrappers, signature checking and package/build integration remain staged work.
 The Rust wire specification is
 [`docs/specs/2026-10-19-macro-worker-wire.md`](../docs/specs/2026-10-19-macro-worker-wire.md).

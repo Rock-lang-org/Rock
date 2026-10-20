@@ -69,6 +69,7 @@ generate_visitor_trait!(
     Module
     TopLevel
     MacroDecl
+    ProcMacroDecl
     MacroInvoc
     TraitDecl
     Impl
@@ -150,6 +151,7 @@ pub fn walk_top_level<'a, V: Visitor<'a>>(visitor: &mut V, top_level: &'a TopLev
         TopLevel::GlobExport(path) => walk_list!(visitor, visit_ident_or_type, path),
         TopLevel::InfixOperator(_precedence, _name) => (),
         TopLevel::MacroDecl(m) => visitor.visit_macro_decl(m),
+        TopLevel::ProcMacroDecl(declaration) => visitor.visit_proc_macro_decl(declaration),
         TopLevel::MacroInvoc(m) => visitor.visit_macro_invoc(m),
         TopLevel::Extern(sig) => visitor.visit_function_sig(sig),
         TopLevel::FunctionSig(sig) => visitor.visit_function_sig(sig),
@@ -638,6 +640,10 @@ pub fn walk_trait_decl<'a, V: Visitor<'a>>(visitor: &mut V, t: &'a TraitDecl) {
 }
 
 pub fn walk_macro_decl<'a, V: Visitor<'a>>(_visitor: &mut V, _m: &'a MacroDecl) {}
+
+pub fn walk_proc_macro_decl<'a, V: Visitor<'a>>(visitor: &mut V, declaration: &'a ProcMacroDecl) {
+    visitor.visit_function_decl(&declaration.function);
+}
 
 // Macro paths and retained inputs are not ordinary value references.
 pub fn walk_macro_invoc<'a, V: Visitor<'a>>(_visitor: &mut V, _m: &'a MacroInvoc) {}

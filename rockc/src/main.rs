@@ -232,6 +232,11 @@ impl Config {
             extern_artifacts,
             source_providers: Vec::new(),
             current_crate_name: config.crate_name,
+            target_role: if config.emit_artifact.is_some() {
+                rock_lib::crate_system::TargetRole::Library
+            } else {
+                rock_lib::crate_system::TargetRole::Binary
+            },
             opt_level: if config.release { 3 } else { 0 },
             overflow_checks: config.overflow_checks,
             emit_llvm: config.emit_llvm,

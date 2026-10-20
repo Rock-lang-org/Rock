@@ -599,6 +599,7 @@ fn item_name_and_kind(top_level: &ast::TopLevel) -> Option<(String, ItemKind, cr
         | ast::TopLevel::GlobExport(_)
         | ast::TopLevel::InfixOperator(_, _)
         | ast::TopLevel::MacroDecl(_)
+        | ast::TopLevel::ProcMacroDecl(_)
         | ast::TopLevel::MacroInvoc(_) => None,
     }
 }

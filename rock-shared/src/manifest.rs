@@ -33,8 +33,9 @@ pub enum CrateTarget {
 }
 
 /// The product role is independent of the source path or package spelling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum TargetRole {
+    #[default]
     Binary,
     Library,
     ProcMacro,

@@ -45,6 +45,9 @@ mod expression_tests;
 mod resolution_tests;
 
 #[cfg(test)]
+mod source_proc_tests;
+
+#[cfg(test)]
 mod traversal_tests;
 
 #[cfg(test)]
@@ -122,8 +125,8 @@ fn expand_forest(
         // one AST identity, not a second executable copy of the entry program.
         modules.retain(|module| !is_forest_root(root, module, context));
         modules.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
-        validate_macro_definitions(root)?;
-        for loaded in modules.iter() { validate_macro_definitions(&loaded.module)?; }
+        validate_macro_definitions(root, context.config)?;
+        for loaded in modules.iter() { validate_macro_definitions(&loaded.module, context.config)?; }
         let sources = crate::source_loader::SourceModuleSet::from_modules(modules.iter().cloned());
         let registry = registry::MacroRegistry::build_for_expansion(root, &sources, context)?;
         if first_forest_invocation(root, modules).is_none() {
@@ -169,8 +172,8 @@ fn validate_no_invocations(module: &Module) -> Result<(), Diagnostics> {
     if pending.0.0.is_empty() { Ok(()) } else { Err(pending.0) }
 }
 
-fn validate_macro_definitions(module: &Module) -> Result<(), Diagnostics> {
-    struct Definitions { diagnostics: Diagnostics }
+fn validate_macro_definitions(module: &Module, config: &crate::Config) -> Result<(), Diagnostics> {
+    struct Definitions { diagnostics: Diagnostics, proc_target: bool }
     impl<'ast> crate::ast::visit::Visitor<'ast> for Definitions {
         fn visit_macro_decl(&mut self, declaration: &'ast MacroDecl) {
             if let Err(message) = DeclarativeMacro::from_ast(declaration).validate() {
@@ -178,8 +181,17 @@ fn validate_macro_definitions(module: &Module) -> Result<(), Diagnostics> {
                     .with_code(crate::diagnostic::DiagnosticCode::Macro));
             }
         }
+        fn visit_proc_macro_decl(&mut self, declaration: &'ast crate::ast::ProcMacroDecl) {
+            if !self.proc_target {
+                self.diagnostics.push(Diagnostic::new(
+                    "source procedural macro declarations require a [lib] with proc_macro = true".into(),
+                    declaration.function.name.span.clone(),
+                ).with_code(crate::diagnostic::DiagnosticCode::Macro));
+            }
+        }
     }
-    let mut definitions = Definitions { diagnostics: Diagnostics::default() };
+    let mut definitions = Definitions { diagnostics: Diagnostics::default(),
+        proc_target: config.target_role == crate::crate_system::TargetRole::ProcMacro };
     crate::ast::visit::walk_module(&mut definitions, module);
     if definitions.diagnostics.0.is_empty() { Ok(()) } else { Err(definitions.diagnostics) }
 }
@@ -564,6 +576,7 @@ mod tests {
             extern_artifacts: Vec::new(),
             source_providers: Vec::new(),
             current_crate_name: None,
+            target_role: crate::crate_system::TargetRole::Binary,
             opt_level: 0,
             overflow_checks: None,
             emit_llvm: false,

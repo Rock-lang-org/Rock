@@ -558,6 +558,18 @@ export them through ordinary Rock visibility:
 - `macro name = context, input -> ...` defines a function-like proc macro.
 - `macro derive Name = context, declaration -> ...` defines a derive proc macro.
 
+Function-like declaration parsing and compiler-library metadata discovery are
+implemented in B.12; derive declarations remain reserved until C.02. An explicit
+`Config::target_role = TargetRole::ProcMacro` authorizes source proc declarations.
+`discover_proc_macros` expands ordinary source declarative macros with workers
+disabled, then exposes direct public declarations in `Expansion::proc_exports`.
+It uses ordinary module/member exports, keeps helper functions out of the macro
+namespace, rejects duplicate macro names, and never executes a source entry to
+discover it. The same-spelled ordinary function remains a distinct binding.
+Self-invocation and proc facade publication diagnose. Host wrapper generation,
+normal signature checking against the supplied SDK, and real package building
+remain the subsequent steps, not implicit behavior of metadata discovery.
+
 The last two forms are proposed new syntax allowed only in a proc library.
 They declare ordinary host function bodies with SDK entry contracts plus macro
 kind/name metadata; no proc macro executes to discover those declarations.

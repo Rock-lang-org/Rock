@@ -8,7 +8,7 @@ use super::{consume_tokens_until, empty_lines, get_span, ident, indent, macro_in
 pub fn macro_decl(stream: Input) -> IResult<MacroDecl> {
     let (stream, (_, name, _, entries)) = (
         TokenType::Keyword("macro".to_string()),
-        ident,
+        macro_name,
         TokenType::Eol,
         indented(many(macro_entry)),
     )
@@ -16,6 +16,25 @@ pub fn macro_decl(stream: Input) -> IResult<MacroDecl> {
     let id = crate::ast::NodeId::fresh()
         .map_err(|message| ParseError::HardError(message.into(), name.span.clone()))?;
     Ok((stream, MacroDecl { id, name, entries }))
+}
+
+fn macro_name(stream: Input) -> IResult<crate::ast::Ident> {
+    let (stream, name) = ident(stream)?;
+    if name.name == "derive" {
+        return Err(ParseError::HardError("'derive' is reserved for derive macro declarations".into(), name.span));
+    }
+    Ok((stream, name))
+}
+
+pub fn proc_macro_decl(stream: Input) -> IResult<crate::ast::ProcMacroDecl> {
+    let (stream, _) = TokenType::Keyword("macro".into()).process(stream)?;
+    // Check the name before the shared ordinary function parser, so reserved
+    // derive syntax receives its own diagnostic instead of an expected '='.
+    macro_name(stream)?;
+    let (stream, function) = super::function_decl(stream)?;
+    let id = crate::ast::NodeId::fresh()
+        .map_err(|message| ParseError::HardError(message.into(), function.name.span.clone()))?;
+    Ok((stream, crate::ast::ProcMacroDecl { id, function }))
 }
 
 pub fn macro_entry(stream: Input) -> IResult<MacroEntry> {

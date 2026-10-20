@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::ast::{MacroDecl, Module, NodeId, Path, TopLevel};
+use crate::ast::{MacroDecl, Module, NodeId, Path, ProcMacroDecl, TopLevel};
 use crate::diagnostic::Diagnostics;
 use crate::lexer::Span;
 use crate::lexer::lossless::SyntaxContext;
@@ -32,6 +32,15 @@ pub enum MacroIdentity {
 pub enum MacroDefinition {
     Declarative(MacroDecl),
     Procedural(ProcMacroRegistryEntry),
+    SourceProcedural(ProcMacroDecl),
+}
+
+/// Source identities retained for the subsequent checked host-wrapper build.
+#[derive(Debug, Clone)]
+pub struct SourceProcMacroExport {
+    pub definition: NodeId,
+    pub module: Vec<(String, SyntaxContext)>,
+    pub export: ProcMacroExport,
 }
 
 #[derive(Debug, Clone)]
@@ -70,7 +79,7 @@ impl MacroRegistry {
         Self::build_with_modules(module, &context.source_modules, context)
     }
 
-    pub(super) fn build_with_modules(module: &Module, sources: &crate::source_loader::SourceModuleSet, context: &MacroExpansionContext<'_>) -> Result<Self, Diagnostics> {
+    pub(crate) fn build_with_modules(module: &Module, sources: &crate::source_loader::SourceModuleSet, context: &MacroExpansionContext<'_>) -> Result<Self, Diagnostics> {
         Self::build_scopes(module, sources, context, true)
     }
 
@@ -160,6 +169,21 @@ impl MacroRegistry {
                         return Err(proc_macro_error(format!("conflicting macro declaration '{}'", declaration.name.name), declaration.name.span.clone()));
                     }
                     self.entries.insert(identity.clone(), MacroEntry { identity, definition: MacroDefinition::Declarative(declaration.clone()) });
+                }
+                TopLevel::ProcMacroDecl(declaration) => {
+                    let name = &declaration.function.name;
+                    if context.config.target_role != crate::crate_system::TargetRole::ProcMacro {
+                        return Err(proc_macro_error("source procedural macro declarations require a [lib] with proc_macro = true", name.span.clone()));
+                    }
+                    let identity = MacroIdentity::Source {
+                        crate_identity: self.current_crate.clone().unwrap_or_else(|| "<current>".into()), definition: declaration.id,
+                    };
+                    let binding = (name.name.clone(), name.context);
+                    if scope.declarations.insert(binding.clone(), identity.clone()).is_some() {
+                        return Err(proc_macro_error(format!("conflicting macro declaration '{}'", name.name), name.span.clone()));
+                    }
+                    if declaration.function.exported { scope.exports.insert(binding, None); }
+                    self.entries.insert(identity.clone(), MacroEntry { identity, definition: MacroDefinition::SourceProcedural(declaration.clone()) });
                 }
                 TopLevel::Import(import) => {
                     let segments = match import { Path::Ident(path) => &path.path, Path::Type(path) => &path.path };
@@ -271,6 +295,42 @@ impl MacroRegistry {
 
     pub fn resolve(&self, scope: &[String], path: &str, span: &Span) -> Result<Option<&MacroEntry>, Diagnostics> {
         self.resolve_bindings(&root_path(scope), &path.split("::").map(|name| (name.to_string(), SyntaxContext::ROOT)).collect::<Vec<_>>(), span)
+    }
+
+    /// Enumerate only direct, publicly reachable source declarations. Ordinary
+    /// function exports are not macro registrations, and facades remain deferred.
+    pub(crate) fn source_proc_exports(&self, crate_identity: &str) -> Result<Vec<SourceProcMacroExport>, Diagnostics> {
+        let mut exports = BTreeMap::new();
+        for (module, scope) in &self.scopes {
+            if !(0..module.len()).all(|index| self.scopes.get(&module[..index])
+                .is_some_and(|parent| parent.exports.contains_key(&module[index]))) { continue; }
+            for name in scope.exports.keys() {
+                let Some(identity) = scope.bindings.get(name) else { continue; };
+                let Some(entry) = self.entries.get(identity) else { continue; };
+                if !scope.declarations.contains_key(name) || scope.exports[name].is_some() {
+                    if matches!(entry.definition, MacroDefinition::SourceProcedural(_) | MacroDefinition::Procedural(_)) {
+                        return Err(proc_macro_error("macro re-export/facade publication is not implemented", match &entry.definition {
+                            MacroDefinition::SourceProcedural(declaration) => declaration.function.name.span.clone(),
+                            _ => Span::new("<macro-export>".into(), 0, 0),
+                        }));
+                    }
+                    continue;
+                }
+                let MacroDefinition::SourceProcedural(declaration) = &entry.definition else { continue; };
+                let mut path = module.clone(); path.push(name.clone());
+                let public_name = display(&path);
+                let export = SourceProcMacroExport {
+                    definition: declaration.id, module: module.clone(),
+                    export: ProcMacroExport { name: public_name.clone(), identity: format!("{crate_identity}::{public_name}"),
+                        kind: super::proc_macro::ProcMacroKind::FunctionLike,
+                        input_shape: super::proc_macro::ProcMacroInputShape::TokenStream },
+                };
+                if exports.insert(public_name.clone(), export).is_some() {
+                    return Err(proc_macro_error(format!("conflicting public macro name '{public_name}'"), declaration.function.name.span.clone()));
+                }
+            }
+        }
+        Ok(exports.into_values().collect())
     }
 
     pub(super) fn loaded_scope(&self, path: &[String]) -> BindingPath {

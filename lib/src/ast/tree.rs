@@ -63,6 +63,7 @@ pub enum TopLevel {
     EnumDecl(EnumDecl),
     Impl(Impl),
     NewType(ParseTypeInner, Vec<GenericParamDecl>, ParseType),
+    ProcMacroDecl(ProcMacroDecl),
 }
 
 impl TopLevel {
@@ -74,6 +75,7 @@ impl TopLevel {
             TopLevel::EnumDecl(ed) => Some(&ed.name.name),
             TopLevel::Impl(i) => i.name.named_inner().map(|name| &name.name),
             TopLevel::MacroDecl(md) => Some(&md.name.name),
+            TopLevel::ProcMacroDecl(declaration) => Some(&declaration.function.name.name),
             TopLevel::MacroInvoc(mi) => mi.path.path.last().and_then(|part| match part {
                 IdentOrType::Ident(ident) => Some(&ident.name),
                 IdentOrType::Type(_) => None,
@@ -334,6 +336,13 @@ pub struct MacroDecl {
     pub id: super::NodeId,
     pub name: Ident,
     pub entries: Vec<MacroEntry>,
+}
+
+/// An ordinary entry implementation in the macro namespace, not a runtime export.
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
+pub struct ProcMacroDecl {
+    pub id: super::NodeId,
+    pub function: FunctionDecl,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
