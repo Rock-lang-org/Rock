@@ -1,0 +1,120 @@
+// Explicit deep copies retain all source, context and provenance handles.
+> rock_macro::*
+> std::clone::Clone
+> std::control::option::Option
+
+impl Clone for ByteRange
+    @clone = -> ByteRange
+        start: self.start
+        end: self.end
+
+impl Clone for Span
+    @clone = -> Span
+        file_path: self.file_path.clone!
+        range: self.range.clone!
+
+impl Clone for SyntaxContext
+    @clone = -> SyntaxContext
+        handle: self.handle
+
+impl Clone for ConstructionKind
+    @clone = ->
+        match *self
+            ConstructionKind::Fresh id => ConstructionKind::Fresh id
+            ConstructionKind::CallSite => ConstructionKind::CallSite
+            ConstructionKind::Dependency id => ConstructionKind::Dependency id
+
+impl Clone for ConstructionContext
+    @clone = -> ConstructionContext
+        invocation: self.invocation
+        kind: self.kind.clone!
+
+impl Clone for TokenProvenance
+    @clone = ->
+        match *self
+            TokenProvenance::Source span => TokenProvenance::Source span.clone!
+            TokenProvenance::Captured origin => TokenProvenance::Captured (CapturedOrigin
+                expansion: origin.expansion
+                invocation_span: origin.invocation_span.clone!
+                capture_span: origin.capture_span.clone!)
+            TokenProvenance::Generated origin => TokenProvenance::Generated (GeneratedOrigin
+                expansion: origin.expansion
+                generated_source: origin.generated_source
+                definition_span: origin.definition_span.clone!)
+
+impl Clone for TokenOrigin
+    @clone = ->
+        retained = &self.projection
+        projection = match *retained
+            Option::Some value => Option::Some (OutputProjection
+                namespace: value.namespace
+                expansion: value.expansion
+                generated_source: value.generated_source
+                source_start: value.source_start
+                output_start: value.output_start)
+            Option::None => Option::None
+        TokenOrigin
+            provenance: self.provenance.clone!
+            projection: projection
+
+impl Clone for SegmentKind
+    @clone = ->
+        match *self
+            SegmentKind::Text => SegmentKind::Text
+            SegmentKind::Whitespace => SegmentKind::Whitespace
+            SegmentKind::LineEnding => SegmentKind::LineEnding
+
+impl Clone for JoinBoundary
+    @clone = ->
+        match *self
+            JoinBoundary::Separate => JoinBoundary::Separate
+            JoinBoundary::SourceAdjacent => JoinBoundary::SourceAdjacent
+
+impl Clone for SourceSnapshot
+    @clone = -> SourceSnapshot
+        identity: self.identity
+        file_path: self.file_path.clone!
+        text: self.text.clone!
+
+impl Clone for Segment
+    @clone = ->
+        retained_origin = &self.origin
+        origin = match *retained_origin
+            Option::Some value => Option::Some value.clone!
+            Option::None => Option::None
+        retained_construction = &self.construction
+        construction = match *retained_construction
+            Option::Some value => Option::Some value.clone!
+            Option::None => Option::None
+        Segment
+            source: self.source
+            range: self.range.clone!
+            kind: self.kind.clone!
+            context: self.context.clone!
+            boundary: self.boundary.clone!
+            origin: origin
+            construction: construction
+
+impl Clone for StreamAnchor
+    @clone = ->
+        retained = &self.origin
+        origin = match *retained
+            Option::Some value => Option::Some value.clone!
+            Option::None => Option::None
+        StreamAnchor
+            source: self.source
+            offset: self.offset
+            context: self.context.clone!
+            origin: origin
+
+impl Clone for ExpressionRange
+    @clone = -> ExpressionRange
+        range: self.range.clone!
+        header_indent: self.header_indent
+
+impl Clone for TokenStream
+    @clone = -> TokenStream
+        sources: self.sources.map_ref (source -> source.clone!)
+        segments: self.segments.map_ref (segment -> segment.clone!)
+        anchor: self.anchor.clone!
+        expressions: self.expressions.map_ref (expression -> expression.clone!)

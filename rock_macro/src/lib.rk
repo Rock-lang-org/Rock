@@ -1,10 +1,14 @@
 // Ordinary owned SDK data for worker protocol 7 and RKLOSS04.
 // Handles are transport values, never permission to mint compiler authority.
-// Local operations and checked binary transport are separate staged work.
+// Local operations never contact the compiler; transport remains separate.
 
 > std::collections::vec::Vec
 > std::control::option::Option
 > std::string::owned::String
+
+mod copies
+< mod operations
+< mod construction
 
 < struct ByteRange
     < start: U64

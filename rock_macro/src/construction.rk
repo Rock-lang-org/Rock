@@ -1,0 +1,240 @@
+> rock_macro::*
+> rock_macro::operations::SdkError
+> std::clone::Clone
+> std::collections::vec::Vec
+> std::control::option::Option
+> std::control::result::Result
+> std::convert::From
+> std::string::owned::String
+> std::num::arithmetic::Add
+> std::cmp::eq::PartialEq
+> std::cmp::ord::PartialOrd
+> std::ops::index::Index
+> std::ops::not::Not
+
+// Deliberately bounded ASCII name construction, not a general Rock lexer.
+// Forwarding existing Unicode/DSL streams uses slices, not this name helper.
+identifier_spelling: &String -> Bool
+identifier_spelling = text ->
+    if text.len! == 0
+        return false
+    bytes = text.as_bytes!
+    i = 0
+    while i < bytes.len!
+        byte = bytes[i] as I64
+        letter = (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) || byte == 95
+        digit = byte >= 48 && byte <= 57
+        if !(letter || (i > 0 && digit))
+            return false
+        i = i + 1
+    true
+
+< struct Identifier
+    < tokens: TokenStream
+
+impl Clone for Identifier
+    @clone = -> Identifier
+        tokens: self.tokens.clone!
+
+impl TokenStream
+    @forwarded_ident: ByteRange -> Result Identifier, SdkError
+    @forwarded_ident = range ->
+        tokens = self.slice range ?
+        spelling = tokens.spelling! ?
+        if !(identifier_spelling &spelling)
+            failure: Result Identifier, SdkError = Result::Err SdkError::InvalidIdentifier
+            return failure
+        context = tokens.segments[0].context.handle
+        i = 0
+        while i < tokens.segments.len!
+            segment = &tokens.segments[i]
+            if segment.context.handle != context
+                failure: Result Identifier, SdkError = Result::Err SdkError::ConflictingContexts
+                return failure
+            if i > 0
+                retained_boundary = &segment.boundary
+                match *retained_boundary
+                    JoinBoundary::Separate =>
+                        failure: Result Identifier, SdkError = Result::Err SdkError::NotSourceAdjacent
+                        return failure
+                    JoinBoundary::SourceAdjacent => ()
+            retained = &segment.construction
+            match *retained
+                Option::Some construction =>
+                    failure: Result Identifier, SdkError = Result::Err SdkError::ConflictingContexts
+                    return failure
+                Option::None => ()
+            i = i + 1
+        Result::Ok (Identifier
+            tokens: tokens)
+
+    @error: ByteRange -> String -> Result Diagnostic, SdkError
+    @error = range, message ->
+        self.slice range.clone! ?
+        Result::Ok (Diagnostic::new DiagnosticSeverity::Error, message, (DiagnosticLocation::Input range))
+
+// One builder per invocation. Reuse/cloning identifiers preserves fresh identity;
+// each fresh_ident call requests a different invocation-local symbolic handle.
+< struct MacroBuilder
+    invocation: U64
+    dependency_names: Vec String
+    next_fresh: U64
+    next_source: U64
+
+impl MacroContext
+    @builder: &TokenStream -> Result MacroBuilder, SdkError
+    @builder = input ->
+        input.len_bytes! ?
+        maximum: U64 = 0 as U64
+        i = 0
+        while i < input.sources.len!
+            identity = input.sources[i].identity
+            if identity > maximum
+                maximum = identity
+            i = i + 1
+        if maximum == (18446744073709551615 as U64)
+            failure: Result MacroBuilder, SdkError = Result::Err SdkError::IdentityExhausted
+            return failure
+        names = self.definition_dependencies.map_ref (dependency -> dependency.name.clone!)
+        Result::Ok (MacroBuilder::new self.invocation, names, (maximum + (1 as U64)))
+
+    @error: String -> Diagnostic
+    @error = message -> Diagnostic::new DiagnosticSeverity::Error, message, DiagnosticLocation::Invocation
+
+// Only known single lexical leaves enter this helper; arbitrary source text is
+// still an output-only SourceFragment, not an eagerly inspected generated stream.
+constructed_leaf: U64 -> U64 -> ConstructionKind -> String -> TokenStream
+constructed_leaf = identity, invocation, kind, text ->
+    length = text.len! as U64
+    mut sources: Vec SourceSnapshot = Vec::new!
+    sources.push (SourceSnapshot
+        identity: identity
+        file_path: String::from "<macro-construction>"
+        text: text)
+    mut segments: Vec Segment = Vec::new!
+    segments.push (Segment
+        source: 0
+        range: ByteRange
+            start: 0
+            end: length
+        kind: SegmentKind::Text
+        context: SyntaxContext
+            handle: 0
+        boundary: JoinBoundary::Separate
+        origin: Option::None
+        construction: Option::Some (ConstructionContext
+            invocation: invocation
+            kind: kind))
+    TokenStream
+        sources: sources
+        segments: segments
+        anchor: StreamAnchor
+            source: 0
+            offset: 0
+            context: SyntaxContext
+                handle: 0
+            origin: Option::None
+        expressions: Vec::new!
+
+impl MacroBuilder
+    new: U64 -> Vec String -> U64 -> MacroBuilder
+    new = invocation, dependency_names, next_source -> MacroBuilder
+        invocation: invocation
+        dependency_names: dependency_names
+        next_fresh: 0
+        next_source: next_source
+
+    ^@leaf: ConstructionKind -> String -> Result TokenStream, SdkError
+    ^@leaf = kind, text ->
+        if self.next_source == (18446744073709551615 as U64)
+            failure: Result TokenStream, SdkError = Result::Err SdkError::IdentityExhausted
+            return failure
+        if text.len! > 16777216
+            failure: Result TokenStream, SdkError = Result::Err SdkError::LengthLimit
+            return failure
+        identity = self.next_source
+        self.next_source = self.next_source + (1 as U64)
+        Result::Ok (constructed_leaf identity, self.invocation, kind, text)
+
+    ^@fresh_ident: String -> Result Identifier, SdkError
+    ^@fresh_ident = spelling ->
+        if !(identifier_spelling &spelling)
+            failure: Result Identifier, SdkError = Result::Err SdkError::InvalidIdentifier
+            return failure
+        if self.next_fresh > (4294967295 as U64)
+            failure: Result Identifier, SdkError = Result::Err SdkError::IdentityExhausted
+            return failure
+        fresh = self.next_fresh as U32
+        self.next_fresh = self.next_fresh + (1 as U64)
+        tokens = self.leaf (ConstructionKind::Fresh fresh), spelling ?
+        Result::Ok (Identifier
+            tokens: tokens)
+
+    ^@call_site_ident: String -> Result Identifier, SdkError
+    ^@call_site_ident = spelling ->
+        if !(identifier_spelling &spelling)
+            failure: Result Identifier, SdkError = Result::Err SdkError::InvalidIdentifier
+            return failure
+        tokens = self.leaf ConstructionKind::CallSite, spelling ?
+        Result::Ok (Identifier
+            tokens: tokens)
+
+    ^@dependency_path: U32 -> Vec String -> Result TokenStream, SdkError
+    ^@dependency_path = dependency, components ->
+        if (dependency as U64) >= (self.dependency_names.len! as U64)
+            failure: Result TokenStream, SdkError = Result::Err (SdkError::InvalidDependency dependency)
+            return failure
+        mut spelling = self.dependency_names[dependency as I64].clone!
+        if !(identifier_spelling &spelling) || components.len! == 0
+            failure: Result TokenStream, SdkError = Result::Err SdkError::InvalidIdentifier
+            return failure
+        i = 0
+        while i < components.len!
+            if !(identifier_spelling (&components[i]))
+                failure: Result TokenStream, SdkError = Result::Err SdkError::InvalidIdentifier
+                return failure
+            if spelling.len! + components[i].len! + 2 > 16777216
+                failure: Result TokenStream, SdkError = Result::Err SdkError::LengthLimit
+                return failure
+            prefix = spelling.concat (String::from "::")
+            spelling = prefix.concat components[i].clone!
+            i = i + 1
+        self.leaf (ConstructionKind::Dependency dependency), spelling
+
+    ^@group: Delimiter -> &TokenStream -> Result TokenStream, SdkError
+    ^@group = delimiter, body ->
+        view = &delimiter
+        opening = match *view
+            Delimiter::Paren => String::from "("
+            Delimiter::Bracket => String::from "["
+            Delimiter::Brace => String::from "{"
+        closing = match *view
+            Delimiter::Paren => String::from ")"
+            Delimiter::Bracket => String::from "]"
+            Delimiter::Brace => String::from "}"
+        left = self.leaf ConstructionKind::CallSite, opening ?
+        right = self.leaf ConstructionKind::CallSite, closing ?
+        grouped = left.join body, JoinBoundary::Separate ?
+        grouped.join &right, JoinBoundary::Separate
+
+impl Diagnostic
+    new: DiagnosticSeverity -> String -> DiagnosticLocation -> Diagnostic
+    new = severity, message, location -> Diagnostic
+        severity: severity
+        message: message
+        primary: location
+        labels: Vec::new!
+        notes: Vec::new!
+        help: Vec::new!
+
+    ^@label: String -> DiagnosticLocation -> ()
+    ^@label = message, location !->
+        self.labels.push (DiagnosticLabel
+            message: message
+            location: location)
+
+    ^@note: String -> ()
+    ^@note = message !-> self.notes.push message
+
+    ^@suggest: String -> ()
+    ^@suggest = message !-> self.help.push message

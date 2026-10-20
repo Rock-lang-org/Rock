@@ -1,0 +1,390 @@
+> rock_macro::*
+> std::clone::Clone
+> std::collections::vec::Vec
+> std::collections::hash_map::HashMap
+> std::control::option::Option
+> std::control::result::Result
+> std::convert::From
+> std::string::owned::String
+> std::num::arithmetic::Add
+> std::num::arithmetic::Sub
+> std::cmp::eq::PartialEq
+> std::cmp::eq::Eq
+> std::hash::Hash
+> std::cmp::ord::PartialOrd
+> std::ops::index::Index
+> std::ops::not::Not
+
+< enum SdkError
+    InvalidRange ByteRange
+    InvalidSource U64
+    NotCharBoundary U64
+    InvalidCapture ByteRange
+    LengthLimit
+    NotSourceAdjacent
+    ConflictingSnapshot U64
+    ConflictingContexts
+    InvalidIdentifier
+    InvalidDependency U32
+    IdentityExhausted
+    InvalidGroup
+
+// Match the lossless transport bounds; never narrow unchecked U64 offsets.
+boundary: &String -> U64 -> Bool
+boundary = text, offset ->
+    if offset > (text.len! as U64)
+        return false
+    if offset == (text.len! as U64)
+        return true
+    byte = text.as_bytes![offset as I64] as I64
+    byte < 128 || byte >= 192
+
+source_range: &TokenStream -> U64 -> &ByteRange -> Result (), SdkError
+source_range = stream, source, range ->
+    if source >= (stream.sources.len! as U64)
+        failure: Result (), SdkError = Result::Err (SdkError::InvalidSource source)
+        return failure
+    text = &stream.sources[source as I64].text
+    if range.start > range.end || range.end > (text.len! as U64)
+        failure: Result (), SdkError = Result::Err (SdkError::InvalidRange range.clone!)
+        return failure
+    if !(boundary text, range.start)
+        failure: Result (), SdkError = Result::Err (SdkError::NotCharBoundary range.start)
+        return failure
+    if !(boundary text, range.end)
+        failure: Result (), SdkError = Result::Err (SdkError::NotCharBoundary range.end)
+        return failure
+    Result::Ok ()
+
+// Called only after physical source ranges have been checked.
+logical_boundary: &TokenStream -> U64 -> Bool
+logical_boundary = stream, offset ->
+    base: U64 = 0 as U64
+    i = 0
+    while i < stream.segments.len!
+        segment = &stream.segments[i]
+        end = base + segment.range.end - segment.range.start
+        if offset < end
+            return boundary (&stream.sources[segment.source as I64].text), (segment.range.start + offset - base)
+        base = end
+        i = i + 1
+    offset == base
+
+impl TokenStream
+    @len_bytes: Result U64, SdkError
+    @len_bytes = ->
+        if self.sources.len! == 0 || self.sources.len! > 1048576 || self.segments.len! > 1048576 || self.expressions.len! > 1048576
+            failure: Result U64, SdkError = Result::Err SdkError::LengthLimit
+            return failure
+        mut identities: HashMap I64, I64 = HashMap::new!
+        retained_bytes: U64 = 0 as U64
+        i = 0
+        while i < self.sources.len!
+            source = &self.sources[i]
+            size = source.text.len! as U64
+            if size > ((16777216 as U64) - retained_bytes)
+                failure: Result U64, SdkError = Result::Err SdkError::LengthLimit
+                return failure
+            retained_bytes = retained_bytes + size
+            if source.identity == (0 as U64) || source.file_path.len! == 0
+                failure: Result U64, SdkError = Result::Err (SdkError::InvalidSource (i as U64))
+                return failure
+            identity_key = source.identity as I64
+            match identities.get &identity_key
+                Option::Some existing =>
+                    failure: Result U64, SdkError = Result::Err (SdkError::ConflictingSnapshot source.identity)
+                    return failure
+                Option::None => ()
+            identities.insert identity_key, i
+            i = i + 1
+        anchor_range = ByteRange
+            start: self.anchor.offset
+            end: self.anchor.offset
+        source_range self, self.anchor.source, &anchor_range ?
+        total: U64 = 0 as U64
+        i = 0
+        while i < self.segments.len!
+            segment = &self.segments[i]
+            source_range self, segment.source, &segment.range ?
+            size = segment.range.end - segment.range.start
+            if size == (0 as U64) || size > ((16777216 as U64) - total)
+                failure: Result U64, SdkError = Result::Err SdkError::LengthLimit
+                return failure
+            total = total + size
+            if i > 0
+                retained_boundary = &segment.boundary
+                match *retained_boundary
+                    JoinBoundary::SourceAdjacent =>
+                        previous = &self.segments[i - 1]
+                        if previous.source != segment.source || previous.range.end != segment.range.start
+                            failure: Result U64, SdkError = Result::Err SdkError::NotSourceAdjacent
+                            return failure
+                    JoinBoundary::Separate => ()
+            i = i + 1
+        mut stack: Vec ByteRange = Vec::new!
+        depth = 0
+        i = 0
+        while i < self.expressions.len!
+            expression = &self.expressions[i]
+            range = &expression.range
+            invalid = range.start >= range.end || range.end > total || expression.header_indent > (16777216 as U64)
+            if i > 0
+                invalid = invalid || range.start < self.expressions[i - 1].range.start
+            if !invalid
+                invalid = !(logical_boundary self, range.start) || !(logical_boundary self, range.end)
+            while depth > 0 && stack[depth - 1].end <= range.start
+                depth = depth - 1
+            if depth > 0
+                outer = &stack[depth - 1]
+                invalid = invalid || range.end > outer.end || (range.start == outer.start && range.end == outer.end)
+            if invalid || depth >= 128
+                failure: Result U64, SdkError = Result::Err (SdkError::InvalidCapture range.clone!)
+                return failure
+            if depth == stack.len!
+                stack.push range.clone!
+            else
+                stack.set depth, range.clone!
+            depth = depth + 1
+            i = i + 1
+        Result::Ok total
+
+    @position: U64 -> Result StreamAnchor, SdkError
+    @position = offset ->
+        length = self.len_bytes! ?
+        if offset > length
+            failure: Result StreamAnchor, SdkError = Result::Err (SdkError::InvalidRange (ByteRange
+                start: offset
+                end: offset))
+            return failure
+        base: U64 = 0 as U64
+        i = 0
+        while i < self.segments.len!
+            segment = &self.segments[i]
+            end = base + segment.range.end - segment.range.start
+            if offset < end || (offset == end && offset == length)
+                point = segment.range.start + offset - base
+                if !(boundary (&self.sources[segment.source as I64].text), point)
+                    failure: Result StreamAnchor, SdkError = Result::Err (SdkError::NotCharBoundary offset)
+                    return failure
+                retained_origin = &segment.origin
+                origin = match *retained_origin
+                    Option::Some value => Option::Some value.clone!
+                    Option::None => Option::None
+                success: Result StreamAnchor, SdkError = Result::Ok (StreamAnchor
+                    source: segment.source
+                    offset: point
+                    context: segment.context.clone!
+                    origin: origin)
+                return success
+            base = end
+            i = i + 1
+        Result::Ok self.anchor.clone!
+
+    @slice: ByteRange -> Result TokenStream, SdkError
+    @slice = range ->
+        if range.start > range.end
+            failure: Result TokenStream, SdkError = Result::Err (SdkError::InvalidRange range)
+            return failure
+        anchor = self.position range.start ?
+        self.position range.end ?
+        mut segments: Vec Segment = Vec::new!
+        base: U64 = 0 as U64
+        i = 0
+        while i < self.segments.len!
+            original = &self.segments[i]
+            end = base + original.range.end - original.range.start
+            start_cut = if range.start > base then range.start else base
+            end_cut = if range.end < end then range.end else end
+            if start_cut < end_cut
+                mut segment = original.clone!
+                segment.range.start = original.range.start + start_cut - base
+                segment.range.end = original.range.start + end_cut - base
+                if start_cut > base
+                    segment.boundary = JoinBoundary::SourceAdjacent
+                segments.push segment
+            base = end
+            i = i + 1
+        mut expressions: Vec ExpressionRange = Vec::new!
+        i = 0
+        while i < self.expressions.len!
+            expression = &self.expressions[i]
+            // Opaque captures cannot silently turn into ordinary text at a cut.
+            overlaps = expression.range.start < range.end && expression.range.end > range.start
+            contained = expression.range.start >= range.start && expression.range.end <= range.end
+            if overlaps && !contained
+                failure: Result TokenStream, SdkError = Result::Err (SdkError::InvalidCapture expression.range.clone!)
+                return failure
+            if contained
+                expressions.push (ExpressionRange
+                    range: ByteRange
+                        start: expression.range.start - range.start
+                        end: expression.range.end - range.start
+                    header_indent: expression.header_indent)
+            i = i + 1
+        Result::Ok (TokenStream
+            sources: self.sources.map_ref (source -> source.clone!)
+            segments: segments
+            anchor: anchor
+            expressions: expressions)
+
+    @spelling: Result String, SdkError
+    @spelling = ->
+        self.len_bytes! ?
+        mut bytes: Vec U8 = Vec::new!
+        i = 0
+        while i < self.segments.len!
+            segment = &self.segments[i]
+            source = self.sources[segment.source as I64].text.as_bytes!
+            offset = segment.range.start as I64
+            while offset < (segment.range.end as I64)
+                bytes.push source[offset]
+                offset = offset + 1
+            i = i + 1
+        Result::Ok (String::from bytes.as_slice!)
+
+    @join: &TokenStream -> JoinBoundary -> Result TokenStream, SdkError
+    @join = right, join_boundary ->
+        length = self.len_bytes! ?
+        right_length = right.len_bytes! ?
+        if right_length > ((16777216 as U64) - length) || self.segments.len! + right.segments.len! > 1048576 || self.sources.len! + right.sources.len! > 1048576 || self.expressions.len! + right.expressions.len! > 1048576
+            failure: Result TokenStream, SdkError = Result::Err SdkError::LengthLimit
+            return failure
+        mut output = self.clone!
+        mut indices: Vec U64 = Vec::new!
+        mut identities: HashMap I64, I64 = HashMap::new!
+        i = 0
+        while i < output.sources.len!
+            identities.insert (output.sources[i].identity as I64), i
+            i = i + 1
+        i = 0
+        while i < right.sources.len!
+            source = &right.sources[i]
+            index = output.sources.len!
+            identity_key = source.identity as I64
+            match identities.get &identity_key
+                Option::Some existing_index =>
+                    existing = &output.sources[*existing_index]
+                    if existing.file_path != source.file_path || existing.text != source.text
+                        failure: Result TokenStream, SdkError = Result::Err (SdkError::ConflictingSnapshot source.identity)
+                        return failure
+                    index = *existing_index
+                Option::None => ()
+            if index == output.sources.len!
+                output.sources.push source.clone!
+                identities.insert identity_key, index
+            indices.push (index as U64)
+            i = i + 1
+        if self.segments.len! > 0 && right.segments.len! > 0
+            boundary_view = &join_boundary
+            match *boundary_view
+                JoinBoundary::SourceAdjacent =>
+                    left_segment = &self.segments[self.segments.len! - 1]
+                    right_segment = &right.segments[0]
+                    if left_segment.source != indices[right_segment.source as I64] || left_segment.range.end != right_segment.range.start
+                        failure: Result TokenStream, SdkError = Result::Err SdkError::NotSourceAdjacent
+                        return failure
+                    retained_boundary = &right_segment.boundary
+                    match *retained_boundary
+                        JoinBoundary::Separate =>
+                            failure: Result TokenStream, SdkError = Result::Err SdkError::NotSourceAdjacent
+                            return failure
+                        JoinBoundary::SourceAdjacent => ()
+                JoinBoundary::Separate => ()
+        i = 0
+        while i < right.segments.len!
+            mut segment = right.segments[i].clone!
+            segment.source = indices[segment.source as I64]
+            if i == 0 && self.segments.len! > 0
+                segment.boundary = join_boundary.clone!
+            output.segments.push segment
+            i = i + 1
+        if self.segments.len! == 0 && right.segments.len! > 0
+            output.anchor = right.anchor.clone!
+            output.anchor.source = indices[output.anchor.source as I64]
+        i = 0
+        while i < right.expressions.len!
+            expression = &right.expressions[i]
+            output.expressions.push (ExpressionRange
+                range: ByteRange
+                    start: length + expression.range.start
+                    end: length + expression.range.end
+                header_indent: expression.header_indent)
+            i = i + 1
+        output.len_bytes! ?
+        Result::Ok output
+
+    @cursor: StreamCursor
+    @cursor = -> StreamCursor::new self.clone!
+
+// A unit is one UTF-8 scalar or an entire opaque expression, never a Rock token.
+< struct StreamCursor
+    stream: TokenStream
+    offset: U64
+
+impl StreamCursor
+    new: TokenStream -> StreamCursor
+    new = stream -> StreamCursor
+        stream: stream
+        offset: 0
+
+    @byte_offset: U64
+    @byte_offset = -> self.offset
+
+    @peek: Result (Option TokenStream), SdkError
+    @peek = ->
+        length = self.stream.len_bytes! ?
+        if self.offset == length
+            empty: Option TokenStream = Option::None
+            success: Result (Option TokenStream), SdkError = Result::Ok empty
+            return success
+        end = self.offset + (1 as U64)
+        i = 0
+        while i < self.stream.expressions.len!
+            expression = &self.stream.expressions[i]
+            if expression.range.start == self.offset
+                end = expression.range.end
+                break
+            i = i + 1
+        loop
+            match self.stream.position end
+                Result::Ok position => break
+                Result::Err error =>
+                    match error
+                        SdkError::NotCharBoundary offset => end = end + (1 as U64)
+                        other =>
+                            failure: Result (Option TokenStream), SdkError = Result::Err other
+                            return failure
+        unit = self.stream.slice (ByteRange
+            start: self.offset
+            end: end) ?
+        Result::Ok (Option::Some unit)
+
+    ^@consume: Result (Option TokenStream), SdkError
+    ^@consume = ->
+        unit = self.peek! ?
+        view = &unit
+        match *view
+            Option::Some stream => self.offset = self.offset + (stream.len_bytes! ?)
+            Option::None => ()
+        Result::Ok unit
+
+    @group: GroupView -> Result TokenStream, SdkError
+    @group = view ->
+        if view.range.start != self.offset
+            failure: Result TokenStream, SdkError = Result::Err SdkError::InvalidGroup
+            return failure
+        tokens = self.stream.slice view.range ?
+        text = tokens.spelling! ?
+        if text.len! < 2
+            failure: Result TokenStream, SdkError = Result::Err SdkError::InvalidGroup
+            return failure
+        delimiter = &view.delimiter
+        expected = match *delimiter
+            Delimiter::Paren => (40, 41)
+            Delimiter::Bracket => (91, 93)
+            Delimiter::Brace => (123, 125)
+        bytes = text.as_bytes!
+        if (bytes[0] as I64) != expected.0 || (bytes[bytes.len! - 1] as I64) != expected.1
+            failure: Result TokenStream, SdkError = Result::Err SdkError::InvalidGroup
+            return failure
+        Result::Ok tokens

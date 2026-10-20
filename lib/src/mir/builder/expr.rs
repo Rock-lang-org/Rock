@@ -294,8 +294,9 @@ impl<'a> MirBuilder<'a> {
                     }
                 }
 
+                // Branch assignments own initialization; a unit or diverging
+                // branch may leave the destination untouched.
                 self.current_block = Some(merge_block);
-                self.mark_place_initialized(&dest, span.clone());
             }
             HirExprKind::Loop(body) => {
                 // Share the ordinary loop CFG and cleanup rules with while.
@@ -1456,8 +1457,8 @@ impl<'a> MirBuilder<'a> {
                     }
                 }
 
+                // Only a value actually written by an arm initializes dest.
                 self.current_block = Some(merge_block);
-                self.mark_place_initialized(&dest, span.clone());
             }
             HirExprKind::EnumVariant(enum_name, variant_name, args, location) => {
                 let field_types = location

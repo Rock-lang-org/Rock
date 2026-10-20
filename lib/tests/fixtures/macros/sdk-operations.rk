@@ -1,0 +1,397 @@
+> rock_macro::*
+> rock_macro::operations::SdkError
+> rock_macro::construction::Identifier
+
+check: Bool -> ()
+check = condition !->
+    if !condition
+        "SDK operation assertion failed".println!
+        exit (1 as I32)
+
+range: U64 -> U64 -> ByteRange
+range = start, end -> ByteRange
+    start: start
+    end: end
+
+segment: U64 -> U64 -> SegmentKind -> U32 -> Segment
+segment = start, end, kind, context -> Segment
+    source: 0
+    range: range start, end
+    kind: kind
+    context: SyntaxContext
+        handle: context
+    boundary: JoinBoundary::SourceAdjacent
+    origin: Option::Some (TokenOrigin
+        provenance: TokenProvenance::Captured (CapturedOrigin
+            expansion: 8
+            invocation_span: Span
+                file_path: String::from "caller.rk"
+                range: range 0, 17
+            capture_span: Span
+                file_path: String::from "caller.rk"
+                range: range 0, 17)
+        projection: Option::Some (OutputProjection
+            namespace: 9
+            expansion: 8
+            generated_source: 7
+            source_start: 0
+            output_start: 100))
+    construction: Option::None
+
+input = ->
+    mut sources: Vec SourceSnapshot = Vec::new!
+    sources.push (SourceSnapshot
+        identity: 1
+        file_path: String::from "caller.rk"
+        text: String::from "name \t//é\r\n雪{'")
+    mut segments: Vec Segment = Vec::new!
+    segments.push (segment 0, 4, SegmentKind::Text, 42)
+    segments.push (segment 4, 6, SegmentKind::Whitespace, 42)
+    segments.push (segment 6, 10, SegmentKind::Text, 42)
+    segments.push (segment 10, 12, SegmentKind::LineEnding, 42)
+    segments.push (segment 12, 17, SegmentKind::Text, 77)
+    TokenStream
+        sources: sources
+        segments: segments
+        anchor: StreamAnchor
+            source: 0
+            offset: 0
+            context: SyntaxContext
+                handle: 42
+            origin: Option::None
+        expressions: Vec::new!
+
+context = ->
+    mut dependencies: Vec DependencyIdentity = Vec::new!
+    dependencies.push (DependencyIdentity
+        name: String::from "helper"
+        version: String::from "1"
+        target_triple: Option::None
+        format_version: 53
+        source_fingerprint: SourceFingerprint
+            manifest_hash: Option::None
+            source_hash: Option::None
+            loaded_files: Vec::new!)
+    MacroContext
+        protocol_version: 7
+        compiler_version: String::from "0.7.0"
+        macro_name: String::from "operations"
+        macro_identity: String::from "example::operations"
+        source_module: Option::None
+        expansion: Option::None
+        invocation: 99
+        parent: Option::None
+        output_category: OutputCategory::Expression
+        kind: MacroKind::FunctionLike
+        header_indent: 0
+        block_base: Option::None
+        definition_dependencies: dependencies
+        views: InputViews
+            arguments: Option::None
+            groups: Vec::new!
+            literals: Vec::new!
+
+fresh_handle: &Identifier -> U32
+fresh_handle = identifier ->
+    retained = &identifier.tokens.segments[0].construction
+    match *retained
+        Option::Some construction =>
+            kind = &construction.kind
+            match *kind
+                ConstructionKind::Fresh handle => handle
+                _ => 999 as U32
+        Option::None => 999 as U32
+
+copy_controls: &TokenStream -> Result (), SdkError
+copy_controls = stream ->
+    copy = stream.clone!
+    check ((copy.spelling! ?) == "name \t//é\r\n雪{'")
+    check (copy.sources[0].identity == (1 as U64))
+    left = copy.slice (range 0, 12) ?
+    right = copy.slice (range 12, 17) ?
+    joined = left.join &right, JoinBoundary::SourceAdjacent ?
+    check ((joined.spelling! ?) == (stream.spelling! ?))
+    check (joined.sources.len! == 1)
+    check (joined.segments.len! == 5)
+    check (joined.segments[4].context.handle == (77 as U32))
+    whitespace = &joined.segments[1].kind
+    match *whitespace
+        SegmentKind::Whitespace => check true
+        _ => check false
+    line_ending = &joined.segments[3].kind
+    match *line_ending
+        SegmentKind::LineEnding => check true
+        _ => check false
+    origin = &joined.segments[4].origin
+    match *origin
+        Option::Some retained =>
+            provenance = &retained.provenance
+            match *provenance
+                TokenProvenance::Captured captured => check (captured.expansion == (8 as U32))
+                _ => check false
+            projection = &retained.projection
+            match *projection
+                Option::Some projected => check (projected.output_start == (100 as U64))
+                Option::None => check false
+        Option::None => check false
+    separated = left.join &right, JoinBoundary::Separate ?
+    boundary = &separated.segments[4].boundary
+    match *boundary
+        JoinBoundary::Separate => check true
+        _ => check false
+    empty = stream.slice (range 12, 12) ?
+    check ((empty.len_bytes! ?) == (0 as U64))
+    check (empty.anchor.context.handle == (77 as U32))
+    check (empty.anchor.offset == (12 as U64))
+    eof = stream.slice (range 17, 17) ?
+    check (eof.anchor.offset == (17 as U64))
+    Result::Ok ()
+
+range_controls: &TokenStream -> Result (), SdkError
+range_controls = stream ->
+    match stream.slice (range 5, 4)
+        Result::Err error =>
+            match error
+                SdkError::InvalidRange invalid => check (invalid.start == (5 as U64))
+                other => check false
+        other => check false
+    match stream.slice (range 0, 18446744073709551615)
+        Result::Err error =>
+            match error
+                SdkError::InvalidRange invalid => check true
+                other => check false
+        other => check false
+    match stream.slice (range 13, 15)
+        Result::Err error =>
+            match error
+                SdkError::NotCharBoundary offset => check (offset == (13 as U64))
+                other => check false
+        other => check false
+    Result::Ok ()
+
+join_controls: &TokenStream -> Result (), SdkError
+join_controls = stream ->
+    left = stream.slice (range 0, 12) ?
+    right = stream.slice (range 12, 17) ?
+    mut unrelated = right.clone!
+    unrelated.sources[0].identity = 2
+    match left.join &unrelated, JoinBoundary::SourceAdjacent
+        Result::Err error =>
+            match error
+                SdkError::NotSourceAdjacent => check true
+                other => check false
+        other => check false
+    distinct = left.join &unrelated, JoinBoundary::Separate ?
+    check (distinct.sources.len! == 2)
+    mut forged = right.clone!
+    forged.sources[0].file_path = String::from "different.rk"
+    match left.join &forged, JoinBoundary::Separate
+        Result::Err error =>
+            match error
+                SdkError::ConflictingSnapshot identity => check (identity == (1 as U64))
+                other => check false
+        other => check false
+    mut bad_source = stream.clone!
+    bad_source.segments[0].source = 18446744073709551615
+    match bad_source.spelling!
+        Result::Err error =>
+            match error
+                SdkError::InvalidSource source => check true
+                other => check false
+        other => check false
+    "copies/slices/joins".println!
+    Result::Ok ()
+
+cursor_controls: &TokenStream -> Result (), SdkError
+cursor_controls = stream ->
+    mut cursor = stream.cursor!
+    units = 0
+    loop
+        match cursor.consume! ?
+            Option::Some unit =>
+                unit.spelling! ?
+                units = units + 1
+            Option::None => break
+    check (units == 14)
+    check (cursor.byte_offset! == (17 as U64))
+    match cursor.peek! ?
+        Option::None => check true
+        other => check false
+    mut captured = stream.clone!
+    captured.expressions.push (ExpressionRange
+        range: range 0, 4
+        header_indent: 2)
+    mut opaque = captured.cursor!
+    match opaque.consume! ?
+        Option::Some unit =>
+            check ((unit.spelling! ?) == "name")
+            check (unit.expressions.len! == 1)
+        other => check false
+    check (opaque.byte_offset! == (4 as U64))
+    match captured.slice (range 1, 4)
+        Result::Err error =>
+            match error
+                SdkError::InvalidCapture invalid => check true
+                other => check false
+        other => check false
+    mut malformed = stream.clone!
+    malformed.expressions.push (ExpressionRange
+        range: range 0, 999
+        header_indent: 0)
+    match malformed.len_bytes!
+        Result::Err error =>
+            match error
+                SdkError::InvalidCapture invalid => check true
+                other => check false
+        other => check false
+    "cursor/opaque/DSL".println!
+    Result::Ok ()
+
+identifier_controls: &TokenStream -> Result (), SdkError
+identifier_controls = stream ->
+    ctx = context!
+    mut builder = ctx.builder stream ?
+    forwarded = stream.forwarded_ident (range 0, 4) ?
+    check (forwarded.tokens.segments[0].context.handle == (42 as U32))
+    first_half = stream.slice (range 0, 2) ?
+    mut second_half = stream.slice (range 2, 4) ?
+    second_half.segments[0].context.handle = 43
+    mixed = first_half.join &second_half, JoinBoundary::SourceAdjacent ?
+    match mixed.forwarded_ident (range 0, 4)
+        Result::Err error =>
+            match error
+                SdkError::ConflictingContexts => check true
+                other => check false
+        other => check false
+    second_half.segments[0].context.handle = 42
+    separated_name = first_half.join &second_half, JoinBoundary::Separate ?
+    match separated_name.forwarded_ident (range 0, 4)
+        Result::Err error =>
+            match error
+                SdkError::NotSourceAdjacent => check true
+                other => check false
+        other => check false
+    first = builder.fresh_ident (String::from "name") ?
+    second = builder.fresh_ident (String::from "name") ?
+    reused = first.clone!
+    check ((fresh_handle &first) == (0 as U32))
+    check ((fresh_handle &second) == (1 as U32))
+    check ((fresh_handle &reused) == (0 as U32))
+    check (first.tokens.segments[0].context.handle == (0 as U32))
+    public_name = builder.call_site_ident (String::from "name") ?
+    request = &public_name.tokens.segments[0].construction
+    match *request
+        Option::Some construction =>
+            check (construction.invocation == (99 as U64))
+            kind = &construction.kind
+            match *kind
+                ConstructionKind::CallSite => check true
+                _ => check false
+        _ => check false
+    Result::Ok ()
+
+construction_controls: &TokenStream -> Result (), SdkError
+construction_controls = stream ->
+    ctx = context!
+    mut builder = ctx.builder stream ?
+    mut components: Vec String = Vec::new!
+    components.push (String::from "api")
+    components.push (String::from "run")
+    path = builder.dependency_path (0 as U32), components ?
+    check ((path.spelling! ?) == "helper::api::run")
+    path_request = &path.segments[0].construction
+    match *path_request
+        Option::Some construction =>
+            kind = &construction.kind
+            match *kind
+                ConstructionKind::Dependency index => check (index == (0 as U32))
+                _ => check false
+        _ => check false
+    match builder.dependency_path (1 as U32), Vec::new!
+        Result::Err error =>
+            match error
+                SdkError::InvalidDependency index => check (index == (1 as U32))
+                other => check false
+        other => check false
+    match builder.fresh_ident (String::from "x::private")
+        Result::Err error =>
+            match error
+                SdkError::InvalidIdentifier => check true
+                other => check false
+        other => check false
+    grouped = builder.group Delimiter::Paren, stream ?
+    check ((grouped.spelling! ?) == "(name \t//é\r\n雪{')")
+    check (grouped.segments[1].context.handle == (42 as U32))
+    check (grouped.segments[5].context.handle == (77 as U32))
+    group_cursor = grouped.cursor!
+    whole = group_cursor.group (GroupView
+        delimiter: Delimiter::Paren
+        range: range 0, 19) ?
+    check ((whole.len_bytes! ?) == (19 as U64))
+    match group_cursor.group (GroupView
+        delimiter: Delimiter::Bracket
+        range: range 0, 19)
+        Result::Err error =>
+            match error
+                SdkError::InvalidGroup => check true
+                other => check false
+        other => check false
+    "identifiers/paths/groups".println!
+    Result::Ok ()
+
+diagnostic_controls: &TokenStream -> Result (), SdkError
+diagnostic_controls = stream ->
+    ctx = context!
+    mut diagnostic = stream.error (range 12, 15), (String::from "snow") ?
+    diagnostic.label (String::from "also here"), (DiagnosticLocation::Input (range 0, 4))
+    diagnostic.note (String::from "retained source")
+    diagnostic.suggest (String::from "choose a name")
+    check (diagnostic.labels.len! == 1)
+    check (diagnostic.notes.len! == 1)
+    check (diagnostic.help.len! == 1)
+    check (diagnostic.message == "snow")
+    invocation_error = ctx.error (String::from "invocation")
+    check (invocation_error.message == "invocation")
+    "diagnostics".println!
+    Result::Ok ()
+
+empty_controls: &TokenStream -> Result (), SdkError
+empty_controls = stream ->
+    empty = stream.slice (range 0, 0) ?
+    check ((empty.spelling! ?) == "")
+    mut cursor = empty.cursor!
+    match cursor.consume! ?
+        Option::None => check true
+        other => check false
+    ctx = context!
+    mut builder = ctx.builder &empty ?
+    grouped = builder.group Delimiter::Bracket, &empty ?
+    check ((grouped.spelling! ?) == "[]")
+    mut exhausted = empty.clone!
+    exhausted.sources[0].identity = 18446744073709551615
+    match ctx.builder &exhausted
+        Result::Err error =>
+            match error
+                SdkError::IdentityExhausted => check true
+                other => check false
+        other => check false
+    Result::Ok ()
+
+run: () -> Result (), SdkError
+run = ->
+    stream = input!
+    copy_controls &stream ?
+    range_controls &stream ?
+    join_controls &stream ?
+    cursor_controls &stream ?
+    identifier_controls &stream ?
+    construction_controls &stream ?
+    diagnostic_controls &stream ?
+    empty_controls &stream
+
+main = !->
+    match run!
+        Result::Ok unit => "SDK operations passed".println!
+        Result::Err error =>
+            "unexpected SDK operation failure".println!
+            exit (1 as I32)

@@ -6305,6 +6305,45 @@ mod tests {
     }
 
     #[test]
+    fn branch_destinations_are_initialized_only_by_value_writes() {
+        let program = empty_program();
+        let ty = Type::function(vec![], Type::Unit);
+        let value = expr(HirExprKind::Var("callback".to_string()), ty.clone());
+        let arm = match_arm(HirPattern::Wildcard, None, value.clone());
+        for kind in [
+            HirExprKind::If {
+                condition: Box::new(expr(HirExprKind::BoolLiteral(true), Type::Bool)),
+                then_branch: arm.body.clone(),
+                else_branch: Some(arm.body.clone()),
+            },
+            HirExprKind::Match {
+                scrutinee: Box::new(expr(HirExprKind::IntLiteral(0), Type::I64)),
+                arms: vec![
+                    match_arm(HirPattern::Literal(HirLiteralPattern::Int(0)), None, value.clone()),
+                    arm.clone(),
+                ],
+            },
+        ] {
+            let type_context = test_type_context(&program);
+            let mut builder = builder_with_var(&program, &type_context, "callback", ty.clone());
+            builder.blocks.push(BasicBlock { statements: vec![], terminator: None });
+            builder.current_block = Some(BasicBlockId(0));
+            let destination = builder.new_local(builder.type_id_for(&ty), Mutability::Not, None);
+            builder.emit_storage_live(destination, None);
+            let flag = builder.drop_flag_for(destination).unwrap();
+            builder.lower_expr(&expr(kind, ty.clone()), Place { local: destination, projection: vec![] });
+            let initializations = builder.blocks.iter().flat_map(|block| &block.statements)
+                .filter(|statement| matches!(&statement.kind,
+                    StatementKind::Assign(place, Rvalue::Use(Operand::Constant(Constant::Bool(true))))
+                        if place.local == flag))
+                .count();
+            assert_eq!(initializations, 2, "only the two branch writes initialize the destination");
+            let merge = &builder.blocks[builder.current_block.unwrap().0];
+            assert!(merge.statements.is_empty(), "merging control flow must not invent an initialized value");
+        }
+    }
+
+    #[test]
     fn literal_match_uses_value_comparison_not_discriminant() {
         let program = empty_program();
         let type_context = test_type_context(&program);

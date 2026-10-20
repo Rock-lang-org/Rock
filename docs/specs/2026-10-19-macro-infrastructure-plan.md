@@ -1237,6 +1237,62 @@ slice; B.04 CLI gates remain unchanged, not rerun evidence for new SDK workflows
 No functional edits follow the final gates. Formatting remains deferred, Beads
 unavailable, and unrelated untracked work untouched.
 
+### B.06 delivery receipt (2026-10-20)
+
+`rock_macro` now supplies explicit deep copies, checked byte positions/slices,
+identity-remapped stream joins, and an owned cursor over UTF-8 scalars or opaque
+expression captures. These operations preserve spelling/trivia, retained source
+identities, context handles, provenance, diagnostic projections and splice
+boundaries. Invalid ranges, UTF-8/capture cuts, conflicting snapshots and invalid
+adjacency return `operations::SdkError`. Local validation retains the transport
+bounds: 16 MiB source/logical bytes, 1,048,576 entries and capture depth 128.
+
+One `MacroBuilder` per invocation emits symbolic fresh/call-site identifiers,
+definition-dependency paths and delimiter groups. Cloned identifiers preserve
+their symbolic fresh identity; separate fresh requests receive separate handles.
+Forwarded identifiers retain their input context and reject mixed contexts,
+separate boundaries or construction requests. The deliberately small name/path
+helpers accept ASCII names; arbitrary Unicode/DSL input remains available through
+preserved stream slices. Group views check supplied delimiter endpoints without
+certifying nested syntax. Diagnostic builders carry checked input ranges or
+invocation locations, never additional binding authority. The compiler remains
+the authority for returned handles and dependency exports.
+
+The runtime fixture covers copies, Unicode/trivia slices, source identity joins,
+origin/projection preservation, empty streams, unmatched DSL punctuation, opaque
+captures, rejected ranges/contexts/adjacency, symbolic identities, dependency
+paths, groups, diagnostics and exhausted source identities. Its native execution
+is bounded to 15 seconds; the unchanged B.05 data/output and independent missing
+SDK/std controls remain in the same explicit-artifact integration.
+
+Runtime acceptance exposed an existing MIR initialization bug: `if`/`match`
+merges marked destinations initialized without a value write. A discarded match
+with a unit arm consequently dropped uninitialized aggregate storage and hung.
+Branch assignments now own destination initialization; the dedicated MIR
+regression requires exactly the two branch writes, with no initialization at the
+merge. The original SDK mixed-context/separated-name negatives remain intact.
+The rebuilt focused runtime probe passes; temporary probe/tracing code was
+removed. The exact MIR regression passes as well.
+
+Verification evidence:
+
+- `cargo test -p rock-lib --lib mir::builder::tests::branch_destinations_are_initialized_only_by_value_writes -- --exact`
+  passes (one test). `/tmp/opencode/macro-b06-branch-regression.log`, SHA-256
+  `7321da84fe91471ed0af3d6a65e4bf4bd4734ca79e3bbbbacba7d77d46d04dbf`.
+- `cargo check --workspace --all-targets` passes with existing warnings.
+  `/tmp/opencode/macro-b06-check-final.log`, SHA-256
+  `59bb5bfb1de4af5155a569ebfc4ff50c94589a286efd2c316f86538206ab99a0`.
+- `cargo test -p rock-lib` passes: 2,699 units, 803 main integrations, six
+  diagnostic integrations, 14 native-process integrations, one SDK integration
+  (113.27 seconds) and one parser integration; one doctest ignored.
+  `/tmp/opencode/macro-b06-acceptance.log`, SHA-256
+  `91cbf058c0474355cc556165d60c16ec36b158d1000b3330f8f1bdf8383d3a44`.
+
+No wire/artifact format, serialization, worker registration or procedural package
+workflow is added here. Canonical literal preparation and deferred fragment
+materialization remain B.18/B.19. Formatting remains deferred and Beads unavailable.
+No functional edits follow these final gates; unrelated work remains untouched.
+
 The first worker is intentionally built from ordinary Rock code and test-provided
 entry functions. This proves the SDK/runtime seam before the source-declared
 export workflow; it is not permission to require authors to write a dispatcher.
