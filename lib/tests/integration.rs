@@ -20585,9 +20585,7 @@ fn test_function_like_proc_macro_expands_through_public_macro_api() {
     };
     let input_program = rock_lib::parser::parse_string("%integration_macros::make_main", &config).unwrap();
     let rock_lib::ast::TopLevel::MacroInvoc(invocation) = &input_program.module.top_levels[0] else { panic!("expected invocation") };
-    let response = rock_lib::macro_expansion::proc_macro::ProcMacroResponse::Expand {
-        output: encode_generated_main_tokens(invocation.id),
-    };
+    let response = rock_lib::macro_expansion::proc_macro::ProcMacroResponse::expanded(encode_generated_main_tokens(invocation.id));
     let (artifact, temp_dir) = proc_macro_host_with_response(response);
     let expanded = (|| {
         let context = rock_lib::macro_expansion::MacroExpansionContext::new(&config)

@@ -17,6 +17,7 @@ pub struct ProcMacroDependency {
 
 #[derive(Debug)]
 pub struct MacroExpansionContext<'a> {
+    pub(crate) reports: RefCell<Diagnostics>,
     pub config: &'a Config,
     pub max_depth: usize,
     pub proc_macro_artifacts: Vec<ProcMacroDependency>,
@@ -31,6 +32,7 @@ pub struct MacroExpansionContext<'a> {
 impl<'a> MacroExpansionContext<'a> {
     pub fn new(config: &'a Config) -> Self {
         Self {
+            reports: RefCell::new(Diagnostics::default()),
             config,
             max_depth: 100,
             proc_macro_artifacts: Vec::new(),

@@ -660,6 +660,7 @@ fn expand_config(config: Config) -> Result<(), Diagnostics> {
         return Err(diagnostics_from_message("Missing required --entry-file for --expand"));
     }
     let expanded = rock_lib::expand(&config.into_compiler_config()?)?;
+    expanded.diagnostics.report();
     expanded.ast.visit(&mut ModulePrinter);
     for module in &expanded.modules { ModulePrinter.visit_module(&module.module); }
     Ok(())

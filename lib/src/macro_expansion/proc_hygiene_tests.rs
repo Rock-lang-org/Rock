@@ -25,7 +25,7 @@ fn join(parts: &[TokenStream]) -> TokenStream {
 }
 
 fn expand(program: Program, output: TokenStream, dependencies: Vec<ProductCrateIdentity>) -> Result<(Program, BindingEnvironments), crate::diagnostic::Diagnostics> {
-    let response = ProcMacroResponse::Expand { output: encode_stream(&output).unwrap() };
+    let response = ProcMacroResponse::expanded(encode_stream(&output).unwrap());
     let (mut artifact, directory) = super::tests::proc_macro_artifact_with_response("make", response);
     artifact.definition_dependencies = dependencies.clone();
     let request_path = artifact.executable.with_extension("request");

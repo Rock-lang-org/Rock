@@ -7,12 +7,13 @@ use std::time::{Duration, Instant};
 use bincode::Options;
 use serde::{Deserialize, Serialize};
 
-use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
-use crate::lexer::Span;
 use crate::ast::{InvocationId, MacroOutputCategory};
 use super::{ExpansionId, TokenStream};
 
-pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 6;
+mod schema;
+pub use schema::*;
+
+pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 7;
 pub const MAX_PROC_MACRO_MESSAGE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,8 +64,14 @@ pub struct ProcMacroRequest {
     pub invocation_id: InvocationId,
     pub parent: Option<ExpansionId>,
     pub output_category: MacroOutputCategory,
+    pub kind: ProcMacroKind,
+    pub header_indent: usize,
+    pub block_base: Option<usize>,
+    #[serde(deserialize_with = "crate::serialization::bounded_vec::<'de, _, _, 1048576>")]
     pub input: Vec<u8>,
+    #[serde(deserialize_with = "crate::serialization::bounded_vec::<'de, _, _, MAX_METADATA_ENTRIES>")]
     pub definition_dependencies: Vec<crate::products::ProductCrateIdentity>,
+    pub views: ProcMacroViews,
 }
 
 impl ProcMacroRequest {
@@ -77,59 +84,40 @@ impl ProcMacroRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ProcMacroResponse {
-    Expand { output: Vec<u8> },
-    Diagnostics { messages: Vec<String> },
-}
-
-impl ProcMacroResponse {
-    pub fn into_diagnostics_at(self, macro_name: &str, span: Span) -> Diagnostics {
-        let mut diagnostics = Diagnostics::default();
-        match self {
-            ProcMacroResponse::Expand { .. } => {}
-            ProcMacroResponse::Diagnostics { messages } => {
-                for message in messages {
-                    diagnostics.push(
-                        Diagnostic::new(
-                            format!("Proc macro '{}' failed: {}", macro_name, message),
-                            span.clone(),
-                        )
-                        .with_code(DiagnosticCode::Macro),
-                    );
-                }
-            }
-        }
-        diagnostics
-    }
-}
-
 pub fn encode_request(request: &ProcMacroRequest) -> Result<Vec<u8>, bincode::Error> {
-    bincode::DefaultOptions::new()
+    let bytes = bincode::DefaultOptions::new()
         .with_limit(MAX_PROC_MACRO_MESSAGE_BYTES)
-        .serialize(request)
+        .serialize(request)?;
+    request.validate().map_err(protocol_error)?;
+    Ok(bytes)
 }
 
 pub fn decode_request(bytes: &[u8]) -> Result<ProcMacroRequest, bincode::Error> {
+    check_size(bytes)?;
+    check_version(bytes)?;
     let request: ProcMacroRequest = bincode::DefaultOptions::new()
         .with_limit(MAX_PROC_MACRO_MESSAGE_BYTES)
         .deserialize(bytes)?;
-    if request.protocol_version != PROC_MACRO_PROTOCOL_VERSION {
-        return Err(Box::new(bincode::ErrorKind::Custom("unsupported proc macro protocol version".into())));
-    }
+    request.validate().map_err(protocol_error)?;
     Ok(request)
 }
 
 pub fn encode_response(response: &ProcMacroResponse) -> Result<Vec<u8>, bincode::Error> {
-    bincode::DefaultOptions::new()
+    let bytes = bincode::DefaultOptions::new()
         .with_limit(MAX_PROC_MACRO_MESSAGE_BYTES)
-        .serialize(response)
+        .serialize(response)?;
+    response.validate().map_err(protocol_error)?;
+    Ok(bytes)
 }
 
 pub fn decode_response(bytes: &[u8]) -> Result<ProcMacroResponse, bincode::Error> {
-    bincode::DefaultOptions::new()
+    check_size(bytes)?;
+    check_version(bytes)?;
+    let response: ProcMacroResponse = bincode::DefaultOptions::new()
         .with_limit(MAX_PROC_MACRO_MESSAGE_BYTES)
-        .deserialize(bytes)
+        .deserialize(bytes)?;
+    response.validate().map_err(protocol_error)?;
+    Ok(response)
 }
 
 pub fn encode_stream(stream: &TokenStream) -> Result<Vec<u8>, bincode::Error> {
@@ -139,10 +127,27 @@ pub fn encode_stream(stream: &TokenStream) -> Result<Vec<u8>, bincode::Error> {
 }
 
 pub fn decode_stream(bytes: &[u8]) -> Result<TokenStream, bincode::Error> {
+    check_size(bytes)?;
     bincode::DefaultOptions::new()
         .with_limit(MAX_PROC_MACRO_MESSAGE_BYTES)
         .deserialize(bytes)
 }
+
+fn protocol_error(message: String) -> bincode::Error { Box::new(bincode::ErrorKind::Custom(message)) }
+
+fn check_size(bytes: &[u8]) -> Result<(), bincode::Error> {
+    if bytes.len() as u64 > MAX_PROC_MACRO_MESSAGE_BYTES { Err(Box::new(bincode::ErrorKind::SizeLimit)) } else { Ok(()) }
+}
+
+fn check_version(bytes: &[u8]) -> Result<(), bincode::Error> {
+    let version: u32 = bincode::DefaultOptions::new().with_limit(MAX_PROC_MACRO_MESSAGE_BYTES)
+        .deserialize_from(std::io::Cursor::new(bytes))?;
+    if version != PROC_MACRO_PROTOCOL_VERSION { return Err(protocol_error("unsupported proc macro protocol version".into())); }
+    Ok(())
+}
+
+#[cfg(test)]
+mod wire_tests;
 
 fn read_limited_to_end(mut reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
     let mut output = Vec::new();
@@ -185,12 +190,10 @@ pub fn run_proc_macro_process(
     timeout: Duration,
 ) -> Result<ProcMacroResponse, String> {
     if artifact.protocol_version != PROC_MACRO_PROTOCOL_VERSION || request.protocol_version != PROC_MACRO_PROTOCOL_VERSION {
-        return Ok(ProcMacroResponse::Diagnostics {
-            messages: vec![format!(
+        return Ok(ProcMacroResponse::failure(vec![format!(
                 "protocol version mismatch: artifact={}, request={}",
                 artifact.protocol_version, request.protocol_version
-            )],
-        });
+            )]));
     }
 
     let request_bytes = encode_request(request).map_err(|err| err.to_string())?;
@@ -243,9 +246,7 @@ pub fn run_proc_macro_process(
             let _ = join_io_thread(stdin_handle, "stdin");
             let _ = join_io_thread(stdout_handle, "stdout");
             let _ = join_io_thread(stderr_handle, "stderr");
-            return Ok(ProcMacroResponse::Diagnostics {
-                messages: vec!["proc macro timed out".to_string()],
-            });
+            return Ok(ProcMacroResponse::failure(vec!["proc macro timed out".to_string()]));
         }
 
         if let Some(status) = child.try_wait().map_err(|err| err.to_string())? {
@@ -254,14 +255,14 @@ pub fn run_proc_macro_process(
             let _stderr = join_io_thread(stderr_handle, "stderr")?;
 
             if !status.success() {
-                return Ok(ProcMacroResponse::Diagnostics {
-                    messages: vec![format!("proc macro exited with {}", status)],
-                });
+                return Ok(ProcMacroResponse::failure(vec![format!("proc macro exited with {}", status)]));
             }
 
             stdin_result?;
 
-            return decode_response(&stdout).map_err(|err| err.to_string());
+            let response = decode_response(&stdout).map_err(|err| err.to_string())?;
+            response.validate_for(request)?;
+            return Ok(response);
         }
 
         std::thread::sleep(Duration::from_millis(5));
@@ -276,7 +277,7 @@ mod tests {
 
     #[test]
     fn proc_macro_protocol_version_tracks_enriched_request_shape() {
-        assert_eq!(PROC_MACRO_PROTOCOL_VERSION, 6);
+        assert_eq!(PROC_MACRO_PROTOCOL_VERSION, 7);
     }
 
     #[test]
@@ -291,7 +292,9 @@ mod tests {
             invocation_id: InvocationId::fresh().unwrap(),
             parent: None,
             output_category: MacroOutputCategory::Items,
-            input: Vec::new(),
+            kind: ProcMacroKind::FunctionLike,
+            header_indent: 0, block_base: None, views: Default::default(),
+            input: encode_stream(&super::super::token_tree::source("")).unwrap(),
             definition_dependencies: Vec::new(),
         };
         let encoded = encode_request(&request).unwrap();
@@ -299,11 +302,11 @@ mod tests {
 
         assert_eq!(decoded.macro_name, "make_main");
 
-        let response = ProcMacroResponse::Expand { output: Vec::new() };
+        let response = ProcMacroResponse::expanded(encode_stream(&super::super::token_tree::source("")).unwrap());
         let encoded = encode_response(&response).unwrap();
         let decoded = decode_response(&encoded).unwrap();
 
-        assert!(matches!(decoded, ProcMacroResponse::Expand { .. }));
+        assert!(decoded.output.is_some());
     }
 
     #[test]
@@ -318,7 +321,9 @@ mod tests {
             invocation_id: InvocationId::fresh().unwrap(),
             parent: Some(ExpansionId(3)),
             output_category: MacroOutputCategory::Expression,
-            input: vec![1, 2, 3],
+            kind: ProcMacroKind::FunctionLike,
+            header_indent: 0, block_base: None, views: Default::default(),
+            input: encode_stream(&super::super::token_tree::source("\"é\" /* trivia */")).unwrap(),
             definition_dependencies: Vec::new(),
         };
         let decoded = decode_request(&encode_request(&request).unwrap()).unwrap();
@@ -391,6 +396,8 @@ mod tests {
             invocation_id: InvocationId::fresh().unwrap(),
             parent: None,
             output_category: MacroOutputCategory::Items,
+            kind: ProcMacroKind::FunctionLike,
+            header_indent: 0, block_base: None, views: Default::default(),
             input: vec![0; OVERSIZED_PAYLOAD_BYTES],
             definition_dependencies: Vec::new(),
         };
@@ -401,9 +408,7 @@ mod tests {
 
     #[test]
     fn decode_response_rejects_oversized_payload() {
-        let response = ProcMacroResponse::Expand {
-            output: vec![0; OVERSIZED_PAYLOAD_BYTES],
-        };
+        let response = ProcMacroResponse::expanded(vec![0; OVERSIZED_PAYLOAD_BYTES]);
         let encoded = bincode::serialize(&response).unwrap();
 
         assert!(decode_response(&encoded).is_err());
@@ -431,6 +436,8 @@ mod tests {
             invocation_id: InvocationId::fresh().unwrap(),
             parent: None,
             output_category: MacroOutputCategory::Items,
+            kind: ProcMacroKind::FunctionLike,
+            header_indent: 0, block_base: None, views: Default::default(),
             input: Vec::new(),
             definition_dependencies: Vec::new(),
         };
@@ -439,7 +446,7 @@ mod tests {
             .expect("protocol mismatch should not fail the runner");
 
         assert!(
-            matches!(response, ProcMacroResponse::Diagnostics { messages } if messages[0].contains("protocol version mismatch"))
+            response.diagnostics[0].message.contains("protocol version mismatch")
         );
     }
 
@@ -465,6 +472,8 @@ mod tests {
             invocation_id: InvocationId::fresh().unwrap(),
             parent: None,
             output_category: MacroOutputCategory::Items,
+            kind: ProcMacroKind::FunctionLike,
+            header_indent: 0, block_base: None, views: Default::default(),
             input: vec![0; OVERSIZED_PAYLOAD_BYTES],
             definition_dependencies: Vec::new(),
         };

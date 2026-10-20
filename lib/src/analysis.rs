@@ -16,6 +16,7 @@ pub struct Analysis {
     pub ast: Program,
     pub hir: ResolvedHirProgram,
     pub macro_source_map: crate::macro_expansion::MacroSourceMap,
+    pub macro_diagnostics: crate::diagnostic::Diagnostics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

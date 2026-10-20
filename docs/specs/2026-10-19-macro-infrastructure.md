@@ -940,6 +940,10 @@ invalid UTF-8/ranges/coverage and source/context/dependency handles. Unknown sou
 characters are preserved data, not unknown wire variants. Never deserialize
 unchecked compiler identities or assume that Rust memory layout is a wire format.
 
+The current Rust contract and shared golden-message locations are specified in
+[the worker wire contract](2026-10-19-macro-worker-wire.md); SDK interoperability
+is established separately by the staged acceptance plan.
+
 Stdout is protocol-only. Capture bounded stderr for developer diagnostics without
 treating it as expansion tokens. Keep one fresh worker per invocation initially;
 worker pooling is not required and must not leak mutable global macro state.

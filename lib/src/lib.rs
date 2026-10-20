@@ -41,6 +41,7 @@ pub mod selection;
 mod semantic_identity_audit;
 pub mod source_loader;
 pub mod source_map;
+mod serialization;
 pub mod sysroot;
 pub mod traits;
 pub mod type_context;
@@ -153,6 +154,7 @@ pub struct Expansion {
     pub ast: Program,
     pub modules: Vec<source_loader::LoadedModule>,
     pub source_map: macro_expansion::MacroSourceMap,
+    pub diagnostics: Diagnostics,
 }
 
 /// Use exactly compilation's dependency loading, discovery and expansion engine,
@@ -161,10 +163,11 @@ pub fn expand(config: &Config) -> Result<Expansion, Diagnostics> {
     let expanded = expand_frontend(config)?;
     let modules = expanded.source_graph.modules().filter(|module|
         Some(&module.path) != expanded.ast.module.filepath.as_ref()).cloned().collect();
-    Ok(Expansion { ast: expanded.ast, modules, source_map: expanded.macro_source_map })
+    Ok(Expansion { ast: expanded.ast, modules, source_map: expanded.macro_source_map, diagnostics: expanded.macro_diagnostics })
 }
 
 struct ExpandedFrontend {
+    macro_diagnostics: Diagnostics,
     ast: Program,
     ctx: CrateContext,
     source_graph: source_loader::ModuleGraph,
@@ -229,13 +232,14 @@ fn expand_frontend(config: &Config) -> Result<ExpandedFrontend, Diagnostics> {
     }
 
     let binding_environments = macro_context.binding_environments.borrow().clone();
+    let macro_diagnostics = macro_source_map.map_diagnostics(std::mem::take(&mut *macro_context.reports.borrow_mut())).with_sources(&diagnostic_sources);
     Ok(ExpandedFrontend { ast, ctx, source_graph, source_db, diagnostic_sources, macro_source_map,
-        binding_environments, effective_current_crate_name })
+        binding_environments, effective_current_crate_name, macro_diagnostics })
 }
 
 fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
     let ExpandedFrontend { ast, ctx, source_graph, source_db, diagnostic_sources, macro_source_map,
-        binding_environments, effective_current_crate_name } = expand_frontend(config)?;
+        binding_environments, effective_current_crate_name, macro_diagnostics } = expand_frontend(config)?;
 
     let declarations = collect::collect_with_binding_environments(
         &ast,
@@ -266,7 +270,7 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
     }
 
     Ok(FrontendOutput {
-        analysis: analysis::Analysis { ast, hir, macro_source_map },
+        analysis: analysis::Analysis { ast, hir, macro_source_map, macro_diagnostics },
         crate_ctx: ctx,
         diagnostic_sources,
         loaded_prelude_export_ids,
@@ -279,7 +283,7 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
 
 fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, Diagnostics> {
     let FrontendOutput {
-        analysis: analysis::Analysis { ast, hir, macro_source_map },
+        analysis: analysis::Analysis { ast, hir, macro_source_map, macro_diagnostics },
         crate_ctx: ctx,
         diagnostic_sources,
         loaded_prelude_export_ids,
@@ -288,6 +292,7 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
         source_db,
         effective_current_crate_name,
     } = compile_frontend(config)?;
+    macro_diagnostics.report();
     let crate_ctx = &ctx;
 
     let source_fingerprint =

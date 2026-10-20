@@ -11,7 +11,7 @@ use self::{
     correspondances::Correspondance,
     declarative::DeclarativeMacro,
     macro_arg_matcher::MacroArgMatcher,
-    proc_macro::{ProcMacroKind, ProcMacroRequest, ProcMacroResponse},
+    proc_macro::{ProcMacroKind, ProcMacroRequest},
     registry::ProcMacroRegistryEntry,
 };
 
@@ -311,8 +311,16 @@ fn expand_proc_macro_top_level(
         invocation_id: invocation.id,
         parent: invocation.parent,
         output_category: invocation.output,
+        kind: entry.export.kind.clone(),
+        header_indent: invocation.header_indent,
+        block_base: invocation.block.as_ref().map(|block| block.body_indent),
         input,
         definition_dependencies: entry.artifact.definition_dependencies.clone(),
+        views: proc_macro::ProcMacroViews {
+            arguments: (invocation.block.is_none() && (!invocation.arguments.is_empty() || args.len_bytes() == 0))
+                .then(|| proc_macro::ProcMacroArguments { ranges: invocation.arguments.clone() }),
+            ..Default::default()
+        },
     };
 
     let response =
@@ -325,33 +333,31 @@ fn expand_proc_macro_top_level(
                 )
             })?;
 
-    let output = match response {
-        ProcMacroResponse::Expand { output } => output,
-        diagnostics @ ProcMacroResponse::Diagnostics { .. } => {
-            return Err(with_expansion_trace(
-                diagnostics.into_diagnostics_at(&entry.export.name, invoc_span),
-                context,
-                expansion_id,
-            ));
+    let mut output = args.slice(0..0, token_tree::MACRO_LIMITS).map_err(|error|
+        proc_macro_error(format!("Failed to anchor macro output: {error:?}"), invoc_span.clone()))?;
+    if let Some(result) = &response.output {
+        for part in &result.parts {
+            let proc_macro::ProcMacroPart::Stream(bytes) = part else {
+                return Err(with_expansion_trace(proc_macro_error("deferred procedural output fragments are not implemented", invoc_span), context, expansion_id));
+            };
+            let stream = proc_macro::decode_stream(bytes).map_err(|error|
+                with_expansion_trace(proc_macro_error(format!("Failed to decode proc macro output: {error}"), invoc_span.clone()), context, expansion_id))?;
+            output = output.join(&stream, crate::lexer::lossless::JoinBoundary::Separate, token_tree::MACRO_LIMITS)
+                .map_err(|error| proc_macro_error(format!("Failed to join proc output parts: {error:?}"), invoc_span.clone()))?;
         }
-    };
-
-    let output = proc_macro::decode_stream(&output).map_err(|err| {
-        with_expansion_trace(
-            proc_macro_error(
-                format!("Failed to decode proc macro output: {}", err),
-                invoc_span,
-            ),
-            context,
-            expansion_id,
-        )
-    })?;
+    }
     let generated_source = context
         .generated_source_id(expansion_id)
         .unwrap_or(GeneratedSourceId(0));
     let stream = output.resolve_proc_output(args, invocation.id, expansion_id, generated_source,
         |request| context.construction_context(request, invocation, &entry.artifact.definition_dependencies))
         .map_err(|message| with_expansion_trace(proc_macro_error(message, invocation.span.clone()), context, expansion_id))?;
+    let projected = context.project_output(&stream, expansion_id);
+    let diagnostics = response.diagnostics_at(&request, invoc_span, Some(&projected));
+    if diagnostics.0.iter().any(|diagnostic| diagnostic.severity == crate::diagnostic::DiagnosticSeverity::Error) {
+        return Err(with_expansion_trace(diagnostics, context, expansion_id));
+    }
+    context.reports.borrow_mut().merge(diagnostics);
     parse_generated_top_levels(stream, context, Some(expansion_id))
 }
 
@@ -496,7 +502,7 @@ mod tests {
         let stream = TokenStream::source_fragment(text.into(), crate::lexer::lossless::ConstructionContext {
             invocation: invocation.id, kind: crate::lexer::lossless::ConstructionKind::CallSite,
         }, token_tree::MACRO_LIMITS).unwrap();
-        proc_macro::ProcMacroResponse::Expand { output: proc_macro::encode_stream(&stream).unwrap() }
+        proc_macro::ProcMacroResponse::expanded(proc_macro::encode_stream(&stream).unwrap())
     }
 
     pub(super) fn proc_macro_artifact_with_response(
@@ -734,9 +740,7 @@ macro repeat_b
         let config = test_config();
         let (artifact, temp_dir) = proc_macro_artifact_with_response(
             "fail_macro",
-            proc_macro::ProcMacroResponse::Diagnostics {
-                messages: vec!["boom".to_string()],
-            },
+            proc_macro::ProcMacroResponse::failure(vec!["boom".to_string()]),
         );
         let input_program = parse_string("%test_macros::fail_macro", &config).unwrap();
         let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
@@ -763,9 +767,7 @@ macro repeat_b
         let config = test_config();
         let (artifact, temp_dir) = proc_macro_artifact_with_response(
             "fail_macro",
-            proc_macro::ProcMacroResponse::Diagnostics {
-                messages: vec!["boom".to_string()],
-            },
+            proc_macro::ProcMacroResponse::failure(vec!["boom".to_string()]),
         );
         let input_program = parse_string("%test_macros::fail_macro", &config).unwrap();
         let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);

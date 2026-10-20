@@ -16,6 +16,8 @@ impl InvocationId {
 }
 
 impl NodeId {
+    pub(crate) fn is_valid(self) -> bool { self.0 != 0 }
+
     pub fn fresh() -> Result<Self, &'static str> {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))

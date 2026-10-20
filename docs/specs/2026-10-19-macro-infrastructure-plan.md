@@ -973,6 +973,60 @@ test needs its own bounded cleanup/watchdog. One fresh worker per invocation,
 protocol-only stdout, bounded diagnostic stderr, and no execution on import are
 requirements from the first runnable path, not deferred hardening.
 
+### B.01 delivery receipt (2026-10-20)
+
+The enriched one-shot schema is specified in
+[`2026-10-19-macro-worker-wire.md`](2026-10-19-macro-worker-wire.md).
+Requests carry kind/category, invocation/layout/dependency handles, shared
+lossless input and optional argument/group/literal views. Results carry ordered
+lossless/deferred-fragment parts and structured diagnostics together, including
+successful warnings. There is no raw-string input alternative, AST projection,
+worker-supplied diagnostic path, or callback channel. Output-part splices do not
+silently glue even contiguous forwarded spelling; explicit adjacency within a
+lossless stream remains retained.
+
+Protocol 7 and product format 53 replace their predecessors without compatibility
+readers. Rust codecs retain bincode's existing limited/default-options encoding,
+validate version headers before payload decoding, bound declared sequence counts
+before element allocation, and reject malformed UTF-8, tags, trailing/truncated
+data, invalid view/mapping coverage, zero/duplicate snapshot identities, invalid
+layout and forged/cross-invocation/dependency/literal/diagnostic handles. Returned
+streams are reauthorized against the original compiler input before generated
+parsing. Warning reports retain severity/labels/notes/help through expansion and
+analysis APIs, compiler/expansion CLIs, and successful LSP analysis.
+
+Three byte-exact shared hex goldens under `lib/tests/fixtures/macros/protocol-7/`
+cover the enriched request, success-with-warning/fragment result, and failure
+result. They fix only fixture handle values, not runtime identities. Canonical
+literal preparation remains B.18 and deferred fragment materialization B.19;
+using those output descriptors before that implementation fails explicitly.
+The schema tests do not establish the later Rock SDK or package workflow, and
+whole-process deadline/descendant hardening remains B.02/B.03.
+
+Final functional snapshot acceptance:
+
+- `cargo test -p rock-lib macro_b_01_`: ten units pass. Log
+  `/tmp/opencode/macro-b01-focused-terminal.log`, SHA-256
+  `7f6b9e2a17874c0bd35d0b21e124c3d0c6a1189453caeecdb336e7cf2188b6a2`.
+- `cargo test -p rock-lib`: 2,698 units, 803 main integrations, six macro
+  diagnostic integrations and one parser integration pass; one doctest ignored.
+  `/tmp/opencode/macro-b01-acceptance-terminal.log`, SHA-256
+  `384ec631653d62295de66dae413af620750c533f52f2bd7a9151bc3029371911`.
+- `cargo test -p rockc -p rock -p rock-shared -p rock-lsp`: 50 compiler CLI,
+  86 application CLI, 26 shared, and five LSP units plus one shared doctest pass.
+  Current `ROCKC` and explicit `ROCK_SYSROOT=/tmp/opencode/macro-b01-sysroot`
+  use std rebuilt by `rockup dev std package`. Log
+  `/tmp/opencode/macro-b01-cli-terminal.log`, SHA-256
+  `b1848887bc344362bf852a5548422f75f96f9ca51fceed213fa443428aa00e78`.
+
+No functional edits follow these gates.
+
+Earlier candidates exposed an unchanged A.14 negative's diagnostic wording and
+a synthetic fixed-handle test accidentally choosing the same fresh invocation;
+both are repaired without weakening authority negatives. Final review added the
+explicit output-part non-gluing regression, and the terminal gates supersede the
+preceding passing candidate. Formatting remains deferred and Beads unavailable.
+
 ### Bb. Bootstrap the SDK without macros or compiler callbacks
 
 | Slice | Implement only | Focused acceptance | Runner |

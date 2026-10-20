@@ -62,7 +62,7 @@ impl LosslessStream {
         for fragment in &self.expressions {
             let range = &fragment.range;
             self.checked_range(range)?;
-            if range.is_empty() || previous.is_some_and(|start| range.start < start) {
+            if range.is_empty() || fragment.header_indent > 16 * 1024 * 1024 || previous.is_some_and(|start| range.start < start) {
                 return Err(LosslessError::InvalidExpressionFragment);
             }
             while stack.last().is_some_and(|outer| outer.end <= range.start) { stack.pop(); }

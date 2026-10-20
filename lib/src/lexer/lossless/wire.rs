@@ -52,9 +52,12 @@ struct WireRef<'a> {
 #[derive(Serialize, Deserialize)]
 struct WireOwned {
     magic: [u8; 8],
+    #[serde(deserialize_with = "crate::serialization::bounded_vec::<'de, _, _, MAX_RUNS>")]
     sources: Vec<SourceSnapshot>,
+    #[serde(deserialize_with = "crate::serialization::bounded_vec::<'de, _, _, MAX_RUNS>")]
     runs: Vec<WireRun>,
     anchor: WireAnchor,
+    #[serde(deserialize_with = "crate::serialization::bounded_vec::<'de, _, _, MAX_RUNS>")]
     expressions: Vec<super::fragments::ExpressionRange>,
 }
 
@@ -96,11 +99,12 @@ impl<'de> Deserialize<'de> for LosslessStream {
             return Err(serde::de::Error::custom("lossless source/run limit exceeded"));
         }
         let mut bytes = 0usize;
+        let mut identities = std::collections::HashSet::new();
         let mut sources = Vec::new();
         sources.try_reserve_exact(wire.sources.len()).map_err(serde::de::Error::custom)?;
         for source in wire.sources {
             bytes = bytes.checked_add(source.text.len()).ok_or_else(|| serde::de::Error::custom("source length overflow"))?;
-            if bytes > MAX_BYTES || source.file_path.as_os_str().is_empty() {
+            if bytes > MAX_BYTES || source.file_path.as_os_str().is_empty() || source.identity == 0 || !identities.insert(source.identity) {
                 return Err(serde::de::Error::custom("invalid lossless source table"));
             }
             sources.push(Arc::new(source));
@@ -213,5 +217,16 @@ mod tests {
             projection: Some(OutputProjection { namespace: 0, expansion: ExpansionId(1), generated_source: GeneratedSourceId(1), source_start: 1, output_start: 0 }) });
         rejects(wire);
         let mut wire = valid(); wire.magic = *b"RKLOSS03"; rejects(wire);
+    }
+
+    #[test]
+    fn macro_b_01_wire_rejects_zero_or_duplicate_snapshot_handles() {
+        let mut wire = valid(); wire.sources[0].identity = 0; rejects(wire);
+        let mut wire = valid();
+        wire.sources.push(SourceSnapshot { identity: wire.sources[0].identity, file_path: "/other.rk".into(), text: "other".into() });
+        rejects(wire);
+        let mut wire = valid();
+        wire.expressions = vec![super::super::fragments::ExpressionRange { range: 0..2, header_indent: usize::MAX }];
+        rejects(wire);
     }
 }

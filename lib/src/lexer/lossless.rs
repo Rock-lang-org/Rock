@@ -92,6 +92,16 @@ struct SourceSnapshot {
     text: String,
 }
 
+#[cfg(test)]
+pub(crate) fn golden_source(text: &str) -> LosslessStream {
+    let mut stream = LosslessStream::from_bytes("/golden.rk".into(), text.as_bytes().to_vec(),
+        crate::macro_expansion::token_tree::MACRO_LIMITS).unwrap();
+    let source = Arc::new(SourceSnapshot { identity: 1, file_path: "/golden.rk".into(), text: text.into() });
+    stream.anchor.source = Arc::clone(&source);
+    for run in &mut stream.runs { run.source = Arc::clone(&source); }
+    stream
+}
+
 impl SourceSnapshot {
     fn new(file_path: PathBuf, text: String) -> Result<Self, LosslessError> {
         static NEXT: AtomicU64 = AtomicU64::new(1);

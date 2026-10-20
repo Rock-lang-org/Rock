@@ -6,7 +6,7 @@ use super::interpretation::{PieceKind, RockError, RockView};
 use super::lossless::{JoinBoundary, LosslessError, LosslessStream, ScanLimits};
 use super::{Span, TokenType};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Delimiter {
     Paren,
     Bracket,

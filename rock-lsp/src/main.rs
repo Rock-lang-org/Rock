@@ -160,13 +160,15 @@ impl Backend {
 
         match analysis {
             Ok(analysis) => {
+                let diagnostics = analysis.macro_diagnostics.0.iter().filter_map(|diagnostic|
+                    diagnostic_to_lsp(diagnostic, &uri, &document.text)).collect();
                 self.state
                     .write()
                     .await
                     .analyses
                     .insert(uri.clone(), Arc::new(analysis));
                 self.client
-                    .publish_diagnostics(uri, Vec::new(), Some(document.version))
+                    .publish_diagnostics(uri, diagnostics, Some(document.version))
                     .await;
             }
             Err(diagnostics) => {
