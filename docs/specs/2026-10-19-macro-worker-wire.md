@@ -105,8 +105,26 @@ In addition to the envelope limit, metadata lists have at most 16,384 entries;
 declared sequence counts reject before element allocation. Lossless tables/runs
 and opaque captures retain their 1,048,576-entry and 16 MiB spelling limits.
 Group/capture nesting is at most 128. Expanded fragment spelling is limited to
-1 MiB for a response; checked lengths precede concatenation. Full process-IO
-deadline/cancellation hardening belongs to B.02, not this schema delivery.
+1 MiB for a response; checked lengths precede concatenation.
+
+## Process IO
+
+The Unix execution host pumps all three pipes nonblockingly under one deadline,
+starting before request encoding and continuing through writes, bounded stdout
+and stderr reads, response validation, and successful worker termination. A
+valid response alone is not success: nonzero exit, crash, unfinished shutdown,
+broken request IO, malformed response, and oversized streams fail. No transport
+reader/writer threads or blocking IO joins remain. Error reports retain the
+selected export identity and at most 4 KiB of stderr bytes, using lossy UTF-8
+only for that developer context, never for syntax or wire input.
+
+Every invocation has a private process group. The runner observes leader exit
+without reaping it, terminates its group while the group ID is still reserved,
+then reaps the leader and closes the pipes. Unsupported hosts reject execution
+before spawning, instead of using an unbounded fallback. Explicit cancellation
+and dedicated descendant-cleanup acceptance are B.03. Native macro code remains
+trusted host code, not sandboxed code; intentionally escaping the process group
+is not a supported worker lifecycle.
 
 Byte-exact lowercase hex fixtures live in
 `lib/tests/fixtures/macros/protocol-7/`: `request.hex`, `response.hex`, and

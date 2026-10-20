@@ -1,7 +1,4 @@
-use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use bincode::Options;
@@ -11,6 +8,7 @@ use crate::ast::{InvocationId, MacroOutputCategory};
 use super::{ExpansionId, TokenStream};
 
 mod schema;
+mod transport;
 pub use schema::*;
 
 pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 7;
@@ -148,125 +146,25 @@ fn check_version(bytes: &[u8]) -> Result<(), bincode::Error> {
 
 #[cfg(test)]
 mod wire_tests;
-
-fn read_limited_to_end(mut reader: impl Read, limit: u64) -> Result<Vec<u8>, String> {
-    let mut output = Vec::new();
-    let mut buffer = [0; 8192];
-
-    loop {
-        let bytes_read = reader.read(&mut buffer).map_err(|err| err.to_string())?;
-        if bytes_read == 0 {
-            return Ok(output);
-        }
-
-        if output.len() as u64 + bytes_read as u64 > limit {
-            return Err(format!(
-                "exceeded maximum proc macro message size of {} bytes",
-                limit
-            ));
-        }
-
-        output.extend_from_slice(&buffer[..bytes_read]);
-    }
-}
-
-fn join_io_thread<T>(
-    handle: JoinHandle<Result<T, String>>,
-    stream_name: &str,
-) -> Result<T, String> {
-    handle
-        .join()
-        .map_err(|_| format!("proc macro {} thread panicked", stream_name))?
-}
-
-fn kill_and_wait(child: &mut Child) {
-    let _ = child.kill();
-    let _ = child.wait();
-}
+#[cfg(test)]
+mod process_tests;
 
 pub fn run_proc_macro_process(
     artifact: &ProcMacroArtifact,
     request: &ProcMacroRequest,
     timeout: Duration,
 ) -> Result<ProcMacroResponse, String> {
+    let started = Instant::now();
+    let describe = |cause| format!("Proc macro '{}' ({}): {cause}", request.macro_name, request.macro_identity);
     if artifact.protocol_version != PROC_MACRO_PROTOCOL_VERSION || request.protocol_version != PROC_MACRO_PROTOCOL_VERSION {
-        return Ok(ProcMacroResponse::failure(vec![format!(
+        return Err(describe(format!(
                 "protocol version mismatch: artifact={}, request={}",
                 artifact.protocol_version, request.protocol_version
-            )]));
+            )));
     }
 
-    let request_bytes = encode_request(request).map_err(|err| err.to_string())?;
-
-    let mut child = Command::new(&artifact.executable)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("failed to start proc macro: {}", err))?;
-
-    let mut child_stdin = match child.stdin.take() {
-        Some(stdin) => stdin,
-        None => {
-            kill_and_wait(&mut child);
-            return Err("proc macro stdin unavailable".to_string());
-        }
-    };
-    let child_stdout = match child.stdout.take() {
-        Some(stdout) => stdout,
-        None => {
-            kill_and_wait(&mut child);
-            return Err("proc macro stdout unavailable".to_string());
-        }
-    };
-    let child_stderr = match child.stderr.take() {
-        Some(stderr) => stderr,
-        None => {
-            kill_and_wait(&mut child);
-            return Err("proc macro stderr unavailable".to_string());
-        }
-    };
-
-    let stdin_handle = std::thread::spawn(move || {
-        child_stdin
-            .write_all(&request_bytes)
-            .map_err(|err| err.to_string())
-    });
-
-    let stdout_handle =
-        std::thread::spawn(move || read_limited_to_end(child_stdout, MAX_PROC_MACRO_MESSAGE_BYTES));
-
-    let stderr_handle =
-        std::thread::spawn(move || read_limited_to_end(child_stderr, MAX_PROC_MACRO_MESSAGE_BYTES));
-
-    let started = Instant::now();
-    loop {
-        if started.elapsed() > timeout {
-            kill_and_wait(&mut child);
-            let _ = join_io_thread(stdin_handle, "stdin");
-            let _ = join_io_thread(stdout_handle, "stdout");
-            let _ = join_io_thread(stderr_handle, "stderr");
-            return Ok(ProcMacroResponse::failure(vec!["proc macro timed out".to_string()]));
-        }
-
-        if let Some(status) = child.try_wait().map_err(|err| err.to_string())? {
-            let stdin_result = join_io_thread(stdin_handle, "stdin");
-            let stdout = join_io_thread(stdout_handle, "stdout")?;
-            let _stderr = join_io_thread(stderr_handle, "stderr")?;
-
-            if !status.success() {
-                return Ok(ProcMacroResponse::failure(vec![format!("proc macro exited with {}", status)]));
-            }
-
-            stdin_result?;
-
-            let response = decode_response(&stdout).map_err(|err| err.to_string())?;
-            response.validate_for(request)?;
-            return Ok(response);
-        }
-
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let request_bytes = encode_request(request).map_err(|err| describe(format!("failed to encode request: {err}")))?;
+    transport::run(artifact, request, &request_bytes, started, timeout).map_err(describe)
 }
 
 #[cfg(test)]
@@ -442,11 +340,11 @@ mod tests {
             definition_dependencies: Vec::new(),
         };
 
-        let response = run_proc_macro_process(&artifact, &request, Duration::from_millis(10))
-            .expect("protocol mismatch should not fail the runner");
+        let error = run_proc_macro_process(&artifact, &request, Duration::from_millis(10))
+            .expect_err("protocol mismatch must reject before spawn");
 
         assert!(
-            response.diagnostics[0].message.contains("protocol version mismatch")
+            error.contains("protocol version mismatch")
         );
     }
 
@@ -485,12 +383,4 @@ mod tests {
         assert!(!err.contains("failed to start proc macro"), "{err}");
     }
 
-    #[test]
-    fn read_limited_to_end_rejects_oversized_pipe_output() {
-        let output = vec![0; OVERSIZED_PAYLOAD_BYTES];
-
-        let err = read_limited_to_end(&output[..], MAX_PROC_MACRO_MESSAGE_BYTES).unwrap_err();
-
-        assert!(err.contains("exceeded maximum proc macro message size"));
-    }
 }

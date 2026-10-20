@@ -1027,6 +1027,54 @@ both are repaired without weakening authority negatives. Final review added the
 explicit output-part non-gluing regression, and the terminal gates supersede the
 preceding passing candidate. Formatting remains deferred and Beads unavailable.
 
+### B.02 delivery receipt (2026-10-20)
+
+Worker transport now pumps nonblocking Unix stdin/stdout/stderr directly under
+one invocation deadline, including request encoding/writes, output reads,
+response validation and process termination. There are no transport IO threads
+or blocking joins. Only a valid response plus successful exit is success;
+malformed output, broken request IO, stream limits, crashes, nonzero exit after
+valid output and unfinished shutdown fail with invocation/export identity and
+bounded stderr context. Native OS permission/spawn errors remain visible.
+
+Each invocation gets a private process group and an ownership guard. Exit is
+observed with `waitid(WNOWAIT)` so group cleanup precedes leader reaping and
+cannot signal a reused group ID. All error paths close pipes, terminate the
+group and reap the leader. The already installed libc dependency is now a Unix
+runtime dependency for these platform primitives; unsupported execution hosts
+diagnose before spawning rather than retaining an unbounded thread fallback.
+Explicit cancellation and dedicated descendant/resource acceptance remain B.03;
+this is not a native-code sandbox or permission to escape the worker group.
+Protocol 7/product format 53 and shared golden bytes are unchanged.
+
+Six focused units include a compiled native C fixture for fragmented request/
+response IO, blocked stdin/stdout/shutdown, broken pipe, oversized stdout/stderr,
+malformed response, valid response followed by exit 7, crash, missing executable,
+and an expired pre-spawn deadline. Every process case has a separate three-second
+test watchdog and worker alarm; return checks prove the direct worker is gone
+and reaped. Stalls are exercised only after the fixture's PID marker exists.
+
+Final functional snapshot acceptance:
+
+- `cargo test -p rock-lib macro_b_02_`: six units pass.
+  `/tmp/opencode/macro-b02-focused-final.log`, SHA-256
+  `a0cfb85e5451fb3e0a3626737dd56e176c5441ffd1ce0eafebf5ce2927148d15`.
+- `cargo test -p rock-lib`: 2,703 units, 803 main integrations, six macro
+  diagnostic integrations and one parser integration pass; one doctest ignored.
+  `/tmp/opencode/macro-b02-acceptance.log`, SHA-256
+  `3f8a9e3c66779abb640a1db516ee0b7a22ec4822d73ab27570d4f06920bb04da`.
+- `cargo test -p rockc -p rock -p rock-shared -p rock-lsp`: 50 compiler CLI,
+  86 application CLI, 26 shared and five LSP units plus one shared doctest pass,
+  with rebuilt current `ROCKC` and the unchanged format-53 std at
+  `/tmp/opencode/macro-b01-sysroot` selected by `ROCK_SYSROOT`.
+  `/tmp/opencode/macro-b02-cli.log`, SHA-256
+  `884f9098789df3da5990ce67bdac3cfd178cae4f49bfdec4289a8013fa89ed19`.
+
+The earlier 29-unit process/schema regression pass precedes the final large
+fragmented-IO fixture and error-identity wording; terminal gates above cover
+those changes. No functional edits follow the terminal gates. Formatting remains
+deferred and Beads unavailable.
+
 ### Bb. Bootstrap the SDK without macros or compiler callbacks
 
 | Slice | Implement only | Focused acceptance | Runner |
