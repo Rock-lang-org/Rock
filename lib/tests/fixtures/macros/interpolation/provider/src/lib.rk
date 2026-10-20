@@ -1,0 +1,133 @@
+> rock_macro::*
+
+syntax: U64 -> String -> OutputPart
+syntax = invocation, text -> OutputPart::Source (SourceFragment
+    text: text
+    context: ConstructionContext
+        invocation: invocation
+        kind: ConstructionKind::Fresh (0 as U32))
+
+helper: U64 -> U32 -> &Str -> OutputPart
+helper = invocation, dependency, name ->
+    prefix = String::from "ink_runtime::"
+    text = prefix.concat (String::from name)
+    OutputPart::Source (SourceFragment
+        text: text
+        context: ConstructionContext
+            invocation: invocation
+            kind: ConstructionKind::Dependency dependency)
+
+// Quote only new literal text. Hole syntax is always a LiteralFragment, never
+// captured spelling copied into generated source.
+quoted: &String -> I64 -> I64 -> String
+quoted = text, start, end ->
+    bytes = text.as_bytes!
+    mut result: Vec U8 = Vec::new!
+    result.push (34 as U8)
+    i = start
+    while i < end
+        byte = bytes[i] as I64
+        if byte == 34 || byte == 92
+            result.push (92 as U8)
+            result.push (byte as U8)
+        else if byte == 10 || byte == 13 || byte == 9 || byte == 0
+            result.push (92 as U8)
+            escaped = if byte == 10
+                110
+            else if byte == 13
+                114
+            else if byte == 9
+                116
+            else
+                48
+            result.push (escaped as U8)
+        else
+            result.push (byte as U8)
+        i = i + 1
+    result.push (34 as U8)
+    String::from result.as_slice!
+
+reject: &MacroContext -> &Str -> MacroResult
+reject = context, message ->
+    mut diagnostics: Vec Diagnostic = Vec::new!
+    diagnostics.push (context.error (String::from message))
+    MacroResult::Error diagnostics
+
+problem: &MacroContext -> &Str -> I64 -> I64 -> MacroResult
+problem = context, message, start, end ->
+    literal = &context.views.literals[0]
+    first = literal.source.start
+    last = literal.source.end
+    i = 0
+    while i < literal.mapping.len!
+        mapping = &literal.mapping[i]
+        if mapping.decoded.start == (start as U64)
+            first = mapping.source.start
+        if mapping.decoded.end == (end as U64)
+            last = mapping.source.end
+        i = i + 1
+    mut diagnostics: Vec Diagnostic = Vec::new!
+    diagnostics.push (Diagnostic::new DiagnosticSeverity::Error, (String::from message), (DiagnosticLocation::Input (ByteRange
+        start: first
+        end: last)))
+    MacroResult::Error diagnostics
+
+< macro weave = context, input ->
+    if context.views.literals.len! != 1
+        return reject &context, "weave expects one quoted literal"
+    literal = &context.views.literals[0]
+    arguments = &context.views.arguments
+    match *arguments
+        Option::Some arguments =>
+            if arguments.ranges.len! != 1 || arguments.ranges[0].start != literal.source.start || arguments.ranges[0].end != literal.source.end
+                return reject &context, "weave expects only the quoted literal"
+        Option::None => return reject &context, "weave expects one quoted argument"
+    dependency = -1
+    d = 0
+    while d < context.definition_dependencies.len!
+        if context.definition_dependencies[d].name.as_str! == "ink_runtime"
+            dependency = d
+        d = d + 1
+    if dependency < 0
+        return reject &context, "weave provider needs its runtime helper dependency"
+    text = &literal.decoded
+    bytes = text.as_bytes!
+    mut parts: Vec OutputPart = Vec::new!
+    parts.push (syntax context.invocation, (String::from "("))
+    parts.push (helper context.invocation, (dependency as U32), "text")
+    segment = 0
+    i = 0
+    while i < bytes.len!
+        if (bytes[i] as I64) == 125
+            return problem &context, "unmatched interpolation closing brace", i, (i + 1)
+        if (bytes[i] as I64) == 123
+            parts.push (syntax context.invocation, (quoted text, segment, i))
+            parts.push (syntax context.invocation, (String::from ").concat ("))
+            parts.push (helper context.invocation, (dependency as U32), "value")
+            parts.push (syntax context.invocation, (String::from " &("))
+            opening = i
+            i = i + 1
+            start = i
+            while i < bytes.len! && (bytes[i] as I64) != 125
+                if (bytes[i] as I64) == 123
+                    return problem &context, "nested braces are outside the fixture grammar", i, (i + 1)
+                i = i + 1
+            if i == bytes.len!
+                return problem &context, "unclosed interpolation hole", opening, (opening + 1)
+            if i == start
+                return problem &context, "empty interpolation hole", opening, (i + 1)
+            parts.push (OutputPart::Literal (LiteralFragment
+                view: 0
+                range: ByteRange
+                    start: start as U64
+                    end: i as U64))
+            parts.push (syntax context.invocation, (String::from ")).concat ("))
+            parts.push (helper context.invocation, (dependency as U32), "text")
+            segment = i + 1
+        i = i + 1
+    parts.push (syntax context.invocation, (quoted text, segment, bytes.len!))
+    parts.push (syntax context.invocation, (String::from ")"))
+    MacroResult::Report (MacroReport
+        output: Option::Some (MacroOutput
+            parts: parts)
+        diagnostics: Vec::new!)

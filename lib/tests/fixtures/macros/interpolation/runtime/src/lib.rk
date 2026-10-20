@@ -1,0 +1,22 @@
+> std::string::owned::String
+> std::show::Show
+> std::clone::Clone
+> std::convert::From
+
+< trait Paint
+    @paint: String
+
+impl Paint for I64
+    @paint = -> self.show!
+
+impl Paint for String
+    @paint = -> self.clone!
+
+impl Paint for &Str
+    @paint = -> String::from *self
+
+text: &Str -> String
+< text = value -> String::from value
+
+value: &T -> String where T: Paint
+< value = item -> item.paint!

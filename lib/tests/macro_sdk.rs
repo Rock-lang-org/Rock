@@ -15,6 +15,8 @@ mod macro_workers;
 mod macro_hosts;
 #[path = "support/macro_blocks.rs"]
 mod macro_blocks;
+#[path = "support/macro_interpolation.rs"]
+mod macro_interpolation;
 
 fn run_client(path: &Path) -> Output {
     run_client_with_input(path, &[])
@@ -151,6 +153,7 @@ fn macro_b_13_plain_rock_sdk_and_generated_host_use_only_explicit_artifact_depen
     macro_hosts::verify(&config, &golden);
     macro_hosts::verify_literals(&config);
     macro_blocks::verify(&config);
+    macro_interpolation::verify(&config);
     let mut missing = config.clone();
     missing.extern_artifacts.retain(|(name, _)| name != "rock_macro");
     assert!(rock_lib::analyze(&missing).is_err(), "SDK is never injected or discovered by spelling");

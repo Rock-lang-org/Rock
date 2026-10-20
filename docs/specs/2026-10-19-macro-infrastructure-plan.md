@@ -2377,6 +2377,91 @@ remains the compiler regression baseline; this step refreshes the affected
 native SDK/CLI suites. Formatting remains deferred, Beads unavailable, and
 unrelated work untouched. B.21–B.22 and Stage C remain unfinished.
 
+### B.21 delivery receipt — external interpolation and runtime formatting
+
+`lib/tests/fixtures/macros/interpolation` contains three ordinary packages: the
+`weave` procedural provider, the `ink_runtime` target helper, and a complete
+consumer. The provider reads exactly one canonical literal view and emits new
+literal text as generated source plus deferred Literal fragments for holes.
+It neither decodes Rock quoting nor prints captured expressions. The compiler's
+normal generated parser and caller context resolve `Hello {name}` and a
+`{count + 1}` expression. Runtime formatting is selected by the helper library's
+ordinary `Paint` trait, not a compiler-known formatting/provider name.
+
+Definition-side helper paths carry the declared dependency handle; the consumer
+supplies the matching runtime library explicitly, without a target SDK dependency.
+Library grammar errors use the supplied decoded-to-input scalar mapping. The
+fixture deliberately supports only non-nested braces; nested/empty/unmatched
+holes diagnose rather than guessing a complete Rock-expression grammar.
+
+Native SDK acceptance executes the full existing cross-language and B.18–B.20
+controls, then proves caller bindings, numeric expressions, exact missing-name
+and library-grammar spans after escaped/Unicode prefixes, and correctly quoted
+literal output. Unsupported values fail the ordinary Paint bound; omitting the
+runtime library fails the existing dependency-authority check. CLI acceptance
+builds/runs the same ordinary packages and repeats caller/missing-name/formatting/
+runtime checks. The checked-in package manifests also run directly and print
+`Hello Ada: 3` with exit status zero.
+
+Final commands/logs under `/tmp/opencode/`:
+
+- `cargo test -p rock-lib --test macro_sdk -- --nocapture`: one native integration
+  passes, `macro-b21-sdk-final.log`, SHA-256
+  `058bee83bf490af470b78711d70098772ad6074c66fb85a0ab02457824ab5632`.
+- `cargo test -p rock macro_b_21 -- --nocapture`: one CLI test passes,
+  `macro-b21-cli-final.log`, SHA-256
+  `c4337b9983c820bf86a46682dab1907ddd709441feda1bff8857cf0b0be175ce`.
+- `cargo check --workspace --all-targets`: pass, `macro-b21-check.log`, SHA-256
+  `bdccac4e8ff01264dfeb301ff82c79b32ded734787c9bf2642f60379e813f2c6`.
+- `cargo clippy --workspace --all-targets`: pass with existing warnings,
+  `macro-b21-clippy.log`, SHA-256
+  `f44fc05c030cca445d5f562822e3fa7b62ce7dc113e464a97f9268706d436a78`.
+- `cargo build --release`: pass, `macro-b21-release-build.log`, SHA-256
+  `ec89a08c8aff871a1163521be8184ed52b32a71e074550a1cf801f8eb03448d8`.
+- `cargo run --manifest-path /home/champii/prog/rust/Rock/Cargo.toml -p rock --
+  run --debug` from the checked-in interpolation fixture passes,
+  `macro-b21-checked-in-example.log`, SHA-256
+  `90eba82a828e4ae3d4cb6d1f6030204c018c96c71436586f35f02f64f3abd880`.
+
+Failed attempts are retained, not counted as acceptance:
+
+- Initial CLI setup probes (`cargo test -p rock macro_b_21 -- --nocapture`):
+  `macro-b21-red.log` (missing explicit std), SHA-256
+  `b81ac959451e229902b22437762a9b70a6b895001c709d19c6f7ae35763def21`;
+  `macro-b21-red-behavior.log` (invalid export marker on a signature), SHA-256
+  `5f6508217de87f97b4859b53c31bf5431d3b74559f151d14bb0f83fd0fd9fd6e`;
+  `macro-b21-red-interpolation.log` (noncanonical package alias in CLI input),
+  SHA-256 `d8e7a479b58dd6218ba472c9803759a6be481b07e0fd2bcef6674fccbf76a70a`.
+- Behavioral RED is `macro-b21-red-policy.log`: identity output prints literal
+  braces instead of interpolating, SHA-256
+  `d8103d9316a734228bdb65e07535e3d71b5735b88a1b6ab6c0c29c7971f001c7`.
+- Direct provider `rock build` initially rejected a temporary receiver borrow:
+  `macro-b21-provider-build.log`, SHA-256
+  `f27fa504137296d5d73ba3228da00d5547842a69f1f71460b79280ee1c4b3ba1`.
+  Binding the new prefix String before concatenation compiles:
+  `macro-b21-provider-build-final.log`, SHA-256
+  `caf6d4cbd7c33f0a59c6461be5e07b00e5c236ae27ba79d53cdf3bd4c50eef6d`.
+- Direct example `rock run` exposed an extra generated closing parenthesis:
+  `macro-b21-example.log`, SHA-256
+  `1d3010627c037713c78e3544efc001b32d906baf385e36767f10e9f2e8833dce`;
+  its correction passes in `macro-b21-example-final.log`, SHA-256
+  `3664ff38c4f1040832c66c7482a8b10e3cbf0ca929a534c3ebf7a7cebc0536a5`.
+- An intermediate CLI gate reached the unsupported-value control but used an
+  invalid nullary constructor call, corrected to a value: `macro-b21-cli-green.log`
+  (despite its name, failed), SHA-256
+  `923a4ec98edd0a8c486807a9a7c8119bc18d6b58c84912b59c0a493fba030685`.
+- Initial native SDK attempt used an alias forbidden by the product loader's
+  existing name-equality contract. Final fixtures use canonical artifact names;
+  no general dependency-renaming support is claimed or added.
+  `macro-b21-sdk.log`, SHA-256
+  `1564176b189f6c9425178b59b1d9316b8c30c3c83aacde9973ab02972a4815f5`.
+
+B.21 is implemented and verified. No functional edits follow the final gates.
+Compiler/SDK/schema bytes remain unchanged; the B.19 full library receipt remains
+the compiler regression baseline. B.22 evaluation/ownership/source-free proofs
+and Stage C remain unfinished. Formatting remains deferred, Beads unavailable,
+and unrelated work untouched.
+
 **B gate:** all `macro_b_` families, the real SDK cross-language goldens, existing
 process/build/artifact tests, and the formatting/DSL proofs pass. Run the broader
 serialized gates below. A Rust-only worker, protocol round trip, or manifest flag

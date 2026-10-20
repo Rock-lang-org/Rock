@@ -1,0 +1,9 @@
+[crate]
+name = "ink_runtime"
+version = "0.1.0"
+
+[lib]
+path = "src/lib.rk"
+
+[dependencies]
+std = { path = "../../../../../../std" }

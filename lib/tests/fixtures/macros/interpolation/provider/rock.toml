@@ -1,0 +1,11 @@
+[crate]
+name = "weave"
+version = "0.1.0"
+
+[lib]
+path = "src/lib.rk"
+proc_macro = true
+
+[dependencies]
+rock_macro = { path = "../../../../../../rock_macro" }
+ink_runtime = { path = "../runtime" }

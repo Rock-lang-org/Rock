@@ -184,3 +184,43 @@ fn macro_b_20_external_block_dsl_runs_and_diagnoses_through_rock() {
     assert!(report.contains("Unexpected") && report.contains("expanded from macro 'raw'"), "{report}");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn macro_b_21_external_interpolation_resolves_caller_holes_and_runtime_authority() {
+    let root = temp_test_dir("macro_b21_interpolation");
+    let provider = root.join("provider"); let runtime = root.join("runtime"); let app = root.join("app");
+    let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("rock_macro");
+    let std = sdk.parent().unwrap().join("std");
+    write_package_with_options(&runtime, "ink_runtime", "src/lib.rk", &[("std", std.display().to_string())],
+        include_str!("../../../lib/tests/fixtures/macros/interpolation/runtime/src/lib.rk"), false);
+    write_package_with_options(&provider, "weave", "src/lib.rk", &[
+        ("rock_macro", sdk.display().to_string()), ("ink_runtime", runtime.display().to_string()),
+    ], include_str!("../../../lib/tests/fixtures/macros/interpolation/provider/src/lib.rk"), false);
+    let manifest = provider.join("rock.toml");
+    fs::write(&manifest, fs::read_to_string(&manifest).unwrap().replace("[lib]", "[lib]\nproc_macro = true")).unwrap();
+    write_package_with_options(&app, "app", "src/main.rk", &[
+        ("weave", provider.display().to_string()), ("ink_runtime", runtime.display().to_string()), ("std", std.display().to_string()),
+    ], include_str!("../../../lib/tests/fixtures/macros/interpolation/consumer.rk"), false);
+    let output = rock(&app, &["run", "--debug"]);
+    success(&output);
+    assert_eq!(output.stdout, b"Hello Ada: 3\n");
+    let manifest = app.join("rock.toml");
+    let original = fs::read_to_string(&manifest).unwrap();
+    fs::write(&manifest, original.lines().filter(|line| !line.starts_with("ink_runtime = ")).collect::<Vec<_>>().join("\n")).unwrap();
+    let output = rock(&app, &["build", "--debug"]);
+    assert!(!output.status.success());
+    let report = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert!(report.contains("required runtime dependency ink_runtime@0.1.0"), "{report}");
+    fs::write(&manifest, original).unwrap();
+    fs::write(app.join("src/main.rk"), "> weave::weave\nmain = !-> (%weave \"é\\n{missing}\").println!\n").unwrap();
+    let output = rock(&app, &["build", "--debug"]);
+    assert!(!output.status.success());
+    let report = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert!(report.contains("Unknown variable: missing"), "{report}");
+    fs::write(app.join("src/main.rk"), "> weave::weave\nstruct Unsupported\nmain = !->\n    item = Unsupported\n    (%weave \"{item}\").println!\n").unwrap();
+    let output = rock(&app, &["build", "--debug"]);
+    assert!(!output.status.success());
+    let report = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert!(report.contains("Paint") && report.contains("Unsupported"), "{report}");
+    fs::remove_dir_all(root).unwrap();
+}

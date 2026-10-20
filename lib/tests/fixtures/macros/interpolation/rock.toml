@@ -1,0 +1,12 @@
+[crate]
+name = "interpolation_example"
+version = "0.1.0"
+
+[[bin]]
+name = "interpolation_example"
+path = "consumer.rk"
+
+[dependencies]
+weave = { path = "provider" }
+ink_runtime = { path = "runtime" }
+std = { path = "../../../../../std" }

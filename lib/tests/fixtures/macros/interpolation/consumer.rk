@@ -1,0 +1,5 @@
+> weave::weave
+main = !->
+    name = String::from "Ada"
+    count = 2
+    (%weave "Hello {name}: {count + 1}").println!
