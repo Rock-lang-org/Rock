@@ -20,7 +20,7 @@ fn reference_pattern_immutable() {
                 pattern: Box::new(Pattern {
                     binding: None,
                     kind: PatternKind::Ident(IdentPattern {
-                        name: Ident {
+                        name: Ident { context: Default::default(),
                             name: "a".to_string(),
                             span: Span::test()
                         },
@@ -51,7 +51,7 @@ fn reference_pattern_mutable() {
                 pattern: Box::new(Pattern {
                     binding: None,
                     kind: PatternKind::Ident(IdentPattern {
-                        name: Ident {
+                        name: Ident { context: Default::default(),
                             name: "a".to_string(),
                             span: Span::test()
                         },
@@ -82,7 +82,7 @@ fn reference_pattern_mutable_caret() {
                 pattern: Box::new(Pattern {
                     binding: None,
                     kind: PatternKind::Ident(IdentPattern {
-                        name: Ident {
+                        name: Ident { context: Default::default(),
                             name: "a".to_string(),
                             span: Span::test()
                         },

@@ -14,7 +14,7 @@ fn test_parse_ident() {
 
     assert_eq!(
         ident,
-        Ident {
+        Ident { context: Default::default(),
             name: "foo".to_string(),
             span: Span {
                 start: 0,

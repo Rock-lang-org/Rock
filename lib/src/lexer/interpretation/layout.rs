@@ -184,7 +184,7 @@ impl<'a> LayoutView<'a> {
         self.terminal = next;
         let origin = if kind == TokenType::Eof { LayoutOrigin::EndOfInput } else { LayoutOrigin::Synthetic };
         let span = self.view.cursor.stream.end_span();
-        Some(self.emit(LayoutToken { token: Token { token_type: kind, span }, origin, context: None }))
+        Some(self.emit(LayoutToken { token: Token { token_type: kind, span, context: SyntaxContext::ROOT }, origin, context: None }))
     }
 
     fn indentation(&mut self) -> Result<Option<LayoutToken>, RockError> {
@@ -233,7 +233,7 @@ impl<'a> LayoutView<'a> {
         };
         self.at_line_start = false;
         Ok(Some(self.emit(LayoutToken {
-            token: Token { token_type: TokenType::Indent(level), span },
+                token: Token { token_type: TokenType::Indent(level), span, context: SyntaxContext::ROOT },
             origin: LayoutOrigin::Source(start.offset..self.view.offset()),
             context: None,
         })))
@@ -247,7 +247,7 @@ impl<'a> LayoutView<'a> {
                 crate::lexer::lossless::ScanLimits { max_source_bytes: 0, max_runs: 0 })
                 .map_err(RockError::Preservation)?.start_span();
             return Ok(Some(self.emit(LayoutToken {
-                token: Token { token_type: TokenType::Eol, span },
+                token: Token { token_type: TokenType::Eol, span, context: SyntaxContext::ROOT },
                 origin: LayoutOrigin::Synthetic,
                 context: None,
             })));
@@ -292,14 +292,14 @@ impl<'a> LayoutView<'a> {
                     // CR remains retained trivia; Rock's EOL points at the LF byte.
                     let span = Span::new(piece.span.file_path, piece.span.end - 1, piece.span.end);
                     return Ok(Some(self.emit(LayoutToken {
-                        token: Token { token_type: TokenType::Eol, span },
+                    token: Token { token_type: TokenType::Eol, span, context: SyntaxContext::ROOT },
                         origin: LayoutOrigin::Source(piece.range.end - 1..piece.range.end),
                         context: None,
                     })));
                 }
             };
             return Ok(Some(self.emit(LayoutToken {
-                token: Token { token_type: kind, span: piece.span },
+                token: Token { token_type: kind, span: piece.span, context: piece.context.unwrap_or(SyntaxContext::ROOT) },
                 origin: LayoutOrigin::Source(piece.range),
                 context: piece.context,
             })));

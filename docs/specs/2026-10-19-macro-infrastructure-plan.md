@@ -667,6 +667,66 @@ ran. Beads remains unavailable.
 | A.14 | Apply template fresh contexts and proc construction permissions: fresh identifiers, explicit call-site names, and authorized definition-side dependency paths. | Template free names use definition scope, captures use caller scope, and generated public names require explicit exposure. Forged/cross-invocation contexts and conflicting-context merges reject. Exercise existing native fixture workers; Rock authoring comes later. | U, I |
 | A.15 | Preserve expansion/source mappings through inference, borrow checking, codegen diagnostics, and expanded-output inspection. Close the normal-compilation integration seam. | Caller/generated failures show the correct ancestry and locations; `return`/`break`, unsafe rules, borrowing, and drop timing behave like handwritten output. Normal compilation and equivalent expansion inspection use the same engine. | I, R |
 
+### A.11 delivery receipt (2026-10-20)
+
+Binding-bearing interpreted tokens now carry their agreed retained syntax
+context into ordinary parser cursors instead of leaving it only on the optional
+lossless view. Identifiers, macro-path segments, operator names, type names,
+generic binders, and associated type members retain that context in the AST.
+Identifier equality, hashing, and ordering use the same spelling/context pair;
+moving a diagnostic span does not change binding identity. Operator/token
+equality also distinguishes contexts. Ordinary source and explicitly synthetic
+root names continue to use `SyntaxContext::ROOT` through its default value.
+
+Existing expected-AST constructors now state that root context; their Rock
+source fixtures and semantic assertions are unchanged. Operator reclassification
+and shorthand token conversion copy contexts, while capture slices, neutral
+groups, duplicated declarative captures, and opaque expression forwarding retain
+the original lossless authority. A type-constructor projection in collection
+copies its existing context rather than silently replacing it with root.
+No production allocator for fresh contexts is introduced in this slice.
+
+- `cargo test -p rock-lib --lib macro_a_11_ -- --nocapture` initially observed
+  RED because token/identifier/operator context fields were absent; that compile
+  also caught two incorrect fixture helper names. Adding context fields required
+  root-context updates to existing expected-AST constructors; a subsequent RED
+  compile identified the remaining 52 constructor/helper errors.
+- The first compiled five-test runner observed three passes/two failures: one
+  assertion assumed a top-level binary expression rather than visiting the
+  ordinary parsed tree, and another included retained leading trivia from a
+  different context in its identifier range. Correcting those fixture assertions
+  brought the runner to five passes.
+- Extending acceptance to eight tests first caught an incorrect source-cursor
+  import path at compilation, then observed six passes/two failures from fixture
+  setup (initial indentation and an overly broad multi-item type fixture). After
+  the indentation correction, seven passed/one failed; the type fixture now uses
+  locally declared generic fields and associated paths without unrelated record
+  construction. Focused acceptance then passed all eight tests.
+- Adjacent `cargo test -p rock-lib --lib lexer:: -- --nocapture`,
+  `cargo test -p rock-lib --lib parser:: -- --nocapture`, and
+  `cargo test -p rock-lib --lib macro_expansion:: -- --nocapture` pass
+  99/569/133 tests, respectively.
+- Initial `cargo test -p rock-lib` aborted with stack overflow in
+  `crate_artifact::tests::std_index_selection_persists_exact_impl_and_trait_authority`
+  (archive `8ec8cee26c947225`);
+  `cargo test -p rock-lib --lib crate_artifact::tests::std_index_selection_persists_exact_impl_and_trait_authority -- --exact --nocapture`
+  reproduced the abort.
+  Boxing the retained `MacroInvoc` operand payload keeps it out of every ordinary
+  recursive expression frame without changing its data/serialization or raising
+  the test stack size. The same exact test now passes; a new size guard brings
+  focused A.11 acceptance to nine passes. The post-repair
+  `cargo test -p rock-lib --lib macro_a_ -- --nocapture` passes all 121 tests.
+- Final `cargo test -p rock-lib` passes 2,600 units, 794 main integrations,
+  and one parser integration; one doctest is ignored (archive
+  `ca76208b2cf20122`). No functional edits follow this gate.
+
+This is context delivery, not completed hygiene: local lowering still needs
+context-aware binding/reference keys (A.12), module/type/definition environments
+remain A.13, and template freshness/procedural construction permissions remain
+A.14. Worker transport continues rejecting unauthorized non-root wire contexts;
+this slice does not grant new authoring permissions. Formatting remains deferred;
+no formatter/check, Clippy, or separate build gate ran. Beads remains unavailable.
+
 **A gate:** run all `macro_a_` families and existing declarative/proc/module
 regressions, then `cargo test -p rock-lib` and affected CLI tests serially.
 Synthetic/native worker tests prove compiler semantics only; they are not evidence

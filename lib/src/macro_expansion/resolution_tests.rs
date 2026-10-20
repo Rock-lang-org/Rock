@@ -7,7 +7,7 @@ fn module(text: &str) -> Module {
 
 fn child(root: &mut Module, name: &str, text: &str) {
     let mut inner = module(text);
-    inner.name = Some(crate::ast::Ident { name: name.into(), span: Span::test() });
+    inner.name = Some(crate::ast::Ident { context: Default::default(), name: name.into(), span: Span::test() });
     root.top_levels.push(TopLevel::Module(crate::ast::ModuleDecl(inner)));
 }
 
@@ -46,7 +46,7 @@ fn macro_a_07_source_imports_aliases_and_qualified_paths_have_one_identity() {
     let mut root = module("> outer::tools\n> outer::tools::make\n");
     let mut outer = module("< tools\n");
     child(&mut outer, "tools", "< make\nmacro make\n    =>\n        main = -> 42\n");
-    outer.name = Some(crate::ast::Ident { name: "outer".into(), span: Span::test() });
+    outer.name = Some(crate::ast::Ident { context: Default::default(), name: "outer".into(), span: Span::test() });
     root.top_levels.push(TopLevel::Module(crate::ast::ModuleDecl(outer)));
     let registry = MacroRegistry::build(&root, &MacroExpansionContext::new(&config)).unwrap();
     assert_eq!(identity(&registry, &[], "make"), identity(&registry, &[], "tools::make"));
@@ -182,7 +182,7 @@ fn macro_a_07_private_nested_modules_do_not_gain_visibility_from_macro_exports()
     let mut root = module("");
     let mut outer = module("");
     child(&mut outer, "hidden", "< make\nmacro make\n    =>\n        42\n");
-    outer.name = Some(crate::ast::Ident { name: "outer".into(), span: Span::test() });
+    outer.name = Some(crate::ast::Ident { context: Default::default(), name: "outer".into(), span: Span::test() });
     root.top_levels.push(TopLevel::Module(crate::ast::ModuleDecl(outer)));
     let registry = MacroRegistry::build(&root, &MacroExpansionContext::new(&config)).unwrap();
     let diagnostics = registry.resolve(&[], "outer::hidden::make", &Span::test()).unwrap_err();
@@ -214,9 +214,9 @@ fn macro_a_07_forward_module_aliases_and_nested_proc_surfaces_are_explicit() {
     let mut outer = module("< tools\n");
     let mut tools = module("< nested\n");
     child(&mut tools, "nested", "< make\nmacro make\n    =>\n        42\n");
-    tools.name = Some(crate::ast::Ident { name: "tools".into(), span: Span::test() });
+    tools.name = Some(crate::ast::Ident { context: Default::default(), name: "tools".into(), span: Span::test() });
     outer.top_levels.push(TopLevel::Module(crate::ast::ModuleDecl(tools)));
-    outer.name = Some(crate::ast::Ident { name: "outer".into(), span: Span::test() });
+    outer.name = Some(crate::ast::Ident { context: Default::default(), name: "outer".into(), span: Span::test() });
     root.top_levels.push(TopLevel::Module(crate::ast::ModuleDecl(outer)));
     let registry = MacroRegistry::build(&root, &MacroExpansionContext::new(&config)).unwrap();
     assert_eq!(identity(&registry, &[], "nested::make"), identity(&registry, &[], "outer::tools::nested::make"));

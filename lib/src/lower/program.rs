@@ -656,7 +656,7 @@ mod tests {
         let graph_io = temp_dir.join("graph_io.rk");
 
         let alias_module = Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "io".to_string(),
                 span: Span::test(),
             }),
@@ -665,7 +665,7 @@ mod tests {
             filepath: Some(alias_io.clone()),
         };
         let graph_module = Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "io".to_string(),
                 span: Span::test(),
             }),
@@ -706,7 +706,7 @@ mod tests {
         let util = temp_dir.join("util.rk");
 
         let module = Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "util".to_string(),
                 span: Span::test(),
             }),

@@ -18,13 +18,13 @@ fn test_parse_assignment_complex() {
         &Statement::Assignment(Assignment {
             lhs: AssignmentLHS::Expression(UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(IdentifierPath {
-                    path: vec![IdentOrType::Ident(Ident {
+                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                         name: "a".to_string(),
                         span: Span::test(),
                     })],
                 }),
                 secondaries: Some(vec![
-                    SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+                    SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                         name: "b".to_string(),
                         span: Span::test(),
                     })),
@@ -38,7 +38,7 @@ fn test_parse_assignment_complex() {
                             type_annotation: None,
                         },
                     )))),
-                    SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+                    SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                         name: "c".to_string(),
                         span: Span::test(),
                     })),

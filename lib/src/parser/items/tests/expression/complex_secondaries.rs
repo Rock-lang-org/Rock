@@ -19,7 +19,7 @@ fn complex_secondaries() {
         &expression,
         &Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
             operand: Operand::Ident(IdentifierPath {
-                path: vec![IdentOrType::Ident(Ident {
+                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                     name: "hello".to_string(),
                     span: Span::test(),
                 })],
@@ -35,7 +35,7 @@ fn complex_secondaries() {
                         type_annotation: None,
                     },
                 )))),
-                SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+                SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                     name: "world".to_string(),
                     span: Span::test(),
                 })),

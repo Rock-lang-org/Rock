@@ -308,7 +308,7 @@ mod tests {
     use super::*;
 
     fn ident(name: &str) -> Ident {
-        Ident {
+        Ident { context: Default::default(),
             name: name.to_string(),
             span: Span::test(),
         }
@@ -319,7 +319,7 @@ mod tests {
         let signature_name = ident("split");
         let trait_decl = TraitDecl {
             where_clauses: Vec::new(),
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: "Carrier".to_string(),
                 generics: vec![],
                 span: Span::test(),

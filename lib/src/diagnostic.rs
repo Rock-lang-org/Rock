@@ -1309,6 +1309,7 @@ mod tests {
         let argument_span = Span::new(path.clone(), 5, 6);
         let token = crate::lexer::Token {
             token_type: crate::lexer::TokenType::Ident("value".to_string()),
+            context: Default::default(),
             span: invocation_span.clone(),
         };
         let cases = [

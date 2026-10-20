@@ -738,14 +738,14 @@ mod tests {
     }
 
     fn ident(name: &str) -> Ident {
-        Ident {
+        Ident { context: Default::default(),
             name: name.to_string(),
             span: Span::test(),
         }
     }
 
     fn parse_type(name: &str, generics: Vec<ast::ParseType>) -> ast::ParseType {
-        ast::ParseType::Type(ParseTypeInner {
+        ast::ParseType::Type(ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics,
             span: Span::test(),
@@ -1126,7 +1126,7 @@ mod tests {
             })
             .unwrap();
         let ast_impl = crate::ast::Impl {
-            name: ast::ParseType::Type(crate::ast::ParseTypeInner {
+            name: ast::ParseType::Type(crate::ast::ParseTypeInner { context: Default::default(),
                 name: "String".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
@@ -1226,7 +1226,7 @@ mod tests {
             })
             .unwrap();
         let ast_impl = crate::ast::Impl {
-            name: ast::ParseType::Type(ParseTypeInner {
+            name: ast::ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Thing".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
@@ -1358,7 +1358,7 @@ mod tests {
             })
             .unwrap();
         let ast_impl = crate::ast::Impl {
-            name: ast::ParseType::Type(ParseTypeInner {
+            name: ast::ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Convert".to_string(),
                 generics: vec![parse_type("Bool", Vec::new())],
                 span: Span::test(),
@@ -1469,7 +1469,7 @@ mod tests {
             })
             .unwrap();
         let ast_impl = crate::ast::Impl {
-            name: ast::ParseType::Type(ParseTypeInner {
+            name: ast::ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Point".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
@@ -1573,7 +1573,7 @@ mod tests {
             })
             .unwrap();
         let ast_impl = crate::ast::Impl {
-            name: ast::ParseType::Type(ParseTypeInner {
+            name: ast::ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Option".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
@@ -1685,7 +1685,7 @@ mod tests {
             })
             .unwrap();
         let ast_impl = ast::Impl {
-            name: ast::ParseType::Type(ParseTypeInner {
+            name: ast::ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Missing".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),

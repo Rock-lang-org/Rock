@@ -562,7 +562,7 @@ mod tests {
     use crate::lexer::Span;
 
     fn type_inner(name: &str) -> ParseTypeInner {
-        ParseTypeInner {
+        ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics: vec![],
             span: Span::test(),
@@ -612,7 +612,7 @@ mod tests {
     }
 
     fn ident(name: &str) -> Ident {
-        Ident {
+        Ident { context: Default::default(),
             name: name.to_string(),
             span: Span::test(),
         }

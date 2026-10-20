@@ -30,7 +30,7 @@ fn deeply_nested_multiline_arguments_with_multiline_dots() {
         })) => {
             assert_eq!(
                 ident_path.path[0],
-                IdentOrType::Ident(Ident {
+                IdentOrType::Ident(Ident { context: Default::default(),
                     name: "foo".to_string(),
                     span: Span::test(),
                 })
@@ -63,7 +63,7 @@ fn deeply_nested_multiline_arguments_with_multiline_dots() {
                 })) => {
                     assert_eq!(
                         ident_path.path[0],
-                        IdentOrType::Ident(Ident {
+                        IdentOrType::Ident(Ident { context: Default::default(),
                             name: "argnested".to_string(),
                             span: Span::test(),
                         })
@@ -93,7 +93,7 @@ fn deeply_nested_multiline_arguments_with_multiline_dots() {
                 })) => {
                     assert_eq!(
                         ident_path.path[0],
-                        IdentOrType::Ident(Ident {
+                        IdentOrType::Ident(Ident { context: Default::default(),
                             name: "arg3".to_string(),
                             span: Span::test(),
                         })

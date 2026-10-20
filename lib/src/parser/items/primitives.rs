@@ -83,8 +83,9 @@ macro_rules! token_with_span {
 }
 
 pub fn ident_token(stream: Input) -> IResult<Ident> {
+    let context = stream.seek()?.context;
     token_with_span!(stream, span, TokenType::Ident(name) =>
-        Ident { name, span }
+        Ident { name, span, context }
     )
 }
 
@@ -183,6 +184,7 @@ pub fn operator_token(stream: Input) -> IResult<Operator> {
         TokenType::Operator(name) => Ok((
             stream,
             Operator {
+                context: token.context,
                 value: name,
                 span: span.clone(),
             },
@@ -190,6 +192,7 @@ pub fn operator_token(stream: Input) -> IResult<Operator> {
         TokenType::Caret => Ok((
             stream,
             Operator {
+                context: token.context,
                 value: "^".to_string(),
                 span: span.clone(),
             },
@@ -197,6 +200,7 @@ pub fn operator_token(stream: Input) -> IResult<Operator> {
         TokenType::Tilde => Ok((
             stream,
             Operator {
+                context: token.context,
                 value: "~".to_string(),
                 span: span.clone(),
             },
@@ -217,6 +221,7 @@ pub fn stuck_operator_token(stream: Input) -> IResult<Operator> {
         TokenType::StuckOperator(name) => Ok((
             stream,
             Operator {
+                context: token.context,
                 value: name,
                 span: span.clone(),
             },
@@ -224,6 +229,7 @@ pub fn stuck_operator_token(stream: Input) -> IResult<Operator> {
         TokenType::Tilde => Ok((
             stream,
             Operator {
+                context: token.context,
                 value: "~".to_string(),
                 span: span.clone(),
             },
@@ -236,8 +242,10 @@ pub fn stuck_operator_token(stream: Input) -> IResult<Operator> {
 }
 
 pub fn ampersand_token(stream: Input) -> IResult<Operator> {
+    let context = stream.seek()?.context;
     token_with_span!(stream, span, TokenType::Ampersand => {
         Operator {
+            context,
             value: "&".to_string(),
             span,
         }

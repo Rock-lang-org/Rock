@@ -29,7 +29,7 @@ fn multiline_method_chain_with_argument() {
             // Should be identifier 'a'
             assert_eq!(
                 ident_path.path[0],
-                IdentOrType::Ident(Ident {
+                IdentOrType::Ident(Ident { context: Default::default(),
                     name: "a".to_string(),
                     span: Span::test(),
                 })
@@ -82,7 +82,7 @@ fn multiline_method_chain_with_argument() {
                                 })) => {
                                     assert_eq!(
                                         ident_path.path[0],
-                                        IdentOrType::Ident(Ident {
+                                        IdentOrType::Ident(Ident { context: Default::default(),
                                             name: "toto".to_string(),
                                             span: Span::test(),
                                         })

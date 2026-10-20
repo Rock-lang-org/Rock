@@ -27,7 +27,7 @@ fn nested_parenthesis_expression() {
                     secondaries: None,
                     type_annotation: None,
                 }),
-                Operator {
+                Operator { context: Default::default(),
                     value: "+".to_string(),
                     span: Span::test(),
                 },
@@ -41,7 +41,7 @@ fn nested_parenthesis_expression() {
                             secondaries: None,
                             type_annotation: None,
                         }),
-                        Operator {
+                        Operator { context: Default::default(),
                             value: "+".to_string(),
                             span: Span::test(),
                         },

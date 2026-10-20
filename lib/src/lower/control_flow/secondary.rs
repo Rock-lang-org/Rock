@@ -2930,7 +2930,7 @@ mod tests {
     fn ident_expression(name: &str) -> Expression {
         Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
             operand: Operand::Ident(IdentifierPath {
-                path: vec![IdentOrType::Ident(Ident {
+                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                     name: name.to_string(),
                     span: Span::test(),
                 })],
@@ -2943,7 +2943,7 @@ mod tests {
     fn call_expr(name: &str, args: Vec<Expression>) -> Expression {
         Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
             operand: Operand::Ident(IdentifierPath {
-                path: vec![IdentOrType::Ident(Ident {
+                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                     name: name.to_string(),
                     span: Span::test(),
                 })],
@@ -3488,7 +3488,7 @@ mod tests {
 
         let lowered = lowerer.apply_secondary(
             receiver_expr(receiver_ty),
-            &SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+            &SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                 name: "value".to_string(),
                 span: Span::test(),
             })),
@@ -3574,7 +3574,7 @@ mod tests {
         );
         let method_field = lowerer.apply_secondary(
             receiver,
-            &SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+            &SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                 name: "value".to_string(),
                 span: Span::test(),
             })),
@@ -3603,7 +3603,7 @@ mod tests {
                 id: DefId::new(CrateId(0), LocalDefId(10)),
                 args: Vec::new(),
             }),
-            &SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+            &SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                 name: "value".to_string(),
                 span: Span::test(),
             })),
@@ -3700,7 +3700,7 @@ mod tests {
         };
         let lowered = lowerer.apply_secondary(
             base,
-            &SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+            &SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                 name: "x".to_string(),
                 span: Span::test(),
             })),
@@ -3745,7 +3745,7 @@ mod tests {
         };
         let lowered = lowerer.apply_secondary(
             base,
-            &SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+            &SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                 name: "value".to_string(),
                 span: Span::test(),
             })),

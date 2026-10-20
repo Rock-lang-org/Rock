@@ -346,7 +346,7 @@ pub(super) fn rock_arguments(input: &TokenStream, config: &crate::Config, header
                 // An unsuccessful probe does not globally validate literal
                 // matcher input as an expression or a balanced group.
             }
-            tokens.push(Token { token_type, span });
+            tokens.push(Token { token_type, span, context: piece.context.unwrap_or_default() });
             ranges.push(range);
         }
     }

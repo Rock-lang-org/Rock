@@ -785,7 +785,7 @@ mod tests {
     use crate::types::AssociatedTypeKey;
 
     fn ident(name: &str) -> Ident {
-        Ident {
+        Ident { context: Default::default(),
             name: name.to_string(),
             span: Span::test(),
         }
@@ -803,7 +803,7 @@ mod tests {
     }
 
     fn named_type(name: &str) -> ParseType {
-        ParseType::Type(ParseTypeInner {
+        ParseType::Type(ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics: Vec::new(),
             span: Span::test(),

@@ -20,7 +20,7 @@ fn indice_expression() {
         &expression,
         &Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
             operand: Operand::Ident(IdentifierPath {
-                path: vec![IdentOrType::Ident(Ident {
+                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                     name: "hello".to_string(),
                     span: Span {
                         start: 0,

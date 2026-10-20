@@ -1948,7 +1948,7 @@ impl Lowerer {
                     continue;
                 };
                 let name = format!("<call-hole-{}>", parameters.len());
-                let ident = ast::Ident {
+                let ident = ast::Ident { context: Default::default(),
                     name: name.clone(),
                     span: span.clone(),
                 };
@@ -2295,7 +2295,7 @@ mod tests {
     #[test]
     fn raw_pointer_dereference_diagnostic_is_selection() {
         let mut lowerer = Lowerer::new_for_test();
-        let operator = Operator {
+        let operator = Operator { context: Default::default(),
             value: "*".to_string(),
             span: Span::test(),
         };
@@ -2303,7 +2303,7 @@ mod tests {
             operator,
             Box::new(UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(IdentifierPath {
-                    path: vec![IdentOrType::Ident(Ident {
+                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                         name: "ptr".to_string(),
                         span: Span::test(),
                     })],
@@ -2445,7 +2445,7 @@ mod tests {
     fn var_expr(name: &str) -> UnaryExpr {
         UnaryExpr::PrimaryExpr(PrimaryExpr {
             operand: Operand::Ident(IdentifierPath {
-                path: vec![IdentOrType::Ident(Ident {
+                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                     name: name.to_string(),
                     span: Span::test(),
                 })],
@@ -2502,7 +2502,7 @@ mod tests {
 
         let expr = Expression::BinopExpr(
             var_expr("borrowed"),
-            Operator {
+            Operator { context: Default::default(),
                 value: "&".to_string(),
                 span: Span::test(),
             },
@@ -2566,7 +2566,7 @@ mod tests {
 
         let expr = Expression::BinopExpr(
             int_expr(41),
-            Operator {
+            Operator { context: Default::default(),
                 value: "|>".to_string(),
                 span: Span::test(),
             },
@@ -2605,7 +2605,7 @@ mod tests {
 
         let expr = Expression::BinopExpr(
             int_expr(1),
-            Operator {
+            Operator { context: Default::default(),
                 value: "%%".to_string(),
                 span: Span::test(),
             },
@@ -2660,7 +2660,7 @@ mod tests {
 
         let expr = Expression::BinopExpr(
             int_expr(1),
-            Operator {
+            Operator { context: Default::default(),
                 value: "%%".to_string(),
                 span: Span::test(),
             },
@@ -2694,7 +2694,7 @@ mod tests {
 
         let expr = Expression::BinopExpr(
             int_expr(40),
-            Operator {
+            Operator { context: Default::default(),
                 value: "%%".to_string(),
                 span: Span::test(),
             },
@@ -2872,7 +2872,7 @@ mod tests {
         lowerer.infix_precedence.insert("+".to_string(), 6);
         let expr = Expression::BinopExpr(
             string_expr("left"),
-            Operator {
+            Operator { context: Default::default(),
                 value: "+".to_string(),
                 span: Span::test(),
             },
@@ -2895,7 +2895,7 @@ mod tests {
     fn missing_concrete_unary_operator_impl_lowers_to_error_typed_expression() {
         let mut lowerer = Lowerer::new_for_test();
         let expr = UnaryExpr::UnaryExpr(
-            Operator {
+            Operator { context: Default::default(),
                 value: "-".to_string(),
                 span: Span::test(),
             },

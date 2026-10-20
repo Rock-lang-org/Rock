@@ -22,7 +22,7 @@ fn test_parse_match() {
             do_syntax: None,
             expr: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(crate::ast::IdentifierPath {
-                    path: vec![IdentOrType::Ident(Ident {
+                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                         name: "a".to_string(),
                         span: Span {
                             start: 6,
@@ -39,7 +39,7 @@ fn test_parse_match() {
                     pattern: Pattern {
                         binding: None,
                         kind: PatternKind::Ident(IdentPattern {
-                            name: Ident {
+                            name: Ident { context: Default::default(),
                                 name: "a".to_string(),
                                 span: Span {
                                     start: 12,
@@ -75,7 +75,7 @@ fn test_parse_match() {
                             Pattern {
                                 binding: None,
                                 kind: PatternKind::Ident(IdentPattern {
-                                    name: Ident {
+                                    name: Ident { context: Default::default(),
                                         name: "a".to_string(),
                                         span: Span {
                                             start: 24,
@@ -89,7 +89,7 @@ fn test_parse_match() {
                             Pattern {
                                 binding: None,
                                 kind: PatternKind::Ident(IdentPattern {
-                                    name: Ident {
+                                    name: Ident { context: Default::default(),
                                         name: "b".to_string(),
                                         span: Span {
                                             start: 27,
@@ -107,7 +107,7 @@ fn test_parse_match() {
                         statements: vec![Statement::Expression(Expression::BinopExpr(
                             UnaryExpr::PrimaryExpr(PrimaryExpr {
                                 operand: Operand::Ident(crate::ast::IdentifierPath {
-                                    path: vec![IdentOrType::Ident(Ident {
+                                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                         name: "a".to_string(),
                                         span: Span::test(),
                                     })],
@@ -115,13 +115,13 @@ fn test_parse_match() {
                                 secondaries: None,
                                 type_annotation: None,
                             }),
-                            Operator {
+                            Operator { context: Default::default(),
                                 value: "+".to_string(),
                                 span: Span::test(),
                             },
                             Box::new(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                                 operand: Operand::Ident(crate::ast::IdentifierPath {
-                                    path: vec![IdentOrType::Ident(Ident {
+                                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                         name: "b".to_string(),
                                         span: Span::test(),
                                     })],

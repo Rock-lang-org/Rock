@@ -31,7 +31,7 @@ fn test_parse_expression() {
                 secondaries: None,
                 type_annotation: None,
             }),
-            Operator {
+            Operator { context: Default::default(),
                 value: "+".to_string(),
                 span: Span {
                     start: 2,

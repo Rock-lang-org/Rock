@@ -367,7 +367,7 @@ fn lower_where_clauses(
                         .iter()
                         .all(|arg| matches!(arg, ast::ParseType::Hole(_))) =>
             {
-                context.lower_parse_type(&ast::ParseType::Type(ast::ParseTypeInner {
+                context.lower_parse_type(&ast::ParseType::Type(ast::ParseTypeInner { context: inner.context,
                     name: inner.name.clone(),
                     generics: Vec::new(),
                     span: inner.span.clone(),
@@ -1794,14 +1794,14 @@ mod tests {
     }
 
     fn ident(name: &str) -> Ident {
-        Ident {
+        Ident { context: Default::default(),
             name: name.to_string(),
             span: Span::test(),
         }
     }
 
     fn type_inner(name: &str) -> ParseTypeInner {
-        ParseTypeInner {
+        ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics: vec![],
             span: Span::test(),
@@ -1836,7 +1836,7 @@ mod tests {
     }
 
     fn generic_type_inner(name: &str) -> ParseTypeInner {
-        ParseTypeInner {
+        ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics: vec![],
             span: Span::test(),
@@ -1984,7 +1984,7 @@ mod tests {
     fn test_build_struct_lowers_struct_field_types() {
         let mut context = CollectContext::new();
         let decl = StructDecl {
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: "Buffer".to_string(),
                 generics: vec![],
                 span: Span::test(),
@@ -2122,7 +2122,7 @@ mod tests {
     fn test_build_struct_rejects_bare_str_field_type() {
         let mut context = CollectContext::new();
         let decl = StructDecl {
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: "TextHolder".to_string(),
                 generics: vec![],
                 span: Span::test(),
@@ -2144,7 +2144,7 @@ mod tests {
     fn test_build_struct_accepts_borrowed_str_field_type() {
         let mut context = CollectContext::new();
         let decl = StructDecl {
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: "TextHolder".to_string(),
                 generics: vec![],
                 span: Span::test(),
@@ -2178,7 +2178,7 @@ mod tests {
         let mut lowerer = CollectContext::new();
         let decl = EnumDecl {
             generic_params: vec![generic_param("T")],
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: "Message".to_string(),
                 generics: vec![],
                 span: Span::test(),
@@ -2801,7 +2801,7 @@ mod tests {
 
         let decl = TraitDecl {
             where_clauses: Vec::new(),
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: "Iterable".to_string(),
                 generics: vec![],
                 span: Span::test(),
@@ -2991,7 +2991,7 @@ mod tests {
         let mut context = CollectContext::new();
         let decl = TraitDecl {
             where_clauses: Vec::new(),
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: "Mapper".to_string(),
                 generics: vec![],
                 span: Span::test(),
@@ -3042,7 +3042,7 @@ mod tests {
         };
         let decl = TraitDecl {
             where_clauses: Vec::new(),
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: "Mapper".to_string(),
                 generics: vec![],
                 span: Span::test(),
@@ -3255,7 +3255,7 @@ mod tests {
 
         let imp = Impl {
             name: ParseType::Type(type_inner("Deref")),
-            for_: Some(ParseType::Type(ParseTypeInner {
+            for_: Some(ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],
                 span: Span::test(),
@@ -3395,7 +3395,7 @@ mod tests {
     fn test_build_impl_registers_methods_and_tracks_function_type_vars_by_id() {
         let mut lowerer = CollectContext::new();
         let imp = Impl {
-            name: ParseType::Type(ParseTypeInner {
+            name: ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Show".to_string(),
                 generics: vec![],
                 span: Span::test(),
@@ -3513,7 +3513,7 @@ mod tests {
         );
         let imp = Impl {
             name: ParseType::Type(type_inner("Families")),
-            for_: Some(ParseType::Type(ParseTypeInner {
+            for_: Some(ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Box".to_string(),
                 generics: vec![named_type("I64")],
                 span: Span::test(),
@@ -3615,7 +3615,7 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: ParseType::Type(ParseTypeInner {
+            name: ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Holder".to_string(),
                 generics: vec![generic_type("F")],
                 span: Span::test(),
@@ -3731,12 +3731,12 @@ mod tests {
             },
         );
         let imp = Impl {
-            name: ParseType::Type(ParseTypeInner {
+            name: ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Show".to_string(),
                 generics: vec![named_type("U8")],
                 span: Span::test(),
             }),
-            for_: Some(ParseType::Type(ParseTypeInner {
+            for_: Some(ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],
                 span: Span::test(),
@@ -3811,7 +3811,7 @@ mod tests {
         );
         let imp = Impl {
             name: ParseType::Type(type_inner("Vec")),
-            for_: Some(ParseType::Type(ParseTypeInner {
+            for_: Some(ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],
                 span: Span::test(),
@@ -3857,7 +3857,7 @@ mod tests {
         );
         let imp = Impl {
             name: ParseType::Type(type_inner("Vec")),
-            for_: Some(ParseType::Type(ParseTypeInner {
+            for_: Some(ParseType::Type(ParseTypeInner { context: Default::default(),
                 name: "Vec".to_string(),
                 generics: vec![generic_type("T")],
                 span: Span::test(),

@@ -293,6 +293,7 @@ impl ParseType {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParseTypeInner {
     pub name: String,
+    pub context: crate::lexer::lossless::SyntaxContext,
     pub generics: Vec<ParseType>,
     pub span: Span,
 }
@@ -500,7 +501,8 @@ pub struct PrimaryExpr {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Operand {
-    MacroInvoc(MacroInvoc),
+    // Retained macro input must not enlarge every recursive expression frame.
+    MacroInvoc(Box<MacroInvoc>),
     Literal(Literal),
     Ident(IdentifierPath),
     CallHole(Span),
@@ -699,12 +701,14 @@ pub struct Argument {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ident {
     pub name: String,
+    /// Binding identity, independent of the diagnostic source location.
+    pub context: crate::lexer::lossless::SyntaxContext,
     pub span: Span,
 }
 
 impl PartialEq for Ident {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+        self.name == other.name && self.context == other.context
     }
 }
 
@@ -713,18 +717,19 @@ impl Eq for Ident {}
 impl std::hash::Hash for Ident {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.name.hash(state);
+        self.context.hash(state);
     }
 }
 
 impl PartialOrd for Ident {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.name.cmp(&other.name))
+        Some(self.cmp(other))
     }
 }
 
 impl Ord for Ident {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.name.cmp(&other.name)
+        self.name.cmp(&other.name).then(self.context.cmp(&other.context))
     }
 }
 
@@ -745,12 +750,13 @@ impl Eq for Number {}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Operator {
     pub value: String,
+    pub context: crate::lexer::lossless::SyntaxContext,
     pub span: Span,
 }
 
 impl PartialEq for Operator {
     fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
+        self.value == other.value && self.context == other.context
     }
 }
 

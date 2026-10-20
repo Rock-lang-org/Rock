@@ -484,12 +484,12 @@ mod tests {
         root_module.top_levels.insert(
             1,
             ast::TopLevel::Module(ast::ModuleDecl(ast::Module {
-                name: Some(ast::Ident {
+                name: Some(ast::Ident { context: Default::default(),
                     name: "left_inline".to_string(),
                     span: crate::lexer::Span::test(),
                 }),
                 top_levels: vec![ast::TopLevel::Module(ast::ModuleDecl(ast::Module {
-                    name: Some(ast::Ident {
+                    name: Some(ast::Ident { context: Default::default(),
                         name: "shared".to_string(),
                         span: crate::lexer::Span::test(),
                     }),
@@ -504,12 +504,12 @@ mod tests {
         root_module.top_levels.insert(
             2,
             ast::TopLevel::Module(ast::ModuleDecl(ast::Module {
-                name: Some(ast::Ident {
+                name: Some(ast::Ident { context: Default::default(),
                     name: "right_inline".to_string(),
                     span: crate::lexer::Span::test(),
                 }),
                 top_levels: vec![ast::TopLevel::Module(ast::ModuleDecl(ast::Module {
-                    name: Some(ast::Ident {
+                    name: Some(ast::Ident { context: Default::default(),
                         name: "shared".to_string(),
                         span: crate::lexer::Span::test(),
                     }),

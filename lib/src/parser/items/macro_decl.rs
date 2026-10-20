@@ -62,8 +62,9 @@ pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
 }
 
 pub(super) fn macro_path(stream: Input) -> IResult<(crate::lexer::Span, crate::ast::IdentifierPath)> {
+    let context = stream.seek()?.context;
     let (mut stream, (mut span, name)) = (get_span, macro_invoc_token).process(stream)?;
-    let mut path = vec![crate::ast::IdentOrType::Ident(Ident { name, span: span.clone() })];
+    let mut path = vec![crate::ast::IdentOrType::Ident(Ident { name, span: span.clone(), context })];
     while matches!(stream.seek().ok().map(|token| token.token_type), Some(TokenType::DoubleColon)) {
         let (next, _) = TokenType::DoubleColon.process(stream)?;
         let (next, part) = ident.process(next).map_err(|error| required_macro_input(error, "expected macro path segment after '::'", next.eof_span()))?;
@@ -165,16 +166,19 @@ fn parse_macro_head_recursive<'a>(
 
                 if kind_token.token_type == TokenType::Ident("ident".to_string()) {
                     defs.push(MacroFragment::Ident(Ident {
+                        context: token.context,
                         name: name.clone(),
                         span: token.span.clone(),
                     }));
                 } else if kind_token.token_type == TokenType::Ident("expr".to_string()) {
                     defs.push(MacroFragment::Expr(Ident {
+                        context: token.context,
                         name: name.clone(),
                         span: token.span.clone(),
                     }));
                 } else if kind_token.token_type == TokenType::Ident("ty".to_string()) {
                     defs.push(MacroFragment::Type(Ident {
+                        context: token.context,
                         name: name.clone(),
                         span: token.span.clone(),
                     }));
@@ -236,6 +240,7 @@ fn parse_macro_block_recursive<'a>(
                         .map_err(|error| ParseError::HardError(format!("invalid macro trivia: {error:?}"), token.span.clone()))?));
                 }
                 let ident = MacroFragment::Ident(Ident {
+                    context: token.context,
                     name: name.clone(),
                     span: token.span.clone(),
                 });

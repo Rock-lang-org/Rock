@@ -558,7 +558,7 @@ mod tests {
 
     fn empty_module(path: &std::path::Path) -> Module {
         Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "io".to_string(),
                 span: Span::test(),
             }),
@@ -573,7 +573,7 @@ mod tests {
             path: names
                 .iter()
                 .map(|name| {
-                    IdentOrType::Ident(Ident {
+                    IdentOrType::Ident(Ident { context: Default::default(),
                         name: name.to_string(),
                         span: Span::test(),
                     })
@@ -790,7 +790,7 @@ mod tests {
         let root = Module {
             name: None,
             top_levels: vec![TopLevel::Mod(
-                Ident {
+                Ident { context: Default::default(),
                     name: "child".to_string(),
                     span: Span::test(),
                 },
@@ -920,7 +920,7 @@ mod tests {
     #[test]
     fn module_context_duplicate_module_aliases_use_scoped_resolver_output() {
         let module = Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "helper".to_string(),
                 span: Span::test(),
             }),

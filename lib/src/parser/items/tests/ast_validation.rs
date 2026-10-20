@@ -566,7 +566,7 @@ fn trait_declaration_valid() {
     let p = parse(input);
     let t = find_trait(&p, "Display");
     assert_eq!(t.signatures.len(), 1);
-    assert!(t.signatures.contains_key(&Ident {
+    assert!(t.signatures.contains_key(&Ident { context: Default::default(),
         name: "display".to_string(),
         span: crate::lexer::Span::test(),
     }));
@@ -2886,14 +2886,14 @@ main = ->
         // Fields are in a BTreeMap so they come out alphabetically
         let x_expr = inst
             .fields
-            .get(&Ident {
+            .get(&Ident { context: Default::default(),
                 name: "x".to_string(),
                 span: crate::lexer::Span::test(),
             })
             .expect("should have x");
         let y_expr = inst
             .fields
-            .get(&Ident {
+            .get(&Ident { context: Default::default(),
                 name: "y".to_string(),
                 span: crate::lexer::Span::test(),
             })
@@ -2922,7 +2922,7 @@ main = ->
     if let Operand::Instance(inst) = &pe.operand {
         let x_expr = inst
             .fields
-            .get(&Ident {
+            .get(&Ident { context: Default::default(),
                 name: "x".to_string(),
                 span: crate::lexer::Span::test(),
             })
@@ -2953,7 +2953,7 @@ impl Foo
     let i = find_impl(&p, "Foo");
     let get = i
         .methods
-        .get(&Ident {
+        .get(&Ident { context: Default::default(),
             name: "get".to_string(),
             span: crate::lexer::Span::test(),
         })

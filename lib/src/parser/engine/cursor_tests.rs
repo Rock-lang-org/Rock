@@ -4,9 +4,9 @@ use crate::Config;
 
 fn tokens() -> Vec<Token> {
     vec![
-        Token { token_type: TokenType::Ident("x".into()), span: Span::new("/virtual/cursor.rk".into(), 0, 1) },
-        Token { token_type: TokenType::Ident("x".into()), span: Span::new("/virtual/cursor.rk".into(), 2, 3) },
-        Token { token_type: TokenType::Eof, span: Span::new("/virtual/cursor.rk".into(), 3, 3) },
+        Token { context: Default::default(), token_type: TokenType::Ident("x".into()), span: Span::new("/virtual/cursor.rk".into(), 0, 1) },
+        Token { context: Default::default(), token_type: TokenType::Ident("x".into()), span: Span::new("/virtual/cursor.rk".into(), 2, 3) },
+        Token { context: Default::default(), token_type: TokenType::Eof, span: Span::new("/virtual/cursor.rk".into(), 3, 3) },
     ]
 }
 
@@ -92,7 +92,7 @@ fn macro_a0_08_checkpoint_restore_keeps_subparse_flags_and_restores_extent() {
 #[test]
 fn macro_a0_08_cursor_operations_preserve_pending_indentation_errors() {
     let mut tokens = tokens();
-    tokens.insert(1, Token {
+    tokens.insert(1, Token { context: Default::default(),
         token_type: TokenType::Indent(3),
         span: Span::new("/virtual/cursor.rk".into(), 1, 4),
     });

@@ -23,7 +23,7 @@ fn multiline_fn_call() {
         &expression,
         &Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
             operand: Operand::Ident(IdentifierPath {
-                path: vec![IdentOrType::Ident(Ident {
+                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                     name: "foo".to_string(),
                     span: Span {
                         start: 0,
@@ -36,7 +36,7 @@ fn multiline_fn_call() {
                 Argument {
                     arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                         operand: Operand::Ident(IdentifierPath {
-                            path: vec![IdentOrType::Ident(Ident {
+                            path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                 name: "bar".to_string(),
                                 span: Span {
                                     start: 4,
@@ -52,7 +52,7 @@ fn multiline_fn_call() {
                 Argument {
                     arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                         operand: Operand::Ident(IdentifierPath {
-                            path: vec![IdentOrType::Ident(Ident {
+                            path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                 name: "baz".to_string(),
                                 span: Span {
                                     start: 8,
@@ -79,7 +79,7 @@ fn multiline_fn_call() {
                             secondaries: None,
                             type_annotation: None,
                         }),
-                        Operator {
+                        Operator { context: Default::default(),
                             value: "+".to_string(),
                             span: Span {
                                 start: 14,

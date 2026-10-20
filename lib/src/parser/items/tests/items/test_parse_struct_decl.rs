@@ -17,7 +17,7 @@ fn test_parse_struct_decl() {
     assert_eq!(
         struct_decl,
         StructDecl {
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: "Foo".to_string(),
                 generics: vec![],
                 span: Span {
@@ -29,7 +29,7 @@ fn test_parse_struct_decl() {
             generic_params: vec![],
             fields: vec![
                 StructDeclField {
-                    name: Ident {
+                    name: Ident { context: Default::default(),
                         name: "a".to_string(),
                         span: Span {
                             start: 15,
@@ -37,7 +37,7 @@ fn test_parse_struct_decl() {
                             file_path: PathBuf::from("/test.rk"),
                         },
                     },
-                    ty: ParseType::Type(ParseTypeInner {
+                    ty: ParseType::Type(ParseTypeInner { context: Default::default(),
                         name: "Int".to_string(),
                         generics: vec![],
                         span: Span {
@@ -50,7 +50,7 @@ fn test_parse_struct_decl() {
                     default: None,
                 },
                 StructDeclField {
-                    name: Ident {
+                    name: Ident { context: Default::default(),
                         name: "b".to_string(),
                         span: Span {
                             start: 26,
@@ -58,7 +58,7 @@ fn test_parse_struct_decl() {
                             file_path: PathBuf::from("/test.rk"),
                         },
                     },
-                    ty: ParseType::Type(ParseTypeInner {
+                    ty: ParseType::Type(ParseTypeInner { context: Default::default(),
                         name: "Int".to_string(),
                         generics: vec![],
                         span: Span {

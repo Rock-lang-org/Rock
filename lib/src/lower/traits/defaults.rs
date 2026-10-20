@@ -292,7 +292,7 @@ mod tests {
     }
 
     fn ident(name: &str) -> Ident {
-        Ident {
+        Ident { context: Default::default(),
             name: name.to_string(),
             span: Span::test(),
         }
@@ -311,7 +311,7 @@ mod tests {
     }
 
     fn named_type(name: &str) -> ParseType {
-        ParseType::Type(ParseTypeInner {
+        ParseType::Type(ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics: Vec::new(),
             span: Span::test(),
@@ -347,7 +347,7 @@ mod tests {
     fn trait_decl(name: &str, method: FunctionDecl) -> TraitDecl {
         TraitDecl {
             where_clauses: Vec::new(),
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: name.to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
@@ -469,7 +469,7 @@ mod tests {
         });
         let trait_decl = TraitDecl {
             where_clauses: Vec::new(),
-            name: ParseTypeInner {
+            name: ParseTypeInner { context: Default::default(),
                 name: "Reader".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
@@ -628,7 +628,7 @@ mod tests {
             });
             let trait_decl = TraitDecl {
                 where_clauses: Vec::new(),
-                name: ParseTypeInner {
+                name: ParseTypeInner { context: Default::default(),
                     name: "Ordered".to_string(),
                     generics: Vec::new(),
                     span: Span::test(),

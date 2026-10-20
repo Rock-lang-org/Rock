@@ -113,6 +113,7 @@ pub fn function_shorthand(stream: Input) -> IResult<LambdaDecl> {
 }
 
 pub fn prefix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
+    let context = stream.seek()?.context;
     let (stream, (span, unit, _, inner_tokens)) = (
         get_span,
         TokenType::StuckOperator("!".to_string())
@@ -125,10 +126,12 @@ pub fn prefix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
 
     let new_inner_tokens = vec![
         Token {
+            context,
             token_type: TokenType::Ident("x".to_string()),
             span: span.clone(),
         },
         Token {
+            context,
             token_type: if unit.is_some() {
                 TokenType::UnitArrow
             } else {
@@ -137,6 +140,7 @@ pub fn prefix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
             span: span.clone(),
         },
         Token {
+            context,
             token_type: TokenType::Ident("x".to_string()),
             span: span.clone(),
         },
@@ -145,6 +149,7 @@ pub fn prefix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
     .chain(inner_tokens.into_iter().map(|token| {
         if let TokenType::StuckOperator(op) = token.token_type {
             Token {
+                context: token.context,
                 token_type: TokenType::Operator(op),
                 span: token.span.clone(),
             }
@@ -176,6 +181,7 @@ pub fn suffix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
     }
 
     let operator = inner_tokens.last().unwrap().clone();
+    let context = operator.context;
 
     // Check if the last token is an operator suitable for function shorthand
     // Exclude "!" because it's used for zero-arg method calls (like show!), not as a binary operator
@@ -196,10 +202,12 @@ pub fn suffix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
 
     let new_inner_tokens = vec![
         Token {
+            context,
             token_type: TokenType::Ident("x".to_string()),
             span: span.clone(),
         },
         Token {
+            context,
             token_type: TokenType::Arrow,
             span: span.clone(),
         },
@@ -208,6 +216,7 @@ pub fn suffix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
     .chain(inner_tokens.into_iter().map(|token| {
         if let TokenType::StuckOperator(op) = token.token_type {
             Token {
+                context: token.context,
                 token_type: TokenType::Operator(op),
                 span: token.span.clone(),
             }
@@ -218,6 +227,7 @@ pub fn suffix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
     .chain(vec![
         operator,
         Token {
+            context,
             token_type: TokenType::Ident("x".to_string()),
             span: span.clone(),
         },

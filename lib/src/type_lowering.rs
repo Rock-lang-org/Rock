@@ -819,7 +819,7 @@ mod tests {
     }
 
     fn named_type(name: &str) -> ParseType {
-        ParseType::Type(ParseTypeInner {
+        ParseType::Type(ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics: vec![],
             span: Span::test(),
@@ -887,7 +887,7 @@ mod tests {
         let explicit = ParseType::Lambda(ast::TypeLambda {
             params: vec![AstGenericParamDecl {
                 default: None,
-                name: Ident {
+                name: Ident { context: Default::default(),
                     name: "T".to_string(),
                     span: Span::test(),
                 },
@@ -1053,12 +1053,12 @@ mod tests {
         let ty = TypeLowerer::lower_parse_type(
             &mut context,
             &ParseType::Associated {
-                base: ParseTypeInner {
+                base: ParseTypeInner { context: Default::default(),
                     name: "Self".to_string(),
                     generics: vec![],
                     span: Span::test(),
                 },
-                member: Ident {
+                member: Ident { context: Default::default(),
                     name: "Item".to_string(),
                     span: Span::test(),
                 },
@@ -1114,12 +1114,12 @@ mod tests {
             },
         );
         let projection = ParseType::Associated {
-            base: ParseTypeInner {
+            base: ParseTypeInner { context: Default::default(),
                 name: "Self".to_string(),
                 generics: Vec::new(),
                 span: Span::test(),
             },
-            member: Ident {
+            member: Ident { context: Default::default(),
                 name: "Family".to_string(),
                 span: Span::test(),
             },

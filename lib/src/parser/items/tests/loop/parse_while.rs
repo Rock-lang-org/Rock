@@ -18,7 +18,7 @@ fn parse_while() {
                 pattern: None,
                 expression: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                     operand: Operand::Ident(IdentifierPath {
-                        path: vec![IdentOrType::Ident(Ident {
+                        path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                             name: "x".to_string(),
                             span: tokens[1].span.clone()
                         })]

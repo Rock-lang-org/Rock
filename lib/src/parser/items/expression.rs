@@ -263,7 +263,7 @@ pub fn operand(stream: Input) -> IResult<Operand> {
             return Ok((stream.advance(1)?, Operand::Expression(Box::new(expression))));
         }
     }
-    super::macro_expression.map(Operand::MacroInvoc)
+    super::macro_expression.map(|invocation| Operand::MacroInvoc(Box::new(invocation)))
         .or(super::do_expression)
         .or(reset_inside_argument_list(parse_if)
             .map(Box::new)
@@ -340,6 +340,7 @@ pub fn tuple(stream: Input) -> IResult<Tuple> {
         Err(ParseError::UnexpectedToken(
             TokenType::OpenParen.discriminant().to_string(),
             Token {
+                context: Default::default(),
                 token_type: TokenType::OpenParen,
                 span: open_span,
             },
@@ -350,9 +351,11 @@ pub fn tuple(stream: Input) -> IResult<Tuple> {
 }
 
 pub fn self_ident(stream: Input) -> IResult<Operand> {
+    let context = stream.seek()?.context;
     preceded(TokenType::Arobase, ident.map(Operand::SelfIdent))
         .or((get_span, TokenType::Arobase).map(|(span, _)| {
             Operand::SelfIdent(Ident {
+                context,
                 name: "self".to_string(),
                 span,
             })

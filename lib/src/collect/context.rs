@@ -2020,7 +2020,7 @@ mod tests {
     use crate::types::GenericParamDecl;
 
     fn named_type(name: &str) -> ParseType {
-        ParseType::Type(ParseTypeInner {
+        ParseType::Type(ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics: vec![],
             span: Span::test(),
@@ -2045,7 +2045,7 @@ mod tests {
         std::fs::write(&util_mod, "answer = -> 42\n").unwrap();
 
         let module = Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "util".to_string(),
                 span: Span::test(),
             }),
@@ -2083,7 +2083,7 @@ mod tests {
         let util = temp_dir.join("util.rk");
 
         let module = Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "util".to_string(),
                 span: Span::test(),
             }),
@@ -2115,7 +2115,7 @@ mod tests {
         let top_level_io = temp_dir.join("io.rk");
 
         let module = Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "io".to_string(),
                 span: Span::test(),
             }),
@@ -2150,7 +2150,7 @@ mod tests {
         let graph_io = temp_dir.join("graph_io.rk");
 
         let alias_module = Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "io".to_string(),
                 span: Span::test(),
             }),
@@ -2159,7 +2159,7 @@ mod tests {
             filepath: Some(alias_io.clone()),
         };
         let graph_module = Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "io".to_string(),
                 span: Span::test(),
             }),
@@ -2201,7 +2201,7 @@ mod tests {
         let util = temp_dir.join("util.rk");
 
         let module = Module {
-            name: Some(Ident {
+            name: Some(Ident { context: Default::default(),
                 name: "util".to_string(),
                 span: Span::test(),
             }),
@@ -2259,7 +2259,7 @@ mod tests {
         context.current_generic_params = vec!["U".to_string()];
         context.current_generic_kinds = vec![crate::type_services::kind::Kind::Type];
 
-        let ty = context.lower_parse_type(&ParseType::Type(ParseTypeInner {
+        let ty = context.lower_parse_type(&ParseType::Type(ParseTypeInner { context: Default::default(),
             name: "missing".to_string(),
             generics: Vec::new(),
             span: span.clone(),
@@ -2341,12 +2341,12 @@ mod tests {
         context.current_generic_params = vec!["Self".to_string()];
 
         let ty = context.lower_parse_type(&ParseType::Associated {
-            base: ParseTypeInner {
+            base: ParseTypeInner { context: Default::default(),
                 name: "Self".to_string(),
                 generics: vec![],
                 span: Span::test(),
             },
-            member: Ident {
+            member: Ident { context: Default::default(),
                 name: "Item".to_string(),
                 span: Span::test(),
             },

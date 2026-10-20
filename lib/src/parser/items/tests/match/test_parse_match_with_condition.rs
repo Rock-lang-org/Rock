@@ -19,7 +19,7 @@ fn test_parse_match_with_condition() {
             do_syntax: None,
             expr: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(crate::ast::IdentifierPath {
-                    path: vec![IdentOrType::Ident(Ident {
+                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                         name: "a".to_string(),
                         span: Span::test(),
                     })]
@@ -34,7 +34,7 @@ fn test_parse_match_with_condition() {
                         Pattern {
                             binding: None,
                             kind: PatternKind::Ident(IdentPattern {
-                                name: Ident {
+                                name: Ident { context: Default::default(),
                                     name: "a".to_string(),
                                     span: Span::test(),
                                 },
@@ -44,7 +44,7 @@ fn test_parse_match_with_condition() {
                         Pattern {
                             binding: None,
                             kind: PatternKind::Ident(IdentPattern {
-                                name: Ident {
+                                name: Ident { context: Default::default(),
                                     name: "b".to_string(),
                                     span: Span::test(),
                                 },
@@ -55,7 +55,7 @@ fn test_parse_match_with_condition() {
                 },
                 condition: Some(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                     operand: Operand::Ident(crate::ast::IdentifierPath {
-                        path: vec![IdentOrType::Ident(Ident {
+                        path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                             name: "a".to_string(),
                             span: Span::test(),
                         })]
@@ -67,7 +67,7 @@ fn test_parse_match_with_condition() {
                     statements: vec![Statement::Expression(Expression::UnaryExpr(
                         UnaryExpr::PrimaryExpr(PrimaryExpr {
                             operand: Operand::Ident(crate::ast::IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
+                                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                     name: "a".to_string(),
                                     span: Span::test(),
                                 })]

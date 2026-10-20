@@ -15,7 +15,7 @@ fn test_parse_function_decl() {
     assert_eq!(
         function_decl,
         FunctionDecl {
-            name: Ident {
+            name: Ident { context: Default::default(),
                 name: "a".to_string(),
                 span: Span {
                     start: 0,
@@ -27,7 +27,7 @@ fn test_parse_function_decl() {
                 parameters: vec![Pattern {
                     binding: None,
                     kind: PatternKind::Ident(IdentPattern {
-                        name: Ident {
+                        name: Ident { context: Default::default(),
                             name: "foo".to_string(),
                             span: Span {
                                 start: 4,
@@ -42,7 +42,7 @@ fn test_parse_function_decl() {
                     statements: vec![Statement::Expression(Expression::UnaryExpr(
                         UnaryExpr::PrimaryExpr(PrimaryExpr {
                             operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
+                                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                     name: "foo".to_string(),
                                     span: Span {
                                         start: 11,

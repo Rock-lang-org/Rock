@@ -18,7 +18,7 @@ fn parse_expr(input: &str) -> Expression {
 fn ident_expr(name: &str, secondaries: Option<Vec<SecondaryExpr>>) -> Expression {
     Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
         operand: Operand::Ident(IdentifierPath {
-            path: vec![IdentOrType::Ident(Ident {
+            path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                 name: name.to_string(),
                 span: Span::test(),
             })],
@@ -42,7 +42,7 @@ fn interogation() {
         expression,
         Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
             operand: Operand::Ident(IdentifierPath {
-                path: vec![IdentOrType::Ident(Ident {
+                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                     name: "foo".to_string(),
                     span: Span::test(),
                 })],
@@ -53,7 +53,7 @@ fn interogation() {
                     Argument {
                         arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                             operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
+                                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                     name: "bar".to_string(),
                                     span: Span::test(),
                                 })],
@@ -65,7 +65,7 @@ fn interogation() {
                     Argument {
                         arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                             operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
+                                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                     name: "baz".to_string(),
                                     span: Span::test(),
                                 })],
@@ -143,7 +143,7 @@ fn receiver_chain_and_call_interogation_compose() {
             "maybe",
             Some(vec![
                 SecondaryExpr::Interogation,
-                SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+                SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                     name: "get".to_string(),
                     span: Span::test(),
                 })),

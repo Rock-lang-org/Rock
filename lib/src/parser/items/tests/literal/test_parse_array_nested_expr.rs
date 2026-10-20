@@ -24,7 +24,7 @@ fn test_parse_array_nested_expr() {
                         elements: vec![
                             Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                                 operand: Operand::Ident(IdentifierPath {
-                                    path: vec![IdentOrType::Ident(Ident {
+                                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                         name: "hello".to_string(),
                                         span: Span::test(),
                                     })],
@@ -63,7 +63,7 @@ fn test_parse_array_nested_expr() {
                     secondaries: None,
                     type_annotation: None,
                 }),
-                Operator {
+                Operator { context: Default::default(),
                     value: "+".to_string(),
                     span: Span::test(),
                 },

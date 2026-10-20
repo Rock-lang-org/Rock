@@ -140,6 +140,7 @@ impl<'a> RockView<'a> {
             TokenType::Ident(_) | TokenType::Type(_) | TokenType::MacroVar(_)
             | TokenType::MacroInvoc(_) | TokenType::NativeOperator(_)
             | TokenType::Operator(_) | TokenType::StuckOperator(_)
+            | TokenType::Caret | TokenType::Tilde | TokenType::Ampersand | TokenType::Arobase
         ));
         let context = if binding {
             let first = start.stream.runs()[start.run].context();

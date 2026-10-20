@@ -22,7 +22,7 @@ fn dot_expression_with_literal() {
                 kind: crate::ast::LiteralKind::Number(4),
                 span: Span::test(),
             }),
-            secondaries: Some(vec![SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+            secondaries: Some(vec![SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                 name: "test".to_string(),
                 span: Span::test(),
             }))]),

@@ -23,7 +23,7 @@ fn multiline_operator() {
         &Expression::BinopExpr(
             UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(IdentifierPath {
-                    path: vec![IdentOrType::Ident(Ident {
+                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                         name: "foo".to_string(),
                         span: Span::test(),
                     })],
@@ -31,7 +31,7 @@ fn multiline_operator() {
                 secondaries: None,
                 type_annotation: None,
             }),
-            Operator {
+            Operator { context: Default::default(),
                 value: "+".to_string(),
                 span: Span::test(),
             },
@@ -65,7 +65,7 @@ fn multiline_operator_indented() {
         &Expression::BinopExpr(
             UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(IdentifierPath {
-                    path: vec![IdentOrType::Ident(Ident {
+                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                         name: "foo".to_string(),
                         span: Span::test(),
                     })],
@@ -73,7 +73,7 @@ fn multiline_operator_indented() {
                 secondaries: None,
                 type_annotation: None,
             }),
-            Operator {
+            Operator { context: Default::default(),
                 value: "+".to_string(),
                 span: Span::test(),
             },

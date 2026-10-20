@@ -18,7 +18,7 @@ fn spaced_dot_closes_fn_call() {
         expression,
         Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
             operand: Operand::Ident(IdentifierPath {
-                path: vec![IdentOrType::Ident(Ident {
+                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                     name: "foo".to_string(),
                     span: Span::test(),
                 })],
@@ -28,7 +28,7 @@ fn spaced_dot_closes_fn_call() {
                     Argument {
                         arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                             operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
+                                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                     name: "a".to_string(),
                                     span: Span::test(),
                                 })],
@@ -40,7 +40,7 @@ fn spaced_dot_closes_fn_call() {
                     Argument {
                         arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                             operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
+                                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                     name: "b".to_string(),
                                     span: Span::test(),
                                 })],
@@ -50,7 +50,7 @@ fn spaced_dot_closes_fn_call() {
                         })),
                     },
                 ]),
-                SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+                SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                     name: "bar".to_string(),
                     span: Span::test(),
                 }))

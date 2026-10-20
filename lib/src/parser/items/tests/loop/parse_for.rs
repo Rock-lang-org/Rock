@@ -17,7 +17,7 @@ fn parse_for() {
             Pattern {
                 binding: None,
                 kind: PatternKind::Ident(IdentPattern {
-                    name: Ident {
+                    name: Ident { context: Default::default(),
                         name: "x".to_string(),
                         span: tokens[1].span.clone()
                     },
@@ -26,7 +26,7 @@ fn parse_for() {
             },
             Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(IdentifierPath {
-                    path: vec![IdentOrType::Ident(Ident {
+                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                         name: "y".to_string(),
                         span: tokens[3].span.clone()
                     })]

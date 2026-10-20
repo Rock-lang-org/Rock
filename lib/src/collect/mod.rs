@@ -1139,7 +1139,7 @@ pub(crate) fn current_crate_canonical_fixture() -> CurrentCrateCanonicalFixture 
                 name: None,
                 top_levels: vec![
                     ast::TopLevel::StructDecl(ast::StructDecl {
-                        name: ast::ParseTypeInner {
+                        name: ast::ParseTypeInner { context: Default::default(),
                             name: "RootThing".to_string(),
                             generics: vec![],
                             span: crate::lexer::Span::test(),
@@ -1149,12 +1149,12 @@ pub(crate) fn current_crate_canonical_fixture() -> CurrentCrateCanonicalFixture 
                         exported: false,
                     }),
                     ast::TopLevel::Module(ast::ModuleDecl(ast::Module {
-                        name: Some(ast::Ident {
+                        name: Some(ast::Ident { context: Default::default(),
                             name: "math".to_string(),
                             span: crate::lexer::Span::test(),
                         }),
                         top_levels: vec![ast::TopLevel::StructDecl(ast::StructDecl {
-                            name: ast::ParseTypeInner {
+                            name: ast::ParseTypeInner { context: Default::default(),
                                 name: "Vector".to_string(),
                                 generics: vec![],
                                 span: crate::lexer::Span::test(),
@@ -1167,7 +1167,7 @@ pub(crate) fn current_crate_canonical_fixture() -> CurrentCrateCanonicalFixture 
                         filepath: None,
                     })),
                     ast::TopLevel::Mod(
-                        ast::Ident {
+                        ast::Ident { context: Default::default(),
                             name: "io".to_string(),
                             span: crate::lexer::Span::test(),
                         },
@@ -1211,7 +1211,7 @@ mod tests {
     use crate::types::{GenericParamDecl, GenericParamId, Type};
 
     fn type_inner(name: &str) -> ParseTypeInner {
-        ParseTypeInner {
+        ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics: vec![],
             span: Span::test(),
@@ -1219,7 +1219,7 @@ mod tests {
     }
 
     fn generic_type_inner(name: &str, generics: Vec<ParseType>) -> ParseTypeInner {
-        ParseTypeInner {
+        ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics,
             span: Span::test(),
@@ -1240,7 +1240,7 @@ mod tests {
     }
 
     fn ident(name: &str) -> Ident {
-        Ident {
+        Ident { context: Default::default(),
             name: name.to_string(),
             span: Span::test(),
         }

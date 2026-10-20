@@ -17,7 +17,7 @@ fn self_ident() {
     assert_eq!(
         expression,
         Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
-            operand: Operand::SelfIdent(Ident {
+            operand: Operand::SelfIdent(Ident { context: Default::default(),
                 name: "foo".to_string(),
                 span: Span::test(),
             }),

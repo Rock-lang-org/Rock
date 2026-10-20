@@ -15,7 +15,7 @@ fn default_span() -> Span {
 }
 
 fn parse_type_i32() -> ParseType {
-    ParseType::Type(ParseTypeInner {
+    ParseType::Type(ParseTypeInner { context: Default::default(),
         name: "I32".to_string(),
         generics: vec![],
         span: default_span(),
@@ -23,7 +23,7 @@ fn parse_type_i32() -> ParseType {
 }
 
 fn parse_type_f64() -> ParseType {
-    ParseType::Type(ParseTypeInner {
+    ParseType::Type(ParseTypeInner { context: Default::default(),
         name: "F64".to_string(),
         generics: vec![],
         span: default_span(),
@@ -31,7 +31,7 @@ fn parse_type_f64() -> ParseType {
 }
 
 fn parse_type_char() -> ParseType {
-    ParseType::Type(ParseTypeInner {
+    ParseType::Type(ParseTypeInner { context: Default::default(),
         name: "Char".to_string(),
         generics: vec![],
         span: default_span(),

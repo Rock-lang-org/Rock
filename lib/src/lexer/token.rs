@@ -7,6 +7,7 @@ use crate::lexer::Span;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Token {
     pub token_type: TokenType,
+    pub context: super::lossless::SyntaxContext,
     pub span: Span,
 }
 
@@ -112,7 +113,7 @@ impl ToString for TokenType {
 
 impl PartialEq for Token {
     fn eq(&self, other: &Self) -> bool {
-        self.token_type == other.token_type
+        self.token_type == other.token_type && self.context == other.context
     }
 }
 
@@ -123,6 +124,7 @@ impl From<TokenType> for Token {
     fn from(token_type: TokenType) -> Self {
         Self {
             token_type,
+            context: super::lossless::SyntaxContext::ROOT,
             span: Span::test(),
         }
     }

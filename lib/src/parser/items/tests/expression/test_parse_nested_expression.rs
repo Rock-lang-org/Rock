@@ -21,7 +21,7 @@ fn test_parse_nested_expression() {
         &Expression::BinopExpr(
             UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(IdentifierPath {
-                    path: vec![IdentOrType::Ident(Ident {
+                    path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                         name: "a".to_string(),
                         span: Span {
                             start: 0,
@@ -30,7 +30,7 @@ fn test_parse_nested_expression() {
                         },
                     })],
                 }),
-                secondaries: Some(vec![SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+                secondaries: Some(vec![SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                     name: "a".to_string(),
                     span: Span {
                         start: 2,
@@ -40,14 +40,14 @@ fn test_parse_nested_expression() {
                 }))]),
                 type_annotation: None,
             }),
-            Operator {
+            Operator { context: Default::default(),
                 value: "+".to_string(),
                 span: Span::test(),
             },
             Box::new(Expression::BinopExpr(
                 UnaryExpr::PrimaryExpr(PrimaryExpr {
                     operand: Operand::Ident(IdentifierPath {
-                        path: vec![IdentOrType::Ident(Ident {
+                        path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                             name: "b".to_string(),
                             span: Span {
                                 start: 6,
@@ -59,7 +59,7 @@ fn test_parse_nested_expression() {
                     secondaries: None,
                     type_annotation: None,
                 }),
-                Operator {
+                Operator { context: Default::default(),
                     value: "+".to_string(),
                     span: Span::test(),
                 },

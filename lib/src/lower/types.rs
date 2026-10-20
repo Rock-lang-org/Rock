@@ -154,7 +154,7 @@ mod tests {
     use crate::types::{GenericParamDecl, GenericParamId};
 
     fn named_type(name: &str) -> ParseType {
-        ParseType::Type(ParseTypeInner {
+        ParseType::Type(ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics: vec![],
             span: crate::lexer::Span::test(),
@@ -253,12 +253,12 @@ mod tests {
             .item_names_by_id
             .insert(def_id(2), "other::Choice".to_string());
 
-        let struct_ty = lowerer.lower_parse_type(&ParseType::Type(ParseTypeInner {
+        let struct_ty = lowerer.lower_parse_type(&ParseType::Type(ParseTypeInner { context: Default::default(),
             name: "Widget".to_string(),
             generics: vec![named_type("I64")],
             span: crate::lexer::Span::test(),
         }));
-        let enum_ty = lowerer.lower_parse_type(&ParseType::Type(ParseTypeInner {
+        let enum_ty = lowerer.lower_parse_type(&ParseType::Type(ParseTypeInner { context: Default::default(),
             name: "Choice".to_string(),
             generics: vec![named_type("Bool")],
             span: crate::lexer::Span::test(),

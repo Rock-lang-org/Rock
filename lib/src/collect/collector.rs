@@ -2075,7 +2075,7 @@ fn qualify_local_segments_with_prefix(
     let mut qualified: Vec<ast::IdentOrType> = prefix
         .split("::")
         .map(|segment| {
-            ast::IdentOrType::Ident(ast::Ident {
+            ast::IdentOrType::Ident(ast::Ident { context: Default::default(),
                 name: segment.to_string(),
                 span: source_span.clone(),
             })
@@ -2129,7 +2129,7 @@ mod tests {
     }
 
     fn type_inner(name: &str) -> ParseTypeInner {
-        ParseTypeInner {
+        ParseTypeInner { context: Default::default(),
             name: name.to_string(),
             generics: vec![],
             span: test_span(name),
@@ -2137,7 +2137,7 @@ mod tests {
     }
 
     fn ident(name: &str) -> Ident {
-        Ident {
+        Ident { context: Default::default(),
             name: name.to_string(),
             span: test_span(name),
         }

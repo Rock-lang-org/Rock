@@ -141,7 +141,7 @@ fn macro_a_08_synthetic_pattern_literals_and_enum_defaults_have_no_unvisited_fie
     }));
     let instance = Pattern { binding: None, kind: PatternKind::Instance(InstancePattern {
         name: TypePath { path: Vec::new() }, args: FieldsPatternOrArgumentsPattern::Fields(vec![FieldPattern {
-            name: Ident { name: "value".into(), span: span.clone() }, pattern: pattern(),
+            name: Ident { context: Default::default(), name: "value".into(), span: span.clone() }, pattern: pattern(),
         }]),
     }) };
     function.lambda.body.statements.push(Statement::Expression(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {

@@ -19,7 +19,7 @@ fn instance_pattern_arguments_nested() {
             binding: None,
             kind: PatternKind::Instance(InstancePattern {
                 name: TypePath {
-                    path: vec![IdentOrType::Type(ParseType::Type(ParseTypeInner {
+                    path: vec![IdentOrType::Type(ParseType::Type(ParseTypeInner { context: Default::default(),
                         name: "Player".to_string(),
                         generics: vec![],
                         span: Span::test(),
@@ -33,7 +33,7 @@ fn instance_pattern_arguments_nested() {
                             kind: PatternKind::Instance(InstancePattern {
                                 name: TypePath {
                                     path: vec![IdentOrType::Type(ParseType::Type(
-                                        ParseTypeInner {
+                                        ParseTypeInner { context: Default::default(),
                                             name: "Ok".to_string(),
                                             generics: vec![],
                                             span: Span::test(),
@@ -53,7 +53,7 @@ fn instance_pattern_arguments_nested() {
                     Pattern {
                         binding: None,
                         kind: PatternKind::Ident(IdentPattern {
-                            name: Ident {
+                            name: Ident { context: Default::default(),
                                 name: "toto".to_string(),
                                 span: Span::test(),
                             },

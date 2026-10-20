@@ -115,6 +115,7 @@ fn parse_named_type(stream: Input) -> IResult<ParseType> {
         return Err(ParseError::UnexpectedToken("type".to_string(), token));
     };
     let inner = ParseTypeInner {
+        context: token.context,
         name: name.clone(),
         generics: Vec::new(),
         span: token.span,
@@ -140,6 +141,7 @@ pub fn parse_type_name(stream: Input) -> IResult<ParseTypeInner> {
     Ok((
         stream,
         ParseTypeInner {
+            context: name.context,
             name: name.name,
             generics: Vec::new(),
             span: name.span,
@@ -189,6 +191,7 @@ fn type_token_with_span(stream: Input) -> IResult<crate::ast::Ident> {
         TokenType::Type(name) => Ok((
             stream,
             crate::ast::Ident {
+                context: token.context,
                 name: name.clone(),
                 span,
             },
@@ -395,6 +398,7 @@ fn parse_constructor_param_inner(
         ));
     };
     let name = crate::ast::Ident {
+        context: name_token.context,
         name: name.clone(),
         span: name_token.span.clone(),
     };
@@ -465,6 +469,7 @@ fn parse_constructor_param_inner(
     }
     let application = TypeApplication {
         constructor: Box::new(ParseType::Type(ParseTypeInner {
+            context: name.context,
             name: name.name.clone(),
             generics: Vec::new(),
             span: name.span.clone(),
@@ -505,6 +510,7 @@ pub fn parse_plain_generic_param(stream: Input) -> IResult<GenericParamDecl> {
         ));
     };
     let name = crate::ast::Ident {
+        context: token.context,
         name: name.clone(),
         span: span.clone(),
     };
@@ -577,6 +583,7 @@ pub fn parse_type_inner(stream: Input) -> IResult<ParseTypeInner> {
     Ok((
         stream,
         ParseTypeInner {
+            context: name.context,
             name: name.name,
             generics,
             span: join_spans(&name.span, &end_span),

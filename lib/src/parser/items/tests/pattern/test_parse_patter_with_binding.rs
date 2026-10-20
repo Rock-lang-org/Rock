@@ -16,7 +16,7 @@ fn test_parse_patter_with_binding() {
     assert_formatted_eq(
         &pattern,
         &Pattern {
-            binding: Some(Ident {
+            binding: Some(Ident { context: Default::default(),
                 name: "a".to_string(),
                 span: Span::test(),
             }),

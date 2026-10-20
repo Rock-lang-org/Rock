@@ -20,7 +20,7 @@ fn test_parse_assignment() {
                 pattern: Pattern {
                     binding: None,
                     kind: PatternKind::Ident(IdentPattern {
-                        name: Ident {
+                        name: Ident { context: Default::default(),
                             name: "a".to_string(),
                             span: Span::test(),
                         },

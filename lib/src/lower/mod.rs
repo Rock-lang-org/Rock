@@ -1053,7 +1053,7 @@ mod tests {
     use crate::ids::{DefId, LocalDefId, ModuleId};
 
     fn ident(name: &str) -> Ident {
-        Ident {
+        Ident { context: Default::default(),
             name: name.to_string(),
             span: crate::lexer::Span::test(),
         }

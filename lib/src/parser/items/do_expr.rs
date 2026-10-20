@@ -61,6 +61,7 @@ pub fn do_expression(stream: Input) -> IResult<Operand> {
             UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Ident(IdentifierPath {
                     path: vec![IdentOrType::Ident(Ident {
+                        context: Default::default(),
                         name: "bind".into(),
                         span: bind_span,
                     })],

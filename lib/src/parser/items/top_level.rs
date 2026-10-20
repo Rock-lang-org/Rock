@@ -250,7 +250,7 @@ pub fn top_level(stream: Input) -> IResult<TopLevel> {
                 TokenType::Eol,
             )
                 .map(|(_, name, params, _, ty, _)| TopLevel::NewType(
-                    crate::ast::ParseTypeInner { name: name.name, span: name.span, generics: Vec::new() },
+                    crate::ast::ParseTypeInner { name: name.name, context: name.context, span: name.span, generics: Vec::new() },
                     params,
                     ty,
                 )))

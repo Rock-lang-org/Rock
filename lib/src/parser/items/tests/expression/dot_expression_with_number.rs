@@ -18,7 +18,7 @@ fn dot_expression_with_number() {
         expression,
         Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
             operand: Operand::Ident(IdentifierPath {
-                path: vec![IdentOrType::Ident(Ident {
+                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                     name: "some_tuple".to_string(),
                     span: Span::test(),
                 })],

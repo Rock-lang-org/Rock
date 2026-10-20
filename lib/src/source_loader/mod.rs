@@ -1037,12 +1037,12 @@ mod tests {
         let root = Module {
             name: None,
             top_levels: vec![TopLevel::Module(ModuleDecl(Module {
-                name: Some(Ident {
+                name: Some(Ident { context: Default::default(),
                     name: "outer".to_string(),
                     span: crate::lexer::Span::test(),
                 }),
                 top_levels: vec![TopLevel::Mod(
-                    Ident {
+                    Ident { context: Default::default(),
                         name: "util".to_string(),
                         span: crate::lexer::Span::test(),
                     },

@@ -29,7 +29,7 @@ impl RunKind {
 
 /// Binding authority is independent of source locations. Ordinary source starts
 /// in ROOT; only the later hygiene owner may allocate expansion contexts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SyntaxContext(u32);
 
 impl SyntaxContext {
@@ -249,3 +249,6 @@ mod splice_tests;
 
 #[cfg(test)]
 mod wire_tests;
+
+#[cfg(test)]
+mod context_delivery_tests;

@@ -703,7 +703,7 @@ mod tests {
     }
 
     fn ident(name: &str) -> ast::Ident {
-        ast::Ident {
+        ast::Ident { context: Default::default(),
             name: name.to_string(),
             span: crate::lexer::Span::test(),
         }
@@ -955,7 +955,7 @@ mod tests {
             binding: None,
             kind: ast::PatternKind::Instance(ast::InstancePattern {
                 name: ast::TypePath {
-                    path: vec![ast::IdentOrType::Ident(ast::Ident {
+                    path: vec![ast::IdentOrType::Ident(ast::Ident { context: Default::default(),
                         name: name.to_string(),
                         span: crate::lexer::Span::test(),
                     })],

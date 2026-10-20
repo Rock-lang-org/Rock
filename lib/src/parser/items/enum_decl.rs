@@ -35,7 +35,7 @@ pub fn enum_decl(stream: Input) -> IResult<EnumDecl> {
                 .collect();
 
             EnumDecl {
-                name: ParseTypeInner { name: name.name, span: name.span, generics: Vec::new() },
+                name: ParseTypeInner { name: name.name, context: name.context, span: name.span, generics: Vec::new() },
                 generic_params,
                 variants,
                 exported: false,
@@ -109,7 +109,8 @@ fn enum_variant_without_indent(stream: Input) -> IResult<EnumVariant> {
         .map(|(name, _, fields_opt)| {
             if !name.generics.is_empty() {
                 EnumVariant {
-                    name: ParseTypeInner {
+        name: ParseTypeInner {
+            context: name.context,
                         span: name.span,
                         name: name.name,
                         generics: Vec::new(),

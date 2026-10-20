@@ -18,7 +18,7 @@ fn spaced_dot_closes_fn_call_nested() {
         expression,
         Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
             operand: Operand::Ident(IdentifierPath {
-                path: vec![IdentOrType::Ident(Ident {
+                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                     name: "foo".to_string(),
                     span: Span::test(),
                 })],
@@ -28,7 +28,7 @@ fn spaced_dot_closes_fn_call_nested() {
                     Argument {
                         arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                             operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
+                                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                     name: "a".to_string(),
                                     span: Span::test(),
                                 })],
@@ -40,7 +40,7 @@ fn spaced_dot_closes_fn_call_nested() {
                     Argument {
                         arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                             operand: Operand::Ident(IdentifierPath {
-                                path: vec![IdentOrType::Ident(Ident {
+                                path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                     name: "b".to_string(),
                                     span: Span::test(),
                                 })],
@@ -48,7 +48,7 @@ fn spaced_dot_closes_fn_call_nested() {
                             secondaries: Some(vec![SecondaryExpr::Arguments(vec![Argument {
                                 arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                                     operand: Operand::Ident(IdentifierPath {
-                                        path: vec![IdentOrType::Ident(Ident {
+                                        path: vec![IdentOrType::Ident(Ident { context: Default::default(),
                                             name: "a".to_string(),
                                             span: Span::test(),
                                         })],
@@ -61,11 +61,11 @@ fn spaced_dot_closes_fn_call_nested() {
                         })),
                     },
                 ]),
-                SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+                SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                     name: "bar".to_string(),
                     span: Span::test(),
                 })),
-                SecondaryExpr::Dot(IdentOrNumber::Ident(Ident {
+                SecondaryExpr::Dot(IdentOrNumber::Ident(Ident { context: Default::default(),
                     name: "baz".to_string(),
                     span: Span::test(),
                 })),

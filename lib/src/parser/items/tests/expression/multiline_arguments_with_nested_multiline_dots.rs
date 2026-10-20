@@ -30,7 +30,7 @@ fn multiline_arguments_with_nested_multiline_dots() {
         })) => {
             assert_eq!(
                 ident_path.path[0],
-                IdentOrType::Ident(Ident {
+                IdentOrType::Ident(Ident { context: Default::default(),
                     name: "foo".to_string(),
                     span: Span::test(),
                 })
@@ -61,7 +61,7 @@ fn multiline_arguments_with_nested_multiline_dots() {
                         })) => {
                             assert_eq!(
                                 ident_path.path[0],
-                                IdentOrType::Ident(Ident {
+                                IdentOrType::Ident(Ident { context: Default::default(),
                                     name: "arg1".to_string(),
                                     span: Span::test(),
                                 })
@@ -93,7 +93,7 @@ fn multiline_arguments_with_nested_multiline_dots() {
                         })) => {
                             assert_eq!(
                                 ident_path.path[0],
-                                IdentOrType::Ident(Ident {
+                                IdentOrType::Ident(Ident { context: Default::default(),
                                     name: "arg2".to_string(),
                                     span: Span::test(),
                                 })
