@@ -1,0 +1,280 @@
+// Explicit protocol 7 / RKLOSS04 writing into a bounded, owned byte buffer.
+// No bytes are exposed on failure; IO and worker dispatch remain separate.
+> rock_macro::*
+> rock_macro::encode_validation::validate_report
+> std::collections::vec::Vec
+> std::control::option::Option
+> std::control::result::Result
+> std::string::owned::String
+> std::num::arithmetic::Add
+> std::num::arithmetic::Sub
+> std::num::arithmetic::Div
+> std::num::arithmetic::Mod
+> std::cmp::eq::PartialEq
+> std::cmp::ord::PartialOrd
+> std::ops::index::Index
+
+< enum EncodeError
+    LengthLimit
+    InvalidRequest
+    InvalidStream
+    InvalidContext
+    InvalidLiteral
+    InvalidLocation
+    MissingErrorDiagnostic
+
+struct Writer
+    < bytes: Vec U8
+
+impl Writer
+    new: () -> Writer
+    new = -> Writer
+        bytes: Vec::new!
+
+    ^@byte: U8 -> Result (), EncodeError
+    ^@byte = value ->
+        if self.bytes.len! >= 1048576
+            failure: Result (), EncodeError = Result::Err EncodeError::LengthLimit
+            return failure
+        self.bytes.push value
+        Result::Ok ()
+
+    ^@raw: &[U8] -> Result (), EncodeError
+    ^@raw = bytes ->
+        if bytes.len! > 1048576 - self.bytes.len!
+            failure: Result (), EncodeError = Result::Err EncodeError::LengthLimit
+            return failure
+        i = 0
+        while i < bytes.len!
+            self.bytes.push bytes[i]
+            i = i + 1
+        Result::Ok ()
+
+    ^@uint: U64 -> Result (), EncodeError
+    ^@uint = value ->
+        if value < (251 as U64)
+            self.byte (value as U8) ?
+        else
+            width = if value <= (65535 as U64) then 2 else if value <= (4294967295 as U64) then 4 else 8
+            tag = if width == 2 then 251 else if width == 4 then 252 else 253
+            self.byte (tag as U8) ?
+            remaining = value
+            i = 0
+            while i < width
+                self.byte ((remaining % (256 as U64)) as U8) ?
+                remaining = remaining / (256 as U64)
+                i = i + 1
+        Result::Ok ()
+
+    ^@count: I64 -> Result (), EncodeError
+    ^@count = count -> self.uint (count as U64)
+
+    ^@text: &String -> Result (), EncodeError
+    ^@text = text ->
+        self.count text.len! ?
+        self.raw text.as_bytes!
+
+    ^@range: &ByteRange -> Result (), EncodeError
+    ^@range = range ->
+        self.uint (range.start) ?
+        self.uint (range.end)
+
+    ^@span: &Span -> Result (), EncodeError
+    ^@span = span ->
+        self.text (&span.file_path) ?
+        self.range (&span.range)
+
+    ^@origin: &(Option TokenOrigin) -> Result (), EncodeError
+    ^@origin = origin ->
+        match *origin
+            Option::None => self.byte (0 as U8)
+            Option::Some retained =>
+                self.byte (1 as U8) ?
+                provenance = &retained.provenance
+                match *provenance
+                    TokenProvenance::Source span =>
+                        self.uint (0 as U64) ?
+                        self.span &span ?
+                    TokenProvenance::Captured captured =>
+                        self.uint (1 as U64) ?
+                        self.uint (captured.expansion as U64) ?
+                        self.span (&captured.invocation_span) ?
+                        self.span (&captured.capture_span) ?
+                    TokenProvenance::Generated generated =>
+                        self.uint (2 as U64) ?
+                        self.uint (generated.expansion as U64) ?
+                        self.uint (generated.generated_source as U64) ?
+                        self.span (&generated.definition_span) ?
+                projection = &retained.projection
+                match *projection
+                    Option::None => self.byte (0 as U8)
+                    Option::Some value =>
+                        self.byte (1 as U8) ?
+                        self.uint (value.namespace) ?
+                        self.uint (value.expansion as U64) ?
+                        self.uint (value.generated_source as U64) ?
+                        self.uint (value.source_start) ?
+                        self.uint (value.output_start)
+
+    ^@construction_value: &ConstructionContext -> Result (), EncodeError
+    ^@construction_value = context ->
+        self.uint (context.invocation) ?
+        kind = &context.kind
+        match *kind
+            ConstructionKind::Fresh slot =>
+                self.uint (0 as U64) ?
+                self.uint (slot as U64)
+            ConstructionKind::CallSite => self.uint (1 as U64)
+            ConstructionKind::Dependency index =>
+                self.uint (2 as U64) ?
+                self.uint (index as U64)
+
+    ^@construction: &(Option ConstructionContext) -> Result (), EncodeError
+    ^@construction = context ->
+        match *context
+            Option::None => self.byte (0 as U8)
+            Option::Some value =>
+                self.byte (1 as U8) ?
+                self.construction_value &value
+
+    ^@stream: &TokenStream -> Result (), EncodeError
+    ^@stream = stream ->
+        magic: [U8; 8] = [82, 75, 76, 79, 83, 83, 48, 52]
+        self.raw &magic ?
+        self.count stream.sources.len! ?
+        i = 0
+        while i < stream.sources.len!
+            source = &stream.sources[i]
+            self.uint (source.identity) ?
+            self.text (&source.file_path) ?
+            self.text (&source.text) ?
+            i = i + 1
+        self.count stream.segments.len! ?
+        i = 0
+        while i < stream.segments.len!
+            segment = &stream.segments[i]
+            self.uint (segment.source) ?
+            self.range (&segment.range) ?
+            kind = &segment.kind
+            tag = match *kind
+                SegmentKind::Text => 0
+                SegmentKind::Whitespace => 1
+                SegmentKind::LineEnding => 2
+            self.count tag ?
+            self.uint (segment.context.handle as U64) ?
+            boundary = &segment.boundary
+            tag = match *boundary
+                JoinBoundary::Separate => 0
+                JoinBoundary::SourceAdjacent => 1
+            self.count tag ?
+            self.origin (&segment.origin) ?
+            self.construction (&segment.construction) ?
+            i = i + 1
+        self.uint (stream.anchor.source) ?
+        self.uint (stream.anchor.offset) ?
+        self.uint (stream.anchor.context.handle as U64) ?
+        self.origin (&stream.anchor.origin) ?
+        self.count stream.expressions.len! ?
+        i = 0
+        while i < stream.expressions.len!
+            expression = &stream.expressions[i]
+            self.range (&expression.range) ?
+            self.uint (expression.header_indent) ?
+            i = i + 1
+        Result::Ok ()
+
+    ^@location: &DiagnosticLocation -> Result (), EncodeError
+    ^@location = location ->
+        match *location
+            DiagnosticLocation::Invocation => self.uint (0 as U64)
+            DiagnosticLocation::Input range =>
+                self.uint (1 as U64) ?
+                self.range &range
+            DiagnosticLocation::Output range =>
+                self.uint (2 as U64) ?
+                self.range &range
+
+    ^@diagnostic: &Diagnostic -> Result (), EncodeError
+    ^@diagnostic = diagnostic ->
+        severity = &diagnostic.severity
+        tag = match *severity
+            DiagnosticSeverity::Error => 0
+            DiagnosticSeverity::Warning => 1
+            DiagnosticSeverity::Info => 2
+            DiagnosticSeverity::Hint => 3
+        self.count tag ?
+        self.text (&diagnostic.message) ?
+        self.location (&diagnostic.primary) ?
+        self.count diagnostic.labels.len! ?
+        i = 0
+        while i < diagnostic.labels.len!
+            label = &diagnostic.labels[i]
+            self.text (&label.message) ?
+            self.location (&label.location) ?
+            i = i + 1
+        self.count diagnostic.notes.len! ?
+        i = 0
+        while i < diagnostic.notes.len!
+            self.text (&diagnostic.notes[i]) ?
+            i = i + 1
+        self.count diagnostic.help.len! ?
+        i = 0
+        while i < diagnostic.help.len!
+            self.text (&diagnostic.help[i]) ?
+            i = i + 1
+        Result::Ok ()
+
+    ^@report: &MacroReport -> Result (), EncodeError
+    ^@report = report ->
+        self.uint (7 as U64) ?
+        output = &report.output
+        match *output
+            Option::None => self.byte (0 as U8) ?
+            Option::Some value =>
+                self.byte (1 as U8) ?
+                self.count value.parts.len! ?
+                i = 0
+                while i < value.parts.len!
+                    part = &value.parts[i]
+                    match *part
+                        OutputPart::Stream stream =>
+                            self.uint (0 as U64) ?
+                            mut nested = Writer::new!
+                            nested.stream &stream ?
+                            self.count nested.bytes.len! ?
+                            self.raw nested.bytes.as_slice! ?
+                        OutputPart::Source fragment =>
+                            self.uint (1 as U64) ?
+                            self.text (&fragment.text) ?
+                            self.construction_value (&fragment.context) ?
+                        OutputPart::Literal fragment =>
+                            self.uint (2 as U64) ?
+                            self.uint (fragment.view as U64) ?
+                            self.range (&fragment.range) ?
+                    i = i + 1
+        self.count report.diagnostics.len! ?
+        i = 0
+        while i < report.diagnostics.len!
+            self.diagnostic (&report.diagnostics[i]) ?
+            i = i + 1
+        Result::Ok ()
+
+// Authoring conveniences normalize to one optional-output/diagnostics record.
+encode_result: &MacroRequest -> MacroResult -> Result (Vec U8), EncodeError
+< encode_result = request, result ->
+    report = match result
+        MacroResult::Expand stream =>
+            mut parts: Vec OutputPart = Vec::new!
+            parts.push (OutputPart::Stream stream)
+            MacroReport
+                output: Option::Some (MacroOutput
+                    parts: parts)
+                diagnostics: Vec::new!
+        MacroResult::Error diagnostics => MacroReport
+            output: Option::None
+            diagnostics: diagnostics
+        MacroResult::Report report => report
+    validate_report request, &report ?
+    mut writer = Writer::new!
+    writer.report &report ?
+    Result::Ok writer.bytes

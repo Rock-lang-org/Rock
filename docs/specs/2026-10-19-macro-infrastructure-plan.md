@@ -1403,6 +1403,68 @@ is introduced: those remain B.09/B.10/B.18/B.19. Protocol 7, `RKLOSS04` and prod
 artifact 53 are unchanged. Formatting remains deferred and Beads unavailable.
 No functional edits follow the final focused gate; unrelated work remains untouched.
 
+### B.09 delivery receipt (2026-10-20)
+
+`encode::encode_result` now normalizes all three authoring variants into the
+single protocol-7 optional-output/diagnostics record and explicitly writes its
+declaration-order fields, varints, options and enum tags. Stream parts encode the
+same `RKLOSS04` snapshot/run/anchor/capture representation; source and literal
+parts retain their typed descriptors. No Rust memory layout, generic serializer,
+compiler callback or fragment scanner participates.
+
+The writer checks the 1 MiB envelope before byte-buffer growth and returns only
+complete owned responses. Shared `validation.rk` preserves B.08 request checks
+and permits symbolic output construction while retaining stream invariants.
+Output validation checks invocation/dependency contexts, literal handles and
+UTF-8 ranges, expanded spelling, metadata counts and diagnostic locations.
+`None` output requires an Error diagnostic; `Some` with zero parts is an empty
+success. Error/warning reports may accompany output without changing the wire
+shape. Only the compiler can reauthorize forwarded snapshots/contexts/origins:
+the native forged-context control encodes ordinary data, then Rust's
+request-specific validator rejects it.
+
+The native fixture compares exact `response.hex` and `error.hex` bytes, including
+warning labels/notes/help, all construction kinds and literal fragments. Its 25
+result controls cover Expand/Error/Report normalization, empty parts/streams,
+all severities/locations, NUL/Unicode, forwarded enriched provenance, wide
+integers/65,536-byte messages, constructed streams, and invalid locations,
+contexts, literal handles/cuts, streams, missing errors and spelling/metadata/
+encoded-message limits. Failed encoders emit no partial stdout. All 206 B.08
+request controls and earlier SDK/IO controls remain intact. Capped concurrent
+stdout/stderr drains now accompany stdin pumping, so responses above pipe
+capacity cannot deadlock the fixture's 15-second execution deadline.
+
+The first combined result-dispatch fixture overflowed the compiler's Rust test
+thread stack; splitting the same cases into small success/error helper functions
+preserves coverage and passes without changing compiler stack configuration.
+This is not a general compiler stack-safety claim. Initial CLI probes also
+exposed a stale pre-B.07 std artifact and fixture-only borrow/signature mistakes;
+the acceptance rebuilds explicit std/SDK artifacts from current sources.
+
+Verification evidence:
+
+- `cargo test -p rock-lib --test macro_sdk -- --nocapture` passes 206 request
+  controls and 25 result controls plus all preserved SDK/IO controls (159.68
+  seconds). `/tmp/opencode/macro-b09-sdk-test.log`, SHA-256
+  `973146ed5fc256f02aff8684be8ad9f37a4cc5c864f49557879d8de5eaee16c2`.
+- `cargo check --workspace --all-targets` passes with existing warnings.
+  `/tmp/opencode/macro-b09-check.log`, SHA-256
+  `753a137f56c732b42d7b561c1a37f2ed88bafdcf200ca5645fce1b0f448ea23b`.
+- `cargo clippy --workspace --all-targets` passes with existing warnings and no
+  warning in the SDK Rust harness/support.
+  `/tmp/opencode/macro-b09-clippy.log`, SHA-256
+  `971c16d7596c0f9e9ad7a3184cb7da42e36b8f77ad0da1e5902ebb8738ffe40b`.
+- `cargo test -p rock-lib` passes: 2,699 units, 805 main integrations, six
+  diagnostic integrations, 14 native-process integrations, one SDK integration
+  (162.31 seconds) and one parser integration; one doctest ignored.
+  `/tmp/opencode/macro-b09-acceptance.log`, SHA-256
+  `d158392ba55d63d817cf7b43d229671f4305c4d1d08a9a705d351c6aaa4bb54b`.
+
+The one-shot runner remains B.10; canonical literal preparation/materialization
+remain B.18/B.19. Protocol 7, `RKLOSS04` and artifact 53 are unchanged. Formatting
+remains deferred, Beads unavailable, and unrelated work untouched.
+No functional edits follow these final gates.
+
 The first worker is intentionally built from ordinary Rock code and test-provided
 entry functions. This proves the SDK/runtime seam before the source-declared
 export workflow; it is not permission to require authors to write a dispatcher.

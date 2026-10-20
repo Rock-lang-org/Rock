@@ -159,8 +159,10 @@ an opaque capture, a group, argument ranges, escape-aware literal mappings,
 forwarded spelling, all construction kinds, a literal fragment, and structured
 warning/error results. Invocation and snapshot handles are fixed to 1 solely
 for these test messages. B.08's Rock SDK request acceptance consumes `request.hex`
-and Rust-produced enriched/malformed controls; response/error production remains
-B.09. Compiler-only tests do not establish Rock-authored worker usability.
+and Rust-produced enriched/malformed controls; B.09 produces the exact
+`response.hex`/`error.hex` bytes and verifies result variants through Rust decoding
+and request-specific validation. Compiler-only tests do not establish
+Rock-authored worker usability.
 
 ## Ordinary Rock data model
 
@@ -174,7 +176,7 @@ their declared `U32` widths. Struct layout is not the wire encoding.
 
 `MacroResult::Expand` and `MacroResult::Error` are authoring conveniences;
 `MacroResult::Report` carries optional ordered output parts and diagnostics
-together. The future encoder normalizes all three into the single B.01 response
+together. `encode::encode_result` normalizes all three into the single B.01 response
 record. All provenance, optional views, dependency identities, construction
 requests and fragment descriptors are ordinary typed data. They grant no compiler
 authority merely by being constructed locally. Local operations and checked IO/
@@ -188,3 +190,12 @@ snapshot table, and validates the request's local structural invariants. Errors
 contain a typed kind and byte offset (nested-stream-relative for nested failures,
 end-of-envelope for whole-request semantic failures). No parser callbacks,
 filesystem loading, macro execution or construction authority are introduced.
+
+`rock_macro::encode::encode_result` takes the request and an owned authoring
+result, validates local structure/ranges/limits, and returns a bounded owned byte
+vector or typed `EncodeError`. It never writes a partial response or invokes a
+parser. Request/input stream validation shares `validation.rk`; output streams
+may retain symbolic construction requests, checked for invocation/dependency
+ownership locally and reauthorized by the compiler on return. The local writer
+does not certify forwarding metadata or interpret deferred fragments. Runner IO
+and entry dispatch remain B.10, canonical literals B.18, materialization B.19.

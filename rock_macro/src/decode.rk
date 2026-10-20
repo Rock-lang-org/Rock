@@ -1,6 +1,6 @@
 // Protocol 7 / RKLOSS04 only. This is a bounded schema decoder, not a serializer framework.
 > rock_macro::*
-> rock_macro::decode_validation::validate_request
+> rock_macro::validation::validate_request
 > std::collections::vec::Vec
 > std::control::option::Option
 > std::control::result::Result

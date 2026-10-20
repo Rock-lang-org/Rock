@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use bincode::Options;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use rock_lib::ast::{InvocationId, MacroOutputCategory};
 use rock_lib::Span;
@@ -11,19 +11,30 @@ use rock_lib::products::ProductCrateIdentity;
 
 // Test-owned wire mirrors let malformed transport reach both real decoders;
 // production code still has one authoritative shared lossless representation.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Snapshot { identity: u64, path: String, text: String }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Run {
     source: usize, range: Range<usize>, kind: u32, context: u32, boundary: u32,
     origin: Option<TokenOrigin>, construction: Option<ConstructionContext>,
 }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Anchor { source: usize, offset: usize, context: u32, origin: Option<TokenOrigin> }
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Stream {
     magic: [u8; 8], sources: Vec<Snapshot>, runs: Vec<Run>, anchor: Anchor,
     expressions: Vec<(Range<usize>, usize)>,
+}
+
+pub fn assert_construction(bytes: &[u8], expected: ConstructionContext) {
+    let wire: Stream = bincode::DefaultOptions::new().with_limit(1048576).deserialize(bytes).unwrap();
+    assert!(!wire.runs.is_empty());
+    for run in wire.runs {
+        assert_eq!(run.construction, Some(expected));
+        assert_eq!(run.context, 0);
+        assert!(run.origin.is_none());
+        assert_eq!(wire.sources[run.source].path, "<macro-construction>");
+    }
 }
 
 fn encode<T: Serialize>(value: &T) -> Vec<u8> {

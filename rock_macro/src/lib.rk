@@ -10,7 +10,9 @@ mod copies
 < mod operations
 < mod construction
 < mod decode
-mod decode_validation
+mod validation
+< mod encode
+mod encode_validation
 
 < struct ByteRange
     < start: U64
@@ -213,7 +215,7 @@ mod decode_validation
     < diagnostics: Vec Diagnostic
 
 // One authoring result contract. Report permits warnings alongside output;
-// Expand and Error are conveniences normalized by the future result encoder.
+// Expand and Error are conveniences normalized by encode::encode_result.
 < enum MacroResult
     Expand TokenStream
     Error (Vec Diagnostic)

@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -7,6 +7,8 @@ use rock_lib::{Config, SourceProvider};
 
 #[path = "support/macro_requests.rs"]
 mod macro_requests;
+#[path = "support/macro_results.rs"]
+mod macro_results;
 
 fn run_client(path: &Path) -> Output {
     run_client_with_input(path, &[])
@@ -16,9 +18,21 @@ fn run_client_with_input(path: &Path, input: &[u8]) -> Output {
     assert!(input.len() <= 1048577, "test input is bounded independently of pipe capacity");
     let mut child = Command::new(path).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(15);
+    let stdout = child.stdout.take().unwrap();
+    let stdout = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.take(1048577).read_to_end(&mut bytes).unwrap();
+        bytes
+    });
+    let stderr = child.stderr.take().unwrap();
+    let stderr = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.take(65536).read_to_end(&mut bytes).unwrap();
+        bytes
+    });
     // Writing runs concurrently with the deadline, including rejection before
     // EOF. The IO controls retain their two-byte fragments; request cases may
-    // exceed pipe capacity. These fixture clients produce only small output.
+    // exceed pipe capacity. Output drains concurrently into capped buffers too.
     let mut stdin = child.stdin.take().unwrap();
     let input = input.to_vec();
     let writer = std::thread::spawn(move || {
@@ -33,12 +47,17 @@ fn run_client_with_input(path: &Path, input: &[u8]) -> Output {
     loop {
         if child.try_wait().unwrap().is_some() {
             writer.join().unwrap();
-            return child.wait_with_output().unwrap();
+            let mut output = child.wait_with_output().unwrap();
+            output.stdout = stdout.join().unwrap();
+            output.stderr = stderr.join().unwrap();
+            return output;
         }
         if Instant::now() >= deadline {
             child.kill().unwrap();
-            let output = child.wait_with_output().unwrap();
+            let mut output = child.wait_with_output().unwrap();
             writer.join().unwrap();
+            output.stdout = stdout.join().unwrap();
+            output.stderr = stderr.join().unwrap();
             panic!("SDK client exceeded 15s: {output:?}");
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -60,7 +79,7 @@ fn build_library(entry: PathBuf, name: &str, output: &Path, dependencies: Vec<(S
 }
 
 #[test]
-fn macro_b_08_plain_rock_sdk_io_and_requests_use_only_explicit_artifact_dependencies() {
+fn macro_b_09_plain_rock_sdk_io_and_codecs_use_only_explicit_artifact_dependencies() {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let root = std::env::temp_dir().join(format!("rock-macro-sdk-data-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
@@ -101,6 +120,23 @@ fn macro_b_08_plain_rock_sdk_io_and_requests_use_only_explicit_artifact_dependen
         assert!(output.stderr.is_empty(), "{name}: {output:?}");
     }
     eprintln!("SDK acceptance: {} Rust/Rock request controls passed", cases.len());
+    let mut results = config.clone();
+    results.source_providers = vec![SourceProvider::Virtual { path: results.entry_file.clone(),
+        text: include_str!("fixtures/macros/sdk-result.rk").into() }];
+    rock_lib::compile(&results).unwrap_or_else(|diagnostics| panic!("SDK result encoder: {diagnostics:?}"));
+    let golden = rock_lib::macro_expansion::proc_macro::decode_request(&cases[0].1).unwrap();
+    let rich = cases.iter().find(|(name, _, _)| name == "all provenance and integer widths").unwrap();
+    let rich = rock_lib::macro_expansion::proc_macro::decode_request(&rich.1).unwrap();
+    let results = macro_results::cases(&golden, &rich);
+    for (request, accepted) in &results {
+        let bytes = rock_lib::macro_expansion::proc_macro::encode_request(request).unwrap();
+        let output = run_client_with_input(&root.join("app/main"), &bytes);
+        assert_eq!(output.status.code(), Some(if *accepted { 0 } else { 2 }), "{}: {output:?}", request.macro_name);
+        assert!(output.stderr.is_empty(), "{}: {output:?}", request.macro_name);
+        if *accepted { macro_results::verify(request, &output.stdout); }
+        else { assert!(output.stdout.is_empty(), "failed encoder emitted partial output"); }
+    }
+    eprintln!("SDK acceptance: {} Rock/Rust result controls passed", results.len());
     let mut missing = config.clone();
     missing.extern_artifacts.retain(|(name, _)| name != "rock_macro");
     assert!(rock_lib::analyze(&missing).is_err(), "SDK is never injected or discovered by spelling");

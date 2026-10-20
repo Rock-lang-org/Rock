@@ -1,0 +1,121 @@
+// Locally check output structure; only the compiler can reauthorize forwarding.
+> rock_macro::*
+> rock_macro::encode::EncodeError
+> rock_macro::validation::in_text
+> rock_macro::validation::validate_request
+> rock_macro::validation::validate_stream
+> std::collections::vec::Vec
+> std::control::option::Option
+> std::control::result::Result
+> std::string::owned::String
+> std::convert::From
+> std::num::arithmetic::Add
+> std::num::arithmetic::Sub
+> std::cmp::eq::PartialEq
+> std::cmp::ord::PartialOrd
+> std::ops::index::Index
+> std::ops::not::Not
+
+ensure: Bool -> EncodeError -> Result (), EncodeError
+ensure = condition, error ->
+    if condition then Result::Ok () else Result::Err error
+
+context_valid: &MacroRequest -> &ConstructionContext -> Bool
+context_valid = request, context ->
+    if context.invocation != request.context.invocation
+        return false
+    kind = &context.kind
+    match *kind
+        ConstructionKind::Dependency index => (index as U64) < (request.context.definition_dependencies.len! as U64)
+        _ => true
+
+append: &mut (Vec U8) -> &String -> Result (), EncodeError
+append = output, text ->
+    ensure (text.len! <= 1048576 - output.len!), EncodeError::LengthLimit ?
+    bytes = text.as_bytes!
+    i = 0
+    while i < bytes.len!
+        output.push bytes[i]
+        i = i + 1
+    Result::Ok ()
+
+location_valid: &DiagnosticLocation -> &String -> &(Option String) -> Bool
+location_valid = location, input, output ->
+    match *location
+        DiagnosticLocation::Invocation => true
+        DiagnosticLocation::Input range => in_text input, &range
+        DiagnosticLocation::Output range =>
+            match *output
+                Option::Some text => in_text &text, &range
+                Option::None => false
+
+validate_report: &MacroRequest -> &MacroReport -> Result (), EncodeError
+< validate_report = request, report ->
+    ensure (request.context.protocol_version == (7 as U32) && (validate_request request)), EncodeError::InvalidRequest ?
+    ensure (report.diagnostics.len! <= 16384), EncodeError::LengthLimit ?
+    mut spelling: Vec U8 = Vec::new!
+    output = &report.output
+    has_output = match *output
+        Option::None => false
+        Option::Some value =>
+            ensure (value.parts.len! <= 16384), EncodeError::LengthLimit ?
+            i = 0
+            while i < value.parts.len!
+                part = &value.parts[i]
+                match *part
+                    OutputPart::Stream stream =>
+                        ensure (validate_stream &stream, true), EncodeError::InvalidStream ?
+                        length = match stream.len_bytes!
+                            Result::Ok length => length
+                            Result::Err _ =>
+                                failure: Result (), EncodeError = Result::Err EncodeError::InvalidStream
+                                return failure
+                        ensure (length <= ((1048576 - spelling.len!) as U64)), EncodeError::LengthLimit ?
+                        j = 0
+                        while j < stream.segments.len!
+                            construction = &stream.segments[j].construction
+                            match *construction
+                                Option::Some context =>
+                                    ensure (context_valid request, &context), EncodeError::InvalidContext ?
+                                Option::None => ()
+                            j = j + 1
+                        text = match stream.spelling!
+                            Result::Ok text => text
+                            Result::Err _ =>
+                                failure: Result (), EncodeError = Result::Err EncodeError::InvalidStream
+                                return failure
+                        append (&mut spelling), &text ?
+                    OutputPart::Source fragment =>
+                        ensure (context_valid request, (&fragment.context)), EncodeError::InvalidContext ?
+                        append (&mut spelling), (&fragment.text) ?
+                    OutputPart::Literal fragment =>
+                        ensure ((fragment.view as U64) < (request.context.views.literals.len! as U64)), EncodeError::InvalidLiteral ?
+                        text = &request.context.views.literals[fragment.view as I64].decoded
+                        ensure (in_text text, (&fragment.range)), EncodeError::InvalidLiteral ?
+                        bytes = text.as_bytes!
+                        selected = String::from (&bytes[(fragment.range.start as I64)..(fragment.range.end as I64)])
+                        append (&mut spelling), &selected ?
+                i = i + 1
+            true
+    output_text = if has_output then Option::Some (String::from spelling.as_slice!) else Option::None
+    input_text = match request.input.spelling!
+        Result::Ok text => text
+        Result::Err _ =>
+            failure: Result (), EncodeError = Result::Err EncodeError::InvalidRequest
+            return failure
+    has_error = false
+    i = 0
+    while i < report.diagnostics.len!
+        diagnostic = &report.diagnostics[i]
+        severity = &diagnostic.severity
+        match *severity
+            DiagnosticSeverity::Error => has_error = true
+            _ => ()
+        ensure (location_valid (&diagnostic.primary), &input_text, &output_text), EncodeError::InvalidLocation ?
+        ensure (diagnostic.labels.len! <= 16384 && diagnostic.notes.len! <= 16384 && diagnostic.help.len! <= 16384), EncodeError::LengthLimit ?
+        j = 0
+        while j < diagnostic.labels.len!
+            ensure (location_valid (&diagnostic.labels[j].location), &input_text, &output_text), EncodeError::InvalidLocation ?
+            j = j + 1
+        i = i + 1
+    ensure (has_output || has_error), EncodeError::MissingErrorDiagnostic

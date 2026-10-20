@@ -1,4 +1,4 @@
-// Local validation of the version-locked request schema, not Rock parsing.
+// Shared local validation of version-locked wire data, not Rock parsing.
 > rock_macro::*
 > std::collections::vec::Vec
 > std::control::option::Option
@@ -22,7 +22,7 @@ boundary = text, offset ->
     byte < 128 || byte >= 192
 
 in_text: &String -> &ByteRange -> Bool
-in_text = text, range ->
+< in_text = text, range ->
     range.start <= range.end && (boundary text, (range.start)) && (boundary text, (range.end))
 
 projection_valid: &(Option TokenOrigin) -> U64 -> U64 -> Bool
@@ -64,8 +64,8 @@ kind_valid = text, kind ->
                     Option::None => break
             true
 
-stream_valid: &TokenStream -> Bool
-stream_valid = stream ->
+validate_stream: &TokenStream -> Bool -> Bool
+< validate_stream = stream, allow_construction ->
     match stream.len_bytes!
         Result::Err _ => return false
         Result::Ok _ => ()
@@ -76,7 +76,9 @@ stream_valid = stream ->
         segment = &stream.segments[i]
         construction = &segment.construction
         match *construction
-            Option::Some _ => return false
+            Option::Some _ =>
+                if !allow_construction
+                    return false
             Option::None => ()
         if !(projection_valid (&segment.origin), (segment.range.start), (segment.range.end))
             return false
@@ -197,7 +199,7 @@ validate_request: &MacroRequest -> Bool
             if value <= context.header_indent || value > (1048576 as U64)
                 return false
         Option::None => ()
-    if !(stream_valid (&request.input))
+    if !(validate_stream (&request.input), false)
         return false
     i = 0
     while i < context.definition_dependencies.len!

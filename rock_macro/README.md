@@ -7,7 +7,7 @@ output fragments, and structured results/diagnostics.
 
 - Input is always `TokenStream`; there is no raw-string or compiler-AST variant.
 - Ranges are UTF-8 byte offsets, not character indices; `U64` transport values
-  are checked against host limits by the staged codecs.
+  are checked against host limits by the bounded codecs.
 - Snapshot indices preserve aliases and explicit splice boundaries. Diagnostic
   projections do not grant adjacency or binding authority.
 - Context/identity values are symbolic handles revalidated by the compiler.
@@ -78,7 +78,31 @@ version explicitly; the SDK does not discover a compiler or contact one.
   use an offset within that payload; whole-request semantic failures point at the
   end of the envelope. Offsets do not designate filesystem locations.
 
-This is not yet a runnable procedural macro package workflow: result encoding,
-generated runners and source export discovery remain staged implementation work.
+## Result encoding
+
+`encode::encode_result &request, result` returns `Result (Vec U8), encode::EncodeError`.
+It consumes `MacroResult::Expand`, `Error` or `Report`, normalizes to one optional
+output/diagnostics record, and writes protocol 7 bytes into an owned buffer.
+
+- `None` output requires an Error diagnostic; `Some` with zero parts is an
+  intentional empty expansion. Warnings and errors may accompany output.
+- Stream, generated-source and literal-view fragments retain their explicit
+  discriminants, construction contexts and ranges. No fragments are parsed or
+  materialized by the encoder.
+- Local checks reject invalid streams, cross-invocation/dependency construction
+  requests, invalid UTF-8 diagnostic/literal ranges, absent-output locations,
+  oversized lists, expanded spelling and encoded envelopes. All buffers are
+  bounded; failure returns no partial response bytes.
+- The compiler independently reauthorizes forwarded snapshots/contexts/origins
+  and canonical literal views against its original request. Encoding locally
+  constructed data does not grant authority or validate Rock syntax.
+
+The native acceptance compares exact response/error goldens, verifies all result,
+severity and fragment forms through Rust decoding/validation, and exercises
+large/wide values and failure paths. Binary stdout is drained concurrently with
+stdin/stderr under the fixture deadline, including output above pipe capacity.
+
+This is not yet a runnable procedural macro package workflow: generated runners
+and source export discovery remain staged implementation work.
 The Rust wire specification is
 [`docs/specs/2026-10-19-macro-worker-wire.md`](../docs/specs/2026-10-19-macro-worker-wire.md).

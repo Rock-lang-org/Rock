@@ -1,0 +1,214 @@
+> rock_macro::*
+> rock_macro::decode::decode_request
+> rock_macro::encode::encode_result
+> std::io::traits::stdin
+> std::io::traits::stdout
+> std::io::traits::read_to_end_limited
+> std::io::traits::write_all
+
+expect: Result T, E -> T
+expect = result ->
+    match result
+        Result::Ok value => value
+        Result::Err _ =>
+            exit (1 as I32)
+            loop
+                ()
+
+range: U64 -> U64 -> ByteRange
+range = start, end -> ByteRange
+    start: start
+    end: end
+
+context: &MacroRequest -> ConstructionKind -> ConstructionContext
+context = request, kind -> ConstructionContext
+    invocation: request.context.invocation
+    kind: kind
+
+source: &MacroRequest -> &Str -> ConstructionKind -> OutputPart
+source = request, text, kind -> OutputPart::Source (SourceFragment
+    text: String::from text
+    context: context request, kind)
+
+report: Vec OutputPart -> Vec Diagnostic -> MacroResult
+report = parts, diagnostics -> MacroResult::Report (MacroReport
+    output: Option::Some (MacroOutput
+        parts: parts)
+    diagnostics: diagnostics)
+
+failure: () -> Vec Diagnostic
+failure = ->
+    mut diagnostics: Vec Diagnostic = Vec::new!
+    diagnostics.push (Diagnostic::new DiagnosticSeverity::Error, (String::from "boom"), DiagnosticLocation::Invocation)
+    diagnostics
+
+golden: &MacroRequest -> MacroResult
+golden = request ->
+    mut parts: Vec OutputPart = Vec::new!
+    parts.push (OutputPart::Stream request.input.clone!)
+    parts.push (source request, "()", (ConstructionKind::Fresh (3 as U32)))
+    parts.push (source request, "dependency", (ConstructionKind::Dependency (0 as U32)))
+    parts.push (source request, "caller", ConstructionKind::CallSite)
+    parts.push (OutputPart::Literal (LiteralFragment
+        view: 0 as U32
+        range: range (0 as U64), (2 as U64)))
+    mut notice = Diagnostic::new DiagnosticSeverity::Warning, (String::from "notice"), (DiagnosticLocation::Input (range (9 as U64), (14 as U64)))
+    notice.label (String::from "emitted here"), (DiagnosticLocation::Output (range (15 as U64), (17 as U64)))
+    notice.note (String::from "note")
+    notice.suggest (String::from "help")
+    mut diagnostics: Vec Diagnostic = Vec::new!
+    diagnostics.push notice
+    report parts, diagnostics
+
+large: I64 -> String
+large = length ->
+    mut bytes: Vec U8 = Vec::new!
+    i = 0
+    while i < length
+        bytes.push (65 as U8)
+        i = i + 1
+    String::from bytes.as_slice!
+
+severities: () -> MacroResult
+severities = ->
+    mut diagnostics = failure!
+    diagnostics.push (Diagnostic::new DiagnosticSeverity::Warning, (String::from "warning"), DiagnosticLocation::Invocation)
+    diagnostics.push (Diagnostic::new DiagnosticSeverity::Info, (String::from "é\0雪"), (DiagnosticLocation::Input (range (2 as U64), (4 as U64))))
+    diagnostics.push (Diagnostic::new DiagnosticSeverity::Hint, (String::from "hint"), (DiagnosticLocation::Output (range (0 as U64), (0 as U64))))
+    report Vec::new!, diagnostics
+
+constructed: &MacroRequest -> MacroResult
+constructed = request ->
+    mut builder = expect (request.context.builder (&request.input))
+    fresh = expect (builder.fresh_ident (String::from "fresh"))
+    caller = expect (builder.call_site_ident (String::from "caller"))
+    mut components: Vec String = Vec::new!
+    components.push (String::from "helper")
+    dependency = expect (builder.dependency_path (0 as U32), components)
+    mut parts: Vec OutputPart = Vec::new!
+    parts.push (OutputPart::Stream fresh.tokens.clone!)
+    parts.push (OutputPart::Stream caller.tokens.clone!)
+    parts.push (OutputPart::Stream dependency)
+    report parts, Vec::new!
+
+invalid_location: &Str -> MacroResult
+invalid_location = name ->
+    location = if name == "output_without_output"
+        DiagnosticLocation::Output (range (0 as U64), (0 as U64))
+    else
+        DiagnosticLocation::Input (range (3 as U64), (4 as U64))
+    mut diagnostic = Diagnostic::new DiagnosticSeverity::Error, (String::from "invalid"), DiagnosticLocation::Invocation
+    if name == "invalid_label"
+        diagnostic.label (String::from "cut"), location
+    else
+        diagnostic.primary = location
+    mut diagnostics: Vec Diagnostic = Vec::new!
+    diagnostics.push diagnostic
+    MacroResult::Error diagnostics
+
+literal: &Str -> MacroResult
+literal = name ->
+    mut parts: Vec OutputPart = Vec::new!
+    parts.push (OutputPart::Literal (LiteralFragment
+        view: if name == "invalid_literal_handle" then 1 as U32 else 0 as U32
+        range: range (0 as U64), (1 as U64)))
+    report parts, Vec::new!
+
+oversized: &MacroRequest -> &Str -> MacroResult
+oversized = request, name ->
+    if name == "message_limit"
+        mut diagnostics: Vec Diagnostic = Vec::new!
+        diagnostics.push (Diagnostic::new DiagnosticSeverity::Error, (large 1048576), DiagnosticLocation::Invocation)
+        return (MacroResult::Error diagnostics)
+    mut parts: Vec OutputPart = Vec::new!
+    if name == "parts_limit"
+        i = 0
+        while i < 16385
+            parts.push (OutputPart::Literal (LiteralFragment
+                view: 0 as U32
+                range: range (0 as U64), (0 as U64)))
+            i = i + 1
+    else
+        parts.push (OutputPart::Source (SourceFragment
+            text: large 1048577
+            context: context request, ConstructionKind::CallSite))
+    report parts, Vec::new!
+
+choose_success: &MacroRequest -> MacroResult
+choose_success = request ->
+    name = &request.context.macro_name
+    if name == "format"
+        golden request
+    else if name == "error"
+        MacroResult::Error (failure!)
+    else if name == "report_failure"
+        MacroResult::Report (MacroReport
+            output: Option::None
+            diagnostics: failure!)
+    else if name == "empty"
+        report Vec::new!, Vec::new!
+    else if name == "expand_empty"
+        empty = expect (request.input.slice (range (0 as U64), (0 as U64)))
+        MacroResult::Expand empty
+    else if name == "severities"
+        severities!
+    else if name == "wide_message"
+        mut diagnostics: Vec Diagnostic = Vec::new!
+        diagnostics.push (Diagnostic::new DiagnosticSeverity::Error, (large 65536), DiagnosticLocation::Invocation)
+        MacroResult::Error diagnostics
+    else if name == "wide_context"
+        mut parts: Vec OutputPart = Vec::new!
+        parts.push (source request, "x", (ConstructionKind::Fresh (4294967295 as U32)))
+        report parts, Vec::new!
+    else if name == "constructed"
+        constructed request
+    else
+        MacroResult::Expand request.input.clone!
+
+choose: &MacroRequest -> MacroResult
+choose = request ->
+    name = &request.context.macro_name
+    if name == "missing_error"
+        diagnostics: Vec Diagnostic = Vec::new!
+        MacroResult::Error diagnostics
+    else if name == "warning_failure"
+        mut diagnostics: Vec Diagnostic = Vec::new!
+        diagnostics.push (Diagnostic::new DiagnosticSeverity::Warning, (String::from "warning"), DiagnosticLocation::Invocation)
+        MacroResult::Error diagnostics
+    else if name == "output_without_output" || name == "input_cut" || name == "invalid_label"
+        invalid_location name.as_str!
+    else if name == "invalid_literal_handle" || name == "invalid_literal_cut"
+        literal name.as_str!
+    else if name == "wrong_invocation" || name == "wrong_dependency"
+        mut parts: Vec OutputPart = Vec::new!
+        invalid = ConstructionContext
+            invocation: if name == "wrong_invocation" then 2 as U64 else request.context.invocation
+            kind: if name == "wrong_invocation" then ConstructionKind::CallSite else ConstructionKind::Dependency (1 as U32)
+        parts.push (OutputPart::Source (SourceFragment
+            text: String::from "x"
+            context: invalid))
+        report parts, Vec::new!
+    else if name == "message_limit" || name == "parts_limit" || name == "spelling_limit"
+        oversized request, name.as_str!
+    else if name == "invalid_stream" || name == "forged_context"
+        mut stream = request.input.clone!
+        if name == "invalid_stream"
+            stream.segments[0].range.end = 999 as U64
+        else
+            stream.segments[0].context.handle = 77 as U32
+        MacroResult::Expand stream
+    else
+        choose_success request
+
+main = !->
+    mut input = stdin!
+    bytes = expect (read_to_end_limited (&mut input), 1048576)
+    request = expect (decode_request bytes, "0.7.0")
+    result = choose &request
+    match encode_result &request, result
+        Result::Ok bytes =>
+            output = stdout!
+            match write_all &output, (bytes.as_slice!)
+                Result::Ok _ => ()
+                Result::Err _ => exit (1 as I32)
+        Result::Err _ => exit (2 as I32)
