@@ -44,7 +44,7 @@ fn bounded_run_with_cancellation(artifact: ProcMacroArtifact, request: ProcMacro
     let pid_path = artifact.executable.with_extension("pid");
     let descendant_path = artifact.executable.with_extension("desc.pid");
     let (sender, receiver) = mpsc::channel();
-    let thread = std::thread::spawn(move || { let _ = sender.send(run_proc_macro_process(&artifact, &request, timeout, cancellation.as_deref())); });
+    let thread = std::thread::spawn(move || { let _ = sender.send(run_proc_macro_process(&artifact, &request, timeout, false, cancellation.as_deref())); });
     let result = match receiver.recv_timeout(Duration::from_secs(3)) {
         Ok(result) => result,
         Err(error) => {
@@ -247,4 +247,61 @@ fn macro_b_03_repeated_cleanup_does_not_leak_descriptors_or_threads() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn macro_b_04_disabled_execution_precedes_protocol_host_and_executable_checks() {
+    let (artifact, request, directory) = fixture("partial", false);
+    for case in 0..4 {
+        let mut artifact = artifact.clone();
+        match case {
+            1 => artifact.protocol_version = 0,
+            2 => artifact.host_triple = "different-execution-host".into(),
+            3 => artifact.executable = directory.join("missing"),
+            _ => {}
+        }
+        let error = run_proc_macro_process(&artifact, &request, Duration::from_secs(1), true, None).unwrap_err();
+        assert!(error.contains("execution is disabled") && error.contains("fixture::run"), "{error}");
+        assert!(!artifact.executable.with_extension("pid").exists());
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn macro_b_04_metadata_and_declarative_expansion_do_not_execute_registered_workers() {
+    let (mut artifact, _, directory) = fixture("partial", false);
+    artifact.protocol_version = 0;
+    artifact.host_triple = "different-execution-host".into();
+    artifact.exports.push(ProcMacroExport { name: "make".into(), identity: "provider::make".into(),
+        kind: ProcMacroKind::FunctionLike, input_shape: ProcMacroInputShape::TokenStream });
+    let marker = artifact.executable.with_extension("pid");
+    let config = compiler::Config { no_proc_execution: true, ..Default::default() };
+    let context = compiler::macro_expansion::MacroExpansionContext::new(&config)
+        .with_named_proc_macro_artifact("provider".into(), artifact);
+    let program = compiler::parser::parse_string("macro identity\n    $value:expr =>\n        $value\nmain = -> %identity 3\n", &config).unwrap();
+    compiler::macro_expansion::expand_macros_with_context(program, &context).unwrap();
+    assert!(!marker.exists());
+    for source in ["%provider::make!", "main = -> %provider::make!\n"] {
+        let program = compiler::parser::parse_string(source, &config).unwrap();
+        let error = compiler::macro_expansion::expand_macros_with_context(program, &context).unwrap_err();
+        assert!(format!("{error:?}").contains("execution is disabled"), "{error:?}");
+        assert!(!marker.exists());
+    }
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn macro_b_04_enabled_execution_preserves_permission_and_format_errors_without_a_shell() {
+    use std::os::unix::fs::PermissionsExt;
+    let (artifact, request, directory) = fixture("partial", false);
+    std::fs::set_permissions(&artifact.executable, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let error = bounded_run(artifact.clone(), request.clone(), Duration::from_secs(1)).unwrap_err();
+    assert!(error.contains("os error 13"), "{error}");
+    let marker = directory.join("shell-was-run");
+    std::fs::write(&artifact.executable, format!("touch '{}'\n", marker.display())).unwrap();
+    std::fs::set_permissions(&artifact.executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let error = bounded_run(artifact, request, Duration::from_secs(1)).unwrap_err();
+    assert!(error.contains("failed to start") && error.contains("os error"), "{error}");
+    assert!(!marker.exists(), "invalid native executables must never launch through a shell");
+    std::fs::remove_dir_all(directory).unwrap();
 }

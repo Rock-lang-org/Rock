@@ -32,9 +32,10 @@ impl BuildProducts {
     }
 }
 
-pub(crate) fn build_project(project_root: &Path, profile: BuildProfile) -> Result<BuildProducts, String> {
+pub(crate) fn build_project(project_root: &Path, profile: BuildProfile, no_proc_execution: bool) -> Result<BuildProducts, String> {
     let mut package = Package::load(project_root.to_path_buf())?;
     package.profile = profile;
+    package.no_proc_execution = no_proc_execution;
     let binaries = package.manifest.binaries().cloned().collect::<Vec<_>>();
     build_targets(package, binaries)
 }
@@ -86,9 +87,10 @@ fn build_targets(mut package: Package, binaries: Vec<CrateTarget>) -> Result<Bui
     Ok(products)
 }
 
-pub(crate) fn run_project(project_root: &Path, profile: BuildProfile, args: &[String], binary: Option<&str>) -> Result<i32, String> {
+pub(crate) fn run_project(project_root: &Path, profile: BuildProfile, args: &[String], binary: Option<&str>, no_proc_execution: bool) -> Result<i32, String> {
     let mut package = Package::load(project_root.to_path_buf())?;
     package.profile = profile;
+    package.no_proc_execution = no_proc_execution;
     let binaries = package.manifest.binaries().cloned().collect::<Vec<_>>();
     let selected = if let Some(name) = binary {
         let target = binaries.iter().find(|target| matches!(target, CrateTarget::Bin { name: candidate, .. } if candidate == name))

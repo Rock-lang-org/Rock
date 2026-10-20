@@ -9,6 +9,44 @@ use crate::{
 use super::support::{run_isolated_test, temp_test_dir, write_package};
 
 #[test]
+fn macro_b_04_no_proc_execution_parses_globally_without_consuming_program_args() {
+    for command in ["build", "run", "expand"] {
+        for arguments in [vec!["rock", "--no-proc-execution", command], vec!["rock", command, "--no-proc-execution"]] {
+            let config = <Config as clap::Parser>::try_parse_from(arguments).unwrap();
+            assert!(config.no_proc_execution);
+        }
+        assert!(!<Config as clap::Parser>::try_parse_from(["rock", command]).unwrap().no_proc_execution);
+    }
+    let config = <Config as clap::Parser>::try_parse_from(["rock", "run", "--", "--no-proc-execution"]).unwrap();
+    assert!(!config.no_proc_execution);
+    assert!(matches!(config.command, Command::Run { args, .. } if args == ["--no-proc-execution"]));
+}
+
+#[cfg(unix)]
+#[test]
+fn macro_b_04_expand_forwards_execution_policy_to_rockc() {
+    if run_isolated_test("tests::cli::macro_b_04_expand_forwards_execution_policy_to_rockc", &[]) { return; }
+    use std::os::unix::fs::PermissionsExt;
+    let root = temp_test_dir("no_proc_expand");
+    write_package(&root, "app", "src/main.rk", &[], "main = !-> ()\n");
+    let executable = root.join("record-rockc");
+    let arguments = root.join("arguments");
+    fs::write(&executable, format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", arguments.display())).unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    std::env::set_var("ROCKC", &executable);
+    let previous = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&root).unwrap();
+    for disabled in [false, true] {
+        expand_project(disabled).unwrap();
+        let arguments = fs::read_to_string(&arguments).unwrap();
+        assert!(arguments.lines().any(|arg| arg == "--expand"));
+        assert_eq!(arguments.lines().any(|arg| arg == "--no-proc-execution"), disabled);
+    }
+    std::env::set_current_dir(previous).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_new_command_requires_project_name() {
     let config = <Config as clap::Parser>::try_parse_from(["rock", "new", "hello-rock"]).unwrap();
     assert!(
@@ -176,7 +214,7 @@ fn test_expand_project_with_dependency_does_not_require_artifacts() {
     let previous_dir = std::env::current_dir().unwrap();
 
     std::env::set_current_dir(&app).unwrap();
-    let result = expand_project();
+    let result = expand_project(false);
     std::env::set_current_dir(previous_dir).unwrap();
 
     result.unwrap();

@@ -3122,6 +3122,7 @@ fn std_artifact_path() -> PathBuf {
                 no_prelude: false,
                 no_std: true,
                 sysroot: None,
+                no_proc_execution: false,
             })
             .unwrap_or_else(|diagnostics| {
                 diagnostics.report();
@@ -3162,6 +3163,7 @@ fn test_config(entry_file: PathBuf, output_dir: PathBuf) -> rock_lib::Config {
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        no_proc_execution: false,
     }
 }
 
@@ -20582,6 +20584,7 @@ fn test_function_like_proc_macro_expands_through_public_macro_api() {
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        no_proc_execution: false,
     };
     let input_program = rock_lib::parser::parse_string("%integration_macros::make_main", &config).unwrap();
     let rock_lib::ast::TopLevel::MacroInvoc(invocation) = &input_program.module.top_levels[0] else { panic!("expected invocation") };

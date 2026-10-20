@@ -21,6 +21,7 @@ use crate::{
 
 pub(crate) struct ArtifactBuildState {
     profile: BuildProfile,
+    no_proc_execution: bool,
     project_root: PathBuf,
     artifacts: HashMap<PathBuf, PathBuf>,
     artifact_dependencies: HashMap<PathBuf, Vec<(String, PathBuf)>>,
@@ -33,6 +34,7 @@ impl ArtifactBuildState {
     pub(crate) fn new(package: &Package) -> Self {
         Self {
             profile: package.profile,
+            no_proc_execution: package.no_proc_execution,
             project_root: package.root_dir.clone(),
             artifacts: HashMap::new(),
             artifact_dependencies: HashMap::new(),
@@ -104,14 +106,14 @@ pub(crate) fn collect_root_artifacts(
         .collect::<Vec<_>>();
 
     if package_requires_sysroot_std(package) {
-        let layout = ensure_sysroot_std_available()?;
+        let layout = ensure_sysroot_std_available(package.no_proc_execution)?;
         artifacts.push(ExternArtifact {
             name: STD_CRATE_NAME.to_string(),
             path: layout.std_artifact,
         });
     }
     if state.dependency_artifacts_use_std(&dependency_artifacts) {
-        let std_artifact = ensure_sysroot_std_available()?.std_artifact;
+        let std_artifact = ensure_sysroot_std_available(package.no_proc_execution)?.std_artifact;
         if !artifacts
             .iter()
             .any(|artifact| artifact.path == std_artifact)
@@ -191,9 +193,10 @@ pub(crate) fn ensure_artifact(
         };
         package.target = library.clone();
         package.profile = state.profile;
+        package.no_proc_execution = state.no_proc_execution;
         package.use_project_build(&state.project_root);
         let mut implicit_artifact_inputs = if package_requires_sysroot_std(&package) {
-            vec![ensure_sysroot_std_available()?.std_artifact.clone()]
+            vec![ensure_sysroot_std_available(package.no_proc_execution)?.std_artifact.clone()]
         } else {
             Vec::new()
         };
@@ -219,7 +222,7 @@ pub(crate) fn ensure_artifact(
         dependency_artifacts.dedup();
 
         if dependencies_use_std {
-            let std_artifact = ensure_sysroot_std_available()?.std_artifact;
+            let std_artifact = ensure_sysroot_std_available(package.no_proc_execution)?.std_artifact;
             if !implicit_artifact_inputs.contains(&std_artifact) {
                 implicit_artifact_inputs.push(std_artifact);
             }

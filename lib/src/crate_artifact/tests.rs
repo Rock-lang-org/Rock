@@ -350,6 +350,7 @@ fn build_product_artifact_with_extern_artifacts(
         no_prelude,
         no_std,
         sysroot: None,
+        no_proc_execution: false,
     })
     .unwrap();
 
@@ -580,6 +581,7 @@ fn compile_with_options(
         no_prelude,
         no_std,
         sysroot,
+        no_proc_execution: false,
     };
 
     crate::compile(&config).unwrap();
@@ -664,6 +666,7 @@ fn compile_artifact_app_without_std_failure(
         no_prelude: true,
         no_std: true,
         sysroot: None,
+        no_proc_execution: false,
     })
     .expect_err("no-std compilation should fail")
 }
@@ -691,6 +694,7 @@ fn test_compile_with_std_artifact() {
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        no_proc_execution: false,
     })
     .unwrap();
 
@@ -741,6 +745,7 @@ main = ->
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        no_proc_execution: false,
     })
     .expect("std-backed indexing should lower");
     let products = output.products.expect("products should be emitted");
@@ -1250,6 +1255,7 @@ fn test_std_product_artifact_links_arithmetic_operator_impl_methods() {
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        no_proc_execution: false,
     })
     .unwrap();
 
@@ -1572,6 +1578,7 @@ fn test_compile_requires_explicit_std_artifact_even_with_sysroot() {
         no_prelude: false,
         no_std: false,
         sysroot: Some(sysroot),
+        no_proc_execution: false,
     };
 
     assert!(crate::compile(&config).is_err());
@@ -1634,6 +1641,7 @@ fn test_compile_without_explicit_std_artifact_fails_with_no_std() {
         no_prelude: false,
         no_std: true,
         sysroot: Some(sysroot),
+        no_proc_execution: false,
     };
 
     assert!(crate::compile(&config).is_err());
@@ -2703,6 +2711,7 @@ main = -> probe 0
         no_prelude: true,
         no_std: true,
         sysroot: None,
+        no_proc_execution: false,
     })
     .expect("downstream source should compile from the provider artifact only");
     let products = output

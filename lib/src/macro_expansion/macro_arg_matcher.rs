@@ -406,6 +406,7 @@ mod tests {
             no_prelude: false,
             no_std: false,
             sysroot: None,
+            no_proc_execution: false,
         }
     }
 

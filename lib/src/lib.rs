@@ -95,6 +95,8 @@ pub struct Config {
     pub emit_object: Option<PathBuf>,
     pub no_prelude: bool,         // Don't inject std prelude
     pub no_std: bool,             // Don't auto-load bundled std
+    /// Permit metadata and declarative expansion, but never execute proc workers.
+    pub no_proc_execution: bool,
     pub sysroot: Option<PathBuf>, // Toolchain sysroot override
 }
 

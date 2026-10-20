@@ -754,6 +754,7 @@ mod tests {
             no_prelude: true,
             no_std: true,
             sysroot: None,
+            no_proc_execution: false,
         };
 
         let ast = parser::parse_source(entry_file, source, &config)

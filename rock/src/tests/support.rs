@@ -87,14 +87,14 @@ pub(crate) fn write_package_with_options(
 }
 
 pub(crate) fn build_project(root: &Path, profile: crate::package::BuildProfile) -> Result<PathBuf, String> {
-    let products = crate::build::build_project(root, profile)?;
+    let products = crate::build::build_project(root, profile, false)?;
     let paths = products.paths().cloned().collect::<Vec<_>>();
     assert_eq!(paths.len(), 1, "single-target fixture must have one build output");
     Ok(paths[0].clone())
 }
 
 pub(crate) fn run_project(root: &Path, profile: crate::package::BuildProfile, args: &[String]) -> Result<i32, String> {
-    crate::build::run_project(root, profile, args, None)
+    crate::build::run_project(root, profile, args, None, false)
 }
 
 pub(super) fn assert_sysroot_std_files_exist() {

@@ -200,6 +200,9 @@ pub struct Config {
     /// Expand macros, print modules, and stop before lowering/compilation
     #[arg(long)]
     expand: bool,
+    /// Load macro metadata and expand declarative macros, but never execute proc workers
+    #[arg(long)]
+    no_proc_execution: bool,
     /// Validate a product artifact can be loaded and its object path exists
     #[arg(long)]
     validate_artifact: Option<PathBuf>,
@@ -236,6 +239,7 @@ impl Config {
             emit_object: config.emit_object,
             no_prelude: config.no_prelude,
             no_std: config.no_std,
+            no_proc_execution: config.no_proc_execution,
             sysroot: config.sysroot,
         })
     }
@@ -1778,6 +1782,76 @@ mod tests {
             "--extern-artifact", "provider=/macro-a15/missing.rkca", "--no-std", "--expand"]).unwrap();
         let diagnostics = run_config(config).unwrap_err();
         assert!(diagnostics.0.iter().any(|diagnostic| diagnostic.code == Some(rock_lib::diagnostic::DiagnosticCode::Artifact)), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn macro_b_04_execution_policy_reaches_shared_compile_and_expand_config() {
+        for extra in [vec![], vec!["--expand"]] {
+            let mut args = vec!["rockc", "--entry-file", "/policy/main.rk", "--no-proc-execution"];
+            args.extend(extra);
+            assert!(Config::try_parse_from(args).unwrap().into_compiler_config().unwrap().no_proc_execution);
+        }
+        assert!(!Config::try_parse_from(["rockc", "--entry-file", "/policy/main.rk"]).unwrap()
+            .into_compiler_config().unwrap().no_proc_execution);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macro_b_04_artifact_inspection_and_declarative_expansion_never_spawn_workers() {
+        use std::fs;
+
+        use rock_lib::macro_expansion::proc_macro::*;
+        let base = artifact_deps_test_dir("no_proc_execution");
+        let executable = base.join("worker");
+        let status = std::process::Command::new("cc")
+            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/../lib/tests/fixtures/macros/io-worker.c"))
+            .arg("-o").arg(&executable).status().unwrap();
+        assert!(status.success());
+        let marker = executable.with_extension("pid");
+        let mut products = product_artifact("provider", Vec::new(), ProductIdentityTable {
+            local_crate: Some(ProductCrateId(1)), ..Default::default()
+        });
+        products.proc_macros.push(ProcMacroArtifact {
+            artifact_format_version: rock_lib::products::PRODUCT_ARTIFACT_FORMAT_VERSION,
+            crate_identity: "provider".into(), protocol_version: PROC_MACRO_PROTOCOL_VERSION,
+            host_triple: rock_lib::sysroot::host_target_triple(), executable,
+            capabilities: vec![ProcMacroCapability::Stdio], definition_dependencies: Vec::new(),
+            exports: vec![ProcMacroExport { name: "make".into(), identity: "provider::make".into(),
+                kind: ProcMacroKind::FunctionLike, input_shape: ProcMacroInputShape::TokenStream }],
+        });
+        let artifact = base.join("provider.rkca");
+        products.write_artifact_to_path(&artifact).unwrap();
+        fs::write(base.join("provider.o"), []).unwrap();
+        for disabled in [false, true] {
+            let mut config = Config::try_parse_from(["rockc", "--validate-artifact", artifact.to_str().unwrap(), "--no-proc-execution"]).unwrap();
+            config.no_proc_execution = disabled;
+            run_config(config).unwrap();
+        }
+        let dependency = format!("provider={}", artifact.display());
+        let entry = base.join("main.rk");
+        fs::write(&entry, "macro id\n    $value:expr =>\n        $value\nmain = -> %id 3\n").unwrap();
+        let args = ["rockc", "--entry-file", entry.to_str().unwrap(), "--no-std", "--no-prelude", "--expand",
+            "--no-proc-execution", "--extern-artifact", &dependency];
+        for disabled in [false, true] {
+            let mut config = Config::try_parse_from(args).unwrap();
+            config.no_proc_execution = disabled;
+            run_config(config).unwrap();
+        }
+        assert!(!marker.exists());
+        fs::write(&entry, "%provider::make!\n").unwrap();
+        for case in 0..3 {
+            if case == 1 { products.proc_macros[0].protocol_version = 0; }
+            if case == 2 { products.proc_macros[0].host_triple = "different-execution-host".into(); }
+            products.write_artifact_to_path(&artifact).unwrap();
+            for expand in [false, true] {
+                let mut config = Config::try_parse_from(args).unwrap();
+                config.expand = expand;
+                let diagnostics = run_config(config).unwrap_err();
+                assert!(format!("{diagnostics:?}").contains("execution is disabled"), "{diagnostics:?}");
+                assert!(!marker.exists());
+            }
+        }
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

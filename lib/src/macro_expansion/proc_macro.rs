@@ -152,10 +152,12 @@ pub fn run_proc_macro_process(
     artifact: &ProcMacroArtifact,
     request: &ProcMacroRequest,
     timeout: Duration,
+    no_proc_execution: bool,
     cancellation: Option<&AtomicBool>,
 ) -> Result<ProcMacroResponse, String> {
     let started = Instant::now();
     let describe = |cause| format!("Proc macro '{}' ({}): {cause}", request.macro_name, request.macro_identity);
+    if no_proc_execution { return Err(describe("procedural macro execution is disabled (--no-proc-execution)".into())); }
     if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) { return Err(describe("proc macro cancelled before spawn".into())); }
     if artifact.protocol_version != PROC_MACRO_PROTOCOL_VERSION || request.protocol_version != PROC_MACRO_PROTOCOL_VERSION {
         return Err(describe(format!(
@@ -165,7 +167,7 @@ pub fn run_proc_macro_process(
     }
 
     let request_bytes = encode_request(request).map_err(|err| describe(format!("failed to encode request: {err}")))?;
-    transport::run(artifact, request, &request_bytes, started, timeout, cancellation).map_err(describe)
+    transport::run(artifact, request, &request_bytes, started, timeout, no_proc_execution, cancellation).map_err(describe)
 }
 
 #[cfg(test)]
@@ -341,7 +343,7 @@ mod tests {
             definition_dependencies: Vec::new(),
         };
 
-        let error = run_proc_macro_process(&artifact, &request, Duration::from_millis(10), None)
+        let error = run_proc_macro_process(&artifact, &request, Duration::from_millis(10), false, None)
             .expect_err("protocol mismatch must reject before spawn");
 
         assert!(
@@ -377,7 +379,7 @@ mod tests {
             definition_dependencies: Vec::new(),
         };
 
-        let err = run_proc_macro_process(&artifact, &request, Duration::from_millis(10), None)
+        let err = run_proc_macro_process(&artifact, &request, Duration::from_millis(10), false, None)
             .expect_err("oversized request should fail during encoding");
 
         assert!(err.contains("the size limit has been reached"), "{err}");

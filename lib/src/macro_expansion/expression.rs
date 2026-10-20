@@ -185,6 +185,11 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                 };
                 let path = crate::collect::resolver::binding_path(&invocation.path.path).unwrap_or_default();
                 let resolved = self.registry.resolve_contextual(&self.scope, &path, &invocation.span, self.context)?;
+                if self.context.config.no_proc_execution && matches!(&resolved,
+                    Some(super::registry::MacroEntry { definition: MacroDefinition::Procedural(_), .. })) {
+                    return Err(failure(Diagnostic::new("procedural macro execution is disabled (--no-proc-execution)".into(), invocation.span.clone())
+                        .with_code(DiagnosticCode::Macro)));
+                }
                 let Some(super::registry::MacroEntry { definition: MacroDefinition::Declarative(declaration), .. }) = resolved else {
                     return Err(failure(Diagnostic::new("expression macro expansion is not implemented for unresolved or procedural macro paths".into(), invocation.span.clone())
                         .with_code(DiagnosticCode::Macro)));

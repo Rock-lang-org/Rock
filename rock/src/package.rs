@@ -38,6 +38,7 @@ pub(crate) struct Package {
     pub(crate) root_dir: PathBuf,
     pub(crate) manifest: CrateManifest,
     pub(crate) profile: BuildProfile,
+    pub(crate) no_proc_execution: bool,
     pub(crate) target: CrateTarget,
     build_root: PathBuf,
     dependency_key: Option<String>,
@@ -63,6 +64,7 @@ impl Package {
             manifest,
             target,
             profile: BuildProfile::default(),
+            no_proc_execution: false,
         })
     }
 

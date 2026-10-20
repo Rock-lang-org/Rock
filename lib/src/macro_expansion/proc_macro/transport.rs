@@ -85,9 +85,10 @@ fn stderr_context(error: String, stderr: &[u8]) -> String {
 }
 
 #[cfg(unix)]
-pub(super) fn run(artifact: &ProcMacroArtifact, request: &ProcMacroRequest, bytes: &[u8], started: Instant, timeout: Duration, cancellation: Option<&AtomicBool>) -> Result<ProcMacroResponse, String> {
+pub(super) fn run(artifact: &ProcMacroArtifact, request: &ProcMacroRequest, bytes: &[u8], started: Instant, timeout: Duration, no_proc_execution: bool, cancellation: Option<&AtomicBool>) -> Result<ProcMacroResponse, String> {
     use std::os::unix::process::CommandExt;
 
+    if no_proc_execution { return Err("procedural macro execution is disabled (--no-proc-execution)".into()); }
     if cancellation.is_some_and(|flag| flag.load(Ordering::Acquire)) { return Err("proc macro cancelled before spawn".into()); }
     if started.elapsed() >= timeout { return Err("proc macro timed out before spawn".into()); }
     let child = Command::new(&artifact.executable).process_group(0)
@@ -147,7 +148,7 @@ pub(super) fn run(artifact: &ProcMacroArtifact, request: &ProcMacroRequest, byte
 }
 
 #[cfg(not(unix))]
-pub(super) fn run(_: &ProcMacroArtifact, _: &ProcMacroRequest, _: &[u8], _: Instant, _: Duration, _: Option<&AtomicBool>) -> Result<ProcMacroResponse, String> {
+pub(super) fn run(_: &ProcMacroArtifact, _: &ProcMacroRequest, _: &[u8], _: Instant, _: Duration, _: bool, _: Option<&AtomicBool>) -> Result<ProcMacroResponse, String> {
     Err("bounded proc macro execution is unsupported on this host".into())
 }
 

@@ -118,6 +118,7 @@ pub(crate) fn build_dependency_artifact_invocation(
         .arg("--emit-artifact")
         .arg(package.artifact_path());
 
+    if package.no_proc_execution { invocation = invocation.arg("--no-proc-execution"); }
     if package.manifest.crate_.no_std || package.manifest.crate_.name == STD_CRATE_NAME {
         invocation = invocation.arg("--no-std");
     }
@@ -149,6 +150,7 @@ pub(crate) fn build_root_invocation(
         .arg("--output-dir")
         .arg(package.binary_build_dir());
 
+    if package.no_proc_execution { invocation = invocation.arg("--no-proc-execution"); }
     if package.manifest.crate_.no_std || package.manifest.crate_.name == STD_CRATE_NAME {
         invocation = invocation.arg("--no-std");
     }
@@ -235,6 +237,21 @@ mod tests {
             .iter()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect()
+    }
+
+    #[test]
+    fn macro_b_04_execution_policy_reaches_root_and_dependency_compilers() {
+        let root = temp_test_dir("no_proc_invocations");
+        write_package(&root, "app", "src/main.rk", &[], "main = !-> ()\n");
+        let mut package = load_package(root.clone());
+        for disabled in [false, true] {
+            package.no_proc_execution = disabled;
+            for invocation in [build_root_invocation("rockc".into(), &package, &[]),
+                build_dependency_artifact_invocation("rockc".into(), &package, &[])] {
+                assert_eq!(args_as_strings(&invocation).iter().any(|arg| arg == "--no-proc-execution"), disabled);
+            }
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

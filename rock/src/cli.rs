@@ -25,14 +25,14 @@ pub fn run() -> Result<CliOutcome, String> {
             Ok(CliOutcome::Success)
         }
         Command::Build { profile } => {
-            let products = build_project(&current_project_root()?, profile.selected())?;
+            let products = build_project(&current_project_root()?, profile.selected(), config.no_proc_execution)?;
             for path in products.paths() {
                 println!("{}", path.display());
             }
             Ok(CliOutcome::Success)
         }
-        Command::Run { profile, args, bin } => run_project(&current_project_root()?, profile.selected(), &args, bin.as_deref()).map(CliOutcome::Exit),
-        Command::Expand => expand_project().map(|_| CliOutcome::Success),
+        Command::Run { profile, args, bin } => run_project(&current_project_root()?, profile.selected(), &args, bin.as_deref(), config.no_proc_execution).map(CliOutcome::Exit),
+        Command::Expand => expand_project(config.no_proc_execution).map(|_| CliOutcome::Success),
     }
 }
 
@@ -48,6 +48,9 @@ fn current_project_root() -> Result<PathBuf, String> {
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub(crate) struct Config {
+    /// Never execute procedural macro workers while building or expanding
+    #[arg(long, global = true)]
+    pub(crate) no_proc_execution: bool,
     #[command(subcommand)]
     pub(crate) command: Command,
 }

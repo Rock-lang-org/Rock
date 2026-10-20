@@ -1120,6 +1120,57 @@ Final functional snapshot acceptance:
 No functional edits follow these gates. Formatting remains deferred and Beads
 unavailable; unrelated untracked work remains untouched.
 
+### B.04 delivery receipt (2026-10-20)
+
+`Config::no_proc_execution` and `--no-proc-execution` on `rockc` and `rock`
+leave metadata/declarative processing available while disabling native workers.
+The application CLI accepts the global flag for build/run/expand, propagates
+it through root/library/transitive dependency invocations, and preserves program
+arguments after `rock run --`. Native spawn checks the immutable host policy
+independently of protocol/host/executable metadata; expansion also diagnoses
+disabled item/expression uses at their invocation. No worker path launches
+through a shell, and enabled execution retains OS permission/format errors.
+
+Artifact inspection and declarative expansion are tested with registered native
+marker workers under both policy settings. Protected use, wrong-protocol and
+wrong-host metadata, missing executables and native format/permission errors
+leave markers absent. Compiler CLI tests consume a current-format synthetic
+artifact through both compile/expand paths; the fixture includes its required
+local product crate ID. Application CLI tests verify global parsing, root and
+dependency argument propagation, and actual expand-launcher forwarding.
+
+Protected builds can reuse prebuilt artifacts and sysroots, but never silently
+invoke the separate developer std packager without this policy; if automatic
+packaging is needed, they explicitly request a prebuilt `ROCK_SYSROOT` instead.
+This policy does not block the compiler/linker or the requested runtime program,
+and is not a native-code sandbox. Source-declared proc packaging and complete
+host-role validation remain B.11–B.17. Protocol 7/product format 53 are unchanged.
+
+Final functional snapshot acceptance:
+
+- `cargo test -p rock-lib -p rockc -p rock macro_b_04_`: four application CLI
+  units, two compiler CLI units and three native-process integrations pass.
+  `/tmp/opencode/macro-b04-focused-certified.log`, SHA-256
+  `100e783e48135294e945ae941f7b4d3f81cf24f778640d9ebed9a671468a26b3`.
+- `cargo test -p rock-lib`: 2,698 units, 803 main integrations, six diagnostic
+  integrations, 14 native-process integrations and one parser integration pass;
+  one doctest ignored. `/tmp/opencode/macro-b04-acceptance.log`, SHA-256
+  `950a082a8b8b40050a1f84424f133672cf7e2af3be23f7b8492c1ce45760823b`.
+- `cargo test -p rockc -p rock -p rock-shared -p rock-lsp`: 52 compiler CLI,
+  90 application CLI, 26 shared and five LSP units plus one shared doctest pass.
+  Rebuilt current `ROCKC` uses unchanged format-53 std through explicit
+  `ROCK_SYSROOT=/tmp/opencode/macro-b01-sysroot`. Log
+  `/tmp/opencode/macro-b04-cli.log`, SHA-256
+  `bed2d6fbd39b4286dd04fd1f700cf577b13dc875d2b238dc065f758c5ef1285d`.
+- `cargo check --workspace --all-targets` passes with existing warnings. Log
+  `/tmp/opencode/macro-b04-check-final.log`, SHA-256
+  `512006935ed4ca13295292d65a1044b5d6b044290aee44b0e4129caddc718f06`.
+
+Earlier focused attempts caught missing Rust configuration-field initializers,
+a missing fixture import, and the synthetic provider's missing local crate ID;
+the final gates supersede them. No functional edits follow these gates.
+Formatting remains deferred, Beads unavailable, and unrelated work untouched.
+
 ### Bb. Bootstrap the SDK without macros or compiler callbacks
 
 | Slice | Implement only | Focused acceptance | Runner |

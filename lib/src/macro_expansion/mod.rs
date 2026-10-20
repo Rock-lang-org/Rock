@@ -280,6 +280,12 @@ fn expand_proc_macro_top_level(
         parent,
     })?;
 
+    if context.config.no_proc_execution {
+        return Err(with_expansion_trace(proc_macro_error(
+            format!("Proc macro '{}': procedural macro execution is disabled (--no-proc-execution)", entry.export.identity),
+            invoc_span,
+        ), context, expansion_id));
+    }
     if entry.export.kind != ProcMacroKind::FunctionLike {
         return Err(with_expansion_trace(
             proc_macro_error(
@@ -324,7 +330,7 @@ fn expand_proc_macro_top_level(
     };
 
     let response =
-        proc_macro::run_proc_macro_process(&entry.artifact, &request, Duration::from_secs(10), context.cancellation.as_deref())
+        proc_macro::run_proc_macro_process(&entry.artifact, &request, Duration::from_secs(10), context.config.no_proc_execution, context.cancellation.as_deref())
             .map_err(|err| {
                 with_expansion_trace(
                     proc_macro_error(err, invoc_span.clone()),
@@ -566,6 +572,7 @@ mod tests {
             no_prelude: false,
             no_std: false,
             sysroot: None,
+            no_proc_execution: false,
         }
     }
 

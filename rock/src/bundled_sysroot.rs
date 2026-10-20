@@ -59,7 +59,7 @@ pub(crate) fn package_requires_sysroot_std(package: &Package) -> bool {
         && !package_has_direct_std_dependency(package)
 }
 
-pub(crate) fn ensure_sysroot_std_available() -> Result<SysrootLayout, String> {
+pub(crate) fn ensure_sysroot_std_available(no_proc_execution: bool) -> Result<SysrootLayout, String> {
     let _guard = sysroot_std_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -97,7 +97,7 @@ pub(crate) fn ensure_sysroot_std_available() -> Result<SysrootLayout, String> {
     };
 
     let std_root = workspace_std_root.expect("checked by can_auto_rebuild_std");
-    package_sysroot_std_with_rockup(&std_root, &layout)?;
+    package_sysroot_std_with_rockup(&std_root, &layout, no_proc_execution)?;
     Ok(layout)
 }
 
@@ -192,7 +192,13 @@ fn resolve_rockup_path() -> Result<PathBuf, String> {
 fn package_sysroot_std_with_rockup(
     std_root: &Path,
     layout: &SysrootLayout,
+    no_proc_execution: bool,
 ) -> Result<(), String> {
+    // The developer packager is a separate build workflow without this policy;
+    // never silently delegate a protected build to an unprotected compiler.
+    if no_proc_execution {
+        return Err("Automatic std packaging is disabled by --no-proc-execution; supply a prebuilt ROCK_SYSROOT".into());
+    }
     let rockup = resolve_rockup_path()?;
     let rockc = crate::rockc::resolve_rockc_path()?;
     let mut command = std::process::Command::new(&rockup);
@@ -249,6 +255,14 @@ mod tests {
     use super::sysroot_std_is_fresh;
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn macro_b_04_protected_build_cannot_delegate_to_an_unprotected_std_packager() {
+        let root = PathBuf::from("/no-proc-execution/missing-std");
+        let layout = SysrootLayout::new(root.clone(), "test-target".into());
+        let error = super::package_sysroot_std_with_rockup(&root, &layout, true).unwrap_err();
+        assert!(error.contains("--no-proc-execution") && error.contains("prebuilt ROCK_SYSROOT"), "{error}");
+    }
 
     fn write_complete_sysroot_std(artifact_format_version: &str) -> (PathBuf, SysrootLayout) {
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);

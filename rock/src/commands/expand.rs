@@ -2,7 +2,7 @@ use std::process::{Command as ProcessCommand, ExitStatus};
 
 use crate::{package::Package, rockc::resolve_rockc_path};
 
-pub(crate) fn expand_project() -> Result<(), String> {
+pub(crate) fn expand_project(no_proc_execution: bool) -> Result<(), String> {
     let package = Package::load(
         std::env::current_dir().map_err(|e| format!("Failed to read current directory: {}", e))?,
     )?;
@@ -12,6 +12,7 @@ pub(crate) fn expand_project() -> Result<(), String> {
         .arg("--entry-file")
         .arg(package.entry_file())
         .arg("--expand");
+    if no_proc_execution { command.arg("--no-proc-execution"); }
     let status = run_expand_command(&mut command)?;
 
     if !status.success() {

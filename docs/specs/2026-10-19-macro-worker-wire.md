@@ -109,6 +109,23 @@ Group/capture nesting is at most 128. Expanded fragment spelling is limited to
 
 ## Process IO
 
+`Config::no_proc_execution` and `--no-proc-execution` on `rockc` or `rock`
+disable procedural worker execution without disabling metadata inspection or
+declarative macros. `rock` accepts the flag before or after `build`, `run` and
+`expand`, and propagates it to root and dependency compiler invocations. Arguments
+after `rock run --` still belong to the program. Protected builds may reuse
+prebuilt artifacts; they do not implicitly run the separate developer std
+packager without the policy, and request a prebuilt `ROCK_SYSROOT` if needed.
+
+The expansion engine diagnoses a disabled procedural use at its invocation;
+the native runner and final spawn boundary enforce the policy independently of
+protocol validity, host metadata, executable existence or OS permissions. Imports,
+artifact validation and declarative-only expansion execute no workers even when
+execution is enabled. This is a macro-execution policy, not a sandbox or a ban
+on compiler/linker processes or on running the requested application. Enabled
+workers are launched as native executables directly, never through a fallback
+shell; OS permission and executable-format failures remain visible.
+
 The Unix execution host pumps all three pipes nonblockingly under one deadline,
 starting before request encoding and continuing through writes, bounded stdout
 and stderr reads, response validation, and successful worker termination. A

@@ -34,13 +34,13 @@ fn test_multiple_binaries_with_or_without_a_library_build_in_both_profiles() {
         let root = temp_test_dir("multiple_targets");
         write_multi_target_package(&root, library);
         for profile in [BuildProfile::Debug, BuildProfile::Release] {
-            let products = crate::build::build_project(&root, profile).unwrap();
+            let products = crate::build::build_project(&root, profile, false).unwrap();
             assert_eq!(products.library.is_some(), library);
             assert_eq!(products.binaries.len(), 2);
             for (binary, expected) in products.binaries.iter().zip([40, 41]) {
                 assert_eq!(binary.path, root.join("build").join(profile.directory()).join(&binary.name));
                 assert_executable_exit_code(&binary.path, expected);
-                assert_eq!(crate::build::run_project(&root, profile, &[], Some(&binary.name)).unwrap(), expected);
+                assert_eq!(crate::build::run_project(&root, profile, &[], Some(&binary.name), false).unwrap(), expected);
             }
         }
         fs::remove_dir_all(root).unwrap();
@@ -52,14 +52,14 @@ fn test_run_requires_a_known_binary_when_multiple_targets_exist() {
     let root = temp_test_dir("multiple_target_selection");
     write_multi_target_package(&root, true);
     for (name, message) in [(None, "rock run --bin <name>"), (Some("unknown"), "No binary named 'unknown'")] {
-        let error = crate::build::run_project(&root, BuildProfile::Debug, &[], name).unwrap_err();
+        let error = crate::build::run_project(&root, BuildProfile::Debug, &[], name, false).unwrap_err();
         assert!(error.contains(message), "{error}");
         assert!(!root.join("build").exists());
     }
     fs::write(root.join("client/main.rk"), "main = -> missing_name\n").unwrap();
-    assert_eq!(crate::build::run_project(&root, BuildProfile::Debug, &[], Some("server")).unwrap(), 40);
+    assert_eq!(crate::build::run_project(&root, BuildProfile::Debug, &[], Some("server"), false).unwrap(), 40);
     assert!(!root.join("build/debug/client").exists());
-    assert!(crate::build::build_project(&root, BuildProfile::Debug).is_err());
+    assert!(crate::build::build_project(&root, BuildProfile::Debug, false).is_err());
     fs::remove_dir_all(root).unwrap();
 }
 
