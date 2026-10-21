@@ -12,9 +12,8 @@ use rock_lib::{Config, SourceProvider};
 mod fixtures;
 use fixtures::{TypeCase, TYPE_CASES};
 
-fn parsed(case: &TypeCase) -> Option<ParseType> {
-    let _scope = ErrorScope::new();
-    let stream = LosslessStream::from_bytes("type-fixture.rk".into(), case.source.as_bytes().to_vec(), ScanLimits {
+pub fn tokens(source: &str) -> Option<Vec<Token>> {
+    let stream = LosslessStream::from_bytes("type-fixture.rk".into(), source.as_bytes().to_vec(), ScanLimits {
         max_source_bytes: 1048576, max_runs: 65536,
     }).unwrap();
     let mut view = RockView::new(&stream);
@@ -29,7 +28,13 @@ fn parsed(case: &TypeCase) -> Option<ParseType> {
         }
     }
     tokens.push(Token { token_type: TokenType::Eof, context: SyntaxContext::ROOT,
-        span: Span::new("type-fixture.rk".into(), case.source.len(), case.source.len()) });
+        span: Span::new("type-fixture.rk".into(), source.len(), source.len()) });
+    Some(tokens)
+}
+
+fn parsed(case: &TypeCase) -> Option<ParseType> {
+    let _scope = ErrorScope::new();
+    let tokens = tokens(case.source)?;
     let config = Config::default();
     let (rest, ty) = parse_type.process(ParseCtx::from(&tokens, &config)).ok()?;
     matches!(rest.seek().ok()?.token_type, TokenType::Eof).then_some(ty)
@@ -39,7 +44,7 @@ fn joined(tag: &str, types: impl IntoIterator<Item = String>) -> String {
     format!("{tag}({})", types.into_iter().collect::<Vec<_>>().join(","))
 }
 
-fn shape(ty: &ParseType) -> String {
+pub fn shape(ty: &ParseType) -> String {
     match ty {
         ParseType::Type(name) => format!("name({})", name.name),
         ParseType::Associated { base, member } => format!("path(name({}),name({}))", base.name, member.name),

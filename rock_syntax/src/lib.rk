@@ -50,6 +50,13 @@ impl Limits
     TypeDepthLimit
     TypeNodeLimit
     InvalidTypeNode I64
+    ExpectedBinder
+    ExpectedBinderKind
+    InvalidBinderKind
+    ExpectedDefault
+    TrailingGenericTokens
+    ExpectedWhere
+    UnsupportedBinderEmission
 
 // Logical UTF-8 input ranges, usable without an invocation or physical file.
 < struct ParseError
@@ -95,6 +102,13 @@ impl ParseError
             ParseErrorKind::TypeDepthLimit => "type-depth"
             ParseErrorKind::TypeNodeLimit => "type-nodes"
             ParseErrorKind::InvalidTypeNode index => "type-node"
+            ParseErrorKind::ExpectedBinder => "binder"
+            ParseErrorKind::ExpectedBinderKind => "binder-kind"
+            ParseErrorKind::InvalidBinderKind => "invalid-kind"
+            ParseErrorKind::ExpectedDefault => "default"
+            ParseErrorKind::TrailingGenericTokens => "generic-trailing"
+            ParseErrorKind::ExpectedWhere => "where"
+            ParseErrorKind::UnsupportedBinderEmission => "binder-emission"
 
     @diagnostic: Diagnostic
     @diagnostic = ->
@@ -134,6 +148,13 @@ impl ParseError
             ParseErrorKind::TypeDepthLimit => "type syntax exceeds the nesting limit"
             ParseErrorKind::TypeNodeLimit => "type syntax exceeds the node limit"
             ParseErrorKind::InvalidTypeNode index => "invalid type node index"
+            ParseErrorKind::ExpectedBinder => "expected an uppercase generic binder"
+            ParseErrorKind::ExpectedBinderKind => "expected constructor holes or an explicit kind"
+            ParseErrorKind::InvalidBinderKind => "kind syntax accepts only Type, grouping and arrows"
+            ParseErrorKind::ExpectedDefault => "expected '=' and a default type"
+            ParseErrorKind::TrailingGenericTokens => "unexpected tokens after generic syntax"
+            ParseErrorKind::ExpectedWhere => "expected 'where' and a constraint"
+            ParseErrorKind::UnsupportedBinderEmission => "explicit constructor kinds have no supported impl-binder emission in this slice"
 
 < enum TokenKind
     Ident

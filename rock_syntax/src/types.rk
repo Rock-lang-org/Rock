@@ -1,5 +1,6 @@
-// A library-owned, token-preserving type tree; no compiler AST or semantics.
+// Library-owned type/binder/constraint trees; no compiler AST or semantics.
 > rock_macro::*
+> rock_macro::construction::MacroBuilder
 > rock_syntax::*
 > rock_syntax::cursor::Cursor
 > std::collections::vec::Vec
@@ -73,26 +74,7 @@ impl TypeSyntax
 
     parse_with_limits: TokenStream -> Limits -> TypeLimits -> Result TypeSyntax, ParseError
     parse_with_limits = input, lexical_limits, limits ->
-        if limits.max_depth < 0 || limits.max_depth > 128 || limits.max_nodes < 0 || limits.max_nodes > 65536
-            failure: Result TypeSyntax, ParseError = Result::Err (ParseError::at ParseErrorKind::InvalidLimits, 0, 0)
-            return failure
-        mut cursor = Cursor::with_limits input, lexical_limits ?
-        mut lexemes: Vec Lexeme = Vec::new!
-        loop
-            match cursor.next_token! ?
-                Option::None => break
-                Option::Some token =>
-                    text = cursor.spelling &token ?
-                    lexemes.push (Lexeme
-                        token: token
-                        text: text)
-        mut parser = Parser
-            lexer_cursor: cursor
-            lexemes: lexemes
-            arena: Vec::new!
-            lexeme_index: 0
-            last_end: 0
-            limits: limits
+        mut parser = Parser::new input, lexical_limits, limits ?
         root = parser.read_type 0 ?
         if parser.lexeme_index < parser.lexemes.len!
             failure: Result TypeSyntax, ParseError = Result::Err (parser.failure ParseErrorKind::TrailingTypeTokens)
@@ -144,6 +126,29 @@ impl TypeKind
             TypeKind::Function => "function"
 
 impl Parser
+    new: TokenStream -> Limits -> TypeLimits -> Result Parser, ParseError
+    new = input, lexical_limits, limits ->
+        if limits.max_depth < 0 || limits.max_depth > 128 || limits.max_nodes < 0 || limits.max_nodes > 65536
+            failure: Result Parser, ParseError = Result::Err (ParseError::at ParseErrorKind::InvalidLimits, 0, 0)
+            return failure
+        mut cursor = Cursor::with_limits input, lexical_limits ?
+        mut lexemes: Vec Lexeme = Vec::new!
+        loop
+            match cursor.next_token! ?
+                Option::None => break
+                Option::Some token =>
+                    text = cursor.spelling &token ?
+                    lexemes.push (Lexeme
+                        token: token
+                        text: text)
+        Result::Ok (Parser
+            lexer_cursor: cursor
+            lexemes: lexemes
+            arena: Vec::new!
+            lexeme_index: 0
+            last_end: 0
+            limits: limits)
+
     @failure: ParseErrorKind -> ParseError
     @failure = kind ->
         if self.lexeme_index < self.lexemes.len!
@@ -363,3 +368,271 @@ impl Parser
                         return failure
                     value = value * (10 as U64) + digit
         Result::Ok value
+
+< struct GenericParam
+    < name: I64
+    // Holes use an Application node; explicit kinds use their type root.
+    < kind: Option I64
+    < explicit_kind: Bool
+    < default_type: Option I64
+    < range: ByteRange
+    < impl_range: ByteRange
+
+< struct GenericSyntax
+    stream: TokenStream
+    arena: Vec TypeNode
+    parameters: Vec GenericParam
+    separators: Vec ByteRange
+
+< struct Constraint
+    < subject: I64
+    < trait_bound: Option I64
+    < range: ByteRange
+
+< struct BoundsSyntax
+    stream: TokenStream
+    arena: Vec TypeNode
+    clauses: Vec Constraint
+
+// Use original SDK operations for every captured piece, including separators.
+syntax_slice: &TokenStream -> ByteRange -> Result TokenStream, ParseError
+syntax_slice = stream, range ->
+    start = range.start
+    end = range.end
+    match stream.slice range
+        Result::Ok tokens => Result::Ok tokens
+        Result::Err error => Result::Err (ParseError::at (ParseErrorKind::InvalidInput error), start, end)
+
+syntax_join: &TokenStream -> &TokenStream -> Result TokenStream, ParseError
+syntax_join = left, right ->
+    match left.join right, JoinBoundary::Separate
+        Result::Ok tokens => Result::Ok tokens
+        Result::Err error => Result::Err (ParseError::at (ParseErrorKind::InvalidInput error), 0, 0)
+
+impl GenericSyntax
+    parse: TokenStream -> Result GenericSyntax, ParseError
+    parse = input -> GenericSyntax::parse_with_limits input, Limits::standard!, TypeLimits::standard!
+
+    parse_with_limits: TokenStream -> Limits -> TypeLimits -> Result GenericSyntax, ParseError
+    parse_with_limits = input, lexical_limits, limits ->
+        mut parser = Parser::new input, lexical_limits, limits ?
+        mut parameters: Vec GenericParam = Vec::new!
+        mut separators: Vec ByteRange = Vec::new!
+        while parser.lexeme_index < parser.lexemes.len!
+            parameter = parser.binder! ?
+            parameters.push parameter
+            if !(parser.at ",")
+                break
+            index = parser.take! ?
+            separators.push (parser.lexemes[index].token.range.clone!)
+        if parser.lexeme_index < parser.lexemes.len!
+            failure: Result GenericSyntax, ParseError = Result::Err (parser.failure ParseErrorKind::TrailingGenericTokens)
+            return failure
+        Result::Ok (GenericSyntax
+            stream: parser.lexer_cursor.input!.clone!
+            arena: parser.arena
+            parameters: parameters
+            separators: separators)
+
+    @params: &Vec GenericParam
+    @params = -> &self.parameters
+
+    @nodes: &Vec TypeNode
+    @nodes = -> &self.arena
+
+    @original: &TokenStream
+    @original = -> &self.stream
+
+    @emit: TokenStream
+    @emit = -> self.stream.clone!
+
+    // Impl generics are implicit in Rock: these are unbounded WHERE subjects,
+    // not a declaration binder list. A bare constructor name would declare Type.
+    @impl_binders: &mut MacroBuilder -> Result TokenStream, ParseError
+    @impl_binders = builder -> self.application_parameters builder
+
+    @type_arguments: &mut MacroBuilder -> Result TokenStream, ParseError
+    @type_arguments = builder -> self.application_parameters builder
+
+    @application_parameters: &mut MacroBuilder -> Result TokenStream, ParseError
+    @application_parameters = builder ->
+        output = syntax_slice &self.stream, (ByteRange
+            start: 0
+            end: 0) ?
+        i = 0
+        while i < self.parameters.len!
+            parameter = &self.parameters[i]
+            if i > 0
+                comma = syntax_slice &self.stream, (self.separators[i - 1].clone!) ?
+                output = syntax_join &output, &comma ?
+            tokens = syntax_slice &self.stream, (parameter.impl_range.clone!) ?
+            retained_kind = &parameter.kind
+            match *retained_kind
+                Option::Some root =>
+                    if parameter.explicit_kind
+                        index = root
+                        while self.arena[index].kind.tag! == "group"
+                            index = self.arena[index].children[0]
+                        if self.arena[index].kind.tag! != "name"
+                            failure: Result TokenStream, ParseError = Result::Err (ParseError::at ParseErrorKind::UnsupportedBinderEmission, (parameter.range.start), (parameter.range.end))
+                            return failure
+                    else
+                        // Without grouping, a constructor's comma arguments can
+                        // absorb the next unbounded WHERE subject.
+                        tokens = match builder.group Delimiter::Paren, &tokens
+                            Result::Ok grouped => grouped
+                            Result::Err error =>
+                                failure: Result TokenStream, ParseError = Result::Err (ParseError::at (ParseErrorKind::InvalidInput error), (parameter.range.start), (parameter.range.end))
+                                return failure
+                Option::None => ()
+            output = syntax_join &output, &tokens ?
+            i = i + 1
+        Result::Ok output
+
+impl BoundsSyntax
+    parse: TokenStream -> Result BoundsSyntax, ParseError
+    parse = input -> BoundsSyntax::parse_with_limits input, Limits::standard!, TypeLimits::standard!
+
+    parse_with_limits: TokenStream -> Limits -> TypeLimits -> Result BoundsSyntax, ParseError
+    parse_with_limits = input, lexical_limits, limits ->
+        mut parser = Parser::new input, lexical_limits, limits ?
+        if !(parser.at "where")
+            failure: Result BoundsSyntax, ParseError = Result::Err (parser.failure ParseErrorKind::ExpectedWhere)
+            return failure
+        parser.take! ?
+        mut clauses: Vec Constraint = Vec::new!
+        loop
+            subject = parser.read_type 0 ?
+            start = parser.arena[subject].range.start
+            mut trait_bound: Option I64 = Option::None
+            if parser.at ":"
+                parser.take! ?
+                bound = parser.read_type 0 ?
+                trait_bound = Option::Some bound
+            clauses.push (Constraint
+                subject: subject
+                trait_bound: trait_bound
+                range: ByteRange
+                    start: start
+                    end: parser.last_end)
+            if !(parser.at ",")
+                break
+            parser.take! ?
+        if parser.lexeme_index < parser.lexemes.len!
+            failure: Result BoundsSyntax, ParseError = Result::Err (parser.failure ParseErrorKind::TrailingGenericTokens)
+            return failure
+        Result::Ok (BoundsSyntax
+            stream: parser.lexer_cursor.input!.clone!
+            arena: parser.arena
+            clauses: clauses)
+
+    @constraints: &Vec Constraint
+    @constraints = -> &self.clauses
+
+    @nodes: &Vec TypeNode
+    @nodes = -> &self.arena
+
+    @original: &TokenStream
+    @original = -> &self.stream
+
+    @emit: TokenStream
+    @emit = -> self.stream.clone!
+
+impl Parser
+    ^@binder: Result GenericParam, ParseError
+    ^@binder = ->
+        if self.lexeme_index >= self.lexemes.len!
+            failure: Result GenericParam, ParseError = Result::Err (self.failure ParseErrorKind::ExpectedBinder)
+            return failure
+        start = self.lexemes[self.lexeme_index].token.range.start
+        defaulted = self.at "{"
+        if defaulted
+            self.take! ?
+        grouped = self.at "("
+        opening = self.last_end
+        if grouped
+            index = self.take! ?
+            opening = self.lexemes[index].token.range.start
+        if !(self.is_name self.lexeme_index)
+            failure: Result GenericParam, ParseError = Result::Err (self.failure ParseErrorKind::ExpectedBinder)
+            return failure
+        name = self.name! ?
+        name_start = self.arena[name].range.start
+        impl_end = self.last_end
+        mut kind: Option I64 = Option::None
+        explicit_kind = false
+        if (self.at ":") && (grouped || defaulted)
+            self.take! ?
+            kind_start = self.lexeme_index
+            first_node = self.arena.len!
+            root = self.read_type 0 ?
+            if !(self.valid_kind first_node)
+                token = &self.lexemes[kind_start].token
+                failure: Result GenericParam, ParseError = Result::Err (ParseError::at ParseErrorKind::InvalidBinderKind, (token.range.start), (token.range.end))
+                return failure
+            kind = Option::Some root
+            explicit_kind = true
+        else
+            if (self.at "_") && (grouped || defaulted)
+                mut children: Vec I64 = Vec::new!
+                children.push name
+                loop
+                    if !(self.at "_")
+                        failure: Result GenericParam, ParseError = Result::Err (self.failure ParseErrorKind::ExpectedBinderKind)
+                        return failure
+                    hole = self.atom 0 ?
+                    children.push hole
+                    if !(self.at ",")
+                        break
+                    self.take! ?
+                root = self.add TypeKind::Application, name_start, children, Option::None ?
+                kind = Option::Some root
+                impl_end = self.last_end
+            else
+                if grouped
+                    failure: Result GenericParam, ParseError = Result::Err (self.failure ParseErrorKind::ExpectedBinderKind)
+                    return failure
+        if grouped
+            self.close ")", opening ?
+        mut default_type: Option I64 = Option::None
+        if defaulted
+            if !(self.at "=")
+                failure: Result GenericParam, ParseError = Result::Err (self.failure ParseErrorKind::ExpectedDefault)
+                return failure
+            self.take! ?
+            root = self.read_type 0 ?
+            default_type = Option::Some root
+            self.close "}", start ?
+        Result::Ok (GenericParam
+            name: name
+            kind: kind
+            explicit_kind: explicit_kind
+            default_type: default_type
+            range: ByteRange
+                start: start
+                end: self.last_end
+            impl_range: ByteRange
+                start: name_start
+                end: impl_end)
+
+    // Postorder grammar validation, not semantic kind/name resolution.
+    @valid_kind: I64 -> Bool
+    @valid_kind = first ->
+        i = first
+        while i < self.arena.len!
+            node = &self.arena[i]
+            kind = &node.kind
+            match *kind
+                TypeKind::Name =>
+                    token = Token
+                        kind: TokenKind::Type
+                        range: node.range.clone!
+                        context: Option::None
+                    match self.lexer_cursor.spelling &token
+                        Result::Ok text => if text != "Type" then return false
+                        Result::Err error => return false
+                TypeKind::Function => ()
+                TypeKind::Grouped => ()
+                _ => return false
+            i = i + 1
+        true

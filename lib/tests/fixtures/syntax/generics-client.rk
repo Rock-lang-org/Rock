@@ -1,0 +1,157 @@
+> rock_syntax::types::GenericSyntax
+> rock_syntax::types::BoundsSyntax
+> rock_macro::construction::MacroBuilder
+
+binder_shape: &GenericSyntax -> String
+binder_shape = syntax ->
+    shapes = type_shapes (syntax.nodes!), (syntax.original!)
+    mut output = String::new!
+    params = syntax.params!
+    nodes = syntax.nodes!
+    i = 0
+    while i < params.len!
+        parameter = &params[i]
+        name = (syntax.original!.slice (nodes[parameter.name].range.clone!)).checked!
+        output = output.concat (name.spelling!.checked!)
+        output = output.concat (String::from "|")
+        kind = &parameter.kind
+        kind_text = match *kind
+            Option::None => String::from "none"
+            Option::Some root =>
+                prefix = if parameter.explicit_kind then String::from "explicit:" else String::from "holes:"
+                prefix.concat (shapes[root].clone!)
+        output = output.concat kind_text
+        output = output.concat (String::from "|")
+        default_type = &parameter.default_type
+        default_text = match *default_type
+            Option::None => String::from "none"
+            Option::Some root => shapes[root].clone!
+        output = output.concat default_text
+        output = output.concat (String::from "\n")
+        i = i + 1
+    output
+
+run_binders: &Str -> &Str -> ()
+run_binders = name, text !->
+    name.println!
+    match GenericSyntax::parse (input text)
+        Result::Err error => error_line &error
+        Result::Ok syntax =>
+            shape = binder_shape &syntax
+            shape.as_str!.print!
+            emitted = syntax.emit!
+            check (emitted.spelling!.checked! == text)
+            repeated = (GenericSyntax::parse emitted).checked!
+            check ((binder_shape &repeated) == shape)
+            parameters = syntax.params!
+            i = 0
+            while i < parameters.len!
+                tokens = (syntax.original!.slice (parameters[i].range.clone!)).checked!
+                single = (GenericSyntax::parse tokens).checked!
+                check (single.params!.len! == 1)
+                i = i + 1
+            mut builder = MacroBuilder::new 99, Vec::new!, 42
+            match syntax.type_arguments &mut builder
+                Result::Err error =>
+                    check (error.code! == "binder-emission")
+                    "emit-error ".print!
+                    error.range.start.print!
+                    " ".print!
+                    error.range.end.print!
+                    "\n".print!
+                    match syntax.impl_binders &mut builder
+                        Result::Err second => check (second.code! == error.code! && second.range.start == error.range.start && second.range.end == error.range.end)
+                        Result::Ok tokens => check false
+                Result::Ok arguments =>
+                    (String::from "args:").concat (arguments.spelling!.checked!).println!
+                    subjects = (syntax.impl_binders &mut builder).checked!
+                    (String::from "impl:").concat (subjects.spelling!.checked!).println!
+
+bounds_shape: &BoundsSyntax -> String
+bounds_shape = syntax ->
+    shapes = type_shapes (syntax.nodes!), (syntax.original!)
+    clauses = syntax.constraints!
+    mut output = String::new!
+    i = 0
+    while i < clauses.len!
+        clause = &clauses[i]
+        output = output.concat (shapes[clause.subject].clone!)
+        output = output.concat (String::from "|")
+        bound = &clause.trait_bound
+        text = match *bound
+            Option::None => String::from "none"
+            Option::Some root => shapes[root].clone!
+        output = output.concat text
+        output = output.concat (String::from "\n")
+        i = i + 1
+    output
+
+run_bounds: &Str -> &Str -> ()
+run_bounds = name, text !->
+    name.println!
+    match BoundsSyntax::parse (input text)
+        Result::Err error => error_line &error
+        Result::Ok syntax =>
+            shape = bounds_shape &syntax
+            shape.as_str!.print!
+            emitted = syntax.emit!
+            check (emitted.spelling!.checked! == text)
+            repeated = (BoundsSyntax::parse emitted).checked!
+            check ((bounds_shape &repeated) == shape)
+
+generic_controls = !->
+    mut limits = TypeLimits::standard!
+    limits.max_nodes = 1
+    match GenericSyntax::parse_with_limits (input "T,U"), Limits::standard!, limits
+        Result::Err error => check (error.code! == "type-nodes")
+        Result::Ok syntax => check false
+    mut limits = TypeLimits::standard!
+    limits.max_depth = 1
+    match BoundsSyntax::parse_with_limits (input "where T: F (A)"), Limits::standard!, limits
+        Result::Err error => check (error.code! == "type-depth")
+        Result::Ok syntax => check false
+    mixed = split "T,{U = T}", 3, JoinBoundary::SourceAdjacent, 9
+    syntax = (GenericSyntax::parse mixed).checked!
+    mut builder = MacroBuilder::new 99, Vec::new!, 42
+    arguments = (syntax.type_arguments &mut builder).checked!
+    check (arguments.spelling!.checked! == "T,U")
+    check (arguments.segments.len! == 3)
+    check (arguments.segments[0].context.handle == (7 as U32))
+    check (arguments.segments[2].context.handle == (9 as U32))
+    check (arguments.sources[0].identity == (41 as U64))
+    mut builder = MacroBuilder::new 99, Vec::new!, 42
+    subjects = (syntax.impl_binders &mut builder).checked!
+    check (subjects.spelling!.checked! == "T,U")
+    check (subjects.segments[2].context.handle == (9 as U32))
+    syntax = (GenericSyntax::parse (input "{F _ = Option},T")).checked!
+    mut builder = MacroBuilder::new 99, Vec::new!, 42
+    subjects = (syntax.impl_binders &mut builder).checked!
+    check (subjects.spelling!.checked! == "(F _),T")
+    check (subjects.sources.len! == 3)
+    check (subjects.segments[1].context.handle == (7 as U32))
+    origin = &subjects.segments[1].origin
+    match *origin
+        Option::Some value => ()
+        Option::None => check false
+    mut exhausted = MacroBuilder::new 99, Vec::new!, (18446744073709551615 as U64)
+    match syntax.impl_binders &mut exhausted
+        Result::Err error => check (error.code! == "input" && error.range.end == (14 as U64))
+        Result::Ok tokens => check false
+    mut lexical_limits = Limits::standard!
+    lexical_limits.max_bytes = 0
+    match GenericSyntax::parse_with_limits (input "T"), lexical_limits, TypeLimits::standard!
+        Result::Err error => check (error.code! == "bytes")
+        Result::Ok syntax => check false
+    mut limits = TypeLimits::standard!
+    limits.max_nodes = -1
+    match BoundsSyntax::parse_with_limits (input "where T"), Limits::standard!, limits
+        Result::Err error => check (error.code! == "limits")
+        Result::Ok syntax => check false
+    mut captured = input "{T = U}"
+    captured.expressions.push (ExpressionRange
+        range: range 5, 6
+        header_indent: 0)
+    match GenericSyntax::parse captured
+        Result::Err error => check (error.code! == "unsupported-type")
+        Result::Ok syntax => check false
+    "generic controls passed".println!

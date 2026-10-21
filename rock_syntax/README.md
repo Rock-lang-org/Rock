@@ -168,7 +168,7 @@ declaration parser owns physical layout and field/default boundaries. It does
 not accept a valid prefix and silently discard the rest. Missing names, closers,
 array lengths, overflow, unsupported forms, and trailing tokens have structured
 errors at logical input ranges, including zero-width EOF locations. Type lambdas,
-binder/default/bound syntax, constant-expression array lengths, and the lexical
+constant-expression array lengths, and the lexical
 layer's non-ASCII-name forms remain explicitly unsupported.
 
 `TypeSyntax` owns the original stream and a flat postorder arena of `TypeNode`
@@ -192,6 +192,67 @@ checked. Lexical spelling is inspected through `cursor.spelling &token`, which
 checks UTF-8/range boundaries without copying the entire SDK snapshot per token.
 The lexical byte/piece ceilings apply here; C.03's group-view ceilings belong to
 explicit `cursor.groups!` requests. Type nesting and storage use `TypeLimits`.
+
+## C.05 generic binders and constraints
+
+`rock_syntax::types::GenericSyntax` parses a complete declaration binder list,
+including an empty list or a trailing comma. It supports plain uppercase names,
+parenthesized constructor holes, explicit kinds made of `Type`, grouping and
+arrows, and brace-wrapped defaults. These **binder-list fragments** illustrate
+the grammar (they are not standalone declarations):
+
+```text
+A, {B = A}
+(F _), (G _, _), T
+(H: (Type -> Type) -> Type)
+T, {F _ = Result T, _}
+{(F: Type -> Type) = Option}
+```
+
+`syntax.params!` returns ordered `GenericParam` records with a name-node index,
+optional kind/default roots, an `explicit_kind` flag, and a whole-binder range.
+`impl_range` identifies the copied name/constructor section before grouping.
+`syntax.nodes!` uses the same flat `TypeNode` arena as `TypeSyntax`. Constructor
+holes are application nodes; explicit kinds retain their actual type root.
+Names retain original syntax contexts. Default types are syntax only: earlier,
+forward, duplicate, unknown and `Self` names are not resolved or validated here.
+The compiler owns declaration-scope/default ordering and kind correctness.
+
+`BoundsSyntax::parse input` separately parses a complete `where` clause with
+comma-separated subjects and optional `: Bound` types. `syntax.constraints!`
+returns ordered `Constraint` records with subject/bound node indices and ranges.
+Constructor sections, associated subjects and nested type arguments use C.04's
+type grammar and comma ownership. Inline bounds on declaration parameters,
+Rust-style `+` bound lists and declaration binders in subject position are not
+guessed into supported nodes. Enclosing declaration parsers still own layout;
+these entry points operate on an already established token boundary.
+
+Both entry points have `parse_with_limits input, lexical_limits, type_limits`,
+`original`, and unchanged `emit` APIs. All their types share the existing lexical
+ceilings and a single per-input type-node budget; there is no budget reset per
+parameter/default/constraint. Unsupported defaults and trailing tokens diagnose
+at logical input ranges instead of being skipped.
+
+For emission, `generic.type_arguments &mut builder` returns copied names or
+parenthesized constructor sections, separated by original commas, with defaults
+removed. A constructor argument must stay `(F _)`, not bare `F`: the compiler's
+implicit impl-generic collection would otherwise declare `F` with kind `Type`.
+Rock impl parameters
+are implicit, not a declaration-style binder header. `generic.impl_binders &mut
+builder` returns **unbounded where subjects**, to be placed after `where` by an
+enclosing impl builder. Constructor-hole subjects are parenthesized so their
+commas cannot swallow later parameters. Plain parameters and explicit `Type`
+parameters emit their names. Other explicit kinds remain parseable and round-trip
+unchanged, but these transformed emission helpers return `binder-emission` for
+them: the current impl grammar has no matching explicit-kind binder spelling,
+and this slice does not guess an arity or erase a higher-order kind. Defaults
+never enter an impl
+subject or type argument. The caller supplies an ordinary SDK `MacroBuilder`
+for new parentheses; these carry output construction requests until normal
+compiler materialization. Copied names, holes, inner trivia and provenance are
+not stringified. Empty parameters emit an empty stream, not an empty `where`.
+
+General edited-node and complete impl builders remain C.08 work.
 
 ## Conformance
 
@@ -221,4 +282,21 @@ checked spelling. It remains opt-in:
 ```sh
 cargo test -p rock-lib --lib macro_c_04_
 cargo test -p rock-lib --lib macro_acceptance_syntax_types -- --ignored --nocapture
+```
+
+`lib/tests/fixtures/syntax/generics.rs` supplies the C.05 binder/constraint
+fixtures. The native group compares kind/default/constraint structure against
+the Rust parser, checks ranges/round trips/limits/contexts, and tests emitted
+impl subjects and type arguments. An additional ordinary compiler/runtime check
+uses the actual emitted fragments with earlier-parameter defaults and constructor
+defaults (using `Option`); an explicit `Type`-kind impl also typechecks. Partial
+constructor-section defaults are covered as syntax, not a claim that the compiler
+can infer every such default at runtime. Other explicit-kind
+emission diagnoses at the whole-binder range instead of producing invalid impls.
+This is not yet
+the hygienic full derive-transport proof reserved for C.08–C.11.
+
+```sh
+cargo test -p rock-lib --lib macro_c_05_
+cargo test -p rock-lib --lib macro_acceptance_syntax_generics -- --ignored --nocapture
 ```

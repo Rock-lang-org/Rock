@@ -1,18 +1,18 @@
 > rock_syntax::types::TypeSyntax
 > rock_syntax::types::TypeKind
 > rock_syntax::types::TypeLimits
+> rock_syntax::types::TypeNode
 
-type_shape: &TypeSyntax -> String
-type_shape = syntax ->
+type_shapes: &Vec TypeNode -> &TokenStream -> Vec String
+type_shapes = nodes, original ->
     mut shapes: Vec String = Vec::new!
-    nodes = syntax.nodes!
     i = 0
     while i < nodes.len!
         node = &nodes[i]
         kind = &node.kind
         shape = match *kind
             TypeKind::Name =>
-                tokens = (syntax.node_tokens i).checked!
+                tokens = (original.slice (node.range.clone!)).checked!
                 text = tokens.spelling!.checked!
                 context = &node.context
                 match *context
@@ -40,6 +40,11 @@ type_shape = syntax ->
                 text.concat (String::from ")")
         shapes.push shape
         i = i + 1
+    shapes
+
+type_shape: &TypeSyntax -> String
+type_shape = syntax ->
+    shapes = type_shapes (syntax.nodes!), (syntax.original!)
     shapes[syntax.root!].clone!
 
 run_type: &Str -> &Str -> ()
@@ -53,6 +58,13 @@ run_type = name, text !->
         Result::Ok syntax =>
             shape = type_shape &syntax
             shape.println!
+            nodes = syntax.nodes!
+            i = 0
+            while i < nodes.len!
+                copied = (syntax.node_tokens i).checked!
+                expected = (syntax.original!.slice (nodes[i].range.clone!)).checked!
+                check (copied.spelling!.checked! == expected.spelling!.checked!)
+                i = i + 1
             emitted = syntax.emit!
             check (emitted.spelling!.checked! == text)
             check (emitted.sources[0].identity == (41 as U64))

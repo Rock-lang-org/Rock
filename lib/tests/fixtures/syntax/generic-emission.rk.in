@@ -1,0 +1,31 @@
+// Test-only placeholders are replaced with actual native library output.
+trait SyntaxProbe
+    @probe: I64
+
+struct Pair A, {B = A}
+    < first: A
+    < second: B
+
+impl SyntaxProbe for Pair {{PAIR_ARGS}} where {{PAIR_BINDERS}}
+    @probe = -> 11
+
+struct Holder T, {F _ = Option}
+    < value: F T
+
+impl SyntaxProbe for Holder {{HOLDER_ARGS}} where {{HOLDER_BINDERS}}
+    @probe = -> 17
+
+struct Higher (T: Type)
+    marker: T
+
+impl SyntaxProbe for Higher {{HIGHER_ARGS}} where {{HIGHER_BINDERS}}
+    @probe = -> 19
+
+main = !->
+    pair: Pair I64 = Pair
+        first: 3
+        second: 5
+    pair.probe!.println!
+    holder: Holder I64 = Holder
+        value: Option::Some 4
+    holder.probe!.println!

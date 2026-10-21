@@ -2791,6 +2791,85 @@ formatting check, CI job, SDK wire-layout change or compiler package special cas
 was added. Worker protocol 7, `RKLOSS04` and product format 54 are unchanged.
 C.05 binders/bounds/defaults and C.06–C.12 remain separate, unimplemented slices.
 
+#### C.05 completion receipt
+
+`rock_syntax::types` now provides standalone `GenericSyntax` and `BoundsSyntax`
+entry points over the same bounded type parser/flat node arena. Declaration
+parameters retain ordered names, constructor-hole applications or explicit kind
+roots, optional default-type roots, whole-binder ranges and original name
+contexts. Empty/trailing-comma binder lists, brace defaults, grouped constructor
+binders, and explicit `Type`/arrow kinds match the Rust parser. Separate `where`
+constraints retain subject/bound roots and ranges, with the compiler's nested
+application/comma ownership. These entry points consume the complete input;
+inline declaration bounds, unsupported default types, malformed kinds and
+trailing tokens diagnose instead of becoming another node. No declaration-scope
+lookup, earlier-name validation, kind inference or compiler AST projection is
+implemented in the library. Type/default/constraint nodes share one input budget.
+
+Unchanged `emit` retains original SDK data. The supported transformed
+`type_arguments` and `impl_binders` helpers remove defaults and preserve copied
+names/constructor sections, contexts, inner trivia and provenance. Impl binders
+mean unbounded `where` subjects, not a new declaration-style impl header. Both
+helpers group constructor sections through a caller-supplied ordinary SDK
+`MacroBuilder`: bare `F` would declare kind `Type` in an impl target, while
+ungrouped `F _, _` can absorb later comma-separated parameters. Plain and
+explicit `Type` parameters emit names. Other explicit kinds remain parseable and
+unchanged-emittable, but transformed impl/type-argument emission explicitly
+returns `binder-emission` at the whole-binder range; it does not invent an impl
+kind binder, guess a higher-order arity, or erase that kind. General transformed
+builders remain C.08 work, and the README documents this initial emission subset.
+
+Sixty-four shared fixtures (45 binder / 19 constraint cases) cover 37 accepted
+parses, 26 malformed/trailing cases and one compiler-valid default type lambda
+outside C.04's subset. They compare actual Rust parser structure, nested comma
+ownership, explicit/grouped kinds, earlier/chained/forward/default names and
+error ranges. Six accepted explicit-kind forms additionally require the
+documented transformed-emission error. Supported emitted fragments are checked
+against the Rust type/where parsers, then the actual native library output is
+used in an ordinary compiler/runtime proof: earlier-parameter defaults and an
+`Option` constructor default run, and an explicit `Type`-kind impl typechecks.
+The latter check uses spelling only inside the test harness, not library
+emission; real hygienic impl transport remains C.08–C.11 acceptance work.
+
+Native supplementary controls cover whole-input and individual-binder round
+trips, original snapshots and independent name contexts, generated grouping,
+source provenance, lexical/type limits, invalid limits, opaque defaults and SDK
+construction exhaustion. C.04 still exercises every node's checked slice API
+after sharing its structural-shape helper with this group. The C.03 proof and
+complete README example continue to pass.
+
+Final verification (test suites executed serially; warnings remain):
+
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 444 pass; three
+  native syntax groups remain opt-in here.
+- `cargo test -p rock-lib --lib macro_acceptance_syntax_ -- --ignored --nocapture --test-threads=1`:
+  all three native groups pass, including the emitted impl/runtime proof.
+- `cargo test -p rock-lib`: 2,755 units, 806 main integrations, six diagnostic
+  integrations, 14 process integrations, four SDK smoke/helper tests and one
+  parser integration pass. Three native syntax groups, ten SDK acceptance groups
+  and one doctest remain ignored in this default gate.
+- `cargo test -p rock -p rockc -p rock-shared`, with `ROCK_SYSROOT` set to the
+  existing workspace `target/` development bundle: 94/57/30 units and one shared
+  doctest pass; five cold macro CLI acceptance scenarios remain ignored.
+- `cargo clippy --workspace --all-targets` and `cargo build --release`: pass.
+
+Final receipts are `/tmp/opencode/macro-c05-{macro-regressions,native-complete,library,cli-shared,clippy,release-build}.log`.
+The shared development std artifact/object hashes remain unchanged. No compiler
+semantics, SDK wire layout, package-loading special case, CI job or formatter was
+added; worker protocol 7, `RKLOSS04` and product format 54 are unchanged.
+
+The initial runtime experiment also exposed a separate existing compiler limit:
+`Holder T, {F _ = Result T, _}` with a `Holder I64` construction reports
+`Type mismatch: _ vs I64`. A direct existing release `rockc` compilation of
+`/tmp/opencode/c05-partial-constructor-default.rk`, without any macro, syntax
+library or emitted impl, reproduces it in
+`/tmp/opencode/macro-c05-partial-default-baseline.log`. The shared parser fixture
+still retains that default form; this receipt certifies its syntax, not runtime
+default inference. The runtime emission proof instead uses `Option`. Compiler
+default-inference repair is outside this grammar slice; `bd` remains unavailable
+in this environment (`command not found`), so no issue was created for it.
+C.06–C.12 remain separate, unimplemented slices.
+
 Each grammar slice publishes its supported forms in library docs and adds shared
 conformance fixtures. A concrete missing form needed by the next proof becomes a
 small parser extension with tests; do not silently grow this into all of Syn or
