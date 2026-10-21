@@ -1,7 +1,9 @@
 //! Capture-capable lossless backing for parser cursors.
 
 use std::cell::RefCell;
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::lexer::interpretation::layout::{LayoutToken, LayoutView};
 use crate::lexer::interpretation::RockError;
@@ -53,6 +55,7 @@ struct Cache<'a> {
 /// A capture forks only the reader state, never mutable speculative results.
 pub struct SourceInput<'a> {
     stream: &'a LosslessStream,
+    retained: OnceCell<Arc<LosslessStream>>,
     eof: Span,
     limits: SourceLimits,
     cache: RefCell<Cache<'a>>,
@@ -89,7 +92,7 @@ impl<'a> SourceInput<'a> {
             stopped: false,
         });
         Ok(Self {
-            stream, eof: stream.end_span(), limits,
+            stream, retained: OnceCell::new(), eof: stream.end_span(), limits,
             cache: RefCell::new(Cache { branches, entries: 0, reads: 0 }),
         })
     }
@@ -260,6 +263,20 @@ impl SourceCursor<'_> {
             return Err(SourceError::Rock(RockError::InvalidCaptureBoundary { span: self.input.eof.clone() }));
         }
         self.input.stream.slice(self.offset()?..end.offset()?, limits).map_err(SourceError::Preservation)
+    }
+
+    pub(crate) fn declaration_until(&self, end: Self, header_indent: usize)
+        -> Result<crate::ast::DeclarationInput, SourceError>
+    {
+        if !std::ptr::eq(self.input, end.input) {
+            return Err(SourceError::Rock(RockError::InvalidCaptureBoundary { span: self.input.eof.clone() }));
+        }
+        let range = self.offset()?..end.offset()?;
+        if range.start > range.end || range.end > self.input.stream.len_bytes() {
+            return Err(SourceError::Rock(RockError::InvalidCaptureBoundary { span: self.input.eof.clone() }));
+        }
+        let source = self.input.retained.get_or_init(|| Arc::new(self.input.stream.clone()));
+        Ok(crate::ast::DeclarationInput::new(Arc::clone(source), range, header_indent))
     }
 
     /// Inspect cached Rock interpretations only, including branches resumed after

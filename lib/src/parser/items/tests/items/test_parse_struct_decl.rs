@@ -17,6 +17,7 @@ fn test_parse_struct_decl() {
     assert_eq!(
         struct_decl,
         StructDecl {
+            original: None,
             name: ParseTypeInner { context: Default::default(),
                 name: "Foo".to_string(),
                 generics: vec![],

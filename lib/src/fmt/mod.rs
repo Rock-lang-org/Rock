@@ -465,6 +465,7 @@ mod tests {
         let formatted_module = module(
             true,
             vec![TopLevel::StructDecl(StructDecl {
+                original: None,
                 name: type_inner("Box"),
                 generic_params: vec![],
                 fields: vec![StructDeclField {
@@ -504,6 +505,7 @@ mod tests {
         let formatted_module = module(
             true,
             vec![TopLevel::StructDecl(StructDecl {
+                original: None,
                 name: type_inner("Box"),
                 generic_params: vec![],
                 fields: vec![StructDeclField {
@@ -871,6 +873,7 @@ mod tests {
         let indented_module = module(
             false,
             vec![TopLevel::StructDecl(StructDecl {
+                original: None,
                 name: type_inner("Box"),
                 generic_params: vec![],
                 fields: vec![StructDeclField {

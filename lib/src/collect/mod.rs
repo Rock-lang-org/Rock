@@ -1161,6 +1161,7 @@ pub(crate) fn current_crate_canonical_fixture() -> CurrentCrateCanonicalFixture 
                 name: None,
                 top_levels: vec![
                     ast::TopLevel::StructDecl(ast::StructDecl {
+                        original: None,
                         name: ast::ParseTypeInner { context: Default::default(),
                             name: "RootThing".to_string(),
                             generics: vec![],
@@ -1176,6 +1177,7 @@ pub(crate) fn current_crate_canonical_fixture() -> CurrentCrateCanonicalFixture 
                             span: crate::lexer::Span::test(),
                         }),
                         top_levels: vec![ast::TopLevel::StructDecl(ast::StructDecl {
+                            original: None,
                             name: ast::ParseTypeInner { context: Default::default(),
                                 name: "Vector".to_string(),
                                 generics: vec![],
@@ -1273,6 +1275,7 @@ mod tests {
             module: Module {
                 name: None,
                 top_levels: vec![TopLevel::StructDecl(StructDecl {
+                    original: None,
                     name: type_inner(name),
                     generic_params: vec![],
                     fields: vec![],
@@ -1564,12 +1567,14 @@ mod tests {
                 name: None,
                 top_levels: vec![
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: generic_type_inner("Inner", vec![]),
                         generic_params: vec![generic_param_decl("T")],
                         fields: vec![struct_field("value", generic_t())],
                         exported: false,
                     }),
                     TopLevel::EnumDecl(crate::ast::EnumDecl {
+                        original: None,
                         name: generic_type_inner("Choice", vec![]),
                         generic_params: vec![generic_param_decl("T")],
                         variants: vec![crate::ast::EnumVariant {
@@ -1580,6 +1585,7 @@ mod tests {
                         language_items: Default::default(),
                     }),
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: generic_type_inner("Outer", vec![]),
                         generic_params: vec![generic_param_decl("T")],
                         fields: vec![struct_field("choice", choice_inner_t())],
@@ -1804,6 +1810,7 @@ mod tests {
             top_levels: vec![
                 TopLevel::InfixOperator(7, "++".to_string()),
                 TopLevel::StructDecl(StructDecl {
+                    original: None,
                     name: type_inner("Same"),
                     generic_params: vec![],
                     fields: vec![],
@@ -1818,6 +1825,7 @@ mod tests {
             top_levels: vec![
                 TopLevel::InfixOperator(7, "++".to_string()),
                 TopLevel::StructDecl(StructDecl {
+                    original: None,
                     name: type_inner("Same"),
                     generic_params: vec![],
                     fields: vec![],
@@ -1826,6 +1834,7 @@ mod tests {
                 inline_module(
                     "inline",
                     vec![TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("Same"),
                         generic_params: vec![],
                         fields: vec![],
@@ -2164,12 +2173,14 @@ mod tests {
                     )),
                     TopLevel::FunctionDecl(single_param_function_decl("identity", "value")),
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("Box"),
                         generic_params: vec![],
                         fields: vec![],
                         exported: false,
                     }),
                     TopLevel::EnumDecl(crate::ast::EnumDecl {
+                        original: None,
                         generic_params: Vec::new(),
                         name: type_inner("Maybe"),
                         variants: vec![crate::ast::EnumVariant {
@@ -2236,6 +2247,7 @@ mod tests {
                 name: None,
                 top_levels: vec![
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("Box"),
                         generic_params: vec![],
                         fields: vec![],
@@ -2486,6 +2498,7 @@ mod tests {
                     inline_module(
                         "left",
                         vec![TopLevel::StructDecl(StructDecl {
+                            original: None,
                             name: type_inner("Thing"),
                             generic_params: vec![],
                             fields: vec![],
@@ -2495,6 +2508,7 @@ mod tests {
                     inline_module(
                         "right",
                         vec![TopLevel::StructDecl(StructDecl {
+                            original: None,
                             name: type_inner("Thing"),
                             generic_params: vec![],
                             fields: vec![],
@@ -2851,6 +2865,7 @@ mod tests {
             Module {
                 name: None,
                 top_levels: vec![TopLevel::StructDecl(StructDecl {
+                    original: None,
                     name: type_inner("DepThing"),
                     generic_params: vec![],
                     fields: vec![],
@@ -2977,6 +2992,7 @@ mod tests {
             name: None,
             top_levels: vec![
                 TopLevel::StructDecl(StructDecl {
+                    original: None,
                     name: type_inner("Point"),
                     generic_params: vec![],
                     fields: vec![],
@@ -2991,6 +3007,7 @@ mod tests {
         let dep_io_module = Module {
             name: Some(ident("io")),
             top_levels: vec![TopLevel::StructDecl(StructDecl {
+                original: None,
                 name: type_inner("Writer"),
                 generic_params: vec![],
                 fields: vec![],
@@ -3095,6 +3112,7 @@ mod tests {
                 top_levels: vec![
                     TopLevel::InfixOperator(7, "++".to_string()),
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("Same"),
                         generic_params: vec![],
                         fields: vec![],
@@ -3103,6 +3121,7 @@ mod tests {
                     inline_module(
                         "inline",
                         vec![TopLevel::StructDecl(StructDecl {
+                            original: None,
                             name: type_inner("Same"),
                             generic_params: vec![],
                             fields: vec![],
@@ -3274,6 +3293,7 @@ mod tests {
             Module {
                 name: Some(ident("inner")),
                 top_levels: vec![TopLevel::StructDecl(StructDecl {
+                    original: None,
                     name: type_inner("Thing"),
                     generic_params: vec![],
                     fields: vec![],
@@ -3449,6 +3469,7 @@ mod tests {
                     exported: true,
                 }),
                 TopLevel::StructDecl(StructDecl {
+                    original: None,
                     name: type_inner("Box"),
                     generic_params: vec![],
                     fields: vec![],
@@ -3600,6 +3621,7 @@ mod tests {
             module: Module {
                 name: None,
                 top_levels: vec![TopLevel::StructDecl(StructDecl {
+                    original: None,
                     name: type_inner("Point"),
                     generic_params: vec![],
                     fields: vec![],
@@ -3815,6 +3837,7 @@ mod tests {
                 name: None,
                 top_levels: vec![
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("RootThing"),
                         generic_params: vec![],
                         fields: vec![],
@@ -3823,6 +3846,7 @@ mod tests {
                     inline_module(
                         "math",
                         vec![TopLevel::StructDecl(StructDecl {
+                            original: None,
                             name: type_inner("Vector"),
                             generic_params: vec![],
                             fields: vec![],
@@ -3901,6 +3925,7 @@ mod tests {
             Module {
                 name: None,
                 top_levels: vec![TopLevel::StructDecl(StructDecl {
+                    original: None,
                     name: type_inner("DepThing"),
                     generic_params: vec![],
                     fields: vec![],
@@ -4035,6 +4060,7 @@ mod tests {
                 name: None,
                 top_levels: vec![
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("Point"),
                         generic_params: vec![],
                         fields: vec![],
@@ -4043,6 +4069,7 @@ mod tests {
                     inline_module(
                         "math",
                         vec![TopLevel::StructDecl(StructDecl {
+                            original: None,
                             name: type_inner("Vector"),
                             generic_params: vec![],
                             fields: vec![],
@@ -4072,12 +4099,14 @@ mod tests {
                 top_levels: vec![
                     TopLevel::FunctionDecl(function_decl("root_fn")),
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("Point"),
                         generic_params: vec![],
                         fields: vec![],
                         exported: false,
                     }),
                     TopLevel::EnumDecl(crate::ast::EnumDecl {
+                        original: None,
                         generic_params: Vec::new(),
                         name: type_inner("Color"),
                         variants: vec![],
@@ -4137,6 +4166,7 @@ mod tests {
                 name: None,
                 top_levels: vec![
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("Foo"),
                         generic_params: vec![],
                         fields: vec![],
@@ -4201,6 +4231,7 @@ mod tests {
                 name: None,
                 top_levels: vec![
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("Box"),
                         generic_params: vec![],
                         fields: vec![],
@@ -4255,6 +4286,7 @@ mod tests {
                 name: None,
                 top_levels: vec![
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("Box"),
                         generic_params: vec![],
                         fields: vec![],
@@ -4318,6 +4350,7 @@ mod tests {
                         "math",
                         vec![
                             TopLevel::StructDecl(StructDecl {
+                                original: None,
                                 name: type_inner("Box"),
                                 generic_params: vec![],
                                 fields: vec![],
@@ -4763,6 +4796,7 @@ mod tests {
                 name: None,
                 top_levels: vec![
                     TopLevel::StructDecl(StructDecl {
+                        original: None,
                         name: type_inner("Box"),
                         generic_params: vec![],
                         fields: vec![],
@@ -5375,6 +5409,7 @@ mod tests {
                     inline_module(
                         "math",
                         vec![TopLevel::StructDecl(StructDecl {
+                            original: None,
                             name: type_inner("Vector"),
                             generic_params: vec![],
                             fields: vec![],
@@ -5417,6 +5452,7 @@ mod tests {
                     "math",
                     vec![
                         TopLevel::StructDecl(StructDecl {
+                            original: None,
                             name: type_inner("Vector"),
                             generic_params: vec![],
                             fields: vec![],

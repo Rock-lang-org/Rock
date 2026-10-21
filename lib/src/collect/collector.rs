@@ -2208,6 +2208,7 @@ mod tests {
         let module = Module {
             name: None,
             top_levels: vec![TopLevel::StructDecl(StructDecl {
+                original: None,
                 name: type_inner("Point"),
                 generic_params: vec![],
                 fields: vec![],
@@ -2249,6 +2250,7 @@ mod tests {
             name: None,
             top_levels: vec![
                 TopLevel::StructDecl(StructDecl {
+                    original: None,
                     name: type_inner("Box"),
                     generic_params: vec![],
                     fields: vec![],

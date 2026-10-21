@@ -11,7 +11,8 @@ use super::{
 };
 
 pub fn enum_decl(stream: Input) -> IResult<EnumDecl> {
-    (
+    let start = stream.clone();
+    let (rest, mut declaration) = (
         TokenType::Keyword("enum".to_string()),
         parse_type_name,
         parse_generic_param_list,
@@ -35,6 +36,7 @@ pub fn enum_decl(stream: Input) -> IResult<EnumDecl> {
                 .collect();
 
             EnumDecl {
+                original: None,
                 name: ParseTypeInner { name: name.name, context: name.context, span: name.span, generics: Vec::new() },
                 generic_params,
                 variants,
@@ -42,7 +44,9 @@ pub fn enum_decl(stream: Input) -> IResult<EnumDecl> {
                 language_items,
             }
         })
-        .process(stream)
+        .process(stream)?;
+    declaration.original = start.declaration_until(rest.clone(), start.header_indent()?)?;
+    Ok((rest, declaration))
 }
 
 pub fn enum_variant(stream: Input) -> IResult<EnumVariant> {

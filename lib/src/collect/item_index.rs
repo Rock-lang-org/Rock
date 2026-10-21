@@ -622,6 +622,7 @@ mod tests {
 
     fn struct_item(name: &str) -> TopLevel {
         TopLevel::StructDecl(StructDecl {
+            original: None,
             name: type_inner(name),
             generic_params: vec![],
             fields: vec![],
@@ -631,6 +632,7 @@ mod tests {
 
     fn enum_item(name: &str) -> TopLevel {
         TopLevel::EnumDecl(EnumDecl {
+            original: None,
             generic_params: Vec::new(),
             name: type_inner(name),
             variants: vec![],

@@ -2567,6 +2567,42 @@ expression/type coverage, production derives, and self-hosting stay out of scope
 | C.01 | Retain original declaration streams/ranges during parsing rather than reconstructing syntax from AST printing. | Struct/enum names, fields/variants, visibility, generic bounds/defaults, trivia, and context segments recover exactly from original input. Multiple consumers see one immutable original declaration; generated origins remain intact. | U |
 | C.02 | Parse `%derive path, path` attachment and `macro derive Name = ...` source declarations/exports; validate target/kind metadata without running a derive. | Qualified/comma-separated lists, comments/blank lines, and consecutive directives attach correctly. Empty lists, intervening items, missing/unsupported targets, duplicate canonical derives, and Rust-style/arbitrary attributes diagnose; block capture does not steal the directive. | U |
 
+#### C.01 completion receipt
+
+Struct/enum AST nodes now retain `DeclarationInput`: an immutable logical range
+and physical header margin over shared original lossless backing. Parser input
+clones that backing once on demand, not once per declaration. The direct grammar
+parsers retain their input; the top-level boundary includes inline visibility,
+owned indentation/trivia and language markers. Token-only/synthetic AST fixtures
+explicitly have no original input; there is no AST-printing fallback.
+
+Six `macro_c_01_` unit tests cover exact struct kind binders/defaults, field
+visibility/defaults, CRLF/comments, enum variant shapes/order, nested margins,
+EOF/bounded input, shared backing across consumers and AST mutation, mixed
+generated/captured contexts and diagnostic projections, retained expression
+captures, serialization, and checked invalid-range rejection. Materialization
+uses the existing lossless slice contract, preserving runs and their origins.
+
+Final verification (suites executed serially; warnings remain):
+
+- `cargo test -p rock-lib --lib macro_c_01_ -- --nocapture`: 6 pass.
+- `cargo test -p rock-lib`: 2,737 units, 806 main integrations, six diagnostic
+  integrations, 14 process integrations, four SDK smoke/helper tests and one
+  parser integration pass; ten native SDK acceptance groups and one doctest
+  remain explicitly ignored under the manual-acceptance split.
+- `cargo test -p rock -p rockc -p rock-shared`: 94/57/30 units and one shared
+  doctest pass; five cold macro CLI acceptance scenarios remain ignored.
+- `cargo clippy --workspace --all-targets` and `cargo build --release`: pass.
+
+Receipts are `/tmp/opencode/macro-c01-{focused-final,library-final,cli-shared,clippy,release-build}.log`.
+The first library attempt hit `Text file busy` while spawning an existing native
+worker fixture; its fully qualified exact retry and the complete library rerun
+both passed without source changes to that fixture or transport.
+
+This completes declaration retention only. C.02 attachments, derive dispatch and
+`rock_syntax` are not implemented; worker protocol 7 and product format 54 are
+unchanged. No formatter or formatting check was run.
+
 ### Cb. Grow the syntax library one grammar family at a time
 
 | Slice | Implement only | Focused acceptance | Runner |

@@ -212,6 +212,23 @@ fn language_item_top_level(stream: Input) -> IResult<TopLevel> {
 }
 
 pub fn top_level(stream: Input) -> IResult<TopLevel> {
+    let (start, _) = empty_lines(stream)?;
+    let (rest, mut item) = top_level_inner(start.clone())?;
+    let original = match &mut item {
+        TopLevel::StructDecl(declaration) => Some(&mut declaration.original),
+        TopLevel::EnumDecl(declaration) => Some(&mut declaration.original),
+        _ => None,
+    };
+    if let Some(original) = original {
+        let header_indent = original.as_ref().map_or(0, crate::ast::DeclarationInput::header_indent);
+        // The outer boundary includes indentation and inline export/language
+        // markers consumed before the struct/enum parser, plus owned trivia.
+        *original = start.declaration_until(rest.clone(), header_indent)?;
+    }
+    Ok((rest, item))
+}
+
+fn top_level_inner(stream: Input) -> IResult<TopLevel> {
     (
         empty_lines,
         indent,

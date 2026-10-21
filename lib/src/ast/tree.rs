@@ -89,6 +89,8 @@ impl TopLevel {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StructDecl {
+    /// Absent only for synthetic ASTs and token-only parser fixtures.
+    pub original: Option<super::DeclarationInput>,
     pub name: ParseTypeInner,
     pub generic_params: Vec<GenericParamDecl>,
     pub fields: Vec<StructDeclField>,
@@ -124,6 +126,8 @@ pub struct AssociatedTypeDecl {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnumDecl {
+    /// Absent only for synthetic ASTs and token-only parser fixtures.
+    pub original: Option<super::DeclarationInput>,
     pub name: ParseTypeInner,
     pub generic_params: Vec<GenericParamDecl>,
     pub variants: Vec<EnumVariant>,

@@ -2000,6 +2000,7 @@ mod tests {
     fn test_build_struct_lowers_struct_field_types() {
         let mut context = CollectContext::new();
         let decl = StructDecl {
+            original: None,
             name: ParseTypeInner { context: Default::default(),
                 name: "Buffer".to_string(),
                 generics: vec![],
@@ -2075,6 +2076,7 @@ mod tests {
             span: Span::test(),
         };
         let decl = StructDecl {
+            original: None,
             name: type_inner("Wrapper"),
             generic_params: vec![constructor_param, generic_param("A")],
             fields: vec![field(
@@ -2111,12 +2113,14 @@ mod tests {
     fn build_struct_assigns_source_order_field_ids_per_owner() {
         let mut context = CollectContext::new();
         let left = StructDecl {
+            original: None,
             name: type_inner("Left"),
             generic_params: vec![],
             fields: vec![field("value", named_type("I32"), true)],
             exported: false,
         };
         let right = StructDecl {
+            original: None,
             name: type_inner("Right"),
             generic_params: vec![],
             fields: vec![
@@ -2138,6 +2142,7 @@ mod tests {
     fn test_build_struct_rejects_bare_str_field_type() {
         let mut context = CollectContext::new();
         let decl = StructDecl {
+            original: None,
             name: ParseTypeInner { context: Default::default(),
                 name: "TextHolder".to_string(),
                 generics: vec![],
@@ -2160,6 +2165,7 @@ mod tests {
     fn test_build_struct_accepts_borrowed_str_field_type() {
         let mut context = CollectContext::new();
         let decl = StructDecl {
+            original: None,
             name: ParseTypeInner { context: Default::default(),
                 name: "TextHolder".to_string(),
                 generics: vec![],
@@ -2193,6 +2199,7 @@ mod tests {
     fn test_build_enum_mirrors_variant_header_construction() {
         let mut lowerer = CollectContext::new();
         let decl = EnumDecl {
+            original: None,
             generic_params: vec![generic_param("T")],
             name: ParseTypeInner { context: Default::default(),
                 name: "Message".to_string(),
@@ -2269,6 +2276,7 @@ mod tests {
     fn build_enum_assigns_variant_ids_and_owner_unique_named_field_ids() {
         let mut context = CollectContext::new();
         let decl = EnumDecl {
+            original: None,
             generic_params: Vec::new(),
             name: type_inner("Message"),
             variants: vec![
