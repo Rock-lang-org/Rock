@@ -184,8 +184,9 @@ through this API and its destruction is nonrecursive.
 `syntax.emit!` copies the **unchanged original** SDK stream, including leading
 and trailing trivia, snapshots, contexts and provenance. `syntax.node_tokens index`
 returns a checked original node slice; an invalid index diagnoses rather than
-panicking. No captured subtree is stringified to emit it. Editing and generated
-type/impl builders remain C.08 work, not a fake AST-printer fallback.
+panicking. No captured subtree is stringified to emit it. Generated type
+construction and range-based edits are described in C.08 below; unchanged
+emission never falls back to an AST printer.
 
 `TypeSyntax::parse_with_limits input, lexical_limits, type_limits` additionally
 accepts the C.03 `Limits` and `TypeLimits` (default/hard ceiling: 128 recursive
@@ -254,7 +255,7 @@ for new parentheses; these carry output construction requests until normal
 compiler materialization. Copied names, holes, inner trivia and provenance are
 not stringified. Empty parameters emit an empty stream, not an empty `where`.
 
-General edited-node and complete impl builders remain C.08 work.
+General edited-node and impl construction use the C.08 output helpers below.
 
 ## C.06 struct derive input
 
@@ -313,7 +314,7 @@ uses the existing lexical/group ceilings, one shared type-node budget for the
 entire declaration, and `DeclarationLimits::standard!` (16,384 fields, also the
 hard ceiling). Lower/zero limits and invalid configurations are checked. The
 shared grammar engine is a private library module, not a public compiler API.
-Edited declaration/impl builders remain C.08 work.
+Edited declaration/impl construction uses the C.08 helpers below.
 
 ## C.07 enum derive input
 
@@ -368,6 +369,113 @@ fields; it is not reset per variant. The common lexical/group and type-node
 limits also cover the whole enum. Empty enums and lower/zero limits are handled
 explicitly; no resolution, kind/arity inference or expression validation is added.
 
+## C.08 token edits and output construction
+
+`rock_syntax::emission` builds `MacroOutput` through the SDK's ordinary
+`syntax`, `forward`, and `quote` helpers. No quotation proc macro, worker callback,
+compiler AST, or eager materialization is needed. Unchanged syntax remains
+`OutputPart::Stream`, not generated text. Generated identifiers still come from
+the SDK builder: forward an original name, request a fresh helper, or explicitly
+request call-site/dependency authority. Copying a spelling does not grant that
+authority.
+
+`TokenEdits::new original` creates an ordered edit script. `replace context,
+range, output` replaces a range in the **original** stream, including zero-width
+insertion or deletion with empty output. Use ranges from type nodes, binders,
+constraints, fields, variants, or declaration tokens. Replacements must be
+ordered and disjoint; invalid ranges, UTF-8 cuts and partial opaque-expression
+cuts diagnose. A failed replacement leaves the script unchanged. Consuming
+`emit context` forwards the remaining suffix. With no edits, the output contains
+one unchanged stream, including its anchor, snapshots, contexts and captures.
+No edit reparses or reformats untouched text. Authors choose the supported node
+range to replace; this is not a visitor/folder or a mutable compiler AST.
+
+`TypeEmitter::emit context, kind, children` constructs the C.04 `TypeKind` forms
+from output children. Arity is checked: names/grouping/references/pointers/slices
+take one child; paths/arrays take two; applications/functions need at least two;
+tuples need at least one; unit, holes and array-length values take none. Arrays'
+second child is a length fragment; `ArrayLength U64` emits the full unsigned
+decimal range without signed narrowing. Application arguments, function operands
+and unary pointees are grouped; singleton tuples keep their comma. Paths expect
+name/path children, not arbitrary expressions. Children may retain parsed nodes
+or contain unresolved SDK construction requests; final Rock validity remains
+the compiler's responsibility. Captured nodes are never printed and re-lexed.
+
+This complete ordinary helper changes the first struct field to a shared
+reference while preserving the declaration's other bytes and token authority:
+
+```rock
+> rock_macro::*
+> rock_syntax::derive_input::DeriveInput
+> rock_syntax::emission::TokenEdits
+> rock_syntax::emission::TypeEmitter
+> rock_syntax::types::TypeKind
+
+reference_first_field: &MacroContext -> DeriveInput -> Result MacroOutput, Diagnostic
+reference_first_field = context, syntax ->
+    fields = syntax.fields!
+    if fields.len! == 0
+        return context.output_error "expected a struct with a field"
+    nodes = syntax.nodes!
+    bounds = nodes[fields[0].ty].range.clone!
+    tokens = match syntax.original!.slice (bounds.clone!)
+        Result::Ok tokens => tokens
+        Result::Err _ => return context.output_error "invalid field type slice"
+    children = [context.forward tokens ?]
+    replacement = TypeEmitter::emit context, TypeKind::SharedReference, &children ?
+    mut edits = TokenEdits::new syntax.emit! ?
+    edits.replace context, bounds, replacement ?
+    edits.emit context
+```
+
+`ImplBuilder::new target, trait_type` accepts output for the target and an optional
+trait (`None` for inherent impls). `constrain context, subject, optional_bound`
+adds a grouped WHERE subject and optional grouped trait bound, avoiding comma
+capture by adjacent applications. For generic declarations, use C.05's
+`GenericSyntax.type_arguments` for target arguments: declaration defaults are not
+impl syntax, and constructor sections must retain their holes/grouping. Existing
+unsupported explicit constructor-kind emission still diagnoses; this helper
+does not guess a conversion.
+
+`member context, name, signature, definition` adds a member with a signature and
+a complete opaque definition such as `-> 7` or `other -> expression`. The name
+can include a receiver marker (for example generated `@show`). `emit context`
+generates the impl header, WHERE clauses, and four-space outer member layout;
+an empty impl diagnoses. Definitions retain supplied internal layout: multiline
+bodies need valid continuation indentation at their emitted location, or SDK
+opaque expression fragments. This is not an expression parser/reindenter.
+
+`OutputBuffer::new!`, `append context, output`, and consuming `output!` support
+larger custom emitters. Appends move owned parts without repeatedly deep-copying
+the accumulated prefix and preflight the complete append before mutation.
+All helpers bound aggregate output at 1 MiB spelling, 16,384 parts and a
+conservative 16 MiB retained-storage charge (including full copied snapshots).
+Arity, edit and output failures use structured SDK diagnostics; ordinary syntax
+parse failures still use `ParseError.diagnostic!`.
+
+`LayoutEmitter::unindent context, input, margin` translates physical leading
+space margins when forwarding a block-captured declaration into item output.
+Use the SDK's `block_base` fact for a complete block input, then parse the
+returned stream to obtain its new logical ranges before applying node edits.
+This helper consumes ordinary lexical pieces: it never scans through multiline
+quotes, block comments or opaque captures to remove their interior whitespace.
+It joins original SDK slices, preserving contexts, provenance and capture
+metadata, without generating or printing captured names. A zero margin returns
+the exact stream. Margins above 254, non-space prefixes and excessive retained
+copy work diagnose; this bounded layout operation is not a formatter.
+
+The native C.08 group checks every supported type constructor against the actual
+Rust type parser, plus changed types/declarations, unchanged contexts/provenance,
+UTF-8/capture/range errors, output limits and failed-append atomicity. Its separate
+function-like proc provider emits inherent, trait and generic impls through the
+real engine, with captured target/field/parameter names and same-spelling helpers
+in caller and nested scopes. This is emission acceptance, not derive dispatch.
+
+```sh
+cargo test -p rock-lib --lib macro_c_08_
+cargo test -p rock-lib --lib macro_acceptance_syntax_emission -- --ignored --nocapture
+```
+
 ## Conformance
 
 `lib/tests/fixtures/syntax/lexical.rs` is the shared positive/negative fixture set
@@ -407,8 +515,8 @@ defaults (using `Option`); an explicit `Type`-kind impl also typechecks. Partial
 constructor-section defaults are covered as syntax, not a claim that the compiler
 can infer every such default at runtime. Other explicit-kind
 emission diagnoses at the whole-binder range instead of producing invalid impls.
-This is not yet
-the hygienic full derive-transport proof reserved for C.08–C.11.
+This spelling-only C.05 check does not establish hygiene; C.08 tests function-like
+impl transport, while C.09–C.11 cover derive dispatch and its proofs.
 
 ```sh
 cargo test -p rock-lib --lib macro_c_05_

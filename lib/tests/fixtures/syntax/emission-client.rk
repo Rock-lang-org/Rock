@@ -1,0 +1,279 @@
+> rock_syntax::emission::OutputBuffer
+> rock_syntax::emission::TokenEdits
+> rock_syntax::emission::TypeEmitter
+> rock_syntax::emission::ImplBuilder
+> rock_syntax::emission::LayoutEmitter
+> rock_syntax::types::TypeSyntax
+> rock_syntax::types::TypeKind
+> rock_syntax::types::GenericSyntax
+> rock_syntax::types::BoundsSyntax
+> rock_syntax::derive_input::DeriveInput
+
+emission_context = -> MacroContext
+    protocol_version: 7
+    compiler_version: String::from "test"
+    macro_name: String::from "emission"
+    macro_identity: String::from "emission"
+    source_module: Option::None
+    expansion: Option::None
+    invocation: 99
+    parent: Option::None
+    output_category: OutputCategory::Items
+    kind: MacroKind::FunctionLike
+    header_indent: 0
+    block_base: Option::None
+    definition_dependencies: Vec::new!
+    views: InputViews
+        arguments: Option::None
+        groups: Vec::new!
+        literals: Vec::new!
+
+// Test-only spelling oracle. Production helpers never turn streams into source.
+output_text: &MacroOutput -> String
+output_text = output ->
+    text = String::new!
+    i = 0
+    while i < output.parts.len!
+        part = &output.parts[i]
+        piece = match *part
+            OutputPart::Source source => source.text.clone!
+            OutputPart::Stream stream => stream.spelling!.checked!
+            OutputPart::Literal literal => String::from "unexpected literal"
+        text = text.concat piece
+        i = i + 1
+    text
+
+test_source: &MacroContext -> &Str -> MacroOutput
+test_source = context, text -> (context.syntax text).checked!
+
+test_tokens: &MacroContext -> &Str -> MacroOutput
+test_tokens = context, text -> (context.forward (input text)).checked!
+
+expect_error: Result T, Diagnostic -> ()
+expect_error = result !->
+    match result
+        Result::Err error => ()
+        Result::Ok value => check false
+
+run_emission: &MacroContext -> TypeKind -> &[MacroOutput] -> ()
+run_emission = context, kind, children !->
+    output = (TypeEmitter::emit context, kind, children).checked!
+    text = output_text &output
+    syntax = (TypeSyntax::parse (input text.as_str!)).checked!
+    emitted = syntax.emit!
+    check (emitted.spelling!.checked! == text)
+    text.println!
+
+type_edit_controls: &MacroContext -> ()
+type_edit_controls = context !->
+    original = split " /* 雪 */ F A, B // tail\r\n", 13, JoinBoundary::SourceAdjacent, 9
+    unchanged_edits = (TokenEdits::new original.clone!).checked!
+    unchanged = (unchanged_edits.emit context).checked!
+    check (unchanged.parts.len! == 1)
+    check ((output_text &unchanged) == original.spelling!.checked!)
+    part = &unchanged.parts[0]
+    match *part
+        OutputPart::Stream stream =>
+            check (stream.sources[0].identity == (41 as U64) && stream.segments.len! == 2)
+            check (stream.segments[1].context.handle == (9 as U32))
+            anchor_origin = &stream.anchor.origin
+            match *anchor_origin
+                Option::None => ()
+                Option::Some origin => check false
+        _ => check false
+    syntax = (TypeSyntax::parse original.clone!).checked!
+    nodes = syntax.nodes!
+    root = &nodes[syntax.root!]
+    target = &nodes[root.children[1]]
+    mut type_edits = (TokenEdits::new original).checked!
+    args = [test_tokens context, "C -> D"]
+    grouped = (TypeEmitter::emit context, TypeKind::Grouped, &args).checked!
+    (type_edits.replace context, (target.range.clone!), grouped).checked!
+    output = (type_edits.emit context).checked!
+    check ((output_text &output) == " /* 雪 */ F (C -> D), B // tail\r\n")
+    part = &output.parts[0]
+    match *part
+        OutputPart::Stream stream =>
+            check (stream.sources[0].text == " /* 雪 */ F A, B // tail\r\n")
+            check (stream.segments[0].context.handle == (7 as U32))
+            origin = &stream.segments[0].origin
+            match *origin
+                Option::Some origin =>
+                    provenance = &origin.provenance
+                    match *provenance
+                        TokenProvenance::Source span => check (span.file_path == "fixture.rk")
+                        _ => check false
+                Option::None => check false
+        _ => check false
+    part = &output.parts[output.parts.len! - 1]
+    match *part
+        OutputPart::Stream stream => check (stream.segments[0].context.handle == (9 as U32))
+        _ => check false
+    text = output_text &output
+    (TypeSyntax::parse (input text.as_str!)).checked!
+
+declaration_edit_controls: &MacroContext -> ()
+declaration_edit_controls = context !->
+    source = "struct Packet T\n    value: T = make 7 // keep\n    other: T\n"
+    syntax = (DeriveInput::parse (input source)).checked!
+    fields = syntax.fields!
+    nodes = syntax.nodes!
+    mut field_edits = (TokenEdits::new syntax.emit!).checked!
+    (field_edits.replace context, (nodes[fields[0].ty].range.clone!), (test_tokens context, "I64")).checked!
+    result = (field_edits.emit context).checked!
+    text = output_text &result
+    check (text == "struct Packet T\n    value: I64 = make 7 // keep\n    other: T\n")
+    (DeriveInput::parse (input text.as_str!)).checked!
+    syntax = (DeriveInput::parse (input "enum E\n    Empty\n    Pair T, U\n    Named\n        field: T\n")).checked!
+    variants = syntax.variants!
+    mut variant_edits = (TokenEdits::new syntax.emit!).checked!
+    (variant_edits.replace context, (variants[0].name.range.clone!), (test_tokens context, "None")).checked!
+    result = (variant_edits.emit context).checked!
+    text = output_text &result
+    repeated = (DeriveInput::parse (input text.as_str!)).checked!
+    check (repeated.variants!.len! == 3)
+    mut layout_edits = (TokenEdits::new (input "struct Packet T\n    value: T\n")).checked!
+    (layout_edits.replace context, (range 0, 0), (test_source context, "< ")).checked!
+    (layout_edits.replace context, (range 13, 15), (test_source context, "")).checked!
+    emitted = (layout_edits.emit context).checked!
+    text = output_text &emitted
+    check (text == "< struct Packet\n    value: T\n")
+    (DeriveInput::parse (input text.as_str!)).checked!
+
+generic_edit_controls: &MacroContext -> ()
+generic_edit_controls = context !->
+    generic = (GenericSyntax::parse (input "T, {U = T} /* keep */")).checked!
+    params = generic.params!
+    nodes = generic.nodes!
+    default_type = &params[1].default_type
+    default_bounds = match *default_type
+        Option::Some index => nodes[index].range.clone!
+        Option::None => range 0, 0
+    mut default_edits = (TokenEdits::new generic.emit!).checked!
+    (default_edits.replace context, default_bounds, (test_tokens context, "I64")).checked!
+    output = (default_edits.emit context).checked!
+    text = output_text &output
+    check (text == "T, {U = I64} /* keep */")
+    (GenericSyntax::parse (input text.as_str!)).checked!
+    bounds = (BoundsSyntax::parse (input "where T: Show, U // keep")).checked!
+    clauses = bounds.constraints!
+    nodes = bounds.nodes!
+    mut bound_edits = (TokenEdits::new bounds.emit!).checked!
+    (bound_edits.replace context, (nodes[clauses[1].subject].range.clone!), (test_tokens context, "V")).checked!
+    output = (bound_edits.emit context).checked!
+    text = output_text &output
+    check (text == "where T: Show, V // keep")
+    (BoundsSyntax::parse (input text.as_str!)).checked!
+
+invalid_edit_controls: &MacroContext -> ()
+invalid_edit_controls = context !->
+    mut range_edits = (TokenEdits::new (input "é abc")).checked!
+    expect_error (range_edits.replace context, (range 1, 2), (test_source context, "x"))
+    expect_error (range_edits.replace context, (range 5, 3), (test_source context, "x"))
+    expect_error (range_edits.replace context, (range 0, 7), (test_source context, "x"))
+    (range_edits.replace context, (range 3, 6), (test_source context, "xyz")).checked!
+    expect_error (range_edits.replace context, (range 4, 5), (test_source context, "bad"))
+    output = (range_edits.emit context).checked!
+    check ((output_text &output) == "é xyz")
+    mut captured = input "abc def"
+    captured.expressions.push (ExpressionRange
+        range: range 0, 3
+        header_indent: 0)
+    mut capture_edits = (TokenEdits::new captured).checked!
+    expect_error (capture_edits.replace context, (range 1, 2), (test_source context, "x"))
+    output = (capture_edits.emit context).checked!
+    part = &output.parts[0]
+    match *part
+        OutputPart::Stream stream => check (stream.expressions.len! == 1)
+        _ => check false
+    empty: Vec MacroOutput = Vec::new!
+    expect_error (TypeEmitter::emit context, TypeKind::Function, (empty.as_slice!))
+    length = (TypeEmitter::emit context, (TypeKind::ArrayLength (18446744073709551615 as U64)), (empty.as_slice!)).checked!
+    check ((output_text &length) == "18446744073709551615")
+    builder = ImplBuilder::new (test_source context, "Packet"), Option::None
+    expect_error (builder.emit context)
+
+output_limit_controls: &MacroContext -> ()
+output_limit_controls = context !->
+    mut atomic_output = OutputBuffer::new!
+    (atomic_output.append context, (test_source context, "kept")).checked!
+    mut invalid: Vec OutputPart = Vec::new!
+    invalid.push (OutputPart::Source (SourceFragment
+        text: String::from "must not append"
+        context: ConstructionContext
+            invocation: context.invocation
+            kind: ConstructionKind::Fresh (0 as U32)))
+    invalid.push (OutputPart::Literal (LiteralFragment
+        view: 99
+        range: range 0, 1))
+    expect_error (atomic_output.append context, (MacroOutput
+        parts: invalid))
+    output = atomic_output.output!
+    check ((output_text &output) == "kept")
+    mut part_output = OutputBuffer::new!
+    mut parts: Vec OutputPart = Vec::new!
+    i = 0
+    while i < 16384
+        parts.push (OutputPart::Source (SourceFragment
+            text: String::from ""
+            context: ConstructionContext
+                invocation: context.invocation
+                kind: ConstructionKind::Fresh (0 as U32)))
+        i = i + 1
+    (part_output.append context, (MacroOutput
+        parts: parts)).checked!
+    expect_error (part_output.append context, (test_source context, "x"))
+    output = part_output.output!
+    check (output.parts.len! == 16384)
+    mut bytes: Vec U8 = Vec::new!
+    i = 0
+    while i < 1048576
+        bytes.push ('x' as U8)
+        i = i + 1
+    large = String::from bytes.as_slice!
+    mut byte_output = OutputBuffer::new!
+    (byte_output.append context, (test_source context, (large.as_str!))).checked!
+    expect_error (byte_output.append context, (test_source context, "x"))
+    mut retained_output = OutputBuffer::new!
+    mut tiny = input "x"
+    tiny.sources[0].text = large
+    i = 0
+    while i < 15
+        fragment = (context.forward tiny.clone!).checked!
+        (retained_output.append context, fragment).checked!
+        i = i + 1
+    fragment = (context.forward tiny).checked!
+    expect_error (retained_output.append context, fragment)
+
+layout_controls: &MacroContext -> ()
+layout_controls = context !->
+    quoted = input "    struct Packet\r\n        text: String = \"first\n    literal margin\"\r\n        // keep\r\n        value: I64\r\n"
+    normalized = (LayoutEmitter::unindent context, quoted.clone!, 4).checked!
+    check (normalized.spelling!.checked! == "struct Packet\r\n    text: String = \"first\n    literal margin\"\r\n    // keep\r\n    value: I64\r\n")
+    (DeriveInput::parse normalized).checked!
+    identity = (LayoutEmitter::unindent context, quoted.clone!, 0).checked!
+    check (identity.spelling!.checked! == quoted.spelling!.checked!)
+    origin = &identity.anchor.origin
+    match *origin
+        Option::None => ()
+        Option::Some origin => check false
+    mut captured = input "    abc\n        @☃[)\n    fake\n    def\n"
+    captured.expressions.push (ExpressionRange
+        range: range 16, 31
+        header_indent: 8)
+    normalized = (LayoutEmitter::unindent context, captured, 4).checked!
+    check (normalized.spelling!.checked! == "abc\n    @☃[)\n    fake\ndef\n")
+    check (normalized.expressions.len! == 1)
+    check (normalized.expressions[0].range.start == (8 as U64) && normalized.expressions[0].range.end == (23 as U64))
+    expect_error (LayoutEmitter::unindent context, (input "    T"), 255)
+    expect_error (LayoutEmitter::unindent context, (input "\t   T"), 4)
+
+emission_controls: &MacroContext -> ()
+emission_controls = context !->
+    type_edit_controls context
+    declaration_edit_controls context
+    generic_edit_controls context
+    invalid_edit_controls context
+    output_limit_controls context
+    layout_controls context
+    "emission controls passed".println!

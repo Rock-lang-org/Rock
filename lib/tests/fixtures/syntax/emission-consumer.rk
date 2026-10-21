@@ -1,0 +1,82 @@
+> emission_provider::implement
+> emission_provider::trait_impl
+> emission_provider::generic_impl
+> emission_provider::rewrite
+
+struct Value
+    < value: I64
+
+trait Measure
+    @measure: I64
+
+impl Measure for I64
+    @measure = -> *self
+
+value = -> 53
+
+%rewrite
+    struct Changed
+        < value: I64 = 7
+
+%implement
+    struct Packet
+        < value: I64 = value!
+
+%trait_impl
+    struct Measured
+        < value: I64
+
+%generic_impl
+    struct Generic T, {U = T}
+        < value: T
+        < other: U
+
+%generic_impl
+    struct Higher T, {F _ = Option}
+        < value: F T
+        < other: T
+
+mod nested
+    > emission_provider::trait_impl
+
+    trait Measure
+        @measure: I64
+
+    %trait_impl
+        struct Measured
+            < value: I64
+
+    < read = ->
+        item = Measured
+            value: 31
+        item.measure!
+
+main = !->
+    changed = Changed
+        value: (1, 2)
+    if changed.value.1 != 2
+        exit (1 as I32)
+    caller_value = Value
+        value: 99
+    if caller_value.value != 99
+        exit (1 as I32)
+    packet = Packet
+        value: 0
+    packet.answer!.println!
+    pair = packet.pair!
+    if pair.0 != 17 || pair.1 != 19
+        exit (1 as I32)
+    packet.default_answer!.println!
+    measured = Measured
+        value: 23
+    measured.measure!.println!
+    nested::read!.println!
+    generic = Generic
+        value: 5
+        other: 6
+    generic.measure!.println!
+    higher: Higher I64, Option = Higher
+        value: Option::Some 7
+        other: 8
+    if higher.measure! != 41
+        exit (1 as I32)

@@ -7537,6 +7537,31 @@ main = ->
 }
 
 #[test]
+fn test_concrete_field_is_not_stolen_by_unrelated_method_value() {
+    let output = compile_and_run(
+        r#"
+struct Holder T
+    < tokens: T
+
+struct Cursor
+
+impl Cursor
+    @tokens: &I64 -> I64
+    @tokens = value -> *value
+
+main = !->
+    holder = Holder
+        tokens: 7
+    value = holder.tokens
+    value.println!
+    borrowed = &holder
+    borrowed.tokens.println!
+"#,
+    );
+    assert_eq!(output, "7\n7\n");
+}
+
+#[test]
 fn test_struct_field_assignment() {
     let output = compile_and_run(
         r#"

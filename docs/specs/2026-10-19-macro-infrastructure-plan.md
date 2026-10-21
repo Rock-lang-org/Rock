@@ -3022,6 +3022,100 @@ was changed; worker protocol 7, `RKLOSS04` and product format 54 remain unchange
 `bd` is still unavailable (`command not found`). C.08–C.12 remain separate,
 unimplemented slices.
 
+#### C.08 completion receipt
+
+The ordinary `rock_syntax::emission` module now supplies bounded output
+accumulation, ordered range edits, type constructors, layout translation and impl
+construction over the existing SDK output contract. `OutputBuffer` moves owned
+parts after complete append validation instead of repeatedly deep-copying the
+accumulated prefix. `TokenEdits` checks original logical ranges, ordering, UTF-8
+boundaries and opaque captures; unsuccessful replacements leave its state
+unchanged. Unchanged emission retains the original stream anchor as well as its
+snapshots, contexts, provenance and capture metadata, rather than deriving a new
+anchor through a full-range SDK slice.
+
+`TypeEmitter` constructs the supported `TypeKind` forms with checked arity,
+grouped application/function operands and reference/pointer pointees, singleton
+tuple commas, and full-range unsigned decimal array lengths. Copied nodes and
+names remain `OutputPart::Stream`; new syntax uses ordinary SDK construction and
+quote helpers. `ImplBuilder` emits inherent/trait headers, grouped WHERE subjects
+and bounds, and four-space member layout around opaque signatures and complete
+definitions. Internal expression layout remains the author's responsibility;
+this does not add an expression parser, general visitor, quotation proc macro or
+AST-print/re-lex fallback. C.05's explicitly unsupported constructor-kind
+conversion remains diagnosed rather than guessed.
+
+`LayoutEmitter::unindent` translates block-captured physical leading margins
+using the existing lexical cursor and original SDK slices/joins. It leaves
+multiline quote/comment and opaque-capture interiors untouched and returns a
+locally parseable stream with new logical ranges, not generated text. A zero
+margin returns the original stream verbatim. Invalid prefixes/margins and
+excessive retained copy work diagnose; growing-prefix join work is charged
+quadratically. This is a bounded emission operation, not a formatter. Output
+accumulation retains the SDK authoring caps of 1 MiB spelling, 16,384 parts and a
+conservative 16 MiB retained-storage charge.
+
+The real provider proof exposed one generic compiler authority defect:
+`select_inferred_method_candidates` could replace an already concrete receiver
+with an unrelated method owner discovered by spelling, causing SDK
+`Identifier.tokens` to select `Cursor.tokens`. Candidate inference now normalizes
+the actual receiver and requires an unknown nominal head before discovering an
+owner. Concrete and unrelated-head rejection checks extend the selection unit
+test, and an ordinary `Holder T.tokens` integration with an unrelated method
+passes for owned and borrowed receivers. No library API was renamed to hide the
+defect, and no compiler-owned syntax-package or operator policy was introduced.
+
+Native acceptance compares fourteen emitted type examples with the actual Rust
+type parser, including nested application/function grouping, singleton tuples
+and maximum-U64 array lengths. It checks unchanged/edited type, generic, bound,
+struct and enum round trips; original trivia, contexts, provenance and anchors;
+insertion/removal, invalid/overlapping ranges, UTF-8/capture cuts, arity errors,
+failed-append atomicity and all output budgets. Layout controls cover CRLF,
+multiline strings, comments, opaque invalid syntax and preserved capture ranges.
+The complete README helper also compiles.
+
+A separate function-like provider exercises the existing proc engine without
+C.09 derive dispatch: it edits a field type/default into a tuple, emits inherent
+and trait impls, emits defaulted scalar and constructor-hole generic targets and
+bounds, and operates in independent root/nested scopes with same-spelling types
+and traits. A copied default expression still resolves the caller's `value`
+function inside a fresh same-spelling helper lambda. The consumer prints
+`17 / 53 / 23 / 31 / 41` on separate lines and checks additional tuple/HKT
+behavior. Invalid edit and arity requests return ordinary structured macro
+diagnostics through real workers.
+
+Final verification (test suites serialized; warnings remain):
+
+- Selection unit and exact field/method integration regression: pass.
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 447 pass; six native
+  syntax groups remain ignored in this default group.
+- `cargo test -p rock-lib --lib macro_acceptance_syntax_ -- --ignored --nocapture --test-threads=1`:
+  all six native groups pass in 244.15 seconds.
+- `cargo test -p rock-lib -- --test-threads=1`: 2,758 units, 807 main integrations,
+  six diagnostic integrations, 14 process integrations, four SDK smoke/helper
+  tests and one parser integration pass. Six native syntax groups, ten SDK
+  acceptance groups and one doctest remain opt-in/ignored in this default gate.
+- `cargo test -p rock -p rockc -p rock-shared`, with the existing development
+  bundle passed through `ROCK_SYSROOT`: 94/57/30 units and one shared doctest pass;
+  five cold macro CLI acceptance scenarios remain ignored.
+- `cargo clippy --workspace --all-targets` and `cargo build --release`: pass.
+
+During fixture development, a combined short-circuit assertion containing owned
+String temporaries exposed an independent MIR drop-flag initialization failure.
+Both assertions now run separately with their checks retained; no ownership
+compiler repair is claimed here. A macro-free reproduction is
+`/tmp/opencode/c08-owned-short-circuit.rk`, with the Cargo/rockc failure retained
+in `/tmp/opencode/macro-c08-short-circuit-baseline.log`; the larger isolated
+source/MIR evidence remains `c08-client.rk` and `macro-c08-drop-mir.log` in the
+same directory. This compiler follow-up is outside C.08's emission contract.
+
+Final receipts are `/tmp/opencode/macro-c08-{selection,field-regression,native-thirteenth,native-final,macro-regressions,library-serial,cli-shared,clippy,release-build}.log`.
+The shared development std artifact/object hashes are unchanged. SDK wire
+layout, worker protocol 7, `RKLOSS04` and product format 54 remain unchanged.
+No CI job, formatter, parser-policy callback or compiler package special case was
+added. `bd` remains unavailable (`command not found`). C.09–C.12 remain separate,
+unimplemented slices; C.08 does not claim derive dispatch or the final closure.
+
 Each grammar slice publishes its supported forms in library docs and adds shared
 conformance fixtures. A concrete missing form needed by the next proof becomes a
 small parser extension with tests; do not silently grow this into all of Syn or

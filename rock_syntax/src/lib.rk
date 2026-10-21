@@ -11,6 +11,7 @@
 < mod types
 mod parser
 < mod derive_input
+< mod emission
 
 < struct Limits
     < max_bytes: U64

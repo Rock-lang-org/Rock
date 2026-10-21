@@ -1,0 +1,180 @@
+> rock_macro::*
+> rock_syntax::derive_input::DeriveInput
+> rock_syntax::emission::ImplBuilder
+> rock_syntax::emission::OutputBuffer
+> rock_syntax::types::GenericSyntax
+> rock_syntax::types::TypeKind
+> rock_syntax::emission::TypeEmitter
+> rock_syntax::emission::TokenEdits
+> rock_syntax::emission::LayoutEmitter
+
+declaration_input: &MacroContext -> TokenStream -> Result TokenStream, Diagnostic
+declaration_input = context, input ->
+    base = &context.block_base
+    margin = match *base
+        Option::Some value => value
+        Option::None => 0 as U64
+    LayoutEmitter::unindent context, input, margin
+
+< macro bad_edit = context, input ->
+    mut edits = TokenEdits::new input ?
+    edits.replace &context, (ByteRange
+        start: 4
+        end: 2), (context.syntax "x" ?) ?
+    (edits.emit &context ?).finish!
+
+< macro bad_arity = context, input ->
+    children: Vec MacroOutput = Vec::new!
+    (TypeEmitter::emit &context, TypeKind::Function, (children.as_slice!) ?).finish!
+
+< macro rewrite = context, input ->
+    syntax = match DeriveInput::parse (declaration_input &context, input ?)
+        Result::Ok syntax => syntax
+        Result::Err error => return MacroResult::from_error error.diagnostic!
+    fields = syntax.fields!
+    if fields.len! != 1
+        return context.fail "expected one field to rewrite"
+    nodes = syntax.nodes!
+    children = [context.syntax "I64" ?, context.syntax "I64" ?]
+    replacement = TypeEmitter::emit &context, TypeKind::Tuple, &children ?
+    mut edits = TokenEdits::new syntax.emit! ?
+    edits.replace &context, (nodes[fields[0].ty].range.clone!), replacement ?
+    default_type = &fields[0].default_range
+    match *default_type
+        Option::Some bounds => edits.replace &context, (bounds.clone!), (context.syntax "(7, 8)" ?) ?
+        Option::None => return context.fail "expected a default to rewrite"
+    (edits.emit &context ?).finish!
+
+// A function-like item macro proves C.08 independently of C.09 derive dispatch.
+< macro implement = context, input ->
+    syntax = match DeriveInput::parse (declaration_input &context, input ?)
+        Result::Ok syntax => syntax
+        Result::Err error => return MacroResult::from_error error.diagnostic!
+    name = syntax.decl_name!
+    target = match syntax.original!.slice name.range.clone!
+        Result::Ok tokens => context.forward tokens ?
+        Result::Err _ => return context.fail "declaration name slice"
+    mut builder = ImplBuilder::new target, Option::None
+    mut helper = match context.builder syntax.original!
+        Result::Ok helper => helper
+        Result::Err _ => return context.fail "construction builder"
+    local = match helper.fresh_ident (String::from "value")
+        Result::Ok local => local
+        Result::Err _ => return context.fail "fresh helper"
+    identifier = context.forward local.tokens ?
+    args = [identifier]
+    definition = context.quote "-> (($0 -> $0) 17)", &args ?
+    builder.member &context, (context.syntax "@answer" ?), (context.syntax "I64" ?), definition ?
+    pair_children = [context.syntax "I64" ?, context.syntax "I64" ?]
+    pair_type = TypeEmitter::emit &context, TypeKind::Tuple, &pair_children ?
+    builder.member &context, (context.syntax "@pair" ?), pair_type, (context.syntax "-> (17, 19)" ?) ?
+    fields = syntax.fields!
+    if fields.len! != 1
+        return context.fail "expected one defaulted field"
+    default_range = &fields[0].default_range
+    default_tokens = match *default_range
+        Option::Some bounds =>
+            match syntax.original!.slice bounds.clone!
+                Result::Ok tokens => tokens
+                Result::Err _ => return context.fail "default slice"
+        Option::None => return context.fail "expected default expression"
+    default_local = match helper.fresh_ident (String::from "value")
+        Result::Ok local => local
+        Result::Err _ => return context.fail "second fresh helper"
+    default_args = [context.forward default_local.tokens ?, context.forward default_tokens ?]
+    default_definition = context.quote "-> (($0 -> $1) 0)", &default_args ?
+    builder.member &context, (context.syntax "@default_answer" ?), (context.syntax "I64" ?), default_definition ?
+    mut output = OutputBuffer::new!
+    output.append &context, (context.forward syntax.emit! ?) ?
+    output.append &context, (context.syntax "\n" ?) ?
+    output.append &context, (builder.emit &context ?) ?
+    output.output!.finish!
+
+< macro generic_impl = context, input ->
+    syntax = match DeriveInput::parse (declaration_input &context, input ?)
+        Result::Ok syntax => syntax
+        Result::Err error => return MacroResult::from_error error.diagnostic!
+    params = syntax.params!
+    if params.len! != 2
+        return context.fail "expected two generic parameters"
+    stream = syntax.original!
+    parameter_stream = match stream.slice (ByteRange
+        start: params[0].range.start
+        end: params[1].range.end)
+        Result::Ok tokens => tokens
+        Result::Err _ => return context.fail "parameter slice"
+    generic = match GenericSyntax::parse parameter_stream
+        Result::Ok generic => generic
+        Result::Err error => return MacroResult::from_error error.diagnostic!
+    mut helper = match context.builder stream
+        Result::Ok helper => helper
+        Result::Err _ => return context.fail "generic construction builder"
+    arguments = match generic.type_arguments &mut helper
+        Result::Ok tokens => context.forward tokens ?
+        Result::Err error => return MacroResult::from_error error.diagnostic!
+    name = syntax.decl_name!
+    target_name = match stream.slice name.range.clone!
+        Result::Ok tokens => context.forward tokens ?
+        Result::Err _ => return context.fail "generic name slice"
+    args = [target_name, arguments]
+    target = context.quote "$0 $1", &args ?
+    trait_name = match helper.call_site_ident (String::from "Measure")
+        Result::Ok name => context.forward name.tokens ?
+        Result::Err _ => return context.fail "generic trait name"
+    mut builder = ImplBuilder::new target, (Option::Some trait_name)
+    i = 0
+    while i < params.len!
+        subject = match stream.slice params[i].impl_range.clone!
+            Result::Ok tokens => context.forward tokens ?
+            Result::Err _ => return context.fail "generic subject"
+        kind = &params[i].kind
+        scalar = match *kind
+            Option::None => true
+            Option::Some root => false
+        bound: Option MacroOutput = if i == 0 && scalar
+            bound_identifier = match helper.call_site_ident (String::from "Measure")
+                Result::Ok name => name
+                Result::Err _ => return context.fail "bound name"
+            Option::Some (context.forward bound_identifier.tokens ?)
+        else
+            Option::None
+        builder.constrain &context, subject, bound ?
+        i = i + 1
+    builder.member &context, (context.syntax "@measure" ?), (context.syntax "I64" ?), (context.syntax "-> 41" ?) ?
+    mut output = OutputBuffer::new!
+    output.append &context, (context.forward syntax.emit! ?) ?
+    output.append &context, (context.syntax "\n" ?) ?
+    output.append &context, (builder.emit &context ?) ?
+    output.output!.finish!
+
+< macro trait_impl = context, input ->
+    // The target name and field name are captured in a caller-owned declaration.
+    syntax = match DeriveInput::parse (declaration_input &context, input ?)
+        Result::Ok syntax => syntax
+        Result::Err error => return MacroResult::from_error error.diagnostic!
+    name = syntax.decl_name!
+    fields = syntax.fields!
+    if fields.len! != 1
+        return context.fail "expected one field"
+    target = match syntax.original!.slice name.range.clone!
+        Result::Ok tokens => context.forward tokens ?
+        Result::Err _ => return context.fail "target slice"
+    field = match syntax.original!.slice fields[0].name.range.clone!
+        Result::Ok tokens => context.forward tokens ?
+        Result::Err _ => return context.fail "field slice"
+    // Intentional caller authority is explicit, never obtained from spelling.
+    mut helper = match context.builder syntax.original!
+        Result::Ok helper => helper
+        Result::Err _ => return context.fail "construction builder"
+    trait_name = match helper.call_site_ident (String::from "Measure")
+        Result::Ok name => context.forward name.tokens ?
+        Result::Err _ => return context.fail "trait name"
+    mut builder = ImplBuilder::new target, (Option::Some trait_name)
+    args = [field]
+    definition = context.quote "-> self.$0", &args ?
+    builder.member &context, (context.syntax "@measure" ?), (context.syntax "I64" ?), definition ?
+    mut output = OutputBuffer::new!
+    output.append &context, (context.forward syntax.emit! ?) ?
+    output.append &context, (context.syntax "\n" ?) ?
+    output.append &context, (builder.emit &context ?) ?
+    output.output!.finish!

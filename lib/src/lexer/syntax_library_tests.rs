@@ -10,6 +10,8 @@ mod macro_generics;
 mod macro_structs;
 #[path = "../../tests/support/macro_enums.rs"]
 mod macro_enums;
+#[path = "../../tests/support/macro_emission.rs"]
+mod macro_emission;
 
 use macro_fixture::SdkCase;
 
@@ -66,4 +68,15 @@ fn macro_c_07_shared_enum_fixtures_have_expected_outcomes() {
 #[ignore = "native Rock derive-input enum conformance; run cargo macro-acceptance"]
 fn macro_acceptance_syntax_enums() {
     macro_enums::verify(&SdkCase::new("enums", "").config);
+}
+
+#[test]
+fn macro_c_08_emission_grouping_oracle() {
+    macro_emission::verify_oracle();
+}
+
+#[test]
+#[ignore = "native Rock emission and hygienic impl conformance; run cargo macro-acceptance"]
+fn macro_acceptance_syntax_emission() {
+    macro_emission::verify(&SdkCase::new("emission", "").config);
 }

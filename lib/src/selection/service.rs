@@ -267,6 +267,16 @@ impl<'a> SelectionService<'a> {
     where
         F: FnMut(&Type) -> Type,
     {
+        // Name-only candidate discovery may establish an unknown nominal head,
+        // but must never replace an already known receiver with another owner.
+        // In particular, an unrelated method must not steal a concrete field.
+        let mut receiver_head = normalize(&receiver.ty);
+        while let Type::Reference { inner, .. } = receiver_head {
+            receiver_head = *inner;
+        }
+        if !matches!(receiver_head, Type::TypeVar(_)) {
+            return Vec::new();
+        }
         self.impl_ids_in_order()
             .filter_map(|id| self.impls.get(&id))
             .filter_map(|imp| {
@@ -3612,13 +3622,17 @@ mod tests {
             normalizations += 1;
             ty.clone()
         });
-        assert_eq!(normalizations, 2, "irrelevant impls must not start candidate searches");
+        assert_eq!(normalizations, 3, "normalize the receiver and only the eligible impls");
         assert_eq!(
             inferred.iter().map(|selected| selected.target.impl_id().unwrap()).collect::<Vec<_>>(),
             vec![def_id(20), def_id(21)],
         );
         let mut concrete_receiver = receiver.clone();
         concrete_receiver.ty = Type::Struct { id: owner, args: Vec::new() };
+        assert!(service.select_inferred_method_candidates(&concrete_receiver, "value", |ty| ty.clone()).is_empty());
+        let mut unrelated_receiver = receiver.clone();
+        unrelated_receiver.ty = Type::Struct { id: def_id(99), args: Vec::new() };
+        assert!(service.select_inferred_method_candidates(&unrelated_receiver, "value", |ty| ty.clone()).is_empty());
         let candidates = [receiver_candidate(concrete_receiver)];
         let concrete = service.select_concrete_method_candidates(&candidates, "value", |ty| ty.clone());
         assert_eq!(
