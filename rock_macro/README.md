@@ -192,8 +192,9 @@ normalize block indentation or interpret DSL text.
   static phase messages go only to ordinary `std::io::traits::stderr`.
 - The native compiler host still validates the final response and clean exit.
   Native acceptance uses parser-produced inline-expression/block invocation data
-  through that host. Both item and expression dispatch are implemented; block
-  margin rewriting and deferred fragment materialization remain separate work.
+  through that host. Item, expression and derive dispatch share the bounded
+  engine; block margins and deferred fragments use the ordinary SDK metadata and
+  validated output operations described below.
 
 ## Source declarations and discovery
 
@@ -312,6 +313,21 @@ SDK dependencies diagnose. Host freshness includes compiler/source/dependency
 inputs, expected product role, and changed worker contents. Published worker paths
 are artifact-relative, including sibling-directory traversal, so an artifact and
 its worker can be moved together and consumed without provider/SDK source files.
+
+## Trust and inspection
+
+Procedural macro packages execute native code with the compiler user's filesystem
+and network permissions. The one-shot worker provides crash isolation and bounded
+protocol/resource handling, **not an OS security sandbox**. Artifact hashes prove
+content identity, not author trust; the `Stdio` capability tag is not an access
+restriction. Review and trust a provider before enabling its execution.
+
+`--no-proc-execution` rejects selected procedural expansions without launching a
+worker. Metadata inspection and `discover_proc_macros` do not execute providers;
+they are not equivalent to compiling a program that requires those expansions.
+Workers may observe external IO, so expansion results are not cached or promised
+to be deterministic. Build-artifact freshness is a separate check, not a replay
+cache for macro results.
 
 ## Application workflow
 

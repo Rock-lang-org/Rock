@@ -31,7 +31,7 @@ fn macro_a_05_matching_ignores_trivia_but_capture_retains_internal_bytes() {
     assert_eq!(text(captured), "1 /* caller 🦀 */ +  2");
     assert_eq!(captured.start_span().start, 5);
     assert_eq!(captured.runs()[0].context(), input.runs()[0].context());
-    // Layout is ignored by this legacy flat matcher, not narrowed to u8 first.
+    // Layout is ignored by the flat matcher, not narrowed to u8 first.
     matches("$name:ident", &source(&format!("\n{}name\n", " ".repeat(512)))).unwrap();
 }
 

@@ -2,9 +2,10 @@
 
 Date: 2026-10-19
 
-Status: execution sequence. Test families below are implementation contracts,
-not claims that every slice exists or passes; acceptance requires actual test
-receipts for the implemented slice and its prerequisites.
+Status: all 59 infrastructure slices implemented and verified through C.12.
+Per-slice receipts below and the [final acceptance mapping](2026-10-21-macro-infrastructure-acceptance.md)
+record actual gates and remaining out-of-scope limitations; the original slice
+tables remain implementation contracts, not a production-library release claim.
 
 Contract: [macro infrastructure specification](2026-10-19-macro-infrastructure.md).
 The specification owns language/API requirements; this document breaks delivery
@@ -3330,6 +3331,83 @@ Only fixture/provider/driver/registration/docs changed. Worker protocol 7,
 unchanged. `bd` is unavailable, so the independent resource-use limitation could
 not be filed there. Nothing was formatted, added to CI or pushed. C.12's full
 acceptance mapping, residue audit and final-snapshot gates remain outstanding.
+
+#### C.12 completion receipt
+
+All 59 planned slices are implemented in sequence: ten A0, fifteen A, twenty-two B
+and twelve C slices. C.10 and C.11 are committed separately as `159ef49` and
+`43d4cdb`; this closure is the following C.12 commit. The earlier per-slice
+receipts remain historical evidence, including limitations and development
+failures, rather than being rewritten as if every intermediate snapshot passed.
+
+The [final acceptance mapping](2026-10-21-macro-infrastructure-acceptance.md)
+maps all seventeen specification families to current named tests and retained
+commands. The residue audit reviewed lossless/wire input, source cursors,
+matching/materialization, procedural codecs, host dispatch, registries and derive
+consumption. There is one lossless stream ABI, only current-version readers,
+bounded context-local state and the shared expansion engine; no obsolete scanner,
+global derive registry, raw-block ABI or span/name execution cache was found to
+remove. Test-only lexer adapters use the same lossless views. Current protocol-7
+goldens and synthetic wrong-version/corrupt controls remain. Stale SDK work-left
+wording and an obsolete matcher comment were corrected; explicit native-worker
+trust/inspection documentation was added, without changing semantics or schemas.
+
+The packaged derive test now additionally compares artifact bytes and worker
+SHA-256/size before relocation and after both successful and failed consumption.
+The final test-code diff from parent `43d4cdb` has SHA-256
+`90fb5412cd046926e643cea2e1d39d0edc31e5b550a1bb8ccce5f2cd37125c16`
+(the matcher comment and provider-integrity assertions only). No compiler,
+SDK or syntax-library production source changed in this closure. Documentation
+was finalized after the same code snapshot's gates passed.
+
+Final manual verification, serialized, with logs `/tmp/opencode/macro-c12-*.log`:
+
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 457 pass, eight opt-in
+  groups ignored; 7.74 seconds (`focused.log`).
+- `cargo build -p rock -p rockc`: current debug CLI/compiler binaries built before
+  CLI acceptance (`debug-build.log`). `cargo build --release` passes in 50.21
+  seconds (`release.log`).
+- `ROCK_SYSROOT=/home/champii/prog/rust/Rock/target cargo macro-acceptance`:
+  all 24 opt-in groups pass: five cold CLI/package/source-free cases in 193.19
+  seconds, eight native syntax/derive groups in 466.68 seconds, and eleven native
+  SDK/host/codec/DSL/interpolation/authoring groups in 79.67 seconds
+  (`acceptance.log`). These include the new provider-byte integrity assertions.
+- `cargo test -p rock-lib -- --test-threads=1`: 2,768 units, 807 main integrations,
+  six diagnostic integrations, fourteen process integrations, four SDK smoke/
+  helper tests and one parser integration pass. The native groups are still
+  intentionally ignored here (eight unit groups, eleven SDK groups) and passed
+  explicitly above. One pre-existing doctest remains ignored and unexecuted
+  (`library.log`).
+- `ROCK_SYSROOT=/home/champii/prog/rust/Rock/target cargo test -p rock -p rockc -p rock-shared -- --test-threads=1`:
+  94/57/30 units and one shared doctest pass; five cold CLI groups remain opt-in
+  in this default command and passed above (`cli-shared.log`).
+- `cargo clippy --workspace --all-targets`: passes in 4.79 seconds; existing
+  warnings remain, including test suggestions and unused group-view APIs
+  (`clippy.log`). No formatter or formatting check ran.
+- From `test_projects/proc_macro/app`, with the same explicit shared development
+  sysroot, `cargo run -p rock --release -- run` builds SDK/provider/app and prints
+  `Hello Ada!` (`format-demo.log`). The simple `%format "Hello {name}!"` example,
+  character literals and `char_indices!` implementation are unchanged; no local
+  source std dependency was introduced.
+
+`identities.log` records the current compiler binaries, shared development std
+artifact/object and tested diff identity. Std remains unchanged:
+`1a73b441d819601558a6306ebabb26e7bde1780fb245d13b7b822bc3d409cdee`
+(`std.rkca`) and
+`670e8c7efd832eb837763b1ff82314af7de2674713b66bb5251c5149b7c1863c`
+(`std.o`). `type -a` probes still find no AArch64 compiler/emulator or MinGW
+compiler; Wine exists, but no runnable foreign-target toolchain is available
+(`cross-tools.log`, expected nonzero probe status). Distinct simulated host/target
+identity tests pass unconditionally; runnable foreign-target acceptance is not
+claimed. Worker protocol 7, `RKLOSS04` and product format 54 remain unchanged.
+
+This completes the infrastructure plan, not production formatting/derive/HTML
+libraries, general attributes, full Syn grammar, persistent workers or
+self-hosting. C.05/C.08/C.10/C.11's independent inference, temporary drop-flag,
+runtime field-default and resource-use limitations remain explicitly documented;
+the passing scoped proofs do not claim those compiler repairs. `bd` remains
+unavailable, so no issue-tracker completion or filing is claimed. No CI job was
+added and nothing was pushed; unrelated pre-existing work remains untouched.
 
 ## Stage gates and final verification
 

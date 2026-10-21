@@ -2,7 +2,9 @@
 
 Date: 2026-10-19
 
-Status: draft proposal for review; no implementation or verification is claimed.
+Status: infrastructure implemented through C.12; see the [implementation receipts](2026-10-19-macro-infrastructure-plan.md)
+and [final acceptance mapping](2026-10-21-macro-infrastructure-acceptance.md).
+This specification does not claim production macro libraries or self-hosting.
 
 Revision: incorporate ordinary Rock call syntax, `%derive` attachment, and
 source-declared exports; adopt one lossless lexical input model with later
@@ -92,10 +94,10 @@ new preservation/interpretation boundary and a dedicated delivery gate. Reuse
 Rock's current lexical behavior in its Rock-specific interpretation layer;
 do not claim that the current lexer can already supply arbitrary DSL input.
 
-## Current implementation baseline
+## Historical implementation baseline (before this plan)
 
-The repository already has useful components, but not an end-to-end authoring
-workflow:
+The following observations describe the pre-plan repository, not the completed
+implementation recorded in the receipts above:
 
 | Area | Observed implementation | Required change |
 | --- | --- | --- |

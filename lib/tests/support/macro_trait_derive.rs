@@ -81,6 +81,8 @@ pub fn verify_enums(config: &Config) {
     std::fs::copy(&descriptor.executable, package.join("worker")).unwrap();
     products.proc_macros[0].executable = "worker".into();
     products.write_artifact_to_path(&package.join("metric_derive.rkca")).unwrap();
+    let artifact_bytes = std::fs::read(package.join("metric_derive.rkca")).unwrap();
+    let worker_identity = rock_lib::macro_expansion::proc_macro::ProcMacroFileIdentity::read(&package.join("worker")).unwrap();
     let relocated = root.join("relocated-package");
     std::fs::rename(&package, &relocated).unwrap();
     // Invalidate the exact build locations, without touching shared SDK/std
@@ -131,4 +133,6 @@ pub fn verify_enums(config: &Config) {
     }
     consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(), text: "#[derive(EnumMetric)]\nenum E\n    Empty\n".into() }];
     assert!(rock_lib::expand(&consumer).is_err(), "attribute transforms are not supported");
+    assert_eq!(std::fs::read(relocated.join("metric_derive.rkca")).unwrap(), artifact_bytes);
+    assert_eq!(rock_lib::macro_expansion::proc_macro::ProcMacroFileIdentity::read(&relocated.join("worker")).unwrap(), worker_identity);
 }
