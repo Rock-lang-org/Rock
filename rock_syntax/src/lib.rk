@@ -8,6 +8,7 @@
 > std::string::owned::String
 
 < mod cursor
+< mod types
 
 < struct Limits
     < max_bytes: U64
@@ -39,6 +40,16 @@ impl Limits
     UnexpectedClose
     MismatchedClose
     UnclosedGroup
+    ExpectedType
+    ExpectedTypeName
+    ExpectedTypeClose
+    ExpectedArrayLength
+    InvalidArrayLength
+    UnsupportedType
+    TrailingTypeTokens
+    TypeDepthLimit
+    TypeNodeLimit
+    InvalidTypeNode I64
 
 // Logical UTF-8 input ranges, usable without an invocation or physical file.
 < struct ParseError
@@ -74,6 +85,16 @@ impl ParseError
             ParseErrorKind::UnexpectedClose => "unexpected-close"
             ParseErrorKind::MismatchedClose => "mismatch"
             ParseErrorKind::UnclosedGroup => "unclosed"
+            ParseErrorKind::ExpectedType => "type"
+            ParseErrorKind::ExpectedTypeName => "type-name"
+            ParseErrorKind::ExpectedTypeClose => "type-close"
+            ParseErrorKind::ExpectedArrayLength => "array-length"
+            ParseErrorKind::InvalidArrayLength => "array-overflow"
+            ParseErrorKind::UnsupportedType => "unsupported-type"
+            ParseErrorKind::TrailingTypeTokens => "type-trailing"
+            ParseErrorKind::TypeDepthLimit => "type-depth"
+            ParseErrorKind::TypeNodeLimit => "type-nodes"
+            ParseErrorKind::InvalidTypeNode index => "type-node"
 
     @diagnostic: Diagnostic
     @diagnostic = ->
@@ -103,6 +124,16 @@ impl ParseError
             ParseErrorKind::UnexpectedClose => "closing delimiter has no opening delimiter"
             ParseErrorKind::MismatchedClose => "closing delimiter does not match its opening delimiter"
             ParseErrorKind::UnclosedGroup => "unclosed Rock group"
+            ParseErrorKind::ExpectedType => "expected a Rock type"
+            ParseErrorKind::ExpectedTypeName => "expected a type name after '::'"
+            ParseErrorKind::ExpectedTypeClose => "expected the closing type delimiter"
+            ParseErrorKind::ExpectedArrayLength => "expected an unsigned decimal array length"
+            ParseErrorKind::InvalidArrayLength => "array length exceeds U64"
+            ParseErrorKind::UnsupportedType => "type form outside the supported grammar"
+            ParseErrorKind::TrailingTypeTokens => "unexpected tokens after the type"
+            ParseErrorKind::TypeDepthLimit => "type syntax exceeds the nesting limit"
+            ParseErrorKind::TypeNodeLimit => "type syntax exceeds the node limit"
+            ParseErrorKind::InvalidTypeNode index => "invalid type node index"
 
 < enum TokenKind
     Ident

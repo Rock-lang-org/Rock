@@ -1,4 +1,5 @@
 > rock_macro::*
+> rock_macro::operations::SdkError
 > rock_syntax::*
 > std::collections::vec::Vec
 > std::control::option::Option
@@ -133,6 +134,26 @@ impl Cursor
 
     @tokens: &Token -> Result TokenStream, ParseError
     @tokens = token -> self.slice_range token.range.clone!
+
+    // Inspect spelling without cloning/revalidating the retained SDK snapshot.
+    // Token is public data, so forged ranges must still fail without a panic.
+    @spelling: &Token -> Result String, ParseError
+    @spelling = token ->
+        if token.range.start > token.range.end || token.range.end > self.length
+            failure: Result String, ParseError = Result::Err (ParseError::at (ParseErrorKind::InvalidInput (SdkError::InvalidRange (token.range.clone!))), 0, (self.length))
+            return failure
+        if !(self.char_boundary (token.range.start)) || !(self.char_boundary (token.range.end))
+            offset = if !(self.char_boundary (token.range.start)) then token.range.start else token.range.end
+            failure: Result String, ParseError = Result::Err (ParseError::at (ParseErrorKind::InvalidInput (SdkError::NotCharBoundary offset)), 0, (self.length))
+            return failure
+        Result::Ok (String::from &self.text[(token.range.start as I64)..(token.range.end as I64)])
+
+    @char_boundary: U64 -> Bool
+    @char_boundary = offset ->
+        if offset == self.length
+            return true
+        byte = self.text.as_bytes![offset as I64] as I64
+        byte < 128 || byte >= 192
 
     @slice_range: ByteRange -> Result TokenStream, ParseError
     @slice_range = range ->

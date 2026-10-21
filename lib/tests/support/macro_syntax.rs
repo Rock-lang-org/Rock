@@ -86,7 +86,7 @@ pub fn verify_oracle() {
     for case in cases() { oracle(case); }
 }
 
-pub fn verify(config: &Config) {
+pub fn build_syntax(config: &Config) -> std::path::PathBuf {
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let directory = config.output_dir.parent().unwrap().join("syntax");
     std::fs::create_dir_all(&directory).unwrap();
@@ -100,6 +100,12 @@ pub fn verify(config: &Config) {
     let products = built.products.unwrap();
     assert!(products.proc_macros.is_empty());
     products.write_artifact_to_path(&artifact).unwrap();
+    artifact
+}
+
+pub fn verify(config: &Config) {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let artifact = build_syntax(config);
     let cases = cases();
     let mut source = std::fs::read_to_string(workspace.join("lib/tests/fixtures/syntax/client.rk")).unwrap();
     source.push_str(&std::fs::read_to_string(workspace.join("lib/tests/fixtures/syntax/controls.rk")).unwrap());
@@ -126,5 +132,5 @@ pub fn verify(config: &Config) {
     rock_lib::compile(&config).unwrap_or_else(|errors| panic!("syntax documentation: {:?}", errors.0.iter().map(|error| (&error.message, &error.location)).collect::<Vec<_>>()));
     let output = Command::new(config.output_dir.join("main")).output().unwrap();
     assert!(output.status.success() && output.stderr.is_empty(), "{output:?}");
-    assert_eq!(output.stdout, b"type\n1\n");
+    assert_eq!(output.stdout, b"type\n1\napply\nPacket(T)\n");
 }

@@ -2730,6 +2730,67 @@ was added. Worker protocol 7, `RKLOSS04` and product format 54 remain unchanged.
 C.04 type syntax, later declaration parsing and C.09 derive dispatch are not
 implemented by this receipt.
 
+#### C.04 completion receipt
+
+`rock_syntax::types` now owns an immutable `TypeSyntax` tree over its original
+SDK stream, with a flat postorder `TypeNode` arena, explicit grouping, earlier
+child indices, source ranges and original name contexts. Complete-input parsing
+supports ASCII names, the compiler's two-name associated paths, applications and
+comma ownership, shared/mutable references, tight raw pointers, unit/grouping/
+tuples, slices, checked U64 decimal array lengths, holes and function arrows.
+Flat arrow chains are parsed iteratively; recursive grammar nesting and stored
+nodes have checked limits (128 / 65,536 hard ceilings). No name/alias resolution,
+kind/arity inference, semantic operator lookup or declaration parsing is added.
+
+Whole-input `emit` and checked `node_tokens` preserve original SDK data rather
+than printing ASTs, including raw leading-zero array lengths, comments/CRLF,
+snapshots and independently captured name contexts. Invalid node indices diagnose.
+Cursor spelling inspection now validates range/UTF-8 boundaries against its
+existing text index without cloning/revalidating a complete SDK snapshot for
+each lexeme. Type parse errors cover missing operands/names/closers/lengths,
+overflow, trailing tokens and explicitly unsupported syntax at input ranges,
+including EOF and related opening-delimiter labels.
+
+The supported grammar and limits are documented in `rock_syntax/README.md`.
+Type lambdas, non-ASCII names, binder/default/bound grammar and constant-expression
+array lengths are not guessed into supported nodes. Lowercase module-qualified
+annotations and longer associated paths are rejected consistently with the
+current compiler type grammar. The enclosing declaration parser still owns
+physical layout and field/default boundaries; this standalone token entry point
+treats lexical trivia as trivia. Transformed type/impl builders remain C.08 work.
+
+Sixty-one shared type fixtures cover 39 accepted forms, 20 malformed/trailing
+forms and two compiler-valid forms explicitly outside this initial library subset.
+The native client compares structural shapes against the actual Rust type parser
+(not its formatter), validates error codes/ranges, and checks whole-input and
+root-node parse/emit/parse round trips. Supplemental controls cover mixed name
+contexts, snapshot retention, invalid node/spelling access, opaque captures,
+lower/invalid resource limits, and a 161-argument flat arrow chain under a
+one-level recursive grammar limit. The existing 25-case C.03 native proof and the
+expanded, complete README example also pass; no runtime worker/RPC is involved.
+
+Final verification (test suites executed serially; warnings remain):
+
+- `cargo test -p rock-lib --lib macro_c_04_`: shared Rust type oracle passes.
+- `cargo test -p rock-lib --lib macro_acceptance_syntax_ -- --ignored --nocapture --test-threads=1`:
+  both native syntax groups pass, including type controls and the README example.
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 443 pass; two native
+  syntax groups remain opt-in and were executed explicitly above.
+- `cargo test -p rock-lib`: 2,754 units, 806 main integrations, six diagnostic
+  integrations, 14 process integrations, four SDK smoke/helper tests and one
+  parser integration pass. Two native syntax groups, ten SDK acceptance groups
+  and one doctest remain ignored in this default gate.
+- `cargo test -p rock -p rockc -p rock-shared`, with `ROCK_SYSROOT` pointing to
+  the existing workspace `target/` development bundle: 94/57/30 units and one
+  shared doctest pass; five cold macro CLI acceptance scenarios remain ignored.
+- `cargo clippy --workspace --all-targets` and `cargo build --release`: pass.
+
+Receipts are `/tmp/opencode/macro-c04-{oracle-initial,native-verified,macro-regressions,library,cli-shared,clippy,release-build}.log`.
+The shared development std artifact/object hashes remain unchanged. No formatter,
+formatting check, CI job, SDK wire-layout change or compiler package special case
+was added. Worker protocol 7, `RKLOSS04` and product format 54 are unchanged.
+C.05 binders/bounds/defaults and C.06–C.12 remain separate, unimplemented slices.
+
 Each grammar slice publishes its supported forms in library docs and adds shared
 conformance fixtures. A concrete missing form needed by the next proof becomes a
 small parser extension with tests; do not silently grow this into all of Syn or

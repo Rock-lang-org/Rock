@@ -29,9 +29,9 @@ unsupported characters instead of treating them as ASCII names. Other malformed
 Rock characters, unterminated quotes/comments and invalid group structure also
 diagnose. The neutral SDK stream remains readable and forwardable afterward.
 
-There is no indentation-token synthesis, expression/type/declaration parser,
-name resolution, inference or token emission builder in this slice. Physical
-layout stays visible as whitespace/line-ending pieces; type syntax starts in C.04.
+The lexical layer does not synthesize indentation tokens, parse expressions or
+declarations, resolve names or infer types. Physical layout stays visible as
+whitespace/line-ending pieces. C.04's separate type entry point is described below.
 
 ## Cursor and errors
 
@@ -81,6 +81,7 @@ and use the shared toolchain std. No proc-macro provider is involved:
 ```rock
 > rock_macro::*
 > rock_syntax::cursor::Cursor
+> rock_syntax::types::TypeSyntax
 
 main = !->
     text = String::from "Packet(T)"
@@ -124,10 +125,73 @@ main = !->
             match cursor.groups!
                 Result::Err error => error.message!.println!
                 Result::Ok groups => groups.len!.println!
+            match TypeSyntax::parse (cursor.input!.clone!)
+                Result::Err error => error.message!.println!
+                Result::Ok syntax =>
+                    nodes = syntax.nodes!
+                    node = &nodes[syntax.root!]
+                    kind = &node.kind
+                    kind.tag!.println!
+                    emitted = syntax.emit!
+                    match emitted.spelling!
+                        Result::Err error => "invalid retained spelling".println!
+                        Result::Ok text => text.println!
 ```
 
-This prints `type` and `1`. A macro uses the same API on its supplied input;
+This prints `type`, `1`, `apply`, and the unchanged `Packet(T)` spelling.
+A macro uses the same API on its supplied input;
 emitting tokens into an invocation still requires the SDK's normal authority.
+
+## C.04 type syntax and unchanged emission
+
+`rock_syntax::types::TypeSyntax::parse input` parses one **complete** type from
+SDK tokens, with no name/alias lookup, inference, arity/kind checking or compiler
+AST projection. An unknown uppercase name is valid syntax. Supported forms are:
+
+- ASCII uppercase type names and the compiler's existing two-name associated
+  paths, such as `T::Item` and `Self::Item`. Import nominal names before using
+  them: lowercase module-qualified annotations are not part of the current
+  compiler type grammar, and longer associated paths are rejected.
+- Type applications, comma-separated sibling arguments, nested parenthesized
+  applications, and `_` holes/constructor sections. Application binds more
+  tightly than `->`. The compiler's comma ownership is preserved: `(F A, B)` is
+  one grouped application, while `(A, B)` is a tuple.
+- Shared/mutable references (both existing `&mut` and `&^` spellings), tightly
+  prefixed raw pointers, unit, grouping, tuples including a trailing comma,
+  slices, and fixed arrays with checked unsigned U64 decimal lengths.
+- Function arrows, including flat arrow chains and explicitly grouped function
+  arguments/returns. Parentheses are retained as `Grouped` syntax nodes even
+  where the compiler's semantic AST discards them.
+
+The standalone entry point treats lexical trivia as trivia; an enclosing
+declaration parser owns physical layout and field/default boundaries. It does
+not accept a valid prefix and silently discard the rest. Missing names, closers,
+array lengths, overflow, unsupported forms, and trailing tokens have structured
+errors at logical input ranges, including zero-width EOF locations. Type lambdas,
+binder/default/bound syntax, constant-expression array lengths, and the lexical
+layer's non-ASCII-name forms remain explicitly unsupported.
+
+`TypeSyntax` owns the original stream and a flat postorder arena of `TypeNode`
+records. Read it through `syntax.nodes!` and `syntax.root!`; each node has a
+`TypeKind`, source range, earlier child indices, and an optional original name
+context. `ArrayLength` retains a U64 value. Grouping stays explicit while flat
+arrow chains are parsed iteratively. Traverse from the root through the earlier
+child indices. The arena is immutable
+through this API and its destruction is nonrecursive.
+
+`syntax.emit!` copies the **unchanged original** SDK stream, including leading
+and trailing trivia, snapshots, contexts and provenance. `syntax.node_tokens index`
+returns a checked original node slice; an invalid index diagnoses rather than
+panicking. No captured subtree is stringified to emit it. Editing and generated
+type/impl builders remain C.08 work, not a fake AST-printer fallback.
+
+`TypeSyntax::parse_with_limits input, lexical_limits, type_limits` additionally
+accepts the C.03 `Limits` and `TypeLimits` (default/hard ceiling: 128 recursive
+grammar levels and 65,536 stored nodes). Lower limits, including zero, are
+checked. Lexical spelling is inspected through `cursor.spelling &token`, which
+checks UTF-8/range boundaries without copying the entire SDK snapshot per token.
+The lexical byte/piece ceilings apply here; C.03's group-view ceilings belong to
+explicit `cursor.groups!` requests. Type nesting and storage use `TypeLimits`.
 
 ## Conformance
 
@@ -147,3 +211,14 @@ cargo test -p rock-lib --lib macro_acceptance_syntax_cursor_and_groups -- --igno
 ```
 
 The broader manual `cargo macro-acceptance` runner includes the native proof.
+
+`lib/tests/fixtures/syntax/types.rs` supplies C.04's shared compiler/library type
+fixtures. The native type group compares structural shapes, validates error
+locations and supported/unsupported boundaries, and checks unchanged parse/emit/
+parse round trips, name contexts, caller limits, opaque-capture rejection and
+checked spelling. It remains opt-in:
+
+```sh
+cargo test -p rock-lib --lib macro_c_04_
+cargo test -p rock-lib --lib macro_acceptance_syntax_types -- --ignored --nocapture
+```

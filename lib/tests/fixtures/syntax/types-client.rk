@@ -1,0 +1,127 @@
+> rock_syntax::types::TypeSyntax
+> rock_syntax::types::TypeKind
+> rock_syntax::types::TypeLimits
+
+type_shape: &TypeSyntax -> String
+type_shape = syntax ->
+    mut shapes: Vec String = Vec::new!
+    nodes = syntax.nodes!
+    i = 0
+    while i < nodes.len!
+        node = &nodes[i]
+        kind = &node.kind
+        shape = match *kind
+            TypeKind::Name =>
+                tokens = (syntax.node_tokens i).checked!
+                text = tokens.spelling!.checked!
+                context = &node.context
+                match *context
+                    Option::Some handle => check (handle.handle == (7 as U32))
+                    Option::None => check false
+                check (tokens.sources[0].identity == (41 as U64))
+                check (tokens.segments[0].context.handle == (7 as U32))
+                named = (String::from "name(").concat text
+                named.concat (String::from ")")
+            TypeKind::Grouped =>
+                check (node.children.len! == 1)
+                shapes[node.children[0]].clone!
+            TypeKind::ArrayLength value =>
+                // A bijective bit-pattern rendering, not a target-size coercion.
+                (String::from "length:").concat ((value as I64).show!)
+            _ =>
+                mut text = (String::from (node.kind.tag!)).concat (String::from "(")
+                j = 0
+                while j < node.children.len!
+                    check (node.children[j] >= 0 && node.children[j] < i)
+                    if j > 0
+                        text = text.concat (String::from ",")
+                    text = text.concat (shapes[node.children[j]].clone!)
+                    j = j + 1
+                text.concat (String::from ")")
+        shapes.push shape
+        i = i + 1
+    shapes[syntax.root!].clone!
+
+run_type: &Str -> &Str -> ()
+run_type = name, text !->
+    name.println!
+    original = input text
+    match TypeSyntax::parse (original.clone!)
+        Result::Err error =>
+            error_line &error
+            check (original.spelling!.checked! == text)
+        Result::Ok syntax =>
+            shape = type_shape &syntax
+            shape.println!
+            emitted = syntax.emit!
+            check (emitted.spelling!.checked! == text)
+            check (emitted.sources[0].identity == (41 as U64))
+            repeated = (TypeSyntax::parse emitted).checked!
+            check ((type_shape &repeated) == shape)
+            root_tokens = (syntax.node_tokens (syntax.root!)).checked!
+            root_again = (TypeSyntax::parse root_tokens).checked!
+            check ((type_shape &root_again) == shape)
+
+type_controls = !->
+    mut limits = TypeLimits::standard!
+    limits.max_depth = 1
+    match TypeSyntax::parse_with_limits (input "(T)"), Limits::standard!, limits
+        Result::Err error => check (error.code! == "type-depth" && error.range.start == (1 as U64))
+        Result::Ok syntax => check false
+    mut limits = TypeLimits::standard!
+    limits.max_nodes = 1
+    match TypeSyntax::parse_with_limits (input "F T"), Limits::standard!, limits
+        Result::Err error => check (error.code! == "type-nodes" && error.range.start == (2 as U64))
+        Result::Ok syntax => check false
+    mut limits = TypeLimits::standard!
+    limits.max_nodes = -1
+    match TypeSyntax::parse_with_limits (input "T"), Limits::standard!, limits
+        Result::Err error => check (error.code! == "limits")
+        Result::Ok syntax => check false
+    mut limits = TypeLimits::standard!
+    limits.max_depth = 0
+    match TypeSyntax::parse_with_limits (input "T"), Limits::standard!, limits
+        Result::Err error => check (error.code! == "type-depth")
+        Result::Ok syntax => check false
+    mut captured = input "T"
+    captured.expressions.push (ExpressionRange
+        range: range 0, 1
+        header_indent: 0)
+    match TypeSyntax::parse captured
+        Result::Err error => check (error.code! == "unsupported-type")
+        Result::Ok syntax => check false
+    mixed = split "T::Item", 3, JoinBoundary::SourceAdjacent, 9
+    parsed = (TypeSyntax::parse (mixed.clone!)).checked!
+    nodes = parsed.nodes!
+    root = &nodes[parsed.root!]
+    check (root.kind.tag! == "path")
+    member = &nodes[root.children[1]]
+    context = &member.context
+    match *context
+        Option::Some value => check (value.handle == (9 as U32))
+        Option::None => check false
+    output = parsed.emit!
+    check (output.segments.len! == 2 && output.segments[1].context.handle == (9 as U32))
+    check (output.spelling!.checked! == mixed.spelling!.checked!)
+    match parsed.node_tokens (-1)
+        Result::Err error => check (error.code! == "type-node")
+        Result::Ok tokens => check false
+    mut cursor = (Cursor::new (input "é")).checked!
+    forged = Token
+        kind: TokenKind::Type
+        range: range 1, 2
+        context: Option::None
+    match cursor.spelling &forged
+        Result::Err error => check (error.code! == "input" && error.range.start == (0 as U64) && error.range.end == (2 as U64))
+        Result::Ok text => check false
+    chain = String::from "T"
+    i = 0
+    while i < 160
+        chain = chain.concat (String::from " -> T")
+        i = i + 1
+    mut limits = TypeLimits::standard!
+    limits.max_depth = 1
+    flat = (TypeSyntax::parse_with_limits (input (chain.as_str!)), Limits::standard!, limits).checked!
+    root = &flat.nodes![flat.root!]
+    check (root.kind.tag! == "function" && root.children.len! == 161)
+    "type controls passed".println!
