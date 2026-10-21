@@ -210,15 +210,60 @@ helper = context, input -> MacroResult::Expand input
 Only macro declarations exported through `< macro name = ...` or a separate
 `< name` enter the proc export metadata. Ordinary functions, including exported
 ones, are not implicit entries. Helpers/private macros stay private, and exported
-members of private modules do not become public package entries. `derive` is
-reserved for the later derive declaration syntax.
+members of private modules do not become public package entries. Use
+`< macro derive Name = context, input -> ...` for a derive-like entry; it has the
+same SDK callable signature but a distinct macro kind.
 
 The compiler library's `discover_proc_macros` uses an explicit proc target role,
 expands source declarative macros, then returns `Expansion::proc_exports` with
-source definition identities, public names and function-like entry kinds. It
-disables workers even if the caller's configuration permits execution. A provider
+source definition identities, public names and function-like/derive-like kinds.
+This metadata-only operation validates attachments but leaves their declarations
+unexecuted, even if the caller's configuration permits workers. Ordinary expansion
+or compilation with `--no-proc-execution` instead rejects a selected derive. A provider
 cannot invoke its own source proc entries while building itself. Proc facades and
 runtime-target proc declarations diagnose instead of inventing runtime exports.
+
+## Derive dispatch
+
+A derive helper is an ordinary proc-library export. This complete provider entry
+accepts a declaration and intentionally emits no extra items:
+
+```rock
+> rock_macro::*
+
+< macro derive Empty = context, input ->
+    (context.syntax "" ?).finish!
+```
+
+After building that provider as an explicit dependency named `derive_helpers`, a
+consumer can attach it to a struct or enum:
+
+```rock
+> derive_helpers::Empty
+
+%derive Empty
+struct Marker
+
+main = !->
+    7.println!
+```
+
+Every attachment receives the same original declaration stream, including its
+visibility, generics, defaults, trivia, contexts and physical margin, but not the
+`%derive` directives. Defaults have not undergone expression-macro expansion yet.
+The request kind is `DeriveLike`, its output category is `Items`, and it has no
+block-DSL or compiler-prepared declaration AST view. Parse it through an ordinary
+syntax library when structure is needed.
+
+The compiler keeps the original declaration once and appends each derive's items
+in attachment order. Empty output is valid; emitted declarations do not replace
+the original. Generated items, attachments, imports and source modules return to
+the same bounded discovery loop before expression expansion. Consumption uses
+declaration node identity, not a name/span/text cache, and generated children keep
+their expansion ancestry. Wrong kinds, duplicate canonical attachments, malformed
+item output and unsupported attribute transforms diagnose through the shared
+macro engine. Derive implementations still cannot execute from their own source
+provider during its build; import a prebuilt provider instead.
 
 ## Generated host compilation
 
@@ -237,7 +282,9 @@ public identities dispatch; unknown identities/kinds return a structured error.
 Source entries need no handwritten table, bootstrap, or signature annotation.
 
 The SDK's root-level ordinary bootstrap contract exports `MacroContext`,
-`TokenStream`, `MacroResult`, `run_worker`, `is_function_like` and `unknown_entry`.
+`TokenStream`, `MacroResult`, `MacroKind`, `run_worker`, `entry_kind_matches` and
+`unknown_entry`. The bootstrap checks each selected identity's declared kind;
+function-like and derive-like entries share the same ordinary callable contract.
 The compiler supplies its version to the runner. The root `run_worker` delegates
 to the same one-shot runtime described above; no second transport path exists.
 

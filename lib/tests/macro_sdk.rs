@@ -17,6 +17,8 @@ mod macro_blocks;
 mod macro_interpolation;
 #[path = "support/macro_authoring.rs"]
 mod macro_authoring;
+#[path = "support/macro_derives.rs"]
+mod macro_derives;
 #[path = "support/macro_fixture.rs"]
 mod macro_fixture;
 #[path = "support/macro_client.rs"]
@@ -45,6 +47,12 @@ fn macro_sdk_one_shot_smoke() {
         let response = run_proc_macro_process(&artifact, &request, std::time::Duration::from_secs(15), false, None).unwrap();
         assert_eq!(response, ProcMacroResponse::expanded(request.input.clone()));
     }
+}
+
+#[test]
+#[ignore = "native derive dispatch/bootstrap acceptance; run cargo macro-acceptance"]
+fn macro_acceptance_derive_dispatch() {
+    macro_derives::verify(&SdkCase::new("derive-dispatch", "").config);
 }
 
 #[test]

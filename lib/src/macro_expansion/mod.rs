@@ -51,6 +51,8 @@ mod source_proc_tests;
 mod derives;
 #[cfg(test)]
 mod derive_tests;
+#[cfg(test)]
+mod derive_dispatch_tests;
 
 #[cfg(test)]
 mod traversal_tests;
@@ -135,31 +137,15 @@ fn expand_forest(
         for loaded in modules.iter() { validate_macro_definitions(&loaded.module, context.config)?; }
         let sources = crate::source_loader::SourceModuleSet::from_modules(modules.iter().cloned());
         let registry = registry::MacroRegistry::build_for_expansion(root, &sources, context)?;
-        if first_forest_invocation(root, modules).is_none() {
-            let registry = registry::MacroRegistry::build_with_modules(root, &sources, context)?;
-            derives::validate(root, &[], &registry, context)?;
-            for loaded in modules.iter() {
-                let mut path: Vec<_> = loaded.qualified_name.split("::").map(String::from).collect();
-                if path.first().map(String::as_str) == context.config.current_crate_name.as_deref() { path.remove(0); }
-                derives::validate(&loaded.module, &registry.loaded_scope(&path), &registry, context)?;
-            }
-            let mut visitor = expression::ExpansionVisitor::new(&registry, context, expression::Phase::Expressions);
-            visitor.module(root)?;
-            for loaded in modules.iter_mut() {
-                visitor.set_scope(&loaded.qualified_name);
-                visitor.module(&mut loaded.module)?;
-            }
-            validate_no_invocations(root)?;
-            for loaded in modules.iter() { validate_no_invocations(&loaded.module)?; }
-            return Ok(());
-        }
         let mut visitor = expression::ExpansionVisitor::new(&registry, context, expression::Phase::Items);
         visitor.module(root)?;
         for loaded in modules.iter_mut() {
             visitor.set_scope(&loaded.qualified_name);
             visitor.module(&mut loaded.module)?;
         }
-        if visitor.executed == 0 && !discovered {
+        if visitor.executed > 0 { continue; }
+        if first_forest_invocation(root, modules).is_some() || visitor.deferred.is_some() {
+            if discovered { continue; }
             // Reject only at a stable frontier: another item's output may add
             // the definition, import, or export needed by this invocation.
             registry::MacroRegistry::build_with_modules(root, &sources, context)?;
@@ -169,6 +155,24 @@ fn expand_forest(
                 return Err(invocation.parent.map(|parent| with_expansion_trace(diagnostics.clone(), context, parent)).unwrap_or(diagnostics));
             }
         }
+        let registry = registry::MacroRegistry::build_with_modules(root, &sources, context)?;
+        if context.metadata_only_derives {
+            derives::validate(root, &[], &registry, context)?;
+            for loaded in modules.iter() {
+                let mut path: Vec<_> = loaded.qualified_name.split("::").map(String::from).collect();
+                if path.first().map(String::as_str) == context.config.current_crate_name.as_deref() { path.remove(0); }
+                derives::validate(&loaded.module, &registry.loaded_scope(&path), &registry, context)?;
+            }
+        }
+        let mut visitor = expression::ExpansionVisitor::new(&registry, context, expression::Phase::Expressions);
+        visitor.module(root)?;
+        for loaded in modules.iter_mut() {
+            visitor.set_scope(&loaded.qualified_name);
+            visitor.module(&mut loaded.module)?;
+        }
+        validate_no_invocations(root)?;
+        for loaded in modules.iter() { validate_no_invocations(&loaded.module)?; }
+        return Ok(());
     }
 }
 
@@ -308,6 +312,15 @@ fn expand_procedural(
     invocation: &MacroInvoc,
     context: &MacroExpansionContext<'_>,
 ) -> Result<generated_parser::GeneratedSyntax, Diagnostics> {
+    expand_procedural_kind(entry, invocation, context, ProcMacroKind::FunctionLike)
+}
+
+fn expand_procedural_kind(
+    entry: &ProcMacroRegistryEntry,
+    invocation: &MacroInvoc,
+    context: &MacroExpansionContext<'_>,
+    expected_kind: ProcMacroKind,
+) -> Result<generated_parser::GeneratedSyntax, Diagnostics> {
     let invoc_span = invocation.span.clone();
     let args = &invocation.args;
     let parent = invocation.parent;
@@ -325,10 +338,12 @@ fn expand_procedural(
             invoc_span,
         ), context, expansion_id));
     }
-    if entry.export.kind != ProcMacroKind::FunctionLike {
+    if entry.export.kind != expected_kind {
         return Err(with_expansion_trace(
             proc_macro_error(
-                format!("Proc macro '{}' is not function-like", entry.export.name),
+                if expected_kind == ProcMacroKind::FunctionLike {
+                    format!("Proc macro '{}' is not function-like", entry.export.name)
+                } else { format!("Proc macro '{}' is not DeriveLike", entry.export.name) },
                 invoc_span,
             ),
             context,

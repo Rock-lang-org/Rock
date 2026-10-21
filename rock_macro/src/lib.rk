@@ -229,10 +229,17 @@ run_worker: &Str -> (MacroContext -> TokenStream -> MacroResult) -> ()
 < run_worker = compiler_version, entry ->
     rock_macro::runtime::run_worker compiler_version, entry
 
-is_function_like: &MacroContext -> Bool
-< is_function_like = context ->
+entry_kind_matches: &MacroContext -> MacroKind -> Bool
+< entry_kind_matches = context, expected ->
     match context.kind.clone!
-        MacroKind::FunctionLike => true
+        MacroKind::FunctionLike =>
+            match expected
+                MacroKind::FunctionLike => true
+                _ => false
+        MacroKind::DeriveLike =>
+            match expected
+                MacroKind::DeriveLike => true
+                _ => false
         _ => false
 
 unknown_entry: MacroContext -> TokenStream -> MacroResult

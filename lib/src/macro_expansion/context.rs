@@ -19,6 +19,8 @@ pub struct ProcMacroDependency {
 pub struct MacroExpansionContext<'a> {
     pub(crate) cancellation: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub(crate) reports: RefCell<Diagnostics>,
+    pub(super) metadata_only_derives: bool,
+    consumed_derives: RefCell<std::collections::HashSet<crate::ast::NodeId>>,
     pub config: &'a Config,
     pub max_depth: usize,
     pub proc_macro_artifacts: Vec<ProcMacroDependency>,
@@ -36,6 +38,8 @@ impl<'a> MacroExpansionContext<'a> {
         Self {
             cancellation: None,
             reports: RefCell::new(Diagnostics::default()),
+            metadata_only_derives: false,
+            consumed_derives: RefCell::new(std::collections::HashSet::new()),
             config,
             max_depth: 100,
             proc_macro_artifacts: Vec::new(),
@@ -52,6 +56,21 @@ impl<'a> MacroExpansionContext<'a> {
     pub fn with_max_depth(mut self, max_depth: usize) -> Self {
         self.max_depth = max_depth;
         self
+    }
+
+    pub(crate) fn with_derive_discovery(mut self) -> Self {
+        self.metadata_only_derives = true;
+        self
+    }
+
+    pub(super) fn consume_derive(&self, node: crate::ast::NodeId, span: &Span) -> Result<bool, Diagnostics> {
+        let mut consumed = self.consumed_derives.borrow_mut();
+        if consumed.contains(&node) { return Ok(false); }
+        if consumed.len() >= self.budget.borrow().limits.max_invocations {
+            return Err(super::proc_macro_error("macro invocation budget exceeded", span.clone()));
+        }
+        consumed.insert(node);
+        Ok(true)
     }
 
     /// Only explicitly supplied consumer-side ordinary products grant runtime authority.

@@ -195,7 +195,11 @@ pub struct Expansion {
 /// Use exactly compilation's dependency loading, discovery and expansion engine,
 /// stopping before collection, inference, or code generation.
 pub fn expand(config: &Config) -> Result<Expansion, Diagnostics> {
-    let expanded = expand_frontend(config, None)?;
+    expand_inspection(config, false)
+}
+
+fn expand_inspection(config: &Config, derive_discovery: bool) -> Result<Expansion, Diagnostics> {
+    let expanded = expand_frontend(config, None, derive_discovery)?;
     let modules = expanded.source_graph.modules().filter(|module|
         Some(&module.path) != expanded.ast.module.filepath.as_ref()).cloned().collect();
     Ok(Expansion { ast: expanded.ast, modules, source_map: expanded.macro_source_map, diagnostics: expanded.macro_diagnostics,
@@ -206,7 +210,7 @@ pub fn expand(config: &Config) -> Result<Expansion, Diagnostics> {
 pub fn discover_proc_macros(config: &Config) -> Result<Expansion, Diagnostics> {
     let mut discovery = config.clone();
     discovery.no_proc_execution = true;
-    expand(&discovery)
+    expand_inspection(&discovery, true)
 }
 
 struct ExpandedFrontend {
@@ -222,7 +226,7 @@ struct ExpandedFrontend {
     proc_exports: Vec<macro_expansion::registry::SourceProcMacroExport>,
 }
 
-fn expand_frontend(config: &Config, sdk: Option<&macro_expansion::host::ProcMacroSdk>) -> Result<ExpandedFrontend, Diagnostics> {
+fn expand_frontend(config: &Config, sdk: Option<&macro_expansion::host::ProcMacroSdk>, derive_discovery: bool) -> Result<ExpandedFrontend, Diagnostics> {
     let effective_current_crate_name = config
         .current_crate_name
         .clone()
@@ -263,6 +267,7 @@ fn expand_frontend(config: &Config, sdk: Option<&macro_expansion::host::ProcMacr
 
     let mut macro_context = macro_expansion::MacroExpansionContext::new(config)
         .with_runtime_dependency_identities(runtime_dependency_identities(&ctx));
+    if derive_discovery { macro_context = macro_context.with_derive_discovery(); }
     for (name, artifact) in ctx.proc_macro_artifacts() {
         macro_context = macro_context.with_named_proc_macro_artifact(name.to_string(), artifact.clone());
     }
@@ -294,7 +299,7 @@ fn expand_frontend(config: &Config, sdk: Option<&macro_expansion::host::ProcMacr
 
 fn compile_frontend(config: &Config, sdk: Option<&macro_expansion::host::ProcMacroSdk>) -> Result<FrontendOutput, Diagnostics> {
     let ExpandedFrontend { ast, ctx, source_graph, source_db, diagnostic_sources, macro_source_map,
-        binding_environments, effective_current_crate_name, macro_diagnostics, proc_exports } = expand_frontend(config, sdk)?;
+        binding_environments, effective_current_crate_name, macro_diagnostics, proc_exports } = expand_frontend(config, sdk, false)?;
 
     macro_expansion::reject_pending_derives(&ast.module)
         .map_err(|errors| macro_source_map.map_diagnostics(errors).with_sources(&diagnostic_sources))?;

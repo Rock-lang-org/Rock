@@ -3130,6 +3130,95 @@ add type signatures to unrelated annotation-free inference regressions.
 | C.11 | Extend the external proof to enum shapes and packaged/source-free providers; exercise multiple/recursive attachments and invalid categories. | Named/positional/nullary cases and ordered derives run correctly from artifacts alone. Ordinary impl/type rules remain enforced, unsupported attribute transforms diagnose, and generic/default/visibility/token-retention controls survive real transport. | I, R |
 | C.12 | Close the acceptance mapping, remove obsolete implementation paths/fixture encodings, and execute final-snapshot gates. | Every spec family maps to named tests and actual receipts; synthetic wrong-version controls remain, while no legacy reader/global registry/destructive macro input path survives. Full passes certify infrastructure, not production formatting/derive libraries or self-hosting. | All affected runners and broader gates |
 
+#### C.09 completion receipt
+
+Ready derive declarations now execute in the same deterministic item visitor as
+ordinary item invocations, preserving their shared source order. Each attachment
+uses the existing proc runner, materializer, diagnostics, output parser and
+aggregate budgets with `DeriveLike` kind and `Items` output. The adapter passes
+the same immutable original declaration stream to every attachment, together
+with its individual invocation ID/location/parent and the original physical
+margin. It supplies no compiler declaration AST, literal classification or
+block-DSL view. Original default expressions remain unexpanded until the item
+fixed point has settled.
+
+The compiler retains the original struct/enum once and appends generated item
+lists in attachment order; an empty list is successful, not deletion. A bounded
+context-local declaration-node-ID set prevents duplicate representations of one
+node from producing another declaration or worker execution. Independently
+parsed nodes with identical names, source text and spans remain independent.
+There is no span/name cache or persistent global derive registry.
+
+Generated attachments, ordinary item invocations, imports and file modules
+return to ordinary bounded discovery before expression expansion. Unresolved
+item/derive paths defer while other ready work can publish their imports;
+failure is reported at a stable no-progress frontier. The source-order audit
+added a mixed derive/item/derive regression before final verification, rather
+than retaining a separate derive-after-all-items phase. Canonical duplicates,
+wrong kinds and invalid original-input shapes still validate before the
+affected declaration's workers start. Generated ancestry, depth, total invocation
+and output limits use the shared expansion state.
+
+Metadata-only discovery is now explicit: `discover_proc_macros` validates and
+retains attachments without workers. Normal expansion/compilation with proc
+execution disabled rejects a selected derive instead of silently leaving it for
+collection. A source provider still cannot execute its own implementation during
+its build. The strict expansion/collection guard remains, but the obsolete
+"derive execution is not implemented" rejection path is removed.
+
+Generated hosts now select both function-like and derive-like public exports.
+Their ordinary SDK facade checks the selected identity's exact declared kind
+through `entry_kind_matches` and `MacroKind`; unknown/mismatched/attribute kinds
+produce structured errors. The obsolete function-only bootstrap helper is
+removed, with no compatibility alias or separate worker transport. Provider
+implementation ASTs, SDK signature checking, private bootstrap hygiene and
+explicit dependency identity remain unchanged.
+
+Ten `macro_c_09_` unit tests cover identical input bytes/contexts and empty views,
+retention/output order, original default-macro timing, empty struct/enum results,
+cloned versus distinct same-spelling node IDs, generated derives and parent
+limits, ordinary non-item rejection, disabled execution, canonical duplicate and
+wrong-kind preflight, deferred imports resolving item/derive paths, generated file
+modules, aggregate budgets and interleaved source order. The existing C.02
+metadata/parser/privacy tests continue to pass with the explicit discovery mode.
+
+The opt-in native `macro_acceptance_derive_dispatch` test builds a real mixed-kind
+source provider and consumes its published artifact. Attached `Stamp`/`Empty`
+entries retain the struct and emit a callable function, while the ordinary
+function-like entry still expands in an expression; the program prints `42 / 7`
+on separate lines. Three direct worker requests independently verify that the
+generated bootstrap rejects identity/kind mismatches, including an attribute
+kind, rather than relying only on compiler-side artifact preflight. This proves
+dispatch/publication, not C.10's syntax-library trait derive.
+
+Final source-snapshot verification (test suites serialized; warnings remain):
+
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 457 pass; six native
+  syntax groups remain ignored in this default group.
+- `cargo test -p rock-lib --test macro_sdk macro_acceptance_ -- --ignored --nocapture --test-threads=1`:
+  all eleven native SDK/host/derive groups pass in 80.71 seconds, including codec,
+  one-shot, publication, literal, DSL, interpolation and authoring regressions.
+- `cargo test -p rock-lib --lib macro_acceptance_syntax_ -- --ignored --nocapture --test-threads=1`:
+  all six native syntax/emission groups pass in 259.78 seconds.
+- `cargo test -p rock-lib -- --test-threads=1`: 2,768 units, 807 main integrations,
+  six diagnostic integrations, 14 process integrations, four SDK smoke/helper
+  tests and one parser integration pass. Six native syntax groups, eleven SDK
+  acceptance groups and one doctest remain ignored in the default gate.
+- `cargo test -p rock -p rockc -p rock-shared`, with `ROCK_SYSROOT` pointing to the
+  existing development bundle: 94/57/30 units and one shared doctest pass; five
+  cold CLI macro acceptance scenarios remain opt-in.
+- `cargo clippy --workspace --all-targets` and `cargo build --release`: pass.
+
+Receipts are `/tmp/opencode/macro-c09-{macro-final,sdk-final-snapshot,syntax-final-snapshot,library-final,cli-shared-final,clippy-final,release-final}.log`.
+Earlier focused/native development logs are retained separately. The shared
+development std artifact/object hashes remain unchanged. Worker protocol 7,
+`RKLOSS04` and product format 54 are unchanged; the SDK's ordinary bootstrap
+export contract was updated and tested from current source. No CI job,
+formatter, std-loading policy or compiler-owned derive meaning was added.
+`bd` remains unavailable (`command not found`). C.10–C.12 remain separate,
+unimplemented steps: external syntax-library trait proofs and final closure are
+not claimed by this dispatch receipt.
+
 ## Stage gates and final verification
 
 At each stage gate, execute the stage's proposed families plus adjacent existing

@@ -1,0 +1,18 @@
+> rock_macro::*
+
+< macro derive Stamp = context, input ->
+    mut builder = match context.builder &input
+        Result::Ok builder => builder
+        Result::Err _ => return context.fail "invalid derive input"
+    identifier = match builder.call_site_ident (String::from "answer")
+        Result::Ok identifier => identifier
+        Result::Err _ => return context.fail "invalid generated function name"
+    name = context.forward identifier.tokens ?
+    splices = [name]
+    (context.quote "$0 = -> 42\n", &splices ?).finish!
+
+< macro derive Empty = context, input ->
+    (context.syntax "" ?).finish!
+
+< macro pick = context, input ->
+    (context.syntax "7" ?).finish!

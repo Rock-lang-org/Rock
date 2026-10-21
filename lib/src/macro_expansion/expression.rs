@@ -36,6 +36,20 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
     pub(super) fn module(&mut self, module: &mut Module) -> Result<(), Diagnostics> {
         let mut output = Vec::new();
         for mut item in std::mem::take(&mut module.top_levels) {
+            if self.phase == Phase::Items && !self.context.metadata_only_derives {
+                if let TopLevel::DerivedDecl(declaration) = &item {
+                    match super::derives::resolve(declaration, &self.scope, self.registry, self.context) {
+                        Ok(entries) => {
+                            let TopLevel::DerivedDecl(declaration) = item else { unreachable!() };
+                            output.extend(super::derives::expand(declaration, &entries, self.context, &self.scope)?);
+                            self.executed += 1;
+                            continue;
+                        }
+                        Err(diagnostics) if self.deferred.is_none() => self.deferred = Some(diagnostics),
+                        Err(_) => {}
+                    }
+                }
+            }
             if self.phase == Phase::Items {
                 if let TopLevel::MacroInvoc(invocation) = &item {
                     let path = crate::collect::resolver::binding_path(&invocation.path.path).unwrap_or_default();

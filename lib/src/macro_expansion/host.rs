@@ -1,7 +1,7 @@
 //! Compiler-owned host glue over an explicitly supplied ordinary SDK contract.
 //! Provider implementations stay ASTs; only bounded bootstrap syntax is parsed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::ast::{
@@ -19,14 +19,14 @@ use super::registry::{MacroRegistry, SourceProcMacroExport};
 use super::{proc_macro_error, MacroExpansionContext};
 
 /// Explicit artifact dependency supplying MacroContext, TokenStream, MacroResult
-/// and the ordinary SDK bootstrap facade (run_worker/is_function_like/unknown_entry).
+/// and the ordinary SDK bootstrap facade (run_worker/entry_kind_matches/unknown_entry).
 /// Its package spelling is never inferred or automatically loaded.
 #[derive(Debug, Clone)]
 pub struct ProcMacroSdk {
     pub dependency: String,
 }
 
-const SDK_EXPORTS: [&str; 6] = ["MacroContext", "TokenStream", "MacroResult", "run_worker", "is_function_like", "unknown_entry"];
+const SDK_EXPORTS: [&str; 7] = ["MacroContext", "TokenStream", "MacroResult", "MacroKind", "run_worker", "entry_kind_matches", "unknown_entry"];
 
 /// Inspect explicitly supplied ordinary artifact interfaces, without running workers.
 pub fn discover_sdks(artifacts: &[(String, PathBuf)]) -> Result<Vec<String>, Diagnostics> {
@@ -70,15 +70,16 @@ fn module_scope(name: &str, context: &MacroExpansionContext<'_>, registry: &Macr
     registry.loaded_scope(&path)
 }
 
-fn template(count: usize, span: &Span) -> Result<String, Diagnostics> {
-    let mut source = String::from("mod __rock_proc_wrapper\n    > sdk::MacroContext\n    > sdk::TokenStream\n    > sdk::MacroResult\n    > sdk::run_worker\n    > sdk::is_function_like\n    > sdk::unknown_entry\n    __rock_dispatch: MacroContext -> TokenStream -> MacroResult\n    __rock_dispatch = context, input ->\n        if is_function_like &context\n            match context.macro_identity.as_str!\n");
+fn template(count: usize, derives: &HashSet<usize>, span: &Span) -> Result<String, Diagnostics> {
+    let mut source = String::from("mod __rock_proc_wrapper\n    > sdk::MacroContext\n    > sdk::TokenStream\n    > sdk::MacroResult\n    > sdk::MacroKind\n    > sdk::run_worker\n    > sdk::entry_kind_matches\n    > sdk::unknown_entry\n    __rock_dispatch: MacroContext -> TokenStream -> MacroResult\n    __rock_dispatch = context, input ->\n        match context.macro_identity.as_str!\n");
     for index in 0..count {
-        source.push_str(&format!("                \"__rock_export_{index}\" => __rock_selected_{index} context, input\n"));
+        let kind = if derives.contains(&index) { "DeriveLike" } else { "FunctionLike" };
+        source.push_str(&format!("            \"__rock_export_{index}\" =>\n                if entry_kind_matches &context, MacroKind::{kind}\n                    __rock_selected_{index} context, input\n                else\n                    unknown_entry context, input\n"));
         if source.len() > super::token_tree::MACRO_LIMITS.max_source_bytes {
             return Err(proc_macro_error("generated host wrapper exceeds the source byte limit", span.clone()));
         }
     }
-    source.push_str("                _ => unknown_entry context, input\n        else\n            unknown_entry context, input\n    __rock_boot = !->\n        run_worker \"__rock_compiler_version\", __rock_dispatch\nmain = !-> __rock_boot!\n");
+    source.push_str("            _ => unknown_entry context, input\n    __rock_boot = !->\n        run_worker \"__rock_compiler_version\", __rock_dispatch\nmain = !-> __rock_boot!\n");
     if source.len() > super::token_tree::MACRO_LIMITS.max_source_bytes {
         return Err(proc_macro_error("generated host wrapper exceeds the source byte limit", span.clone()));
     }
@@ -202,10 +203,9 @@ pub(crate) fn install(ast: &mut Program, graph: &mut ModuleGraph, context: &Macr
     let entries_by_id: HashMap<_, _> = entries.iter().map(|entry| (entry.id, entry)).collect();
     let selected = exports.iter().map(|export| entries_by_id.get(&export.definition).map(|entry| (*entry, export))
         .ok_or_else(|| failure("source export has no retained implementation".into()))).collect::<Result<Vec<_>, _>>()?;
-    // Derive exports are publishable metadata now, but only function-like entries
-    // are callable through this bootstrap until derive dispatch is implemented.
-    let callable: Vec<_> = selected.iter().copied().filter(|(_, export)| export.export.kind == super::proc_macro::ProcMacroKind::FunctionLike).collect();
-    let source = template(callable.len(), &span)?;
+    let derives = selected.iter().enumerate().filter_map(|(index, (_, export))|
+        (export.export.kind == super::proc_macro::ProcMacroKind::DeriveLike).then_some(index)).collect();
+    let source = template(selected.len(), &derives, &span)?;
     let bytes = selected.iter().try_fold(source.len(), |bytes, (_, export)| bytes.checked_add(export.export.identity.len()));
     if bytes.is_none_or(|bytes| bytes > super::token_tree::MACRO_LIMITS.max_source_bytes) {
         return Err(failure("generated host identities exceed the source byte limit".into()));
@@ -228,7 +228,7 @@ pub(crate) fn install(ast: &mut Program, graph: &mut ModuleGraph, context: &Macr
     let signature = wrapper.0.top_levels.iter().find_map(|item| match item {
         TopLevel::FunctionSig(signature) => Some(signature.clone()), _ => None,
     }).ok_or_else(|| failure("missing generated entry signature".into()))?;
-    let rewrite = Rewrite { selected: &callable, boot };
+    let rewrite = Rewrite { selected: &selected, boot };
     for item in &mut wrapper.0.top_levels {
         if let TopLevel::FunctionDecl(function) = item { rewrite.block(&mut function.lambda.body); }
     }
@@ -254,10 +254,10 @@ mod tests {
     use super::*;
 
     fn wrapper_signature(count: usize) -> FunctionSig {
-        let source = template(count, &Span::test()).unwrap();
+        let source = template(count, &HashSet::new(), &Span::test()).unwrap();
         let parsed = crate::parser::parse_string(&source, &crate::Config::default()).unwrap();
         let TopLevel::Module(wrapper) = &parsed.module.top_levels[0] else { panic!("wrapper") };
-        let TopLevel::FunctionSig(signature) = &wrapper.0.top_levels[6] else { panic!("signature") };
+        let signature = wrapper.0.top_levels.iter().find_map(|item| match item { TopLevel::FunctionSig(signature) => Some(signature), _ => None }).expect("signature");
         assert_eq!(parsed.module.top_levels.len(), 2, "only private module and main");
         signature.clone()
     }
@@ -269,7 +269,10 @@ mod tests {
             let ParseType::Function(parts) = signature.sig else { panic!("ordinary arrow signature") };
             assert_eq!(parts.len(), 3);
         }
-        let errors = template(usize::MAX, &Span::test()).unwrap_err();
+        let mixed = template(2, &HashSet::from([1]), &Span::test()).unwrap();
+        assert!(mixed.contains("MacroKind::FunctionLike") && mixed.contains("MacroKind::DeriveLike"));
+        crate::parser::parse_string(&mixed, &crate::Config::default()).unwrap();
+        let errors = template(usize::MAX, &HashSet::new(), &Span::test()).unwrap_err();
         assert!(errors.0[0].message.contains("source byte limit"));
     }
 

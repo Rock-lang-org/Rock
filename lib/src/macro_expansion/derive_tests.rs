@@ -32,7 +32,7 @@ fn macro_c_02_discovers_public_derive_metadata_without_running_bodies() {
 #[test]
 fn macro_c_02_validates_external_and_local_attachments_without_execution() {
     let cfg = Config { no_proc_execution: true, ..Config::default() };
-    let context = MacroExpansionContext::new(&cfg).with_named_proc_macro_artifact("dep".into(), descriptor(ProcMacroKind::DeriveLike));
+    let context = MacroExpansionContext::new(&cfg).with_derive_discovery().with_named_proc_macro_artifact("dep".into(), descriptor(ProcMacroKind::DeriveLike));
     let program = crate::parser::parse_string("> dep::Show\n%derive Show\nstruct S\nmod nested\n    %derive dep::Show\n    enum E\n        A\n", &cfg).unwrap();
     let program = expand_macros_with_context(program, &context).unwrap();
     assert!(matches!(program.module.top_levels[1], TopLevel::DerivedDecl(_)));
@@ -41,7 +41,7 @@ fn macro_c_02_validates_external_and_local_attachments_without_execution() {
     let expanded = crate::discover_proc_macros(&config(source)).unwrap();
     assert_eq!(expanded.proc_exports[0].export.kind, ProcMacroKind::DeriveLike);
     let errors = crate::analyze(&config(source)).unwrap_err();
-    assert!(format!("{errors:?}").contains("derive execution is not implemented"));
+    assert!(format!("{errors:?}").contains("cannot execute while building its own provider"));
 }
 
 #[test]
