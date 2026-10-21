@@ -16,9 +16,69 @@ output fragments, and structured results/diagnostics.
   reports failure, and `Report` permits structured diagnostics alongside output.
   All forms normalize to the same optional-output/diagnostics wire contract.
 
-`std` is declared as an ordinary path dependency. Direct compiler contributors
-must build and pass both dependencies as artifacts; the compiler never discovers
-or injects this SDK by name. Host-role package planning is separate staged work.
+The `rock` CLI supplies the selected toolchain's prebuilt `std`; the SDK does not
+override it with a source dependency. Direct compiler contributors must pass std
+and SDK artifacts explicitly; the compiler never discovers this SDK by name.
+
+## Authoring helpers
+
+Normal macro code can use the helpers without constructing transport records:
+
+```rock
+> rock_macro::*
+
+< macro greeting = context, input ->
+    prefix = context.string_literal "Hello " ?
+    name = context.forward input ?
+    splices = [prefix, name]
+    (context.quote "($0).show!.concat (($1).show!)", &splices ?).finish!
+```
+
+This proc macro accepts an expression, formats its value using ordinary std
+methods, and returns the generated expression. Declare it in a proc-macro library
+with an explicit `rock_macro` dependency, just like the example under
+`test_projects/proc_macro/`. Formatting is library code, not compiler policy.
+
+- `context.string_input &input` checks that the complete argument is one string
+  literal (not a character literal), returning its decoded `LiteralView`.
+- `context.string_literal text` constructs an escaped string literal. It handles
+  quotes, backslashes, newlines, carriage returns, tabs, NUL and UTF-8.
+- `context.literal_text view, start, end` quotes a decoded literal range as text;
+  `context.literal_expr view, start, end` requests caller-context expression
+  reconstruction from that range. Both check view indices and UTF-8 boundaries;
+  offsets are signed byte indices and negative/reversed ranges reject.
+- `context.forward input` wraps an existing stream without stringifying it.
+- `context.syntax text` supplies fresh generated syntax. `context.quote template,
+  &splices` assembles such syntax with `$0`, `$1`, ... output splices; `$$` emits a
+  dollar sign. Use a named array or vector slice for the splice collection.
+- `output.finish!` produces a successful `MacroResult`. `context.fail message`
+  reports an invocation error. `MacroResult::from_error diagnostic` preserves a
+  structured diagnostic; ordinary `Result ..., Diagnostic` helpers propagate
+  directly with `?` from macro entries.
+
+`quote` is an ordinary library template assembler, not a new parser or AST API.
+Templates must describe valid Rock syntax; parenthesize expression splices where
+needed. Source template text uses one reserved invocation-local fresh context,
+distinct from `MacroBuilder`'s identifier handles, while
+forwarded streams and literal-expression requests retain their original handles.
+Use the existing `MacroBuilder` when distinct fresh identifiers or explicitly
+authorized dependency paths are needed. Do not interpolate captured source text
+into `syntax`; use forwarding or literal-expression splices instead.
+
+The helpers bound output spelling to 1 MiB and quoted output to 16,384 parts,
+checking repeated splices before copying them. Large retained snapshots and stream
+records also have a conservative 16 MiB splice-copy budget, even when the spliced
+logical range is small. The encoder enforces the
+complete envelope limit (including metadata), and the compiler independently
+revalidates contexts, captures and ranges before parsing. These helpers neither
+grant authority nor weaken existing wire validation. Repeated splices are copied;
+this API does not promise zero-copy construction or solve stream-joining scaling.
+
+Native helper/formatting acceptance runs manually:
+
+```sh
+cargo test -p rock-lib --test macro_sdk macro_acceptance_sdk_authoring -- --ignored --exact --nocapture
+```
 
 ## Local operations
 

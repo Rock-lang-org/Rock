@@ -161,7 +161,8 @@ impl MacroBuilder
         if !(identifier_spelling &spelling)
             failure: Result Identifier, SdkError = Result::Err SdkError::InvalidIdentifier
             return failure
-        if self.next_fresh > (4294967295 as U64)
+        // The final handle is the authoring layer's shared template scope.
+        if self.next_fresh >= (4294967295 as U64)
             failure: Result Identifier, SdkError = Result::Err SdkError::IdentityExhausted
             return failure
         fresh = self.next_fresh as U32

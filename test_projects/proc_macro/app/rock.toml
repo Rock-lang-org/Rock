@@ -1,0 +1,10 @@
+[crate]
+name = "proc_macro_demo"
+version = "0.1.0"
+
+[[bin]]
+name = "proc_macro_demo"
+path = "src/main.rk"
+
+[dependencies]
+demo_macros = { path = "../macros" }

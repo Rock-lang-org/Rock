@@ -1,0 +1,36 @@
+> rock_macro::*
+
+< macro format = context, input ->
+    literal = context.string_input &input ?
+    mut chars = literal.decoded.char_indices!
+    output = context.syntax "(\"\").show!" ?
+    segment = 0
+    loop
+        entry = match chars.next!
+            Option::Some entry => entry
+            Option::None => break
+        offset = entry.0
+        if entry.1 == '}'
+            return context.fail "format has an unmatched '}'"
+        if entry.1 == '{'
+            text = context.literal_text 0, segment, offset ?
+            start = offset + 1
+            end = start
+            loop
+                next = match chars.next!
+                    Option::Some next => next
+                    Option::None => return context.fail "format has an unclosed '{'"
+                if next.1 == '{'
+                    return context.fail "format does not support nested braces"
+                if next.1 == '}'
+                    end = next.0
+                    break
+            if end == start
+                return context.fail "format needs a name between braces"
+            value = context.literal_expr 0, start, end ?
+            splices = [output, text, value]
+            output = context.quote "($0).concat (($1).show!).concat (($2).show!)", &splices ?
+            segment = end + 1
+    tail = context.literal_text 0, segment, literal.decoded.len! ?
+    splices = [output, tail]
+    (context.quote "($0).concat (($1).show!)", &splices ?).finish!

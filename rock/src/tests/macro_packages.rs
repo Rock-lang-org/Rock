@@ -193,8 +193,17 @@ fn macro_b_20_external_block_dsl_runs_and_diagnoses_through_rock() {
 fn macro_b_21_external_interpolation_resolves_caller_holes_and_runtime_authority() {
     let root = temp_test_dir("macro_b21_interpolation");
     let provider = root.join("provider"); let runtime = root.join("runtime"); let app = root.join("app");
-    let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("rock_macro");
-    let std = sdk.parent().unwrap().join("std");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let std = workspace.join("std");
+    // This cold fixture rebuilds std explicitly. Its SDK must use that same
+    // dependency graph, not mix it with the normally implicit toolchain std.
+    let sdk = root.join("sdk");
+    write_package_with_options(&sdk, "rock_macro", "src/lib.rk", &[("std", std.display().to_string())], "", true);
+    for entry in fs::read_dir(workspace.join("rock_macro/src")).unwrap() {
+        let entry = entry.unwrap(); if entry.path().extension().is_some_and(|extension| extension == "rk") {
+            fs::copy(entry.path(), sdk.join("src").join(entry.file_name())).unwrap();
+        }
+    }
     write_package_with_options(&runtime, "ink_runtime", "src/lib.rk", &[("std", std.display().to_string())],
         include_str!("../../../lib/tests/fixtures/macros/interpolation/runtime/src/lib.rk"), false);
     write_package_with_options(&provider, "weave", "src/lib.rk", &[

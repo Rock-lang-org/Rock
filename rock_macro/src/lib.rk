@@ -10,6 +10,7 @@
 mod copies
 < mod operations
 < mod construction
+< mod authoring
 < mod decode
 mod validation
 < mod encode

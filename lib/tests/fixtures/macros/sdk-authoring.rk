@@ -1,0 +1,121 @@
+// Appended to sdk-format.rk by the acceptance harness.
+require: &MacroContext -> Bool -> &Str -> Result (), Diagnostic
+require = context, condition, message ->
+    if condition then Result::Ok () else Result::Err (context.error (String::from message))
+
+failed: Result MacroOutput, Diagnostic -> Bool
+failed = result ->
+    match result
+        Result::Err _ => true
+        _ => false
+
+< macro checks = context, input ->
+    literal = context.string_input &input ?
+    require &context, (literal.decoded == "雪"), "checked literal decoding" ?
+    require &context, (failed (context.literal_text 0, -1, 1)), "negative range" ?
+    require &context, (failed (context.literal_text 0, 2, 1)), "reversed range" ?
+    require &context, (failed (context.literal_text 0, 0, 4)), "oversized range" ?
+    require &context, (failed (context.literal_text 1, 0, 0)), "missing view" ?
+    require &context, (failed (context.literal_expr 0, 1, 3)), "UTF-8 expression cut" ?
+    require &context, (failed (context.literal_text 0, 0, 2)), "UTF-8 literal cut" ?
+    empty = context.syntax "" ?
+    args = [empty]
+    require &context, (failed (context.quote "$", &args)), "missing index" ?
+    require &context, (failed (context.quote "$x", &args)), "nonnumeric index" ?
+    require &context, (failed (context.quote "$1", &args)), "absent splice" ?
+    require &context, (failed (context.quote "$999999999999999999999999999", &args)), "huge index" ?
+    dollar = context.quote "$$", &args ?
+    part = &dollar.parts[0]
+    match *part
+        OutputPart::Source source => require &context, (source.text == "$"), "escaped dollar" ?
+        _ => return context.fail "dollar must remain generated source"
+    unicode = context.quote "雪$0🦀", &args ?
+    part = &unicode.parts[2]
+    match *part
+        OutputPart::Source source => require &context, (source.text == "🦀"), "UTF-8 quote template" ?
+        _ => return context.fail "template text must remain generated source"
+    mut invalid = input.clone!
+    invalid.segments[0].source = 18446744073709551615
+    require &context, (failed (context.forward invalid)), "invalid forwarding" ?
+    mut escaped: Vec U8 = Vec::new!
+    i = 0
+    while i < 524288
+        escaped.push (92 as U8)
+        i = i + 1
+    text = String::from escaped.as_slice!
+    require &context, (failed (context.string_literal text.as_str!)), "escaped literal byte budget" ?
+    mut bytes: Vec U8 = Vec::new!
+    i = 0
+    while i < 1048574
+        bytes.push (97 as U8)
+        i = i + 1
+    large = String::from bytes.as_slice!
+    exact = context.string_literal large.as_str! ?
+    args = [exact]
+    require &context, (failed (context.quote "$0$0", &args)), "aggregate byte budget" ?
+    mut retained = input.clone!
+    retained.sources[0].text = large.clone!
+    small = context.forward retained ?
+    args = [small]
+    require &context, (failed (context.quote "$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0", &args)), "retained snapshot copy budget" ?
+    bytes.push (97 as U8)
+    excess = String::from bytes.as_slice!
+    require &context, (failed (context.string_literal excess.as_str!)), "literal byte budget" ?
+    bytes.push (97 as U8)
+    maximum = String::from bytes.as_slice!
+    context.syntax maximum.as_str! ?
+    bytes.push (97 as U8)
+    excess = String::from bytes.as_slice!
+    require &context, (failed (context.syntax excess.as_str!)), "syntax byte budget" ?
+    mut parts: Vec OutputPart = Vec::new!
+    i = 0
+    while i < 16384
+        parts.push (OutputPart::Source (SourceFragment
+            text: String::from "x"
+            context: ConstructionContext
+                invocation: context.invocation
+                kind: ConstructionKind::Fresh (0 as U32)))
+        i = i + 1
+    many = MacroOutput
+        parts: parts
+    args = [many]
+    context.quote "$0", &args ?
+    require &context, (failed (context.quote "$0x", &args)), "part count budget" ?
+    (context.syntax "42" ?).finish!
+
+< macro forward = context, input -> (context.forward input ?).finish!
+
+< macro string = context, input ->
+    literal = context.string_input &input ?
+    (context.string_literal literal.decoded.as_str! ?).finish!
+
+< macro twice = context, input ->
+    tokens = context.forward input ?
+    args = [tokens]
+    (context.quote "($0) + ($0)", &args ?).finish!
+
+< macro scoped = context, input ->
+    tokens = context.forward input ?
+    args = [tokens]
+    (context.quote "((value -> $0) 0)", &args ?).finish!
+
+< macro propagation = context, input ->
+    context.literal_expr 999, 0, 1 ?
+    (context.syntax "0" ?).finish!
+
+< macro greeting = context, input ->
+    prefix = context.string_literal "Hello " ?
+    name = context.forward input ?
+    splices = [prefix, name]
+    (context.quote "($0).show!.concat (($1).show!)", &splices ?).finish!
+
+< macro mixed_scope = context, input ->
+    mut builder = match context.builder &input
+        Result::Ok builder => builder
+        Result::Err _ => return context.fail "builder failed"
+    identifier = match builder.fresh_ident (String::from "value")
+        Result::Ok identifier => identifier
+        Result::Err _ => return context.fail "identifier failed"
+    name = context.forward identifier.tokens ?
+    splices = [name]
+    (context.quote "((value -> (($0 -> value) 2)) 1)", &splices ?).finish!

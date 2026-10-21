@@ -1,0 +1,282 @@
+// Convenience over the existing output contract; no parser or compiler callbacks.
+> rock_macro::*
+> rock_macro::validation::in_text
+> std::clone::Clone
+> std::collections::vec::Vec
+> std::control::option::Option
+> std::control::result::Result
+> std::control::result::ResultResidual
+> std::control::control_flow::FromResidual
+> std::convert::From
+> std::string::owned::String
+> std::num::arithmetic::Add
+> std::num::arithmetic::Sub
+> std::num::arithmetic::Mul
+> std::cmp::eq::PartialEq
+> std::cmp::ord::PartialOrd
+> std::ops::index::Index
+> std::ops::not::Not
+
+impl MacroResult
+    from_error: Diagnostic -> MacroResult
+    from_error = error ->
+        mut diagnostics: Vec Diagnostic = Vec::new!
+        diagnostics.push error
+        MacroResult::Error diagnostics
+
+// Let ordinary Result-returning helpers use ? directly in a macro entry.
+impl FromResidual ResultResidual Diagnostic for MacroResult
+    from_residual = residual ->
+        match residual
+            ResultResidual::Err error => MacroResult::from_error error
+
+impl MacroOutput
+    from_part: OutputPart -> MacroOutput
+    from_part = part ->
+        mut parts: Vec OutputPart = Vec::new!
+        parts.push part
+        MacroOutput
+            parts: parts
+
+    ~@finish: MacroResult
+    ~@finish = -> MacroResult::Report (MacroReport
+        output: Option::Some self
+        diagnostics: Vec::new!)
+
+// Output cloning preserves symbolic context and forwarding requests verbatim.
+copy_part: &OutputPart -> OutputPart
+copy_part = part ->
+    match *part
+        OutputPart::Stream stream => OutputPart::Stream stream.clone!
+        OutputPart::Source source => OutputPart::Source (SourceFragment
+            text: source.text.clone!
+            context: source.context.clone!)
+        OutputPart::Literal literal => OutputPart::Literal (LiteralFragment
+            view: literal.view
+            range: literal.range.clone!)
+
+origin_cost: &(Option TokenOrigin) -> I64
+origin_cost = origin ->
+    match *origin
+        Option::None => 0
+        Option::Some value =>
+            provenance = &value.provenance
+            match *provenance
+                TokenProvenance::Source span => span.file_path.len!
+                TokenProvenance::Captured captured => captured.invocation_span.file_path.len! + captured.capture_span.file_path.len!
+                TokenProvenance::Generated generated => generated.definition_span.file_path.len!
+
+impl MacroContext
+    @output_error: &Str -> Result MacroOutput, Diagnostic
+    @output_error = message -> Result::Err (self.error (String::from message))
+
+    @input_error: &Str -> Result LiteralView, Diagnostic
+    @input_error = message -> Result::Err (self.error (String::from message))
+
+    @range_error: &Str -> Result ByteRange, Diagnostic
+    @range_error = message -> Result::Err (self.error (String::from message))
+
+    @length_error: &Str -> Result I64, Diagnostic
+    @length_error = message -> Result::Err (self.error (String::from message))
+
+    @fail: &Str -> MacroResult
+    @fail = message -> MacroResult::from_error (self.error (String::from message))
+
+    @string_input: &TokenStream -> Result LiteralView, Diagnostic
+    @string_input = input ->
+        if self.views.literals.len! != 1
+            return self.input_error "expected one string literal"
+        literal = &self.views.literals[0]
+        arguments = &self.views.arguments
+        match *arguments
+            Option::Some arguments =>
+                if arguments.ranges.len! == 1 && arguments.ranges[0].start == literal.source.start && arguments.ranges[0].end == literal.source.end
+                    tokens = match input.slice literal.source.clone!
+                        Result::Ok tokens => tokens
+                        Result::Err _ => return self.input_error "invalid string literal input range"
+                    spelling = match tokens.spelling!
+                        Result::Ok spelling => spelling
+                        Result::Err _ => return self.input_error "invalid string literal input"
+                    bytes = spelling.as_bytes!
+                    if bytes.len! >= 2 && (bytes[0] as I64) == 34 && (bytes[bytes.len! - 1] as I64) == 34
+                        success: Result LiteralView, Diagnostic = Result::Ok literal.clone!
+                        return success
+                    return self.input_error "expected a string literal, not a character literal"
+            Option::None => ()
+        Result::Err (self.error (String::from "expected only a string literal"))
+
+    @syntax: &Str -> Result MacroOutput, Diagnostic
+    @syntax = text ->
+        if text.len! > 1048576
+            return self.output_error "generated source exceeds the macro output limit"
+        Result::Ok (MacroOutput::from_part (OutputPart::Source (SourceFragment
+            text: String::from text
+            context: ConstructionContext
+                invocation: self.invocation
+                // Keep template-local names distinct from MacroBuilder identifiers.
+                kind: ConstructionKind::Fresh (4294967295 as U32))))
+
+    @string_literal: &Str -> Result MacroOutput, Diagnostic
+    @string_literal = text ->
+        if text.len! > 1048574
+            return self.output_error "string literal exceeds the macro output limit"
+        bytes = text.as_bytes!
+        mut output: Vec U8 = Vec::new!
+        output.push (34 as U8)
+        i = 0
+        while i < bytes.len!
+            byte = bytes[i] as I64
+            escaped = byte == 34 || byte == 92 || byte == 10 || byte == 13 || byte == 9 || byte == 0
+            needed = if escaped then 2 else 1
+            if output.len! > 1048575 - needed
+                return self.output_error "escaped string literal exceeds the macro output limit"
+            if escaped
+                output.push (92 as U8)
+                value = if byte == 10 then 110 else if byte == 13 then 114 else if byte == 9 then 116 else if byte == 0 then 48 else byte
+                output.push (value as U8)
+            else
+                output.push bytes[i]
+            i = i + 1
+        output.push (34 as U8)
+        quoted = String::from output.as_slice!
+        self.syntax quoted.as_str!
+
+    @literal_range: U32 -> I64 -> I64 -> Result ByteRange, Diagnostic
+    @literal_range = view, start, end ->
+        if (view as U64) >= (self.views.literals.len! as U64) || start < 0 || end < start
+            return self.range_error "invalid literal range"
+        range = ByteRange
+            start: start as U64
+            end: end as U64
+        if !(in_text (&self.views.literals[view as I64].decoded), &range)
+            return self.range_error "literal range must follow UTF-8 boundaries"
+        Result::Ok range
+
+    @literal_text: U32 -> I64 -> I64 -> Result MacroOutput, Diagnostic
+    @literal_text = view, start, end ->
+        self.literal_range view, start, end ?
+        bytes = self.views.literals[view as I64].decoded.as_bytes!
+        text = String::from (&bytes[start..end])
+        self.string_literal text.as_str!
+
+    @literal_expr: U32 -> I64 -> I64 -> Result MacroOutput, Diagnostic
+    @literal_expr = view, start, end ->
+        range = self.literal_range view, start, end ?
+        Result::Ok (MacroOutput::from_part (OutputPart::Literal (LiteralFragment
+            view: view
+            range: range)))
+
+    @forward: TokenStream -> Result MacroOutput, Diagnostic
+    @forward = input ->
+        match input.len_bytes!
+            Result::Ok length =>
+                if length > (1048576 as U64)
+                    return self.output_error "forwarded tokens exceed the macro output limit"
+            Result::Err _ => return self.output_error "invalid forwarded token stream"
+        Result::Ok (MacroOutput::from_part (OutputPart::Stream input))
+
+    // $0, $1, ... splice output fragments; $$ emits a literal dollar sign.
+    // Templates only supply fresh syntax, never caller binding authority.
+    @quote: &Str -> &[MacroOutput] -> Result MacroOutput, Diagnostic
+    @quote = template, splices ->
+        if template.len! > 1048576 || splices.len! > 16384
+            return self.output_error "quote exceeds the macro output limit"
+        bytes = template.as_bytes!
+        mut parts: Vec OutputPart = Vec::new!
+        size = 0
+        copied = 0
+        start = 0
+        i = 0
+        while i < bytes.len!
+            if (bytes[i] as I64) != 36
+                i = i + 1
+                continue
+            if start < i
+                if i - start > 1048576 - size || parts.len! >= 16384
+                    return self.output_error "quoted output exceeds the macro output limit"
+                text = String::from (&bytes[start..i])
+                generated = self.syntax text.as_str! ?
+                parts.push (copy_part &generated.parts[0])
+                size = size + i - start
+            i = i + 1
+            if i < bytes.len! && (bytes[i] as I64) == 36
+                if size >= 1048576 || parts.len! >= 16384
+                    return self.output_error "quoted output exceeds the macro output limit"
+                generated = self.syntax "$" ?
+                parts.push (copy_part &generated.parts[0])
+                size = size + 1
+                i = i + 1
+            else
+                digits = i
+                index = 0
+                while i < bytes.len! && (bytes[i] as I64) >= 48 && (bytes[i] as I64) <= 57
+                    // Bound before multiplication, including arbitrarily long indices.
+                    if index > 16384
+                        return self.output_error "quote splice index is out of range"
+                    index = index * 10 + (bytes[i] as I64) - 48
+                    i = i + 1
+                if i == digits || index >= splices.len!
+                    return self.output_error "quote expects a valid $0-style splice"
+                splice = &splices[index]
+                j = 0
+                while j < splice.parts.len!
+                    part = &splice.parts[j]
+                    length = self.part_length part ?
+                    cost = self.part_copy_cost part
+                    if length > 1048576 - size || parts.len! >= 16384
+                        return self.output_error "quoted output exceeds the macro output limit"
+                    if cost > 16777216 - copied
+                        return self.output_error "quoted output exceeds the retained copy limit"
+                    size = size + length
+                    copied = copied + cost
+                    parts.push (copy_part part)
+                    j = j + 1
+            if size > 1048576 || parts.len! > 16384
+                return self.output_error "quoted output exceeds the macro output limit"
+            start = i
+        if start < bytes.len!
+            if bytes.len! - start > 1048576 - size || parts.len! >= 16384
+                return self.output_error "quoted output exceeds the macro output limit"
+            text = String::from (&bytes[start..bytes.len!])
+            generated = self.syntax text.as_str! ?
+            parts.push (copy_part &generated.parts[0])
+        Result::Ok (MacroOutput
+            parts: parts)
+
+    @part_length: &OutputPart -> Result I64, Diagnostic
+    @part_length = part ->
+        match *part
+            OutputPart::Source source => Result::Ok source.text.len!
+            OutputPart::Literal literal =>
+                if literal.range.start > literal.range.end || literal.range.end > (1048576 as U64)
+                    return self.length_error "invalid literal splice"
+                self.literal_range literal.view, (literal.range.start as I64), (literal.range.end as I64) ?
+                Result::Ok ((literal.range.end - literal.range.start) as I64)
+            OutputPart::Stream stream =>
+                match stream.len_bytes!
+                    Result::Ok length =>
+                        if length > (1048576 as U64)
+                            return self.length_error "token splice exceeds the macro output limit"
+                        Result::Ok (length as I64)
+                    Result::Err _ => Result::Err (self.error (String::from "invalid token splice"))
+
+    // Logical spelling can be tiny while a stream retains a large snapshot.
+    // Charge owned strings and conservative record overhead before deep copying.
+    @part_copy_cost: &OutputPart -> I64
+    @part_copy_cost = part ->
+        match *part
+            OutputPart::Source source => source.text.len! + 64
+            OutputPart::Literal _ => 32
+            OutputPart::Stream stream =>
+                cost = stream.sources.len! * 128 + stream.segments.len! * 256 + stream.expressions.len! * 32
+                cost = cost + (origin_cost &stream.anchor.origin)
+                i = 0
+                while i < stream.sources.len!
+                    source = &stream.sources[i]
+                    cost = cost + source.text.len! + source.file_path.len!
+                    i = i + 1
+                i = 0
+                while i < stream.segments.len!
+                    cost = cost + (origin_cost &stream.segments[i].origin)
+                    i = i + 1
+                cost

@@ -15,6 +15,8 @@ mod macro_hosts;
 mod macro_blocks;
 #[path = "support/macro_interpolation.rs"]
 mod macro_interpolation;
+#[path = "support/macro_authoring.rs"]
+mod macro_authoring;
 #[path = "support/macro_fixture.rs"]
 mod macro_fixture;
 #[path = "support/macro_client.rs"]
@@ -152,4 +154,10 @@ fn macro_acceptance_sdk_binary_io() {
     let output = run_client_with_input(&config.output_dir.join("main"), &[0; 33]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(output.stdout.is_empty() && output.stderr.is_empty());
+}
+
+#[test]
+#[ignore = "native SDK authoring acceptance; run cargo macro-acceptance"]
+fn macro_acceptance_sdk_authoring() {
+    macro_authoring::verify(&SdkCase::new("authoring", "").config);
 }

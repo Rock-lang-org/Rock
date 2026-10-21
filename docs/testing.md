@@ -29,6 +29,7 @@ full test name, for example:
 ```sh
 cargo test -p rock-lib --test macro_sdk macro_acceptance_sdk_request_codec -- --ignored --exact --nocapture
 cargo test -p rock-lib --test macro_sdk macro_acceptance_sdk_interpolation_ownership -- --ignored --exact --nocapture
+cargo test -p rock-lib --test macro_sdk macro_acceptance_sdk_authoring -- --ignored --exact --nocapture
 cargo test -p rock macro_b_20 -- --ignored --nocapture --test-threads=1
 ```
 
