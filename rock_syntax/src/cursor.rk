@@ -1,0 +1,414 @@
+> rock_macro::*
+> rock_syntax::*
+> std::collections::vec::Vec
+> std::control::option::Option
+> std::control::result::Result
+> std::clone::Clone
+> std::convert::From
+> std::string::owned::String
+> std::num::arithmetic::Add
+> std::num::arithmetic::Sub
+> std::cmp::eq::PartialEq
+> std::cmp::ord::PartialOrd
+> std::ops::index::Index
+> std::ops::not::Not
+
+struct Scalar
+    < value: Char
+    < start: U64
+    < end: U64
+    < context: U32
+    < epoch: I64
+    < capture_end: U64
+    < construction: Bool
+
+< struct Cursor
+    stream: TokenStream
+    text: String
+    units: Vec Scalar
+    length: U64
+    cursor_index: I64
+    pieces: I64
+    limits: Limits
+
+ascii_lower: Char -> Bool
+ascii_lower = ch -> ch >= 'a' && ch <= 'z'
+ascii_upper: Char -> Bool
+ascii_upper = ch -> ch >= 'A' && ch <= 'Z'
+letter: Char -> Bool
+letter = ch -> ascii_lower ch || ascii_upper ch
+digit: Char -> Bool
+digit = ch -> ch >= '0' && ch <= '9'
+space: Char -> Bool
+space = ch -> ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n'
+operator: Char -> Bool
+operator = ch ->
+    ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' || ch == '=' || ch == '!' || ch == '<' || ch == '>' || ch == '$' || ch == '|' || ch == '&' || ch == ';'
+
+keyword: &Str -> Bool
+keyword = text ->
+    text == "struct" || text == "enum" || text == "trait" || text == "impl" || text == "if" || text == "then" || text == "else" || text == "for" || text == "in" || text == "while" || text == "loop" || text == "macro" || text == "true" || text == "false" || text == "return" || text == "continue" || text == "break" || text == "infix" || text == "mod" || text == "extern" || text == "match" || text == "unsafe" || text == "type" || text == "mut" || text == "where" || text == "as" || text == "do"
+
+impl Cursor
+    new: TokenStream -> Result Cursor, ParseError
+    new = input -> Cursor::with_limits input, Limits::standard!
+
+    with_limits: TokenStream -> Limits -> Result Cursor, ParseError
+    with_limits = input, limits ->
+        if limits.max_bytes > (1048576 as U64) || limits.max_pieces < 0 || limits.max_pieces > 65536 || limits.max_depth < 0 || limits.max_depth > 128 || limits.max_groups < 0 || limits.max_groups > 16384
+            failure: Result Cursor, ParseError = Result::Err (ParseError::at ParseErrorKind::InvalidLimits, 0, 0)
+            return failure
+        length = match input.len_bytes!
+            Result::Ok size => size
+            Result::Err error =>
+                failure: Result Cursor, ParseError = Result::Err (ParseError::at (ParseErrorKind::InvalidInput error), 0, 0)
+                return failure
+        if length > limits.max_bytes
+            failure: Result Cursor, ParseError = Result::Err (ParseError::at ParseErrorKind::ByteLimit, 0, length)
+            return failure
+        text = match input.spelling!
+            Result::Ok text => text
+            Result::Err error =>
+                failure: Result Cursor, ParseError = Result::Err (ParseError::at (ParseErrorKind::InvalidInput error), 0, 0)
+                return failure
+        mut units: Vec Scalar = Vec::new!
+        segment_index = 0
+        epoch = 0
+        capture_index = 0
+        base: U64 = 0 as U64
+        segment_end: U64 = if input.segments.len! > 0 then input.segments[0].range.end - input.segments[0].range.start else 0 as U64
+        mut chars = text.char_indices!
+        loop
+            match chars.next!
+                Option::None => break
+                Option::Some item =>
+                    start = item.0 as U64
+                    while start >= segment_end
+                        segment_index = segment_index + 1
+                        base = segment_end
+                        segment_end = segment_end + input.segments[segment_index].range.end - input.segments[segment_index].range.start
+                    segment = &input.segments[segment_index]
+                    boundary = &segment.boundary
+                    separate = start == base && (match *boundary
+                        JoinBoundary::Separate => true
+                        JoinBoundary::SourceAdjacent => false)
+                    capture_end: U64 = 0 as U64
+                    while capture_index < input.expressions.len! && input.expressions[capture_index].range.start <= start
+                        if input.expressions[capture_index].range.start == start
+                            if capture_end == (0 as U64)
+                                capture_end = input.expressions[capture_index].range.end
+                            epoch = epoch + 1
+                        capture_index = capture_index + 1
+                    if separate
+                        epoch = epoch + 1
+                    construction = &segment.construction
+                    unresolved = match *construction
+                        Option::Some request => true
+                        Option::None => false
+                    // UTF-8 width, not an ASCII spelling/classification shortcut.
+                    code = item.1 as U32
+                    width: U64 = if code < (128 as U32) then 1 as U64 else if code < (2048 as U32) then 2 as U64 else if code < (65536 as U32) then 3 as U64 else 4 as U64
+                    units.push (Scalar
+                        value: item.1
+                        start: start
+                        end: start + width
+                        context: segment.context.handle
+                        epoch: epoch
+                        capture_end: capture_end
+                        construction: unresolved)
+        Result::Ok (Cursor
+            stream: input
+            text: text
+            units: units
+            length: length
+            cursor_index: 0
+            pieces: 0
+            limits: limits)
+
+    @byte_offset: U64
+    @byte_offset = -> if self.cursor_index < self.units.len! then self.units[self.cursor_index].start else self.length
+
+    @input: &TokenStream
+    @input = -> &self.stream
+
+    @tokens: &Token -> Result TokenStream, ParseError
+    @tokens = token -> self.slice_range token.range.clone!
+
+    @slice_range: ByteRange -> Result TokenStream, ParseError
+    @slice_range = range ->
+        retained = self.stream.slice range.clone!
+        match retained
+            Result::Ok stream => Result::Ok stream
+            // A rejected caller range may itself be outside UTF-8/input bounds.
+            // Keep diagnostic labels valid; SdkError retains the requested range.
+            Result::Err error => Result::Err (ParseError::at (ParseErrorKind::InvalidInput error), 0, (self.length))
+
+    @group_inner: &Group -> Result TokenStream, ParseError
+    @group_inner = group ->
+        bounds = ByteRange
+            start: group.open.end
+            end: group.close.start
+        self.slice_range bounds
+
+    @peek: Result (Option Token), ParseError
+    @peek = ->
+        match self.read self.cursor_index, self.pieces ?
+            Option::Some scanned => Result::Ok (Option::Some (scanned.0))
+            Option::None => Result::Ok Option::None
+
+    ^@consume: Result (Option Token), ParseError
+    ^@consume = ->
+        match self.read self.cursor_index, self.pieces ?
+            Option::Some scanned =>
+                self.cursor_index = scanned.1
+                self.pieces = self.pieces + 1
+                Result::Ok (Option::Some (scanned.0))
+            Option::None => Result::Ok Option::None
+
+    ^@next_token: Result (Option Token), ParseError
+    ^@next_token = ->
+        while self.cursor_index < self.units.len!
+            match self.consume! ?
+                Option::Some token =>
+                    if !token.is_trivia!
+                        success: Result (Option Token), ParseError = Result::Ok (Option::Some token)
+                        return success
+                Option::None =>
+                    success: Result (Option Token), ParseError = Result::Ok Option::None
+                    return success
+        Result::Ok Option::None
+
+    // Peek cannot cross an explicit join or opaque capture boundary.
+    @at: I64 -> I64 -> Char
+    @at = start, index ->
+        if !(self.available start, index)
+            return '\0'
+        self.units[index].value
+
+    @available: I64 -> I64 -> Bool
+    @available = start, index -> index < self.units.len! && self.units[index].epoch == self.units[start].epoch
+
+    @finish: I64 -> I64 -> TokenKind -> Bool -> Result (Option (Token, I64)), ParseError
+    @finish = start, end, kind, binding ->
+        index = start
+        while index < end
+            if self.units[index].construction
+                failure: Result (Option (Token, I64)), ParseError = Result::Err (ParseError::at ParseErrorKind::UnresolvedConstruction, self.units[start].start, self.units[end - 1].end)
+                return failure
+            if binding && self.units[index].context != self.units[start].context
+                failure: Result (Option (Token, I64)), ParseError = Result::Err (ParseError::at ParseErrorKind::ConflictingContexts, self.units[index].start, self.units[index].end)
+                return failure
+            index = index + 1
+        context: Option SyntaxContext = if binding then Option::Some (SyntaxContext
+            handle: self.units[start].context) else Option::None
+        Result::Ok (Option::Some (Token
+            kind: kind
+            range: ByteRange
+                start: self.units[start].start
+                end: self.units[end - 1].end
+            context: context, end))
+
+    @read: I64 -> I64 -> Result (Option (Token, I64)), ParseError
+    @read = start, pieces ->
+        if start >= self.units.len!
+            success: Result (Option (Token, I64)), ParseError = Result::Ok Option::None
+            return success
+        if pieces >= self.limits.max_pieces
+            failure: Result (Option (Token, I64)), ParseError = Result::Err (ParseError::at ParseErrorKind::PieceLimit, self.units[start].start, self.units[start].end)
+            return failure
+        if self.units[start].capture_end > (0 as U64)
+            end = start
+            while end < self.units.len! && self.units[end].start < self.units[start].capture_end
+                end = end + 1
+            return self.finish start, end, TokenKind::Expression, false
+        ch = self.at start, start
+        next = self.at start, (start + 1)
+        third = self.at start, (start + 2)
+        if (ch == '_' || ch == '$' || ch == '%' || ch == '~') && (next as U32) > (127 as U32)
+            failure: Result (Option (Token, I64)), ParseError = Result::Err (ParseError::at ParseErrorKind::UnsupportedCharacter, self.units[start + 1].start, self.units[start + 1].end)
+            return failure
+        if ch == ' ' && next == '.' && third != '.' && third != ' '
+            return self.finish start, (start + 2), TokenKind::Symbol, false
+        if ch == '\n' || (ch == '\r' && next == '\n')
+            count = if ch == '\r' then 2 else 1
+            return self.finish start, (start + count), TokenKind::LineEnding, false
+        end = start + 1
+        if space ch
+            while space (self.at start, end) && (self.at start, end) != '\n'
+                end = end + 1
+            return self.finish start, end, TokenKind::Whitespace, false
+        if ch == '\'' || ch == '"'
+            escaped = false
+            while end < self.units.len!
+                current = self.at start, end
+                if !(self.available start, end)
+                    break
+                if current == ch && !escaped
+                    kind = if ch == '\'' then TokenKind::Char else TokenKind::String
+                    return self.finish start, (end + 1), kind, false
+                escaped = if escaped then false else current == '\\'
+                end = end + 1
+            failure: Result (Option (Token, I64)), ParseError = Result::Err (ParseError::at ParseErrorKind::UnterminatedQuote, self.units[start].start, self.units[end - 1].end)
+            return failure
+        if ch == '/' && (next == '/' || next == '*')
+            end = start + 2
+            if next == '/'
+                while (self.available start, end) && (self.at start, end) != '\n'
+                    end = end + 1
+                return self.finish start, end, TokenKind::LineComment, false
+            while end < self.units.len!
+                current = self.at start, end
+                if !(self.available start, end)
+                    break
+                if current == '*' && (self.at start, (end + 1)) == '/'
+                    return self.finish start, (end + 2), TokenKind::BlockComment, false
+                end = end + 1
+            failure: Result (Option (Token, I64)), ParseError = Result::Err (ParseError::at ParseErrorKind::UnterminatedComment, self.units[start].start, self.units[end - 1].end)
+            return failure
+        fixed = 0
+        binding = false
+        if ch == '!' && next == '-' && third == '>'
+            fixed = 3
+        else if (ch == '-' && next == '>') || (ch == '~' && next == '>') || (ch == '=' && next == '>') || (ch == '$' && next == '(') || (ch == ')' && next == '*') || (ch == ':' && next == ':')
+            fixed = 2
+        else if ch == '&' && next == '&'
+            return self.finish start, (start + 2), TokenKind::Operator, true
+        else if ch == '.' && next == ' '
+            return self.finish start, end, TokenKind::Operator, true
+        else if ch == '.' && next == '.'
+            fixed = if third == '=' then 3 else 2
+        else if ch == '\\' || ch == ':' || ch == '.' || ch == '(' || ch == ')' || ch == '[' || ch == ']' || ch == '{' || ch == '}' || ch == ',' || ch == '?'
+            fixed = 1
+        else if ch == '^' || ch == '&' || ch == '@'
+            fixed = 1
+            binding = true
+        else if ch == '_' && !(letter next || digit next || next == '_')
+            fixed = 1
+        else if ch == '~' && !(ascii_upper next)
+            fixed = 1
+            binding = true
+        if fixed > 0
+            return self.finish start, (start + fixed), TokenKind::Symbol, binding
+        prefixed = (ch == '$' && letter next) || (ch == '%' && ascii_lower next) || ch == '~'
+        if prefixed || letter ch || ch == '_'
+            while letter (self.at start, end) || digit (self.at start, end) || (self.at start, end) == '_'
+                end = end + 1
+            kind = TokenKind::Ident
+            binding = true
+            if prefixed
+                kind = if ch == '$' then TokenKind::MacroVar else if ch == '%' then TokenKind::MacroInvoc else TokenKind::NativeOperator
+            else if ascii_upper ch
+                kind = TokenKind::Type
+            else
+                spelling = &self.text[(self.units[start].start as I64)..(self.units[end - 1].end as I64)]
+                if keyword spelling
+                    kind = TokenKind::Keyword
+                    binding = spelling == "do"
+            if end < self.units.len! && ((self.at start, end) as U32) > (127 as U32)
+                failure: Result (Option (Token, I64)), ParseError = Result::Err (ParseError::at ParseErrorKind::UnsupportedCharacter, self.units[end].start, self.units[end].end)
+                return failure
+            return self.finish start, end, kind, binding
+        if digit ch
+            while digit (self.at start, end)
+                end = end + 1
+            kind = TokenKind::Number
+            if (self.at start, end) == '.' && digit (self.at start, (end + 1))
+                end = end + 1
+                while digit (self.at start, end)
+                    end = end + 1
+                kind = TokenKind::Float
+            return self.finish start, end, kind, false
+        if operator ch
+            while operator (self.at start, end)
+                end = end + 1
+            spelling = &self.text[(self.units[start].start as I64)..(self.units[end - 1].end as I64)]
+            if spelling == "="
+                return self.finish start, end, TokenKind::Symbol, false
+            kind = if (self.at start, end) == ' ' || (self.at start, end) == '\n' then TokenKind::Operator else TokenKind::StuckOperator
+            return self.finish start, end, kind, true
+        kind = if (ch as U32) > (127 as U32) then ParseErrorKind::UnsupportedCharacter else ParseErrorKind::UnexpectedCharacter
+        Result::Err (ParseError::at kind, self.units[start].start, self.units[start].end)
+
+    // An explicit full-remainder Rock group request, not an SDK inspection gate.
+    @groups: Result (Vec Group), ParseError
+    @groups = ->
+        mut groups: Vec Group = Vec::new!
+        mut stack: Vec I64 = Vec::new!
+        depth = 0
+        index = self.cursor_index
+        pieces = self.pieces
+        loop
+            scanned = self.read index, pieces ?
+            match scanned
+                Option::None => break
+                Option::Some pair =>
+                    token = pair.0
+                    first = self.units[index].value
+                    index = pair.1
+                    pieces = pieces + 1
+                    kind = &token.kind
+                    symbolic = match *kind
+                        TokenKind::Symbol => true
+                        _ => false
+                    if symbolic && (first == '(' || first == ')' || first == '[' || first == ']' || first == '{' || first == '}' || first == '$')
+                        delimiter = if first == '[' || first == ']' then Delimiter::Bracket else if first == '{' || first == '}' then Delimiter::Brace else Delimiter::Paren
+                        offset = token.range.start + (if first == '$' then 1 as U64 else 0 as U64)
+                        range = ByteRange
+                            start: offset
+                            end: offset + (1 as U64)
+                        opening = first == '(' || first == '[' || first == '{' || first == '$'
+                        if opening
+                            if depth >= self.limits.max_depth
+                                failure: Result (Vec Group), ParseError = Result::Err (ParseError::at ParseErrorKind::DepthLimit, range.start, range.end)
+                                return failure
+                            if groups.len! >= self.limits.max_groups
+                                failure: Result (Vec Group), ParseError = Result::Err (ParseError::at ParseErrorKind::GroupLimit, range.start, range.end)
+                                return failure
+                            parent: Option I64 = if depth > 0 then Option::Some (stack[depth - 1]) else Option::None
+                            group_index = groups.len!
+                            groups.push (Group
+                                delimiter: delimiter
+                                open: range.clone!
+                                close: ByteRange
+                                    start: range.end
+                                    end: range.end
+                                parent: parent)
+                            if depth == stack.len!
+                                stack.push group_index
+                            else
+                                stack.set depth, group_index
+                            depth = depth + 1
+                        else
+                            if depth == 0
+                                failure: Result (Vec Group), ParseError = Result::Err (ParseError::at ParseErrorKind::UnexpectedClose, range.start, range.end)
+                                return failure
+                            depth = depth - 1
+                            group_index = stack[depth]
+                            group = &groups[group_index]
+                            if (delimiter_tag &group.delimiter) != (delimiter_tag &delimiter)
+                                mut error = ParseError::at ParseErrorKind::MismatchedClose, range.start, range.end
+                                error.related = Option::Some (group.open.clone!)
+                                failure: Result (Vec Group), ParseError = Result::Err error
+                                return failure
+                            retained_parent = &group.parent
+                            parent = match *retained_parent
+                                Option::Some index => Option::Some index
+                                Option::None => Option::None
+                            replacement = Group
+                                delimiter: group.delimiter.clone!
+                                open: group.open.clone!
+                                close: range
+                                parent: parent
+                            groups.set group_index, replacement
+        if depth > 0
+            group = &groups[stack[depth - 1]]
+            failure: Result (Vec Group), ParseError = Result::Err (ParseError::at ParseErrorKind::UnclosedGroup, group.open.start, group.open.end)
+            return failure
+        Result::Ok groups
+
+delimiter_tag: &Delimiter -> I64
+delimiter_tag = delimiter ->
+    match *delimiter
+        Delimiter::Paren => 0
+        Delimiter::Bracket => 1
+        Delimiter::Brace => 2

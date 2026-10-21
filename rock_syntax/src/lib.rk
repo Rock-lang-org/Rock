@@ -1,0 +1,172 @@
+// Ordinary, bounded syntax views. No worker, MacroContext or compiler callbacks.
+> rock_macro::*
+> rock_macro::operations::SdkError
+> std::collections::vec::Vec
+> std::control::option::Option
+> std::clone::Clone
+> std::convert::From
+> std::string::owned::String
+
+< mod cursor
+
+< struct Limits
+    < max_bytes: U64
+    < max_pieces: I64
+    < max_depth: I64
+    < max_groups: I64
+
+impl Limits
+    standard: Limits
+    standard = -> Limits
+        max_bytes: 1048576
+        max_pieces: 65536
+        max_depth: 128
+        max_groups: 16384
+
+< enum ParseErrorKind
+    InvalidInput SdkError
+    InvalidLimits
+    ByteLimit
+    PieceLimit
+    DepthLimit
+    GroupLimit
+    UnexpectedCharacter
+    UnsupportedCharacter
+    UnterminatedQuote
+    UnterminatedComment
+    ConflictingContexts
+    UnresolvedConstruction
+    UnexpectedClose
+    MismatchedClose
+    UnclosedGroup
+
+// Logical UTF-8 input ranges, usable without an invocation or physical file.
+< struct ParseError
+    < kind: ParseErrorKind
+    < range: ByteRange
+    < related: Option ByteRange
+
+impl ParseError
+    at: ParseErrorKind -> U64 -> U64 -> ParseError
+    at = kind, start, end -> ParseError
+        kind: kind
+        range: ByteRange
+            start: start
+            end: end
+        related: Option::None
+
+    @code: &Str
+    @code = ->
+        kind = &self.kind
+        match *kind
+            ParseErrorKind::InvalidInput error => "input"
+            ParseErrorKind::InvalidLimits => "limits"
+            ParseErrorKind::ByteLimit => "bytes"
+            ParseErrorKind::PieceLimit => "pieces"
+            ParseErrorKind::DepthLimit => "depth"
+            ParseErrorKind::GroupLimit => "groups"
+            ParseErrorKind::UnexpectedCharacter => "character"
+            ParseErrorKind::UnsupportedCharacter => "unsupported"
+            ParseErrorKind::UnterminatedQuote => "quote"
+            ParseErrorKind::UnterminatedComment => "comment"
+            ParseErrorKind::ConflictingContexts => "contexts"
+            ParseErrorKind::UnresolvedConstruction => "construction"
+            ParseErrorKind::UnexpectedClose => "unexpected-close"
+            ParseErrorKind::MismatchedClose => "mismatch"
+            ParseErrorKind::UnclosedGroup => "unclosed"
+
+    @diagnostic: Diagnostic
+    @diagnostic = ->
+        mut diagnostic = Diagnostic::new DiagnosticSeverity::Error, (String::from (self.message!)), (DiagnosticLocation::Input (self.range.clone!))
+        related = &self.related
+        match *related
+            Option::Some range => diagnostic.label (String::from "opening delimiter"), (DiagnosticLocation::Input (range.clone!))
+            Option::None => ()
+        diagnostic
+
+    @message: &Str
+    @message = ->
+        kind = &self.kind
+        match *kind
+            ParseErrorKind::InvalidInput error => "invalid token-stream data or slice"
+            ParseErrorKind::InvalidLimits => "invalid syntax limits"
+            ParseErrorKind::ByteLimit => "syntax input exceeds the byte limit"
+            ParseErrorKind::PieceLimit => "syntax input exceeds the piece limit"
+            ParseErrorKind::DepthLimit => "syntax input exceeds the group depth limit"
+            ParseErrorKind::GroupLimit => "syntax input exceeds the group count limit"
+            ParseErrorKind::UnexpectedCharacter => "unexpected character in Rock syntax"
+            ParseErrorKind::UnsupportedCharacter => "character outside the supported Rock lexical subset"
+            ParseErrorKind::UnterminatedQuote => "unterminated quoted Rock token"
+            ParseErrorKind::UnterminatedComment => "unterminated Rock block comment"
+            ParseErrorKind::ConflictingContexts => "binding token crosses conflicting syntax contexts"
+            ParseErrorKind::UnresolvedConstruction => "unresolved token construction in syntax input"
+            ParseErrorKind::UnexpectedClose => "closing delimiter has no opening delimiter"
+            ParseErrorKind::MismatchedClose => "closing delimiter does not match its opening delimiter"
+            ParseErrorKind::UnclosedGroup => "unclosed Rock group"
+
+< enum TokenKind
+    Ident
+    Type
+    Keyword
+    Number
+    Float
+    String
+    Char
+    MacroVar
+    MacroInvoc
+    NativeOperator
+    Operator
+    StuckOperator
+    Symbol
+    Whitespace
+    LineEnding
+    LineComment
+    BlockComment
+    Expression
+
+// Tokens are views, never reconstructed source or new binding authority.
+< struct Token
+    < kind: TokenKind
+    < range: ByteRange
+    < context: Option SyntaxContext
+
+impl Token
+    @tag: &Str
+    @tag = ->
+        kind = &self.kind
+        match *kind
+            TokenKind::Ident => "ident"
+            TokenKind::Type => "type"
+            TokenKind::Keyword => "keyword"
+            TokenKind::Number => "number"
+            TokenKind::Float => "float"
+            TokenKind::String => "string"
+            TokenKind::Char => "char"
+            TokenKind::MacroVar => "macro-var"
+            TokenKind::MacroInvoc => "macro-invocation"
+            TokenKind::NativeOperator => "native"
+            TokenKind::Operator => "operator"
+            TokenKind::StuckOperator => "stuck-operator"
+            TokenKind::Symbol => "symbol"
+            TokenKind::Whitespace => "whitespace"
+            TokenKind::LineEnding => "line-ending"
+            TokenKind::LineComment => "line-comment"
+            TokenKind::BlockComment => "block-comment"
+            TokenKind::Expression => "expression"
+
+    @is_trivia: Bool
+    @is_trivia = ->
+        kind = &self.kind
+        match *kind
+            TokenKind::Whitespace => true
+            TokenKind::LineEnding => true
+            TokenKind::LineComment => true
+            TokenKind::BlockComment => true
+            _ => false
+
+// Flat preorder records bound both traversal and destruction depth.
+< struct Group
+    < delimiter: Delimiter
+    < open: ByteRange
+    < close: ByteRange
+    < parent: Option I64

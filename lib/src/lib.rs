@@ -2,6 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// Shared native conformance helpers also run inside the compiler unit-test crate.
+#[cfg(test)]
+extern crate self as rock_lib;
+
 use ast::debug::debug_ast;
 use diagnostic::Diagnostics;
 use inkwell::context::Context;

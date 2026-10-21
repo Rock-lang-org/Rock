@@ -1,0 +1,164 @@
+> rock_macro::*
+> rock_syntax::*
+> rock_syntax::cursor::Cursor
+> std::ffi::libc::putchar
+
+impl Result T, E
+    ~@checked: T
+    ~@checked = ->
+        match self
+            Result::Ok value => value
+            Result::Err error =>
+                "unexpected fixture failure".println!
+                exit (1 as I32)
+                failed: Result T, E = Result::Err error
+                failed.checked!
+
+trait Trace
+    @print: ()
+
+impl Trace for &Str
+    @print = !->
+        bytes = self.as_bytes!
+        i = 0
+        while i < bytes.len!
+            putchar (bytes[i] as I32)
+            i = i + 1
+
+impl Trace for U64
+    @print = !->
+        value = *self as I64
+        text = value.show!
+        text.as_str!.print!
+
+check = condition !->
+    if !condition
+        "syntax assertion failed".println!
+        exit (1 as I32)
+
+range = start, end -> ByteRange
+    start: start
+    end: end
+
+input: &Str -> TokenStream
+input = text ->
+    mut sources: Vec SourceSnapshot = Vec::new!
+    sources.push (SourceSnapshot
+        identity: 41
+        file_path: String::from "fixture.rk"
+        text: String::from text)
+    mut segments: Vec Segment = Vec::new!
+    if text.len! > 0
+        segments.push (Segment
+            source: 0
+            range: range 0, (text.len! as U64)
+            kind: SegmentKind::Text
+            context: SyntaxContext
+                handle: 7
+            boundary: JoinBoundary::Separate
+            origin: Option::Some (TokenOrigin
+                provenance: TokenProvenance::Source (Span
+                    file_path: String::from "fixture.rk"
+                    range: range 0, (text.len! as U64))
+                projection: Option::None)
+            construction: Option::None)
+    TokenStream
+        sources: sources
+        segments: segments
+        anchor: StreamAnchor
+            source: 0
+            offset: 0
+            context: SyntaxContext
+                handle: 7
+            origin: Option::None
+        expressions: Vec::new!
+
+error_line: &ParseError -> ()
+error_line = error !->
+    "E ".print!
+    error.code!.print!
+    " ".print!
+    error.range.start.print!
+    " ".print!
+    error.range.end.print!
+    " ".print!
+    related = &error.related
+    match *related
+        Option::Some point => (point.start as I64).println!
+        Option::None => (-1).println!
+    diagnostic = error.diagnostic!
+    location = &diagnostic.primary
+    match *location
+        DiagnosticLocation::Input bounds => check (bounds.start == error.range.start && bounds.end == error.range.end)
+        _ => check false
+
+run_case: &Str -> TokenStream -> ()
+run_case = name, stream !->
+    name.println!
+    before = stream.spelling!.checked!
+    mut cursor = (Cursor::new stream.clone!).checked!
+    loop
+        offset = cursor.byte_offset!
+        match cursor.consume!
+            Result::Ok value =>
+                match value
+                    Option::None => break
+                    Option::Some token =>
+                        "T ".print!
+                        token.tag!.print!
+                        " ".print!
+                        token.range.start.print!
+                        " ".print!
+                        token.range.end.print!
+                        " ".print!
+                        context = &token.context
+                        match *context
+                            Option::Some handle => (handle.handle as I64).println!
+                            Option::None => (-1).println!
+                        copied = (cursor.tokens &token).checked!
+                        check (copied.sources[0].identity == (41 as U64))
+                        check (copied.segments[0].context.handle == (7 as U32))
+                        check (copied.spelling!.checked! == &before[(token.range.start as I64)..(token.range.end as I64)])
+                        origin = &copied.segments[0].origin
+                        match *origin
+                            Option::Some retained => check true
+                            Option::None => check false
+            Result::Err error =>
+                check (cursor.byte_offset! == offset)
+                error_line &error
+                match cursor.peek!
+                    Result::Err repeated => check (repeated.code! == error.code!)
+                    Result::Ok value => check false
+                break
+    check (stream.spelling!.checked! == before)
+    group_cursor = (Cursor::new stream).checked!
+    match group_cursor.groups!
+        Result::Err error => error_line &error
+        Result::Ok groups =>
+            i = 0
+            while i < groups.len!
+                group = &groups[i]
+                "G ".print!
+                delimiter = &group.delimiter
+                tag = match *delimiter
+                    Delimiter::Paren => "paren"
+                    Delimiter::Bracket => "bracket"
+                    Delimiter::Brace => "brace"
+                tag.print!
+                " ".print!
+                group.open.start.print!
+                " ".print!
+                group.open.end.print!
+                " ".print!
+                group.close.start.print!
+                " ".print!
+                group.close.end.print!
+                " ".print!
+                parent = &group.parent
+                match *parent
+                    Option::Some index => index.println!
+                    Option::None => (-1).println!
+                inner = (group_cursor.group_inner group).checked!
+                check (inner.len_bytes!.checked! == group.close.start - group.open.end)
+                i = i + 1
+    "done".println!

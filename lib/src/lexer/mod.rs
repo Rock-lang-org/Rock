@@ -6,6 +6,9 @@ pub(crate) mod literal;
 mod span;
 mod token;
 
+#[cfg(test)]
+mod syntax_library_tests;
+
 pub use lexer::LexerError;
 #[cfg(test)]
 mod test_support;

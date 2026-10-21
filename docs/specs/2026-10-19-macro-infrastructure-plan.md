@@ -2670,6 +2670,66 @@ CI workflow was added or run.
 | C.07 | Extend `DeriveInput` to enums and named/positional/nullary variants supported by Rock. | Variant/field order and shape, nested types, and generic cases match the compiler; malformed/unsupported variants report structured errors. Struct handling continues to pass. | I |
 | C.08 | Complete token emission/builders for transformed supported nodes and the impl syntax required by the derive proofs. Keep quote-style conveniences ordinary library helpers. | Parse/emit/parse and edited-node tests preserve unchanged slices/contexts/trivia and grouping. Captured input names bind correctly in emitted impls; construction does not stringify captured subtrees or require a quotation proc macro to build itself. | I |
 
+#### C.03 completion receipt
+
+New ordinary package `rock_syntax/` depends on the SDK, never the reverse. Its
+`cursor::Cursor` validates SDK preservation data and indexes UTF-8 scalars without
+requiring valid Rock syntax. Explicit peek/consume operations interpret supported
+lexical pieces lazily, preserve trivia and opaque captures, and leave a failing
+piece unconsumed. Tokens retain logical ranges and agreed binding contexts;
+materialization uses checked original SDK slices, not reconstructed spelling.
+An explicit group request validates the remaining input iteratively and returns
+flat preorder delimiter/range/parent records. Typed parse errors carry logical
+input ranges, optional related opening ranges, and standalone SDK diagnostics;
+rejected caller slice ranges cannot produce invalid diagnostic labels.
+
+The documented initial lexical subset covers ASCII names/keywords, current
+numeric/prefix/symbol spellings, spaces/tabs/CR/LF, quoted boundaries, comments,
+and explicit groups including repetition delimiters. Unicode/NUL within quoted
+or comment text and opaque captures stay intact. Non-ASCII identifier/whitespace
+classification is explicitly unsupported, not approximated; there is no Unicode
+classification API in the current std. This slice does not synthesize layout
+tokens, decode literal values, parse types/declarations, resolve operators or
+emit syntax. Defaults/hard ceilings are 1 MiB logical input, 65,536 pieces,
+128 group levels and 16,384 groups, with checked lower caller limits.
+
+Twenty-five shared positive/negative fixtures compare the actual Rust and Rock
+lexical/group interpretations, including classifications/ranges, binding-context
+presence, group ranges/parents and error categories/ranges. Supplementary native
+controls cover join/context boundaries, preserved snapshot/context/origin data,
+opaque/nested/interrupted captures, unsupported forms, invalid SDK data/slices,
+limits, EOF and failure rollback. The native proof compiles the ordinary library
+artifact and an ordinary in-memory client with proc execution disabled; it also
+compiles/runs the complete README example. No `MacroContext`, worker or RPC is
+needed at runtime. Rust oracle coverage stays in default regressions; native
+conformance is an explicit ignored group included by `cargo macro-acceptance`.
+The test-only Rust wiring keeps private compiler lexical views private and
+reuses the SDK prerequisite cache rather than adding a new transport encoding.
+
+Final verification (test suites executed serially; warnings remain):
+
+- `cargo test -p rock-lib --lib macro_acceptance_syntax_cursor_and_groups -- --ignored --nocapture`:
+  native conformance, supplementary controls and README example pass.
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 442 pass; the new
+  native syntax group is ignored here and was executed explicitly above.
+- `cargo test -p rock-lib`: 2,753 units, 806 main integrations, six diagnostic
+  integrations, 14 process integrations, four SDK smoke/helper tests and one
+  parser integration pass. The native syntax group, ten SDK acceptance groups
+  and one doctest remain explicitly ignored in this default gate.
+- `cargo test -p rock -p rockc -p rock-shared`, with `ROCK_SYSROOT` pointing to
+  the existing workspace `target/` development bundle: 94/57/30 units and one
+  shared doctest pass; five cold macro CLI acceptance scenarios remain ignored.
+- `cargo clippy --workspace --all-targets` and `cargo build --release`: pass.
+  Clippy also reports the intentional repeated inclusion of the shared native
+  prerequisite cache-key helper inside compiler tests; no lint is suppressed.
+
+Receipts are `/tmp/opencode/macro-c03-{native-final,macro-regressions,library,cli-shared,clippy,release-build}.log`.
+The shared development std artifact/object hashes remain unchanged. No formatter,
+formatting check, CI workflow, SDK wire layout or compiler-owned package loading
+was added. Worker protocol 7, `RKLOSS04` and product format 54 remain unchanged.
+C.04 type syntax, later declaration parsing and C.09 derive dispatch are not
+implemented by this receipt.
+
 Each grammar slice publishes its supported forms in library docs and adds shared
 conformance fixtures. A concrete missing form needed by the next proof becomes a
 small parser extension with tests; do not silently grow this into all of Syn or

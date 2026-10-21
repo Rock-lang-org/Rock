@@ -1,0 +1,154 @@
+split: &Str -> U64 -> JoinBoundary -> U32 -> TokenStream
+split = text, cut, boundary, context ->
+    mut stream = input text
+    mut left = stream.segments[0].clone!
+    mut right = stream.segments[0].clone!
+    left.range.end = cut
+    right.range.start = cut
+    right.context.handle = context
+    right.boundary = boundary
+    stream.segments.set 0, left
+    stream.segments.push right
+    stream
+
+read_error: TokenStream -> &Str -> U64 -> U64 -> ()
+read_error = stream, code, start, end !->
+    before = stream.spelling!.checked!
+    mut cursor = (Cursor::new stream.clone!).checked!
+    match cursor.consume!
+        Result::Err error =>
+            check (error.code! == code && error.range.start == start && error.range.end == end)
+            check (cursor.byte_offset! == (0 as U64))
+        Result::Ok token => check false
+    check (stream.spelling!.checked! == before)
+
+controls = !->
+    adjacent = split "name", 2, JoinBoundary::SourceAdjacent, 7
+    mut cursor = (Cursor::new adjacent).checked!
+    first = cursor.peek!.checked!
+    check (cursor.byte_offset! == (0 as U64))
+    match first
+        Option::Some token => check (token.tag! == "ident" && token.range.end == (4 as U64))
+        Option::None => check false
+    match cursor.consume!.checked!
+        Option::Some token => check (token.range.end == (4 as U64))
+        Option::None => check false
+    match cursor.consume!.checked!
+        Option::None => check true
+        Option::Some token => check false
+    separated = split "name", 2, JoinBoundary::Separate, 9
+    mut cursor = (Cursor::new separated).checked!
+    match cursor.consume!.checked!
+        Option::Some token => check (token.range.end == (2 as U64))
+        Option::None => check false
+    match cursor.consume!.checked!
+        Option::Some token =>
+            check (token.range.start == (2 as U64) && token.range.end == (4 as U64))
+            context = &token.context
+            match *context
+                Option::Some handle => check (handle.handle == (9 as U32))
+                Option::None => check false
+        Option::None => check false
+    read_error (split "name", 2, JoinBoundary::SourceAdjacent, 9), "contexts", 2, 3
+    read_error (split "\"abc\"", 2, JoinBoundary::Separate, 7), "quote", 0, 2
+    read_error (input "é"), "unsupported", 0, 2
+    read_error (input "_雪"), "unsupported", 1, 4
+    read_error (input "abc雪"), "unsupported", 3, 6
+    read_error (input "%é"), "unsupported", 1, 3
+    unicode = (Cursor::new (input "é")).checked!
+    match unicode.slice_range (range 1, 2)
+        Result::Err error => check (error.code! == "input" && error.range.start == (0 as U64) && error.range.end == (2 as U64))
+        Result::Ok stream => check false
+    quoted = split "\"abc\"", 2, JoinBoundary::SourceAdjacent, 9
+    cursor = (Cursor::new quoted).checked!
+    match cursor.peek!.checked!
+        Option::Some token =>
+            check (token.tag! == "string" && token.range.end == (5 as U64))
+            copied = (cursor.tokens &token).checked!
+            check (copied.segments.len! == 2 && copied.segments[1].context.handle == (9 as U32))
+        Option::None => check false
+    mut unresolved = input "name"
+    mut segment = unresolved.segments[0].clone!
+    segment.construction = Option::Some (ConstructionContext
+        invocation: 1
+        kind: ConstructionKind::CallSite)
+    unresolved.segments.set 0, segment
+    read_error unresolved, "construction", 0, 4
+    mut captured = input "x ] unmatched '\n{"
+    length = captured.len_bytes!.checked!
+    captured.expressions.push (ExpressionRange
+        range: range 2, length
+        header_indent: 0)
+    captured.expressions.push (ExpressionRange
+        range: range 4, (length - (1 as U64))
+        header_indent: 0)
+    mut cursor = (Cursor::new captured.clone!).checked!
+    match cursor.next_token!.checked!
+        Option::Some token => check (token.tag! == "ident")
+        Option::None => check false
+    match cursor.next_token!.checked!
+        Option::Some token =>
+            check (token.tag! == "expression" && token.range.start == (2 as U64) && token.range.end == length)
+            retained = (cursor.tokens &token).checked!
+            check (retained.expressions.len! == 2)
+            check (retained.expressions[0].range.start == (0 as U64))
+            check (retained.sources[0].identity == (41 as U64))
+        Option::None => check false
+    groups = (Cursor::new captured).checked!.groups!.checked!
+    check (groups.len! == 0)
+    mut interrupted = input "\"abc\""
+    interrupted.expressions.push (ExpressionRange
+        range: range 2, 3
+        header_indent: 0)
+    read_error interrupted, "quote", 0, 2
+    mut limits = Limits::standard!
+    limits.max_bytes = 2
+    match Cursor::with_limits (input "abc"), limits
+        Result::Err error => check (error.code! == "bytes" && error.range.end == (3 as U64))
+        Result::Ok cursor => check false
+    mut limits = Limits::standard!
+    limits.max_pieces = 0
+    mut cursor = (Cursor::with_limits (input "x"), limits).checked!
+    match cursor.consume!
+        Result::Err error => check (error.code! == "pieces" && cursor.byte_offset! == (0 as U64))
+        Result::Ok token => check false
+    mut limits = Limits::standard!
+    limits.max_depth = 1
+    cursor = (Cursor::with_limits (input "((x))"), limits).checked!
+    match cursor.groups!
+        Result::Err error => check (error.code! == "depth" && error.range.start == (1 as U64))
+        Result::Ok groups => check false
+    mut limits = Limits::standard!
+    limits.max_groups = 1
+    cursor = (Cursor::with_limits (input "()()"), limits).checked!
+    match cursor.groups!
+        Result::Err error => check (error.code! == "groups" && error.range.start == (2 as U64))
+        Result::Ok groups => check false
+    mut limits = Limits::standard!
+    limits.max_depth = -1
+    match Cursor::with_limits (input ""), limits
+        Result::Err error => check (error.code! == "limits")
+        Result::Ok cursor => check false
+    mut limits = Limits::standard!
+    limits.max_bytes = 1048577
+    match Cursor::with_limits (input ""), limits
+        Result::Err error => check (error.code! == "limits")
+        Result::Ok cursor => check false
+    limits = Limits
+        max_bytes: 0
+        max_pieces: 0
+        max_depth: 0
+        max_groups: 0
+    mut empty = (Cursor::with_limits (input ""), limits).checked!
+    check (empty.groups!.checked!.len! == 0)
+    match empty.consume!.checked!
+        Option::None => check true
+        Option::Some token => check false
+    mut malformed = input "x"
+    mut segment = malformed.segments[0].clone!
+    segment.range.end = 2
+    malformed.segments.set 0, segment
+    match Cursor::new malformed
+        Result::Err error => check (error.code! == "input")
+        Result::Ok cursor => check false
+    "controls passed".println!
