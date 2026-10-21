@@ -54,7 +54,10 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                             self.executed += 1;
                             continue;
                         }
-                        Ok(Some(super::registry::MacroEntry { definition: MacroDefinition::SourceProcedural(_), .. })) => {
+                        Ok(Some(super::registry::MacroEntry { definition: MacroDefinition::SourceProcedural(declaration), .. })) => {
+                            if declaration.kind != super::proc_macro::ProcMacroKind::FunctionLike {
+                                return Err(super::proc_macro_error("source procedural macro is not function-like", invocation.span.clone()));
+                            }
                             return Err(super::proc_macro_error(
                                 "a source procedural macro cannot execute while building its own provider; use a built dependency",
                                 invocation.span.clone(),
@@ -75,6 +78,12 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                 TopLevel::FunctionDecl(function) if self.phase == Phase::Expressions => self.lambda(&mut function.lambda, 0)?,
                 TopLevel::ProcMacroDecl(declaration) if self.phase == Phase::Expressions => self.lambda(&mut declaration.function.lambda, 0)?,
                 TopLevel::StructDecl(declaration) if self.phase == Phase::Expressions => self.fields(&mut declaration.fields)?,
+                TopLevel::DerivedDecl(declaration) if self.phase == Phase::Expressions => match &mut declaration.target {
+                    DeriveTarget::Struct(node) => self.fields(&mut node.fields)?,
+                    DeriveTarget::Enum(node) => for variant in &mut node.variants {
+                        if let NamedFieldsOrTypesList::NamedFields(fields) = &mut variant.fields { self.fields(fields)?; }
+                    },
+                },
                 TopLevel::EnumDecl(declaration) if self.phase == Phase::Expressions => {
                     for variant in &mut declaration.variants {
                         if let NamedFieldsOrTypesList::NamedFields(fields) = &mut variant.fields { self.fields(fields)?; }
@@ -86,7 +95,7 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                 | TopLevel::GlobImport(_) | TopLevel::Export(_) | TopLevel::GlobExport(_) | TopLevel::Extern(_)
                 | TopLevel::InfixOperator(_, _) | TopLevel::FunctionSig(_) | TopLevel::NewType(_, _, _)
                 | TopLevel::FunctionDecl(_) | TopLevel::StructDecl(_) | TopLevel::EnumDecl(_)
-                | TopLevel::TraitDecl(_) | TopLevel::Impl(_) => {}
+                | TopLevel::TraitDecl(_) | TopLevel::Impl(_) | TopLevel::DerivedDecl(_) => {}
             }
             output.push(item);
         }
@@ -192,7 +201,10 @@ impl<'a, 'cfg> ExpansionVisitor<'a, 'cfg> {
                 };
                 let path = crate::collect::resolver::binding_path(&invocation.path.path).unwrap_or_default();
                 let resolved = self.registry.resolve_contextual(&self.scope, &path, &invocation.span, self.context)?;
-                if matches!(&resolved, Some(super::registry::MacroEntry { definition: MacroDefinition::SourceProcedural(_), .. })) {
+                if let Some(super::registry::MacroEntry { definition: MacroDefinition::SourceProcedural(declaration), .. }) = &resolved {
+                    if declaration.kind != super::proc_macro::ProcMacroKind::FunctionLike {
+                        return Err(super::proc_macro_error("source procedural macro is not function-like", invocation.span.clone()));
+                    }
                     return Err(failure(Diagnostic::new(
                         "a source procedural macro cannot execute while building its own provider; use a built dependency".into(),
                         invocation.span.clone(),

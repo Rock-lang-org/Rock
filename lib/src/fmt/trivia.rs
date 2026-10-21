@@ -255,6 +255,7 @@ impl<'a> FormatTrivia<'a> {
         TopLevel::NewType(inner, _, _) => Some(&inner.span),
             TopLevel::MacroDecl(decl) => Some(&decl.name.span),
             TopLevel::ProcMacroDecl(declaration) => Some(&declaration.function.name.span),
+            TopLevel::DerivedDecl(_) => None,
             TopLevel::MacroInvoc(invoc) => Some(&invoc.span),
         }
     }

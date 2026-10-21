@@ -1,6 +1,7 @@
 mod array;
 mod block;
 mod do_expr;
+mod derive;
 mod enum_decl;
 mod expression;
 mod function_decl;

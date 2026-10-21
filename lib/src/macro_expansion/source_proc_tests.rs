@@ -33,8 +33,6 @@ fn macro_b_12_parses_proc_entries_beside_declarative_definitions() {
 #[test]
 fn macro_b_12_derive_declarations_and_names_are_reserved() {
     for source in [
-        "macro derive Show = context, input -> input\n",
-        "< macro derive Show = context, input -> input\n",
         "macro derive = context, input -> input\n",
         "macro derive\n    =>\n        1\n",
     ] {

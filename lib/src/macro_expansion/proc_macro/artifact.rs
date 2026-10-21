@@ -87,7 +87,7 @@ impl ProcMacroArtifact {
         let mut names = BTreeSet::new();
         let mut identities = BTreeSet::new();
         for export in &self.exports {
-            if export.kind != ProcMacroKind::FunctionLike || export.name.split("::").any(str::is_empty)
+            if !matches!(export.kind, ProcMacroKind::FunctionLike | ProcMacroKind::DeriveLike) || export.name.split("::").any(str::is_empty)
                 || export.identity.is_empty() || !identities.insert(&export.identity) || !names.insert(&export.name) {
                 return Err("invalid or unsupported proc export identity/kind".into());
             }

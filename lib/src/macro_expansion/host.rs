@@ -202,7 +202,10 @@ pub(crate) fn install(ast: &mut Program, graph: &mut ModuleGraph, context: &Macr
     let entries_by_id: HashMap<_, _> = entries.iter().map(|entry| (entry.id, entry)).collect();
     let selected = exports.iter().map(|export| entries_by_id.get(&export.definition).map(|entry| (*entry, export))
         .ok_or_else(|| failure("source export has no retained implementation".into()))).collect::<Result<Vec<_>, _>>()?;
-    let source = template(selected.len(), &span)?;
+    // Derive exports are publishable metadata now, but only function-like entries
+    // are callable through this bootstrap until derive dispatch is implemented.
+    let callable: Vec<_> = selected.iter().copied().filter(|(_, export)| export.export.kind == super::proc_macro::ProcMacroKind::FunctionLike).collect();
+    let source = template(callable.len(), &span)?;
     let bytes = selected.iter().try_fold(source.len(), |bytes, (_, export)| bytes.checked_add(export.export.identity.len()));
     if bytes.is_none_or(|bytes| bytes > super::token_tree::MACRO_LIMITS.max_source_bytes) {
         return Err(failure("generated host identities exceed the source byte limit".into()));
@@ -225,7 +228,7 @@ pub(crate) fn install(ast: &mut Program, graph: &mut ModuleGraph, context: &Macr
     let signature = wrapper.0.top_levels.iter().find_map(|item| match item {
         TopLevel::FunctionSig(signature) => Some(signature.clone()), _ => None,
     }).ok_or_else(|| failure("missing generated entry signature".into()))?;
-    let rewrite = Rewrite { selected: &selected, boot };
+    let rewrite = Rewrite { selected: &callable, boot };
     for item in &mut wrapper.0.top_levels {
         if let TopLevel::FunctionDecl(function) = item { rewrite.block(&mut function.lambda.body); }
     }
@@ -261,7 +264,7 @@ mod tests {
 
     #[test]
     fn macro_b_13_bootstrap_is_ordinary_bounded_syntax() {
-        for count in [1, 2, 16] {
+        for count in [0, 1, 2, 16] {
             let signature = wrapper_signature(count);
             let ParseType::Function(parts) = signature.sig else { panic!("ordinary arrow signature") };
             assert_eq!(parts.len(), 3);

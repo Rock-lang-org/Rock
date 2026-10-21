@@ -70,6 +70,8 @@ generate_visitor_trait!(
     TopLevel
     MacroDecl
     ProcMacroDecl
+    DerivedDecl
+    DeriveAttachment
     MacroInvoc
     TraitDecl
     Impl
@@ -152,6 +154,7 @@ pub fn walk_top_level<'a, V: Visitor<'a>>(visitor: &mut V, top_level: &'a TopLev
         TopLevel::InfixOperator(_precedence, _name) => (),
         TopLevel::MacroDecl(m) => visitor.visit_macro_decl(m),
         TopLevel::ProcMacroDecl(declaration) => visitor.visit_proc_macro_decl(declaration),
+        TopLevel::DerivedDecl(declaration) => visitor.visit_derived_decl(declaration),
         TopLevel::MacroInvoc(m) => visitor.visit_macro_invoc(m),
         TopLevel::Extern(sig) => visitor.visit_function_sig(sig),
         TopLevel::FunctionSig(sig) => visitor.visit_function_sig(sig),
@@ -644,6 +647,16 @@ pub fn walk_macro_decl<'a, V: Visitor<'a>>(_visitor: &mut V, _m: &'a MacroDecl) 
 pub fn walk_proc_macro_decl<'a, V: Visitor<'a>>(visitor: &mut V, declaration: &'a ProcMacroDecl) {
     visitor.visit_function_decl(&declaration.function);
 }
+
+pub fn walk_derived_decl<'a, V: Visitor<'a>>(visitor: &mut V, declaration: &'a DerivedDecl) {
+    for attachment in &declaration.derives { visitor.visit_derive_attachment(attachment); }
+    match &declaration.target {
+        DeriveTarget::Struct(node) => visitor.visit_struct_decl(node),
+        DeriveTarget::Enum(node) => visitor.visit_enum_decl(node),
+    }
+}
+
+pub fn walk_derive_attachment<'a, V: Visitor<'a>>(_visitor: &mut V, _attachment: &'a DeriveAttachment) {}
 
 // Macro paths and retained inputs are not ordinary value references.
 pub fn walk_macro_invoc<'a, V: Visitor<'a>>(_visitor: &mut V, _m: &'a MacroInvoc) {}

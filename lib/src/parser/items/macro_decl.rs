@@ -28,13 +28,24 @@ fn macro_name(stream: Input) -> IResult<crate::ast::Ident> {
 
 pub fn proc_macro_decl(stream: Input) -> IResult<crate::ast::ProcMacroDecl> {
     let (stream, _) = TokenType::Keyword("macro".into()).process(stream)?;
+    if matches!(stream.seek()?.token_type, TokenType::Ident(ref name) if name == "derive") {
+        let marker = stream.seek()?.span;
+        let (next, _) = stream.consume()?;
+        let (next, name) = super::derive::named_segment(next).map_err(|error| required_macro_input(error, "'derive' is reserved for derive macro declarations; expected a derive name", marker))?;
+        let (next, _) = TokenType::Equal.process(next).map_err(|error| required_macro_input(error, "expected '=' in derive macro declaration", name.span.clone()))?;
+        let (next, lambda) = super::lambda_decl(next)?;
+        let (next, _) = TokenType::Eol.process(next)?;
+        let id = crate::ast::NodeId::fresh().map_err(|message| ParseError::HardError(message.into(), name.span.clone()))?;
+        let function = crate::ast::FunctionDecl { name, lambda, self_receiver: None, self_context: Default::default(), is_unsafe: false, exported: false };
+        return Ok((next, crate::ast::ProcMacroDecl { id, kind: crate::macro_expansion::proc_macro::ProcMacroKind::DeriveLike, function }));
+    }
     // Check the name before the shared ordinary function parser, so reserved
     // derive syntax receives its own diagnostic instead of an expected '='.
     macro_name(stream)?;
     let (stream, function) = super::function_decl(stream)?;
     let id = crate::ast::NodeId::fresh()
         .map_err(|message| ParseError::HardError(message.into(), function.name.span.clone()))?;
-    Ok((stream, crate::ast::ProcMacroDecl { id, function }))
+    Ok((stream, crate::ast::ProcMacroDecl { id, kind: crate::macro_expansion::proc_macro::ProcMacroKind::FunctionLike, function }))
 }
 
 pub fn macro_entry(stream: Input) -> IResult<MacroEntry> {
@@ -87,13 +98,14 @@ pub(super) fn macro_path(stream: Input) -> IResult<(crate::lexer::Span, crate::a
     let mut path = vec![crate::ast::IdentOrType::Ident(Ident { name, span: span.clone(), context })];
     while matches!(stream.seek().ok().map(|token| token.token_type), Some(TokenType::DoubleColon)) {
         let (next, _) = TokenType::DoubleColon.process(stream)?;
-        let (next, part) = ident.process(next).map_err(|error| required_macro_input(error, "expected macro path segment after '::'", next.eof_span()))?;
+        let (next, part) = super::derive::named_segment(next).or_else(|_| ident(next))
+            .map_err(|error| required_macro_input(error, "expected macro path segment after '::'", next.eof_span()))?;
         span.end = part.span.end;
         path.push(crate::ast::IdentOrType::Ident(part));
         stream = next;
     }
     if path.len() == 1 && matches!(&path[0], crate::ast::IdentOrType::Ident(ident) if ident.name == "derive") {
-        return Err(ParseError::HardError("%derive attachment parsing is not implemented".into(), span));
+        return Err(ParseError::HardError("%derive must precede a struct or enum, not occur as an expression".into(), span));
     }
     Ok((stream, (span, crate::ast::IdentifierPath { path })))
 }
@@ -134,7 +146,7 @@ pub fn macro_expression(stream: Input) -> IResult<MacroInvoc> {
     Ok((stream, MacroInvoc { header_indent, id, parent: stream.expansion_parent, output: crate::ast::MacroOutputCategory::Expression, path, span, args, arguments, literal_ranges, block: None }))
 }
 
-fn required_macro_input(error: ParseError, message: &str, span: crate::lexer::Span) -> ParseError {
+pub(super) fn required_macro_input(error: ParseError, message: &str, span: crate::lexer::Span) -> ParseError {
     match error.without_source_context() {
         error @ (ParseError::Lexer(_) | ParseError::UnexpectedIndent(_, _) | ParseError::HardError(_, _)) => error,
         _ => ParseError::HardError(message.into(), span),

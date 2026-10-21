@@ -49,6 +49,16 @@ pub struct MacroEntry {
     pub definition: MacroDefinition,
 }
 
+impl MacroEntry {
+    pub(super) fn proc_kind(&self) -> Option<&super::proc_macro::ProcMacroKind> {
+        match &self.definition {
+            MacroDefinition::Declarative(_) => None,
+            MacroDefinition::Procedural(entry) => Some(&entry.export.kind),
+            MacroDefinition::SourceProcedural(declaration) => Some(&declaration.kind),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ModuleTarget {
     Source(BindingPath),
@@ -322,7 +332,7 @@ impl MacroRegistry {
                 let export = SourceProcMacroExport {
                     definition: declaration.id, module: module.clone(),
                     export: ProcMacroExport { name: public_name.clone(), identity: format!("{crate_identity}::{public_name}"),
-                        kind: super::proc_macro::ProcMacroKind::FunctionLike,
+                        kind: declaration.kind.clone(),
                         input_shape: super::proc_macro::ProcMacroInputShape::TokenStream },
                 };
                 if exports.insert(public_name.clone(), export).is_some() {

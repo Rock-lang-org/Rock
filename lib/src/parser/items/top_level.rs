@@ -213,6 +213,19 @@ fn language_item_top_level(stream: Input) -> IResult<TopLevel> {
 
 pub fn top_level(stream: Input) -> IResult<TopLevel> {
     let (start, _) = empty_lines(stream)?;
+    let (head, _) = indent(start)?;
+    if super::derive::is_directive(head)? { return super::derive::derived_decl(start); }
+    let (declaration_head, exported) = if matches!(head.seek()?.token_type, TokenType::Operator(ref op) if op == "<") {
+        (head.consume()?.0, true)
+    } else { (head, false) };
+    if matches!(declaration_head.seek()?.token_type, TokenType::Keyword(ref word) if word == "macro")
+        && matches!(declaration_head.seek_nth(1)?.token_type, TokenType::Ident(ref word) if word == "derive") {
+        // This prefix commits to a derive declaration, not a declarative macro;
+        // speculative alternatives must not mask lexical or body errors.
+        let (rest, mut declaration) = proc_macro_decl(declaration_head)?;
+        declaration.function.exported = exported;
+        return Ok((rest, TopLevel::ProcMacroDecl(declaration)));
+    }
     let (rest, mut item) = top_level_inner(start.clone())?;
     let original = match &mut item {
         TopLevel::StructDecl(declaration) => Some(&mut declaration.original),

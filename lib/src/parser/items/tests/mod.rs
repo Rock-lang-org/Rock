@@ -1,4 +1,5 @@
 mod common;
+mod derive;
 
 mod array;
 mod ast_validation;

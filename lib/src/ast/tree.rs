@@ -64,6 +64,7 @@ pub enum TopLevel {
     Impl(Impl),
     NewType(ParseTypeInner, Vec<GenericParamDecl>, ParseType),
     ProcMacroDecl(ProcMacroDecl),
+    DerivedDecl(DerivedDecl),
 }
 
 impl TopLevel {
@@ -76,6 +77,7 @@ impl TopLevel {
             TopLevel::Impl(i) => i.name.named_inner().map(|name| &name.name),
             TopLevel::MacroDecl(md) => Some(&md.name.name),
             TopLevel::ProcMacroDecl(declaration) => Some(&declaration.function.name.name),
+            TopLevel::DerivedDecl(declaration) => Some(&declaration.target.name().name),
             TopLevel::MacroInvoc(mi) => mi.path.path.last().and_then(|part| match part {
                 IdentOrType::Ident(ident) => Some(&ident.name),
                 IdentOrType::Type(_) => None,
@@ -346,7 +348,40 @@ pub struct MacroDecl {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct ProcMacroDecl {
     pub id: super::NodeId,
+    pub kind: crate::macro_expansion::proc_macro::ProcMacroKind,
     pub function: FunctionDecl,
+}
+
+/// Attachments are macro-namespace data, not executable function-like calls.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeriveAttachment {
+    pub id: super::InvocationId,
+    pub parent: Option<crate::macro_expansion::ExpansionId>,
+    pub path: IdentifierPath,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DeriveTarget {
+    Struct(StructDecl),
+    Enum(EnumDecl),
+}
+
+impl DeriveTarget {
+    pub fn name(&self) -> &ParseTypeInner {
+        match self { Self::Struct(node) => &node.name, Self::Enum(node) => &node.name }
+    }
+
+    pub fn original(&self) -> Option<&super::DeclarationInput> {
+        match self { Self::Struct(node) => node.original.as_ref(), Self::Enum(node) => node.original.as_ref() }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DerivedDecl {
+    pub id: super::NodeId,
+    pub derives: Vec<DeriveAttachment>,
+    pub target: DeriveTarget,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]

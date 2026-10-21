@@ -57,7 +57,7 @@ fn macro_b_14_host_identity_files_and_compatibility_reject_before_spawn() {
         header_indent: 0, block_base: None, input: encode_stream(&crate::macro_expansion::token_tree::source("")).unwrap(),
         definition_dependencies: Vec::new(), views: Default::default(),
     };
-    for mutation in 0..7 {
+    for mutation in 0..8 {
         let mut bad = artifact.clone();
         match mutation {
             0 => bad.host_triple = "different-host".into(),
@@ -66,7 +66,8 @@ fn macro_b_14_host_identity_files_and_compatibility_reject_before_spawn() {
             3 => bad.artifact_format_version -= 1,
             4 => bad.executable_identity.sha256[0] ^= 1,
             5 => bad.required_files[0].identity.sha256[0] ^= 1,
-            _ => bad.exports[0].kind = ProcMacroKind::DeriveLike,
+            6 => bad.exports[0].kind = ProcMacroKind::DeriveLike,
+            _ => bad.exports[0].kind = ProcMacroKind::AttributeLike,
         }
         let error = run_proc_macro_process(&bad, &request, Duration::from_secs(1), false, None).unwrap_err();
         assert!(!error.contains("failed to start"), "validation must precede spawn: {error}");

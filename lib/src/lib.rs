@@ -292,6 +292,13 @@ fn compile_frontend(config: &Config, sdk: Option<&macro_expansion::host::ProcMac
     let ExpandedFrontend { ast, ctx, source_graph, source_db, diagnostic_sources, macro_source_map,
         binding_environments, effective_current_crate_name, macro_diagnostics, proc_exports } = expand_frontend(config, sdk)?;
 
+    macro_expansion::reject_pending_derives(&ast.module)
+        .map_err(|errors| macro_source_map.map_diagnostics(errors).with_sources(&diagnostic_sources))?;
+    for module in source_graph.modules() {
+        macro_expansion::reject_pending_derives(&module.module)
+            .map_err(|errors| macro_source_map.map_diagnostics(errors).with_sources(&diagnostic_sources))?;
+    }
+
     // Source proc declarations require the explicit checked host-build API;
     // ordinary compilation must never silently discard their implementations.
     if config.target_role == crate_system::TargetRole::ProcMacro && sdk.is_none() {

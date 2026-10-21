@@ -221,6 +221,7 @@ impl FormatNode for TopLevel {
             }
             TopLevel::MacroDecl(decl) => decl.fmt_with(context, f),
             TopLevel::ProcMacroDecl(declaration) => {
+                if declaration.kind != crate::macro_expansion::proc_macro::ProcMacroKind::FunctionLike { return Err(fmt::Error); }
                 if declaration.function.exported { write!(f, "< ")?; }
                 write!(f, "macro ")?;
                 let mut function = declaration.function.clone();
@@ -238,6 +239,8 @@ impl FormatNode for TopLevel {
             TopLevel::FunctionSig(sig) => sig.fmt_with(context, f),
             TopLevel::FunctionDecl(decl) => decl.fmt_with(context, f),
             TopLevel::StructDecl(decl) => decl.fmt_with(context, f),
+            // Formatting support remains deferred; never drop attachment syntax.
+            TopLevel::DerivedDecl(_) => Err(fmt::Error),
             TopLevel::TraitDecl(decl) => decl.fmt_with(context, f),
             TopLevel::EnumDecl(decl) => decl.fmt_with(context, f),
             TopLevel::Impl(impl_) => impl_.fmt_with(context, f),

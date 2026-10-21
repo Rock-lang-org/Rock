@@ -2599,9 +2599,65 @@ The first library attempt hit `Text file busy` while spawning an existing native
 worker fixture; its fully qualified exact retry and the complete library rerun
 both passed without source changes to that fixture or transport.
 
-This completes declaration retention only. C.02 attachments, derive dispatch and
-`rock_syntax` are not implemented; worker protocol 7 and product format 54 are
-unchanged. No formatter or formatting check was run.
+This receipt completes declaration retention only; C.02 attachments, derive
+dispatch and `rock_syntax` were still pending at that snapshot. Worker protocol 7
+and product format 54 are unchanged. No formatter or formatting check was run.
+
+#### C.02 completion receipt
+
+The parser now retains ordered `%derive path, path` attachments in a typed
+`DerivedDecl` wrapper whose target can only be a struct or enum. Consecutive
+directives, qualified paths, trailing commas, comments/blank lines, visibility,
+and nested scopes are supported. Each attachment has independent invocation
+identity, syntax contexts and expansion parent; the declaration has stable node
+identity. Parsing the target independently preserves its original C.01 input
+without any attached directive. Reserved derive prefixes commit before ordinary
+macro/block alternatives, preserving requested lexical failures.
+
+`macro derive Name = ...` declarations use the existing source proc-macro target,
+namespace and ordinary export rules, publishing `DeriveLike` metadata. At the
+stable item-expansion frontier, metadata-only validation resolves attachments
+through the shared registry and rejects missing/private paths, wrong kinds and
+canonical duplicates without starting workers. Artifact metadata accepts derive
+exports but still rejects attribute kinds. Host bootstrap callable selection
+remains function-like only; derive bodies retain the ordinary implementation
+signature-checking path, including providers with no callable exports.
+
+Fourteen `macro_c_02_` tests cover these paths, malformed/empty lists,
+missing/intervening/unsupported targets, scope escapes, Rust-style/arbitrary
+attributes, generated declarations/attachments, retained input, serialization,
+source-file visibility, invalid synthetic metadata, and wrong-kind item and
+expression calls. The existing bootstrap parser test also covers zero callable
+entries. The complete `macro_` unit group passes all 440 tests with one test
+thread; its initial parallel run hit the previously observed `Text file busy`
+race in two existing native-worker fixtures, without changes to those fixtures.
+
+Final verification (test suites executed serially; warnings remain):
+
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 440 pass, including
+  all 14 C.02 tests and adjacent declaration-retention, source-export, bootstrap,
+  artifact, hygiene and expansion regressions.
+- `cargo test -p rock-lib`: 2,751 units, 806 main integrations, six diagnostic
+  integrations, 14 process integrations, four SDK smoke/helper tests and one
+  parser integration pass; ten native SDK acceptance groups and one doctest
+  remain explicitly ignored under the manual-acceptance split.
+- `cargo test -p rock -p rockc -p rock-shared`, with `ROCK_SYSROOT` pointing to
+  the existing workspace `target/` development bundle: 94/57/30 units and one
+  shared doctest pass; five cold macro CLI acceptance scenarios remain ignored.
+- `cargo clippy --workspace --all-targets` and `cargo build --release`: pass.
+
+Receipts are `/tmp/opencode/macro-c02-{macro-regressions-serial,library,cli-shared-final,clippy,release-build}.log`.
+The initial CLI run resolved Cargo's redirected cache target as its explicit
+sysroot, which had no bundled std. The fully qualified sysroot control and the
+complete CLI/shared rerun passed with the existing development bundle supplied
+through `ROCK_SYSROOT`; its artifact/object hashes remain unchanged, with no std
+rebuild or compiler-loading change.
+
+This completes attachment syntax and metadata validation only. Compilation
+explicitly rejects unexecuted attachments before ordinary collection; C.09 owns
+derive dispatch/consumption and `rock_syntax` begins at C.03. Worker protocol 7,
+`RKLOSS04` and product format 54 are unchanged. No formatter, formatting check or
+CI workflow was added or run.
 
 ### Cb. Grow the syntax library one grammar family at a time
 

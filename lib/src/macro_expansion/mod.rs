@@ -48,6 +48,10 @@ mod resolution_tests;
 #[cfg(test)]
 mod source_proc_tests;
 
+mod derives;
+#[cfg(test)]
+mod derive_tests;
+
 #[cfg(test)]
 mod traversal_tests;
 
@@ -61,6 +65,7 @@ mod budget;
 pub use budget::ExpansionLimits;
 
 pub use context::MacroExpansionContext;
+pub(crate) use derives::reject_pending as reject_pending_derives;
 pub use source_map::{
     ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, OutputProjection, TokenOrigin, TokenProvenance,
 };
@@ -132,6 +137,12 @@ fn expand_forest(
         let registry = registry::MacroRegistry::build_for_expansion(root, &sources, context)?;
         if first_forest_invocation(root, modules).is_none() {
             let registry = registry::MacroRegistry::build_with_modules(root, &sources, context)?;
+            derives::validate(root, &[], &registry, context)?;
+            for loaded in modules.iter() {
+                let mut path: Vec<_> = loaded.qualified_name.split("::").map(String::from).collect();
+                if path.first().map(String::as_str) == context.config.current_crate_name.as_deref() { path.remove(0); }
+                derives::validate(&loaded.module, &registry.loaded_scope(&path), &registry, context)?;
+            }
             let mut visitor = expression::ExpansionVisitor::new(&registry, context, expression::Phase::Expressions);
             visitor.module(root)?;
             for loaded in modules.iter_mut() {
@@ -188,6 +199,10 @@ fn validate_macro_definitions(module: &Module, config: &crate::Config) -> Result
                     "source procedural macro declarations require a [lib] with proc_macro = true".into(),
                     declaration.function.name.span.clone(),
                 ).with_code(crate::diagnostic::DiagnosticCode::Macro));
+            }
+            if !matches!(declaration.kind, ProcMacroKind::FunctionLike | ProcMacroKind::DeriveLike) {
+                self.diagnostics.push(Diagnostic::new("unsupported source procedural macro kind".into(), declaration.function.name.span.clone())
+                    .with_code(crate::diagnostic::DiagnosticCode::Macro));
             }
         }
     }
