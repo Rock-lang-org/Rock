@@ -3219,6 +3219,56 @@ formatter, std-loading policy or compiler-owned derive meaning was added.
 unimplemented steps: external syntax-library trait proofs and final closure are
 not claimed by this dispatch receipt.
 
+#### C.10 completion receipt
+
+The external `metric_derive` fixture now publishes `SumMetric` and the deliberate
+negative `UnboundedMetric` as ordinary source derive exports. Its provider is
+built against the explicit ordinary SDK and `rock_syntax` artifacts; consumers
+receive only explicit std and provider artifacts. The complete build/import/
+attachment/worker/`DeriveInput`/`GenericSyntax`/`ImplBuilder` path compiles and runs
+without compiler-known trait names, reflection callbacks or syntax-library
+package handling.
+
+The fixture-owned `Metric` trait returns `I64`. The derive sums named fields using
+`~I64Add`, supplies scalar generic bounds, and emits target arguments without
+declaration defaults. A fresh bounded generic helper dispatches the explicitly
+caller-owned trait for each field; ordinary unqualified concrete method lookup
+would be ambiguous between the intentional root/nested traits. Target and field
+names are copied from input streams; trait/member identifiers explicitly request
+caller authority. Provider-private `Metric`/`Pair`/`value`, caller functions and
+fields, fresh top-level helpers and nested declarations collide intentionally.
+All remain independent, including the nested `I64` implementation multiplying
+by ten. The executable prints `0 / 18 / 18 / 11 / 19 / 30` on separate lines for
+empty, plain, generic, earlier-parameter-defaulted, private-owner and nested cases.
+
+Six negatives are rejected by ordinary compiler rules, not macro errors:
+missing concrete impl, missing generic obligations during specialization,
+private construction, private access, duplicate impl and overlapping generic/
+concrete impl. The enum negative is instead the provider's explicit structured
+unsupported-input diagnostic, pending C.11. Field-default ASTs survive expansion;
+this does not claim runtime field-default evaluation. A macro-free program with
+an omitted defaulted field reproduces an existing MIR panic (reproducer
+`/tmp/opencode/c10-qualified-baseline.rk`, log
+`/tmp/opencode/macro-c10-default-baseline.log`); executable constructions supply
+all fields explicitly. The earlier call-argument failure was fixture precedence,
+fixed by grouping `helper (&self.field)`, not a compiler hygiene repair.
+
+Verification on the final code snapshot:
+
+- `cargo test -p rock-lib --lib macro_acceptance_derive_struct -- --ignored --nocapture`:
+  one external native group passes in 111.34 seconds, including all six ordinary
+  negatives and retained-default checks (`/tmp/opencode/macro-c10-native-final.log`).
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 457 pass, seven native
+  groups ignored (`/tmp/opencode/macro-c10-regressions.log`).
+- `cargo clippy --workspace --all-targets`: passes with existing warnings
+  (`/tmp/opencode/macro-c10-clippy.log`).
+
+Only test registration, provider/consumer fixtures, their driver and docs changed;
+no compiler/SDK/syntax production code or schema changed. `bd` remains unavailable
+(`command not found`), so the independent field-default limitation could not be
+filed there. No formatter, CI job, source std dependency or push was used.
+C.11 and C.12 remain unimplemented separate steps.
+
 ## Stage gates and final verification
 
 At each stage gate, execute the stage's proposed families plus adjacent existing

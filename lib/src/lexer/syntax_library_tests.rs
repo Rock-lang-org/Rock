@@ -12,6 +12,8 @@ mod macro_structs;
 mod macro_enums;
 #[path = "../../tests/support/macro_emission.rs"]
 mod macro_emission;
+#[path = "../../tests/support/macro_trait_derive.rs"]
+mod macro_trait_derive;
 
 use macro_fixture::SdkCase;
 
@@ -79,4 +81,10 @@ fn macro_c_08_emission_grouping_oracle() {
 #[ignore = "native Rock emission and hygienic impl conformance; run cargo macro-acceptance"]
 fn macro_acceptance_syntax_emission() {
     macro_emission::verify(&SdkCase::new("emission", "").config);
+}
+
+#[test]
+#[ignore = "external syntax-library trait derive; run cargo macro-acceptance"]
+fn macro_acceptance_derive_struct() {
+    macro_trait_derive::verify(&SdkCase::new("derive-struct", "").config);
 }

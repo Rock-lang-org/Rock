@@ -1,0 +1,105 @@
+> rock_macro::*
+> rock_syntax::derive_input::DeriveInput
+> rock_syntax::derive_input::DeriveKind
+> rock_syntax::types::GenericSyntax
+> rock_syntax::emission::ImplBuilder
+
+// Deliberate definition-side collisions: emitted targets and trait references
+// must use caller-owned tokens/explicit caller authority, not these declarations.
+trait Metric
+    @metric: I64
+
+struct Pair
+    < value: Bool
+
+value = -> 1234
+
+captured: &MacroContext -> &TokenStream -> ByteRange -> Result MacroOutput, Diagnostic
+captured = context, stream, range ->
+    match stream.slice range
+        Result::Ok tokens => context.forward tokens
+        Result::Err _ => context.output_error "invalid retained derive slice"
+
+expand_metric: MacroContext -> TokenStream -> Bool -> MacroResult
+expand_metric = context, input, with_bounds ->
+    syntax = match DeriveInput::parse input
+        Result::Ok syntax => syntax
+        Result::Err error => return MacroResult::from_error error.diagnostic!
+    match syntax.decl_kind!
+        DeriveKind::Struct => ()
+        DeriveKind::Enum => return context.fail "SumMetric currently supports structs only"
+    stream = syntax.original!
+    mut names = match context.builder stream
+        Result::Ok names => names
+        Result::Err _ => return context.fail "invalid derive construction input"
+    declaration_name = syntax.decl_name!
+    target = captured &context, stream, (declaration_name.range.clone!) ?
+    params = syntax.params!
+    if params.len! > 0
+        parameter_tokens = match stream.slice (ByteRange
+            start: params[0].range.start
+            end: params[params.len! - 1].range.end)
+            Result::Ok tokens => tokens
+            Result::Err _ => return context.fail "invalid generic parameter slice"
+        generic = match GenericSyntax::parse parameter_tokens
+            Result::Ok generic => generic
+            Result::Err error => return MacroResult::from_error error.diagnostic!
+        arguments = match generic.type_arguments &mut names
+            Result::Ok tokens => context.forward tokens ?
+            Result::Err error => return MacroResult::from_error error.diagnostic!
+        target_parts = [target, arguments]
+        target = context.quote "$0 $1", &target_parts ?
+    trait_ident = match names.call_site_ident (String::from "Metric")
+        Result::Ok name => name
+        Result::Err _ => return context.fail "invalid trait identifier"
+    trait_type = context.forward (trait_ident.tokens.clone!) ?
+    mut implementation = ImplBuilder::new target, (Option::Some trait_type)
+    nodes = syntax.nodes!
+    i = 0
+    while i < params.len!
+        subject = captured &context, stream, (params[i].impl_range.clone!) ?
+        retained_kind = &params[i].kind
+        scalar = match *retained_kind
+            Option::None => true
+            Option::Some root =>
+                index = root
+                while nodes[index].kind.tag! == "group"
+                    index = nodes[index].children[0]
+                params[i].explicit_kind && nodes[index].kind.tag! == "name"
+        bound: Option MacroOutput = if with_bounds && scalar
+            Option::Some (context.forward (trait_ident.tokens.clone!) ?)
+        else
+            Option::None
+        implementation.constrain &context, subject, bound ?
+        i = i + 1
+    method_ident = match names.call_site_ident (String::from "metric")
+        Result::Ok name => name
+        Result::Err _ => return context.fail "invalid metric method identifier"
+    helper_ident = match names.fresh_ident (String::from "value")
+        Result::Ok name => name
+        Result::Err _ => return context.fail "invalid fresh helper identifier"
+    expression = context.syntax "0" ?
+    fields = syntax.fields!
+    i = 0
+    while i < fields.len!
+        field = captured &context, stream, (fields[i].name.range.clone!) ?
+        helper = context.forward (helper_ident.tokens.clone!) ?
+        parts = [expression, field, helper]
+        expression = context.quote "~I64Add ($0), ($2 (&self.$1))", &parts ?
+        i = i + 1
+    definition_parts = [expression]
+    definition = context.quote "-> $0", &definition_parts ?
+    member_parts = [context.forward (method_ident.tokens.clone!) ?]
+    member_name = context.quote "@$0", &member_parts ?
+    implementation.member &context, member_name, (context.syntax "I64" ?), definition ?
+    // The explicit bound selects this caller-owned trait even when another
+    // same-spelling trait implements the same method on a concrete field type.
+    helper_parts = [context.forward helper_ident.tokens ?, context.forward trait_ident.tokens ?, context.forward (method_ident.tokens.clone!) ?]
+    helper_output = context.quote "$0: &T -> I64 where T: $1\n$0 = field -> field.$2!\n", &helper_parts ?
+    output_parts = [helper_output, implementation.emit &context ?]
+    (context.quote "$0\n$1", &output_parts ?).finish!
+
+< macro derive SumMetric = context, input -> expand_metric context, input, true
+
+// Negative control: the body is identical but its generic obligations are absent.
+< macro derive UnboundedMetric = context, input -> expand_metric context, input, false

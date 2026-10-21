@@ -1,0 +1,68 @@
+> metric_derive::SumMetric
+
+trait Metric
+    @metric: I64
+
+impl Metric for I64
+    @metric = -> *self
+
+value = -> 13
+
+%derive SumMetric
+struct Empty
+
+%derive SumMetric
+struct Packet
+    < value: I64 = value!
+    < result: I64 = 7
+
+%derive SumMetric
+struct Pair T, {U = T}
+    < value: T
+    < result: U
+
+%derive SumMetric
+struct Hidden
+    value: I64
+
+impl Hidden
+    new: I64 -> Hidden
+    new = value -> Hidden
+        value: value
+
+mod nested
+    > metric_derive::SumMetric
+
+    trait Metric
+        @metric: I64
+
+    impl Metric for I64
+        @metric = -> ~I64Mul *self, 10
+
+    %derive SumMetric
+    struct Packet
+        < value: I64
+
+    < read = ->
+        packet = Packet
+            value: 3
+        packet.metric!
+
+main = !->
+    empty = Empty
+    empty.metric!.println!
+    packet = Packet
+        value: value!
+        result: 5
+    packet.metric!.println!
+    pair = Pair
+        value: 7
+        result: 11
+    pair.metric!.println!
+    defaulted: Pair I64 = Pair
+        value: 5
+        result: 6
+    defaulted.metric!.println!
+    hidden = Hidden::new 19
+    hidden.metric!.println!
+    nested::read!.println!
