@@ -1,0 +1,192 @@
+> rock_syntax::derive_input::DeriveInput
+> rock_syntax::derive_input::DeclarationLimits
+> rock_syntax::derive_input::DeriveKind
+
+print_tokens: &TokenStream -> ()
+print_tokens = tokens !->
+    text = tokens.spelling!.checked!
+    text.as_str!.print!
+
+print_range: &ByteRange -> ()
+print_range = value !->
+    value.start.print!
+    "|".print!
+    value.end.print!
+
+struct_shape: &DeriveInput -> ()
+struct_shape = syntax !->
+    stream = syntax.original!
+    name = syntax.decl_name!
+    tokens = (stream.slice (name.range.clone!)).checked!
+    print_tokens &tokens
+    "|".print!
+    if syntax.is_public! then "true".print! else "false".print!
+    "|".print!
+    print_range &name.range
+    "\n".print!
+    nodes = syntax.nodes!
+    shapes = type_shapes nodes, stream
+    parameters = syntax.params!
+    i = 0
+    while i < parameters.len!
+        parameter = &parameters[i]
+        "param:".print!
+        tokens = (stream.slice (nodes[parameter.name].range.clone!)).checked!
+        print_tokens &tokens
+        "|".print!
+        kind = &parameter.kind
+        match *kind
+            Option::None => "none".print!
+            Option::Some root =>
+                if parameter.explicit_kind then "explicit:".print! else "holes:".print!
+                shapes[root].as_str!.print!
+        "|".print!
+        default_type = &parameter.default_type
+        match *default_type
+            Option::None => "none".print!
+            Option::Some root => shapes[root].as_str!.print!
+        "\n".print!
+        i = i + 1
+    fields = syntax.fields!
+    i = 0
+    while i < fields.len!
+        field = &fields[i]
+        "field:".print!
+        tokens = (stream.slice (field.name.range.clone!)).checked!
+        print_tokens &tokens
+        "|".print!
+        if field.public then "true".print! else "false".print!
+        "|".print!
+        print_range &field.name.range
+        "|".print!
+        print_range &nodes[field.ty].range
+        "|".print!
+        shapes[field.ty].as_str!.print!
+        "\n".print!
+        tokens = (stream.slice (nodes[field.ty].range.clone!)).checked!
+        "type:".print!
+        print_tokens &tokens
+        "\n".print!
+        default_range = &field.default_range
+        "default:".print!
+        match *default_range
+            Option::None => "none".print!
+            Option::Some range =>
+                print_range &range
+                "|".print!
+                tokens = (stream.slice range.clone!).checked!
+                print_tokens &tokens
+        "\n".print!
+        check (field.range.start <= field.name.range.start && field.range.end >= nodes[field.ty].range.end)
+        check (field.layout_range.start <= field.range.start && field.layout_range.end >= field.range.end)
+        copied = (syntax.field_tokens i).checked!
+        check (copied.sources[0].identity == (41 as U64))
+        i = i + 1
+
+run_struct: &Str -> &Str -> ()
+run_struct = name, text !->
+    name.println!
+    match DeriveInput::parse (input text)
+        Result::Err error => error_line &error
+        Result::Ok syntax =>
+            match syntax.decl_kind!
+                DeriveKind::Struct => ()
+            struct_shape &syntax
+            emitted = syntax.emit!
+            check (emitted.spelling!.checked! == text)
+            check (emitted.sources[0].identity == (41 as U64))
+            repeated = (DeriveInput::parse emitted).checked!
+            check (repeated.fields!.len! == syntax.fields!.len!)
+            check (repeated.nodes!.len! == syntax.nodes!.len!)
+            check (repeated.params!.len! == syntax.params!.len!)
+            // Header and complete physical field slices partition every byte.
+            original = syntax.original!
+            header = (original.slice (syntax.header!.clone!)).checked!
+            rebuilt = header.spelling!.checked!
+            fields = syntax.fields!
+            again = repeated.fields!
+            i = 0
+            while i < fields.len!
+                check (fields[i].ty == again[i].ty && fields[i].public == again[i].public)
+                check (fields[i].range.start == again[i].range.start && fields[i].range.end == again[i].range.end)
+                check (fields[i].layout_range.start == again[i].layout_range.start && fields[i].layout_range.end == again[i].layout_range.end)
+                part = (original.slice (fields[i].layout_range.clone!)).checked!
+                rebuilt = rebuilt.concat (part.spelling!.checked!)
+                i = i + 1
+            check (rebuilt == text)
+
+struct_controls = !->
+    mut limits = DeclarationLimits::standard!
+    limits.max_fields = 0
+    match DeriveInput::parse_with_limits (input "struct S\n    value: T\n"), Limits::standard!, TypeLimits::standard!, limits
+        Result::Err error => check (error.code! == "declaration-fields")
+        Result::Ok syntax => check false
+    mut limits = DeclarationLimits::standard!
+    limits.max_fields = -1
+    match DeriveInput::parse_with_limits (input "struct S"), Limits::standard!, TypeLimits::standard!, limits
+        Result::Err error => check (error.code! == "limits")
+        Result::Ok syntax => check false
+    mut type_limits = TypeLimits::standard!
+    type_limits.max_nodes = 2
+    match DeriveInput::parse_with_limits (input "struct S T\n    first: T\n    second: T\n"), Limits::standard!, type_limits, DeclarationLimits::standard!
+        Result::Err error => check (error.code! == "type-nodes" && error.range.start == (36 as U64))
+        Result::Ok syntax => check false
+    mixed = split "struct S\n    value: T\n", 9, JoinBoundary::SourceAdjacent, 9
+    syntax = (DeriveInput::parse mixed).checked!
+    fields = syntax.fields!
+    context = &fields[0].name.context
+    match *context
+        Option::Some context => check (context.handle == (9 as U32))
+        Option::None => check false
+    copied = (syntax.field_tokens 0).checked!
+    check (copied.segments[0].context.handle == (9 as U32))
+    match syntax.field_tokens (-1)
+        Result::Err error => check (error.code! == "field-index")
+        Result::Ok tokens => check false
+    match syntax.field_tokens 1
+        Result::Err error => check (error.code! == "field-index")
+        Result::Ok tokens => check false
+    declaration_name = syntax.decl_name!
+    name_context = &declaration_name.context
+    match *name_context
+        Option::Some context => check (context.handle == (7 as U32))
+        Option::None => check false
+    mut captured = input "struct S\n    value: T = @☃[)\n    fake: Nope\n    next: U\n"
+    captured.expressions.push (ExpressionRange
+        range: range 24, 45
+        header_indent: 4)
+    syntax = (DeriveInput::parse (captured.clone!)).checked!
+    check (syntax.fields!.len! == 2)
+    emitted = syntax.emit!
+    check (emitted.spelling!.checked! == captured.spelling!.checked!)
+    check (emitted.expressions.len! == 1)
+    mut lexical_limits = Limits::standard!
+    lexical_limits.max_groups = 0
+    match DeriveInput::parse_with_limits (input "struct S\n    value: T = f ()\n"), lexical_limits, TypeLimits::standard!, DeclarationLimits::standard!
+        Result::Err error => check (error.code! == "groups")
+        Result::Ok syntax => check false
+    mut lexical_limits = Limits::standard!
+    lexical_limits.max_bytes = 0
+    match DeriveInput::parse_with_limits (input "struct S"), lexical_limits, TypeLimits::standard!, DeclarationLimits::standard!
+        Result::Err error => check (error.code! == "bytes")
+        Result::Ok syntax => check false
+    mut lexical_limits = Limits::standard!
+    lexical_limits.max_pieces = 1
+    match DeriveInput::parse_with_limits (input "struct S"), lexical_limits, TypeLimits::standard!, DeclarationLimits::standard!
+        Result::Err error => check (error.code! == "pieces")
+        Result::Ok syntax => check false
+    mut bad = input "struct S"
+    mut source = bad.sources[0].clone!
+    source.identity = 0
+    bad.sources.set 0, source
+    match DeriveInput::parse bad
+        Result::Err error => check (error.code! == "input")
+        Result::Ok syntax => check false
+    conflicted = split "struct Packet", 9, JoinBoundary::SourceAdjacent, 9
+    match DeriveInput::parse conflicted
+        Result::Err error => check (error.code! == "contexts")
+        Result::Ok syntax => check false
+    match DeriveInput::parse (input "struct S\n    value: T =\n        7\n")
+        Result::Err error => check (error.code! == "declaration-boundary")
+        Result::Ok syntax => check false
+    "struct controls passed".println!

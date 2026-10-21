@@ -2870,6 +2870,77 @@ default-inference repair is outside this grammar slice; `bd` remains unavailable
 in this environment (`command not found`), so no issue was created for it.
 C.06–C.12 remain separate, unimplemented slices.
 
+#### C.06 completion receipt
+
+`rock_syntax::derive_input::DeriveInput` now parses one complete struct from its
+original SDK stream, with declaration visibility/name, ordered generic
+parameters, ordered named fields, field visibility, type roots, exact logical
+ranges and opaque default-expression ranges. Header and physical field slices
+partition every original input byte, including comments, blank lines and CRLF.
+Unchanged `emit` and checked `field_tokens` use retained SDK data; invalid field
+indices diagnose without panicking. No compiler-prepared declaration structure,
+semantic name lookup, inference, expression AST or worker/RPC is involved.
+
+The type/binder engine is extracted into a private ordinary library module and
+reused through bounded token windows. All declaration parameters, kinds,
+defaults and field types share one flat type-node arena/budget and one retained
+stream, rather than cloning a source snapshot into each field. Lexical/group
+limits remain checked; `Cursor::all_groups` adds a non-consuming whole-input
+group scan after lexical indexing. `DeclarationLimits` separately bounds fields
+(16,384 standard/hard ceiling), including lower/zero and invalid settings.
+
+The documented initial layout subset supports space-indented even declaration
+and field margins through 254 bytes, original nested margins, single-physical-
+line headers/type annotations, and defaults beginning on their '=' line with
+optional indented bodies/continuations. Delimiter groups, quoted/comment text
+and opaque expression captures cannot introduce accepted false sibling fields;
+multiline token tails remain on their actual closing physical line. Default
+bodies are preserved, not expression-validated or printed. Non-default type
+continuations, newline-only operands after '=', unsupported margins/types,
+non-struct kinds, malformed fields and trailing declarations diagnose. No struct
+`where` grammar or compiler layout/typing semantics are added.
+
+Forty-five shared struct fixtures cover 22 accepted declarations, 20 malformed/
+trailing cases and three compiler-valid forms outside this slice (enum input,
+type-lambda annotations and tab-indented margins). The actual Rust source
+parser is the structural/visibility oracle; independent fixture spellings check
+exact name/type/default ranges and retained text. Coverage includes generic
+defaults/kinds, nested types, duplicate/unknown names as syntax, EOF, visibility,
+CRLF/comments, macro defaults, indented instance/lambda defaults, multiline
+quoted field lookalikes and postfix code after a multiline token. Native checks
+also reconstruct the complete input from layout slices and compare unchanged
+parse/emit/parse field structure/ranges.
+
+Supplementary controls cover a shared header/field node budget, field limits,
+byte/piece/group limits, invalid limits/SDK data/access, independent declaration
+and field contexts, conflicting name contexts, and opaque captures containing
+otherwise invalid delimiters and field lookalikes. The new complete README
+declaration example typechecks as part of the native client. The original README
+program, C.03 cursor/groups, C.04 types and C.05 binder/emission/runtime proofs
+continue to pass after the private parser extraction.
+
+Final verification (test suites executed serially; warnings remain):
+
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 445 pass; four native
+  syntax groups remain opt-in here.
+- `cargo test -p rock-lib --lib macro_acceptance_syntax_ -- --ignored --nocapture --test-threads=1`:
+  all four native groups pass (195.05 seconds including cold prerequisites).
+- `cargo test -p rock-lib`: 2,756 units, 806 main integrations, six diagnostic
+  integrations, 14 process integrations, four SDK smoke/helper tests and one
+  parser integration pass. Four native syntax groups, ten SDK acceptance groups
+  and one doctest remain ignored in the default gate.
+- `cargo test -p rock -p rockc -p rock-shared`, with `ROCK_SYSROOT` set to the
+  existing workspace `target/` development bundle: 94/57/30 units and one shared
+  doctest pass; five cold macro CLI acceptance scenarios remain ignored.
+- `cargo clippy --workspace --all-targets` and `cargo build --release`: pass.
+
+Final receipts are `/tmp/opencode/macro-c06-{macro-regressions,native-final,library,cli-shared,clippy,release-build}.log`.
+The shared development std artifact/object hashes remain unchanged. No compiler
+semantics, SDK wire layout, package special case, CI job or formatter was changed;
+worker protocol 7, `RKLOSS04` and product format 54 remain unchanged. `bd` is still
+unavailable (`command not found`). C.07 enums, C.08 edited builders and C.09–C.12
+derive dispatch/proofs/final closure remain separate, unimplemented slices.
+
 Each grammar slice publishes its supported forms in library docs and adds shared
 conformance fixtures. A concrete missing form needed by the next proof becomes a
 small parser extension with tests; do not silently grow this into all of Syn or

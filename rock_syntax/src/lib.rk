@@ -9,6 +9,8 @@
 
 < mod cursor
 < mod types
+mod parser
+< mod derive_input
 
 < struct Limits
     < max_bytes: U64
@@ -57,6 +59,17 @@ impl Limits
     TrailingGenericTokens
     ExpectedWhere
     UnsupportedBinderEmission
+    ExpectedDeclaration
+    ExpectedDeclarationName
+    ExpectedHeaderEnd
+    InvalidDeclarationIndent
+    ExpectedField
+    ExpectedFieldColon
+    ExpectedFieldEnd
+    ExpectedFieldDefault
+    UnsupportedDeclarationBoundary
+    DeclarationFieldLimit
+    InvalidFieldIndex I64
 
 // Logical UTF-8 input ranges, usable without an invocation or physical file.
 < struct ParseError
@@ -109,6 +122,17 @@ impl ParseError
             ParseErrorKind::TrailingGenericTokens => "generic-trailing"
             ParseErrorKind::ExpectedWhere => "where"
             ParseErrorKind::UnsupportedBinderEmission => "binder-emission"
+            ParseErrorKind::ExpectedDeclaration => "declaration"
+            ParseErrorKind::ExpectedDeclarationName => "declaration-name"
+            ParseErrorKind::ExpectedHeaderEnd => "header-end"
+            ParseErrorKind::InvalidDeclarationIndent => "declaration-indent"
+            ParseErrorKind::ExpectedField => "field"
+            ParseErrorKind::ExpectedFieldColon => "field-colon"
+            ParseErrorKind::ExpectedFieldEnd => "field-end"
+            ParseErrorKind::ExpectedFieldDefault => "field-default"
+            ParseErrorKind::UnsupportedDeclarationBoundary => "declaration-boundary"
+            ParseErrorKind::DeclarationFieldLimit => "declaration-fields"
+            ParseErrorKind::InvalidFieldIndex index => "field-index"
 
     @diagnostic: Diagnostic
     @diagnostic = ->
@@ -155,6 +179,17 @@ impl ParseError
             ParseErrorKind::TrailingGenericTokens => "unexpected tokens after generic syntax"
             ParseErrorKind::ExpectedWhere => "expected 'where' and a constraint"
             ParseErrorKind::UnsupportedBinderEmission => "explicit constructor kinds have no supported impl-binder emission in this slice"
+            ParseErrorKind::ExpectedDeclaration => "expected a supported derive declaration"
+            ParseErrorKind::ExpectedDeclarationName => "expected an uppercase declaration name"
+            ParseErrorKind::ExpectedHeaderEnd => "expected the end of the declaration header"
+            ParseErrorKind::InvalidDeclarationIndent => "invalid declaration or field indentation"
+            ParseErrorKind::ExpectedField => "expected a named field"
+            ParseErrorKind::ExpectedFieldColon => "expected ':' after the field name"
+            ParseErrorKind::ExpectedFieldEnd => "expected '=' or the end of the field type"
+            ParseErrorKind::ExpectedFieldDefault => "expected a default expression after '='"
+            ParseErrorKind::UnsupportedDeclarationBoundary => "declaration layout or default boundary is outside the supported subset"
+            ParseErrorKind::DeclarationFieldLimit => "declaration exceeds the field limit"
+            ParseErrorKind::InvalidFieldIndex index => "invalid declaration field index"
 
 < enum TokenKind
     Ident

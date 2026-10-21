@@ -352,12 +352,19 @@ impl Cursor
 
     // An explicit full-remainder Rock group request, not an SDK inspection gate.
     @groups: Result (Vec Group), ParseError
-    @groups = ->
+    @groups = -> self.scan_groups (self.cursor_index), (self.pieces)
+
+    // Declaration layout needs all group boundaries after lexical indexing.
+    @all_groups: Result (Vec Group), ParseError
+    @all_groups = -> self.scan_groups 0, 0
+
+    @scan_groups: I64 -> I64 -> Result (Vec Group), ParseError
+    @scan_groups = initial_index, initial_pieces ->
         mut groups: Vec Group = Vec::new!
         mut stack: Vec I64 = Vec::new!
         depth = 0
-        index = self.cursor_index
-        pieces = self.pieces
+        index = initial_index
+        pieces = initial_pieces
         loop
             scanned = self.read index, pieces ?
             match scanned

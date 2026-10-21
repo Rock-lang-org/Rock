@@ -52,6 +52,8 @@ whitespace/line-ending pieces. C.04's separate type entry point is described bel
   the cursor. It returns flat preorder `Group` records with delimiter, opening and
   closing byte ranges, and optional parent index. `cursor.group_inner &group`
   returns the original inner token slice.
+- `cursor.all_groups!` performs the same checked scan from the start of the
+  original input, also without changing the current cursor position.
 
 `Token` contains a `TokenKind`, a logical `ByteRange`, and an optional binding
 `SyntaxContext`; `token.tag!` provides a stable textual classification and
@@ -254,6 +256,64 @@ not stringified. Empty parameters emit an empty stream, not an empty `where`.
 
 General edited-node and complete impl builders remain C.08 work.
 
+## C.06 struct derive input
+
+`rock_syntax::derive_input::DeriveInput::parse input` parses one complete struct
+declaration, independently of any compiler/worker. It supports ordinary/private
+and `<` exported declarations, C.05 generic parameters, ordered named fields,
+field visibility, C.04 types and bounded opaque defaults. For example, this is a
+complete library declaration using its own generic parameters:
+
+```rock
+struct Packet T, {U = T}
+    < value: T
+    fallback: U
+    attempts: I64 = 3
+```
+
+The initial layout subset uses LF/CRLF, space-indented declaration/field margins
+with even widths up to 254 bytes, and a consistent field margin deeper than the
+declaration margin.
+Original nested-module margins are retained, not stripped. Blank/comment-only
+lines are preserved. Headers and field type annotations occupy one physical
+line; multiline annotation continuations, indentation tabs, code after a leading
+inline block comment in a header/field margin, and non-struct declaration kinds
+diagnose instead of being
+guessed into this subset. A second declaration or an unconsumed malformed field
+is an error, not a successful prefix parse. Struct `where` headers are not added:
+they are not part of the compiler's struct grammar.
+
+`syntax.decl_kind!`, `decl_name`, `is_public`, `params`, `fields` and `nodes` expose the
+parsed data. All generic/type indices refer to one flat arena, and all ranges
+are logical byte ranges in the original declaration input. `Field` contains an
+original name token, a visibility flag, a type-node index, an optional
+`default_range`, a significant-syntax `range` and a complete physical
+`layout_range`. `syntax.header!` and the ordered field layout ranges partition
+every original input byte, including leading/trailing comments and blank lines.
+Comments before a field stay in the preceding layout slice (or the header).
+
+A default starts with a token on the same line as `=` and may have indented
+continuation/body lines. Delimiter groups, quoted/comment text and SDK opaque
+expression captures cannot create false sibling fields. Bodies are retained as
+original ranges, not decoded, formatted or converted to expression ASTs. This is
+**boundary detection, not expression validation**: ordinary compiler parsing and
+typing still decide whether a preserved body is a valid expression. Newline-only
+operands after `=`, non-default type continuations and ambiguous margins diagnose.
+The C.03 lexical subset still applies except inside SDK opaque captures.
+
+`syntax.emit!` clones the unchanged original stream. `syntax.field_tokens index`
+returns a checked significant field slice; an invalid index diagnoses. Materialize
+other parts through the SDK's checked `syntax.original!.slice range` API.
+Snapshots, capture metadata, binding contexts and provenance are never rebuilt
+from spelling. Parsing stores ranges rather than a whole snapshot per field.
+
+`DeriveInput::parse_with_limits input, lexical_limits, type_limits, declaration_limits`
+uses the existing lexical/group ceilings, one shared type-node budget for the
+entire declaration, and `DeclarationLimits::standard!` (16,384 fields, also the
+hard ceiling). Lower/zero limits and invalid configurations are checked. The
+shared grammar engine is a private library module, not a public compiler API.
+Enum shapes remain C.07 work; edited declaration/impl builders remain C.08 work.
+
 ## Conformance
 
 `lib/tests/fixtures/syntax/lexical.rs` is the shared positive/negative fixture set
@@ -299,4 +359,18 @@ the hygienic full derive-transport proof reserved for C.08–C.11.
 ```sh
 cargo test -p rock-lib --lib macro_c_05_
 cargo test -p rock-lib --lib macro_acceptance_syntax_generics -- --ignored --nocapture
+```
+
+`lib/tests/fixtures/syntax/structs.rs` supplies the C.06 struct fixtures. The
+native client compares the actual compiler's field/parameter structure and
+visibility, checks exact name/type/default ranges and source spelling, and
+reconstructs the complete input from its header and field layout slices.
+Supplementary controls cover shared budgets, group limits, captures, independent
+name contexts, invalid SDK data and checked field access. Both README Rock
+examples are compiled by the native syntax groups. No declaration structure is
+requested from the compiler, and expression bodies stay opaque in the library.
+
+```sh
+cargo test -p rock-lib --lib macro_c_06_
+cargo test -p rock-lib --lib macro_acceptance_syntax_structs -- --ignored --nocapture
 ```

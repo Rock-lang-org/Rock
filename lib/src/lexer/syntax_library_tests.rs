@@ -6,6 +6,8 @@ mod macro_syntax;
 mod macro_types;
 #[path = "../../tests/support/macro_generics.rs"]
 mod macro_generics;
+#[path = "../../tests/support/macro_structs.rs"]
+mod macro_structs;
 
 use macro_fixture::SdkCase;
 
@@ -40,4 +42,15 @@ fn macro_c_05_shared_generic_fixtures_have_expected_outcomes() {
 #[ignore = "native Rock generic syntax conformance; run cargo macro-acceptance"]
 fn macro_acceptance_syntax_generics() {
     macro_generics::verify(&SdkCase::new("generics", "").config);
+}
+
+#[test]
+fn macro_c_06_shared_struct_fixtures_have_expected_outcomes() {
+    macro_structs::verify_oracle();
+}
+
+#[test]
+#[ignore = "native Rock derive-input struct conformance; run cargo macro-acceptance"]
+fn macro_acceptance_syntax_structs() {
+    macro_structs::verify(&SdkCase::new("structs", "").config);
 }
