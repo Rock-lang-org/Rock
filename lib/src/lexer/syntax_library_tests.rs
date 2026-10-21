@@ -88,3 +88,9 @@ fn macro_acceptance_syntax_emission() {
 fn macro_acceptance_derive_struct() {
     macro_trait_derive::verify(&SdkCase::new("derive-struct", "").config);
 }
+
+#[test]
+#[ignore = "packaged syntax-library enum derives; run cargo macro-acceptance"]
+fn macro_acceptance_derive_enums_packaged() {
+    macro_trait_derive::verify_enums(&SdkCase::new("derive-enums", "").config);
+}

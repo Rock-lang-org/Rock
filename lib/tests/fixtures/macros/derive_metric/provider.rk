@@ -1,8 +1,11 @@
 > rock_macro::*
+> rock_macro::construction::MacroBuilder
 > rock_syntax::derive_input::DeriveInput
 > rock_syntax::derive_input::DeriveKind
+> rock_syntax::derive_input::Variant
 > rock_syntax::types::GenericSyntax
 > rock_syntax::emission::ImplBuilder
+> rock_syntax::emission::OutputBuffer
 
 // Deliberate definition-side collisions: emitted targets and trait references
 // must use caller-owned tokens/explicit caller authority, not these declarations.
@@ -20,14 +23,60 @@ captured = context, stream, range ->
         Result::Ok tokens => context.forward tokens
         Result::Err _ => context.output_error "invalid retained derive slice"
 
-expand_metric: MacroContext -> TokenStream -> Bool -> MacroResult
-expand_metric = context, input, with_bounds ->
+variant_arm: &MacroContext -> &TokenStream -> ByteRange -> &Variant -> &mut MacroBuilder -> &TokenStream -> Result MacroOutput, Diagnostic
+variant_arm = context, stream, name_range, variant, names, helper_tokens ->
+    variant_name = captured context, stream, (variant.name.range.clone!) ?
+    enum_name = captured context, stream, name_range ?
+    pattern_parts = [enum_name, variant_name]
+    mut pattern = OutputBuffer::new!
+    pattern.append context, (context.quote "$0::$1", &pattern_parts ?) ?
+    total = context.syntax "0" ?
+    named = &variant.named_fields
+    count = if named.len! > 0 then named.len! else variant.types.len!
+    j = 0
+    while j < count
+        binding = match names.fresh_ident (String::from "value")
+            Result::Ok binding => binding
+            Result::Err _ => return context.output_error "invalid payload binding"
+        separator = if j == 0 then " " else ", "
+        pattern.append context, (context.syntax separator ?) ?
+        if named.len! > 0
+            label = captured context, stream, (named[j].name.range.clone!) ?
+            label_parts = [label]
+            pattern.append context, (context.quote "$0: ", &label_parts ?) ?
+        pattern.append context, (context.forward (binding.tokens.clone!) ?) ?
+        sum_parts = [total, context.forward (helper_tokens.clone!) ?, context.forward binding.tokens ?]
+        total = context.quote "~I64Add ($0), ($1 (&$2))", &sum_parts ?
+        j = j + 1
+    arm_parts = [pattern.output!, total]
+    context.quote "            $0 => $1\n", &arm_parts
+
+enum_definition: &MacroContext -> &DeriveInput -> &mut MacroBuilder -> &TokenStream -> Result MacroOutput, Diagnostic
+enum_definition = context, syntax, names, helper_tokens ->
+    mut arms = OutputBuffer::new!
+    stream = syntax.original!
+    variants = syntax.variants!
+    declaration_name = syntax.decl_name!
+    i = 0
+    while i < variants.len!
+        arm = variant_arm context, stream, (declaration_name.range.clone!), (&variants[i]), (&mut *names), helper_tokens ?
+        arms.append context, arm ?
+        i = i + 1
+    match_parts = [arms.output!]
+    context.quote "->\n        match *self\n$0", &match_parts
+
+expand_metric: MacroContext -> TokenStream -> Bool -> Bool -> MacroResult
+expand_metric = context, input, with_bounds, enums ->
     syntax = match DeriveInput::parse input
         Result::Ok syntax => syntax
         Result::Err error => return MacroResult::from_error error.diagnostic!
     match syntax.decl_kind!
-        DeriveKind::Struct => ()
-        DeriveKind::Enum => return context.fail "SumMetric currently supports structs only"
+        DeriveKind::Struct =>
+            if enums
+                return context.fail "EnumMetric supports enums only"
+        DeriveKind::Enum =>
+            if !enums
+                return context.fail "SumMetric currently supports structs only"
     stream = syntax.original!
     mut names = match context.builder stream
         Result::Ok names => names
@@ -89,6 +138,8 @@ expand_metric = context, input, with_bounds ->
         i = i + 1
     definition_parts = [expression]
     definition = context.quote "-> $0", &definition_parts ?
+    if enums
+        definition = enum_definition &context, &syntax, &mut names, (&helper_ident.tokens) ?
     member_parts = [context.forward (method_ident.tokens.clone!) ?]
     member_name = context.quote "@$0", &member_parts ?
     implementation.member &context, member_name, (context.syntax "I64" ?), definition ?
@@ -99,7 +150,55 @@ expand_metric = context, input, with_bounds ->
     output_parts = [helper_output, implementation.emit &context ?]
     (context.quote "$0\n$1", &output_parts ?).finish!
 
-< macro derive SumMetric = context, input -> expand_metric context, input, true
+< macro derive SumMetric = context, input -> expand_metric context, input, true, false
 
 // Negative control: the body is identical but its generic obligations are absent.
-< macro derive UnboundedMetric = context, input -> expand_metric context, input, false
+< macro derive UnboundedMetric = context, input -> expand_metric context, input, false, false
+
+< macro derive EnumMetric = context, input -> expand_metric context, input, true, true
+
+< macro derive Cascade = context, input ->
+    mut builder = match context.builder &input
+        Result::Ok builder => builder
+        Result::Err _ => return context.fail "invalid cascade input"
+    name = match builder.fresh_ident (String::from "Generated")
+        Result::Ok name => name
+        Result::Err _ => return context.fail "invalid generated type"
+    derive = match builder.call_site_ident (String::from "EnumMetric")
+        Result::Ok derive => derive
+        Result::Err _ => return context.fail "invalid generated derive"
+    function = match builder.call_site_ident (String::from "cascade_value")
+        Result::Ok function => function
+        Result::Err _ => return context.fail "invalid cascade function"
+    method = match builder.call_site_ident (String::from "metric")
+        Result::Ok method => method
+        Result::Err _ => return context.fail "invalid cascade member"
+    parts = [context.forward name.tokens ?, context.forward derive.tokens ?, context.forward function.tokens ?, context.forward method.tokens ?]
+    (context.quote "%derive $1\nenum $0\n    Empty\n$2 = ->\n    value = $0::Empty\n    value.$3!\n", &parts ?).finish!
+
+< macro derive After = context, input ->
+    mut builder = match context.builder &input
+        Result::Ok builder => builder
+        Result::Err _ => return context.fail "invalid ordered derive input"
+    function = match builder.call_site_ident (String::from "after_value")
+        Result::Ok function => function
+        Result::Err _ => return context.fail "invalid ordered function"
+    previous = match builder.call_site_ident (String::from "cascade_value")
+        Result::Ok previous => previous
+        Result::Err _ => return context.fail "invalid previous function"
+    parts = [context.forward function.tokens ?, context.forward previous.tokens ?]
+    (context.quote "$0 = -> ~I64Add ($1!), 7\n", &parts ?).finish!
+
+< macro derive WrongCategory = context, input -> (context.syntax "42" ?).finish!
+
+< macro ordinary = context, input -> (context.syntax "" ?).finish!
+
+< macro derive Loop = context, input ->
+    mut builder = match context.builder &input
+        Result::Ok builder => builder
+        Result::Err _ => return context.fail "invalid recursive input"
+    again = match builder.call_site_ident (String::from "Loop")
+        Result::Ok again => again
+        Result::Err _ => return context.fail "invalid recursive derive"
+    parts = [context.forward again.tokens ?, context.forward input ?]
+    (context.quote "%derive $0\n$1", &parts ?).finish!

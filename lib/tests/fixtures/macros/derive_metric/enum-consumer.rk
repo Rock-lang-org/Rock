@@ -1,0 +1,38 @@
+> metric_derive::EnumMetric
+> metric_derive::Cascade
+> metric_derive::After
+
+trait Metric
+    @metric: I64
+
+impl Metric for I64
+    @metric = -> *self
+
+value = -> 1000
+
+%derive EnumMetric
+< enum Event T, {U = T}
+    Empty
+    One T
+    Pair T, U
+    Named
+        // Retain Unicode trivia through the original CRLF transport: 雪
+        < value: T
+        < other: U = 99
+
+%derive Cascade, After
+struct Seed
+
+main = !->
+    empty: Event I64 = Event::Empty
+    empty.metric!.println!
+    one: Event I64 = Event::One 3
+    one.metric!.println!
+    pair: Event I64 = Event::Pair 5, 7
+    pair.metric!.println!
+    named: Event I64 = Event::Named
+        value: 11
+        other: 13
+    named.metric!.println!
+    cascade_value!.println!
+    after_value!.println!

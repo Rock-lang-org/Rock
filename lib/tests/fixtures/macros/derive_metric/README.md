@@ -29,8 +29,35 @@ an omitted defaulted field independently reproduces an existing MIR panic.
 General higher-kinded field derivation and production derive policy are outside
 this fixture.
 
+## Packaged enum proof
+
+`EnumMetric` extends the same policy to nullary, positional and named variants.
+Per-variant pattern construction copies declaration/variant/field names and uses
+fresh payload bindings. `OutputBuffer` accumulates arms before `ImplBuilder`
+emits the ordinary implementation. The multiline definition supplies its own
+continuation margins within the builder's four-column member layout.
+
+`enum-consumer.rk` uses defaulted generic arguments, public declarations/fields,
+and a retained named-field default. The driver sends CRLF source with Unicode
+trivia and checks the original stream after real worker transport. As with the
+struct proof, runtime construction supplies every field explicitly.
+
+`Cascade` emits a fresh enum with another `EnumMetric` attachment; `After` follows
+it on the same original declaration. The driver checks expansion order and the
+generated attachment's parent, then verifies `0 / 3 / 12 / 24 / 0 / 7` at runtime.
+`Loop` deliberately emits another attachment to test the shared depth limit;
+`WrongCategory` and `ordinary` provide item-category and kind negatives.
+
+Before consuming the enum program, the test copies only the proc artifact and
+its worker to a package, relocates that directory, and invalidates the original
+host/syntax build locations. There is no provider source file, SDK dependency or
+syntax-library dependency in the consumer configuration. Missing field impls,
+overlapping enum impls, invalid targets/categories/kinds, canonical duplicates,
+unbounded recursive attachments and unsupported attribute syntax all reject.
+
 Run manually with:
 
 ```bash
 cargo test -p rock-lib --lib macro_acceptance_derive_struct -- --ignored --nocapture
+cargo test -p rock-lib --lib macro_acceptance_derive_enums_packaged -- --ignored --nocapture
 ```

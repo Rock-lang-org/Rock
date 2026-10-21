@@ -3269,6 +3269,68 @@ no compiler/SDK/syntax production code or schema changed. `bd` remains unavailab
 filed there. No formatter, CI job, source std dependency or push was used.
 C.11 and C.12 remain unimplemented separate steps.
 
+#### C.11 completion receipt
+
+`EnumMetric` extends the same external ordinary provider to nullary, positional
+and named enum variants. Per-variant helpers construct patterns from captured
+declaration/variant/field streams, use fresh payload binders, sum measurements
+through the explicitly bounded fresh helper, and accumulate arms with ordinary
+`OutputBuffer`/`ImplBuilder` APIs. `Cascade` emits a fresh enum carrying another
+derive attachment; `After` is a following attachment on the original declaration.
+No compiler or syntax-library production extension was needed.
+
+The native packaged test copies only the current proc artifact and its worker
+into a two-file package, stores an artifact-relative executable path, relocates
+the package, and renames the original host/syntax build directories before any
+consumer expansion. Provider input is virtual (there is no provider source file
+to reopen). The consumer has only explicit std/provider artifacts, not SDK or
+syntax-library dependencies; the published proc products have no runtime bodies
+or target dependencies. All ordinary derive construction/parsing code executes
+from the relocated native worker.
+
+The generic `Event T, {U = T}` consumer exercises empty, one-field, two-field and
+named variants using `Event I64` defaulted applications. It prints
+`0 / 3 / 12 / 24 / 0 / 7` on separate lines, including the generated enum and
+ordered second attachment. Expansion records are exactly `EnumMetric`,
+`Cascade`, `After`, `EnumMetric`, with the last record parented to `Cascade`.
+The input is CRLF with Unicode trivia; retained original enum tokens still
+contain public visibility, generic defaults, named-field defaults and that
+trivia after the real transport. As in C.10, field-default evaluation is not
+claimed and every runtime field is supplied explicitly.
+
+Seven negative scenarios assert missing field-trait impls and overlapping enum
+impls are ordinary compiler errors, while unsupported targets, non-item output,
+wrong macro kinds, canonical duplicate attachments and unbounded recursive
+attachments are macro errors. The recursive worker emits another attachment on
+the copied declaration until the shared depth limit rejects it. Unsupported
+attribute syntax also rejects. C.10's six ordinary negatives, hygiene collisions
+and original-default checks remain green with the extended provider.
+
+Development exposed excessive borrow-checker memory use for the original nested
+enum-emission function (SIGKILL; phase-isolation logs under
+`/tmp/opencode/macro-c11-native-{initial,phases,phases2,borrow-phases}.log`).
+The final fixture factors per-variant construction into a smaller ordinary
+function and explicitly reborrows its mutable builder; this preserves all
+shapes/validation and completes successfully, but is not a compiler resource-use
+repair. Temporary compiler phase instrumentation and the one-export isolation
+experiment were removed; the final provider publishes all its entries normally.
+
+Final source-snapshot verification, serialized:
+
+- `cargo test -p rock-lib --lib macro_acceptance_derive_ -- --ignored --nocapture --test-threads=1`:
+  both native struct/packaged-enum groups pass in 234.82 seconds, including all
+  controls (`/tmp/opencode/macro-c11-derives-final.log`).
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 457 pass, eight native
+  groups ignored (`/tmp/opencode/macro-c11-regressions.log`).
+- `cargo clippy --workspace --all-targets`: passes with existing warnings
+  (`/tmp/opencode/macro-c11-clippy.log`).
+
+Only fixture/provider/driver/registration/docs changed. Worker protocol 7,
+`RKLOSS04`, product format 54 and production compiler/SDK/syntax code are
+unchanged. `bd` is unavailable, so the independent resource-use limitation could
+not be filed there. Nothing was formatted, added to CI or pushed. C.12's full
+acceptance mapping, residue audit and final-snapshot gates remain outstanding.
+
 ## Stage gates and final verification
 
 At each stage gate, execute the stage's proposed families plus adjacent existing
