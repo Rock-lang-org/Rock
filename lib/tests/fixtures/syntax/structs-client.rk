@@ -1,6 +1,7 @@
 > rock_syntax::derive_input::DeriveInput
 > rock_syntax::derive_input::DeclarationLimits
 > rock_syntax::derive_input::DeriveKind
+> rock_syntax::derive_input::Field
 
 print_tokens: &TokenStream -> ()
 print_tokens = tokens !->
@@ -13,8 +14,8 @@ print_range = value !->
     "|".print!
     value.end.print!
 
-struct_shape: &DeriveInput -> ()
-struct_shape = syntax !->
+declaration_head: &DeriveInput -> Vec String
+declaration_head = syntax ->
     stream = syntax.original!
     name = syntax.decl_name!
     tokens = (stream.slice (name.range.clone!)).checked!
@@ -47,38 +48,49 @@ struct_shape = syntax !->
             Option::Some root => shapes[root].as_str!.print!
         "\n".print!
         i = i + 1
+    shapes
+
+field_shape: &DeriveInput -> &Field -> &Vec String -> ()
+field_shape = syntax, field, shapes !->
+    stream = syntax.original!
+    nodes = syntax.nodes!
+    "field:".print!
+    tokens = (stream.slice (field.name.range.clone!)).checked!
+    print_tokens &tokens
+    "|".print!
+    if field.public then "true".print! else "false".print!
+    "|".print!
+    print_range &field.name.range
+    "|".print!
+    print_range &nodes[field.ty].range
+    "|".print!
+    shapes[field.ty].as_str!.print!
+    "\n".print!
+    tokens = (stream.slice (nodes[field.ty].range.clone!)).checked!
+    "type:".print!
+    print_tokens &tokens
+    "\n".print!
+    default_range = &field.default_range
+    "default:".print!
+    match *default_range
+        Option::None => "none".print!
+        Option::Some range =>
+            print_range &range
+            "|".print!
+            tokens = (stream.slice range.clone!).checked!
+            print_tokens &tokens
+    "\n".print!
+    check (field.range.start <= field.name.range.start && field.range.end >= nodes[field.ty].range.end)
+    check (field.layout_range.start <= field.range.start && field.layout_range.end >= field.range.end)
+
+struct_shape: &DeriveInput -> ()
+struct_shape = syntax !->
+    shapes = declaration_head syntax
     fields = syntax.fields!
     i = 0
     while i < fields.len!
         field = &fields[i]
-        "field:".print!
-        tokens = (stream.slice (field.name.range.clone!)).checked!
-        print_tokens &tokens
-        "|".print!
-        if field.public then "true".print! else "false".print!
-        "|".print!
-        print_range &field.name.range
-        "|".print!
-        print_range &nodes[field.ty].range
-        "|".print!
-        shapes[field.ty].as_str!.print!
-        "\n".print!
-        tokens = (stream.slice (nodes[field.ty].range.clone!)).checked!
-        "type:".print!
-        print_tokens &tokens
-        "\n".print!
-        default_range = &field.default_range
-        "default:".print!
-        match *default_range
-            Option::None => "none".print!
-            Option::Some range =>
-                print_range &range
-                "|".print!
-                tokens = (stream.slice range.clone!).checked!
-                print_tokens &tokens
-        "\n".print!
-        check (field.range.start <= field.name.range.start && field.range.end >= nodes[field.ty].range.end)
-        check (field.layout_range.start <= field.range.start && field.layout_range.end >= field.range.end)
+        field_shape syntax, field, &shapes
         copied = (syntax.field_tokens i).checked!
         check (copied.sources[0].identity == (41 as U64))
         i = i + 1
@@ -91,6 +103,7 @@ run_struct = name, text !->
         Result::Ok syntax =>
             match syntax.decl_kind!
                 DeriveKind::Struct => ()
+                DeriveKind::Enum => check false
             struct_shape &syntax
             emitted = syntax.emit!
             check (emitted.spelling!.checked! == text)

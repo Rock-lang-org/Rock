@@ -259,7 +259,8 @@ General edited-node and complete impl builders remain C.08 work.
 ## C.06 struct derive input
 
 `rock_syntax::derive_input::DeriveInput::parse input` parses one complete struct
-declaration, independently of any compiler/worker. It supports ordinary/private
+or enum declaration, independently of any compiler/worker. This section covers
+structs; enum shapes are described below. It supports ordinary/private
 and `<` exported declarations, C.05 generic parameters, ordered named fields,
 field visibility, C.04 types and bounded opaque defaults. For example, this is a
 complete library declaration using its own generic parameters:
@@ -277,7 +278,7 @@ declaration margin.
 Original nested-module margins are retained, not stripped. Blank/comment-only
 lines are preserved. Headers and field type annotations occupy one physical
 line; multiline annotation continuations, indentation tabs, code after a leading
-inline block comment in a header/field margin, and non-struct declaration kinds
+inline block comment in a header/field margin, and unsupported declaration kinds
 diagnose instead of being
 guessed into this subset. A second declaration or an unconsumed malformed field
 is an error, not a successful prefix parse. Struct `where` headers are not added:
@@ -312,7 +313,60 @@ uses the existing lexical/group ceilings, one shared type-node budget for the
 entire declaration, and `DeclarationLimits::standard!` (16,384 fields, also the
 hard ceiling). Lower/zero limits and invalid configurations are checked. The
 shared grammar engine is a private library module, not a public compiler API.
-Enum shapes remain C.07 work; edited declaration/impl builders remain C.08 work.
+Edited declaration/impl builders remain C.08 work.
+
+## C.07 enum derive input
+
+The same `DeriveInput` entry point supports enum headers, generic parameters,
+visibility and ordered nullary, named or positional variants. This is a complete
+library declaration with each generic parameter declared in its header:
+
+```rock
+enum Signal T, {U = T}
+    Empty
+    Pair T, U
+    Named
+        < value: U
+        retries: I64 = 3
+```
+
+`syntax.decl_kind!` distinguishes `Struct` from `Enum`. For enums,
+`syntax.variants!` returns ordered `Variant` records, while `syntax.fields!`
+remains the struct-field list (empty on enums). Each variant has an original
+name token, `VariantShape` (`Nullary`, `Named`, `Positional`), `named_fields`,
+positional `types` indices, and significant, physical-layout and header ranges.
+All generic, positional and named-field type indices use the declaration's one
+shared arena. A nullary variant has no fields; a variant with `()` has one
+positional unit field, not nullary shape.
+
+Positional variants mirror the compiler's declaration-argument grammar, not a
+new whitespace-separated list. An ungrouped argument uses the complete type
+parser, including its comma ownership: `One Result T, E` has one application
+field. `Pair (Result T, E), U` has two fields. Adjacent `(T) U` are two fields,
+whereas ungrouped `T U` is one application. Trailing positional commas are
+retained. Explicit declaration-kind binders are not type arguments; type lambdas
+remain outside C.04's supported type subset.
+
+Named fields reuse the struct parser, including field visibility and opaque
+defaults. Their margin is one further declaration indentation step beyond the
+variant margin. Layout/default limitations from C.06 still apply. Variant
+visibility markers, discriminants, compiler-internal markers and mixed inline
+positional/named bodies are unsupported. Mixed bodies diagnose instead of
+silently discarding one field family; no variant shape is guessed from malformed
+syntax. A following declaration or malformed sibling is not ignored.
+
+The declaration header plus variant layout ranges partition the original input;
+each named variant's header plus named-field layout ranges also partition its
+layout. `syntax.variant_tokens index` returns a checked original significant
+variant slice and diagnoses invalid indices. Use checked SDK slicing for nested
+field/type ranges. Unchanged `emit` preserves original snapshots, contexts,
+provenance, trivia and opaque captures without an AST-print/re-lex pass.
+
+`DeclarationLimits` now includes `max_variants` (16,384 standard/hard ceiling).
+`max_fields` is a **single total** across all named and positional variant
+fields; it is not reset per variant. The common lexical/group and type-node
+limits also cover the whole enum. Empty enums and lower/zero limits are handled
+explicitly; no resolution, kind/arity inference or expression validation is added.
 
 ## Conformance
 
@@ -366,11 +420,23 @@ native client compares the actual compiler's field/parameter structure and
 visibility, checks exact name/type/default ranges and source spelling, and
 reconstructs the complete input from its header and field layout slices.
 Supplementary controls cover shared budgets, group limits, captures, independent
-name contexts, invalid SDK data and checked field access. Both README Rock
-examples are compiled by the native syntax groups. No declaration structure is
+name contexts, invalid SDK data and checked field access. The cursor program and
+struct declaration example are compiled by the native syntax groups. No declaration structure is
 requested from the compiler, and expression bodies stay opaque in the library.
 
 ```sh
 cargo test -p rock-lib --lib macro_c_06_
 cargo test -p rock-lib --lib macro_acceptance_syntax_structs -- --ignored --nocapture
+```
+
+`lib/tests/fixtures/syntax/enums.rs` shares C.07 enum fixtures with the actual
+Rust parser. Native acceptance compares variant/field shape and order, nested
+type structure, visibility and exact name/type/default spelling/ranges. It also
+checks whole-input and nested layout reconstruction, unchanged round trips,
+common resource budgets, independent name contexts and checked variant slicing.
+The complete enum example above is compiled in this ordinary in-memory proof.
+
+```sh
+cargo test -p rock-lib --lib macro_c_07_
+cargo test -p rock-lib --lib macro_acceptance_syntax_enums -- --ignored --nocapture
 ```

@@ -9,11 +9,11 @@ use super::macro_types::shape;
 mod fixtures;
 use fixtures::{StructCase, CASES};
 
-fn parsed(case: &StructCase) -> Option<(TopLevel, usize)> {
-    let first = case.source.lines().find(|line| !line.trim().is_empty() && !line.trim().starts_with("/*"))?;
+pub fn declaration(text: &str) -> Option<(TopLevel, usize)> {
+    let first = text.lines().find(|line| !line.trim().is_empty() && !line.trim().starts_with("/*"))?;
     let nested = first.starts_with(' ');
     let prefix = if nested { "mod nested\n" } else { "" };
-    let source = format!("{prefix}{}", case.source);
+    let source = format!("{prefix}{text}");
     let module = parser::parse_source("struct-fixture.rk".into(), &source, &Config::default()).ok()?;
     if module.top_levels.len() != 1 { return None; }
     let node = if nested {
@@ -21,14 +21,11 @@ fn parsed(case: &StructCase) -> Option<(TopLevel, usize)> {
         if module.0.top_levels.len() != 1 { return None; }
         module.0.top_levels[0].clone()
     } else { module.top_levels[0].clone() };
-    match node {
-        TopLevel::StructDecl(_) | TopLevel::EnumDecl(_) => Some((node, prefix.len())),
-        _ => None,
-    }
+    Some((node, prefix.len()))
 }
 
 fn expected(case: &StructCase) -> String {
-    let parsed = parsed(case);
+    let parsed = declaration(case.source);
     assert_eq!(parsed.is_some(), case.rust_accept, "{}", case.name);
     if let Some((code, start, end, related)) = case.error {
         return format!("{}\nE {code} {start} {end} {related}\n", case.name);

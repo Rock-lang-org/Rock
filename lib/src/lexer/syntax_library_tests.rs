@@ -8,6 +8,8 @@ mod macro_types;
 mod macro_generics;
 #[path = "../../tests/support/macro_structs.rs"]
 mod macro_structs;
+#[path = "../../tests/support/macro_enums.rs"]
+mod macro_enums;
 
 use macro_fixture::SdkCase;
 
@@ -53,4 +55,15 @@ fn macro_c_06_shared_struct_fixtures_have_expected_outcomes() {
 #[ignore = "native Rock derive-input struct conformance; run cargo macro-acceptance"]
 fn macro_acceptance_syntax_structs() {
     macro_structs::verify(&SdkCase::new("structs", "").config);
+}
+
+#[test]
+fn macro_c_07_shared_enum_fixtures_have_expected_outcomes() {
+    macro_enums::verify_oracle();
+}
+
+#[test]
+#[ignore = "native Rock derive-input enum conformance; run cargo macro-acceptance"]
+fn macro_acceptance_syntax_enums() {
+    macro_enums::verify(&SdkCase::new("enums", "").config);
 }

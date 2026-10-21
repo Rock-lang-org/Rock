@@ -2941,6 +2941,87 @@ worker protocol 7, `RKLOSS04` and product format 54 remain unchanged. `bd` is st
 unavailable (`command not found`). C.07 enums, C.08 edited builders and C.09–C.12
 derive dispatch/proofs/final closure remain separate, unimplemented slices.
 
+#### C.07 completion receipt
+
+`DeriveInput` now accepts complete enum declarations as well as structs.
+`decl_kind` distinguishes the two; ordered `variants` retain original name
+tokens, explicit `VariantShape` (`Nullary`, `Named`, `Positional`), named fields,
+positional type roots, significant ranges, physical layout ranges and variant
+header ranges. All generic and field types remain in the declaration's shared
+flat arena/stream. Struct `fields` and enum `variants` are separate views, not
+an ambiguous flattened list. Checked `variant_tokens` retains original SDK data
+and diagnoses invalid indices; unchanged `emit` still copies the original input.
+
+Positional headers mirror the actual compiler declaration-argument grammar:
+grouped types are individual fields, while ungrouped types own nested
+application/arrow commas. Applications, tuples, unit payloads, references,
+arrays, constructor sections, grouped functions and trailing commas retain
+their structure and spelling. Named fields reuse the struct parser and opaque
+default boundaries, with one additional declaration indentation step. Generic
+defaults/kinds, visibility, original nested margins and source order survive
+both paths. No resolver, inference, expression AST or compiler-prepared
+declaration data is queried.
+
+The private parser now owns the shared declaration-field/variant routines.
+`DeclarationLimits::max_variants` has a 16,384 standard/hard ceiling;
+`max_fields` is a cumulative named-plus-positional budget across the entire enum,
+not a per-variant reset. The existing lexical/group/type budgets remain shared.
+Zero/invalid limits, malformed siblings/fields, unsupported payload types,
+discriminants, variant visibility and trailing declarations diagnose.
+
+Mixed inline positional/named bodies are explicitly unsupported: the current
+Rust parser can consume such a body while retaining only its positional fields,
+so the library returns `variant-shape` rather than dropping the named family.
+The supported subset and this boundary are documented in the README. Type
+lambdas remain outside C.04's type subset. Edited enum/impl construction remains
+C.08 work, not a new quotation macro or an AST-print/re-lex fallback.
+
+Forty-one shared enum fixtures cover 24 accepted forms, 15 malformed/trailing
+cases and two compiler-valid forms explicitly outside the subset (mixed bodies
+and type-lambda payloads). The actual Rust parser checks variant/field order,
+shape and nested type structure; independent raw spellings check exact
+name/type/default ranges and trivia. Native acceptance reconstructs complete
+inputs from header/variant layout slices and named variants from header/field
+slices, and checks unchanged round trips, snapshots, source contexts, shared
+budgets, zero/invalid limits, checked access and opaque defaults containing fake
+variants/invalid delimiters. The complete README enum example also typechecks.
+All 45 struct fixtures/controls continue to pass; their former enum-rejection
+control is intentionally replaced by a trait-declaration rejection as enum
+parsing becomes supported. The existing cursor, type and generic/emission proofs
+also pass, with their expected behavior unchanged.
+
+Final verification (suite commands executed serially; warnings remain):
+
+- `cargo test -p rock-lib --lib macro_c_07_`: shared Rust enum oracle passes.
+- `cargo test -p rock-lib --lib macro_ -- --test-threads=1`: 446 pass; five native
+  syntax groups remain opt-in here.
+- `cargo test -p rock-lib --lib macro_acceptance_syntax_ -- --ignored --nocapture --test-threads=1`:
+  all five native groups pass in 100.73 seconds.
+- `cargo test -p rock-lib -- --test-threads=1`: 2,757 units, 806 main integrations,
+  six diagnostic integrations, 14 process integrations, four SDK smoke/helper
+  tests and one parser integration pass. Five native syntax groups, ten SDK
+  acceptance groups and one doctest remain ignored in the default gate.
+- `cargo test -p rock -p rockc -p rock-shared`, with `ROCK_SYSROOT` set to the
+  existing workspace `target/` development bundle: 94/57/30 units and one shared
+  doctest pass; five cold macro CLI acceptance scenarios remain ignored.
+- `cargo clippy --workspace --all-targets` and `cargo build --release`: pass.
+
+The first default-parallel `cargo test -p rock-lib` attempt passed 2,756 units but
+failed the existing native-worker raw-context rejection test before request
+creation because launching its fixture returned `Text file busy` (`ETXTBSY`).
+That fully qualified test passed alone with `--exact --nocapture --test-threads=1`,
+and the subsequent complete serialized gate above passed on the same source.
+No worker-fixture assertions, worker implementation or retry policy were changed.
+The failed run remains `/tmp/opencode/macro-c07-library.log`, with isolated
+evidence in `/tmp/opencode/macro-c07-worker-isolated.log`.
+
+Final receipts are `/tmp/opencode/macro-c07-{oracle-initial,macro-regressions,native-final,library-serial,cli-shared,clippy,release-build}.log`.
+The shared development std artifact/object hashes remain unchanged. No compiler
+semantics, SDK wire layout, compiler package special case, CI job or formatter
+was changed; worker protocol 7, `RKLOSS04` and product format 54 remain unchanged.
+`bd` is still unavailable (`command not found`). C.08–C.12 remain separate,
+unimplemented slices.
+
 Each grammar slice publishes its supported forms in library docs and adds shared
 conformance fixtures. A concrete missing form needed by the next proof becomes a
 small parser extension with tests; do not silently grow this into all of Syn or

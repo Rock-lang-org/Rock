@@ -70,6 +70,11 @@ impl Limits
     UnsupportedDeclarationBoundary
     DeclarationFieldLimit
     InvalidFieldIndex I64
+    ExpectedVariant
+    ExpectedVariantEnd
+    UnsupportedVariantShape
+    DeclarationVariantLimit
+    InvalidVariantIndex I64
 
 // Logical UTF-8 input ranges, usable without an invocation or physical file.
 < struct ParseError
@@ -133,6 +138,11 @@ impl ParseError
             ParseErrorKind::UnsupportedDeclarationBoundary => "declaration-boundary"
             ParseErrorKind::DeclarationFieldLimit => "declaration-fields"
             ParseErrorKind::InvalidFieldIndex index => "field-index"
+            ParseErrorKind::ExpectedVariant => "variant"
+            ParseErrorKind::ExpectedVariantEnd => "variant-end"
+            ParseErrorKind::UnsupportedVariantShape => "variant-shape"
+            ParseErrorKind::DeclarationVariantLimit => "declaration-variants"
+            ParseErrorKind::InvalidVariantIndex index => "variant-index"
 
     @diagnostic: Diagnostic
     @diagnostic = ->
@@ -190,6 +200,11 @@ impl ParseError
             ParseErrorKind::UnsupportedDeclarationBoundary => "declaration layout or default boundary is outside the supported subset"
             ParseErrorKind::DeclarationFieldLimit => "declaration exceeds the field limit"
             ParseErrorKind::InvalidFieldIndex index => "invalid declaration field index"
+            ParseErrorKind::ExpectedVariant => "expected an uppercase enum variant name"
+            ParseErrorKind::ExpectedVariantEnd => "expected a positional type or the end of the variant header"
+            ParseErrorKind::UnsupportedVariantShape => "mixed positional and named variant fields are unsupported"
+            ParseErrorKind::DeclarationVariantLimit => "declaration exceeds the variant limit"
+            ParseErrorKind::InvalidVariantIndex index => "invalid declaration variant index"
 
 < enum TokenKind
     Ident

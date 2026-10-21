@@ -1,0 +1,153 @@
+> rock_syntax::derive_input::VariantShape
+
+enum_shape: &DeriveInput -> ()
+enum_shape = syntax !->
+    shapes = declaration_head syntax
+    stream = syntax.original!
+    nodes = syntax.nodes!
+    variants = syntax.variants!
+    i = 0
+    while i < variants.len!
+        variant = &variants[i]
+        "variant:".print!
+        tokens = (stream.slice (variant.name.range.clone!)).checked!
+        print_tokens &tokens
+        "|".print!
+        kind = &variant.shape
+        kind.tag!.print!
+        "|".print!
+        print_range &variant.name.range
+        "\n".print!
+        fields = &variant.named_fields
+        positions = &variant.types
+        j = 0
+        while j < positions.len!
+            node = &nodes[positions[j]]
+            "position:".print!
+            print_range &node.range
+            "|".print!
+            shapes[positions[j]].as_str!.print!
+            "\n".print!
+            "type:".print!
+            tokens = (stream.slice (node.range.clone!)).checked!
+            print_tokens &tokens
+            "\n".print!
+            j = j + 1
+        header = (stream.slice (variant.header_range.clone!)).checked!
+        rebuilt = header.spelling!.checked!
+        j = 0
+        while j < fields.len!
+            field_shape syntax, (&fields[j]), &shapes
+            part = (stream.slice (fields[j].layout_range.clone!)).checked!
+            rebuilt = rebuilt.concat (part.spelling!.checked!)
+            j = j + 1
+        part = (stream.slice (variant.layout_range.clone!)).checked!
+        check (rebuilt == part.spelling!.checked!)
+        copied = (syntax.variant_tokens i).checked!
+        check (copied.sources[0].identity == (41 as U64))
+        match *kind
+            VariantShape::Nullary => check (positions.len! == 0 && fields.len! == 0)
+            VariantShape::Named => check (positions.len! == 0 && fields.len! > 0)
+            VariantShape::Positional => check (positions.len! > 0 && fields.len! == 0)
+        i = i + 1
+
+run_enum: &Str -> &Str -> ()
+run_enum = name, text !->
+    name.println!
+    match DeriveInput::parse (input text)
+        Result::Err error => error_line &error
+        Result::Ok syntax =>
+            match syntax.decl_kind!
+                DeriveKind::Enum => ()
+                DeriveKind::Struct => check false
+            check (syntax.fields!.len! == 0)
+            enum_shape &syntax
+            emitted = syntax.emit!
+            check (emitted.spelling!.checked! == text)
+            repeated = (DeriveInput::parse emitted).checked!
+            variants = syntax.variants!
+            again = repeated.variants!
+            check (again.len! == variants.len! && syntax.nodes!.len! == repeated.nodes!.len!)
+            original = syntax.original!
+            header = (original.slice (syntax.header!.clone!)).checked!
+            rebuilt = header.spelling!.checked!
+            i = 0
+            while i < variants.len!
+                variant = &variants[i]
+                check (variant.range.start == again[i].range.start && variant.range.end == again[i].range.end)
+                check (variant.types.len! == again[i].types.len! && variant.named_fields.len! == again[i].named_fields.len!)
+                part = (original.slice (variant.layout_range.clone!)).checked!
+                rebuilt = rebuilt.concat (part.spelling!.checked!)
+                i = i + 1
+            check (rebuilt == text)
+
+enum_controls = !->
+    mut limits = DeclarationLimits::standard!
+    limits.max_variants = 0
+    match DeriveInput::parse_with_limits (input "enum E\n    One\n"), Limits::standard!, TypeLimits::standard!, limits
+        Result::Err error => check (error.code! == "declaration-variants")
+        Result::Ok syntax => check false
+    mut limits = DeclarationLimits::standard!
+    limits.max_variants = 0
+    empty = (DeriveInput::parse_with_limits (input "enum E"), Limits::standard!, TypeLimits::standard!, limits).checked!
+    check (empty.variants!.len! == 0)
+    mut limits = DeclarationLimits::standard!
+    limits.max_variants = -1
+    match DeriveInput::parse_with_limits (input "enum E"), Limits::standard!, TypeLimits::standard!, limits
+        Result::Err error => check (error.code! == "limits")
+        Result::Ok syntax => check false
+    mut limits = DeclarationLimits::standard!
+    limits.max_variants = 16385
+    match DeriveInput::parse_with_limits (input "enum E"), Limits::standard!, TypeLimits::standard!, limits
+        Result::Err error => check (error.code! == "limits")
+        Result::Ok syntax => check false
+    mut limits = DeclarationLimits::standard!
+    limits.max_fields = 1
+    match DeriveInput::parse_with_limits (input "enum E\n    One T\n    Named\n        field: U\n"), Limits::standard!, TypeLimits::standard!, limits
+        Result::Err error => check (error.code! == "declaration-fields")
+        Result::Ok syntax => check false
+    mut limits = DeclarationLimits::standard!
+    limits.max_fields = 1
+    match DeriveInput::parse_with_limits (input "enum E\n    Named\n        field: U\n    One T\n"), Limits::standard!, TypeLimits::standard!, limits
+        Result::Err error => check (error.code! == "declaration-fields")
+        Result::Ok syntax => check false
+    mut type_limits = TypeLimits::standard!
+    type_limits.max_nodes = 2
+    match DeriveInput::parse_with_limits (input "enum E T\n    One T\n    Named\n        value: T\n"), Limits::standard!, type_limits, DeclarationLimits::standard!
+        Result::Err error => check (error.code! == "type-nodes")
+        Result::Ok syntax => check false
+    mixed = split "enum E\n    One T\n", 11, JoinBoundary::SourceAdjacent, 9
+    syntax = (DeriveInput::parse mixed).checked!
+    variants = syntax.variants!
+    context = &variants[0].name.context
+    match *context
+        Option::Some value => check (value.handle == (9 as U32))
+        Option::None => check false
+    name = syntax.decl_name!
+    context = &name.context
+    match *context
+        Option::Some value => check (value.handle == (7 as U32))
+        Option::None => check false
+    copied = (syntax.variant_tokens 0).checked!
+    check (copied.segments[0].context.handle == (9 as U32))
+    match syntax.variant_tokens (-1)
+        Result::Err error => check (error.code! == "variant-index")
+        Result::Ok tokens => check false
+    match syntax.variant_tokens 1
+        Result::Err error => check (error.code! == "variant-index")
+        Result::Ok tokens => check false
+    mut captured = input "enum E\n    Named\n        value: T = @☃[)\n    Fake\n    Last\n"
+    captured.expressions.push (ExpressionRange
+        range: range 36, 51
+        header_indent: 8)
+    syntax = (DeriveInput::parse (captured.clone!)).checked!
+    check (syntax.variants!.len! == 2)
+    copied = (syntax.variant_tokens 0).checked!
+    check (copied.expressions.len! == 1)
+    emitted = syntax.emit!
+    check (emitted.spelling!.checked! == captured.spelling!.checked! && emitted.expressions.len! == 1)
+    mut limits = DeclarationLimits::standard!
+    limits.max_fields = 0
+    syntax = (DeriveInput::parse_with_limits (input "enum E\n    One\n"), Limits::standard!, TypeLimits::standard!, limits).checked!
+    check (syntax.variants!.len! == 1)
+    "enum controls passed".println!

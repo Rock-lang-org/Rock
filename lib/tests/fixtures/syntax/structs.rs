@@ -40,7 +40,7 @@ pub const CASES: &[StructCase] = &[
     yes!("nested-margin", "    < struct Packet T\n        < value: T\n        next: T\n", &[("value", "T", None), ("next", "T", None)]),
     yes!("duplicate-field-is-syntax", "struct Pair\n    same: I64\n    same: Bool\n", &[("same", "I64", None), ("same", "Bool", None)]),
     yes!("unknown-is-syntax", "struct Shape {T = Unknown}\n    value: NotResolved T\n", &[("value", "NotResolved T", None)]),
-    no!("not-struct", "enum Empty\n", true, "declaration", 0, 4, -1),
+    no!("unsupported-declaration", "trait Empty\n", true, "declaration", 0, 5, -1),
     no!("empty-input", "", false, "declaration", 0, 0, -1),
     no!("missing-name", "struct\n", false, "declaration-name", 6, 6, -1),
     no!("lower-name", "struct lower\n", false, "declaration-name", 7, 12, -1),

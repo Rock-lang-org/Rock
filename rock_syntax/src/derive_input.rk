@@ -21,14 +21,31 @@
 
 < struct DeclarationLimits
     < max_fields: I64
+    < max_variants: I64
 
 impl DeclarationLimits
     standard: DeclarationLimits
     standard = -> DeclarationLimits
         max_fields: 16384
+        max_variants: 16384
 
 < enum DeriveKind
     Struct
+    Enum
+
+< enum VariantShape
+    Nullary
+    Named
+    Positional
+
+< struct Variant
+    < name: Token
+    < shape: VariantShape
+    < named_fields: Vec Field
+    < types: Vec I64
+    < range: ByteRange
+    < layout_range: ByteRange
+    < header_range: ByteRange
 
 < struct Field
     < name: Token
@@ -47,6 +64,8 @@ impl DeclarationLimits
     exported: Bool
     parameters: Vec GenericParam
     members: Vec Field
+    variant_nodes: Vec Variant
+    enumeration: Bool
     header_range: ByteRange
 
 struct Line
@@ -127,6 +146,195 @@ layout_marks = parser, lines, groups ->
         i = i + 1
     marks
 
+// A header/type window never consumes a sibling's first token.
+line_stop: &Vec Mark -> I64 -> I64 -> I64
+line_stop = marks, start, stop ->
+    line = marks[start].line
+    index = start + 1
+    while index < stop && marks[index].line == line
+        index = index + 1
+    index
+
+body_stop: &Vec Line -> &Vec Mark -> I64 -> I64 -> I64 -> I64
+body_stop = lines, marks, start, stop, margin ->
+    index = start
+    while index < stop
+        mark = &marks[index]
+        if mark.first && !mark.grouped && lines[mark.line].indent <= margin
+            break
+        index = index + 1
+    index
+
+impl Parser
+    @decl_margin: &Vec Line -> &Vec Mark -> I64 -> Result I64, ParseError
+    @decl_margin = lines, marks, parent_margin ->
+        index = self.lexeme_index
+        mark = &marks[index]
+        line = &lines[mark.line]
+        if !mark.first || mark.grouped || !line.supported || line.indent % 2 != 0 || line.indent > 254 || line.indent <= parent_margin
+            failure: Result I64, ParseError = Result::Err (self.failure ParseErrorKind::InvalidDeclarationIndent)
+            return failure
+        if line.start + (line.indent as U64) != self.lexemes[index].token.range.start
+            failure: Result I64, ParseError = Result::Err (self.failure ParseErrorKind::UnsupportedDeclarationBoundary)
+            return failure
+        Result::Ok (line.indent)
+
+    ^@read_decl_fields: &Vec Line -> &Vec Mark -> I64 -> I64 -> I64 -> U64 -> I64 -> Result (Vec Field), ParseError
+    ^@read_decl_fields = lines, marks, parent_margin, required_margin, last_stop, source_end, field_limit ->
+        mut fields: Vec Field = Vec::new!
+        body_indent = required_margin
+        while self.lexeme_index < last_stop
+            first_index = self.lexeme_index
+            mark = &marks[first_index]
+            line = &lines[mark.line]
+            self.lexeme_stop = last_stop
+            self.stop_offset = source_end
+            margin = self.decl_margin lines, marks, parent_margin ?
+            if body_indent < 0
+                body_indent = margin
+            if margin != body_indent
+                failure: Result (Vec Field), ParseError = Result::Err (self.failure ParseErrorKind::InvalidDeclarationIndent)
+                return failure
+            if fields.len! >= field_limit
+                failure: Result (Vec Field), ParseError = Result::Err (self.failure ParseErrorKind::DeclarationFieldLimit)
+                return failure
+            first_line_stop = line_stop marks, first_index, last_stop
+            field_stop = body_stop lines, marks, first_line_stop, last_stop, body_indent
+            self.lexeme_stop = first_line_stop
+            self.stop_offset = line.content_end
+            start = self.lexemes[first_index].token.range.start
+            public = (self.at "<") && self.lexemes[self.lexeme_index].token.tag! == "operator"
+            if public
+                self.take! ?
+            if self.lexeme_index >= first_line_stop || self.lexemes[self.lexeme_index].token.tag! != "ident"
+                failure: Result (Vec Field), ParseError = Result::Err (self.failure ParseErrorKind::ExpectedField)
+                return failure
+            index = self.take! ?
+            field_name = copy_token (&self.lexemes[index].token)
+            if !(self.at ":")
+                failure: Result (Vec Field), ParseError = Result::Err (self.failure ParseErrorKind::ExpectedFieldColon)
+                return failure
+            self.take! ?
+            ty = self.read_type 0 ?
+            mut default_range: Option ByteRange = Option::None
+            if self.lexeme_index < first_line_stop
+                if !(self.at "=")
+                    failure: Result (Vec Field), ParseError = Result::Err (self.failure ParseErrorKind::ExpectedFieldEnd)
+                    return failure
+                self.take! ?
+                if self.lexeme_index >= field_stop
+                    failure: Result (Vec Field), ParseError = Result::Err (self.failure ParseErrorKind::ExpectedFieldDefault)
+                    return failure
+                if self.lexeme_index >= first_line_stop
+                    failure: Result (Vec Field), ParseError = Result::Err (self.failure ParseErrorKind::UnsupportedDeclarationBoundary)
+                    return failure
+                default_range = Option::Some (ByteRange
+                    start: self.lexemes[self.lexeme_index].token.range.start
+                    end: self.lexemes[field_stop - 1].token.range.end)
+            else
+                if field_stop != first_line_stop
+                    self.lexeme_stop = field_stop
+                    failure: Result (Vec Field), ParseError = Result::Err (self.failure ParseErrorKind::UnsupportedDeclarationBoundary)
+                    return failure
+            i = first_line_stop
+            while i < field_stop
+                item = &marks[i]
+                continuation = &lines[item.line]
+                if item.first && !item.grouped && (!continuation.supported || continuation.indent % 2 != 0 || continuation.indent > 254)
+                    token = &self.lexemes[i].token
+                    failure: Result (Vec Field), ParseError = Result::Err (ParseError::at ParseErrorKind::InvalidDeclarationIndent, (token.range.start), (token.range.end))
+                    return failure
+                i = i + 1
+            layout_end = if field_stop < last_stop then lines[marks[field_stop].line].start else source_end
+            fields.push (Field
+                name: field_name
+                public: public
+                ty: ty
+                default_range: default_range
+                range: ByteRange
+                    start: start
+                    end: self.lexemes[field_stop - 1].token.range.end
+                layout_range: ByteRange
+                    start: line.start
+                    end: layout_end)
+            self.lexeme_index = field_stop
+        Result::Ok fields
+
+    ^@read_decl_variants: &Vec Line -> &Vec Mark -> I64 -> U64 -> &DeclarationLimits -> Result (Vec Variant), ParseError
+    ^@read_decl_variants = lines, marks, header_indent, source_end, limits ->
+        mut variants: Vec Variant = Vec::new!
+        body_indent = -1
+        used_fields = 0
+        stop = self.lexemes.len!
+        while self.lexeme_index < stop
+            first = self.lexeme_index
+            self.lexeme_stop = stop
+            self.stop_offset = source_end
+            margin = self.decl_margin lines, marks, header_indent ?
+            if body_indent < 0
+                body_indent = margin
+            if margin != body_indent
+                failure: Result (Vec Variant), ParseError = Result::Err (self.failure ParseErrorKind::InvalidDeclarationIndent)
+                return failure
+            if variants.len! >= limits.max_variants
+                failure: Result (Vec Variant), ParseError = Result::Err (self.failure ParseErrorKind::DeclarationVariantLimit)
+                return failure
+            line = &lines[marks[first].line]
+            first_line_stop = line_stop marks, first, stop
+            variant_stop = body_stop lines, marks, first_line_stop, stop, body_indent
+            layout_end = if variant_stop < stop then lines[marks[variant_stop].line].start else source_end
+            self.lexeme_stop = first_line_stop
+            self.stop_offset = line.content_end
+            if !(self.is_name first)
+                failure: Result (Vec Variant), ParseError = Result::Err (self.failure ParseErrorKind::ExpectedVariant)
+                return failure
+            self.take! ?
+            name = copy_token (&self.lexemes[first].token)
+            mut positional: Vec I64 = Vec::new!
+            while self.starts_atom (self.lexeme_index)
+                if used_fields >= limits.max_fields
+                    failure: Result (Vec Variant), ParseError = Result::Err (self.failure ParseErrorKind::DeclarationFieldLimit)
+                    return failure
+                // Grouped arguments are individual fields; otherwise the full
+                // type parser owns application/arrow commas, like parse_type_inner.
+                ty = if self.at "(" then self.atom 0 ? else self.read_type 0 ?
+                positional.push ty
+                used_fields = used_fields + 1
+                if self.at ","
+                    self.take! ?
+            if self.lexeme_index != first_line_stop
+                failure: Result (Vec Variant), ParseError = Result::Err (self.failure ParseErrorKind::ExpectedVariantEnd)
+                return failure
+            mut fields: Vec Field = Vec::new!
+            header_end = layout_end
+            if first_line_stop < variant_stop
+                if positional.len! > 0
+                    self.lexeme_stop = variant_stop
+                    failure: Result (Vec Variant), ParseError = Result::Err (self.failure ParseErrorKind::UnsupportedVariantShape)
+                    return failure
+                header_end = lines[marks[first_line_stop].line].start
+                field_margin = body_indent + body_indent - header_indent
+                remaining = limits.max_fields - used_fields
+                fields = self.read_decl_fields lines, marks, body_indent, field_margin, variant_stop, layout_end, remaining ?
+                used_fields = used_fields + fields.len!
+            shape = if positional.len! > 0 then VariantShape::Positional else if fields.len! > 0 then VariantShape::Named else VariantShape::Nullary
+            variants.push (Variant
+                name: name
+                shape: shape
+                named_fields: fields
+                types: positional
+                range: ByteRange
+                    start: self.lexemes[first].token.range.start
+                    end: self.lexemes[variant_stop - 1].token.range.end
+                layout_range: ByteRange
+                    start: line.start
+                    end: layout_end
+                header_range: ByteRange
+                    start: line.start
+                    end: header_end)
+            self.lexeme_index = variant_stop
+        Result::Ok variants
+
 copy_token: &Token -> Token
 copy_token = token ->
     retained = &token.context
@@ -144,7 +352,7 @@ impl DeriveInput
 
     parse_with_limits: TokenStream -> Limits -> TypeLimits -> DeclarationLimits -> Result DeriveInput, ParseError
     parse_with_limits = input, lexical_limits, type_limits, limits ->
-        if limits.max_fields < 0 || limits.max_fields > 16384
+        if limits.max_fields < 0 || limits.max_fields > 16384 || limits.max_variants < 0 || limits.max_variants > 16384
             failure: Result DeriveInput, ParseError = Result::Err (ParseError::at ParseErrorKind::InvalidLimits, 0, 0)
             return failure
         mut parser = Parser::new input, lexical_limits, type_limits ?
@@ -175,7 +383,8 @@ impl DeriveInput
         exported = (parser.at "<") && parser.lexemes[parser.lexeme_index].token.tag! == "operator"
         if exported
             parser.take! ?
-        if !(parser.at "struct")
+        enumeration = parser.at "enum"
+        if !enumeration && !(parser.at "struct")
             failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::ExpectedDeclaration)
             return failure
         parser.take! ?
@@ -195,101 +404,16 @@ impl DeriveInput
             failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::ExpectedHeaderEnd)
             return failure
         mut fields: Vec Field = Vec::new!
-        body_indent = -1
+        mut variants: Vec Variant = Vec::new!
         header_end = text.len! as U64
-        while parser.lexeme_index < parser.lexemes.len!
-            first_index = parser.lexeme_index
-            mark = &marks[first_index]
-            line = &lines[mark.line]
-            parser.lexeme_stop = parser.lexemes.len!
-            parser.stop_offset = text.len! as U64
-            if !mark.first || mark.grouped || !line.supported || line.indent % 2 != 0 || line.indent > 254 || line.indent <= header_indent
-                failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::InvalidDeclarationIndent)
-                return failure
-            if line.start + (line.indent as U64) != parser.lexemes[first_index].token.range.start
-                failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::UnsupportedDeclarationBoundary)
-                return failure
-            if body_indent < 0
-                body_indent = line.indent
-                header_end = line.start
-            if line.indent != body_indent
-                failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::InvalidDeclarationIndent)
-                return failure
-            if fields.len! >= limits.max_fields
-                failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::DeclarationFieldLimit)
-                return failure
-            field_stop = first_index + 1
-            first_line_stop = field_stop
-            while first_line_stop < marks.len! && marks[first_line_stop].line == mark.line
-                first_line_stop = first_line_stop + 1
-            field_stop = first_line_stop
-            while field_stop < marks.len!
-                next_mark = &marks[field_stop]
-                next_line = &lines[next_mark.line]
-                if next_mark.first && !next_mark.grouped && next_line.indent <= body_indent
-                    break
-                field_stop = field_stop + 1
-            parser.lexeme_stop = first_line_stop
-            parser.stop_offset = line.content_end
-            start = parser.lexemes[first_index].token.range.start
-            public = (parser.at "<") && parser.lexemes[parser.lexeme_index].token.tag! == "operator"
-            if public
-                parser.take! ?
-            if parser.lexeme_index >= first_line_stop || parser.lexemes[parser.lexeme_index].token.tag! != "ident"
-                failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::ExpectedField)
-                return failure
-            index = parser.take! ?
-            field_name = copy_token (&parser.lexemes[index].token)
-            if !(parser.at ":")
-                failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::ExpectedFieldColon)
-                return failure
-            parser.take! ?
-            ty = parser.read_type 0 ?
-            mut default_range: Option ByteRange = Option::None
-            if parser.lexeme_index < first_line_stop
-                if !(parser.at "=")
-                    failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::ExpectedFieldEnd)
-                    return failure
-                parser.take! ?
-                if parser.lexeme_index >= field_stop
-                    failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::ExpectedFieldDefault)
-                    return failure
-                // A newline immediately after '=' is an unsupported boundary;
-                // no expression grammar is guessed to make it a valid operand.
-                if parser.lexeme_index >= first_line_stop
-                    failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::UnsupportedDeclarationBoundary)
-                    return failure
-                default_range = Option::Some (ByteRange
-                    start: parser.lexemes[parser.lexeme_index].token.range.start
-                    end: parser.lexemes[field_stop - 1].token.range.end)
-            else
-                if field_stop != first_line_stop
-                    parser.lexeme_stop = field_stop
-                    failure: Result DeriveInput, ParseError = Result::Err (parser.failure ParseErrorKind::UnsupportedDeclarationBoundary)
-                    return failure
-            // Default bodies remain opaque, but physical margins are checked.
-            i = first_line_stop
-            while i < field_stop
-                item = &marks[i]
-                continuation = &lines[item.line]
-                if item.first && !item.grouped && (!continuation.supported || continuation.indent % 2 != 0 || continuation.indent > 254)
-                    token = &parser.lexemes[i].token
-                    failure: Result DeriveInput, ParseError = Result::Err (ParseError::at ParseErrorKind::InvalidDeclarationIndent, (token.range.start), (token.range.end))
-                    return failure
-                i = i + 1
-            layout_end = if field_stop < marks.len! then lines[marks[field_stop].line].start else text.len! as U64
-            fields.push (Field
-                name: field_name
-                public: public
-                ty: ty
-                default_range: default_range
-                range: ByteRange
-                    start: start
-                    end: parser.lexemes[field_stop - 1].token.range.end
-                layout_range: ByteRange
-                    start: line.start
-                    end: layout_end)
-            parser.lexeme_index = field_stop
+        stop = parser.lexemes.len!
+        end = text.len! as U64
+        if parser.lexeme_index < stop
+            header_end = lines[marks[parser.lexeme_index].line].start
+        if enumeration
+            variants = parser.read_decl_variants &lines, &marks, header_indent, end, &limits ?
+        else
+            fields = parser.read_decl_fields &lines, &marks, header_indent, -1, stop, end, (limits.max_fields) ?
         Result::Ok (DeriveInput
             stream: parser.lexer_cursor.input!.clone!
             arena: parser.arena
@@ -297,12 +421,14 @@ impl DeriveInput
             exported: exported
             parameters: parameters
             members: fields
+            variant_nodes: variants
+            enumeration: enumeration
             header_range: ByteRange
                 start: 0
                 end: header_end)
 
     @decl_kind: DeriveKind
-    @decl_kind = -> DeriveKind::Struct
+    @decl_kind = -> if self.enumeration then DeriveKind::Enum else DeriveKind::Struct
 
     @decl_name: &Token
     @decl_name = -> &self.declaration_name
@@ -315,6 +441,9 @@ impl DeriveInput
 
     @fields: &Vec Field
     @fields = -> &self.members
+
+    @variants: &Vec Variant
+    @variants = -> &self.variant_nodes
 
     @nodes: &Vec TypeNode
     @nodes = -> &self.arena
@@ -336,3 +465,20 @@ impl DeriveInput
         match self.stream.slice (self.members[index].range.clone!)
             Result::Ok tokens => Result::Ok tokens
             Result::Err error => Result::Err (ParseError::at (ParseErrorKind::InvalidInput error), 0, 0)
+
+    @variant_tokens: I64 -> Result TokenStream, ParseError
+    @variant_tokens = index ->
+        if index < 0 || index >= self.variant_nodes.len!
+            failure: Result TokenStream, ParseError = Result::Err (ParseError::at (ParseErrorKind::InvalidVariantIndex index), 0, 0)
+            return failure
+        match self.stream.slice (self.variant_nodes[index].range.clone!)
+            Result::Ok tokens => Result::Ok tokens
+            Result::Err error => Result::Err (ParseError::at (ParseErrorKind::InvalidInput error), 0, 0)
+
+impl VariantShape
+    @tag: &Str
+    @tag = ->
+        match *self
+            VariantShape::Nullary => "nullary"
+            VariantShape::Named => "named"
+            VariantShape::Positional => "positional"
