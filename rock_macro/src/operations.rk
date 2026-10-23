@@ -44,14 +44,15 @@ source_range = stream, source, range ->
     if source >= (stream.sources.len! as U64)
         failure: Result (), SdkError = Result::Err (SdkError::InvalidSource source)
         return failure
-    text = &stream.sources[source as I64].text
-    if range.start > range.end || range.end > (text.len! as U64)
+    snapshot = &stream.sources[source as I64]
+    text = &snapshot.text
+    if range.start > range.end || range.start < snapshot.offset || range.end < snapshot.offset
         failure: Result (), SdkError = Result::Err (SdkError::InvalidRange range.clone!)
         return failure
-    if !(boundary text, range.start)
+    if !(boundary text, (range.start - snapshot.offset))
         failure: Result (), SdkError = Result::Err (SdkError::NotCharBoundary range.start)
         return failure
-    if !(boundary text, range.end)
+    if !(boundary text, (range.end - snapshot.offset))
         failure: Result (), SdkError = Result::Err (SdkError::NotCharBoundary range.end)
         return failure
     Result::Ok ()
@@ -63,9 +64,10 @@ logical_boundary = stream, offset ->
     i = 0
     while i < stream.segments.len!
         segment = &stream.segments[i]
-        end = base + segment.range.end - segment.range.start
+        end = base + (segment.range.end - segment.range.start)
         if offset < end
-            return boundary (&stream.sources[segment.source as I64].text), (segment.range.start + offset - base)
+            source = &stream.sources[segment.source as I64]
+            return boundary (&source.text), (segment.range.start - source.offset + (offset - base))
         base = end
         i = i + 1
     offset == base
@@ -82,7 +84,7 @@ impl TokenStream
         while i < self.sources.len!
             source = &self.sources[i]
             size = source.text.len! as U64
-            if size > ((16777216 as U64) - retained_bytes)
+            if size > ((16777216 as U64) - retained_bytes) || source.offset > (18446744073709551615 as U64) - size
                 failure: Result U64, SdkError = Result::Err SdkError::LengthLimit
                 return failure
             retained_bytes = retained_bytes + size
@@ -160,10 +162,11 @@ impl TokenStream
         i = 0
         while i < self.segments.len!
             segment = &self.segments[i]
-            end = base + segment.range.end - segment.range.start
+            end = base + (segment.range.end - segment.range.start)
             if offset < end || (offset == end && offset == length)
-                point = segment.range.start + offset - base
-                if !(boundary (&self.sources[segment.source as I64].text), point)
+                point = segment.range.start + (offset - base)
+                source = &self.sources[segment.source as I64]
+                if !(boundary (&source.text), (point - source.offset))
                     failure: Result StreamAnchor, SdkError = Result::Err (SdkError::NotCharBoundary offset)
                     return failure
                 retained_origin = &segment.origin
@@ -192,13 +195,13 @@ impl TokenStream
         i = 0
         while i < self.segments.len!
             original = &self.segments[i]
-            end = base + original.range.end - original.range.start
+            end = base + (original.range.end - original.range.start)
             start_cut = if range.start > base then range.start else base
             end_cut = if range.end < end then range.end else end
             if start_cut < end_cut
                 mut segment = original.clone!
-                segment.range.start = original.range.start + start_cut - base
-                segment.range.end = original.range.start + end_cut - base
+                segment.range.start = original.range.start + (start_cut - base)
+                segment.range.end = original.range.start + (end_cut - base)
                 if start_cut > base
                     segment.boundary = JoinBoundary::SourceAdjacent
                 segments.push segment
@@ -235,8 +238,9 @@ impl TokenStream
         while i < self.segments.len!
             segment = &self.segments[i]
             source = self.sources[segment.source as I64].text.as_bytes!
-            offset = segment.range.start as I64
-            while offset < (segment.range.end as I64)
+            start = self.sources[segment.source as I64].offset
+            offset = (segment.range.start - start) as I64
+            while offset < ((segment.range.end - start) as I64)
                 bytes.push source[offset]
                 offset = offset + 1
             i = i + 1
@@ -264,7 +268,7 @@ impl TokenStream
             match identities.get &identity_key
                 Option::Some existing_index =>
                     existing = &output.sources[*existing_index]
-                    if existing.file_path != source.file_path || existing.text != source.text
+                    if existing.file_path != source.file_path || existing.offset != source.offset || existing.text != source.text
                         failure: Result TokenStream, SdkError = Result::Err (SdkError::ConflictingSnapshot source.identity)
                         return failure
                     index = *existing_index

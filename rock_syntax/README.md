@@ -92,6 +92,7 @@ main = !->
     sources.push (SourceSnapshot
         identity: 1
         file_path: String::from "example.rk"
+        offset: 0
         text: text)
     mut segments: Vec Segment = Vec::new!
     segments.push (Segment

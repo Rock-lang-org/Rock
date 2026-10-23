@@ -59,7 +59,7 @@ impl LosslessStream {
             let end = base + run.text().len();
             if offset < end || (offset == end && offset == self.len_bytes) {
                 let source_offset = run.range.start + (offset - base);
-                if !run.source.text.is_char_boundary(source_offset) {
+                if !run.source.is_char_boundary(source_offset) {
                     return Err(LosslessError::NotCharBoundary { offset });
                 }
                 return Ok(SourcePosition {

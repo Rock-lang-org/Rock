@@ -1,4 +1,4 @@
-// Explicit protocol 7 / RKLOSS04 writing into a bounded, owned byte buffer.
+// Explicit protocol 8 / RKLOSS05 writing into a bounded, owned byte buffer.
 // No bytes are exposed on failure; IO and worker dispatch remain separate.
 > rock_macro::*
 > rock_macro::encode_validation::validate_report
@@ -139,15 +139,42 @@ impl Writer
 
     ^@stream: &TokenStream -> Result (), EncodeError
     ^@stream = stream ->
-        magic: [U8; 8] = [82, 75, 76, 79, 83, 83, 48, 52]
+        magic: [U8; 8] = [82, 75, 76, 79, 83, 83, 48, 53]
         self.raw &magic ?
+        mut windows: Vec ByteRange = Vec::new!
+        i = 0
+        while i < stream.sources.len!
+            source = &stream.sources[i]
+            windows.push (ByteRange
+                start: source.offset + (source.text.len! as U64)
+                end: source.offset)
+            i = i + 1
+        windows.set (stream.anchor.source as I64), (ByteRange
+            start: stream.anchor.offset
+            end: stream.anchor.offset)
+        i = 0
+        while i < stream.segments.len!
+            segment = &stream.segments[i]
+            window = &windows[segment.source as I64]
+            start = if segment.range.start < window.start then segment.range.start else window.start
+            end = if segment.range.end > window.end then segment.range.end else window.end
+            windows.set (segment.source as I64), (ByteRange
+                start: start
+                end: end)
+            i = i + 1
         self.count stream.sources.len! ?
         i = 0
         while i < stream.sources.len!
             source = &stream.sources[i]
+            window = &windows[i]
+            start = if window.start <= window.end then window.start else source.offset
+            end = if window.start <= window.end then window.end else source.offset
             self.uint (source.identity) ?
             self.text (&source.file_path) ?
-            self.text (&source.text) ?
+            self.uint start ?
+            self.uint (end - start) ?
+            bytes = source.text.as_bytes!
+            self.raw (&bytes[((start - source.offset) as I64)..((end - source.offset) as I64)]) ?
             i = i + 1
         self.count stream.segments.len! ?
         i = 0
@@ -226,7 +253,7 @@ impl Writer
 
     ^@report: &MacroReport -> Result (), EncodeError
     ^@report = report ->
-        self.uint (7 as U64) ?
+        self.uint (8 as U64) ?
         output = &report.output
         match *output
             Option::None => self.byte (0 as U8) ?

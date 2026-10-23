@@ -20,6 +20,29 @@ fn macro_a_10_many_siblings_share_the_invocation_budget() {
 }
 
 #[test]
+fn macro_review_parser_probes_and_generated_results_share_aggregate_work() {
+    let config = Config::default();
+    let input = super::token_tree::source("1 + 2");
+    let measure = MacroExpansionContext::new(&config);
+    let before = measure.remaining_matching_work();
+    assert!(measure.parse_probe(&input, || crate::parser::expression_prefix(&input, &config, 0)).unwrap().is_some());
+    let cost = before - measure.remaining_matching_work();
+    assert!(cost > 1);
+    let context = MacroExpansionContext::new(&config).with_limits(ExpansionLimits {
+        max_matching_work: cost + 1, ..ExpansionLimits::default()
+    });
+    assert!(context.parse_probe(&input, || crate::parser::expression_prefix(&input, &config, 0)).unwrap().is_some());
+    let errors = super::parse_generated_result(input, &context, crate::ast::MacroOutputCategory::Expression, None).unwrap_err();
+    assert!(format!("{errors:?}").contains("parser work limit exceeded"));
+    let context = MacroExpansionContext::new(&config).with_limits(ExpansionLimits {
+        max_matching_work: 1, ..ExpansionLimits::default()
+    });
+    let nested = super::token_tree::source("%other 7");
+    let errors = super::macro_arg_matcher::rock_arguments(&nested, &context, 0).unwrap_err();
+    assert!(format!("{errors:?}").contains("parser work limit exceeded"));
+}
+
+#[test]
 fn macro_a_10_spelling_trivia_and_output_segments_are_aggregate_resources() {
     let text = "macro make\n    =>\n        value = -> 42 /* long retained trivia */\n%make\n";
     fail(text, ExpansionLimits { max_output_bytes: 12, ..ExpansionLimits::default() }, "output byte budget");

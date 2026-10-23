@@ -85,6 +85,18 @@ failed = result ->
 
 < macro forward = context, input -> (context.forward input ?).finish!
 
+< macro strip_capture = context, input ->
+    input.expressions = Vec::new!
+    (context.forward input ?).finish!
+
+< macro scale_capture = context, input ->
+    args = [context.forward input ?]
+    (context.quote "3 * $0", &args ?).finish!
+
+< macro parse_literal = context, input ->
+    literal = context.string_input &input ?
+    (context.literal_expr 0, 0, literal.decoded.len! ?).finish!
+
 < macro string = context, input ->
     literal = context.string_input &input ?
     (context.string_literal literal.decoded.as_str! ?).finish!

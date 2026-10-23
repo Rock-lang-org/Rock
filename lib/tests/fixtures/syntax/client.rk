@@ -44,6 +44,7 @@ input: &Str -> TokenStream
 input = text ->
     mut sources: Vec SourceSnapshot = Vec::new!
     sources.push (SourceSnapshot
+        offset: 0
         identity: 41
         file_path: String::from "fixture.rk"
         text: String::from text)

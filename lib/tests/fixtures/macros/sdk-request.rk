@@ -29,7 +29,7 @@ errors = !->
                 _ => check false
         _ => check false
     mut utf8: Vec U8 = Vec::new!
-    utf8.push (7 as U8)
+    utf8.push (8 as U8)
     utf8.push (1 as U8)
     utf8.push (255 as U8)
     match decode_request utf8, "0.7.0"
@@ -206,12 +206,27 @@ check_request = bytes ->
     length = bytes.len!
     match decode_request bytes, "0.7.0"
         Result::Ok request =>
-            check (request.context.protocol_version == (7 as U32))
+            check (request.context.protocol_version == (8 as U32))
             check (request.context.compiler_version == "0.7.0")
             if request.context.macro_name == "format"
                 golden &request
             else if request.context.macro_name == "rich"
                 rich &request
+            else if request.context.macro_name == "window"
+                base = request.input.sources[0].offset
+                check (base > (0 as U64))
+                match request.input.spelling!
+                    Result::Ok text => check (text == "a b\t雪\r\n")
+                    _ => check false
+                match request.input.slice (ByteRange
+                    start: 4
+                    end: 7)
+                    Result::Ok part =>
+                        check (part.anchor.offset == base + (4 as U64))
+                        match part.spelling!
+                            Result::Ok text => check (text == "雪")
+                            _ => check false
+                    _ => check false
             else
                 check (request.context.macro_name == "empty")
                 check (request.input.segments.len! == 0)

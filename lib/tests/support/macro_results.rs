@@ -13,6 +13,14 @@ pub fn cases(golden: &ProcMacroRequest, rich: &ProcMacroRequest) -> Vec<(ProcMac
     }
     cases.push((rich.clone(), true));
     let mut wide = rich.clone(); wide.macro_name = "wide_context".into(); cases.push((wide, true));
+    for (_, bytes, accepted) in super::macro_requests::cases() {
+        if !accepted { continue; }
+        let mut request = decode_request(&bytes).unwrap();
+        if request.macro_name == "window" {
+            request.macro_name = "expand".into();
+            cases.push((request, true));
+        }
+    }
     cases
 }
 
@@ -30,11 +38,11 @@ pub fn verify(request: &ProcMacroRequest, bytes: &[u8]) {
     }
     response.validate_for(request).unwrap();
     match request.macro_name.as_str() {
-        "format" => assert_eq!(bytes, unhex(include_str!("../fixtures/macros/protocol-7/response.hex"))),
-        "error" | "report_failure" => assert_eq!(bytes, unhex(include_str!("../fixtures/macros/protocol-7/error.hex"))),
+        "format" => assert_eq!(bytes, unhex(include_str!("../fixtures/macros/protocol-8/response.hex"))),
+        "error" | "report_failure" => assert_eq!(bytes, unhex(include_str!("../fixtures/macros/protocol-8/error.hex"))),
         "expand" | "rich" => assert_eq!(response, ProcMacroResponse::expanded(request.input.clone())),
         "empty" => {
-            assert_eq!(bytes, [7, 1, 0, 0]);
+            assert_eq!(bytes, [8, 1, 0, 0]);
             assert!(response.output.unwrap().parts.is_empty());
         }
         "expand_empty" => {

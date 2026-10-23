@@ -3479,6 +3479,84 @@ All four repair outcomes are verified. `bd` is still unavailable; no issue write
 is claimed. Verification completed before the subsequent request to commit and
 push these follow-up changes.
 
+## Merge-review hardening follow-up (2026-10-23)
+
+The subsequent branch review identified four additional merge blockers despite
+the earlier passing gates. Repairs preserve the original semantic fixtures:
+
+- Generated parsing now has sticky work/depth guards shared by alternatives and
+  nested fragments; direct recursive type parsing is guarded too. Matcher probes
+  and generated-result parsing charge actual work to the aggregate expansion
+  budget. Limit failures cannot become matcher fallthrough. Limits are 512 guarded
+  frames and 8,388,608 parser work units, additionally capped by remaining expansion
+  work when parsing for expansion. Linux x86-64/AArch64 guards query native stack
+  bounds once per root parse and reserve 256 KiB; unavailable bounds use a
+  conservative 128-frame cap.
+- Nested declarative matcher/template repetition rejects at the second opening,
+  before descending into the unsupported nested structure.
+- `RKLOSS05` snapshots carry physical window offsets and only referenced window
+  text. Tiny invocations no longer serialize unrelated source prefixes/suffixes;
+  run offsets, snapshot identities, spans and aliasing are retained. Compiler and
+  SDK range operations validate window arithmetic, including offsets near U64's
+  maximum. Protocol 8 and product format 56 are forward-only replacements; rebuild
+  dependencies. Current goldens live under `protocol-8/`.
+- Compiler reconstruction authorizes opaque expression captures as whole atoms:
+  their nested grouping/layout, source ranges, contexts, provenance and internal
+  boundaries must match compiler-owned input. Removing/splitting metadata or
+  inventing captures rejects before generated parsing; whole omission, forwarding,
+  repetition and reordering remain supported.
+
+Nine `macro_review` unit regressions cover these repairs, including 2,000 nested
+parentheses/types/patterns, 10,000 repetition openings, aggregate work and parser
+recovery on default and reduced 512 KiB stacks. Native authoring acceptance covers multi-megabyte surrounding comments,
+`3 * (1 + 2) == 9` across declarative/procedural forwarding, rejected metadata
+removal, and generated parser exhaustion. Cross-language codec controls include
+nonzero/maximal source windows and overflowing/out-of-window negatives.
+
+Intermediate checks exposed and corrected a duplicate helper name, a missing
+direct-recursion guard, an overly restrictive 64-frame limit, and a source-size
+work heuristic that rejected the existing formatter output. Those failed runs
+are not acceptance. A 128-frame guard passed std/authoring but rejected the existing
+LSP 32-array case; raising it to 512 alone overflowed the default test stack. The
+final stack-aware guard passes both, plus all nine review regressions in debug
+and release without enlarging test stacks. A compiled `rock_syntax` README example
+also needed the new `SourceSnapshot.offset` field.
+
+Final stack-aware verification (test suites serialized):
+
+- `cargo test -p rock-lib`: 2,778 units, 815 main integrations, six diagnostic
+  tests, fourteen process tests, four SDK/support tests and one parser integration
+  pass; eight native unit groups, eleven native SDK groups and one doctest remain
+  ignored by this command. Log `sh_1690c71f80013TlmgjTf510gy3.out`.
+- All nine `macro_review` regressions pass in both debug and release; the exact
+  `rock-lsp` nested-source acceptance also passes.
+- Remaining workspace suites pass with explicit `ROCK_SYSROOT=target` and
+  `ROCKC=target/debug/rockc` (absolute paths): Rock 94, LSP five, shared 30,
+  rockc 57, rockup 50 units/seven release integrations, and one shared doctest.
+- `cargo build --workspace` and `cargo build --release --workspace` pass with
+  warnings; debug log `sh_1690c81900019vM7lTzHPB7CYh.out`.
+- `cargo clippy --workspace --all-targets` passes with warnings;
+  `sh_1690cedab001f07Byu5hF9Il4r.out`.
+- The rebuilt debug `rockup dev std package` with explicit repository `std`,
+  `target` sysroot and `target/debug/rockc` succeeds; the sysroot manifest records
+  artifact format 56.
+
+The complete native acceptance refresh passes all 24 groups in
+`sh_1690ff485002quDIjwhwtpTMAm.out`: five CLI/package groups (277.26 s), eight
+syntax/derive groups (544.68 s), and eleven SDK groups (81.76 s), after 34.85 s
+of compilation. This final stack-aware run supersedes the depth-128 acceptance
+receipts; no acceptance gate remains pending.
+The user-requested release comparison also passes all 24 groups with release
+`rockc`: CLI/package 207.88 s, syntax/derive 618.11 s, SDK 108.58 s, compilation
+46.16 s (`sh_1691efb65002dbMIA2VCdnohPN.out`). Summed build/test times are 980.73 s
+versus 938.55 s for debug, about 4.5% longer in this run. This is not an
+unoptimized-versus-speed-optimized comparison: `Cargo.toml` already builds
+`rock-lib` at opt-level 2 for dev/tests, while release uses size-focused `z` and
+thin LTO; fixture caches are also keyed by profile and executable contents.
+Logs above are retained under the OpenCode shell session directory
+`604a7dc12c0e7de810bd56c74804b2eb16408999`. No merge/commit/push or formatting gate
+is part of this repair; merge remains subject to user validation. `bd` is absent.
+
 ## Stage gates and final verification
 
 At each stage gate, execute the stage's proposed families plus adjacent existing

@@ -168,4 +168,48 @@ mod tests {
         let diagnostics = parse_generated_source(&stream, &test_config(), MacroOutputCategory::Expression, None).unwrap_err();
         assert!(diagnostics.0.iter().any(|diagnostic| matches!(&diagnostic.location, crate::diagnostic::DiagnosticLocation::Source(span) if span.start == 7 && span.end == 11)));
     }
+
+    #[test]
+    fn macro_review_generated_nesting_is_bounded_and_next_parse_recovers() {
+        for depth in [16, 32, 128, 512, 2000] {
+            let text = format!("{}7{}", "(".repeat(depth), ")".repeat(depth));
+            let errors = generated(&text, MacroOutputCategory::Expression).unwrap_err();
+            assert!(errors.0.iter().any(|error| error.message.contains("parser") && error.message.contains("limit exceeded")), "{depth}: {errors:?}");
+        }
+        assert!(generated("((7))", MacroOutputCategory::Expression).is_ok());
+    }
+
+    #[test]
+    fn macro_review_small_stack_rejects_depth_and_recovers() {
+        std::thread::Builder::new().stack_size(512 * 1024).spawn(|| {
+            let text = format!("{}7{}", "[".repeat(2000), "]".repeat(2000));
+            let errors = generated(&text, MacroOutputCategory::Expression).unwrap_err();
+            assert!(errors.0.iter().any(|error| error.message.contains("parser depth limit exceeded")), "{errors:?}");
+            assert!(generated("7", MacroOutputCategory::Expression).is_ok());
+        }).unwrap().join().unwrap();
+    }
+
+    #[test]
+    fn macro_review_nested_fragments_share_the_outer_parse_work_budget() {
+        let scope = crate::parser::ParseWorkScope::new(50);
+        let fragment = source("1 + 2").expression_fragment(0, super::super::token_tree::MACRO_LIMITS).unwrap();
+        let errors = parse_generated_source(&fragment, &test_config(), MacroOutputCategory::Expression, None).unwrap_err();
+        assert!(errors.0.iter().any(|error| error.message.contains("parser work limit exceeded")), "{errors:?}");
+        assert!(scope.used() <= 50);
+        drop(scope);
+        assert!(generated("1 + 2", MacroOutputCategory::Expression).is_ok());
+    }
+
+    #[test]
+    fn macro_review_recursive_type_and_pattern_paths_are_bounded() {
+        for text in [
+            format!("value: {}I64{}\n", "[".repeat(2000), "]".repeat(2000)),
+            format!("value: {}I64\n", "& ".repeat(2000)),
+            format!("value: {}I64\n", "I64 -> ".repeat(2000)),
+            format!("main = -> match 1\n    {}x{} => 7\n", "(".repeat(2000), ")".repeat(2000)),
+        ] {
+            let errors = generated(&text, MacroOutputCategory::Items).unwrap_err();
+            assert!(errors.0.iter().any(|error| error.message.contains("parser") && error.message.contains("limit exceeded")), "{errors:?}");
+        }
+    }
 }

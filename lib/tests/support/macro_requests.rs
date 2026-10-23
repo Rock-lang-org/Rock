@@ -12,7 +12,7 @@ use rock_lib::products::ProductCrateIdentity;
 // Test-owned wire mirrors let malformed transport reach both real decoders;
 // production code still has one authoritative shared lossless representation.
 #[derive(Clone, Deserialize, Serialize)]
-struct Snapshot { identity: u64, path: String, text: String }
+struct Snapshot { identity: u64, path: String, offset: usize, text: String }
 #[derive(Clone, Deserialize, Serialize)]
 struct Run {
     source: usize, range: Range<usize>, kind: u32, context: u32, boundary: u32,
@@ -58,7 +58,7 @@ fn rich_stream() -> Stream {
         None, None, None,
     ];
     Stream {
-        magic: *b"RKLOSS04", sources: vec![Snapshot { identity: u64::MAX, path: "/rich.rk".into(), text: "a b\t雪\r\n".into() }],
+        magic: *b"RKLOSS05", sources: vec![Snapshot { identity: u64::MAX, path: "/rich.rk".into(), offset: 0, text: "a b\t雪\r\n".into() }],
         runs: [(0..1, 0, 251), (1..2, 1, 65536), (2..3, 0, u32::MAX), (3..4, 1, 0), (4..7, 0, 0), (7..9, 2, 0)]
             .into_iter().zip(origins).enumerate().map(|(index, ((range, kind, context), origin))| Run {
                 source: 0, range, kind, context, boundary: u32::from(index != 0), origin, construction: None,
@@ -68,21 +68,21 @@ fn rich_stream() -> Stream {
 }
 
 pub fn cases() -> Vec<(String, Vec<u8>, bool)> {
-    let hex = include_str!("../fixtures/macros/protocol-7/request.hex").trim();
+    let hex = include_str!("../fixtures/macros/protocol-8/request.hex").trim();
     let bytes: Vec<_> = (0..hex.len()).step_by(2).map(|index| u8::from_str_radix(&hex[index..index + 2], 16).unwrap()).collect();
     let golden = decode_request(&bytes).unwrap();
-    let mut cases = vec![("protocol-7 golden".into(), bytes.clone(), true)];
+    let mut cases = vec![("protocol-8 golden".into(), bytes.clone(), true)];
     for length in 0..bytes.len() {
         cases.push((format!("golden prefix {length}"), bytes[..length].to_vec(), false));
     }
     let mut trailing = bytes.clone(); trailing.push(0);
     cases.push(("trailing data".into(), trailing, false));
-    let mut wide_version = vec![253]; wide_version.extend_from_slice(&7u64.to_le_bytes()); wide_version.extend_from_slice(&bytes[1..]);
+    let mut wide_version = vec![253]; wide_version.extend_from_slice(&8u64.to_le_bytes()); wide_version.extend_from_slice(&bytes[1..]);
     cases.push(("nonminimal unsigned encoding".into(), wide_version, true));
     let mut overflow_version = vec![253]; overflow_version.extend_from_slice(&(u32::MAX as u64 + 1).to_le_bytes());
     overflow_version.extend_from_slice(&bytes[1..]);
     cases.push(("u32 overflow".into(), overflow_version, false));
-    for malformed in [vec![6], vec![254], vec![255], vec![7, 253, 255, 255, 255, 255, 255, 255, 255, 255]] {
+    for malformed in [vec![0], vec![254], vec![255], vec![8, 253, 255, 255, 255, 255, 255, 255, 255, 255]] {
         cases.push(("invalid version/tag/length".into(), malformed, false));
     }
     let mut utf8 = bytes.clone();
@@ -100,6 +100,22 @@ pub fn cases() -> Vec<(String, Vec<u8>, bool)> {
     }
 
     let stream = rich_stream();
+    for base in [1_100_000, usize::MAX - 9] {
+        let mut window = stream.clone();
+        window.sources[0].offset = base;
+        window.anchor.offset = base;
+        for run in &mut window.runs {
+            run.range = run.range.start + base..run.range.end + base;
+            if let Some(projection) = run.origin.as_mut().and_then(|origin| origin.projection.as_mut()) {
+                projection.source_start += base;
+            }
+        }
+        let mut request = golden.clone();
+        request.macro_name = "window".into();
+        request.views = ProcMacroViews::default();
+        request.input = encode(&window);
+        cases.push((format!("physical source window {base}"), encode(&request), true));
+    }
     let mut rich = golden.clone();
     rich.macro_name = "rich".into(); rich.macro_identity = "macros::rich".into();
     rich.source_module = None; rich.expansion_id = Some(u32::MAX); rich.invocation_id = invocation(u64::MAX);
@@ -126,7 +142,7 @@ pub fn cases() -> Vec<(String, Vec<u8>, bool)> {
         cases.push((name.into(), bytes, false));
     };
     for (name, count) in [("oversized lossless table count", 1048577u64), ("table count exceeds remaining bytes", 1000)] {
-        let mut bad = rich.clone(); bad.input = b"RKLOSS04".to_vec(); bad.input.extend(encode(&count)); reject(name, bad);
+        let mut bad = rich.clone(); bad.input = b"RKLOSS05".to_vec(); bad.input.extend(encode(&count)); reject(name, bad);
     }
     let mut bad = golden.clone(); bad.compiler_version = "other".into(); reject("compiler version", bad);
     let mut bad = golden.clone(); bad.macro_identity.clear(); reject("empty identity", bad);
@@ -147,6 +163,8 @@ pub fn cases() -> Vec<(String, Vec<u8>, bool)> {
     for (name, wire) in [
         ("bad source", { let mut wire = stream.clone(); wire.runs[0].source = 99; wire }),
         ("bad range", { let mut wire = stream.clone(); wire.runs[0].range.end = 999; wire }),
+        ("range before source window", { let mut wire = stream.clone(); wire.sources[0].offset = 1; wire }),
+        ("source window overflow", { let mut wire = stream.clone(); wire.sources[0].offset = usize::MAX; wire }),
         ("bad kind", { let mut wire = stream.clone(); wire.runs[0].kind = 1; wire }),
         ("invalid run kind tag", { let mut wire = stream.clone(); wire.runs[0].kind = 3; wire }),
         ("invalid boundary tag", { let mut wire = stream.clone(); wire.runs[0].boundary = 2; wire }),

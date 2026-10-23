@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{LosslessError, LosslessStream, ScanLimits};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(super) struct ExpressionRange {
     pub range: Range<usize>,
     pub header_indent: usize,

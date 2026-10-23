@@ -83,7 +83,8 @@ validate_stream: &TokenStream -> Bool -> Bool
         if !(projection_valid (&segment.origin), (segment.range.start), (segment.range.end))
             return false
         bytes = stream.sources[segment.source as I64].text.as_bytes!
-        text = String::from (&bytes[(segment.range.start as I64)..(segment.range.end as I64)])
+        offset = stream.sources[segment.source as I64].offset
+        text = String::from (&bytes[((segment.range.start - offset) as I64)..((segment.range.end - offset) as I64)])
         if !(kind_valid &text, (&segment.kind))
             return false
         i = i + 1

@@ -8,7 +8,7 @@ fn text(input: &TokenStream) -> String {
 
 fn expand(code: &str) -> Result<Program, Diagnostics> {
     let config = crate::Config::default();
-    let program = crate::parser::parse_string(code, &config).unwrap();
+    let program = crate::parser::parse_string(code, &config).map_err(Diagnostics::from)?;
     expand_macros_with_context(program, &MacroExpansionContext::new(&config))
 }
 
@@ -17,9 +17,10 @@ fn matches(head: &str, input: &TokenStream) -> Result<Correspondance, Diagnostic
     let program = crate::parser::parse_string(&format!("macro m\n    {head} =>\n        main = -> 0\n"), &config).unwrap();
     let TopLevel::MacroDecl(decl) = &program.module.top_levels[0] else { panic!("expected declaration") };
     let compiled = DeclarativeMacro::from_ast(decl);
-    let (tokens, ranges) = macro_arg_matcher::rock_arguments(input, &config, 0)?;
+    let context = MacroExpansionContext::new(&config);
+    let (tokens, ranges) = macro_arg_matcher::rock_arguments(input, &context, 0)?;
     MacroArgMatcher::new(&tokens, input, 0, &ranges, compiled.arms[0].matcher.fragments.clone(),
-        decl.name.span.clone(), input.start_span(), &MacroExpansionContext::new(&config)).run()
+        decl.name.span.clone(), input.start_span(), &context).run()
         .map_err(macro_arg_matcher::MatchError::into_diagnostics)
 }
 
@@ -84,6 +85,18 @@ fn macro_a_05_nested_repetitions_reject_during_definition_validation_even_unused
         "macro bad\n    $name:ident =>\n        $( $( $name = -> 0 )* )*\n"] {
         let diagnostics = expand(code).unwrap_err();
         assert!(diagnostics.0.iter().any(|diagnostic| diagnostic.message.contains("nested repetition")), "{diagnostics:?}");
+    }
+}
+
+#[test]
+fn macro_review_deep_repetitions_reject_at_the_second_opening() {
+    let nested = format!("{}$name:ident{}", "$(".repeat(10_000), ")*".repeat(10_000));
+    for code in [format!("macro bad\n    {nested} =>\n        ()\n"),
+        format!("macro bad\n    =>\n        {nested}\n")] {
+        let error = crate::parser::parse_string(&code, &crate::Config::default()).unwrap_err();
+        let crate::parser::ParseError::HardError(message, span) = error else { panic!("{error:?}") };
+        assert!(message.contains("nested repetition"), "{message}");
+        assert_eq!(span.start, code.find("$(").unwrap() + 2);
     }
 }
 

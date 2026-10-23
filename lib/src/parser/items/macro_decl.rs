@@ -161,8 +161,12 @@ fn incomplete_macro_head(message: &str, token: &Token) -> ParseError {
 }
 
 fn parse_macro_head_recursive<'a>(
-    mut stream: Input<'a>,
+    stream: Input<'a>,
 ) -> IResult<'a, Vec<MacroFragment>> {
+    parse_macro_head(stream, false)
+}
+
+fn parse_macro_head(mut stream: Input<'_>, repeated: bool) -> IResult<'_, Vec<MacroFragment>> {
     let mut defs = Vec::new();
 
     while !stream.is_empty() {
@@ -233,8 +237,11 @@ fn parse_macro_head_recursive<'a>(
                 continue;
             }
             TokenType::MacroRepeatOpen => {
+                if repeated {
+                    return Err(ParseError::HardError("nested repetition is not supported in declarative macro matchers".into(), token.span));
+                }
                 let (remaining, inner_block) =
-                    parse_macro_head_recursive(stream.advance(1)?)?;
+                    parse_macro_head(stream.advance(1)?, true)?;
 
                 stream = remaining;
                 defs.push(MacroFragment::Repetition(inner_block));
@@ -257,8 +264,12 @@ fn parse_macro_head_recursive<'a>(
 }
 
 fn parse_macro_block_recursive<'a>(
-    mut stream: Input<'a>,
+    stream: Input<'a>,
 ) -> IResult<'a, Vec<MacroFragment>> {
+    parse_macro_block(stream, false)
+}
+
+fn parse_macro_block(mut stream: Input<'_>, repeated: bool) -> IResult<'_, Vec<MacroFragment>> {
     let mut block = Vec::new();
 
     while !stream.is_empty() {
@@ -282,8 +293,11 @@ fn parse_macro_block_recursive<'a>(
                 stream = next;
             }
             TokenType::MacroRepeatOpen => {
+                if repeated {
+                    return Err(ParseError::HardError("nested repetition is not supported in declarative macro templates".into(), token.span));
+                }
                 let (remaining, inner_block) =
-                    parse_macro_block_recursive(stream.advance(1)?)?;
+                    parse_macro_block(stream.advance(1)?, true)?;
 
                 stream = remaining;
                 block.push(MacroFragment::Repetition(inner_block));

@@ -172,7 +172,8 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
                                 let margin = view.header_indent(Some(self.header_indent));
                                 let remaining = self.input.slice(start..self.input.len_bytes(), MACRO_LIMITS)
                                     .map_err(|error| ParseError::HardError(format!("invalid expression input: {error:?}"), self.invoc_span.clone()))?;
-                                if let Ok(bytes) = crate::parser::expression_prefix(&remaining, self.context.config, margin) {
+                                if let Some(bytes) = self.context.parse_probe(&remaining,
+                                    || crate::parser::expression_prefix(&remaining, self.context.config, margin))? {
                                     let end = start.checked_add(bytes).ok_or_else(|| ParseError::HardError("expression extent overflow".into(), self.invoc_span.clone()))?;
                                     let count = self.ranges[offset..].iter().take_while(|range| range.end <= end).count();
                                     if count == 0 { return Err(ParseError::HardError("macro expression capture made no progress".into(), self.invoc_span.clone()).into()); }
@@ -316,7 +317,7 @@ impl<'args, 'ctx, 'cfg> MacroArgMatcher<'args, 'ctx, 'cfg> {
 /// this temporary Rock view discards trivia; captures slice the retained input
 /// from the first significant piece through the last, including internal trivia.
 /// Spacing-sensitive Rock token kinds remain distinct during literal matching.
-pub(super) fn rock_arguments(input: &TokenStream, config: &crate::Config, header_indent: usize) -> Result<(Vec<Token>, Vec<std::ops::Range<usize>>), Diagnostics> {
+pub(super) fn rock_arguments(input: &TokenStream, context: &MacroExpansionContext<'_>, header_indent: usize) -> Result<(Vec<Token>, Vec<std::ops::Range<usize>>), Diagnostics> {
     use crate::lexer::interpretation::{PieceKind, RockView};
     let mut view = RockView::new(input);
     let mut tokens = Vec::new();
@@ -331,7 +332,8 @@ pub(super) fn rock_arguments(input: &TokenStream, config: &crate::Config, header
                 let margin = view.header_indent(Some(header_indent));
                 let remaining = input.slice(range.start..input.len_bytes(), MACRO_LIMITS)
                     .map_err(|error| ParseError::HardError(format!("invalid nested macro input: {error:?}"), span.clone()))?;
-                if let Ok(bytes) = crate::parser::operand_prefix(&remaining, config, margin) {
+                if let Some(bytes) = context.parse_probe(&remaining,
+                    || crate::parser::operand_prefix(&remaining, context.config, margin))? {
                     let end = range.start.checked_add(bytes).filter(|end| *end >= view.offset() && *end <= input.len_bytes())
                         .ok_or_else(|| ParseError::HardError("nested macro input made no progress".into(), span.clone()))?;
                     let fragment = input.slice(range.start..end, MACRO_LIMITS)
@@ -416,7 +418,7 @@ mod tests {
         let config = test_config();
         let context = MacroExpansionContext::new(&config);
         let input = super::super::token_tree::source("main");
-        let (args, ranges) = rock_arguments(&input, &config, 0).unwrap();
+        let (args, ranges) = rock_arguments(&input, &context, 0).unwrap();
         let matcher = vec![MatcherFragment::Capture {
             name: "name".to_string(),
             kind: CaptureKind::Ident,

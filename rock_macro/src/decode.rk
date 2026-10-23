@@ -1,4 +1,4 @@
-// Protocol 7 / RKLOSS04 only. This is a bounded schema decoder, not a serializer framework.
+// Protocol 8 / RKLOSS05 only. This is a bounded schema decoder, not a serializer framework.
 > rock_macro::*
 > rock_macro::validation::validate_request
 > std::collections::vec::Vec
@@ -239,10 +239,12 @@ impl Reader
     ^@snapshot = ->
         identity = self.uint! ?
         path = self.text! ?
+        offset = self.uint! ?
         text = self.text! ?
         Result::Ok (SourceSnapshot
             identity: identity
             file_path: path
+            offset: offset
             text: text)
 
     ^@segment: Result Segment, DecodeError
@@ -284,7 +286,7 @@ impl Reader
 
     ^@stream: Result TokenStream, DecodeError
     ^@stream = ->
-        magic: [U8; 8] = [82, 75, 76, 79, 83, 83, 48, 52]
+        magic: [U8; 8] = [82, 75, 76, 79, 83, 83, 48, 53]
         i = 0
         while i < 8
             byte = self.byte! ?
@@ -404,7 +406,7 @@ impl Reader
     ^@request: &Str -> Result MacroRequest, DecodeError
     ^@request = expected_compiler ->
         protocol = self.small! ?
-        require (protocol == (7 as U32)), (self.offset), DecodeErrorKind::ProtocolVersion ?
+        require (protocol == (8 as U32)), (self.offset), DecodeErrorKind::ProtocolVersion ?
         compiler = self.text! ?
         require (compiler == expected_compiler), (self.offset), DecodeErrorKind::CompilerVersion ?
         name = self.text! ?

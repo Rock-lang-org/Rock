@@ -72,6 +72,7 @@ impl LosslessStream {
         generated_source: GeneratedSourceId,
         mut resolve: impl FnMut(ConstructionContext) -> Result<SyntaxContext, String>,
     ) -> Result<Self, String> {
+        self.validate_forwarded_captures(input)?;
         let mut stream = self.generated(expansion, generated_source);
         let mut generated = HashMap::new();
         let mut sources = HashMap::new();
@@ -101,8 +102,9 @@ impl LosslessStream {
                 output.construction = None;
                 let key = Arc::as_ptr(&original.source);
                 if let std::collections::hash_map::Entry::Vacant(entry) = generated.entry(key) {
-                    let source = SourceSnapshot::new(original.source.file_path.clone(), original.source.text.clone())
+                    let mut source = SourceSnapshot::new(original.source.file_path.clone(), original.source.text.clone())
                         .map_err(|error| format!("generated snapshot identity: {error:?}"))?;
+                    source.offset = original.source.offset;
                     entry.insert(Arc::new(source));
                 }
                 output.source = Arc::clone(&generated[&key]);
@@ -110,7 +112,9 @@ impl LosslessStream {
                 let allowed = sources.get(&original.source.identity)
                     .ok_or_else(|| "proc output contains an unauthorized source snapshot".to_string())?;
                 if checked_sources.insert(Arc::as_ptr(&original.source))
-                    && (original.source.file_path != allowed.file_path || original.source.text != allowed.text) {
+                    && (original.source.file_path != allowed.file_path
+                        || original.source.offset.checked_add(original.source.text.len())
+                            .and_then(|end| allowed.get(original.source.offset..end)) != Some(original.source.text.as_str())) {
                     return Err("proc output changed a forwarded source snapshot".into());
                 }
                 let intervals = ranges.get(&(original.source.identity, original.context, original.kind, original.origin.as_ref()))
@@ -228,5 +232,30 @@ mod tests {
         assert!(resolve(&forwarded).is_ok());
         forwarded.runs[0].origin.as_mut().unwrap().projection.as_mut().unwrap().output_start += 1;
         assert!(resolve(&forwarded).is_err());
+    }
+
+    #[test]
+    fn macro_review_transport_windows_preserve_offsets_without_whole_files() {
+        use crate::macro_expansion::proc_macro::{decode_stream, encode_stream};
+        let text = format!("{}雪{}", " ".repeat(1_100_000), " ".repeat(1_100_000));
+        let full = LosslessStream::from_bytes("/large.rk".into(), text.into_bytes(), crate::parser::SOURCE_LIMITS).unwrap();
+        let input = full.slice(1_100_000..1_100_003, MACRO_LIMITS).unwrap();
+        let bytes = encode_stream(&input).unwrap();
+        assert!(bytes.len() < 256, "{}", bytes.len());
+        let forwarded = decode_stream(&bytes).unwrap();
+        assert_eq!(forwarded.start_span(), input.start_span());
+        assert_eq!(forwarded.end_span(), input.end_span());
+        assert_eq!(forwarded.runs[0].text(), "雪");
+        let invocation = InvocationId::fresh().unwrap();
+        let resolve = |stream: &LosslessStream| stream.resolve_proc_output(&input, invocation, ExpansionId(1), GeneratedSourceId(1), |_| unreachable!());
+        assert!(resolve(&forwarded).is_ok());
+        let repeated = forwarded.join(&forwarded, JoinBoundary::Separate, MACRO_LIMITS).unwrap();
+        assert!(encode_stream(&repeated).unwrap().len() < 512);
+        assert!(resolve(&repeated).is_ok());
+        let empty = decode_stream(&encode_stream(&input.slice(3..3, MACRO_LIMITS).unwrap()).unwrap()).unwrap();
+        assert_eq!(empty.start_span(), input.end_span());
+        let mut forged = forwarded.clone();
+        forged.runs[0].range = 1_099_999..1_100_000;
+        assert!(resolve(&forged).is_err());
     }
 }

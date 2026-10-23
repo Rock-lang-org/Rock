@@ -37,7 +37,7 @@ pub fn verify(path: &Path, golden: &ProcMacroRequest, rich: &ProcMacroRequest) {
     let output = super::run_client_with_input(path, &encode_request(&request).unwrap());
     assert!(output.status.success(), "author mutations changed retained request: {output:?}");
     pid(&output.stderr, &mut seen);
-    assert_eq!(output.stdout, [7, 1, 0, 0]);
+    assert_eq!(output.stdout, [8, 1, 0, 0]);
     decode_response(&output.stdout).unwrap().validate_for(&request).unwrap();
 
     request.macro_name = "reject".into();

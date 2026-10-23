@@ -74,6 +74,7 @@ impl Clone for SourceSnapshot
     @clone = -> SourceSnapshot
         identity: self.identity
         file_path: self.file_path.clone!
+        offset: self.offset
         text: self.text.clone!
 
 impl Clone for Segment

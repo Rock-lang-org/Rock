@@ -4,6 +4,7 @@ use crate::{
 };
 
 mod and;
+mod budget;
 mod cursor;
 mod delimited;
 mod fns;
@@ -30,6 +31,7 @@ pub(crate) mod tests;
 mod cursor_tests;
 
 pub use and::*;
+pub(crate) use budget::{invoke as bounded_parse, ParseWorkScope, MAX_PARSE_WORK};
 pub(crate) use cursor::source_error;
 pub use delimited::*;
 pub use followed::*;
@@ -229,6 +231,7 @@ impl ParseCtx<'_> {
     }
 
     pub fn seek_nth(&self, n: usize) -> Result<Token, ParseError> {
+        budget::charge(|| self.eof_span())?;
         if let Some((level, span)) = self.invalid_indent {
             return Err(ParseError::UnexpectedIndent(level, span.clone()));
         }

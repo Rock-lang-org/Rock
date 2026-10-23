@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{JoinBoundary, LosslessRun, LosslessStream, RunKind, SourcePosition, SourceSnapshot, SyntaxContext};
 
-const MAGIC: [u8; 8] = *b"RKLOSS04";
+const MAGIC: [u8; 8] = *b"RKLOSS05";
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RUNS: usize = 1024 * 1024;
 
@@ -41,9 +41,17 @@ struct WireAnchor {
 }
 
 #[derive(Serialize)]
+struct SnapshotRef<'a> {
+    identity: u64,
+    file_path: &'a std::path::Path,
+    offset: usize,
+    text: &'a str,
+}
+
+#[derive(Serialize)]
 struct WireRef<'a> {
     magic: [u8; 8],
-    sources: Vec<&'a SourceSnapshot>,
+    sources: Vec<SnapshotRef<'a>>,
     runs: Vec<WireRun>,
     anchor: WireAnchor,
     expressions: &'a [super::fragments::ExpressionRange],
@@ -66,6 +74,7 @@ impl Serialize for LosslessStream {
         let mut sources = Vec::new();
         let mut source_ids = HashMap::new();
         let mut runs = Vec::new();
+        let mut extents = vec![self.anchor.offset..self.anchor.offset];
         sources.try_reserve(1).map_err(serde::ser::Error::custom)?;
         source_ids.try_reserve(1).map_err(serde::ser::Error::custom)?;
         sources.push(self.anchor.source.as_ref());
@@ -80,12 +89,21 @@ impl Serialize for LosslessStream {
                     source_ids.try_reserve(1).map_err(serde::ser::Error::custom)?;
                     let id = sources.len();
                     sources.push(run.source.as_ref());
+                    extents.push(run.range.clone());
                     source_ids.insert(key, id);
                     id
                 }
             };
+            extents[source].start = extents[source].start.min(run.range.start);
+            extents[source].end = extents[source].end.max(run.range.end);
             runs.push(WireRun { source, range: run.range.clone(), kind: run.kind, context: run.context.0, boundary: run.boundary, origin: run.origin.clone(), construction: run.construction });
         }
+        // Keep physical offsets/identity, but only retain the referenced window.
+        // In particular a tiny invocation must not carry its entire source file.
+        let sources = sources.into_iter().zip(extents).map(|(source, extent)| {
+            Ok(SnapshotRef { identity: source.identity, file_path: &source.file_path,
+                offset: extent.start, text: source.get(extent).ok_or_else(|| serde::ser::Error::custom("invalid source window"))? })
+        }).collect::<Result<Vec<_>, S::Error>>()?;
         WireRef { magic: MAGIC, sources, runs, anchor: WireAnchor { source: 0, offset: self.anchor.offset, context: self.anchor.context.0, origin: self.anchor.origin.clone() }, expressions: &self.expressions }
             .serialize(serializer)
     }
@@ -104,13 +122,14 @@ impl<'de> Deserialize<'de> for LosslessStream {
         sources.try_reserve_exact(wire.sources.len()).map_err(serde::de::Error::custom)?;
         for source in wire.sources {
             bytes = bytes.checked_add(source.text.len()).ok_or_else(|| serde::de::Error::custom("source length overflow"))?;
-            if bytes > MAX_BYTES || source.file_path.as_os_str().is_empty() || source.identity == 0 || !identities.insert(source.identity) {
+            if bytes > MAX_BYTES || source.offset.checked_add(source.text.len()).is_none()
+                || source.file_path.as_os_str().is_empty() || source.identity == 0 || !identities.insert(source.identity) {
                 return Err(serde::de::Error::custom("invalid lossless source table"));
             }
             sources.push(Arc::new(source));
         }
         let source = sources.get(wire.anchor.source).ok_or_else(|| serde::de::Error::custom("invalid anchor source"))?;
-        if wire.anchor.offset > source.text.len() || !source.text.is_char_boundary(wire.anchor.offset)
+        if !source.is_char_boundary(wire.anchor.offset)
             || !valid_projection(&wire.anchor.origin, wire.anchor.offset, wire.anchor.offset) {
             return Err(serde::de::Error::custom("invalid lossless anchor"));
         }
@@ -120,7 +139,7 @@ impl<'de> Deserialize<'de> for LosslessStream {
         let mut len_bytes = 0usize;
         for run in wire.runs {
             let source = sources.get(run.source).ok_or_else(|| serde::de::Error::custom("invalid run source"))?;
-            let Some(text) = source.text.get(run.range.clone()) else { return Err(serde::de::Error::custom("invalid lossless range")) };
+            let Some(text) = source.get(run.range.clone()) else { return Err(serde::de::Error::custom("invalid lossless range")) };
             if text.is_empty() || !text.chars().all(|ch| RunKind::of(ch) == run.kind)
                 || !valid_projection(&run.origin, run.range.start, run.range.end)
                 || (run.kind == RunKind::LineEnding && !matches!(text, "\r" | "\n" | "\r\n"))
@@ -223,7 +242,7 @@ mod tests {
     fn macro_b_01_wire_rejects_zero_or_duplicate_snapshot_handles() {
         let mut wire = valid(); wire.sources[0].identity = 0; rejects(wire);
         let mut wire = valid();
-        wire.sources.push(SourceSnapshot { identity: wire.sources[0].identity, file_path: "/other.rk".into(), text: "other".into() });
+        wire.sources.push(SourceSnapshot { identity: wire.sources[0].identity, file_path: "/other.rk".into(), offset: 0, text: "other".into() });
         rejects(wire);
         let mut wire = valid();
         wire.expressions = vec![super::super::fragments::ExpressionRange { range: 0..2, header_indent: usize::MAX }];

@@ -87,7 +87,7 @@ fn macro_a_01_ast_invocation_and_template_keep_trivia_and_original_margins() {
     let TopLevel::MacroDecl(decl) = &program.module.top_levels[0] else { panic!("expected macro") };
     assert_eq!(text(&decl.entries[0].input), "    $v:expr =>\r\n        /* retained */ $v\r\n");
     assert_eq!(text(&invocation(&program).args), "  1 /* caller */ +  2\r\n");
-    let (tokens, ranges) = macro_arg_matcher::rock_arguments(&invocation(&program).args, &config, 0).unwrap();
+    let (tokens, ranges) = macro_arg_matcher::rock_arguments(&invocation(&program).args, &MacroExpansionContext::new(&config), 0).unwrap();
     let context = MacroExpansionContext::new(&config);
     let compiled = DeclarativeMacro::from_ast(decl);
     let captures = MacroArgMatcher::new(&tokens, &invocation(&program).args, 0, &ranges,

@@ -29,6 +29,10 @@ pub fn verify(config: &Config) {
 > authoring_provider::scoped
 > authoring_provider::greeting
 > authoring_provider::mixed_scope
+> authoring_provider::scale_capture
+macro relay
+    $value:expr =>
+        %scale_capture $value
 make = ->
     "once".println!
     7
@@ -49,12 +53,28 @@ main = !->
     (%twice value).println!
     (%scoped value).println!
     (%mixed_scope!).println!
+    (%relay 1 + 2).println!
 "#;
     consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(), text: source.into() }];
     rock_lib::compile(&consumer).unwrap_or_else(|errors| panic!("authoring consumer: {errors:?}"));
     let output = super::run_client(&consumer.output_dir.join("consumer"));
     assert!(output.status.success() && output.stderr.is_empty(), "{output:?}");
-    assert_eq!(output.stdout, "Hello Ada 雪! 3 items; Ada 雪.\n雪🦀 Ada 雪 / 3\nAda 雪\nHello Ada 雪\nplain\n\nonce\n7\na\"b\\c\n\r\t\0雪🦀\n42\n21\n42\n21\n1\n".as_bytes());
+    assert_eq!(output.stdout, "Hello Ada 雪! 3 items; Ada 雪.\n雪🦀 Ada 雪 / 3\nAda 雪\nHello Ada 雪\nplain\n\nonce\n7\na\"b\\c\n\r\t\0雪🦀\n42\n21\n42\n21\n1\n9\n".as_bytes());
+    for padding in [100_000, 530_000, 1_100_000] {
+        consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(),
+            text: format!("// {}\n> authoring_provider::twice\nmain = -> %twice 7\n// {}\n", "x".repeat(padding), "y".repeat(padding)) }];
+        rock_lib::analyze(&consumer).unwrap_or_else(|errors| panic!("small repeated capture in large source ({padding}): {errors:?}"));
+    }
+    consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(),
+        text: "> authoring_provider::strip_capture\nmacro relay\n    $value:expr =>\n        %strip_capture $value\nmain = -> %relay 1 + 2\n".into() }];
+    let errors = rock_lib::analyze(&consumer).unwrap_err();
+    assert!(errors.0.iter().any(|error| error.message.contains("opaque expression capture")), "{errors:?}");
+    for depth in [32, 512] {
+        consumer.source_providers = vec![SourceProvider::Virtual { path: consumer.entry_file.clone(),
+            text: format!("> authoring_provider::parse_literal\nmain = -> %parse_literal \"{}7{}\"\n", "(".repeat(depth), ")".repeat(depth)) }];
+        let errors = rock_lib::analyze(&consumer).unwrap_err();
+        assert!(errors.0.iter().any(|error| error.message.contains("parser") && error.message.contains("limit exceeded")), "{depth}: {errors:?}");
+    }
     for (call, expected) in [
         ("%format!", "expected one string literal"),
         ("%format 'a'", "not a character literal"),

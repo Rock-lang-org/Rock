@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
     fclose(read_marker);
     if (!strcmp(mode, "descendant-cancel")) for (;;) pause();
     if (!strcmp(mode, "blocked-stdout")) {
-        emit(1, "\7", 1);
+        emit(1, "\10", 1);
         for (;;) pause();
     }
     if (!strcmp(mode, "oversized-stdout") || !strcmp(mode, "oversized-stderr")) {

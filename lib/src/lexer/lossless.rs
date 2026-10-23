@@ -53,7 +53,7 @@ pub enum ConstructionKind {
 }
 
 /// A splice is a lexical boundary even if its printed neighbours could touch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum JoinBoundary {
     Separate,
     /// Explicitly restore adjacency of contiguous slices of the same snapshot.
@@ -89,6 +89,7 @@ pub enum LosslessError {
 struct SourceSnapshot {
     identity: u64,
     file_path: PathBuf,
+    offset: usize,
     text: String,
 }
 
@@ -96,7 +97,7 @@ struct SourceSnapshot {
 pub(crate) fn golden_source(text: &str) -> LosslessStream {
     let mut stream = LosslessStream::from_bytes("/golden.rk".into(), text.as_bytes().to_vec(),
         crate::macro_expansion::token_tree::MACRO_LIMITS).unwrap();
-    let source = Arc::new(SourceSnapshot { identity: 1, file_path: "/golden.rk".into(), text: text.into() });
+    let source = Arc::new(SourceSnapshot { identity: 1, file_path: "/golden.rk".into(), offset: 0, text: text.into() });
     stream.anchor.source = Arc::clone(&source);
     for run in &mut stream.runs { run.source = Arc::clone(&source); }
     stream
@@ -107,7 +108,15 @@ impl SourceSnapshot {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let identity = NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
             .map_err(|_| LosslessError::SnapshotIdentityExhausted)?;
-        Ok(Self { identity, file_path, text })
+        Ok(Self { identity, file_path, offset: 0, text })
+    }
+
+    fn get(&self, range: std::ops::Range<usize>) -> Option<&str> {
+        self.text.get(range.start.checked_sub(self.offset)?..range.end.checked_sub(self.offset)?)
+    }
+
+    fn is_char_boundary(&self, offset: usize) -> bool {
+        offset.checked_sub(self.offset).is_some_and(|offset| self.text.is_char_boundary(offset))
     }
 }
 
@@ -160,7 +169,7 @@ impl LosslessRun {
 
     pub fn text(&self) -> &str {
         // Scanning and checked slicing are the only range constructors.
-        &self.source.text[self.range.clone()]
+        self.source.get(self.range.clone()).expect("validated lossless source range")
     }
 
     pub fn span(&self) -> Span {
@@ -285,6 +294,7 @@ mod wire;
 mod origin;
 mod fragments;
 mod construction;
+mod capture_authority;
 pub(crate) use construction::LiteralSourceRange;
 
 pub use fragments::ExpressionFragment;

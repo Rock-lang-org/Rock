@@ -110,6 +110,7 @@ constructed_leaf = identity, invocation, kind, text ->
     sources.push (SourceSnapshot
         identity: identity
         file_path: String::from "<macro-construction>"
+        offset: 0
         text: text)
     mut segments: Vec Segment = Vec::new!
     segments.push (Segment

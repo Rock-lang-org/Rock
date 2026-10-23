@@ -169,6 +169,22 @@ impl<'a> MacroExpansionContext<'a> {
             .map_err(|message| super::proc_macro_error(message, span.clone()))
     }
 
+    pub(super) fn remaining_matching_work(&self) -> usize {
+        let budget = self.budget.borrow();
+        budget.limits.max_matching_work.saturating_sub(budget.matching_work)
+    }
+
+    pub(super) fn parse_probe<T>(&self, input: &super::TokenStream,
+        parse: impl FnOnce() -> Result<T, crate::parser::ParseError>) -> Result<Option<T>, Diagnostics> {
+        let work = crate::parser::ParseWorkScope::new(self.remaining_matching_work()
+            .min(crate::parser::MAX_PARSE_WORK));
+        let result = parse();
+        self.charge_matching(work.used(), &input.start_span())?;
+        // Grammar mismatches may backtrack; resource failures are always fatal.
+        work.finish(Ok(())).map_err(Diagnostics::from)?;
+        Ok(result.ok())
+    }
+
     pub(super) fn charge_output(&self, stream: &super::TokenStream) -> Result<(), Diagnostics> {
         let mut budget = self.budget.borrow_mut();
         let bytes = budget.limits.max_output_bytes;

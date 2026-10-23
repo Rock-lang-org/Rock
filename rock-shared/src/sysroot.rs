@@ -17,7 +17,7 @@ pub const STD_ARTIFACT_FILE_NAME: &str = "std.rkca";
 pub const STD_OBJECT_FILE_NAME: &str = "std.o";
 pub const TOOLCHAIN_MANIFEST_FILE_NAME: &str = "manifest.json";
 pub const COMPONENTS_MANIFEST_FILE_NAME: &str = "components.json";
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 55;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 56;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SysrootSource {

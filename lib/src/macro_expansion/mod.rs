@@ -243,7 +243,7 @@ fn expand_declarative(
     })?;
     context.charge_matching(invocation.args.len_bytes(), &invoc_span)
         .map_err(|diagnostics| with_expansion_trace(diagnostics, context, expansion_id))?;
-    let (args, ranges) = macro_arg_matcher::rock_arguments(&invocation.args, context.config, invocation.header_indent)
+    let (args, ranges) = macro_arg_matcher::rock_arguments(&invocation.args, context, invocation.header_indent)
         .map_err(|diagnostics| with_expansion_trace(diagnostics, context, expansion_id))?;
     let declarative_macro = DeclarativeMacro::from_ast(macro_decl);
     let mut diagnostics = Diagnostics::default();
@@ -426,7 +426,11 @@ fn parse_generated_result(
     context.charge_output(&stream).map_err(|diagnostics| expansion_id
         .map(|id| with_expansion_trace(diagnostics.clone(), context, id)).unwrap_or(diagnostics))?;
     let stream = expansion_id.map(|id| context.project_output(&stream, id)).unwrap_or(stream);
-    generated_parser::parse_generated_source(&stream, context.config, category, expansion_id).map_err(
+    let work = crate::parser::ParseWorkScope::new(context.remaining_matching_work()
+        .min(crate::parser::MAX_PARSE_WORK));
+    let result = generated_parser::parse_generated_source(&stream, context.config, category, expansion_id);
+    context.charge_matching(work.used(), &stream.start_span())?;
+    result.map_err(
         |mut diags| {
             if let Some(expansion_id) = expansion_id {
                 context.map_generated_diagnostics(&mut diags, expansion_id);
@@ -1014,7 +1018,7 @@ two = -> value"#;
         };
 
         let expanded = template.expand(&captures).unwrap();
-        let (tokens, _) = macro_arg_matcher::rock_arguments(&expanded, &crate::Config::default(), 0).unwrap();
+        let (tokens, _) = macro_arg_matcher::rock_arguments(&expanded, &MacroExpansionContext::new(&crate::Config::default()), 0).unwrap();
         assert_eq!(tokens.len(), 2);
         assert_eq!(tokens[0].token_type, crate::lexer::TokenType::Ident("first".into()));
         assert_eq!(tokens[1].token_type, crate::lexer::TokenType::Ident("second".into()));

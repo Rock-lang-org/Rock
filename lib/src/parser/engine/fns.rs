@@ -7,6 +7,6 @@ where
     type Output = T;
 
     fn process<'a>(&mut self, tokens: Input<'a>) -> IResult<'a, Self::Output> {
-        self(tokens)
+        super::budget::invoke(tokens, self)
     }
 }

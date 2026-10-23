@@ -10,7 +10,7 @@
 > rock_syntax::derive_input::DeriveInput
 
 emission_context = -> MacroContext
-    protocol_version: 7
+    protocol_version: 8
     compiler_version: String::from "test"
     macro_name: String::from "emission"
     macro_identity: String::from "emission"

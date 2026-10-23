@@ -7,6 +7,7 @@ make_stream = text ->
     sources.push (SourceSnapshot
         identity: 1
         file_path: String::from "caller.rk"
+        offset: 0
         text: text)
     mut segments: Vec Segment = Vec::new!
     if length > 0
@@ -37,7 +38,7 @@ identity = context, input -> MacroResult::Expand input
 
 context = ->
     MacroContext
-        protocol_version: 7
+        protocol_version: 8
         compiler_version: String::from "0.7.0"
         macro_name: String::from "identity"
         macro_identity: String::from "example::identity"

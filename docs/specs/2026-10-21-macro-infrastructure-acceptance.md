@@ -63,9 +63,9 @@ Paths below are relative to the repository root. Native test names are in
   not a second raw-string input ABI. Captures are streamed/sliced, not printed and
   re-lexed; generated source requests are interpreted only at the explicit output
   boundary.
-- The Rust wire reader accepts only `RKLOSS04`; both SDK codecs implement protocol
-  7/current stream schema, and products require format 55. Rejection controls use
-  fabricated invalid magic/version values. `protocol-7/*.hex` are current interoperability
+- The Rust wire reader accepts only `RKLOSS05`; both SDK codecs implement protocol
+  8/current stream schema, and products require format 56. Rejection controls use
+  fabricated invalid magic/version values. `protocol-8/*.hex` are current interoperability
   fixtures, not compatibility readers or preserved historical artifact snapshots.
 - Registries are built for each expansion forest/context. Derive consumption is a
   bounded context-local node-ID set; ancestry and aggregate budgets are shared with
@@ -97,8 +97,9 @@ recorded in the original receipts are addressed by the follow-up repairs below.
   in source order, then omitted defaults in declaration order. Generic owner
   witnesses preserve body-only type parameters. Tests cover declaration scope,
   source-free artifacts at O0/O3, invalid fields and malformed initializer metadata.
-  Rebuild dependencies; there is no compatibility reader. Protocol 7 and RKLOSS04
-  are unchanged.
+  That repair kept protocol 7 and RKLOSS04 unchanged; the subsequent review
+  hardening advances them to protocol 8/RKLOSS05 and products to format 56.
+  Rebuild dependencies; there is no compatibility reader.
 - C.11 uses sparse initialization states, shared local-root maps, sparse
   loan-location entries and early release of unused initialization exit states.
   The original unfactored enum emitter is restored. The measured packaged run

@@ -7,6 +7,10 @@ use crate::{
 use super::{get_span, mut_prefix, primitives};
 
 pub fn parse_type(stream: Input) -> IResult<ParseType> {
+    bounded_parse(stream, parse_type_bounded_inner)
+}
+
+fn parse_type_bounded_inner(stream: Input) -> IResult<ParseType> {
     let (stream, mut ty) = if matches!(peek_token(&stream), Some(TokenType::TypeLambda)) {
         parse_type_lambda(stream)?
     } else {
@@ -51,6 +55,10 @@ fn parse_type_after_arrow(stream: Input) -> IResult<ParseType> {
 }
 
 fn parse_type_application(stream: Input) -> IResult<ParseType> {
+    bounded_parse(stream, parse_type_application_inner)
+}
+
+fn parse_type_application_inner(stream: Input) -> IResult<ParseType> {
     let (mut stream, constructor) = parse_type_atom(stream)?;
     let mut args = Vec::new();
     let constructor_span = type_span(&constructor);

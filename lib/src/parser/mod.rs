@@ -83,6 +83,7 @@ pub(crate) fn expression_prefix(stream: &LosslessStream, config: &Config, header
 fn retained_prefix<P: Parser>(stream: &LosslessStream, config: &Config, header_indent: usize, mut parser: P)
     -> Result<usize, ParseError>
 {
+    let _work = engine::ParseWorkScope::new(engine::MAX_PARSE_WORK);
     let _scope = engine::ErrorScope::new();
     let input = source_cursor::SourceInput::with_layout(stream, true, CURSOR_LIMITS, Some(header_indent))
         .map_err(|error| engine::source_error(error, stream.start_span()))?;
@@ -109,6 +110,7 @@ fn parse_lossless<P: Parser>(
     relative_indent: Option<usize>,
     mut parser: P,
 ) -> Result<P::Output, ParseError> {
+    let work = engine::ParseWorkScope::new(engine::MAX_PARSE_WORK);
     let _scope = engine::ErrorScope::new();
     let input = source_cursor::SourceInput::with_layout(stream, true, CURSOR_LIMITS, relative_indent)
         .map_err(|error| engine::source_error(error, stream.start_span()))?;
@@ -124,13 +126,13 @@ fn parse_lossless<P: Parser>(
         println!("{:#?}", input.tokens_debug());
     }
 
-    match result {
+    work.finish(match result {
         Ok(value) => Ok(value),
         Err(e) => {
             // Return the best error we've seen during parsing
             Err(engine::get_best_error(e).without_source_context())
         }
-    }
+    })
 }
 
 pub fn parse_string(input: &str, config: &Config) -> Result<Program, ParseError> {

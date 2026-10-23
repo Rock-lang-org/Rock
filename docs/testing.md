@@ -39,6 +39,13 @@ or rejection status and byte-exact assertions. This driver is not a worker
 protocol: production macro execution and lifecycle tests still start a fresh,
 bounded, one-shot process for every invocation.
 
+The `macro_review` unit filter covers parser depth/work exhaustion and recovery,
+shared expansion work, early nested-repetition rejection, compact source windows,
+and opaque-capture authorization. Native authoring acceptance also exercises tiny
+invocations in multi-megabyte files, preserved arithmetic grouping, rejected
+capture-metadata removal, and deeply nested worker output. The codec batch checks
+physical windows near `U64::MAX` and rejects overflowing or out-of-window offsets.
+
 ## Shared prerequisites and compiler optimization
 
 The native SDK groups and smoke test reuse immutable, explicitly built `std` and

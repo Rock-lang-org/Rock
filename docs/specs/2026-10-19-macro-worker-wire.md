@@ -1,10 +1,10 @@
-# Rock macro worker wire: protocol 7
+# Rock macro worker wire: protocol 8
 
 This is the compiler/SDK contract for the current one-shot worker, not a stable
 cross-version protocol. Rebuild workers and dependencies after a format change.
 The normative Rust records are `lib/src/macro_expansion/proc_macro/schema.rs`
 and `proc_macro.rs`; the checked lossless transport is
-`lib/src/lexer/lossless/wire.rs`. Product artifacts are format 54. No older
+`lib/src/lexer/lossless/wire.rs`. Product artifacts are format 56. No older
 request, response, or artifact reader is provided.
 
 ## Encoding and framing
@@ -19,7 +19,7 @@ integer encoding. A Rust/LLVM in-memory struct is never a wire record.
 
 There is no extra length prefix: compiler stdin contains one complete request,
 then EOF; stdout contains one complete response, then EOF. Reject trailing data.
-Every request and response begins with protocol version 7, validated before
+Every request and response begins with protocol version 8, validated before
 decoding its payload. Requests also require the exact compiler package version.
 The 1 MiB limit covers the whole encoded envelope, not just spelling. Nested
 lossless byte payloads use these same bincode options, not `bincode::serialize`'s
@@ -40,14 +40,23 @@ fixed-integer defaults. Stdout contains protocol data only; stderr is not syntax
 8. Declared definition dependencies (`Vec<ProductCrateIdentity>`).
 9. `ProcMacroViews`: optional argument-range record, group records, literal records.
 
-The input retains `RKLOSS04` snapshot tables, run kinds, byte ranges, syntax
+The input retains `RKLOSS05` snapshot tables, run kinds, byte ranges, syntax
 contexts, boundaries, provenance/projections, and opaque expression ranges.
 Aliases reference the same snapshot table row. Snapshot handles must be nonzero
 and unique; source adjacency is valid only between contiguous ranges of that
 same row. Invalid ranges, run coverage/kinds, UTF-8, projection arithmetic, or
 crossing/overdeep expression ranges reject. Input cannot contain unresolved
-construction requests. All offsets in metadata are logical UTF-8 byte offsets
-in the concatenated retained spelling; diagnostic projections never prove
+construction requests. Snapshot rows contain identity, file path, physical window
+offset, and UTF-8 window text, in that order. Writers retain only the minimum
+window covering that snapshot's referenced runs and anchor; unrelated file
+prefixes/suffixes do not count toward the envelope. Internal gaps within that
+window remain retained. Run ranges and anchor offsets stay physical: subtract the
+window offset before indexing text. Window ends must not overflow; ranges and
+anchors must lie within the window on UTF-8 boundaries. Returned windows must
+match the corresponding substring of the compiler-owned snapshot.
+
+Argument, group, literal-view and opaque-expression ranges are logical UTF-8 byte
+offsets in concatenated retained spelling. Diagnostic projections never prove
 physical adjacency or binding authority.
 
 An argument view is an ordered list of disjoint, nonempty ranges. Absence means
@@ -100,6 +109,12 @@ only source of binding authority. Cross-invocation requests, invalid dependency
 or literal handles, mutated forwarding snapshots/ranges/contexts/provenance,
 and invalid diagnostic ranges reject before generated parsing.
 
+An opaque expression capture is an indivisible forwarded atom. Output may omit,
+duplicate or reorder whole captures, but cannot remove or invent their metadata,
+split a capture, change its layout margin, or change nested capture metadata.
+Validation compares retained source ranges, contexts, provenance, and internal
+splice boundaries against the original input before reconstructing output.
+
 Each diagnostic contains severity (Error=0, Warning=1, Info=2, Hint=3), message,
 primary location, secondary labels, notes, and help. Locations are Invocation=0,
 Input=1 (range), or Output=2 (range). There are no worker-provided filesystem
@@ -133,6 +148,17 @@ declared sequence counts reject before element allocation. Lossless tables/runs
 and opaque captures retain their 1,048,576-entry and 16 MiB spelling limits.
 Group/capture nesting is at most 128. Expanded fragment spelling is limited to
 1 MiB for a response; checked lengths precede concatenation.
+
+Normal source and generated parsing share a sticky parser-work/depth budget,
+including speculative alternatives and nested opaque fragments. Parser calls
+and token lookahead charge work; direct recursive type paths also carry depth
+guards. The limits are 512 guarded frames and at most 8,388,608 work units per
+parse. On Linux x86-64/AArch64, guards also reserve 256 KiB of the current native
+thread stack for diagnostics and unguarded frames; unavailable stack bounds use
+a conservative 128-frame cap. Nested parsers share the root guard. Generated parsing and
+matcher expression/operand probes charge the aggregate expansion matching-work
+budget; resource exhaustion cannot select a later matcher arm. Nested declarative
+repetition rejects at the second opening, before recursive descent.
 
 ## Process IO
 
@@ -180,7 +206,7 @@ trusted host code, not sandboxed code; intentionally escaping the process group
 is not a supported worker lifecycle.
 
 Byte-exact lowercase hex fixtures live in
-`lib/tests/fixtures/macros/protocol-7/`: `request.hex`, `response.hex`, and
+`lib/tests/fixtures/macros/protocol-8/`: `request.hex`, `response.hex`, and
 `error.hex`. They cover the `("é\n", value)` input (backslash-n source spelling),
 an opaque capture, a group, argument ranges, escape-aware literal mappings,
 forwarded spelling, all construction kinds, a literal fragment, and structured
