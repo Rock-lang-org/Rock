@@ -3,6 +3,10 @@ panic = 'abort'
 opt-level = 'z'
 lto = 'thin'
 
+# Compiler throughput benefits more from speed optimization than size reduction.
+[profile.release.package.rock-lib]
+opt-level = 3
+
 # Speed up compiling the test harnesses themselves.
 [profile.test]
 opt-level = 0

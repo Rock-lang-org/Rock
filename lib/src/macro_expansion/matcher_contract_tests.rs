@@ -101,6 +101,43 @@ fn macro_review_deep_repetitions_reject_at_the_second_opening() {
 }
 
 #[test]
+fn macro_review_declarative_proc_input_omits_distant_source_gap() {
+    use crate::ast::visit::Visitor;
+    use super::proc_macro::{decode_stream, encode_stream};
+
+    #[derive(Default)]
+    struct Invocations(Vec<MacroInvoc>);
+    impl<'ast> Visitor<'ast> for Invocations {
+        fn visit_macro_invoc(&mut self, invocation: &'ast MacroInvoc) {
+            self.0.push(invocation.clone());
+        }
+    }
+
+    for gap in [100, 1_100_000] {
+        let code = format!("macro wrap\n    $x:expr =>\n        %remote::consume 0, $x\n//{}\nmain = -> %wrap 7\n", "x".repeat(gap));
+        let config = crate::Config::default();
+        let program = crate::parser::parse_string(&code, &config).unwrap();
+        let TopLevel::MacroDecl(declaration) = &program.module.top_levels[0] else { panic!("macro declaration") };
+        let mut calls = Invocations::default();
+        calls.visit_program(&program);
+        assert_eq!(calls.0.len(), 1);
+        let context = MacroExpansionContext::new(&config);
+        context.record_definition_scope(declaration.id, Vec::new()).unwrap();
+        let generated_parser::GeneratedSyntax::Expression(expression) =
+            expand_declarative(declaration, &calls.0[0], &context).unwrap() else { panic!("expression output") };
+        let mut emitted = Invocations::default();
+        emitted.visit_expression(&expression);
+        assert_eq!(emitted.0.len(), 1);
+        let input = &emitted.0[0].args;
+        let bytes = encode_stream(input).unwrap();
+        assert!(bytes.len() < 2048, "unrelated source gap in proc input: {}", bytes.len());
+        let decoded = decode_stream(&bytes).unwrap();
+        assert_eq!(text(&decoded), text(input));
+        assert_eq!(decoded.runs().last().unwrap().range(), input.runs().last().unwrap().range());
+    }
+}
+
+#[test]
 fn macro_a_05_empty_repetition_cannot_silently_make_no_progress() {
     let diagnostics = matches("$( )*", &source("")).unwrap_err();
     assert!(diagnostics.0.iter().any(|diagnostic| diagnostic.message.contains("progress")), "{diagnostics:?}");

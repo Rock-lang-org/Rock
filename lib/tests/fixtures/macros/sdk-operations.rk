@@ -39,12 +39,15 @@ segment = start, end, kind, context -> Segment
     construction: Option::None
 
 input = ->
+    mut windows: Vec SourceWindow = Vec::new!
+    windows.push (SourceWindow
+        offset: 0
+        text: String::from "name \t//é\r\n雪{'")
     mut sources: Vec SourceSnapshot = Vec::new!
     sources.push (SourceSnapshot
         identity: 1
         file_path: String::from "caller.rk"
-        offset: 0
-        text: String::from "name \t//é\r\n雪{'")
+        windows: windows)
     mut segments: Vec Segment = Vec::new!
     segments.push (segment 0, 4, SegmentKind::Text, 42)
     segments.push (segment 4, 6, SegmentKind::Whitespace, 42)
@@ -74,7 +77,7 @@ context = ->
             source_hash: Option::None
             loaded_files: Vec::new!)
     MacroContext
-        protocol_version: 8
+        protocol_version: 9
         compiler_version: String::from "0.7.0"
         macro_name: String::from "operations"
         macro_identity: String::from "example::operations"

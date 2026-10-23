@@ -1,0 +1,29 @@
+> clone_derive::Clone
+> std::clone::Clone
+
+%derive Clone
+struct Message
+    < name: String
+    < visits: I64
+
+%derive Clone
+struct Envelope T
+    < value: T
+
+main = !->
+    original = Envelope
+        value: Message
+            name: String::from "Ada"
+            visits: 1
+    mut copied = original.clone!
+    copied.value.name = String::from "Grace"
+    copied.value.visits = 2
+
+    original_label = String::from "original: "
+    original_line = original_label.concat (original.value.name.clone!)
+    original_line.println!
+    original.value.visits.println!
+    copy_label = String::from "copy: "
+    copy_line = copy_label.concat (copied.value.name.clone!)
+    copy_line.println!
+    copied.value.visits.println!

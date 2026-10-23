@@ -1,10 +1,10 @@
-# Rock macro worker wire: protocol 8
+# Rock macro worker wire: protocol 9
 
 This is the compiler/SDK contract for the current one-shot worker, not a stable
 cross-version protocol. Rebuild workers and dependencies after a format change.
 The normative Rust records are `lib/src/macro_expansion/proc_macro/schema.rs`
 and `proc_macro.rs`; the checked lossless transport is
-`lib/src/lexer/lossless/wire.rs`. Product artifacts are format 56. No older
+`lib/src/lexer/lossless/wire.rs`. Product artifacts are format 57. No older
 request, response, or artifact reader is provided.
 
 ## Encoding and framing
@@ -19,7 +19,7 @@ integer encoding. A Rust/LLVM in-memory struct is never a wire record.
 
 There is no extra length prefix: compiler stdin contains one complete request,
 then EOF; stdout contains one complete response, then EOF. Reject trailing data.
-Every request and response begins with protocol version 8, validated before
+Every request and response begins with protocol version 9, validated before
 decoding its payload. Requests also require the exact compiler package version.
 The 1 MiB limit covers the whole encoded envelope, not just spelling. Nested
 lossless byte payloads use these same bincode options, not `bincode::serialize`'s
@@ -40,20 +40,25 @@ fixed-integer defaults. Stdout contains protocol data only; stderr is not syntax
 8. Declared definition dependencies (`Vec<ProductCrateIdentity>`).
 9. `ProcMacroViews`: optional argument-range record, group records, literal records.
 
-The input retains `RKLOSS05` snapshot tables, run kinds, byte ranges, syntax
+The input retains `RKLOSS06` snapshot tables, run kinds, byte ranges, syntax
 contexts, boundaries, provenance/projections, and opaque expression ranges.
 Aliases reference the same snapshot table row. Snapshot handles must be nonzero
 and unique; source adjacency is valid only between contiguous ranges of that
 same row. Invalid ranges, run coverage/kinds, UTF-8, projection arithmetic, or
 crossing/overdeep expression ranges reject. Input cannot contain unresolved
-construction requests. Snapshot rows contain identity, file path, physical window
-offset, and UTF-8 window text, in that order. Writers retain only the minimum
-window covering that snapshot's referenced runs and anchor; unrelated file
-prefixes/suffixes do not count toward the envelope. Internal gaps within that
-window remain retained. Run ranges and anchor offsets stay physical: subtract the
-window offset before indexing text. Window ends must not overflow; ranges and
-anchors must lie within the window on UTF-8 boundaries. Returned windows must
-match the corresponding substring of the compiler-owned snapshot.
+construction requests. Snapshot rows contain identity, file path, and a nonempty
+vector of windows. Each window contains its physical offset followed by UTF-8
+text. Windows are sorted by offset and strictly separated: overlapping or touching
+windows reject. Writers merge overlapping/adjacent referenced ranges and omit
+all unreferenced gaps, prefixes and suffixes. An isolated anchor retains an empty
+window. Window count across snapshots is bounded by 1,048,576, and retained text
+by 16 MiB, independently of the 1 MiB message limit.
+
+Run ranges and anchor offsets stay physical: select the containing window and
+subtract its offset before indexing text. Window ends must not overflow; each
+run and anchor must fit within one window on UTF-8 boundaries. Returned windows
+must match corresponding substrings of the compiler-owned snapshot. Sparse
+windows retain one snapshot identity, so gaps never grant source adjacency.
 
 Argument, group, literal-view and opaque-expression ranges are logical UTF-8 byte
 offsets in concatenated retained spelling. Diagnostic projections never prove
@@ -206,7 +211,7 @@ trusted host code, not sandboxed code; intentionally escaping the process group
 is not a supported worker lifecycle.
 
 Byte-exact lowercase hex fixtures live in
-`lib/tests/fixtures/macros/protocol-8/`: `request.hex`, `response.hex`, and
+`lib/tests/fixtures/macros/protocol-9/`: `request.hex`, `response.hex`, and
 `error.hex`. They cover the `("é\n", value)` input (backslash-n source spelling),
 an opaque capture, a group, argument ranges, escape-aware literal mappings,
 forwarded spelling, all construction kinds, a literal fragment, and structured

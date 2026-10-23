@@ -53,10 +53,10 @@ fn macro_b_01_enriched_schema_roundtrips_with_exact_utf8_and_all_handles() {
     let decoded = decode_response(&bytes).unwrap();
     assert_eq!(decoded, response);
     assert_eq!(encode_response(&decoded).unwrap(), bytes);
-    assert_eq!(hex(&encode_request(&request).unwrap()), include_str!("../../../tests/fixtures/macros/protocol-8/request.hex").trim());
-    assert_eq!(hex(&bytes), include_str!("../../../tests/fixtures/macros/protocol-8/response.hex").trim());
+    assert_eq!(hex(&encode_request(&request).unwrap()), include_str!("../../../tests/fixtures/macros/protocol-9/request.hex").trim());
+    assert_eq!(hex(&bytes), include_str!("../../../tests/fixtures/macros/protocol-9/response.hex").trim());
     assert_eq!(hex(&encode_response(&ProcMacroResponse::failure(vec!["boom".into()])).unwrap()),
-        include_str!("../../../tests/fixtures/macros/protocol-8/error.hex").trim());
+        include_str!("../../../tests/fixtures/macros/protocol-9/error.hex").trim());
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn macro_b_01_rejects_every_truncation_trailing_data_versions_and_unknown_tags()
     assert!(decode_request(&[0]).unwrap_err().to_string().contains("version"));
     assert!(decode_response(&[0]).unwrap_err().to_string().contains("version"));
     // Protocol, Some(output), one part, invalid enum discriminant.
-    assert!(decode_response(&[8, 1, 1, 99]).is_err());
+    assert!(decode_response(&[9, 1, 1, 99]).is_err());
     let mut raw = encode_request(&request).unwrap();
     let index = raw.windows(2).position(|bytes| bytes == [0xc3, 0xa9]).unwrap();
     raw[index] = 0xff; assert!(decode_request(&raw).is_err());
@@ -137,11 +137,11 @@ fn macro_b_01_unknown_source_characters_and_unmatched_dsl_quotes_are_data() {
 #[test]
 fn macro_b_01_declared_sequence_limits_reject_before_element_allocation() {
     // protocol, Some(output), over-limit parts count; no elements are provided.
-    let mut bytes = vec![8, 1];
+    let mut bytes = vec![9, 1];
     bytes.extend(bincode::DefaultOptions::new().serialize(&(MAX_METADATA_ENTRIES as u64 + 1)).unwrap());
     assert!(decode_response(&bytes).unwrap_err().to_string().contains("sequence limit"));
     // protocol, Some(output), one Stream part with a forged byte-vector length.
-    let mut bytes = vec![8, 1, 1, 0];
+    let mut bytes = vec![9, 1, 1, 0];
     bytes.extend(bincode::DefaultOptions::new().serialize(&u64::MAX).unwrap());
     assert!(decode_response(&bytes).unwrap_err().to_string().contains("sequence limit"));
 }

@@ -527,7 +527,7 @@ fn capture_set_from_correspondance(
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::symlink;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -573,10 +573,13 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
         let host = temp_dir.join("proc_macro_host");
         fs::write(host.with_extension("response"), response).unwrap();
-        fs::write(&host, "#!/bin/sh\ncat >\"$0.request\"\ncat \"$0.response\"\n").unwrap();
-        let mut permissions = fs::metadata(&host).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&host, permissions).unwrap();
+        // Concurrent child launches can inherit a transient writable script FD,
+        // even after fs::write returns here, making exec fail with ETXTBSY.
+        // Keep executable bytes immutable; $0 selects this fixture's data files.
+        symlink(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/macros/response-worker.sh"),
+            &host,
+        ).unwrap();
 
         let artifact = proc_macro::ProcMacroArtifact {
             artifact_format_version: crate::products::PRODUCT_ARTIFACT_FORMAT_VERSION,
@@ -742,6 +745,34 @@ macro repeat_b
         let expanded = expand_macros_with_context(input_program, &context).unwrap();
 
         assert!(!expanded.module.has_macro_invoc());
+    }
+
+    #[test]
+    fn response_worker_fixtures_keep_parallel_requests_isolated() {
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for index in 0..8 {
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    for round in 0..8 {
+                        let config = test_config();
+                        let program = parse_string("%test_macros::make", &config).unwrap();
+                        let call = first_invocation(&program);
+                        let name = format!("result_{index}_{round}");
+                        let response = constructed_response(&call, &format!("{name} = -> 0\n"));
+                        let (artifact, directory) = proc_macro_artifact_with_response("make", response);
+                        let request_path = artifact.executable.with_extension("request");
+                        let context = MacroExpansionContext::new(&config).with_proc_macro_artifact(artifact);
+                        let expanded = expand_macros_with_context(program, &context).unwrap();
+                        assert!(expanded.module.top_level_from_ident(&name).is_some());
+                        let request = proc_macro::decode_request(&fs::read(request_path).unwrap()).unwrap();
+                        assert_eq!(request.invocation_id, call.id);
+                        fs::remove_dir_all(directory).unwrap();
+                    }
+                });
+            }
+        });
     }
 
     #[test]

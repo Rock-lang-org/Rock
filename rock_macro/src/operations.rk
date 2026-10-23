@@ -8,6 +8,7 @@
 > std::string::owned::String
 > std::num::arithmetic::Add
 > std::num::arithmetic::Sub
+> std::num::arithmetic::Div
 > std::cmp::eq::PartialEq
 > std::cmp::eq::Eq
 > std::hash::Hash
@@ -39,22 +40,50 @@ boundary = text, offset ->
     byte = text.as_bytes![offset as I64] as I64
     byte < 128 || byte >= 192
 
+impl SourceSnapshot
+    // Windows are sorted, disjoint physical ranges, not new source identities.
+    @window_index: &ByteRange -> Result I64, SdkError
+    @window_index = range ->
+        low = 0
+        high = self.windows.len!
+        while low < high
+            middle = low + (high - low) / 2
+            if self.windows[middle].offset <= range.start
+                low = middle + 1
+            else
+                high = middle
+        if low == 0 || range.start > range.end
+            failure: Result I64, SdkError = Result::Err (SdkError::InvalidRange range.clone!)
+            return failure
+        window = &self.windows[low - 1]
+        if !(boundary (&window.text), (range.start - window.offset))
+            failure: Result I64, SdkError = Result::Err (SdkError::NotCharBoundary range.start)
+            return failure
+        if !(boundary (&window.text), (range.end - window.offset))
+            failure: Result I64, SdkError = Result::Err (SdkError::NotCharBoundary range.end)
+            return failure
+        Result::Ok (low - 1)
+
+    @same_windows: &SourceSnapshot -> Bool
+    @same_windows = other ->
+        if self.windows.len! != other.windows.len!
+            return false
+        i = 0
+        while i < self.windows.len!
+            left = &self.windows[i]
+            right = &other.windows[i]
+            if left.offset != right.offset || left.text != right.text
+                return false
+            i = i + 1
+        true
+
 source_range: &TokenStream -> U64 -> &ByteRange -> Result (), SdkError
 source_range = stream, source, range ->
     if source >= (stream.sources.len! as U64)
         failure: Result (), SdkError = Result::Err (SdkError::InvalidSource source)
         return failure
     snapshot = &stream.sources[source as I64]
-    text = &snapshot.text
-    if range.start > range.end || range.start < snapshot.offset || range.end < snapshot.offset
-        failure: Result (), SdkError = Result::Err (SdkError::InvalidRange range.clone!)
-        return failure
-    if !(boundary text, (range.start - snapshot.offset))
-        failure: Result (), SdkError = Result::Err (SdkError::NotCharBoundary range.start)
-        return failure
-    if !(boundary text, (range.end - snapshot.offset))
-        failure: Result (), SdkError = Result::Err (SdkError::NotCharBoundary range.end)
-        return failure
+    snapshot.window_index range ?
     Result::Ok ()
 
 // Called only after physical source ranges have been checked.
@@ -67,7 +96,12 @@ logical_boundary = stream, offset ->
         end = base + (segment.range.end - segment.range.start)
         if offset < end
             source = &stream.sources[segment.source as I64]
-            return boundary (&source.text), (segment.range.start - source.offset + (offset - base))
+            point = segment.range.start + (offset - base)
+            match source.window_index (&ByteRange
+                start: point
+                end: point)
+                Result::Ok _ => return true
+                Result::Err _ => return false
         base = end
         i = i + 1
     offset == base
@@ -80,14 +114,28 @@ impl TokenStream
             return failure
         mut identities: HashMap I64, I64 = HashMap::new!
         retained_bytes: U64 = 0 as U64
+        window_count = 0
         i = 0
         while i < self.sources.len!
             source = &self.sources[i]
-            size = source.text.len! as U64
-            if size > ((16777216 as U64) - retained_bytes) || source.offset > (18446744073709551615 as U64) - size
+            window_count = window_count + source.windows.len!
+            if source.windows.len! == 0 || window_count > 1048576
                 failure: Result U64, SdkError = Result::Err SdkError::LengthLimit
                 return failure
-            retained_bytes = retained_bytes + size
+            previous_end: U64 = 0 as U64
+            j = 0
+            while j < source.windows.len!
+                window = &source.windows[j]
+                size = window.text.len! as U64
+                if size > ((16777216 as U64) - retained_bytes) || window.offset > (18446744073709551615 as U64) - size
+                    failure: Result U64, SdkError = Result::Err SdkError::LengthLimit
+                    return failure
+                if j > 0 && window.offset <= previous_end
+                    failure: Result U64, SdkError = Result::Err (SdkError::ConflictingSnapshot source.identity)
+                    return failure
+                retained_bytes = retained_bytes + size
+                previous_end = window.offset + size
+                j = j + 1
             if source.identity == (0 as U64) || source.file_path.len! == 0
                 failure: Result U64, SdkError = Result::Err (SdkError::InvalidSource (i as U64))
                 return failure
@@ -166,9 +214,13 @@ impl TokenStream
             if offset < end || (offset == end && offset == length)
                 point = segment.range.start + (offset - base)
                 source = &self.sources[segment.source as I64]
-                if !(boundary (&source.text), (point - source.offset))
-                    failure: Result StreamAnchor, SdkError = Result::Err (SdkError::NotCharBoundary offset)
-                    return failure
+                match source.window_index (&ByteRange
+                    start: point
+                    end: point)
+                    Result::Err _ =>
+                        failure: Result StreamAnchor, SdkError = Result::Err (SdkError::NotCharBoundary offset)
+                        return failure
+                    Result::Ok _ => ()
                 retained_origin = &segment.origin
                 origin = match *retained_origin
                     Option::Some value => Option::Some value.clone!
@@ -237,8 +289,11 @@ impl TokenStream
         i = 0
         while i < self.segments.len!
             segment = &self.segments[i]
-            source = self.sources[segment.source as I64].text.as_bytes!
-            start = self.sources[segment.source as I64].offset
+            snapshot = &self.sources[segment.source as I64]
+            index = snapshot.window_index (&segment.range) ?
+            window = &snapshot.windows[index]
+            source = window.text.as_bytes!
+            start = window.offset
             offset = (segment.range.start - start) as I64
             while offset < ((segment.range.end - start) as I64)
                 bytes.push source[offset]
@@ -268,7 +323,7 @@ impl TokenStream
             match identities.get &identity_key
                 Option::Some existing_index =>
                     existing = &output.sources[*existing_index]
-                    if existing.file_path != source.file_path || existing.offset != source.offset || existing.text != source.text
+                    if existing.file_path != source.file_path || !(existing.same_windows source)
                         failure: Result TokenStream, SdkError = Result::Err (SdkError::ConflictingSnapshot source.identity)
                         return failure
                     index = *existing_index

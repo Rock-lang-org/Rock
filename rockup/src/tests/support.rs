@@ -18,11 +18,44 @@ use std::os::unix::fs::PermissionsExt;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn temp_test_dir(name: &str) -> PathBuf {
-    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("rockup_{}_{}", name, id));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
-    dir
+    loop {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("rockup_{}_{}_{}", name, std::process::id(), id));
+        match fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("failed to create test directory {}: {error}", dir.display()),
+        }
+    }
+}
+
+#[test]
+fn temporary_directories_are_process_isolated() {
+    const PROBE: &str = "ROCKUP_TEST_DIRECTORY_PROBE";
+    const PREFIX: &str = "ROCKUP_TEST_DIRECTORY=";
+    if std::env::var_os(PROBE).is_some() {
+        let directory = temp_test_dir("process_isolation");
+        fs::write(directory.join("owner"), std::process::id().to_string()).unwrap();
+        println!("\n{PREFIX}{}", directory.display());
+        return;
+    }
+
+    let directories = (0..2).map(|_| {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["tests::support::temporary_directories_are_process_isolated", "--exact", "--nocapture"])
+            .env(PROBE, "1")
+            .output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let directory = PathBuf::from(stdout.lines().find_map(|line| line.strip_prefix(PREFIX)).unwrap());
+        let owner = fs::read_to_string(directory.join("owner")).unwrap();
+        (directory, owner)
+    }).collect::<Vec<_>>();
+    assert_ne!(directories[0].0, directories[1].0);
+    for (directory, owner) in directories {
+        assert_eq!(fs::read_to_string(directory.join("owner")).unwrap(), owner);
+        fs::remove_dir_all(directory).unwrap();
+    }
 }
 
 pub(super) fn fake_home(root: PathBuf) -> RockupHome {

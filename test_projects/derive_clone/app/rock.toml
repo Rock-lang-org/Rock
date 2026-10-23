@@ -1,0 +1,10 @@
+[crate]
+name = "derive_clone_demo"
+version = "0.1.0"
+
+[[bin]]
+name = "derive_clone_demo"
+path = "src/main.rk"
+
+[dependencies]
+clone_derive = { path = "../macros" }

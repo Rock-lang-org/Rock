@@ -1,4 +1,4 @@
-// Ordinary owned SDK data for worker protocol 8 and RKLOSS05.
+// Ordinary owned SDK data for worker protocol 9 and RKLOSS06.
 // Handles are transport values, never permission to mint compiler authority.
 // Local operations never contact the compiler; transport remains separate.
 
@@ -75,6 +75,9 @@ mod encode_validation
 < struct SourceSnapshot
     < identity: U64
     < file_path: String
+    < windows: Vec SourceWindow
+
+< struct SourceWindow
     < offset: U64
     < text: String
 

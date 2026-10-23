@@ -54,7 +54,7 @@ failed = result ->
     args = [exact]
     require &context, (failed (context.quote "$0$0", &args)), "aggregate byte budget" ?
     mut retained = input.clone!
-    retained.sources[0].text = large.clone!
+    retained.sources[0].windows[0].text = large.clone!
     small = context.forward retained ?
     args = [small]
     require &context, (failed (context.quote "$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0$0", &args)), "retained snapshot copy budget" ?

@@ -1,6 +1,6 @@
 > demo_macros::format
 
 main = !->
-    name = "Ada"
+    name = "frere"
     message = %format "Hello {name}!"
     message.println!

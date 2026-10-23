@@ -10,7 +10,7 @@
 > rock_syntax::derive_input::DeriveInput
 
 emission_context = -> MacroContext
-    protocol_version: 8
+    protocol_version: 9
     compiler_version: String::from "test"
     macro_name: String::from "emission"
     macro_identity: String::from "emission"
@@ -93,7 +93,7 @@ type_edit_controls = context !->
     part = &output.parts[0]
     match *part
         OutputPart::Stream stream =>
-            check (stream.sources[0].text == " /* 雪 */ F A, B // tail\r\n")
+            check (stream.sources[0].windows[0].text == " /* 雪 */ F A, B // tail\r\n")
             check (stream.segments[0].context.handle == (7 as U32))
             origin = &stream.segments[0].origin
             match *origin
@@ -235,7 +235,7 @@ output_limit_controls = context !->
     expect_error (byte_output.append context, (test_source context, "x"))
     mut retained_output = OutputBuffer::new!
     mut tiny = input "x"
-    tiny.sources[0].text = large
+    tiny.sources[0].windows[0].text = large
     i = 0
     while i < 15
         fragment = (context.forward tiny.clone!).checked!

@@ -3,12 +3,12 @@ use rock_lib::macro_expansion::proc_macro::*;
 
 pub fn cases(golden: &ProcMacroRequest, rich: &ProcMacroRequest) -> Vec<(ProcMacroRequest, bool)> {
     let mut cases = Vec::new();
-    for name in ["format", "error", "report_failure", "expand", "empty", "expand_empty", "severities", "constructed", "wide_message",
+    for name in ["format", "error", "report_failure", "expand", "empty", "expand_empty", "severities", "constructed", "compact_windows", "wide_message",
         "missing_error", "warning_failure", "output_without_output", "input_cut", "invalid_label", "invalid_literal_handle",
         "invalid_literal_cut", "wrong_invocation", "wrong_dependency", "message_limit", "parts_limit", "spelling_limit", "invalid_stream", "forged_context"] {
         let mut request = golden.clone(); request.macro_name = name.into();
         let accepted = matches!(name, "format" | "error" | "report_failure" | "expand" | "empty" | "expand_empty" | "severities"
-            | "constructed" | "wide_message" | "forged_context");
+            | "constructed" | "compact_windows" | "wide_message" | "forged_context");
         cases.push((request, accepted));
     }
     cases.push((rich.clone(), true));
@@ -16,7 +16,7 @@ pub fn cases(golden: &ProcMacroRequest, rich: &ProcMacroRequest) -> Vec<(ProcMac
     for (_, bytes, accepted) in super::macro_requests::cases() {
         if !accepted { continue; }
         let mut request = decode_request(&bytes).unwrap();
-        if request.macro_name == "window" {
+        if matches!(request.macro_name.as_str(), "window" | "disjoint") {
             request.macro_name = "expand".into();
             cases.push((request, true));
         }
@@ -38,11 +38,11 @@ pub fn verify(request: &ProcMacroRequest, bytes: &[u8]) {
     }
     response.validate_for(request).unwrap();
     match request.macro_name.as_str() {
-        "format" => assert_eq!(bytes, unhex(include_str!("../fixtures/macros/protocol-8/response.hex"))),
-        "error" | "report_failure" => assert_eq!(bytes, unhex(include_str!("../fixtures/macros/protocol-8/error.hex"))),
+        "format" => assert_eq!(bytes, unhex(include_str!("../fixtures/macros/protocol-9/response.hex"))),
+        "error" | "report_failure" => assert_eq!(bytes, unhex(include_str!("../fixtures/macros/protocol-9/error.hex"))),
         "expand" | "rich" => assert_eq!(response, ProcMacroResponse::expanded(request.input.clone())),
         "empty" => {
-            assert_eq!(bytes, [8, 1, 0, 0]);
+            assert_eq!(bytes, [9, 1, 0, 0]);
             assert!(response.output.unwrap().parts.is_empty());
         }
         "expand_empty" => {
@@ -68,6 +68,15 @@ pub fn verify(request: &ProcMacroRequest, bytes: &[u8]) {
                 assert_eq!(stream.runs().iter().map(|run| run.text()).collect::<String>(), text);
                 super::macro_requests::assert_construction(bytes, request.construction_context(kind));
             }
+        }
+        "compact_windows" => {
+            assert!(bytes.len() < 512, "unused snapshot gap retained in SDK output");
+            let output = response.output.unwrap();
+            let ProcMacroPart::Stream(bytes) = &output.parts[0] else { panic!("expected stream") };
+            let stream = decode_stream(bytes).unwrap();
+            assert_eq!(stream.runs().iter().map(|run| run.text()).collect::<String>(), "AAA");
+            assert_eq!(stream.runs().iter().map(|run| run.range()).collect::<Vec<_>>(), [1_099_999..1_100_000, 0..1, 0..1]);
+            assert_eq!(encode_stream(&stream).unwrap(), *bytes);
         }
         "wide_context" => assert_eq!(response.output.unwrap().parts, [ProcMacroPart::Source {
             text: "x".into(), context: request.construction_context(ConstructionKind::Fresh(u32::MAX)),

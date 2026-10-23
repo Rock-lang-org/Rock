@@ -1,10 +1,8 @@
-use std::collections::{HashMap, HashSet};
-
 use crate::lexer::Span;
 use crate::mir::borrowck::location::{Location, StatementIndex};
 use crate::mir::BasicBlockId;
 use crate::mir::{
-    Local, MirBackendContract, MirFunction, MirFunctionId,
+    Local, MirBackendContract, MirFunction,
     Operand, Place, Projection, ReferenceOrigin, Rvalue, StatementData,
     StatementKind, Terminator,
 };
@@ -61,24 +59,17 @@ pub fn collect_terminator_borrows(term: &Terminator, created_at: Location) -> Ve
     collect_terminator_borrows_with_context(term, created_at, None)
 }
 
-pub fn collect_function_borrows_with_contract(
-    func: &MirFunction,
-    type_context: &TypeContext,
-    backend_contract: &MirBackendContract,
-    return_summaries: &HashMap<MirFunctionId, HashSet<ReferenceOrigin>>,
+pub(super) fn collect_function_borrows_with_contract(
+    origins: &super::ReferenceEscapeAnalysis<'_>,
+    entries: Option<&crate::mir::dataflow::Results<super::ReferenceOriginState>>,
 ) -> Vec<BorrowData> {
+    let func = origins.func;
     let mut borrows = Vec::new();
-    use crate::mir::dataflow::{run_fixpoint, Analysis};
-    let origins = super::ReferenceEscapeAnalysis::new(
-        func, type_context, backend_contract, return_summaries, super::MissingSummaryMode::Conservative,
-    );
-    let needs_raw_roots = func.local_decls.iter().enumerate().any(|(index, _)|
-        origins.local_type_tracks_origin(Local(index))
-    );
-    let entries = needs_raw_roots.then(|| run_fixpoint(&origins, func));
+    use crate::mir::dataflow::Analysis;
+    let needs_raw_roots = entries.is_some();
 
     for (block_idx, block) in func.basic_blocks.iter().enumerate() {
-        let mut state = entries.as_ref().map(|entries| entries.entry_sets[block_idx].clone())
+        let mut state = entries.map(|entries| entries.entry_sets[block_idx].clone())
             .unwrap_or_default();
         for (stmt_idx, stmt) in block.statements.iter().enumerate() {
             let mut statement_borrows = collect_statement_borrows(
@@ -88,7 +79,7 @@ pub fn collect_function_borrows_with_contract(
             if let StatementKind::Assign(_, Rvalue::Ref(_, place)) = &stmt.kind {
                 if let Some(source) = origins.raw_pointer_source(place) {
                     if let Some(template) = statement_borrows.first().cloned() {
-                        let replacements = recover_raw_borrows(&origins, &state, &source, &template);
+                        let replacements = recover_raw_borrows(origins, &state, &source, &template);
                         if !replacements.is_empty() {
                             statement_borrows = replacements;
                         }
@@ -107,7 +98,7 @@ pub fn collect_function_borrows_with_contract(
                     BasicBlockId(block_idx),
                     StatementIndex(block.statements.len()),
                 ),
-                Some((&origins, &state)),
+                Some((origins, &state)),
             );
             borrows.extend(call_borrows);
         }

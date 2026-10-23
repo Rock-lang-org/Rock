@@ -1493,19 +1493,24 @@ impl BorrowChecker {
         backend_contract: &MirBackendContract,
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
     ) -> Result<(), Diagnostics> {
+        let analysis = ReferenceEscapeAnalysis::new(
+            func, type_context, backend_contract, return_summaries, MissingSummaryMode::Conservative,
+        );
+        let needs_origins = type_id_contains_reference(TypeView::new(type_context), backend_contract, func.ret_type)
+            || func.local_decls.iter().any(|decl|
+                type_id_tracks_origin(TypeView::new(type_context), backend_contract, decl.ty));
+        let origins = needs_origins.then(|| run_fixpoint(&analysis, func));
+        let borrows = collect_function_borrows_with_contract(&analysis, origins.as_ref());
+        let mut escape_diagnostics = Diagnostics::default();
+        if let Some(results) = &origins {
+            Self::validate_reference_escapes_with_origins(&analysis, results, &mut escape_diagnostics);
+        }
+        // Release the shared origin states before allocating initialization/loan states.
+        drop(origins);
         let mut diagnostics = Self::validate_moves_and_initialization(
-            func,
-            type_context,
-            backend_contract,
-            return_summaries,
+            func, type_context, backend_contract, return_summaries, &borrows,
         );
-        Self::validate_reference_escapes(
-            func,
-            type_context,
-            backend_contract,
-            return_summaries,
-            &mut diagnostics,
-        );
+        diagnostics.0.extend(escape_diagnostics.0);
         Self::validate_drop_obligations(func, backend_contract, &mut diagnostics);
 
         if diagnostics.0.is_empty() {
@@ -1516,36 +1521,56 @@ impl BorrowChecker {
     }
 
     fn reference_return_summaries(program: &MirProgram) -> HashMap<MirFunctionId, OriginSet> {
+        let functions = program.functions().filter(|(_, func)| type_id_tracks_origin(
+            TypeView::new(&program.type_context), &program.backend_contract, func.ret_type,
+        )).collect::<Vec<_>>();
+        let mut callers = HashMap::<MirFunctionId, Vec<usize>>::new();
+        for (index, (_, func)) in functions.iter().enumerate() {
+            let mut dependencies = HashSet::new();
+            for block in &func.basic_blocks {
+                if let Some(Terminator::Call {
+                    func: Operand::Constant(Constant::Callable(callable)), ..
+                }) = &block.terminator {
+                    if let Some(id) = callable.function_id() {
+                        if dependencies.insert(id.clone()) {
+                            callers.entry(id).or_default().push(index);
+                        }
+                    }
+                }
+            }
+        }
         let mut summaries = HashMap::new();
-
-        loop {
-            let previous = summaries.clone();
-            let mut next = HashMap::new();
-            for (id, func) in program.functions() {
-                if !type_id_tracks_origin(
-                    TypeView::new(&program.type_context),
-                    &program.backend_contract,
-                    func.ret_type,
-                ) {
+        let mut dirty = (0..functions.len()).collect::<Vec<_>>();
+        while !dirty.is_empty() {
+            // Evaluate a round against unchanged summaries, including recursive calls.
+            // Only callers of changed summaries need another round; no map clone.
+            let updates = dirty.iter().map(|&index| {
+                let (id, func) = functions[index];
+                (id, Self::reference_return_origins(
+                    func, &program.type_context, &program.backend_contract, &summaries,
+                ))
+            }).collect::<Vec<_>>();
+            dirty.clear();
+            let mut queued = vec![false; functions.len()];
+            for (id, origins) in updates {
+                if summaries.get(id) == Some(&origins)
+                    || (origins.is_empty() && !summaries.contains_key(id)) {
                     continue;
                 }
-
-                let origins = Self::reference_return_origins(
-                    func,
-                    &program.type_context,
-                    &program.backend_contract,
-                    &previous,
-                );
-                if !origins.is_empty() {
-                    next.insert(id.clone(), origins);
+                if origins.is_empty() {
+                    summaries.remove(id);
+                } else {
+                    summaries.insert(id.clone(), origins);
+                }
+                for &caller in callers.get(id).into_iter().flatten() {
+                    if !queued[caller] {
+                        queued[caller] = true;
+                        dirty.push(caller);
+                    }
                 }
             }
-
-            if next == previous {
-                return next;
-            }
-            summaries = next;
         }
+        summaries
     }
 
     fn reference_return_origins(
@@ -1590,6 +1615,7 @@ impl BorrowChecker {
         type_context: &crate::type_context::TypeContext,
         backend_contract: &MirBackendContract,
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        borrows: &[borrows::BorrowData],
     ) -> Diagnostics {
         let mut diagnostics = Diagnostics::default();
         let mut move_validation = MoveValidationContext::new(type_context, backend_contract);
@@ -1600,14 +1626,8 @@ impl BorrowChecker {
         let init_reachable = init_results.reachable;
         drop(init_results.exit_sets);
 
-        let borrows = collect_function_borrows_with_contract(
-            func,
-            type_context,
-            backend_contract,
-            return_summaries,
-        );
         let place_paths = crate::mir::borrowck::paths::PlacePathTable::for_function(func);
-        let loan_table = LoanTable::from_borrows_with_paths(&borrows, place_paths);
+        let loan_table = LoanTable::from_borrows_with_paths(borrows, place_paths);
         let loans_by_location = LoanLocationIndex::for_function(&loan_table, func);
         let reference_liveness =
             compute_reference_liveness_with_contract(func, type_context, backend_contract);
@@ -1737,6 +1757,7 @@ impl BorrowChecker {
         }
     }
 
+    #[cfg(test)]
     fn validate_reference_escapes(
         func: &MirFunction,
         type_context: &crate::type_context::TypeContext,
@@ -1760,8 +1781,18 @@ impl BorrowChecker {
             MissingSummaryMode::Conservative,
         );
         let results = run_fixpoint(&analysis, func);
+        Self::validate_reference_escapes_with_origins(&analysis, &results, diagnostics);
+    }
 
-        Self::validate_temporary_reference_storage(func, &analysis, &results, diagnostics);
+    fn validate_reference_escapes_with_origins(
+        analysis: &ReferenceEscapeAnalysis<'_>,
+        results: &crate::mir::dataflow::Results<ReferenceOriginState>,
+        diagnostics: &mut Diagnostics,
+    ) {
+        let func = analysis.func;
+        let type_context = analysis.type_context;
+        let backend_contract = analysis.backend_contract;
+        Self::validate_temporary_reference_storage(func, analysis, results, diagnostics);
 
         if !type_id_contains_reference(TypeView::new(type_context), backend_contract, func.ret_type)
         {
@@ -3212,6 +3243,88 @@ mod tests {
             summaries.get(&caller_id),
             Some(&HashSet::from([ReferenceOrigin::Param(Local(1))]))
         );
+    }
+
+    #[test]
+    fn dependency_return_summaries_match_sweeps_for_chains_and_recursion() {
+        for reverse in [false, true] {
+            let mut type_context = TypeContext::new();
+            let ty = test_type_id(&mut type_context, Type::Reference {
+                mutable: false, inner: Box::new(Type::I64),
+            });
+            let id = |index: u32| MirFunctionId::Function(DefId::new(
+                CrateId(0), LocalDefId(if reverse { 10 - index } else { index }),
+            ));
+            let place = |index| Place { local: Local(index), projection: vec![] };
+            let mut functions = BTreeMap::new();
+            for index in 0..5 {
+                let return_param = BasicBlock {
+                    statements: vec![StatementData::assign(
+                        place(0), Rvalue::Use(Operand::Copy(place(if index == 3 { 2 } else { 1 }))), None,
+                    )],
+                    terminator: Some(Terminator::Return),
+                };
+                let blocks = if index == 4 {
+                    vec![return_param]
+                } else {
+                    let callee = if index == 3 { 2 } else { index + 1 };
+                    let MirFunctionId::Function(callee) = id(callee) else { unreachable!() };
+                    vec![
+                        BasicBlock {
+                            statements: vec![],
+                            terminator: Some(Terminator::SwitchInt {
+                                discr: Operand::Constant(Constant::Bool(true)),
+                                targets: vec![(1, crate::mir::BasicBlockId(1))],
+                                otherwise: crate::mir::BasicBlockId(2),
+                            }),
+                        },
+                        return_param,
+                        BasicBlock {
+                            statements: vec![],
+                            terminator: Some(Terminator::Call {
+                                func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
+                                    MirCallableKey::Function(callee),
+                                ))),
+                                args: vec![Operand::Copy(place(1)), Operand::Copy(place(2))],
+                                destination: place(0), target: crate::mir::BasicBlockId(3), span: None,
+                            }),
+                        },
+                        BasicBlock { statements: vec![], terminator: Some(Terminator::Return) },
+                    ]
+                };
+                functions.insert(id(index), MirFunction {
+                    id: id(index), name: format!("summary_{index}"), basic_blocks: blocks,
+                    local_decls: (0..3).map(|local| LocalDecl {
+                        ty, mutability: Mutability::Not, name: None, span: None,
+                        source: if local == 0 { crate::mir::LocalSource::ReturnPlace }
+                            else { crate::mir::LocalSource::Argument },
+                    }).collect(),
+                    closure_captures: vec![], arg_count: 2, ret_type: ty,
+                    ownership: MirOwnershipMetadata::default(),
+                });
+            }
+            let program = MirProgram { functions, type_context, backend_contract: Default::default() };
+            let actual = BorrowChecker::reference_return_summaries(&program);
+            let mut expected = HashMap::new();
+            let mut converged = false;
+            for _ in 0..20 {
+                let mut next = HashMap::new();
+                for (id, func) in program.functions() {
+                    let origins = BorrowChecker::reference_return_origins(
+                        func, &program.type_context, &program.backend_contract, &expected,
+                    );
+                    if !origins.is_empty() { next.insert(id.clone(), origins); }
+                }
+                if next == expected { converged = true; break; }
+                expected = next;
+            }
+            assert!(converged);
+            assert_eq!(actual, expected);
+            assert_eq!(actual[&id(0)], HashSet::from([
+                ReferenceOrigin::Param(Local(1)), ReferenceOrigin::Param(Local(2)),
+            ]));
+            assert_eq!(actual[&id(4)], HashSet::from([ReferenceOrigin::Param(Local(1))]));
+        }
     }
 
     #[test]

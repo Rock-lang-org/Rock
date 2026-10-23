@@ -1,7 +1,7 @@
 # Rock macro SDK
 
 `rock_macro` is an ordinary Rock library, supplied explicitly like any other
-dependency. It contains owned data types for protocol 8:
+dependency. It contains owned data types for protocol 9:
 lossless source snapshots/segments, contextual handles, optional input views,
 output fragments, and structured results/diagnostics.
 
@@ -10,9 +10,10 @@ output fragments, and structured results/diagnostics.
   are checked against host limits by the bounded codecs.
 - Snapshot indices preserve aliases and explicit splice boundaries. Diagnostic
   projections do not grant adjacency or binding authority.
-- Each `SourceSnapshot.offset` is the physical start of its retained text window;
-  subtract it from segment/anchor offsets to index `text`. The codecs omit
-  unrelated source-file prefixes/suffixes while preserving original locations.
+- Each `SourceSnapshot.windows` entry contains a physical `offset` and retained
+  `text`; subtract that offset from segment/anchor offsets within the window.
+  The codecs omit unrelated gaps, prefixes and suffixes while preserving one
+  snapshot identity and original locations.
 - Forward opaque expression captures whole: removing their metadata or changing
   nested grouping/layout is rejected by the compiler.
 - Context/identity values are symbolic handles revalidated by the compiler.
@@ -131,7 +132,7 @@ source IO errors propagate unchanged.
 `Result MacroRequest, decode::DecodeError`. Supply the runner's compiler package
 version explicitly; the SDK does not discover a compiler or contact one.
 
-- Only protocol 8 and `RKLOSS05` are accepted, with the exact field order and
+- Only protocol 9 and `RKLOSS06` are accepted, with the exact field order and
   bincode 1 variable-width little-endian encoding; trailing bytes reject.
 - The whole encoded request is capped at 1 MiB, including its nested lossless
   stream. Declared lengths are checked against schema caps and remaining bytes
@@ -147,7 +148,7 @@ version explicitly; the SDK does not discover a compiler or contact one.
 
 `encode::encode_result &request, result` returns `Result (Vec U8), encode::EncodeError`.
 It consumes `MacroResult::Expand`, `Error` or `Report`, normalizes to one optional
-output/diagnostics record, and writes protocol 8 bytes into an owned buffer.
+output/diagnostics record, and writes protocol 9 bytes into an owned buffer.
 
 - `None` output requires an Error diagnostic; `Some` with zero parts is an
   intentional empty expansion. Warnings and errors may accompany output.
@@ -301,7 +302,7 @@ using `compile_proc_macro_with_products`; do not pass `--no-link`/`--emit-object
 The product contains host/export metadata, not ordinary functions, HIR bodies or
 a dummy runtime object. Its SDK/std objects are not consumer dependencies.
 
-Artifact format 56 records the host/compiler/protocol and bounded SHA-256 content
+Artifact format 57 records the host/compiler/protocol and bounded SHA-256 content
 identities for the executable/required host files. Relative host paths are anchored
 to the artifact directory. Loading or `rockc --validate-artifact` checks metadata
 and files without running the worker; invocation checks them again before spawn.

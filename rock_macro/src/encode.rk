@@ -1,7 +1,8 @@
-// Explicit protocol 8 / RKLOSS05 writing into a bounded, owned byte buffer.
+// Explicit protocol 9 / RKLOSS06 writing into a bounded, owned byte buffer.
 // No bytes are exposed on failure; IO and worker dispatch remain separate.
 > rock_macro::*
 > rock_macro::encode_validation::validate_report
+> std::clone::Clone
 > std::collections::vec::Vec
 > std::control::option::Option
 > std::control::result::Result
@@ -10,6 +11,7 @@
 > std::num::arithmetic::Sub
 > std::num::arithmetic::Div
 > std::num::arithmetic::Mod
+> std::num::arithmetic::Mul
 > std::cmp::eq::PartialEq
 > std::cmp::ord::PartialOrd
 > std::ops::index::Index
@@ -22,6 +24,75 @@
     InvalidLiteral
     InvalidLocation
     MissingErrorDiagnostic
+
+struct RetainedRange
+    < source: U64
+    < start: U64
+    < end: U64
+
+impl Clone for RetainedRange
+    @clone = -> RetainedRange
+        source: self.source
+        start: self.start
+        end: self.end
+
+// Bottom-up merge sort keeps arbitrary splice order bounded by O(runs log runs).
+retained_ranges: &TokenStream -> Vec RetainedRange
+retained_ranges = stream ->
+    mut entries: Vec RetainedRange = Vec::new!
+    entries.push (RetainedRange
+        source: stream.anchor.source
+        start: stream.anchor.offset
+        end: stream.anchor.offset)
+    i = 0
+    while i < stream.segments.len!
+        segment = &stream.segments[i]
+        entries.push (RetainedRange
+            source: segment.source
+            start: segment.range.start
+            end: segment.range.end)
+        i = i + 1
+    mut buffer = entries.map_ref (entry -> entry.clone!)
+    width = 1
+    length = entries.len!
+    while width < length
+        base = 0
+        while base < length
+            middle = if base + width < length then base + width else length
+            end = if middle + width < length then middle + width else length
+            left = base
+            right = middle
+            output = base
+            while output < end
+                take_left = right == end
+                if left < middle && right < end
+                    a = &entries[left]
+                    b = &entries[right]
+                    take_left = a.source < b.source || (a.source == b.source && a.start <= b.start)
+                if take_left
+                    buffer.set output, entries[left].clone!
+                    left = left + 1
+                else
+                    buffer.set output, entries[right].clone!
+                    right = right + 1
+                output = output + 1
+            base = end
+        saved = entries
+        entries = buffer
+        buffer = saved
+        width = width * 2
+    mut merged: Vec RetainedRange = Vec::new!
+    i = 0
+    while i < length
+        entry = &entries[i]
+        last = merged.len! - 1
+        if last >= 0 && merged[last].source == entry.source && entry.start <= merged[last].end
+            if entry.end > merged[last].end
+                merged[last].end = entry.end
+        else
+            merged.push entry.clone!
+        i = i + 1
+    merged
 
 struct Writer
     < bytes: Vec U8
@@ -139,42 +210,48 @@ impl Writer
 
     ^@stream: &TokenStream -> Result (), EncodeError
     ^@stream = stream ->
-        magic: [U8; 8] = [82, 75, 76, 79, 83, 83, 48, 53]
+        magic: [U8; 8] = [82, 75, 76, 79, 83, 83, 48, 54]
         self.raw &magic ?
-        mut windows: Vec ByteRange = Vec::new!
-        i = 0
-        while i < stream.sources.len!
-            source = &stream.sources[i]
-            windows.push (ByteRange
-                start: source.offset + (source.text.len! as U64)
-                end: source.offset)
-            i = i + 1
-        windows.set (stream.anchor.source as I64), (ByteRange
-            start: stream.anchor.offset
-            end: stream.anchor.offset)
-        i = 0
-        while i < stream.segments.len!
-            segment = &stream.segments[i]
-            window = &windows[segment.source as I64]
-            start = if segment.range.start < window.start then segment.range.start else window.start
-            end = if segment.range.end > window.end then segment.range.end else window.end
-            windows.set (segment.source as I64), (ByteRange
-                start: start
-                end: end)
-            i = i + 1
+        windows = retained_ranges stream
+        window_count = windows.len!
+        if window_count > 1048576
+            failure: Result (), EncodeError = Result::Err EncodeError::LengthLimit
+            return failure
         self.count stream.sources.len! ?
         i = 0
+        cursor = 0
         while i < stream.sources.len!
             source = &stream.sources[i]
-            window = &windows[i]
-            start = if window.start <= window.end then window.start else source.offset
-            end = if window.start <= window.end then window.end else source.offset
             self.uint (source.identity) ?
             self.text (&source.file_path) ?
-            self.uint start ?
-            self.uint (end - start) ?
-            bytes = source.text.as_bytes!
-            self.raw (&bytes[((start - source.offset) as I64)..((end - source.offset) as I64)]) ?
+            end = cursor
+            while end < windows.len! && windows[end].source == (i as U64)
+                end = end + 1
+            if cursor == end
+                window_count = window_count + 1
+                if window_count > 1048576
+                    failure: Result (), EncodeError = Result::Err EncodeError::LengthLimit
+                    return failure
+                self.count 1 ?
+                self.uint (source.windows[0].offset) ?
+                self.count 0 ?
+            else
+                self.count (end - cursor) ?
+                while cursor < end
+                    range = &windows[cursor]
+                    index = match source.window_index (&ByteRange
+                        start: range.start
+                        end: range.end)
+                        Result::Ok value => value
+                        Result::Err _ =>
+                            failure: Result (), EncodeError = Result::Err EncodeError::InvalidStream
+                            return failure
+                    window = &source.windows[index]
+                    self.uint (range.start) ?
+                    self.uint (range.end - range.start) ?
+                    bytes = window.text.as_bytes!
+                    self.raw (&bytes[((range.start - window.offset) as I64)..((range.end - window.offset) as I64)]) ?
+                    cursor = cursor + 1
             i = i + 1
         self.count stream.segments.len! ?
         i = 0
@@ -253,7 +330,7 @@ impl Writer
 
     ^@report: &MacroReport -> Result (), EncodeError
     ^@report = report ->
-        self.uint (8 as U64) ?
+        self.uint (9 as U64) ?
         output = &report.output
         match *output
             Option::None => self.byte (0 as U8) ?

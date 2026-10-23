@@ -21,7 +21,7 @@ pub use artifact::{ProcMacroFileIdentity, ProcMacroHostFile};
 mod artifact_tests;
 pub use schema::*;
 
-pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 8;
+pub const PROC_MACRO_PROTOCOL_VERSION: u32 = 9;
 pub const MAX_PROC_MACRO_MESSAGE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn proc_macro_protocol_version_tracks_enriched_request_shape() {
-        assert_eq!(PROC_MACRO_PROTOCOL_VERSION, 8);
+        assert_eq!(PROC_MACRO_PROTOCOL_VERSION, 9);
     }
 
     #[test]

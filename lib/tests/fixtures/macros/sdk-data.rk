@@ -3,12 +3,15 @@
 make_stream: String -> TokenStream
 make_stream = text ->
     length = text.len!
+    mut windows: Vec SourceWindow = Vec::new!
+    windows.push (SourceWindow
+        offset: 0
+        text: text)
     mut sources: Vec SourceSnapshot = Vec::new!
     sources.push (SourceSnapshot
         identity: 1
         file_path: String::from "caller.rk"
-        offset: 0
-        text: text)
+        windows: windows)
     mut segments: Vec Segment = Vec::new!
     if length > 0
         segments.push (Segment
@@ -38,7 +41,7 @@ identity = context, input -> MacroResult::Expand input
 
 context = ->
     MacroContext
-        protocol_version: 8
+        protocol_version: 9
         compiler_version: String::from "0.7.0"
         macro_name: String::from "identity"
         macro_identity: String::from "example::identity"
@@ -74,10 +77,10 @@ inspect: MacroResult -> ()
 inspect = result !->
     match result
         MacroResult::Expand retained =>
-            retained.sources[0].text.len!.println!
+            retained.sources[0].windows[0].text.len!.println!
             retained.segments.len!.println!
             (retained.anchor.context.handle as I64).println!
-            retained.sources[0].text.println!
+            retained.sources[0].windows[0].text.println!
         MacroResult::Error reports => reports[0].message.println!
         MacroResult::Report report => report.diagnostics[0].message.println!
 

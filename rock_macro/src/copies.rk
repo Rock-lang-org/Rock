@@ -74,6 +74,10 @@ impl Clone for SourceSnapshot
     @clone = -> SourceSnapshot
         identity: self.identity
         file_path: self.file_path.clone!
+        windows: self.windows.map_ref (window -> window.clone!)
+
+impl Clone for SourceWindow
+    @clone = -> SourceWindow
         offset: self.offset
         text: self.text.clone!
 

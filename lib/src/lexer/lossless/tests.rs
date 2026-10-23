@@ -61,7 +61,7 @@ fn assert_coverage(source: &str) {
         assert!(source.is_char_boundary(range.start));
         assert!(source.is_char_boundary(range.end));
         assert_eq!(run.text(), &source[range.clone()]);
-        assert_eq!(run.text().as_ptr(), run.source.text[range.clone()].as_ptr());
+        assert_eq!(run.text().as_ptr(), run.source.get(range.clone()).unwrap().as_ptr());
         assert!(std::sync::Arc::ptr_eq(&stream.anchor.source, &run.source));
         end = range.end;
     }
@@ -134,7 +134,7 @@ fn macro_a0_02_input_spelling_is_owned_without_copying() {
     let bytes = "é 🦀\0\r\n".as_bytes().to_vec();
     let original_pointer = bytes.as_ptr();
     let stream = LosslessStream::from_bytes(SOURCE_PATH.into(), bytes, LIMITS).unwrap();
-    assert_eq!(stream.anchor.source.text.as_ptr(), original_pointer);
+    assert_eq!(stream.anchor.source.windows[0].text.as_ptr(), original_pointer);
     let run = stream.runs()[0].clone();
     drop(stream);
     assert_eq!(run.text(), "é");

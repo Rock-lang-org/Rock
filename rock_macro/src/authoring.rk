@@ -273,7 +273,11 @@ impl MacroContext
                 i = 0
                 while i < stream.sources.len!
                     source = &stream.sources[i]
-                    cost = cost + source.text.len! + source.file_path.len!
+                    cost = cost + source.file_path.len!
+                    j = 0
+                    while j < source.windows.len!
+                        cost = cost + source.windows[j].text.len! + 32
+                        j = j + 1
                     i = i + 1
                 i = 0
                 while i < stream.segments.len!

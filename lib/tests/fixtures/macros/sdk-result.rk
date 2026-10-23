@@ -157,6 +157,13 @@ choose_success = request ->
         mut parts: Vec OutputPart = Vec::new!
         parts.push (source request, "x", (ConstructionKind::Fresh (4294967295 as U32)))
         report parts, Vec::new!
+    else if name == "compact_windows"
+        mut builder = expect (request.context.builder (&request.input))
+        identifier = expect (builder.call_site_ident (large 1100000))
+        first = expect (identifier.tokens.slice (range (0 as U64), (1 as U64)))
+        last = expect (identifier.tokens.slice (range (1099999 as U64), (1100000 as U64)))
+        joined = expect (last.join &first, JoinBoundary::Separate)
+        MacroResult::Expand (expect (joined.join &first, JoinBoundary::Separate))
     else if name == "constructed"
         constructed request
     else

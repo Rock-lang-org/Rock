@@ -89,6 +89,12 @@ pub enum LosslessError {
 struct SourceSnapshot {
     identity: u64,
     file_path: PathBuf,
+    #[serde(deserialize_with = "crate::serialization::bounded_vec::<'de, _, _, 1048576>")]
+    windows: Vec<SourceWindow>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SourceWindow {
     offset: usize,
     text: String,
 }
@@ -97,7 +103,7 @@ struct SourceSnapshot {
 pub(crate) fn golden_source(text: &str) -> LosslessStream {
     let mut stream = LosslessStream::from_bytes("/golden.rk".into(), text.as_bytes().to_vec(),
         crate::macro_expansion::token_tree::MACRO_LIMITS).unwrap();
-    let source = Arc::new(SourceSnapshot { identity: 1, file_path: "/golden.rk".into(), offset: 0, text: text.into() });
+    let source = Arc::new(SourceSnapshot { identity: 1, file_path: "/golden.rk".into(), windows: vec![SourceWindow { offset: 0, text: text.into() }] });
     stream.anchor.source = Arc::clone(&source);
     for run in &mut stream.runs { run.source = Arc::clone(&source); }
     stream
@@ -108,15 +114,17 @@ impl SourceSnapshot {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let identity = NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |next| next.checked_add(1))
             .map_err(|_| LosslessError::SnapshotIdentityExhausted)?;
-        Ok(Self { identity, file_path, offset: 0, text })
+        Ok(Self { identity, file_path, windows: vec![SourceWindow { offset: 0, text }] })
     }
 
     fn get(&self, range: std::ops::Range<usize>) -> Option<&str> {
-        self.text.get(range.start.checked_sub(self.offset)?..range.end.checked_sub(self.offset)?)
+        let index = self.windows.partition_point(|window| window.offset <= range.start).checked_sub(1)?;
+        let window = &self.windows[index];
+        window.text.get(range.start.checked_sub(window.offset)?..range.end.checked_sub(window.offset)?)
     }
 
     fn is_char_boundary(&self, offset: usize) -> bool {
-        offset.checked_sub(self.offset).is_some_and(|offset| self.text.is_char_boundary(offset))
+        self.get(offset..offset).is_some()
     }
 }
 
@@ -236,7 +244,7 @@ impl LosslessStream {
         })?;
         let source = Arc::new(SourceSnapshot::new(file_path, text)?);
         let mut runs = Vec::new();
-        let mut characters = source.text.char_indices().peekable();
+        let mut characters = source.windows[0].text.char_indices().peekable();
 
         // Every iteration consumes at least one scalar, without recursion/lookbehind.
         while let Some((start, character)) = characters.next() {
@@ -277,7 +285,7 @@ impl LosslessStream {
         }
 
         Ok(Self {
-            len_bytes: source.text.len(),
+            len_bytes: source.windows[0].text.len(),
             anchor: SourcePosition { source, offset: 0, context: SyntaxContext::ROOT, origin: None },
             runs,
             expressions: Vec::new(),

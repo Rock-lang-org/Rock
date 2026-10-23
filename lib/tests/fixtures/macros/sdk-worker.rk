@@ -30,7 +30,7 @@ entry = mut context, mut input ->
         context.views.groups[0].range.end = 0 as U64
         context.views.literals[0].mapping[0].decoded.end = 1 as U64
         context.definition_dependencies[0].name = String::from "changed"
-        input.sources[0].text = String::from ""
+        input.sources[0].windows[0].text = String::from ""
         parts: Vec OutputPart = Vec::new!
         MacroResult::Report (MacroReport
             output: Option::Some (MacroOutput

@@ -1,4 +1,5 @@
 mod blocks;
+mod cleanup;
 mod expr;
 
 use std::cell::RefCell;
@@ -2398,7 +2399,7 @@ impl<'a> MirBuilder<'a> {
             }
         }
 
-        MirFunction {
+        let mut function = MirFunction {
             id,
             name: display_name.to_string(),
             basic_blocks: std::mem::take(&mut self.blocks),
@@ -2407,7 +2408,12 @@ impl<'a> MirBuilder<'a> {
             arg_count: func.params.len(),
             ret_type: self.type_id_for(&func.ret_type),
             ownership: std::mem::take(&mut self.ownership),
-        }
+        };
+        cleanup::simplify(
+            &mut function,
+            self.drop_flags.values().chain(self.projection_drop_flags.values()).copied(),
+        );
+        function
     }
 
     #[cfg(test)]

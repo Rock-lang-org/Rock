@@ -24,7 +24,7 @@ impl LosslessStream {
         let mut end = 0;
         for mapping in mappings {
             if mapping.decoded.start != end || mapping.decoded.is_empty()
-                || !stream.anchor.source.text.get(mapping.decoded.clone()).is_some_and(|text| text.chars().count() == 1) {
+                || !stream.anchor.source.get(mapping.decoded.clone()).is_some_and(|text| text.chars().count() == 1) {
                 return Err("invalid canonical literal source mapping".into());
             }
             while raw < stream.runs.len() && stream.runs[raw].range.end <= mapping.decoded.start { raw += 1; }
@@ -102,9 +102,9 @@ impl LosslessStream {
                 output.construction = None;
                 let key = Arc::as_ptr(&original.source);
                 if let std::collections::hash_map::Entry::Vacant(entry) = generated.entry(key) {
-                    let mut source = SourceSnapshot::new(original.source.file_path.clone(), original.source.text.clone())
+                    let mut source = SourceSnapshot::new(original.source.file_path.clone(), String::new())
                         .map_err(|error| format!("generated snapshot identity: {error:?}"))?;
-                    source.offset = original.source.offset;
+                    source.windows = original.source.windows.clone();
                     entry.insert(Arc::new(source));
                 }
                 output.source = Arc::clone(&generated[&key]);
@@ -113,8 +113,8 @@ impl LosslessStream {
                     .ok_or_else(|| "proc output contains an unauthorized source snapshot".to_string())?;
                 if checked_sources.insert(Arc::as_ptr(&original.source))
                     && (original.source.file_path != allowed.file_path
-                        || original.source.offset.checked_add(original.source.text.len())
-                            .and_then(|end| allowed.get(original.source.offset..end)) != Some(original.source.text.as_str())) {
+                        || original.source.windows.iter().any(|window| window.offset.checked_add(window.text.len())
+                            .and_then(|end| allowed.get(window.offset..end)) != Some(window.text.as_str()))) {
                     return Err("proc output changed a forwarded source snapshot".into());
                 }
                 let intervals = ranges.get(&(original.source.identity, original.context, original.kind, original.origin.as_ref()))

@@ -63,9 +63,9 @@ Paths below are relative to the repository root. Native test names are in
   not a second raw-string input ABI. Captures are streamed/sliced, not printed and
   re-lexed; generated source requests are interpreted only at the explicit output
   boundary.
-- The Rust wire reader accepts only `RKLOSS05`; both SDK codecs implement protocol
-  8/current stream schema, and products require format 56. Rejection controls use
-  fabricated invalid magic/version values. `protocol-8/*.hex` are current interoperability
+- The Rust wire reader accepts only `RKLOSS06`; both SDK codecs implement protocol
+  9/current stream schema, and products require format 57. Rejection controls use
+  fabricated invalid magic/version values. `protocol-9/*.hex` are current interoperability
   fixtures, not compatibility readers or preserved historical artifact snapshots.
 - Registries are built for each expansion forest/context. Derive consumption is a
   bounded context-local node-ID set; ancestry and aggregate budgets are shared with
@@ -109,3 +109,32 @@ recorded in the original receipts are addressed by the follow-up repairs below.
 
 The original C.12 receipts above describe the earlier snapshot. Follow-up command
 receipts are recorded separately in the implementation plan.
+
+## Disjoint source-window follow-up (2026-10-23)
+
+Protocol 9 / `RKLOSS06` / product format 57 supersede the single-window format
+above. Each snapshot retains a sorted, disjoint vector of physical text windows;
+Rust and SDK writers serialize the union of referenced ranges instead of the
+envelope between the earliest template token and latest capture. Source identity,
+physical offsets, contexts, adjacency and opaque captures remain intact.
+
+- `macro_review_declarative_proc_input_omits_distant_source_gap` parses and expands
+  the reported wrapper with 100-byte and 1,100,000-byte intervening comments,
+  then encodes its emitted proc input in-process, without executing a worker.
+- `macro_review_disjoint_windows_keep_identity_offsets_and_capture_authority`,
+  `macro_review_windows_merge_overlaps_in_source_order_and_keep_empty_anchors`,
+  and `macro_review_windows_reject_missing_overlapping_unsorted_and_cross_gap_ranges`
+  cover sparse round trips, aliasing, UTF-8, empty anchors, repeated/reordered
+  ranges and window validation.
+- Request codec acceptance passes 218 Rust/Rock controls, including disjoint
+  windows and invalid window layouts. Result codec acceptance passes 29 controls,
+  including SDK-created distant slices of a 1.1 MB snapshot encoded below 512 bytes.
+- Final `cargo test -p rock-lib --lib -- --test-threads=1`: 2,782 passed, eight
+  ignored. Targeted SDK data/operations, authoring and syntax-emission acceptance
+  also pass. Workspace/all-targets Clippy passes with warnings.
+
+Receipts: `/tmp/opencode/disjoint-library-tests.log`,
+`disjoint-codecs-final.log`, `disjoint-sdk-operations.log`,
+`disjoint-sdk-authoring.log`, `disjoint-syntax-emission.log`, and
+`disjoint-clippy.log` in the same directory. Earlier full-workspace and native
+acceptance receipts remain scoped to their original snapshots.

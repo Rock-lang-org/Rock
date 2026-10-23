@@ -9,7 +9,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{JoinBoundary, LosslessRun, LosslessStream, RunKind, SourcePosition, SourceSnapshot, SyntaxContext};
 
-const MAGIC: [u8; 8] = *b"RKLOSS05";
+const MAGIC: [u8; 8] = *b"RKLOSS06";
 const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RUNS: usize = 1024 * 1024;
 
@@ -44,6 +44,11 @@ struct WireAnchor {
 struct SnapshotRef<'a> {
     identity: u64,
     file_path: &'a std::path::Path,
+    windows: Vec<WindowRef<'a>>,
+}
+
+#[derive(Serialize)]
+struct WindowRef<'a> {
     offset: usize,
     text: &'a str,
 }
@@ -74,7 +79,7 @@ impl Serialize for LosslessStream {
         let mut sources = Vec::new();
         let mut source_ids = HashMap::new();
         let mut runs = Vec::new();
-        let mut extents = vec![self.anchor.offset..self.anchor.offset];
+        let mut extents = vec![vec![self.anchor.offset..self.anchor.offset]];
         sources.try_reserve(1).map_err(serde::ser::Error::custom)?;
         source_ids.try_reserve(1).map_err(serde::ser::Error::custom)?;
         sources.push(self.anchor.source.as_ref());
@@ -89,20 +94,42 @@ impl Serialize for LosslessStream {
                     source_ids.try_reserve(1).map_err(serde::ser::Error::custom)?;
                     let id = sources.len();
                     sources.push(run.source.as_ref());
-                    extents.push(run.range.clone());
+                    extents.try_reserve(1).map_err(serde::ser::Error::custom)?;
+                    extents.push(Vec::new());
                     source_ids.insert(key, id);
                     id
                 }
             };
-            extents[source].start = extents[source].start.min(run.range.start);
-            extents[source].end = extents[source].end.max(run.range.end);
+            extents[source].try_reserve(1).map_err(serde::ser::Error::custom)?;
+            extents[source].push(run.range.clone());
             runs.push(WireRun { source, range: run.range.clone(), kind: run.kind, context: run.context.0, boundary: run.boundary, origin: run.origin.clone(), construction: run.construction });
         }
-        // Keep physical offsets/identity, but only retain the referenced window.
-        // In particular a tiny invocation must not carry its entire source file.
-        let sources = sources.into_iter().zip(extents).map(|(source, extent)| {
-            Ok(SnapshotRef { identity: source.identity, file_path: &source.file_path,
-                offset: extent.start, text: source.get(extent).ok_or_else(|| serde::ser::Error::custom("invalid source window"))? })
+        // Keep one identity per snapshot, with only the union of referenced ranges.
+        // Distant template/capture slices must not retain the intervening source.
+        let mut window_count = 0usize;
+        let sources = sources.into_iter().zip(extents).map(|(source, mut extents)| {
+            extents.sort_unstable_by_key(|range| (range.start, range.end));
+            let mut merged = Vec::<Range<usize>>::new();
+            merged.try_reserve_exact(extents.len()).map_err(serde::ser::Error::custom)?;
+            for extent in extents {
+                if let Some(previous) = merged.last_mut() {
+                    if extent.start <= previous.end {
+                        previous.end = previous.end.max(extent.end);
+                        continue;
+                    }
+                }
+                merged.push(extent);
+            }
+            window_count = window_count.checked_add(merged.len())
+                .ok_or_else(|| serde::ser::Error::custom("source window count overflow"))?;
+            if window_count > MAX_RUNS {
+                return Err(serde::ser::Error::custom("lossless source window limit exceeded"));
+            }
+            let windows = merged.into_iter().map(|extent| {
+                Ok(WindowRef { offset: extent.start,
+                    text: source.get(extent).ok_or_else(|| serde::ser::Error::custom("invalid source window"))? })
+            }).collect::<Result<Vec<_>, S::Error>>()?;
+            Ok(SnapshotRef { identity: source.identity, file_path: &source.file_path, windows })
         }).collect::<Result<Vec<_>, S::Error>>()?;
         WireRef { magic: MAGIC, sources, runs, anchor: WireAnchor { source: 0, offset: self.anchor.offset, context: self.anchor.context.0, origin: self.anchor.origin.clone() }, expressions: &self.expressions }
             .serialize(serializer)
@@ -117,14 +144,24 @@ impl<'de> Deserialize<'de> for LosslessStream {
             return Err(serde::de::Error::custom("lossless source/run limit exceeded"));
         }
         let mut bytes = 0usize;
+        let mut windows = 0usize;
         let mut identities = std::collections::HashSet::new();
         let mut sources = Vec::new();
         sources.try_reserve_exact(wire.sources.len()).map_err(serde::de::Error::custom)?;
         for source in wire.sources {
-            bytes = bytes.checked_add(source.text.len()).ok_or_else(|| serde::de::Error::custom("source length overflow"))?;
-            if bytes > MAX_BYTES || source.offset.checked_add(source.text.len()).is_none()
+            windows = windows.checked_add(source.windows.len()).ok_or_else(|| serde::de::Error::custom("source window count overflow"))?;
+            if source.windows.is_empty() || windows > MAX_RUNS
                 || source.file_path.as_os_str().is_empty() || source.identity == 0 || !identities.insert(source.identity) {
                 return Err(serde::de::Error::custom("invalid lossless source table"));
+            }
+            let mut previous_end = None;
+            for window in &source.windows {
+                bytes = bytes.checked_add(window.text.len()).ok_or_else(|| serde::de::Error::custom("source length overflow"))?;
+                let end = window.offset.checked_add(window.text.len()).ok_or_else(|| serde::de::Error::custom("source window overflow"))?;
+                if bytes > MAX_BYTES || previous_end.is_some_and(|previous| window.offset <= previous) {
+                    return Err(serde::de::Error::custom("invalid lossless source windows"));
+                }
+                previous_end = Some(end);
             }
             sources.push(Arc::new(source));
         }
@@ -201,7 +238,7 @@ mod tests {
         wire.runs.push(WireRun { source: 0, range: 3..4, kind: RunKind::Text, context: 0, boundary: JoinBoundary::SourceAdjacent, origin: None, construction: None });
         rejects(wire);
         let mut wire = valid();
-        wire.sources[0].text = "\n\n".into();
+        wire.sources[0].windows[0].text = "\n\n".into();
         wire.runs[0].kind = RunKind::LineEnding;
         rejects(wire);
     }
@@ -215,10 +252,10 @@ mod tests {
             let mut wire = valid(); wire.expressions = ranges.into_iter().map(fragment).collect(); rejects(wire);
         }
         for ranges in [vec![0..4, 2..6], vec![2..4, 0..6]] {
-            let mut wire = valid(); wire.sources[0].text = "abcdef".into(); wire.runs[0].range = 0..6;
+            let mut wire = valid(); wire.sources[0].windows[0].text = "abcdef".into(); wire.runs[0].range = 0..6;
             wire.expressions = ranges.into_iter().map(fragment).collect(); rejects(wire);
         }
-        let mut wire = valid(); wire.sources[0].text = "a".repeat(129); wire.runs[0].range = 0..129;
+        let mut wire = valid(); wire.sources[0].windows[0].text = "a".repeat(129); wire.runs[0].range = 0..129;
         wire.expressions = (1..=129).rev().map(|end| fragment(0..end)).collect(); rejects(wire);
     }
 
@@ -242,10 +279,83 @@ mod tests {
     fn macro_b_01_wire_rejects_zero_or_duplicate_snapshot_handles() {
         let mut wire = valid(); wire.sources[0].identity = 0; rejects(wire);
         let mut wire = valid();
-        wire.sources.push(SourceSnapshot { identity: wire.sources[0].identity, file_path: "/other.rk".into(), offset: 0, text: "other".into() });
+        let mut duplicate = SourceSnapshot::new("/other.rk".into(), "other".into()).unwrap();
+        duplicate.identity = wire.sources[0].identity;
+        wire.sources.push(duplicate);
         rejects(wire);
         let mut wire = valid();
         wire.expressions = vec![super::super::fragments::ExpressionRange { range: 0..2, header_indent: usize::MAX }];
         rejects(wire);
+    }
+
+    #[test]
+    fn macro_review_disjoint_windows_keep_identity_offsets_and_capture_authority() {
+        use crate::ast::InvocationId;
+        use crate::macro_expansion::{ExpansionId, GeneratedSourceId};
+        use crate::macro_expansion::proc_macro::{decode_stream, encode_stream};
+        use crate::macro_expansion::token_tree::MACRO_LIMITS;
+
+        for gap in [100, 1_100_000] {
+            let text = format!("0, {}雪", " ".repeat(gap));
+            let source = LosslessStream::from_bytes("/disjoint.rk".into(), text.into_bytes(), MACRO_LIMITS).unwrap();
+            let template = source.slice(0..3, MACRO_LIMITS).unwrap();
+            let capture = source.slice(3 + gap..6 + gap, MACRO_LIMITS).unwrap()
+                .expression_fragment(0, MACRO_LIMITS).unwrap();
+            let input = template.join(&capture, JoinBoundary::Separate, MACRO_LIMITS).unwrap();
+            let encoded = encode_stream(&input).unwrap();
+            assert!(encoded.len() < 256, "unreferenced gap leaked into transport: {}", encoded.len());
+            let decoded = decode_stream(&encoded).unwrap();
+            assert_eq!(decoded.runs.iter().map(LosslessRun::text).collect::<String>(), "0, 雪");
+            assert_eq!(decoded.expressions, input.expressions);
+            assert_eq!(decoded.anchor.source.identity, source.anchor.source.identity);
+            assert_eq!(decoded.anchor.source.windows.len(), 2);
+            assert!(decoded.runs.iter().all(|run| Arc::ptr_eq(&run.source, &decoded.anchor.source)));
+            assert_eq!(decoded.runs.last().unwrap().range, 3 + gap..6 + gap);
+            assert_eq!(encode_stream(&decoded).unwrap(), encoded);
+            let left = decoded.slice(0..1, MACRO_LIMITS).unwrap();
+            let adjacent = decoded.slice(1..3, MACRO_LIMITS).unwrap();
+            assert!(left.join(&adjacent, JoinBoundary::SourceAdjacent, MACRO_LIMITS).is_ok());
+            let capture = decoded.slice(3..6, MACRO_LIMITS).unwrap();
+            assert!(adjacent.join(&capture, JoinBoundary::SourceAdjacent, MACRO_LIMITS).is_err());
+            let forwarded = decoded.resolve_proc_output(&input, InvocationId::fresh().unwrap(),
+                ExpansionId(1), GeneratedSourceId(1), |_| unreachable!()).unwrap();
+            assert!(Arc::ptr_eq(&forwarded.runs[0].source, &source.anchor.source));
+        }
+    }
+
+    #[test]
+    fn macro_review_windows_merge_overlaps_in_source_order_and_keep_empty_anchors() {
+        use crate::macro_expansion::proc_macro::{decode_stream, encode_stream};
+        use crate::macro_expansion::token_tree::MACRO_LIMITS;
+        let source = LosslessStream::from_bytes("/order.rk".into(), b"abcdef gap xyz".to_vec(), MACRO_LIMITS).unwrap();
+        let mut stream = source.slice(11..14, MACRO_LIMITS).unwrap()
+            .join(&source.slice(2..6, MACRO_LIMITS).unwrap(), JoinBoundary::Separate, MACRO_LIMITS).unwrap()
+            .join(&source.slice(0..4, MACRO_LIMITS).unwrap(), JoinBoundary::Separate, MACRO_LIMITS).unwrap();
+        stream.anchor = source.slice(9..9, MACRO_LIMITS).unwrap().anchor;
+        let decoded = decode_stream(&encode_stream(&stream).unwrap()).unwrap();
+        let windows = &decoded.anchor.source.windows;
+        assert_eq!(windows.iter().map(|window| (window.offset, window.text.as_str())).collect::<Vec<_>>(),
+            vec![(0, "abcdef"), (9, ""), (11, "xyz")]);
+        assert_eq!(decoded.runs.iter().map(LosslessRun::text).collect::<String>(), "xyzcdefabcd");
+        let empty = source.slice(9..9, MACRO_LIMITS).unwrap();
+        let decoded = decode_stream(&encode_stream(&empty).unwrap()).unwrap();
+        assert_eq!(decoded.anchor.offset, 9);
+        assert!(decoded.anchor.source.windows[0].text.is_empty());
+    }
+
+    #[test]
+    fn macro_review_windows_reject_missing_overlapping_unsorted_and_cross_gap_ranges() {
+        use super::super::SourceWindow;
+        let mut wire = valid(); wire.sources[0].windows.clear(); rejects(wire);
+        for offset in [0, 1, 4, usize::MAX] {
+            let mut wire = valid();
+            wire.sources[0].windows.push(SourceWindow { offset, text: "x".into() });
+            rejects(wire);
+        }
+        let mut wire = valid();
+        wire.sources[0].windows.push(SourceWindow { offset: 10, text: "z".into() });
+        wire.runs[0].range = 0..11;
+        rejects(wire);
+        let mut wire = valid(); wire.anchor.offset = 5; rejects(wire);
     }
 }

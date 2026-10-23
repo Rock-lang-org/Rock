@@ -1,0 +1,74 @@
+> rock_macro::*
+> rock_syntax::derive_input::DeriveInput
+> rock_syntax::derive_input::DeriveKind
+> rock_syntax::emission::ImplBuilder
+> rock_syntax::emission::OutputBuffer
+
+// Splice the caller's identifiers rather than rebuilding them from their text.
+captured: &MacroContext -> &TokenStream -> ByteRange -> Result MacroOutput, Diagnostic
+captured = context, stream, range ->
+    match stream.slice range
+        Result::Ok tokens => context.forward tokens
+        Result::Err _ => context.output_error "invalid declaration slice"
+
+< macro derive Clone = context, input ->
+    declaration = match DeriveInput::parse input
+        Result::Ok declaration => declaration
+        Result::Err error => return MacroResult::from_error error.diagnostic!
+    match declaration.decl_kind!
+        DeriveKind::Struct => ()
+        DeriveKind::Enum => return context.fail "this Clone example supports structs only"
+
+    stream = declaration.original!
+    name = declaration.decl_name!
+    target = captured &context, stream, (name.range.clone!) ?
+    parameters = declaration.params!
+    i = 0
+    while i < parameters.len!
+        parameter = &parameters[i]
+        kind = &parameter.kind
+        match *kind
+            Option::Some _ => return context.fail "this Clone example supports ordinary type parameters only"
+            Option::None => ()
+        argument = captured &context, stream, (parameter.impl_range.clone!) ?
+        target_parts = [target, argument]
+        target = context.quote (if i == 0 then "$0 $1" else "$0, $1"), &target_parts ?
+        i = i + 1
+
+    mut names = match context.builder stream
+        Result::Ok names => names
+        Result::Err _ => return context.fail "invalid derive input"
+    // The app explicitly imports std's Clone trait at the derive invocation.
+    trait_name = match names.call_site_ident (String::from "Clone")
+        Result::Ok trait_name => trait_name
+        Result::Err _ => return context.fail "invalid Clone trait name"
+    method = match names.call_site_ident (String::from "clone")
+        Result::Ok method => method
+        Result::Err _ => return context.fail "invalid clone method name"
+    signature_parts = [target]
+    return_type = context.quote "$0", &signature_parts ?
+    target = context.quote "$0", &signature_parts ?
+    mut implementation = ImplBuilder::new target, (Option::Some (context.forward (trait_name.tokens.clone!) ?))
+    i = 0
+    while i < parameters.len!
+        subject = captured &context, stream, (parameters[i].impl_range.clone!) ?
+        implementation.constrain &context, subject, (Option::Some (context.forward (trait_name.tokens.clone!) ?)) ?
+        i = i + 1
+
+    constructor = captured &context, stream, (name.range.clone!) ?
+    constructor_parts = [constructor]
+    mut body = OutputBuffer::new!
+    body.append &context, (context.quote "-> $0\n", &constructor_parts ?) ?
+    fields = declaration.fields!
+    i = 0
+    while i < fields.len!
+        field = captured &context, stream, (fields[i].name.range.clone!) ?
+        field_parts = [field, context.forward (method.tokens.clone!) ?]
+        body.append &context, (context.quote "        $0: self.$0.$1!\n", &field_parts ?) ?
+        i = i + 1
+
+    definition = body.output!
+    method_parts = [context.forward method.tokens ?]
+    member_name = context.quote "@$0", &method_parts ?
+    implementation.member &context, member_name, return_type, definition ?
+    (implementation.emit &context ?).finish!

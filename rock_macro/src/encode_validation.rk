@@ -51,7 +51,7 @@ location_valid = location, input, output ->
 
 validate_report: &MacroRequest -> &MacroReport -> Result (), EncodeError
 < validate_report = request, report ->
-    ensure (request.context.protocol_version == (8 as U32) && (validate_request request)), EncodeError::InvalidRequest ?
+    ensure (request.context.protocol_version == (9 as U32) && (validate_request request)), EncodeError::InvalidRequest ?
     ensure (report.diagnostics.len! <= 16384), EncodeError::LengthLimit ?
     mut spelling: Vec U8 = Vec::new!
     output = &report.output

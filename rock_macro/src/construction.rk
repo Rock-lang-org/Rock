@@ -106,12 +106,15 @@ impl MacroContext
 constructed_leaf: U64 -> U64 -> ConstructionKind -> String -> TokenStream
 constructed_leaf = identity, invocation, kind, text ->
     length = text.len! as U64
+    mut windows: Vec SourceWindow = Vec::new!
+    windows.push (SourceWindow
+        offset: 0
+        text: text)
     mut sources: Vec SourceSnapshot = Vec::new!
     sources.push (SourceSnapshot
         identity: identity
         file_path: String::from "<macro-construction>"
-        offset: 0
-        text: text)
+        windows: windows)
     mut segments: Vec Segment = Vec::new!
     segments.push (Segment
         source: 0
