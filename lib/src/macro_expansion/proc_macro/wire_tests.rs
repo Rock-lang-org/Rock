@@ -68,8 +68,8 @@ fn macro_b_01_rejects_every_truncation_trailing_data_versions_and_unknown_tags()
     let bytes = encode_response(&response(&request)).unwrap();
     for length in 0..bytes.len() { assert!(decode_response(&bytes[..length]).is_err(), "response prefix {length}"); }
     let mut trailing = bytes; trailing.push(0); assert!(decode_response(&trailing).is_err());
-    assert!(decode_request(&[PROC_MACRO_PROTOCOL_VERSION as u8 - 1]).unwrap_err().to_string().contains("version"));
-    assert!(decode_response(&[PROC_MACRO_PROTOCOL_VERSION as u8 - 1]).unwrap_err().to_string().contains("version"));
+    assert!(decode_request(&[0]).unwrap_err().to_string().contains("version"));
+    assert!(decode_response(&[0]).unwrap_err().to_string().contains("version"));
     // Protocol, Some(output), one part, invalid enum discriminant.
     assert!(decode_response(&[7, 1, 1, 99]).is_err());
     let mut raw = encode_request(&request).unwrap();

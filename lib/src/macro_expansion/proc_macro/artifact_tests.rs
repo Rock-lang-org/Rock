@@ -63,7 +63,7 @@ fn macro_b_14_host_identity_files_and_compatibility_reject_before_spawn() {
             0 => bad.host_triple = "different-host".into(),
             1 => bad.compiler_version = "different-compiler".into(),
             2 => bad.protocol_version += 1,
-            3 => bad.artifact_format_version -= 1,
+            3 => bad.artifact_format_version = u32::MAX,
             4 => bad.executable_identity.sha256[0] ^= 1,
             5 => bad.required_files[0].identity.sha256[0] ^= 1,
             6 => bad.exports[0].kind = ProcMacroKind::DeriveLike,

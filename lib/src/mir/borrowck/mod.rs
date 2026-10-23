@@ -1596,6 +1596,9 @@ impl BorrowChecker {
 
         let init_analysis = InitializationAnalysis::new(func, type_context);
         let init_results = run_fixpoint(&init_analysis, func);
+        let init_entries = init_results.entry_sets;
+        let init_reachable = init_results.reachable;
+        drop(init_results.exit_sets);
 
         let borrows = collect_function_borrows_with_contract(
             func,
@@ -1619,10 +1622,10 @@ impl BorrowChecker {
         );
 
         for (block_idx, block) in func.basic_blocks.iter().enumerate() {
-            if !init_results.reachable[block_idx] {
+            if !init_reachable[block_idx] {
                 continue;
             }
-            let mut state = init_results.entry_sets[block_idx].clone();
+            let mut state = init_entries[block_idx].clone();
             let mut active_loans = active_loan_entries[block_idx].clone();
 
             for (stmt_idx, stmt) in block.statements.iter().enumerate() {

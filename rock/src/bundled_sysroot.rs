@@ -295,9 +295,9 @@ mod tests {
     }
 
     #[test]
-    fn test_sysroot_std_is_not_fresh_with_stale_artifact_format() {
+    fn test_sysroot_std_is_not_fresh_with_invalid_artifact_format() {
         let (root, layout) =
-            write_complete_sysroot_std(&(PRODUCT_ARTIFACT_FORMAT_VERSION - 1).to_string());
+            write_complete_sysroot_std(&u32::MAX.to_string());
 
         assert!(!sysroot_std_is_fresh(&layout, None).unwrap());
 

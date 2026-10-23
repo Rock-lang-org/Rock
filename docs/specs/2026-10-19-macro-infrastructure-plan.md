@@ -4,7 +4,8 @@ Date: 2026-10-19
 
 Status: all 59 infrastructure slices implemented and verified through C.12.
 Per-slice receipts below and the [final acceptance mapping](2026-10-21-macro-infrastructure-acceptance.md)
-record actual gates and remaining out-of-scope limitations; the original slice
+record actual gates and scope limits; the compiler repair follow-up below
+supersedes the four independent limitations recorded during C.05/C.08/C.10/C.11. The original slice
 tables remain implementation contracts, not a production-library release claim.
 
 Contract: [macro infrastructure specification](2026-10-19-macro-infrastructure.md).
@@ -3408,6 +3409,75 @@ runtime field-default and resource-use limitations remain explicitly documented;
 the passing scoped proofs do not claim those compiler repairs. `bd` remains
 unavailable, so no issue-tracker completion or filing is claimed. No CI job was
 added and nothing was pushed; unrelated pre-existing work remains untouched.
+
+## Compiler repair follow-up (2026-10-23)
+
+The original slice receipts above remain historical evidence. The subsequent
+request to repair all four independent compiler failures adds the following:
+
+- C.05: defer constructor-application equations compatible with a declaration
+  default until caller context/default fallback resolves them. Restore the
+  native partial `Result T, _` fixture and cover explicit overrides.
+- C.08: give short-circuit RHS temporaries branch-local cleanup; restore the
+  combined emission assertion and verify exact destructor behavior.
+- C.10: retain declaration-scoped field initializer function identities through
+  lowering, product serialization and consumer remapping. Generic owner-pointer
+  witnesses carry body-only parameters. Explicit fields evaluate first in source
+  order, omitted defaults next in declaration order. Product format is now 55;
+  dependencies must be rebuilt. Worker protocol 7 and RKLOSS04 stay current.
+- C.11: sparse initialization maps share immutable roots, loan-location indexes
+  retain only created loans, and unused initialization exit states are released
+  before loan analysis. Restore the unfactored enum emitter.
+- Rejection fixtures use fabricated invalid magic/version values rather than
+  historical formats; rejection coverage remains.
+
+The three initial macro-free reproducers failed with the documented constructor,
+drop-flag and omitted-field errors. Focused borrow/dataflow/inference units then
+passed 128 tests (lean-ctx archive `1046ccb3677ff1e5`). A 20-test expanded integration
+run passed 19 cases and correctly rejected malformed metadata in the remaining
+case; its assertion exposed missing field-specific diagnostic context. After
+adding that context, the exact source-free/default-metadata test passed.
+
+Packaged enum profiling measured peak RSS of 10,457,392 kB before the memory
+repair (`3b56613b4587a384`) and 3,347,252 kB after it (`a948ed8a14c7b442`), about
+68% lower. Both measured runs passed; the repaired run took 130.07 seconds.
+These are workload-specific measurements from before the final initializer
+validation changes, not final-snapshot acceptance or a general memory bound.
+Temporary profiling instrumentation has been removed.
+
+Final-source verification (manual Cargo commands; test suites serialized):
+
+- `cargo test -p rock-lib --lib -- macro_acceptance_syntax_generics macro_acceptance_syntax_emission macro_acceptance_derive_struct macro_acceptance_derive_enums_packaged --ignored --test-threads=1`
+  passes all four restored native groups in 323.28 seconds (`bbd329b1f80bae94`).
+- `cargo test -p rock-lib -- --test-threads=1` passes 2,769 units (eight ignored),
+  815 main integrations, six diagnostic tests, fourteen process tests, four SDK
+  tests (eleven ignored), and one parser integration; one doctest is ignored
+  (`9b7ce71942c54fa4`). The process runner's nested child receipt is not counted
+  twice. The expanded default/short-circuit regressions all pass in this suite.
+- `cargo build --release` passes; `cargo build -p rock -p rockc` also passes.
+- `cargo clippy --workspace --all-targets` passes with warnings
+  (`4d2054cf86f57d8b`); no formatter or formatting check ran.
+- The first CLI/demo attempt rejected the explicit sysroot: repository-local
+  `target/release` binaries were stale because lean-ctx builds into its shared
+  Cargo cache. Packaging with those old binaries had recreated format 54.
+  `cargo run -p rockup --release -- dev std package --path std --sysroot target --rockc /home/champii/.local/share/lean-ctx/build-cache/cargo-target/release/rockc`
+  then rebuilt the shared std, and its manifest was checked to contain format 55.
+  Its artifact/object SHA-256 values are
+  `f7c07c279a8cfc2670f7d9cf5fe287116a8b36ba0a1ff35f398c49b9a3002237` and
+  `c93c258898d706b41c3da5c7701f07ebf0e7b6146fb7d001578a95cb378a4139`.
+- With `ROCK_SYSROOT=/home/champii/prog/rust/Rock/target` and
+  `ROCKC=/home/champii/.local/share/lean-ctx/build-cache/cargo-target/debug/rockc`,
+  `cargo test -p rock -p rockc -p rock-shared -- --test-threads=1` passes 94 Rock,
+  57 rockc and 30 shared tests, plus one shared doctest; five native package tests
+  remain opt-in (`bf3a9ba0c8f76aa6`).
+- From `test_projects/proc_macro/app`, `cargo run -p rock --release -- run` with
+  the same sysroot and the cache's release `ROCKC` rebuilds SDK/provider/app and
+  prints `Hello Ada!`. The `%format` demo, character literals and `char_indices!`
+  stay unchanged and use shared prebuilt std.
+
+All four repair outcomes are verified. `bd` is still unavailable; no issue write
+is claimed. Verification completed before the subsequent request to commit and
+push these follow-up changes.
 
 ## Stage gates and final verification
 

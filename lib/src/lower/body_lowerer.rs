@@ -30,6 +30,11 @@ impl<'a> BodyLowerer<'a> {
             return;
         };
         let mut edges = HashMap::new();
+        self.lowerer.prepare_field_initializers(root_module, root_module_id);
+        ModuleLoweringContext::for_each_loaded_module(
+            self.lowerer,
+            |lowerer, module_id, _, module| lowerer.prepare_field_initializers(module, module_id),
+        );
         collect_module_edges(self.lowerer, root_module, None, root_module_id, &mut edges);
         ModuleLoweringContext::for_each_loaded_module(
             self.lowerer,

@@ -3678,6 +3678,7 @@ mod tests {
             name: "Point".to_string(),
             generic_params: Vec::new(),
             fields: vec![HirField {
+                initializer: None,
                 id: FieldId(0),
                 name: "x".to_string(),
                 ty: Type::I64,
@@ -3720,6 +3721,7 @@ mod tests {
             name: "First".to_string(),
             generic_params: Vec::new(),
             fields: vec![HirField {
+                initializer: None,
                 id: FieldId(0),
                 name: "value".to_string(),
                 ty: Type::I64,
@@ -3731,6 +3733,7 @@ mod tests {
             name: "Second".to_string(),
             generic_params: Vec::new(),
             fields: vec![HirField {
+                initializer: None,
                 id: FieldId(0),
                 name: "value".to_string(),
                 ty: Type::I64,

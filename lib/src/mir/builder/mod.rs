@@ -3229,6 +3229,7 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(index, name)| HirField {
+                initializer: None,
                 id: FieldId(index as u32),
                 name: name.to_string(),
                 ty: Type::I64,
@@ -7451,7 +7452,8 @@ mod tests {
                 id: inner_id,
                 name: "Inner".to_string(),
                 generic_params: vec![],
-                fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                     id: crate::ids::FieldId(0),
                     name: "x".to_string(),
                     ty: Type::I64,
@@ -7465,7 +7467,8 @@ mod tests {
                 id: outer_id,
                 name: "Outer".to_string(),
                 generic_params: vec![],
-                fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                     id: crate::ids::FieldId(0),
                     name: "inner".to_string(),
                     ty: inner_ty.clone(),
@@ -8699,7 +8702,8 @@ mod tests {
                     id: struct_id,
                     name: "Point".to_string(),
                     generic_params: vec![],
-                    fields: vec![crate::hir::HirField {
+            fields: vec![crate::hir::HirField {
+                initializer: None,
                         id: field_id,
                         name: "x".to_string(),
                         ty: Type::I64,
@@ -9211,7 +9215,8 @@ mod tests {
                 id: wrapper_id,
                 name: "Wrapper".to_string(),
                 generic_params: vec![],
-                fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                     id: FieldId(0),
                     name: "inner".to_string(),
                     ty: struct_ty(1),

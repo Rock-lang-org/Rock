@@ -9,6 +9,7 @@ pub mod crates;
 pub(crate) mod diagnostics;
 pub mod error;
 pub mod expression;
+mod field_initializers;
 pub mod function;
 pub(crate) mod inference_scc;
 pub mod intrinsics;

@@ -2537,6 +2537,48 @@ impl Lowerer {
                 });
             }
 
+            // Explicit fields evaluate in source order, followed by omitted
+            // initializers in declaration order, each through its resolved owner.
+            for field in &hir_struct.fields {
+                if fields.iter().any(|supplied| supplied.field.as_ref().is_some_and(|location| location.field_id == field.id)) {
+                    continue;
+                }
+                let Some(initializer) = field.initializer else {
+                    self.diagnostics.push_with_span(
+                        format!("Missing field '{}' in construction of '{}'", field.name, type_name), span.clone(),
+                    );
+                    continue;
+                };
+                let ty = field.ty.substitute_generics(&type_var_mapping);
+                let args = if generic_params.is_empty() { Vec::new() } else {
+                    let owner_ty = Type::Pointer(Box::new(Type::Struct {
+                        id: hir_struct.id,
+                        args: generic_params.iter().map(|param| type_var_mapping[&param.id].clone()).collect(),
+                    }));
+                    vec![HirExpr {
+                        ty: owner_ty.clone(), span: span.clone(),
+                        kind: HirExprKind::Cast(Box::new(HirExpr {
+                            ty: Type::I64, span: span.clone(), kind: HirExprKind::IntLiteral(0),
+                        }), owner_ty),
+                    }]
+                };
+                let callee = HirExpr {
+                    ty: Type::function(args.iter().map(|arg| arg.ty.clone()).collect(), ty.clone()), span: span.clone(),
+                    kind: HirExprKind::ResolvedVar(crate::hir::HirVarRef {
+                        name: format!("{}::{}::initializer", type_name, field.name),
+                        target: crate::hir::HirVarTarget::Function(initializer),
+                    }),
+                };
+                fields.push(HirStructLiteralField {
+                    name: field.name.clone(),
+                    value: HirExpr {
+                        ty, span: span.clone(),
+                        kind: HirExprKind::Call(Box::new(callee), args, Some(crate::hir::HirCallTarget::Function(initializer))),
+                    },
+                    field: Some(HirFieldLocation { owner: hir_struct.id, field_id: field.id, name: field.name.clone() }),
+                });
+            }
+
             // Resolve the type variables to get actual type arguments
             let type_args: Vec<Type> = generic_params
                 .iter()
@@ -3493,12 +3535,14 @@ identity = x -> x
             generic_params: Vec::new(),
             fields: vec![
                 HirField {
+                    initializer: None,
                     id: FieldId(0),
                     name: "x".to_string(),
                     ty: Type::I64,
                     public: true,
                 },
                 HirField {
+                    initializer: None,
                     id: FieldId(1),
                     name: "y".to_string(),
                     ty: Type::I64,
@@ -3530,25 +3574,29 @@ identity = x -> x
                 id: VariantId(0),
                 name: "Pair".to_string(),
                 fields: HirVariantFields::Named(vec![
-                    HirField {
+                HirField {
+                    initializer: None,
                         id: FieldId(0),
                         name: "first".to_string(),
                         ty: Type::I64,
                         public: true,
                     },
-                    HirField {
+                HirField {
+                    initializer: None,
                         id: FieldId(1),
                         name: "second".to_string(),
                         ty: Type::I64,
                         public: true,
                     },
-                    HirField {
+                HirField {
+                    initializer: None,
                         id: FieldId(2),
                         name: "third".to_string(),
                         ty: Type::I64,
                         public: true,
                     },
-                    HirField {
+                HirField {
+                    initializer: None,
                         id: FieldId(3),
                         name: "fourth".to_string(),
                         ty: Type::I64,
@@ -3587,6 +3635,7 @@ identity = x -> x
             name: name.to_string(),
             generic_params: Vec::new(),
             fields: vec![HirField {
+                initializer: None,
                 id: FieldId(0),
                 name: "ptr".to_string(),
                 ty: Type::I64,

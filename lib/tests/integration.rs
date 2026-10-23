@@ -22,6 +22,189 @@ mod callable;
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]
+fn test_struct_field_initializers_fill_omitted_fields() {
+    assert_eq!(compile_and_run(r#"
+value = -> 13
+struct Packet
+    < value: I64 = value!
+    < result: I64 = 7
+main = !->
+    packet = Packet
+        result: 5
+    packet.value.println!
+    packet.result.println!
+"#), "13\n5\n");
+}
+
+#[test]
+fn test_short_circuit_owned_temporaries() {
+    assert_eq!(compile_and_run(r#"
+main = !->
+    (true && (String::from "a").len! == 1).println!
+    (false && (String::from "b").len! == 1).println!
+    (false || (String::from "c").len! == 1).println!
+    (true || (String::from "d").len! == 1).println!
+"#), "true\nfalse\ntrue\ntrue\n");
+}
+
+#[test]
+fn test_struct_field_initializers_generic_and_source_free() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let entry = dir.join("models.rk");
+    fs::write(&entry, r#"
+seed = -> 13
+< enum Maybe T
+    Missing
+    Present T
+< struct Holder T
+    < value: Maybe T = Maybe::Missing
+    < count: I64 = seed!
+"#).unwrap();
+    let config = rock_lib::Config {
+        entry_file: entry.clone(), output_dir: dir.join("provider"),
+        current_crate_name: Some("models".into()),
+        no_std: true, no_prelude: true, no_link: true,
+        ..Default::default()
+    };
+    let artifact = dir.join("models.rkca");
+    let products = rock_lib::compile_with_products(&config).unwrap().products.unwrap();
+    products.write_artifact_to_path(&artifact).unwrap();
+    fs::remove_file(entry).unwrap();
+    let entry = dir.join("consumer.rk");
+    fs::write(&entry, r#"
+> models::Holder
+> models::Maybe
+seed = -> false
+main = ->
+    holder: Holder I64 = Holder
+    match holder.value
+        Maybe::Missing => holder.count
+        Maybe::Present _ => 99
+"#).unwrap();
+    for opt_level in [0, 3] {
+        rock_lib::compile(&rock_lib::Config {
+            entry_file: entry.clone(), output_dir: dir.join("consumer"),
+            current_crate_name: None, no_link: false, opt_level,
+            extern_artifacts: vec![("models".into(), artifact.clone())],
+            ..config.clone()
+        }).unwrap();
+        let output = run_test_command(&mut Command::new(dir.join("consumer/consumer")));
+        assert_eq!(output.status.code(), Some(13), "{output:?}");
+    }
+    for corrupt_signature in [false, true] {
+        let mut bad = products.clone();
+        let field = &mut bad.interface.structs.values_mut().next().unwrap().fields[1];
+        if corrupt_signature {
+            bad.interface.functions.get_mut(&field.initializer.unwrap().into()).unwrap().ret_type = rock_lib::types::Type::Bool;
+        } else {
+            field.initializer = Some(bad.interface.enums.values().next().unwrap().id);
+        }
+        bad.write_artifact_to_path(&artifact).unwrap();
+        let errors = rock_lib::compile(&rock_lib::Config {
+            entry_file: entry.clone(), output_dir: dir.join("invalid"), current_crate_name: None,
+            extern_artifacts: vec![("models".into(), artifact.clone())], ..config.clone()
+        }).unwrap_err();
+        assert!(errors.0.iter().any(|error| error.message.contains("field initializer")), "{errors:?}");
+    }
+}
+
+#[test]
+fn test_struct_field_initializers_reject_missing_and_invalid_fields() {
+    compile_should_fail("struct S\n    < value: I64\nmain = !->\n    s = S\n", "Missing field");
+    compile_should_fail("struct S\n    < value: I64 = false\nmain = !-> ()\n", "Type mismatch");
+}
+
+#[test]
+fn test_short_circuit_temporaries_drop_only_on_evaluated_edges() {
+    assert_eq!(compile_and_run(r#"
+struct Tracked
+    < value: I64
+impl Drop for Tracked
+    ~@drop = !-> self.value.println!
+impl Tracked
+    @yes = -> true
+make = value -> Tracked
+    value: value
+main = !->
+    (false && (make 1).yes!).println!
+    (true && (make 2).yes!).println!
+    (true || (make 3).yes!).println!
+    (false || (make 4).yes!).println!
+    (true && (false || (make 5).yes!)).println!
+"#), "false\n2\ntrue\ntrue\n4\ntrue\n5\ntrue\n");
+}
+
+#[test]
+fn test_default_type_arguments_partial_constructor() {
+    assert_eq!(compile_and_run(r#"
+struct Holder T, {F _ = Result T, _}
+    < value: F I64
+read: Holder I64 -> I64
+read = holder -> match holder.value
+    Result::Ok value => value
+    Result::Err error => error
+main = !->
+    holder: Holder I64 = Holder
+        value: Result::Ok 42
+    (read holder).println!
+    inferred = Holder
+        value: Result::Err 7
+    (read inferred).println!
+    override: Holder I64, Option = Holder
+        value: Option::Some 9
+    match override.value
+        Option::Some value => value.println!
+        Option::None => 0.println!
+    section: Holder I64, (Result _, Bool) = Holder
+        value: Result::Ok 11
+    match section.value
+        Result::Ok value => value.println!
+        Result::Err _ => 0.println!
+"#), "42\n7\n9\n11\n");
+}
+
+#[test]
+fn test_struct_field_initializers_evaluate_once_in_declaration_scope() {
+    assert_eq!(compile_and_run(r#"
+make = value ->
+    value.println!
+    value
+struct Packet
+    < first: I64 = make 1
+    < second: I64 = make 2
+mod nested
+    seed = -> 17
+    < struct Packet
+        < value: I64 = seed!
+main = !->
+    packet = Packet
+        second: make 3
+    packet.first.println!
+    packet.second.println!
+    seed = -> false
+    other = nested::Packet
+    other.value.println!
+"#), "3\n1\n1\n3\n17\n");
+}
+
+#[test]
+fn test_struct_field_initializers_specialize_body_only_generics() {
+    assert_eq!(compile_and_run(r#"
+> std::mem::sizeof_pointee
+struct Size T
+    < bytes: I64 = sizeof_pointee (0 as *T)
+main = !->
+    small: Size U8 = Size
+    large: Size I64 = Size
+    small.bytes.println!
+    large.bytes.println!
+"#), "1\n8\n");
+}
+
+#[test]
 fn macro_a0_10_compiles_utf8_and_terminal_comments_through_lossless_source() {
     assert_eq!(compile_and_run("main = !->\r\n  \"🦀\".println!\r\n// EOF comment"), "🦀\n");
 }

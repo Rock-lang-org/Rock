@@ -308,6 +308,13 @@ impl Lowerer {
                 }
 
                 // Now lower function bodies (after impl methods are resolved)
+                for (ordinal, item) in module.top_levels.iter().enumerate() {
+                    if let ast::TopLevel::StructDecl(declaration) = item {
+                        if let Some(owner) = lowerer.item_index.item_at_source(module_id, ordinal).map(|item| item.def_id) {
+                            lowerer.lower_field_initializers(declaration, owner);
+                        }
+                    }
+                }
                 for (ordinal, top_level) in module.top_levels.iter().enumerate() {
                     let ast::TopLevel::FunctionDecl(fd) = top_level else {
                         continue;

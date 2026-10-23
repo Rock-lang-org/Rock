@@ -211,6 +211,7 @@ pub(super) struct SerializedHirParam {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct SerializedHirField {
+    pub initializer: Option<crate::ids::DefId>,
     pub id: crate::ids::FieldId,
     pub name: String,
     pub ty: ProductTypeId,
@@ -1772,6 +1773,7 @@ impl SerializedHirField {
         encoder: &mut ProductTypeEncoder,
     ) -> Result<Self, String> {
         Ok(Self {
+            initializer: value.initializer,
             id: value.id,
             name: value.name.clone(),
             ty: encoder.encode_type(&value.ty)?,
@@ -1784,6 +1786,7 @@ impl SerializedHirField {
         encoder: &mut ProductTypeEncoder,
     ) -> Result<Self, String> {
         Ok(Self {
+            initializer: value.initializer,
             id: value.id,
             name: value.name.clone(),
             ty: encoder.encode_type(&value.ty)?,
@@ -1793,6 +1796,7 @@ impl SerializedHirField {
 
     fn decode(self, decoder: &mut ProductTypeDecoder<'_>) -> Result<crate::hir::HirField, String> {
         Ok(crate::hir::HirField {
+            initializer: self.initializer,
             id: self.id,
             name: self.name,
             ty: decoder.decode_type(self.ty)?,
@@ -1805,6 +1809,7 @@ impl SerializedHirField {
         decoder: &mut ProductTypeDecoder<'_>,
     ) -> Result<crate::products::ProductFieldInterface, String> {
         Ok(crate::products::ProductFieldInterface {
+            initializer: self.initializer,
             id: self.id,
             name: self.name,
             ty: decoder.decode_type(self.ty)?,

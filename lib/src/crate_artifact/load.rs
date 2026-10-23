@@ -2199,6 +2199,11 @@ fn remap_struct_interface_id(
     strukt.id = remap.def_id(id)?;
     remap_generic_param_decls(&mut strukt.generic_params, remap, type_validator)?;
     for field in &mut strukt.fields {
+        if let Some(initializer) = &mut field.initializer {
+            type_validator.validate_function_target((*initializer).into(), "field initializer")
+                .map_err(|error| format!("Invalid field initializer for '{}.{}': {error}", strukt.name, field.name))?;
+            *initializer = remap.def_id((*initializer).into())?;
+        }
         remap_type_def_ids(&mut field.ty, remap, type_validator)?;
     }
     Ok(strukt)
@@ -4133,6 +4138,30 @@ fn validate_product_method_authority_maps(
 }
 
 fn validate_product_body_rows_have_interface(products: &CompilerProducts) -> Result<(), String> {
+    for structure in products.interface.structs.values() {
+        for field in &structure.fields {
+            let Some(id) = field.initializer else { continue };
+            let Some(function) = products.interface.functions.get(&id.into()) else {
+                return Err(format!("Product artifact field initializer for '{}.{}' has no function interface", structure.name, field.name));
+            };
+            let substitution = function.generic_params.iter().zip(&structure.generic_params)
+                .map(|(from, to)| (from.id, Type::Generic(to.id))).collect();
+            let expected_params = if structure.generic_params.is_empty() { Vec::new() } else {
+                vec![Type::Pointer(Box::new(Type::Struct {
+                    id: structure.id, args: structure.generic_params.iter().map(|param| Type::Generic(param.id)).collect(),
+                }))]
+            };
+            if id.crate_id != structure.id.crate_id || function.is_unsafe || function.is_method
+                || function.self_receiver.is_some()
+                || function.params.iter().map(|ty| ty.substitute_generics(&substitution)).collect::<Vec<_>>() != expected_params
+                || function.generic_params.len() != structure.generic_params.len()
+                || function.generic_params.iter().zip(&structure.generic_params).any(|(a, b)| a.kind != b.kind)
+                || function.ret_type.substitute_generics(&substitution) != field.ty
+            {
+                return Err(format!("Product artifact field initializer signature mismatch for '{}.{}'", structure.name, field.name));
+            }
+        }
+    }
     for (id, body) in &products.bodies.functions {
         if !products.interface.functions.contains_key(id) {
             return Err(format!(
@@ -4492,6 +4521,7 @@ mod product_tests {
             name: "dep::Box".to_string(),
             generic_params: Vec::new(),
             fields: vec![HirField {
+                initializer: None,
                 id: FieldId(0),
                 name: "value".to_string(),
                 ty: Type::I64,
@@ -6501,12 +6531,12 @@ mod product_tests {
     }
 
     #[test]
-    fn load_product_artifact_rejects_previous_format_before_context_mutation() {
-        let (base, _cleanup) = temp_test_dir("rejects_previous_format_before_mutation");
-        let artifact_path = base.join("old.rkca");
+    fn load_product_artifact_rejects_invalid_format_before_context_mutation() {
+        let (base, _cleanup) = temp_test_dir("rejects_invalid_format_before_mutation");
+        let artifact_path = base.join("invalid.rkca");
         let mut preamble = Vec::new();
         preamble.extend_from_slice(&PRODUCT_ARTIFACT_MAGIC);
-        preamble.extend_from_slice(&43u32.to_le_bytes());
+        preamble.extend_from_slice(&0u32.to_le_bytes());
         preamble.extend_from_slice(&0u64.to_le_bytes());
         preamble.extend_from_slice(&0u64.to_le_bytes());
         fs::write(&artifact_path, preamble).unwrap();
@@ -6517,7 +6547,7 @@ mod product_tests {
             .load_product_artifact_from_path_with_type_context(artifact_path, &mut type_context)
             .unwrap_err();
 
-        assert!(error.contains("Unsupported product artifact format 43"));
+        assert!(error.contains("Unsupported product artifact format 0"));
         assert!(ctx.product_crate_ids.is_empty());
         assert!(type_context.id_for_type(&Type::I64).is_none());
     }
@@ -6585,7 +6615,8 @@ mod product_tests {
                 id: product_hir_def_id(struct_id),
                 name: "dep::Private".to_string(),
                 generic_params: Vec::new(),
-                fields: vec![ProductFieldInterface {
+            fields: vec![ProductFieldInterface {
+                initializer: None,
                     id: FieldId(0),
                     name: "value".to_string(),
                     ty: Type::Tuple(vec![Type::Reference {
@@ -7179,7 +7210,8 @@ mod product_tests {
                 id: struct_def,
                 name: "dep::Widget".to_string(),
                 generic_params: Vec::new(),
-                fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                     id: FieldId(0),
                     name: "value".to_string(),
                     ty: Type::I64,
@@ -8933,7 +8965,8 @@ mod product_tests {
                 id: first_struct_def,
                 name: "dep::First".to_string(),
                 generic_params: Vec::new(),
-                fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                     id: FieldId(0),
                     name: "value".to_string(),
                     ty: Type::I64,
@@ -8948,7 +8981,8 @@ mod product_tests {
                 id: second_struct_def,
                 name: "dep::Second".to_string(),
                 generic_params: Vec::new(),
-                fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                     id: FieldId(0),
                     name: "value".to_string(),
                     ty: Type::I64,
@@ -9020,7 +9054,8 @@ mod product_tests {
                 id: first_struct_def,
                 name: "dep::First".to_string(),
                 generic_params: Vec::new(),
-                fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                     id: FieldId(0),
                     name: "value".to_string(),
                     ty: Type::I64,
@@ -9035,7 +9070,8 @@ mod product_tests {
                 id: second_struct_def,
                 name: "dep::Second".to_string(),
                 generic_params: Vec::new(),
-                fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                     id: FieldId(0),
                     name: "value".to_string(),
                     ty: Type::I64,
@@ -9908,7 +9944,8 @@ mod product_tests {
                 id: dep_struct_id,
                 name: "dep::Widget".to_string(),
                 generic_params: Vec::new(),
-                fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                     id: FieldId(0),
                     name: "value".to_string(),
                     ty: Type::I64,
@@ -10072,7 +10109,8 @@ mod product_tests {
                 id: struct_def,
                 name: "dep::Widget".to_string(),
                 generic_params: Vec::new(),
-                fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                     id: FieldId(0),
                     name: "value".to_string(),
                     ty: Type::I64,

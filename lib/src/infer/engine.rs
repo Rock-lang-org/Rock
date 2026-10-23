@@ -201,6 +201,7 @@ pub struct InferenceEngine {
     normalization_env: TypeNormalizationEnv,
     type_display_context: crate::type_services::display::TypeDisplayContext,
     generic_defaults: Vec<(Type, Type)>,
+    constructor_default_constraints: Vec<(Type, Type)>,
 }
 
 struct ResolveFolder<'a> {
@@ -997,6 +998,7 @@ impl InferenceEngine {
             normalization_env: TypeNormalizationEnv::new(),
             type_display_context: Default::default(),
             generic_defaults: Vec::new(),
+            constructor_default_constraints: Vec::new(),
         }
     }
 
@@ -1020,6 +1022,7 @@ impl InferenceEngine {
             normalization_env,
             type_display_context: Default::default(),
             generic_defaults: Vec::new(),
+            constructor_default_constraints: Vec::new(),
         }
     }
 
@@ -1036,6 +1039,7 @@ impl InferenceEngine {
             normalization_env: self.normalization_env.clone(),
             type_display_context: self.type_display_context.clone(),
             generic_defaults: self.generic_defaults.clone(),
+            constructor_default_constraints: self.constructor_default_constraints.clone(),
         }
     }
 
@@ -1205,6 +1209,9 @@ impl InferenceEngine {
             if matches!(self.resolve(&arg), Type::TypeVar(id) if !parameter_vars.contains(&id)) {
                 self.unify(&arg, &default).map_err(|error| InferenceError { error, span: self.span_for_type(&arg) })?;
             }
+        }
+        for (pattern, actual) in std::mem::take(&mut self.constructor_default_constraints) {
+            self.unify(&pattern, &actual).map_err(|error| InferenceError { error, span: self.span_for_type(&pattern) })?;
         }
         Ok(())
     }
@@ -1682,6 +1689,26 @@ impl InferenceEngine {
         };
         if actual_args.len() < pattern_args.len() {
             return Some(Err(Self::constructor_inference_error(pattern, actual)));
+        }
+
+        // A prefix section is not unique when a declaration supplies a different
+        // section (e.g. Result T, _). Keep the application equation until caller
+        // context or the ordinary fallback phase determines the constructor.
+        if actual_args.len() > pattern_args.len() {
+            let default = self.generic_defaults.iter().find_map(|(arg, default)| {
+                (self.resolve(arg) == Type::TypeVar(*constructor_var)).then(|| default.clone())
+            });
+            if let Some(default) = default {
+                let application = Type::Apply { constructor: Box::new(default), args: pattern_args.clone() };
+                let mut probe = self.clone_for_probe();
+                if probe.unify(&application, actual).is_ok() {
+                    let equation = (pattern.clone(), actual.clone());
+                    if !self.constructor_default_constraints.contains(&equation) {
+                        self.constructor_default_constraints.push(equation);
+                    }
+                    return Some(Ok(()));
+                }
+            }
         }
 
         let mut probe = self.clone_for_probe();

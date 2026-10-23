@@ -69,8 +69,7 @@ type_edit_controls = context !->
     original = split " /* 雪 */ F A, B // tail\r\n", 13, JoinBoundary::SourceAdjacent, 9
     unchanged_edits = (TokenEdits::new original.clone!).checked!
     unchanged = (unchanged_edits.emit context).checked!
-    check (unchanged.parts.len! == 1)
-    check ((output_text &unchanged) == original.spelling!.checked!)
+    check (unchanged.parts.len! == 1 && (output_text &unchanged) == original.spelling!.checked!)
     part = &unchanged.parts[0]
     match *part
         OutputPart::Stream stream =>

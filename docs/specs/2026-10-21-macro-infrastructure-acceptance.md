@@ -64,8 +64,8 @@ Paths below are relative to the repository root. Native test names are in
   re-lexed; generated source requests are interpreted only at the explicit output
   boundary.
 - The Rust wire reader accepts only `RKLOSS04`; both SDK codecs implement protocol
-  7/current stream schema, and products require format 54. Old magic/version values
-  remain only as rejection controls. `protocol-7/*.hex` are current interoperability
+  7/current stream schema, and products require format 55. Rejection controls use
+  fabricated invalid magic/version values. `protocol-7/*.hex` are current interoperability
   fixtures, not compatibility readers or preserved historical artifact snapshots.
 - Registries are built for each expansion forest/context. Derive consumption is a
   bounded context-local node-ID set; ancestry and aggregate budgets are shared with
@@ -80,8 +80,31 @@ Paths below are relative to the repository root. Native test names are in
 
 Infrastructure completion does not ship production formatting/derive/HTML
 libraries, arbitrary attribute transforms, a full Syn grammar, persistent workers,
-or a self-hosted compiler. Known independent limitations remain: partial-constructor
-default inference (C.05), owned temporary drop flags on lazy `&&` (C.08), omitted
-runtime struct-field defaults (C.10), and high borrow-checker resource use on the
-unfactored enum-emission function (C.11). The receipts distinguish these from the
-syntax-retention and infrastructure proofs; no repair of them is claimed.
+or a self-hosted compiler. The independent C.05/C.08/C.10/C.11 compiler failures
+recorded in the original receipts are addressed by the follow-up repairs below.
+
+## Compiler repair follow-up
+
+- C.05 retains ambiguous constructor-application equations until caller context
+  or declaration-default fallback determines the constructor. The native generic
+  fixture again uses the partial `Result T, _` default; macro-free integrations
+  also cover inference and explicit constructor overrides.
+- C.08 cleans RHS temporaries inside the evaluated short-circuit branch. The
+  native emission fixture again uses its combined owned-temporary assertion;
+  macro-free tests cover skipped/taken `&&` and `||`, nesting and exact drops.
+- C.10 lowers field initializers into declaration-scoped functions and publishes
+  resolved initializer identities in product format 55. Explicit fields evaluate
+  in source order, then omitted defaults in declaration order. Generic owner
+  witnesses preserve body-only type parameters. Tests cover declaration scope,
+  source-free artifacts at O0/O3, invalid fields and malformed initializer metadata.
+  Rebuild dependencies; there is no compatibility reader. Protocol 7 and RKLOSS04
+  are unchanged.
+- C.11 uses sparse initialization states, shared local-root maps, sparse
+  loan-location entries and early release of unused initialization exit states.
+  The original unfactored enum emitter is restored. The measured packaged run
+  fell from 10,457,392 kB to 3,347,252 kB peak RSS (about 68% lower); this is a
+  workload-specific improvement, not a general memory bound. Profiling hooks
+  were removed after measurement.
+
+The original C.12 receipts above describe the earlier snapshot. Follow-up command
+receipts are recorded separately in the implementation plan.

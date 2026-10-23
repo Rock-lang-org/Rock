@@ -3,6 +3,7 @@
 //! Tracks which locals are initialized, moved, or uninitialized.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::ids::{Idx, MovePathId, PlacePathId};
 use crate::lexer::Span;
@@ -36,43 +37,49 @@ pub enum InitState {
 #[derive(Debug, Clone)]
 pub struct InitMap {
     reachable: bool,
-    states: Vec<InitState>,
-    local_roots: HashMap<Local, MovePathId>,
+    // Uninitialized paths are implicit. Cleanup-heavy CFGs otherwise duplicate
+    // every dead temporary (and every local root) at every block boundary.
+    states: HashMap<MovePathId, InitState>,
+    path_count: usize,
+    local_roots: Arc<HashMap<Local, MovePathId>>,
 }
 
 impl InitMap {
     pub fn new_for_move_paths(moves: &MovePathTable, initial: InitState) -> Self {
-        let states = moves.iter_ids().map(|_| initial.clone()).collect();
-        let local_roots = moves.local_roots();
+        let states = if initial == InitState::Uninit { HashMap::new() } else {
+            moves.iter_ids().map(|id| (id, initial.clone())).collect()
+        };
+        let local_roots = Arc::new(moves.local_roots());
 
         Self {
             reachable: true,
             states,
+            path_count: moves.iter_ids().count(),
             local_roots,
         }
     }
 
-    fn unreachable_for_move_paths(moves: &MovePathTable) -> Self {
-        let states = moves.iter_ids().map(|_| InitState::Uninit).collect();
-        let local_roots = moves.local_roots();
+    fn state_at(&self, id: MovePathId) -> Option<&InitState> {
+        (id.index() < self.path_count).then(|| self.states.get(&id).unwrap_or(&InitState::Uninit))
+    }
 
-        Self {
-            reachable: false,
-            states,
-            local_roots,
+    fn set_state(&mut self, id: MovePathId, state: InitState) {
+        if id.index() >= self.path_count { return; }
+        if state == InitState::Uninit {
+            self.states.remove(&id);
+        } else {
+            self.states.insert(id, state);
         }
     }
 
     pub fn get_local(&self, local: Local) -> Option<&InitState> {
         let move_path = self.local_roots.get(&local)?;
-        self.states.get(move_path.index())
+        self.state_at(*move_path)
     }
 
     fn set_local(&mut self, local: Local, state: InitState) {
-        if let Some(move_path) = self.local_roots.get(&local) {
-            if let Some(slot) = self.states.get_mut(move_path.index()) {
-                *slot = state;
-            }
+        if let Some(move_path) = self.local_roots.get(&local).copied() {
+            self.set_state(move_path, state);
         }
     }
 
@@ -82,9 +89,7 @@ impl InitMap {
         };
 
         for descendant in moves.descendants_inclusive(move_path) {
-            if let Some(slot) = self.states.get_mut(descendant.index()) {
-                *slot = InitState::Moved(info.clone());
-            }
+            self.set_state(descendant, InitState::Moved(info.clone()));
         }
     }
 
@@ -94,9 +99,7 @@ impl InitMap {
         };
 
         for descendant in moves.descendants_inclusive(move_path) {
-            if let Some(slot) = self.states.get_mut(descendant.index()) {
-                *slot = state.clone();
-            }
+            self.set_state(descendant, state.clone());
         }
     }
 
@@ -110,7 +113,7 @@ impl InitMap {
         };
 
         for ancestor in moves.ancestors_inclusive(move_path) {
-            match self.states.get(ancestor.index()) {
+            match self.state_at(ancestor) {
                 Some(InitState::Init) => {}
                 Some(InitState::Uninit) => {
                     return Err(InitError {
@@ -129,7 +132,7 @@ impl InitMap {
         }
 
         for descendant in moves.descendants(move_path) {
-            if let Some(InitState::Moved(info)) = self.states.get(descendant.index()) {
+            if let Some(InitState::Moved(info)) = self.state_at(descendant) {
                 return Err(InitError {
                     message: "use of partially moved value".to_string(),
                     move_span: info.span.clone(),
@@ -150,7 +153,7 @@ impl InitMap {
         };
 
         for ancestor in moves.ancestors_inclusive(move_path) {
-            match self.states.get(ancestor.index()) {
+            match self.state_at(ancestor) {
                 Some(InitState::Init) => {}
                 Some(InitState::Uninit) => {
                     return Err(InitError {
@@ -181,7 +184,7 @@ impl InitMap {
         };
 
         for ancestor in moves.ancestors_inclusive(move_path) {
-            match self.states.get(ancestor.index()) {
+            match self.state_at(ancestor) {
                 Some(InitState::Init) => {}
                 Some(InitState::Uninit | InitState::Moved(_)) => return Ok(()),
                 None => return Ok(()),
@@ -189,7 +192,7 @@ impl InitMap {
         }
 
         for descendant in moves.descendants(move_path) {
-            if let Some(InitState::Moved(info)) = self.states.get(descendant.index()) {
+            if let Some(InitState::Moved(info)) = self.state_at(descendant) {
                 return Err(InitError {
                     message: "drop of partially moved value".to_string(),
                     move_span: info.span.clone(),
@@ -213,33 +216,18 @@ impl Lattice for InitMap {
         }
 
         let mut changed = false;
-        for (index, v) in other.states.iter().enumerate() {
-            if let Some(existing) = self.states.get(index) {
-                // At control flow merge, keep moved conservative and require
-                // initialization on every incoming path.
-                // - Init + Init = Init (definitely initialized)
-                // - Init + Moved = Moved (may have been moved on one path)
-                // - Init + Uninit = Uninit (not initialized on every path)
-                // - Uninit + Uninit = Uninit (definitely uninitialized)
-                // - Uninit + Moved = Moved (may have been moved)
-                // - Moved + Moved = Moved (definitely moved, keep one of the move infos)
-                let merged = match (existing, v) {
-                    (InitState::Moved(info), _) => InitState::Moved(info.clone()),
-                    (_, InitState::Moved(info)) => InitState::Moved(info.clone()),
-                    (InitState::Init, InitState::Init) => InitState::Init,
-                    (InitState::Uninit, _) | (_, InitState::Uninit) => InitState::Uninit,
-                };
-                if existing != &merged {
-                    self.states[index] = merged;
-                    changed = true;
-                }
-            } else {
-                self.states.push(v.clone());
+        // Init requires both predecessors; Moved dominates even an implicit
+        // Uninit, retaining the first move span just as the dense lattice did.
+        self.states.retain(|id, state| {
+            let keep = matches!(state, InitState::Moved(_)) || other.states.contains_key(id);
+            changed |= !keep;
+            keep
+        });
+        for (id, state) in &other.states {
+            if matches!(state, InitState::Moved(_)) && !matches!(self.states.get(id), Some(InitState::Moved(_))) {
+                self.states.insert(*id, state.clone());
                 changed = true;
             }
-        }
-        for (local, root) in &other.local_roots {
-            self.local_roots.entry(*local).or_insert(*root);
         }
         changed
     }
@@ -252,6 +240,7 @@ pub struct InitializationAnalysis {
     raw_pointer_locals: HashSet<Local>,
     place_paths: PlacePathTable,
     move_paths: MovePathTable,
+    empty: InitMap,
 }
 
 impl InitializationAnalysis {
@@ -282,6 +271,8 @@ impl InitializationAnalysis {
 
         let place_paths = PlacePathTable::for_function(func);
         let move_paths = MovePathTable::from_place_paths(&place_paths);
+        let mut empty = InitMap::new_for_move_paths(&move_paths, InitState::Uninit);
+        empty.reachable = false;
 
         // Return place (Local(0)) is not always init - it's written to
 
@@ -290,6 +281,7 @@ impl InitializationAnalysis {
             raw_pointer_locals,
             place_paths,
             move_paths,
+            empty,
         }
     }
 
@@ -441,7 +433,8 @@ impl Analysis for InitializationAnalysis {
     type Domain = InitMap;
 
     fn initial_state(&self, _func: &MirFunction) -> Self::Domain {
-        let mut state = InitMap::new_for_move_paths(&self.move_paths, InitState::Uninit);
+        let mut state = self.empty.clone();
+        state.reachable = true;
 
         // Mark always-initialized locals
         for local in &self.always_init {
@@ -452,7 +445,7 @@ impl Analysis for InitializationAnalysis {
     }
 
     fn bottom_state(&self, _func: &MirFunction) -> Self::Domain {
-        InitMap::unreachable_for_move_paths(&self.move_paths)
+        self.empty.clone()
     }
 
     fn apply_statement(&self, state: &mut Self::Domain, stmt: &StatementData) {
@@ -564,6 +557,38 @@ impl InitializationAnalysis {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sparse_initialization_join_matches_dense_lattice_and_shares_roots() {
+        let mut paths = PlacePathTable::new();
+        for local in 0..10_000 {
+            paths.intern(Place { local: Local(local), projection: Vec::new() });
+        }
+        let moves = MovePathTable::from_place_paths(&paths);
+        let empty = InitMap::new_for_move_paths(&moves, InitState::Uninit);
+        let states = [InitState::Uninit, InitState::Init, InitState::Moved(MoveInfo { span: None })];
+        for left in &states {
+            for right in &states {
+                let mut a = empty.clone();
+                let mut b = empty.clone();
+                a.set_local(Local(9_999), left.clone());
+                b.set_local(Local(9_999), right.clone());
+                let expected = match (left, right) {
+                    (InitState::Moved(info), _) | (_, InitState::Moved(info)) => InitState::Moved(info.clone()),
+                    (InitState::Init, InitState::Init) => InitState::Init,
+                    _ => InitState::Uninit,
+                };
+                assert_eq!(a.join(&b), left != &expected);
+                assert_eq!(a.get_local(Local(9_999)), Some(&expected));
+                assert_eq!(a.get_local(Local(0)), Some(&InitState::Uninit));
+                assert!(!a.join(&b), "join must reach a fixed point");
+                assert!(Arc::ptr_eq(&a.local_roots, &b.local_roots));
+                assert!(a.states.len() <= 1, "dead locals must not allocate per-block state");
+                a.set_local(Local(9_999), InitState::Uninit);
+                assert!(a.states.is_empty());
+            }
+        }
+    }
 
     use crate::ids::{CrateId, DefId, LocalDefId};
     use crate::mir::{

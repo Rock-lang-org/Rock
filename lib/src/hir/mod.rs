@@ -2922,6 +2922,8 @@ pub struct HirField {
     pub name: String,
     pub ty: Type,
     pub public: bool,
+    /// Declaration-scoped function evaluated when construction omits this field.
+    pub initializer: Option<DefId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3987,6 +3989,7 @@ mod tests {
             name: name.to_string(),
             generic_params: Vec::new(),
             fields: vec![HirField {
+                initializer: None,
                 id: field_id(0),
                 name: "value".to_string(),
                 ty: Type::I32,
@@ -4505,6 +4508,7 @@ mod tests {
             name: "Holder".to_string(),
             generic_params: Vec::new(),
             fields: vec![HirField {
+                initializer: None,
                 id: FieldId(0),
                 name: "value".to_string(),
                 ty: constructor.clone(),
@@ -5564,7 +5568,8 @@ mod tests {
                         id: left_owner,
                         name: "Left".to_string(),
                         generic_params: Vec::new(),
-                        fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                             id: field_id(0),
                             name: "value".to_string(),
                             ty: Type::I32,
@@ -5578,7 +5583,8 @@ mod tests {
                         id: right_owner,
                         name: "Right".to_string(),
                         generic_params: Vec::new(),
-                        fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                             id: field_id(0),
                             name: "value".to_string(),
                             ty: Type::I64,

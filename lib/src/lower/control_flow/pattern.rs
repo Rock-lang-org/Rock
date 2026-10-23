@@ -873,6 +873,7 @@ mod tests {
                 id: VariantId(0),
                 name: "Pair".to_string(),
                 fields: HirVariantFields::Named(vec![HirField {
+                    initializer: None,
                     id: FieldId(0),
                     name: "first".to_string(),
                     ty: Type::I64,
@@ -892,12 +893,14 @@ mod tests {
                 name: "Pair".to_string(),
                 fields: HirVariantFields::Named(vec![
                     HirField {
+                        initializer: None,
                         id: FieldId(0),
                         name: "first".to_string(),
                         ty: Type::I64,
                         public: true,
                     },
                     HirField {
+                        initializer: None,
                         id: FieldId(1),
                         name: "second".to_string(),
                         ty: Type::I64,

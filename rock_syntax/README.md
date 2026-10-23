@@ -511,9 +511,9 @@ fixtures. The native group compares kind/default/constraint structure against
 the Rust parser, checks ranges/round trips/limits/contexts, and tests emitted
 impl subjects and type arguments. An additional ordinary compiler/runtime check
 uses the actual emitted fragments with earlier-parameter defaults and constructor
-defaults (using `Option`); an explicit `Type`-kind impl also typechecks. Partial
-constructor-section defaults are covered as syntax, not a claim that the compiler
-can infer every such default at runtime. Other explicit-kind
+defaults (using the partial section `Result T, _`); an explicit `Type`-kind impl
+also typechecks. Macro-free compiler regressions cover inferred construction and
+explicit constructor overrides. Other explicit-kind
 emission diagnoses at the whole-binder range instead of producing invalid impls.
 This spelling-only C.05 check does not establish hygiene; C.08 tests function-like
 impl transport, while C.09–C.11 cover derive dispatch and its proofs.

@@ -1223,7 +1223,8 @@ mod tests {
                         id: struct_id,
                         name: "Box".to_string(),
                         generic_params: Vec::new(),
-                        fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                             id: FieldId(0),
                             name: "value".to_string(),
                             ty: Type::Struct {
@@ -1240,7 +1241,8 @@ mod tests {
                         id: other_struct_id,
                         name: "OtherBox".to_string(),
                         generic_params: Vec::new(),
-                        fields: vec![HirField {
+            fields: vec![HirField {
+                initializer: None,
                             id: FieldId(0),
                             name: "value".to_string(),
                             ty: Type::Struct {
@@ -1262,7 +1264,8 @@ mod tests {
                         HirVariant {
                             id: VariantId(0),
                             name: "Named".to_string(),
-                            fields: HirVariantFields::Named(vec![HirField {
+                fields: HirVariantFields::Named(vec![HirField {
+                    initializer: None,
                                 id: FieldId(0),
                                 name: "payload".to_string(),
                                 ty: Type::Bool,

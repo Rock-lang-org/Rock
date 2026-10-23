@@ -504,6 +504,7 @@ pub(crate) fn build_struct_with_id(
         .iter()
         .enumerate()
         .map(|(index, f)| HirField {
+            initializer: None,
             id: FieldId(index as u32),
             name: f.name.name.clone(),
             ty: context.lower_parse_type(&f.ty),
@@ -634,7 +635,8 @@ pub(crate) fn build_enum_with_id(
                         .map(|f| {
                             let id = FieldId(next_field_id);
                             next_field_id += 1;
-                            HirField {
+                        HirField {
+                            initializer: None,
                                 id,
                                 name: f.name.name.clone(),
                                 ty: context.lower_parse_type(&f.ty),

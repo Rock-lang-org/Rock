@@ -52,7 +52,6 @@ main = !->
     empty = Empty
     empty.metric!.println!
     packet = Packet
-        value: value!
         result: 5
     packet.metric!.println!
     pair = Pair

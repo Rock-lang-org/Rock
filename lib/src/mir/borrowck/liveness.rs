@@ -7,7 +7,7 @@ use crate::mir::{
 
 use crate::ids::{AssocTypeId, DefId, LoanId, TypeId};
 use crate::mir::dataflow::analyses::{LoanState, LoanTable};
-use crate::mir::dataflow::{Analysis, BitSet, Lattice, LocalSet};
+use crate::mir::dataflow::{Analysis, Lattice, LocalSet};
 use crate::type_context::{Ty, TypeContext, TypeView};
 use crate::types::{GenericParamId, Type};
 
@@ -16,7 +16,7 @@ use super::{MissingSummaryMode, OriginSet, ReferenceEscapeAnalysis};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoanLocationIndex {
     block_offsets: Vec<usize>,
-    slots: Vec<BitSet<LoanId>>,
+    slots: Vec<Vec<LoanId>>,
 }
 
 impl LoanLocationIndex {
@@ -39,7 +39,7 @@ impl LoanLocationIndex {
         block_offsets.push(next_offset);
 
         let slots = (0..next_offset)
-            .map(|_| BitSet::with_capacity(table.len()))
+            .map(|_| Vec::new())
             .collect::<Vec<_>>();
         let mut index = Self {
             block_offsets,
@@ -48,7 +48,7 @@ impl LoanLocationIndex {
 
         for loan in table.iter() {
             if let Some(slot) = index.slot_mut(loan.created_at) {
-                slot.insert(loan.id);
+                slot.push(loan.id);
             }
         }
 
@@ -59,10 +59,10 @@ impl LoanLocationIndex {
         &self,
         location: crate::mir::borrowck::location::Location,
     ) -> impl Iterator<Item = LoanId> + '_ {
-        self.slot(location).into_iter().flat_map(|slot| slot.iter())
+        self.slot(location).into_iter().flat_map(|slot| slot.iter().copied())
     }
 
-    fn slot(&self, location: crate::mir::borrowck::location::Location) -> Option<&BitSet<LoanId>> {
+    fn slot(&self, location: crate::mir::borrowck::location::Location) -> Option<&Vec<LoanId>> {
         let index = self.slot_index(location)?;
         self.slots.get(index)
     }
@@ -70,7 +70,7 @@ impl LoanLocationIndex {
     fn slot_mut(
         &mut self,
         location: crate::mir::borrowck::location::Location,
-    ) -> Option<&mut BitSet<LoanId>> {
+    ) -> Option<&mut Vec<LoanId>> {
         let index = self.slot_index(location)?;
         self.slots.get_mut(index)
     }
@@ -2526,7 +2526,7 @@ mod tests {
     }
 
     #[test]
-    fn loan_location_index_uses_dense_slots_and_deduplicates_loan_ids() {
+    fn loan_location_index_stores_only_created_loans() {
         let mut table = LoanTable::new();
         let created_at = Location::new(BasicBlockId(0), StatementIndex(1));
         let first = table.push(crate::mir::dataflow::analyses::LoanData {
@@ -2556,7 +2556,9 @@ mod tests {
             created_at,
         });
 
-        let index = super::LoanLocationIndex::from_table(&table, 1, &[2]);
+        let index = super::LoanLocationIndex::from_table(&table, 1, &[10_000]);
+        assert_eq!(index.slots.iter().map(Vec::len).sum::<usize>(), table.len());
+        assert_eq!(index.slots.iter().filter(|slot| slot.capacity() != 0).count(), 1);
 
         assert_eq!(
             index.loan_ids_at(created_at).collect::<Vec<_>>(),

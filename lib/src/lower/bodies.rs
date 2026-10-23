@@ -798,6 +798,7 @@ mod tests {
             name: name.to_string(),
             generic_params: Vec::new(),
             fields: vec![HirField {
+                initializer: None,
                 id: FieldId(0),
                 name: "ptr".to_string(),
                 ty: Type::I64,

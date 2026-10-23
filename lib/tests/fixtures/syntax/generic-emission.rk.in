@@ -9,7 +9,7 @@ struct Pair A, {B = A}
 impl SyntaxProbe for Pair {{PAIR_ARGS}} where {{PAIR_BINDERS}}
     @probe = -> 11
 
-struct Holder T, {F _ = Option}
+struct Holder T, {F _ = Result T, _}
     < value: F T
 
 impl SyntaxProbe for Holder {{HOLDER_ARGS}} where {{HOLDER_BINDERS}}
@@ -27,5 +27,5 @@ main = !->
         second: 5
     pair.probe!.println!
     holder: Holder I64 = Holder
-        value: Option::Some 4
+        value: Result::Ok 4
     holder.probe!.println!

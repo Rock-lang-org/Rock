@@ -1741,7 +1741,12 @@ impl<'a> MirBuilder<'a> {
         }
 
         self.current_block = Some(rhs_block);
+        // RHS temporaries exist only on this edge; clean them before joining
+        // the path that never initialized their storage or drop flags.
+        self.scope_locals.push(Vec::new());
         self.lower_expr(rhs, dest);
+        let temporaries = self.scope_locals.pop().unwrap_or_default();
+        self.finish_scope_locals(temporaries);
         if let Some(current) = self.current_block {
             self.blocks[current.0].terminator = Some(Terminator::goto(
                 merge_block,

@@ -472,6 +472,7 @@ mod tests {
             name: name.to_string(),
             generic_params: Vec::new(),
             fields: vec![HirField {
+                initializer: None,
                 id: field_id,
                 name: field.to_string(),
                 ty: Type::function(Vec::new(), Type::Unit),

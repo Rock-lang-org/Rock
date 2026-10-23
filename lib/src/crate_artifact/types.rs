@@ -338,6 +338,7 @@ pub(crate) fn hir_struct_from_interface(strukt: &ProductStructInterface) -> HirS
             .fields
             .iter()
             .map(|field| HirField {
+                initializer: field.initializer,
                 id: field.id,
                 name: field.name.clone(),
                 ty: field.ty.clone(),

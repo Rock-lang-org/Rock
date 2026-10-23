@@ -4521,13 +4521,15 @@ mod worklist_tests {
                 name: "Record".to_string(),
                 generic_params: Vec::new(),
                 fields: vec![
-                    crate::hir::HirField {
+                crate::hir::HirField {
+                    initializer: None,
                         id: crate::ids::FieldId(0),
                         name: "first".to_string(),
                         ty: Type::I64,
                         public: true,
                     },
-                    crate::hir::HirField {
+                crate::hir::HirField {
+                    initializer: None,
                         id: crate::ids::FieldId(1),
                         name: "second".to_string(),
                         ty: Type::I64,

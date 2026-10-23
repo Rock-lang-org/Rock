@@ -60,7 +60,7 @@ impl From<DefId> for ProductDefId {
     }
 }
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 54;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 55;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;
@@ -364,11 +364,13 @@ pub struct ProductFieldInterface {
     pub name: String,
     pub ty: Type,
     pub public: bool,
+    pub initializer: Option<DefId>,
 }
 
 impl From<&crate::hir::HirField> for ProductFieldInterface {
     fn from(field: &crate::hir::HirField) -> Self {
         Self {
+            initializer: field.initializer,
             id: field.id,
             name: field.name.clone(),
             ty: field.ty.clone(),
@@ -2245,6 +2247,9 @@ fn remap_product_type_def_ids(
     for strukt in interface.structs.values_mut() {
         remap_generic_param_decls_product_ids(&mut strukt.generic_params, id_remap);
         for field in &mut strukt.fields {
+            if let Some(initializer) = &mut field.initializer {
+                remap_product_def_id_owner(initializer, id_remap);
+            }
             remap_type(&mut field.ty);
         }
     }
@@ -6590,7 +6595,8 @@ mod tests {
                 .find(|strukt| strukt.name == "Box")
                 .unwrap()
                 .fields
-                .push(crate::hir::HirField {
+            .push(crate::hir::HirField {
+                initializer: None,
                     id: FieldId(99),
                     name: "payload".to_string(),
                     ty: field_ty.clone(),
@@ -7128,10 +7134,10 @@ mod tests {
     }
 
     #[test]
-    fn compiler_products_reject_format_23_product_artifacts() {
+    fn compiler_products_reject_zero_format_product_artifacts() {
         let bytes = ProductArtifactPreamble {
             magic: PRODUCT_ARTIFACT_MAGIC,
-            format_version: 23,
+            format_version: 0,
             header_len: 0,
             payload_len: 0,
         }
@@ -7140,18 +7146,18 @@ mod tests {
         let err = CompilerProducts::from_artifact_bytes(&bytes).unwrap_err();
 
         assert!(
-            err.contains("Unsupported product artifact format 23")
+            err.contains("Unsupported product artifact format 0")
                 && err.contains(&format!("expected {}", PRODUCT_ARTIFACT_FORMAT_VERSION)),
-            "expected format-23 rejection, got {err}"
+            "expected format-zero rejection, got {err}"
         );
     }
 
     #[test]
-    fn compiler_products_rejects_previous_format_before_full_deserialize() {
-        let previous_version = PRODUCT_ARTIFACT_FORMAT_VERSION - 1;
+    fn compiler_products_rejects_invalid_format_before_full_deserialize() {
+        let invalid_version = u32::MAX;
         let bytes = ProductArtifactPreamble {
             magic: PRODUCT_ARTIFACT_MAGIC,
-            format_version: previous_version,
+            format_version: invalid_version,
             header_len: 0,
             payload_len: 0,
         }
@@ -7161,9 +7167,9 @@ mod tests {
 
         assert!(
             err.contains(&format!(
-                "Unsupported product artifact format {previous_version}"
+                "Unsupported product artifact format {invalid_version}"
             )) && err.contains(&format!("expected {PRODUCT_ARTIFACT_FORMAT_VERSION}")),
-            "expected format-{previous_version} rejection before full deserialize, got {err}"
+            "expected format-{invalid_version} rejection before full deserialize, got {err}"
         );
     }
 
@@ -7190,7 +7196,7 @@ mod tests {
 
     #[test]
     fn product_artifact_format_version_matches_shared_contract() {
-        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 54);
+        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 55);
         assert_eq!(
             PRODUCT_ARTIFACT_FORMAT_VERSION,
             rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION

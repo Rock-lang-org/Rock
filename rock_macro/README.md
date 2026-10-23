@@ -296,7 +296,7 @@ using `compile_proc_macro_with_products`; do not pass `--no-link`/`--emit-object
 The product contains host/export metadata, not ordinary functions, HIR bodies or
 a dummy runtime object. Its SDK/std objects are not consumer dependencies.
 
-Artifact format 54 records the host/compiler/protocol and bounded SHA-256 content
+Artifact format 55 records the host/compiler/protocol and bounded SHA-256 content
 identities for the executable/required host files. Relative host paths are anchored
 to the artifact directory. Loading or `rockc --validate-artifact` checks metadata
 and files without running the worker; invocation checks them again before spawn.

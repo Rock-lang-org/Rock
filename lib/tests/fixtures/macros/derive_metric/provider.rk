@@ -2,7 +2,6 @@
 > rock_macro::construction::MacroBuilder
 > rock_syntax::derive_input::DeriveInput
 > rock_syntax::derive_input::DeriveKind
-> rock_syntax::derive_input::Variant
 > rock_syntax::types::GenericSyntax
 > rock_syntax::emission::ImplBuilder
 > rock_syntax::emission::OutputBuffer
@@ -23,34 +22,6 @@ captured = context, stream, range ->
         Result::Ok tokens => context.forward tokens
         Result::Err _ => context.output_error "invalid retained derive slice"
 
-variant_arm: &MacroContext -> &TokenStream -> ByteRange -> &Variant -> &mut MacroBuilder -> &TokenStream -> Result MacroOutput, Diagnostic
-variant_arm = context, stream, name_range, variant, names, helper_tokens ->
-    variant_name = captured context, stream, (variant.name.range.clone!) ?
-    enum_name = captured context, stream, name_range ?
-    pattern_parts = [enum_name, variant_name]
-    mut pattern = OutputBuffer::new!
-    pattern.append context, (context.quote "$0::$1", &pattern_parts ?) ?
-    total = context.syntax "0" ?
-    named = &variant.named_fields
-    count = if named.len! > 0 then named.len! else variant.types.len!
-    j = 0
-    while j < count
-        binding = match names.fresh_ident (String::from "value")
-            Result::Ok binding => binding
-            Result::Err _ => return context.output_error "invalid payload binding"
-        separator = if j == 0 then " " else ", "
-        pattern.append context, (context.syntax separator ?) ?
-        if named.len! > 0
-            label = captured context, stream, (named[j].name.range.clone!) ?
-            label_parts = [label]
-            pattern.append context, (context.quote "$0: ", &label_parts ?) ?
-        pattern.append context, (context.forward (binding.tokens.clone!) ?) ?
-        sum_parts = [total, context.forward (helper_tokens.clone!) ?, context.forward binding.tokens ?]
-        total = context.quote "~I64Add ($0), ($1 (&$2))", &sum_parts ?
-        j = j + 1
-    arm_parts = [pattern.output!, total]
-    context.quote "            $0 => $1\n", &arm_parts
-
 enum_definition: &MacroContext -> &DeriveInput -> &mut MacroBuilder -> &TokenStream -> Result MacroOutput, Diagnostic
 enum_definition = context, syntax, names, helper_tokens ->
     mut arms = OutputBuffer::new!
@@ -59,7 +30,32 @@ enum_definition = context, syntax, names, helper_tokens ->
     declaration_name = syntax.decl_name!
     i = 0
     while i < variants.len!
-        arm = variant_arm context, stream, (declaration_name.range.clone!), (&variants[i]), (&mut *names), helper_tokens ?
+        variant = &variants[i]
+        variant_name = captured context, stream, (variant.name.range.clone!) ?
+        enum_name = captured context, stream, (declaration_name.range.clone!) ?
+        pattern_parts = [enum_name, variant_name]
+        mut pattern = OutputBuffer::new!
+        pattern.append context, (context.quote "$0::$1", &pattern_parts ?) ?
+        total = context.syntax "0" ?
+        named = &variant.named_fields
+        count = if named.len! > 0 then named.len! else variant.types.len!
+        j = 0
+        while j < count
+            binding = match names.fresh_ident (String::from "value")
+                Result::Ok binding => binding
+                Result::Err _ => return context.output_error "invalid payload binding"
+            separator = if j == 0 then " " else ", "
+            pattern.append context, (context.syntax separator ?) ?
+            if named.len! > 0
+                label = captured context, stream, (named[j].name.range.clone!) ?
+                label_parts = [label]
+                pattern.append context, (context.quote "$0: ", &label_parts ?) ?
+            pattern.append context, (context.forward (binding.tokens.clone!) ?) ?
+            sum_parts = [total, context.forward (helper_tokens.clone!) ?, context.forward binding.tokens ?]
+            total = context.quote "~I64Add ($0), ($1 (&$2))", &sum_parts ?
+            j = j + 1
+        arm_parts = [pattern.output!, total]
+        arm = context.quote "            $0 => $1\n", &arm_parts ?
         arms.append context, arm ?
         i = i + 1
     match_parts = [arms.output!]

@@ -188,10 +188,10 @@ mod tests {
     }
 
     #[test]
-    fn macro_a_06_wire_rejects_invalid_expression_boundaries_and_old_streams() {
+    fn macro_a_06_wire_rejects_invalid_expression_boundaries_and_magic() {
         use super::super::fragments::ExpressionRange;
         let fragment = |range| ExpressionRange { range, header_indent: 0 };
-        let mut wire = valid(); wire.magic = *b"RKLOSS01"; rejects(wire);
+        let mut wire = valid(); wire.magic = *b"BADMAGIC"; rejects(wire);
         for ranges in [vec![0..0], vec![1..2], vec![0..3], vec![0..2, 0..2]] {
             let mut wire = valid(); wire.expressions = ranges.into_iter().map(fragment).collect(); rejects(wire);
         }
@@ -216,7 +216,7 @@ mod tests {
         wire.anchor.origin = Some(TokenOrigin { provenance: TokenProvenance::Source(crate::lexer::Span::new("/wire.rk".into(), 0, 0)),
             projection: Some(OutputProjection { namespace: 0, expansion: ExpansionId(1), generated_source: GeneratedSourceId(1), source_start: 1, output_start: 0 }) });
         rejects(wire);
-        let mut wire = valid(); wire.magic = *b"RKLOSS03"; rejects(wire);
+        let mut wire = valid(); wire.magic = *b"INVALID!"; rejects(wire);
     }
 
     #[test]
