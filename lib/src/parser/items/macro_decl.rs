@@ -63,15 +63,31 @@ pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
 }
 
 fn parse_macro_head_recursive(stream: Input<'_>) -> IResult<'_, Vec<MacroFragment>> {
-    let (defs, tokens) = parse_macro_head_recursive_inner(stream.tokens, stream)?;
+    let (defs, tokens) = parse_macro_head_recursive_inner(stream.tokens, stream, None)?;
 
     Ok((Input { tokens, ..stream }, defs))
 }
 
 fn parse_macro_block_recursive(stream: Input<'_>) -> IResult<'_, Vec<MacroFragment>> {
-    let (block, tokens) = parse_macro_block_recursive_inner(stream.tokens, stream)?;
+    let (block, tokens) = parse_macro_block_recursive_inner(stream.tokens, stream, None)?;
 
     Ok((Input { tokens, ..stream }, block))
+}
+
+/// A repetition opened by `$(` must be closed by `)*` before its matcher or
+/// template ends; a plain `)` is an ordinary token inside the repetition.
+fn unclosed_macro_repetition(open: &Token) -> ParseError {
+    ParseError::HardError(
+        "Unclosed macro repetition: expected `)*` to close this `$(`".to_string(),
+        open.span.clone(),
+    )
+}
+
+fn unexpected_macro_repetition_close(close: &Token) -> ParseError {
+    ParseError::HardError(
+        "Unexpected `)*` outside of a macro repetition".to_string(),
+        close.span.clone(),
+    )
 }
 
 fn incomplete_macro_head(message: &str, token: &Token) -> ParseError {
@@ -84,6 +100,7 @@ fn incomplete_macro_head(message: &str, token: &Token) -> ParseError {
 fn parse_macro_head_recursive_inner<'a>(
     tokens: &'a [Token],
     parse_ctx: ParseCtx,
+    repetition_open: Option<&Token>,
 ) -> Result<(Vec<MacroFragment>, &'a [Token]), ParseError> {
     let mut defs = Vec::new();
     let mut remaining_tokens = tokens;
@@ -158,16 +175,25 @@ fn parse_macro_head_recursive_inner<'a>(
                 continue;
             }
             TokenType::MacroRepeatOpen => {
-                let (inner_block, new_remaining_tokens) =
-                    parse_macro_head_recursive_inner(&remaining_tokens[1..], parse_ctx)?;
+                let (inner_block, new_remaining_tokens) = parse_macro_head_recursive_inner(
+                    &remaining_tokens[1..],
+                    parse_ctx,
+                    Some(token),
+                )?;
 
                 remaining_tokens = new_remaining_tokens;
                 defs.push(MacroFragment::Repetition(inner_block));
             }
             TokenType::MacroRepeatClose => {
+                if repetition_open.is_none() {
+                    return Err(unexpected_macro_repetition_close(token));
+                }
                 return Ok((defs, &remaining_tokens[1..]));
             }
             TokenType::FatArrow => {
+                if let Some(open) = repetition_open {
+                    return Err(unclosed_macro_repetition(open));
+                }
                 return Ok((defs, remaining_tokens));
             }
             _ => {
@@ -177,12 +203,17 @@ fn parse_macro_head_recursive_inner<'a>(
         }
     }
 
+    if let Some(open) = repetition_open {
+        return Err(unclosed_macro_repetition(open));
+    }
+
     Ok((defs, remaining_tokens))
 }
 
 fn parse_macro_block_recursive_inner<'a>(
     tokens: &'a [Token],
     parse_ctx: ParseCtx,
+    repetition_open: Option<&Token>,
 ) -> Result<(Vec<MacroFragment>, &'a [Token]), ParseError> {
     let mut block = Vec::new();
     let mut remaining_tokens = tokens;
@@ -198,13 +229,19 @@ fn parse_macro_block_recursive_inner<'a>(
                 remaining_tokens = &remaining_tokens[1..];
             }
             TokenType::MacroRepeatOpen => {
-                let (inner_block, new_remaining_tokens) =
-                    parse_macro_block_recursive_inner(&remaining_tokens[1..], parse_ctx)?;
+                let (inner_block, new_remaining_tokens) = parse_macro_block_recursive_inner(
+                    &remaining_tokens[1..],
+                    parse_ctx,
+                    Some(token),
+                )?;
 
                 remaining_tokens = new_remaining_tokens;
                 block.push(MacroFragment::Repetition(inner_block));
             }
             TokenType::MacroRepeatClose => {
+                if repetition_open.is_none() {
+                    return Err(unexpected_macro_repetition_close(token));
+                }
                 return Ok((block, &remaining_tokens[1..]));
             }
             _ => {
@@ -214,6 +251,9 @@ fn parse_macro_block_recursive_inner<'a>(
                 if let TokenType::Indent(level) = token.token_type {
                     if level == 0 || level == parse_ctx.indent_step as u8 {
                         // the definition is over
+                        if let Some(open) = repetition_open {
+                            return Err(unclosed_macro_repetition(open));
+                        }
                         return Ok((block, remaining_tokens));
                     }
                     if level % 2 != 0 {
@@ -232,6 +272,10 @@ fn parse_macro_block_recursive_inner<'a>(
                 remaining_tokens = &remaining_tokens[1..];
             }
         }
+    }
+
+    if let Some(open) = repetition_open {
+        return Err(unclosed_macro_repetition(open));
     }
 
     Ok((block, remaining_tokens))

@@ -901,12 +901,12 @@ macro outer
     #[test]
     fn declarative_repetition_expands_each_capture_group() {
         let input = r#"macro defs
-    $( $name:ident ) =>
-        $( $name = -> 1 )
+    $( $name:ident )* =>
+        $( $name = -> 1 )*
 %defs one two three"#;
         let expected = r#"macro defs
-    $( $name:ident ) =>
-        $( $name = -> 1 )
+    $( $name:ident )* =>
+        $( $name = -> 1 )*
 one = -> 1
 two = -> 1
 three = -> 1"#;
@@ -923,12 +923,12 @@ three = -> 1"#;
     #[test]
     fn declarative_repetition_can_use_direct_outer_capture() {
         let input = r#"macro defs
-    $ret:ident $( $name:ident ) =>
-        $( $name = -> $ret )
+    $ret:ident $( $name:ident )* =>
+        $( $name = -> $ret )*
 %defs value one two"#;
         let expected = r#"macro defs
-    $ret:ident $( $name:ident ) =>
-        $( $name = -> $ret )
+    $ret:ident $( $name:ident )* =>
+        $( $name = -> $ret )*
 one = -> value
 two = -> value"#;
         let config = test_config();
@@ -939,6 +939,77 @@ two = -> value"#;
         let expected = parse_string(expected, &config).unwrap();
 
         assert_program_semantically_eq(&expanded, &expected);
+    }
+
+    fn assert_expands_to(input: &str, expected: &str) {
+        let config = test_config();
+        let context = MacroExpansionContext::new(&config);
+
+        let expanded =
+            expand_macros_with_context(parse_string(input, &config).unwrap(), &context).unwrap();
+        let expected = parse_string(expected, &config).unwrap();
+
+        assert_program_semantically_eq(&expanded, &expected);
+    }
+
+    const INLINE_JOIN_MACRO: &str = r#"macro join
+    $name:ident $first:expr $( , $rest:expr )* =>
+        $name = -> ($first).show! $( .concat (($rest).show!) )*
+"#;
+
+    #[test]
+    fn inline_repetition_ending_with_paren_keeps_its_paren() {
+        assert_expands_to(
+            &format!("{INLINE_JOIN_MACRO}%join joined a, b, c"),
+            &format!(
+                "{INLINE_JOIN_MACRO}joined = -> (a).show! .concat ((b).show!) .concat ((c).show!)"
+            ),
+        );
+    }
+
+    #[test]
+    fn inline_repetition_with_one_copy_stays_on_its_line() {
+        assert_expands_to(
+            &format!("{INLINE_JOIN_MACRO}%join joined a, b"),
+            &format!("{INLINE_JOIN_MACRO}joined = -> (a).show! .concat ((b).show!)"),
+        );
+    }
+
+    #[test]
+    fn inline_repetition_with_no_copy_keeps_the_rest_of_its_line() {
+        assert_expands_to(
+            &format!("{INLINE_JOIN_MACRO}%join single a\n%join other b"),
+            &format!("{INLINE_JOIN_MACRO}single = -> (a).show!\nother = -> (b).show!"),
+        );
+    }
+
+    #[test]
+    fn whole_line_repetition_with_no_copy_keeps_following_lines() {
+        let declaration = r#"macro defs
+    $( $name:ident )* =>
+        $( $name = -> 1 )*
+        last = -> 2
+"#;
+        assert_expands_to(
+            &format!("{declaration}%defs"),
+            &format!("{declaration}last = -> 2"),
+        );
+        assert_expands_to(
+            &format!("{declaration}%defs one two"),
+            &format!("{declaration}one = -> 1\ntwo = -> 1\nlast = -> 2"),
+        );
+    }
+
+    #[test]
+    fn matcher_repetition_can_contain_parenthesized_tokens() {
+        let declaration = r#"macro defs
+    $( ( $name:ident ) )* =>
+        $( $name = -> 1 )*
+"#;
+        assert_expands_to(
+            &format!("{declaration}%defs (one) (two)"),
+            &format!("{declaration}one = -> 1\ntwo = -> 1"),
+        );
     }
 
     #[test]
