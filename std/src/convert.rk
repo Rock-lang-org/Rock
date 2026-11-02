@@ -5,6 +5,7 @@
 > std::ffi::libc::atol
 > std::ffi::libc::atof
 > std::string::owned::String
+> std::string::owned::format_i64
 
 < trait From T
     from: T -> Self
@@ -28,7 +29,7 @@ to_int: F64 -> I64
 
 // Convert integer to string, returns an owned String
 int_to_string: I64 -> String
-< int_to_string = x -> String::from x
+< int_to_string = x -> format_i64 x
 
 // Convert float to string, returns an owned String
 float_to_string: F64 -> String

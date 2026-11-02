@@ -13,12 +13,10 @@ main = !->
     low = 2
     high = 8
     inside = sum >= low && sum <= high
-    sum.println!
-    same.println!
-    inside.println!
+    %println sum, "\n", same, "\n", inside
 ```
 
-The inferred types of `sum`, `same`, and `inside` are `I64`, `Bool`, and `Bool`; the output is `5`, `true`, and `true`. Operand and operator constraints determine these types without local annotations. If no implementation matches the operand types, compilation fails instead of applying a hidden built-in conversion.
+The inferred types of `sum`, `same`, and `inside` are `I64`, `Bool`, and `Bool`; the output is `5`, `true`, and `true` on separate lines. Operand and operator constraints determine these types without local annotations. If no implementation matches the operand types, compilation fails instead of applying a hidden built-in conversion.
 
 ## Declaring Precedence and Defining a Function
 
@@ -74,12 +72,10 @@ main = !->
     borrowed = &number
     incremented = borrowed + 1
     even = borrowed % 2 == 0
-    incremented.println!
-    even.println!
-    number.println!
+    %println incremented, "\n", even, "\n", number
 ```
 
-The output is `5`, `true`, and `4`. Although `borrowed` has type `&I64`, method lookup can select the `I64` implementations of `+` and `%`. Those implementations use shared receivers (`@`) and read the integer through `self`, so the caller does not need to write `*borrowed`. The original integer remains available.
+The output is `5`, `true`, and `4` on separate lines. Although `borrowed` has type `&I64`, method lookup can select the `I64` implementations of `+` and `%`. Those implementations use shared receivers (`@`) and read the integer through `self`, so the caller does not need to write `*borrowed`. The original integer remains available.
 
 This also lets operator sections such as `(+ 1)` work as callbacks receiving `&I64`, as shown in the [collection transformations](../std/collections.md#consuming-and-borrowing-transformations). Receiver adjustment does not make references and values interchangeable in every argument position; the selected operator's signature still determines its requirements.
 
@@ -93,14 +89,13 @@ main = !->
     condition = true
     negative = -value
     opposite = !condition
-    negative.println!
-    opposite.println!
+    %println negative, "\n", opposite
     bits = 0 as U8
     inverted = !bits
     (inverted as I64).println!
 ```
 
-The output is `-7`, `false`, and `255`. Integer `!` flips every bit and preserves the operand's type; it is available for signed and unsigned 8-, 16-, 32-, and 64-bit integers. User-defined types can also implement the `Neg` and `Not` traits with `@-` and `@!` methods and an associated `Output` type.
+The output is `-7`, `false`, and `255` on separate lines. Integer `!` flips every bit and preserves the operand's type; it is available for signed and unsigned 8-, 16-, 32-, and 64-bit integers. User-defined types can also implement the `Neg` and `Not` traits with `@-` and `@!` methods and an associated `Output` type.
 
 ## Operator Sections
 

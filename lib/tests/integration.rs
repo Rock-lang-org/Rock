@@ -494,12 +494,51 @@ fn test_integer_arithmetic_families_all_widths() {
 }
 
 #[test]
+fn test_show_all_integer_widths_and_unit() {
+    let source = r#"
+main = !->
+    i8_zero = 0 as I8
+    i16_zero = 0 as I16
+    u16_zero = 0 as U16
+    u32_zero = 0 as U32
+    %println (i8_zero.min_value!), ",", (i8_zero.max_value!), ",", (i16_zero.min_value!), ",", (i16_zero.max_value!)
+    %println u16_zero, ",", (u16_zero.max_value!), ",", u32_zero, ",", (u32_zero.max_value!)
+    unit_value = ()
+    %println unit_value, ",", (Option::Some unit_value)
+    (%format "unit=", unit_value).println!
+"#;
+    for opt_level in [0, 3] {
+        assert_eq!(compile_and_run_at_opt(source, opt_level),
+            "-128,127,-32768,32767\n0,65535,0,4294967295\n(),Some(())\nunit=()\n");
+    }
+}
+
+#[test]
+fn test_u64_show_formats_full_range() {
+    let source = r#"
+main = !->
+    zero = 0 as U64
+    u64_max = zero.max_value!
+    signed_max = ((0 as I64).max_value!) as U64
+    above_signed_max = signed_max + (1 as U64)
+    %println zero, "\n", (9 as U64), "\n", (10 as U64), "\n", signed_max, "\n", above_signed_max, "\n", u64_max
+    u64_max.println!
+    u64_max.show!.println!
+    (%format "max=", u64_max).println!
+"#;
+    for opt_level in [0, 3] {
+        assert_eq!(compile_and_run_at_opt(source, opt_level),
+            "0\n9\n10\n9223372036854775807\n9223372036854775808\n18446744073709551615\n18446744073709551615\n18446744073709551615\nmax=18446744073709551615\n");
+    }
+}
+
+#[test]
 fn test_integer_minimum_formatting_never_negates_the_minimum() {
     let source = r#"
 main = !->
     smallest = (0 as I64).min_value!
     smallest.println!
-    (String::from smallest).println!
+    smallest.show!.println!
     ((0 as I64).max_value!).println!
     (-1).println!
     0.println!
@@ -8972,19 +9011,19 @@ main = !->
     text = String::from "hello"
     text.println!
     text.len!.println!
-    String::from 42 .println!
-    String::from (-7) .println!
-    String::from 0 .println!
+    42.show!.println!
+    (-7).show!.println!
+    0.show!.println!
     String::from 3.5 .println!
     String::from 'R' .println!
     String::from "" .len!.println!
     bytes = [82 as U8, 111 as U8, 99 as U8, 107 as U8]
     String::from (&bytes) .println!
     generic_text: String = convert "generic"
-    generic_number: String = convert 123
+    generic_number: String = convert 3.5
     generic_text.println!
     generic_number.println!
-    converted: String = 7.into!
+    converted: String = 'R'.into!
     converted.println!
     owned = String::from text
     owned.println!
@@ -8992,7 +9031,7 @@ main = !->
     );
     assert_eq!(
         output,
-        "hello\n5\n42\n-7\n0\n3.5\nR\n0\nRock\ngeneric\n123\n7\nhello\n"
+        "hello\n5\n42\n-7\n0\n3.5\nR\n0\nRock\ngeneric\n3.5\nR\nhello\n"
     );
 }
 
@@ -9005,6 +9044,13 @@ main = !->
 "#,
         "does not implement trait",
     );
+}
+
+#[test]
+fn test_std_string_from_rejects_integer_sources() {
+    for ty in ["I64", "U64"] {
+        compile_should_fail(&format!("main = !->\n    value = 1 as {ty}\n    String::from value .println!\n"), "does not implement trait");
+    }
 }
 
 #[test]

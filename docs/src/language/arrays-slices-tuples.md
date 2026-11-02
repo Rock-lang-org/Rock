@@ -16,8 +16,7 @@ An array literal infers one element type and one length. The following program c
 main = !->
     scores = [10, 20, 30, 40]
     labeled: [I64; 4] = [10, 20, 30, 40]
-    scores.println!
-    labeled.println!
+    %println scores, "\n", labeled
 ```
 
 The inferred type of `scores` is `[I64; 4]`: integer literals are inferred as `I64` here, and the literal has four elements. The result is:
@@ -61,11 +60,10 @@ main = !->
     before = values[1]
     values[1] = 99
     after = values[1]
-    before.println!
-    after.println!
+    %println before, "\n", after
 ```
 
-`before` and `after` are both inferred as `I64`; the output is `20` followed by `99`. The array remains owned by `values` before and after the indexing operations. An index below zero or at least the array length terminates the program with an `index out of bounds` message.
+`before` and `after` are both inferred as `I64`; the output is `20` followed by `99` on the next line. The array remains owned by `values` before and after the indexing operations. An index below zero or at least the array length terminates the program with an `index out of bounds` message.
 
 Nested arrays use the same rule at each position.
 
@@ -264,12 +262,10 @@ A tuple stores a fixed number of values in a fixed order. Its type records every
 ```rock
 main = !->
     entry = (7, true, "rock")
-    entry.0.println!
-    entry.1.println!
-    entry.2.println!
+    %println entry.0, "\n", entry.1, "\n", entry.2
 ```
 
-The annotation specifies component types `I64`, `Bool`, and `&Str`; the output is `7`, `true`, and `rock`. `.0`, `.1`, and `.2` are tuple projections, not array indexes, so their positions are checked statically.
+The component types are `I64`, `Bool`, and `&Str`; the output is `7`, `true`, and `rock` on separate lines. `.0`, `.1`, and `.2` are tuple projections, not array indexes, so their positions are checked statically.
 
 Functions can return tuples and callers can project the result.
 
@@ -279,11 +275,10 @@ swap = left, right -> (right, left)
 
 main = !->
     pair = swap 10, 20
-    pair.0.println!
-    pair.1.println!
+    %println pair.0, "\n", pair.1
 ```
 
-`swap` returns `(20, 10)`, so the output is `20` and `10`. A parenthesized expression such as `(7)` is grouping; a one-element tuple is not part of the current tuple syntax.
+`swap` returns `(20, 10)`, so the output is `20` and `10` on separate lines. A parenthesized expression such as `(7)` is grouping; a one-element tuple is not part of the current tuple syntax.
 
 ## Choosing a Type
 

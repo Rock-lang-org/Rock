@@ -21,6 +21,8 @@ The prelude does not turn a missing implementation into a compiler fallback: an 
 
 `Show` converts a value to an owned `String`, and `println!` writes that representation. Literal values have prelude implementations, so this complete program needs no imports.
 
+All signed and unsigned integer widths, both floating-point types, `Bool`, `Char`, `&Str`, and `()` implement `Show`. A unit value is formatted as `()`.
+
 ```rock
 main = !->
     42.println!
@@ -117,24 +119,20 @@ The output is `3000`. In `impl From Meters for Millimeters`, `Meters` is the inp
 
 This example assumes the scaled distance fits in `I64`. For a conversion that needs validation or can fail, use a function returning `Result` so callers can handle the error. Implementing `From` in one direction does not define the reverse conversion.
 
-The standard library uses the same trait to convert `&Str`, `&[U8]`, `I64`, `F64`, and `Char` values into owned strings. Each call below selects a different `From` implementation from its argument type:
+The standard library uses the same trait to convert `&Str`, `&[U8]`, `F64`, and `Char` values into owned strings. For integers, use `show!` to format a value as a string:
 
 ```rock
 main = !->
     from_text = String::from "hello"
-    from_integer = String::from 42
+    from_integer = 42.show!
     from_float = String::from 3.5
     from_character = String::from 'R'
     bytes = [82 as U8, 111 as U8, 99 as U8, 107 as U8]
     from_bytes = String::from (&bytes)
-    from_text.println!
-    from_integer.println!
-    from_float.println!
-    from_character.println!
-    from_bytes.println!
+    %println from_text, "\n", from_integer, "\n", from_float, "\n", from_character, "\n", from_bytes
 ```
 
-The output is `hello`, `42`, `3.5`, `R`, and `Rock`. Borrowed text and bytes are copied into the new string's owned storage.
+The output is `hello`, `42`, `3.5`, `R`, and `Rock` on separate lines. Borrowed text and bytes are copied into the new string's owned storage.
 
 ### Converting with `Into`
 
@@ -147,12 +145,12 @@ print_text: String -> ()
 print_text = text !-> text.println!
 
 main = !->
-    text: String = 42.into!
+    text: String = 3.5.into!
     text.println!
     print_text 'R'.into!
 ```
 
-The output is `42` and `R`. The `String` annotation on `text` selects the first conversion's destination; the `print_text` parameter supplies the destination for the second. `into!` takes its receiver by value, transferring ownership when the source is non-copyable. Prefer implementing `From` and using this automatic `Into` implementation rather than writing both yourself.
+The output is `3.5` and `R`. The `String` annotation on `text` selects the first conversion's destination; the `print_text` parameter supplies the destination for the second. `into!` takes its receiver by value, transferring ownership when the source is non-copyable. Prefer implementing `From` and using this automatic `Into` implementation rather than writing both yourself.
 
 ### Primitive casts
 

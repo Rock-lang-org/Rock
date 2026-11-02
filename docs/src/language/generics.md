@@ -51,8 +51,7 @@ main = !->
         first: 7
         second: true
     choice: Choice = Choice::Value 42
-    numbers.second.println!
-    mixed.second.println!
+    %println numbers.second, "\n", mixed.second
     match choice
         Choice::Empty => 0.println!
         Choice::Value value => value.println!
@@ -73,11 +72,10 @@ main = !->
         value: 7
     flag: Value = Value
         value: true
-    number.value.println!
-    flag.value.println!
+    %println number.value, "\n", flag.value
 ```
 
-The field establishes `Value I64` for `number`, despite the declaration's `Bool` default. In the annotation on `flag`, the omitted argument selects `Value Bool`. The output is `7` and `true`. Construction uses a default only when inference leaves that argument unconstrained; types determined by a generic function's parameters remain generic.
+The field establishes `Value I64` for `number`, despite the declaration's `Bool` default. In the annotation on `flag`, the omitted argument selects `Value Bool`. The output is `7` and `true` on separate lines. Construction uses a default only when inference leaves that argument unconstrained; types determined by a generic function's parameters remain generic.
 
 Trait defaults can also use `Self`. The standard equality trait declares its right-hand parameter as `{Rhs = Self}`, so `T: PartialEq` means `T: PartialEq T`. An explicit `T: PartialEq U` still describes cross-type equality. Braces here declare defaults; they are not named arguments or associated-type constraints. Function type parameters remain inferred rather than gaining a new declaration syntax.
 
@@ -92,11 +90,10 @@ identity = value -> value
 main = !->
     number = identity 42
     flag = identity true
-    number.println!
-    flag.println!
+    %println number, "\n", flag
 ```
 
-At the first call, inference chooses `T = I64`; at the second, it chooses `T = Bool`. The output is `42` and `true`. The signature says that the result has exactly the same type as the argument.
+At the first call, inference chooses `T = I64`; at the second, it chooses `T = Bool`. The output is `42` and `true` on separate lines. The signature says that the result has exactly the same type as the argument.
 
 ## Trait Bounds
 

@@ -169,8 +169,7 @@ mod geometry
 
 main = !->
     point = make_point 3, 4
-    point.x.println!
-    point.y.println!
+    %println point.x, "\n", point.y
     distance_squared point .println!
 ```
 

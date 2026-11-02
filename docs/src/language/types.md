@@ -21,20 +21,17 @@ This complete program gives each of the commonly encountered literal forms an ex
 ```rock
 main = !->
     signed: I64 = -5
-    unsigned: U64 = 255
+    unsigned: U64 = 255 as U64
     fraction: F64 = 3.5
     enabled: Bool = true
     letter: Char = 'R'
     text: &Str = "rock"
-    signed.println!
-    unsigned as I64 .println!
-    fraction.println!
-    enabled.println!
-    letter.println!
-    text.println!
+    %println signed, "\n", unsigned, "\n", fraction, "\n", enabled, "\n", letter, "\n", text
 ```
 
 Numeric literals receive an expected type from an annotation or a function signature. When no expected type is available, the compiler applies its numeric defaulting rules. Use fixed-width names in public signatures so callers do not have to guess.
+
+The explicit `as U64` cast also ensures that formatting resolves correctly when this example is compiled against a separately built standard library.
 
 Without an expected type, whole-number literals default to `I64` and decimal literals default to `F64`:
 
@@ -64,8 +61,7 @@ A string literal is borrowed string data with type `&Str`. `String` is a separat
 main = !->
     borrowed: &Str = "hello"
     owned = String::from borrowed
-    borrowed.println!
-    owned.println!
+    %println borrowed, "\n", owned
 ```
 
 The literal can be used while its source is available; `String::from` copies the UTF-8 bytes into owned storage. Lengths and range offsets count bytes, and slicing checks UTF-8 boundaries. `Char` represents one Unicode scalar; use `str_char_at` or `String::char_at` for scalar lookup. See [Strings and Collections](../std/collections.md) for complete examples.
@@ -78,8 +74,7 @@ Local annotations use a colon:
 main = !->
     enabled: Bool = true
     distance: F64 = 12.5
-    enabled.println!
-    distance.println!
+    %println enabled, "\n", distance
 ```
 
 Function signatures use arrows. The following declaration and definition agree on two `F64` parameters and an `F64` result:
@@ -129,8 +124,7 @@ main = !->
     doubled = apply value -> value * 2, 4
     pair.0.println!
     array[0].println!
-    shared_value.println!
-    doubled.println!
+    %println shared_value, "\n", doubled
 ```
 
 The tuple has two elements, the fixed array has four `I64` elements, and `Option` and `Result` are generic prelude enums. `[I64]` is an unsized slice type, so a borrowed slice is written `&[I64]`. `&T` and `&mut T` are shared and mutable references. `*I64` is a raw pointer type; the dereference and assignment in the example are inside `unsafe` because the compiler cannot prove a raw pointer's validity.

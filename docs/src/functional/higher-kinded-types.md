@@ -40,11 +40,10 @@ make_values = ->
 main = !->
     option_result = map_any increment, Option::Some 4
     vector_result = make_values!.fmap double
-    option_result.println!
-    vector_result.println!
+    %println option_result, "\n", vector_result
 ```
 
-At the first call, `F = Option`, `A = I64`, and `B = I64`; at the second, the receiver supplies `F = Vec`. The standalone `fmap mapper, value` and receiver form `value.fmap mapper` delegate to the same constructor's `Functor` implementation. The output is `Some(5)` and `[2, 4, 6]`. Both input carriers are consumed by their mapping operation.
+At the first call, `F = Option`, `A = I64`, and `B = I64`; at the second, the receiver supplies `F = Vec`. The standalone `fmap mapper, value` and receiver form `value.fmap mapper` delegate to the same constructor's `Functor` implementation. The output is `Some(5)` and `[2, 4, 6]` on separate lines. Both input carriers are consumed by their mapping operation.
 
 For `Result`, a function signature can fix the error type while the call still infers the constructor:
 
@@ -58,11 +57,10 @@ increment = value -> value + 1
 main = !->
     success = map_result increment, Result::Ok 4
     failure = map_result increment, Result::Err 9
-    success.println!
-    failure.println!
+    %println success, "\n", failure
 ```
 
-Here the inferred constructor is `Result _, I64`: the error type stays fixed while `fmap` changes the success payload. It has the required unary kind, while bare `Result` would still require two arguments. The output is `Ok(5)` and `Err(9)`. When explicit dispatch is useful, the same operation can be written `(Result _, I64)::Functor::fmap mapper, value`; that qualification is not required at ordinary call sites.
+Here the inferred constructor is `Result _, I64`: the error type stays fixed while `fmap` changes the success payload. It has the required unary kind, while bare `Result` would still require two arguments. The output is `Ok(5)` and `Err(9)` on separate lines. When explicit dispatch is useful, the same operation can be written `(Result _, I64)::Functor::fmap mapper, value`; that qualification is not required at ordinary call sites.
 
 ## Applicative Values
 
@@ -146,12 +144,10 @@ main = !->
     option_total = foldl fold_digits, 0, Option::Some 4
     vector_total = make_values!.foldl fold_digits, 0
     traversed = make_values!.traverse increment_effect
-    option_total.println!
-    vector_total.println!
-    traversed.println!
+    %println option_total, "\n", vector_total, "\n", traversed
 ```
 
-The fold over `Some 4` returns `4`; the vector fold computes `123`; and traversal produces `Some([2, 3, 4])`. The output is `4`, `123`, and `Some([2, 3, 4])`. `Vec` supplies `Functor`, `Foldable`, and `Traversable`; its traversal consumes the input vector while constructing a new vector. The standalone traversal spelling is `traverse increment_effect, make_values!`.
+The fold over `Some 4` returns `4`; the vector fold computes `123`; and traversal produces `Some([2, 3, 4])`. Those values appear on separate output lines. `Vec` supplies `Functor`, `Foldable`, and `Traversable`; its traversal consumes the input vector while constructing a new vector. The standalone traversal spelling is `traverse increment_effect, make_values!`.
 
 `traverse_m` uses monadic binding instead of applicative application and can stop as soon as an effect fails.
 

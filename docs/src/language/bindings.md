@@ -6,11 +6,10 @@ A binding gives a value a name. Rock does not use a `let` keyword; an assignment
 main = !->
     answer = 42
     name = "Ada"
-    answer.println!
-    name.println!
+    %println answer, "\n", name
 ```
 
-The compiler infers `answer` as `I64` and `name` as `&Str`. The names are available only after their declarations. The `println!` calls are evaluated for effects; `!->` discards the trailing value and makes `main` return unit (`()`), which maps to process exit status `0`.
+The compiler infers `answer` as `I64` and `name` as `&Str`. The names are available only after their declarations. `%println` joins its arguments and prints them, with `"\n"` separating `42` and `Ada` onto different lines; `!->` discards the trailing value and makes `main` return unit (`()`), which maps to process exit status `0`.
 
 ## Type annotations
 
@@ -21,9 +20,7 @@ main = !->
     answer: I64 = 42
     ratio: F64 = 0.75
     enabled: Bool = true
-    answer.println!
-    ratio.println!
-    enabled.println!
+    %println answer, "\n", ratio, "\n", enabled
 ```
 
 An annotation documents the intended type and gives inference an expected type. It is not a conversion: `0.75` already has a floating-point type in this example.
@@ -98,8 +95,7 @@ A pattern on the left can bind several parts of a tuple:
 main = !->
     pair = (10, "ten")
     (number, word) = pair
-    number.println!
-    word.println!
+    %println number, "\n", word
 ```
 
 `pair = (10, "ten")` creates the tuple. In `(number, word) = pair`, the pattern binds that tuple's first element to `number` and its second element to `word`. The pattern must have a shape compatible with the value.
@@ -129,8 +125,7 @@ main = !->
         x: 1
         y: 2
     point.x = 5
-    point.x.println!
-    point.y.println!
+    %println point.x, "\n", point.y
 ```
 
 The first assignment constructs `point`; `point.x = 5` updates its existing field. Indexing and mutable receiver calls use the same general idea of selecting a place, but their trait and receiver contracts can impose additional requirements.
