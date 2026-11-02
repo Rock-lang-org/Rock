@@ -14,21 +14,17 @@ main = !->
     name = "Rock"
     owned = describe name
     empty = String::new!
-    number = String::from 42
+    number = 42.show!
     copy = owned.clone!
     length = owned.len!
     view = owned.as_str!
     combined = owned.concat number
     message = "Hello, " + "Rock" + "!"
     empty.len!.println!
-    copy.println!
-    length.println!
-    view.println!
-    combined.println!
-    message.println!
+    %println copy, "\n", length, "\n", view, "\n", combined, "\n", message
 ```
 
-The output is `0`, `Rock`, `4`, `Rock`, `Rock42`, and `Hello, Rock!`. `String::from` converts through the `From` trait, while `String::new!` constructs an empty string; `len!` reads a byte count and `as_str!` borrows a string view. `clone!` makes a second owner. `owned.concat number` borrows its receiver `owned`, consumes the argument `number`, and returns a new owner. Because `owned` remains alive, `view` can still be printed after concatenation. The `+` implementations cover `String` and `&Str` combinations and also return a new `String`.
+The output is `0`, `Rock`, `4`, `Rock`, `Rock42`, and `Hello, Rock!` on separate lines. `String::from` converts through the `From` trait, while `String::new!` constructs an empty string; `len!` reads a byte count and `as_str!` borrows a string view. `clone!` makes a second owner. `owned.concat number` borrows its receiver `owned`, consumes the argument `number`, and returns a new owner. Because `owned` remains alive, `view` can still be printed after concatenation. The `+` implementations cover `String` and `&Str` combinations and also return a new `String`.
 
 Both string types contain valid UTF-8. `Char` is a 32-bit Unicode scalar value, and converting it to `String` encodes one to four UTF-8 bytes. Lengths and search offsets count bytes, not Unicode scalars or displayed characters. Strings can contain embedded NUL bytes; their stored length includes these bytes, and `println!` prints the whole string. C functions that consume null-terminated strings still stop at the first NUL.
 
@@ -118,12 +114,11 @@ main = !->
     text = String::from "aé🦀"
     for_each text.chars!, (!.println!)
     for (offset, ch) in text.char_indices!
-        offset.println!
-        ch.println!
+        %println offset, "\n", ch
     text.println!
 ```
 
-The first traversal prints `a`, `é`, and `🦀`. The second prints offsets `0`, `1`, and `3`, each followed by its character. The final line prints `aé🦀`: traversal borrowed the owner rather than consuming it. Keep the owner alive while a cursor exists.
+The first traversal prints `a`, `é`, and `🦀` on separate lines. The second prints offsets `0`, `1`, and `3`, each followed by its character on the next line. The final line prints `aé🦀`: traversal borrowed the owner rather than consuming it. Keep the owner alive while a cursor exists.
 
 Each call creates a fresh cursor. Advancing through the entire text takes linear time in its byte length, and `break` stops decoding immediately. To advance manually, use `next!` on a mutable cursor; it returns `Option Char` or `Option (I64, Char)` and remains exhausted after reaching the end:
 
@@ -172,14 +167,12 @@ main = !->
     bytes = [114, 111, 99, 107]
     middle = byte_substr &bytes, 1, 2
     second = byte_at &bytes, 1
-    length.println!
-    offset.println!
-    contains.println!
+    %println length, "\n", offset, "\n", contains
     middle.len!.println!
     second as I64 .println!
 ```
 
-The output is `4`, `1`, `1`, `2`, and `111`. `string_find` returns a byte offset or `-1`; `string_contains` returns `1` or `0`; `byte_substr` returns an owned `Vec U8`; and `byte_at` reads one byte from a byte slice. Both byte helpers check bounds and terminate on an invalid index or range. They operate on arbitrary bytes and do not enforce Unicode boundaries.
+The output is `4`, `1`, `1`, `2`, and `111` on separate lines. `string_find` returns a byte offset or `-1`; `string_contains` returns `1` or `0`; `byte_substr` returns an owned `Vec U8`; and `byte_at` reads one byte from a byte slice. Both byte helpers check bounds and terminate on an invalid index or range. They operate on arbitrary bytes and do not enforce Unicode boundaries.
 
 ## `Vec T`
 
@@ -252,15 +245,11 @@ main = !->
         then Result::Ok value
         else Result::Err 1
 
-    mapped.println!
-    references.println!
-    filtered.println!
-    retained_source.println!
-    positives.println!
+    %println mapped, "\n", references, "\n", filtered, "\n", retained_source, "\n", positives
     checked.unwrap_or Vec::new! .println!
 ```
 
-The first `map` moves `source`, while `map_ref` leaves `borrowed_source` available after the callback. The output is `4`, `5`, `[2, 3, 4]`, `[5, 6]`, `[2]`, `[2]`, `[2, 3]`, and `[4, 5]`; the first two lines come from `for_each`. `try_map` returns `Ok` here. If a callback returns `Err 1`, later source elements are not mapped and the original source is consumed.
+The first `map` moves `source`, while `map_ref` leaves `borrowed_source` available after the callback. The output is `4`, `5`, `[2, 3, 4]`, `[5, 6]`, `[2]`, `[2]`, `[2, 3]`, and `[4, 5]` on separate lines; the first two lines come from `for_each`. `try_map` returns `Ok` here. If a callback returns `Err 1`, later source elements are not mapped and the original source is consumed.
 
 `map_ref` and `retain` pass shared references to their callbacks. Their operator sections still work: `(+ 1)` means `value -> value + 1`, and `(% 2 == 0)` means `value -> value % 2 == 0`. The integer `+` and `%` implementations use shared receivers, and method lookup adjusts the borrowed left operand to select them. No explicit `*value` is needed; the parameter remains `&I64`. See [operators on borrowed values](../language/operators.md#operators-on-borrowed-values).
 
@@ -308,12 +297,11 @@ main = !->
     mutable_view = boxed.as_mut!
     mutable_view.x = 5
     view = boxed.as_ref!
-    view.x.println!
-    view.y.println!
+    %println view.x, "\n", view.y
     (*boxed).x.println!
 ```
 
-The output is `5`, `4`, and `5`. `point` is moved into `boxed`; `as_mut!` changes the owned value through an exclusive borrow, `as_ref!` creates a shared view, and `*boxed` uses `Deref`. The box drops its value and allocation when `boxed` leaves scope.
+The output is `5`, `4`, and `5` on separate lines. `point` is moved into `boxed`; `as_mut!` changes the owned value through an exclusive borrow, `as_ref!` creates a shared view, and `*boxed` uses `Deref`. The box drops its value and allocation when `boxed` leaves scope.
 
 ## Querying a value's size
 
@@ -329,11 +317,10 @@ main = !->
         x: 3
         y: 4
     (sizeof &point).println!
-    point.x.println!
-    point.y.println!
+    %println point.x, "\n", point.y
 ```
 
-On a 64-bit target, the output is `16`, `3`, and `4`. The shared borrow leaves `point` available for later use. `sizeof` measures the value's representation, not any separately allocated memory it owns; for example, measuring a vector does not include its element buffer.
+On a 64-bit target, the output is `16`, `3`, and `4` on separate lines. The shared borrow leaves `point` available for later use. `sizeof` measures the value's representation, not any separately allocated memory it owns; for example, measuring a vector does not include its element buffer.
 
 When allocating storage before a value exists, use `sizeof_pointee` with a typed raw pointer. The pointer supplies the type; the function does not read memory, so a null pointer is sufficient:
 

@@ -10,8 +10,7 @@ The compiler knows that primitive values such as `I64` and `Bool` can be copied.
 main = !->
     first = 42
     second = first
-    first.println!
-    second.println!
+    %println first, "\n", second
 ```
 
 Both bindings contain `42`, and the output is two lines containing `42`. `first` and `second` do not share an owned allocation.
@@ -47,11 +46,10 @@ measure = text -> text.len!
 main = !->
     name = String::from "Rock"
     length = measure &name
-    length.println!
-    name.println!
+    %println length, "\n", name
 ```
 
-Before the call, `name` owns the allocation. `&name` creates a shared borrow, and `measure` reads through it. After the borrow's last use, `name` is still the owner and can be printed. The output is `4` and `Rock`.
+Before the call, `name` owns the allocation. `&name` creates a shared borrow, and `measure` reads through it. After the borrow's last use, `name` is still the owner and can be printed. The output is `4` and `Rock` on separate lines.
 
 Use a borrowed parameter when the operation only observes data. Use a by-value parameter when the operation must forward or consume the resource.
 
@@ -116,8 +114,7 @@ main = !->
 main = !->
     first = String::from "owned"
     second = first.clone!
-    first.println!
-    second.println!
+    %println first, "\n", second
 ```
 
 `first.clone!` borrows `first`, allocates a second string, and returns it. Both bindings remain usable, so the output contains `owned` twice. Clone only when two owners are actually required; a shared borrow is cheaper when the second owner is unnecessary.

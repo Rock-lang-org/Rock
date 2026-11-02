@@ -146,11 +146,10 @@ macro join
 main = !->
     name = String::from "rock"
     greeting = %join "Hello ", name, ", you are ", 42
-    greeting.println!
-    name.println!
+    %println greeting, "\n", name
 ```
 
-The program prints `Hello rock, you are 42` and then `rock`. `show` borrows its receiver, so `name` is still usable after the call.
+The program prints `Hello rock, you are 42` and then `rock` on the next line. `show` borrows its receiver, so `name` is still usable after the call.
 
 In an expression, a macro call takes every token up to the end of its line, commas included. To use the result in a larger expression, wrap the call in parentheses: `(%join "a", 1).concat (%join "b", 2)` evaluates both calls and joins them into `a1b2`. The expansion itself is treated as parenthesized, so it never mixes with the operators around the call. A template that produces something other than one expression, such as an assignment, is reported at the call site.
 

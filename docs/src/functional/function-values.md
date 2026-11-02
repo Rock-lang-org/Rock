@@ -84,8 +84,7 @@ main = !->
         calls = calls + 1
         value + calls
     first = apply_mut callback, 10
-    first.println!
-    calls.println!
+    %println first, "\n", calls
 ```
 
 The callback's capture is mutable, so `apply_mut` calls it through `FnMut`. Its `mut function` parameter permits that mutable borrow. The outputs are `11` and `1`. The invocation itself borrows the callback, but passing the callback into `apply_mut` transfers ownership of this non-copy value.
@@ -125,8 +124,7 @@ main = !->
     answer = add_ends 2
     fill_middle = combine _, 5, _
     second_answer = fill_middle 1, 9
-    answer.println!
-    second_answer.println!
+    %println answer, "\n", second_answer
 ```
 
 `combine 10, _, 30` creates `middle -> 10 + middle + 30`, so `answer` is `42`. `combine _, 5, _` creates a two-argument function, so `second_answer` is `15`. Use a named lambda when the hole order would obscure ownership or evaluation order.
@@ -143,11 +141,10 @@ main = !->
     increment = add 1
     first = increment 2
     second = add 1, 2
-    first.println!
-    second.println!
+    %println first, "\n", second
 ```
 
-`add 1` owns the captured `left = 1` in the returned function; `increment 2` supplies the remaining argument and returns `3`. The direct two-argument call also returns `3`, so the output is `3` and `3`.
+`add 1` owns the captured `left = 1` in the returned function; `increment 2` supplies the remaining argument and returns `3`. The direct two-argument call also returns `3`, so the output is `3` and `3` on separate lines.
 
 ## Operator Sections
 
@@ -181,11 +178,10 @@ main = !->
     get = counter.get
     first = get!
     second = counter.get!
-    first.println!
-    second.println!
+    %println first, "\n", second
 ```
 
-`get` is a callable value with a shared receiver. Both calls return `21`, and the output is `21` and `21`; the receiver remains available because `get` is shared. A mutable or consuming method value carries the corresponding borrow or move restriction.
+`get` is a callable value with a shared receiver. Both calls return `21`, and the output is `21` on each of two lines; the receiver remains available because `get` is shared. A mutable or consuming method value carries the corresponding borrow or move restriction.
 
 ## Current Limits
 

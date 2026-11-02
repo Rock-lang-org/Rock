@@ -14,12 +14,10 @@ main = !->
     name = String::from "Rock"
     first = length &name
     second = length &name
-    first.println!
-    second.println!
-    name.println!
+    %println first, "\n", second, "\n", name
 ```
 
-Before either call, `name` owns the allocation. Each `&name` creates a shared view for one call and `length` only reads it. After both calls, `name` is still available; the output is `4`, `4`, and `Rock`.
+Before either call, `name` owns the allocation. Each `&name` creates a shared view for one call and `length` only reads it. After both calls, `name` is still available; the output is `4`, `4`, and `Rock` on separate lines.
 
 A shared reference can be copied as a reference, but every alias keeps the borrow live until its last use.
 
@@ -144,11 +142,10 @@ main = !->
     value = Option::Some String::from "hello"
     first = show_option &value
     second = show_option &value
-    first.println!
-    second.println!
+    %println first, "\n", second
 ```
 
-The output is `5` and `5`. In each `Some` arm, `text` is a shared reference to the payload, so the `String` remains owned by `value`.
+The output is `5` on each of two lines. In each `Some` arm, `text` is a shared reference to the payload, so the `String` remains owned by `value`.
 
 ## Receiver Modes
 

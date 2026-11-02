@@ -231,8 +231,7 @@ main = !->
     original = Label
         text: String::from "Rock"
     copy = original.clone!
-    original.println!
-    copy.println!
+    %println original, "\n", copy
 ```
 
 The output is `Rock` twice. Cloning the `String` gives each `Label` its own allocation, while `Show` borrows the receiver. Other focused standard traits follow the same selection model: [Arrays, Slices, and Tuples](arrays-slices-tuples.md) demonstrates `Index` and `IndexMut`, and [Functions as Values](../functional/function-values.md) demonstrates `Fn`, `FnMut`, and `FnOnce` with complete callbacks. Keep a trait small; combine bounds only when one operation genuinely needs several capabilities.

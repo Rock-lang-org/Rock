@@ -4,6 +4,7 @@
 > std::convert::int_to_string
 > std::convert::float_to_string
 > std::string::owned::String
+> std::string::owned::format_u64
 > std::clone::Clone
 
 show_println_string: String -> I32
@@ -24,6 +25,21 @@ impl Show for I32
         value = *self as I64
         int_to_string value
 
+impl Show for I16
+    @show = -> int_to_string (*self as I64)
+
+impl Show for I8
+    @show = -> int_to_string (*self as I64)
+
+impl Show for U64
+    @show = -> format_u64 *self
+
+impl Show for U32
+    @show = -> int_to_string (*self as I64)
+
+impl Show for U16
+    @show = -> int_to_string (*self as I64)
+
 impl Show for U8
     @show = ->
         value = *self as I64
@@ -43,6 +59,9 @@ impl Show for Bool
             String::from "true"
         else
             String::from "false"
+
+impl Show for ()
+    @show = -> String::from "()"
 
 impl Show for String
     @show = -> self.clone!

@@ -119,15 +119,7 @@ main = !->
     values: [I64; 3] = [1, 2, 3]
     repeated: [I64; 3] = [7; 3]
     pair: (I64, &Str) = (1, "one")
-    count.println!
-    ratio.println!
-    enabled.println!
-    initial.println!
-    greeting.println!
-    values.println!
-    repeated.println!
-    pair.0.println!
-    pair.1.println!
+    %println count, "\n", ratio, "\n", enabled, "\n", initial, "\n", greeting, "\n", values, "\n", repeated, "\n", pair.0, "\n", pair.1
 ```
 
 Strings and characters are byte-oriented in the current implementation. Use
@@ -296,8 +288,7 @@ main = !->
     counter.add 3
     current: I64 = counter.read!
     total: I64 = counter.finish!
-    current.println!
-    total.println!
+    %println current, "\n", total
 ```
 
 `@read` observes, `^@add` mutates, and `~@finish` consumes. A consuming call
@@ -442,8 +433,7 @@ label = message ->
 main = !->
     first: &Str = label Message::Quit
     second: &Str = label Message::Number 4
-    first.println!
-    second.println!
+    %println first, "\n", second
 ```
 
 An arm guard runs only after its structural pattern matches. The current
@@ -533,11 +523,11 @@ double = value -> value * 2
 
 main = !->
     value: I64 = 7 |> double
-    text: String = String::from value
+    text: String = value.show!
     text.println!
 ```
 
-`7 |> double` produces `14`, `String::from value` creates the text `14`,
+`7 |> double` produces `14`, `value.show!` creates the text `14`,
 and `text.println!` prints it. The standard library supplies common arithmetic
 and comparison meanings, but the compiler does not assign a meaning to an
 operator spelling by itself.

@@ -70,14 +70,14 @@ main = !->
 ```rock
 main = !->
     some = Option::Some 5
-    text = String::from 42
+    text = String::from "42"
     some_text = match some
         Option::Some value => text
         Option::None => String::from "missing"
     some_text.println!
 ```
 
-`Option::Some` constructs a prelude enum variant, and `String::from` constructs an owned string through the `From` trait's associated function. A method would instead use a receiver and dot syntax, as `some_text.println!` does.
+`Option::Some` constructs a prelude enum variant, and `String::from` constructs an owned string through the `From` trait's associated function. A method instead uses a receiver and dot syntax, as `some_text.println!` does.
 
 ## Receiver contracts
 
@@ -101,8 +101,7 @@ main = !->
     current = counter.read!
     counter.add 3
     total = counter.finish!
-    current.println!
-    total.println!
+    %println current, "\n", total
 ```
 
 The first call borrows `counter` shared. The second needs a mutable receiver, so the binding is marked `mut`. The final call consumes `counter`; after it returns, that value is no longer available for another use. The markers are part of the method's type-level contract, not decoration.

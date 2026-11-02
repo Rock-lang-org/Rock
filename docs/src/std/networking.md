@@ -15,13 +15,10 @@ main = !->
     address: SocketAddrV4 = SocketAddrV4::new loopback, 8080
     local: SocketAddrV4 = SocketAddrV4::localhost 9000
     wildcard: SocketAddrV4 = SocketAddrV4::any 7000
-    address.ip.a.println!
-    address.port.println!
-    local.ip.d.println!
-    wildcard.ip.a.println!
+    %println address.ip.a, "\n", address.port, "\n", local.ip.d, "\n", wildcard.ip.a
 ```
 
-The output is `127`, `8080`, `1`, and `0`. Ports are checked to fit the valid range `0..=65535` when a listener or stream is created. A port of `0` asks the operating system to select an available port for a listener.
+The output is `127`, `8080`, `1`, and `0` on separate lines. Ports are checked to fit the valid range `0..=65535` when a listener or stream is created. A port of `0` asks the operating system to select an available port for a listener.
 
 ## Connecting
 
@@ -103,8 +100,7 @@ roundtrip = ->
             return failure
         total = total + count
     server.shutdown!?
-    written.println!
-    total.println!
+    %println written, "\n", total
     received[0] as I64 .println!
     received[3] as I64 .println!
     Result::Ok 0
@@ -115,7 +111,7 @@ main = ->
         Result::Err _ => 1
 ```
 
-On success, the output is `4`, `4`, `112`, and `103`, corresponding to `ping`. `write_all` sends the four-byte prefix, while each `recv` fills only the still-empty suffix of the destination. The loop handles arbitrary short reads. This example uses `InvalidInput` to report an early end of stream because the current `IoError` has no dedicated unexpected-EOF variant.
+On success, the output is `4`, `4`, `112`, and `103` on separate lines. The byte values `112` and `103` are the first and last characters of `ping`. `write_all` sends the four-byte prefix, while each `recv` fills only the still-empty suffix of the destination. The loop handles arbitrary short reads. This example uses `InvalidInput` to report an early end of stream because the current `IoError` has no dedicated unexpected-EOF variant.
 
 `shutdown_write!` prevents further client writes while permitting reads; it also lets the peer observe end of stream after draining the sent bytes. `shutdown!` disables both directions. Neither operation releases descriptor ownership: the stream's `Drop` still closes the descriptor. Both shutdown calls return `Result (), IoError`, so their errors are propagated here.
 

@@ -91,46 +91,63 @@ impl String
             raw: raw
             raw_len: len
 
-impl From I64 for String
-    from = x ->
-        raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, 21
-        mut buf = raw.ptr!
-        is_neg = x < 0
-        // Keep the magnitude negative: MIN has no positive I64 counterpart.
-        n = if is_neg then x else 0 - x
+// Decimal formatting helpers used by Show and the integer conversion function.
+format_i64: I64 -> String
+< format_i64 = x ->
+    mut buf: [U8; 20] = [0 as U8; 20]
+    is_neg = x < 0
+    // Keep the magnitude negative: MIN has no positive I64 counterpart.
+    n = if is_neg then x else 0 - x
 
-        digits = 1
-        temp = n
-        while temp <= -10
-            temp = temp / 10
-            digits = digits + 1
+    digits = 1
+    temp = n
+    while temp <= -10
+        temp = temp / 10
+        digits = digits + 1
 
-        len = digits
-        if is_neg
-            len = len + 1
+    len = digits
+    if is_neg
+        len = len + 1
 
-        divisor = 1
-        i = 1
-        while i < digits
-            divisor = divisor * 10
-            i = i + 1
+    divisor = 1
+    i = 1
+    while i < digits
+        divisor = divisor * 10
+        i = i + 1
 
-        out = 0
-        if is_neg
-            unsafe *buf = 45
-            out = 1
+    out = 0
+    if is_neg
+        buf[0] = 45 as U8
+        out = 1
 
-        while divisor > 0
-            digit = 0 - (n / divisor)
-            unsafe buf[out] = (digit + 48) as U8
-            n = n % divisor
-            divisor = divisor / 10
-            out = out + 1
+    while divisor > 0
+        digit = 0 - (n / divisor)
+        buf[out] = (digit + 48) as U8
+        n = n % divisor
+        divisor = divisor / 10
+        out = out + 1
 
-        unsafe buf[len] = 0
-        String
-            raw: raw
-            raw_len: len
+    String::from (&buf[..len])
+
+format_u64: U64 -> String
+< format_u64 = x ->
+    mut buf: [U8; 20] = [0 as U8; 20]
+    ten = 10 as U64
+    temp = x
+    digits = 1
+    while temp >= ten
+        temp = temp / ten
+        digits = digits + 1
+
+    n = x
+    i = digits
+    while i > 0
+        i = i - 1
+        digit = (n % ten) as I64
+        buf[i] = (digit + 48) as U8
+        n = n / ten
+
+    String::from (&buf[..digits])
 
 impl From F64 for String
     from = x ->

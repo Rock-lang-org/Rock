@@ -35,8 +35,7 @@ main = !->
     origin = Point
         x: 0
         y: 0
-    origin.x.println!
-    origin.y.println!
+    %println origin.x, "\n", origin.y
 ```
 
 The field labels are part of the constructor syntax. Rock checks that every required field is present and that each expression has the declared type. Initialize every field explicitly; default field expressions are not reliably preserved by the current semantic pipeline.
@@ -52,8 +51,7 @@ main = !->
     entry = Pair
         first: "answer"
         second: 42
-    entry.first.println!
-    entry.second.println!
+    %println entry.first, "\n", entry.second
 ```
 
 Here the compiler infers `A` as `&Str` and `B` as `I64` from the two field values.
@@ -73,11 +71,10 @@ main = !->
         y: 3
     horizontal = point.x
     point.x = 8
-    horizontal.println!
-    point.x.println!
+    %println horizontal, "\n", point.x
 ```
 
-`horizontal` keeps the value read before the update, so the output is `2` followed by `8`. Whether a field read copies, borrows, or moves depends on the field type and the surrounding ownership context.
+`horizontal` keeps the value read before the update, so the output is `2` followed by `8` on the next line. Whether a field read copies, borrows, or moves depends on the field type and the surrounding ownership context.
 
 ## Adding behavior
 
