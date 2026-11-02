@@ -7,6 +7,9 @@ use crate::lexer::Span;
 use crate::parser::{self, ParseError};
 use crate::Config;
 
+mod diagnostics;
+pub use diagnostics::source_load_errors_to_diagnostics;
+
 /// Expands the macros of one loaded file module. The loader applies it before
 /// loading the module's own `mod` children, so generated `mod` items load too.
 pub type ModuleExpander<'a> = dyn FnMut(ast::Module) -> Result<ast::Module, Diagnostics> + 'a;

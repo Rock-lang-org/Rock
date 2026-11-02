@@ -420,7 +420,7 @@ fn product_backend_symbols_are_link_record_owned() {
         ],
     );
     assert_production_file_absent(
-        "lib.rs",
+        "pipeline/backend.rs",
         &[
             "identity_table.backend_symbols",
             "product_id_for_exported_backend_symbol",
@@ -1536,7 +1536,7 @@ fn runtime_requirements_are_derived_from_mir_and_consumed_by_codegen() {
 
 #[test]
 fn instance_body_backend_boundary_is_mir_native() {
-    let pipeline = production_source("lib.rs");
+    let pipeline = production_source("pipeline/backend.rs");
     assert_present(
         &pipeline,
         &[

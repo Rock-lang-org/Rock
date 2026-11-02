@@ -631,7 +631,7 @@ fn load_program_with_source_database(
     }
     let graph = source_db
         .load_entry(rockc_config.entry_file.clone(), rockc_config)
-        .map_err(rock_lib::source_load_errors_to_diagnostics)?;
+        .map_err(rock_lib::source_loader::source_load_errors_to_diagnostics)?;
     Ok((
         Program {
             module: graph.root_module().clone(),

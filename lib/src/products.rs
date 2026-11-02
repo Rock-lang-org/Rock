@@ -21,6 +21,9 @@ use crate::language_items::{
 };
 use crate::types::{GenericParamDecl, Type};
 
+pub(crate) mod fingerprint;
+pub(crate) mod identity;
+pub(crate) mod link;
 mod type_table;
 
 pub use crate::infer::constants::{ArithmeticSummary, ArithmeticType};

@@ -582,18 +582,18 @@ impl TypeLowerer {
             .collect();
 
         let base = match inner.name.as_str() {
-            "I8" | "i8" => Type::I8,
-            "I16" | "i16" => Type::I16,
-            "I32" | "i32" | "Int" => Type::I32,
-            "I64" | "i64" => Type::I64,
-            "U8" | "u8" => Type::U8,
-            "U16" | "u16" => Type::U16,
-            "U32" | "u32" => Type::U32,
-            "U64" | "u64" => Type::U64,
-            "F32" | "f32" => Type::F32,
-            "F64" | "f64" | "Float" => Type::F64,
-            "Bool" | "bool" => Type::Bool,
-            "Char" | "char" => Type::Char,
+            "I8" => Type::I8,
+            "I16" => Type::I16,
+            "I32" | "Int" => Type::I32,
+            "I64" => Type::I64,
+            "U8" => Type::U8,
+            "U16" => Type::U16,
+            "U32" => Type::U32,
+            "U64" => Type::U64,
+            "F32" => Type::F32,
+            "F64" | "Float" => Type::F64,
+            "Bool" => Type::Bool,
+            "Char" => Type::Char,
             "Str" => {
                 if !allow_bare_slice {
                     context.push_type_error(

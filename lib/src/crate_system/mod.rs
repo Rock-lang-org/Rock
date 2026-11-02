@@ -1,6 +1,7 @@
 //! Crate system for external crate loading and package management.
 
 mod context;
+mod extern_artifacts;
 mod extern_store;
 mod manifest;
 mod module_tree;
@@ -13,6 +14,8 @@ use std::collections::BTreeMap;
 use crate::products::ProductCrateIdentity;
 
 pub use rock_shared::manifest::{CrateConfig, CrateManifest, CrateTarget, Dependency};
+
+pub(crate) use extern_artifacts::{load_extern_artifacts, validate_extern_artifact_names};
 
 #[allow(unused_imports)]
 pub(crate) use extern_store::{
