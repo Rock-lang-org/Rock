@@ -18,6 +18,7 @@ use self::{
 mod context;
 mod correspondances;
 pub mod declarative;
+pub mod exports;
 mod expression;
 pub mod generated_parser;
 mod macro_arg_matcher;
@@ -42,11 +43,7 @@ pub fn expand_macros_with_context(
     while module.has_macro_invoc() {
         let mut decls = HashMap::new();
         let mut proc_macros = HashMap::new();
-        let mut registry = registry::MacroRegistry::from_module(&module);
-
-        for artifact in &context.proc_macro_artifacts {
-            registry.add_proc_macro_artifact(artifact.clone());
-        }
+        let registry = module_registry(&module, context);
 
         for (i, top_level) in module.top_levels.iter().enumerate() {
             if let TopLevel::MacroInvoc(invocation) = &top_level {
@@ -92,15 +89,45 @@ pub fn expand_macros_with_context(
         }
     }
 
-    let mut registry = registry::MacroRegistry::from_module(&module);
-    for artifact in &context.proc_macro_artifacts {
-        registry.add_proc_macro_artifact(artifact.clone());
-    }
+    let registry = module_registry(&module, context);
     expression::expand_module_expressions(&mut module, &registry, context)?;
 
     program.module = expand_inline_modules(module, context)?;
 
     Ok(program)
+}
+
+/// Macros visible in `module`, from lowest to highest priority: std prelude
+/// macros, dependency macros imported by name with `>`, and the module's own
+/// macros.
+fn module_registry(
+    module: &Module,
+    context: &MacroExpansionContext<'_>,
+) -> registry::MacroRegistry {
+    let mut registry = registry::MacroRegistry::new();
+
+    for (alias, decl) in &context.prelude_macros {
+        registry.insert_declaration(alias.clone(), decl.clone());
+    }
+
+    for top_level in &module.top_levels {
+        if let TopLevel::Import(path) = top_level {
+            let segments = exports::path_segments(path);
+            if let (Some(decl), Some(name)) = (
+                context.dependency_macros.get(&segments.join("::")),
+                segments.last(),
+            ) {
+                registry.insert_declaration(name.clone(), decl.clone());
+            }
+        }
+    }
+
+    registry.add_module_declarations(module);
+    for artifact in &context.proc_macro_artifacts {
+        registry.add_proc_macro_artifact(artifact.clone());
+    }
+
+    registry
 }
 
 /// Expands each inline `mod name` block with the macros declared inside it.

@@ -13,6 +13,7 @@ use crate::hir::{
 };
 use crate::ids::{CrateId, DefId};
 use crate::macro_expansion::proc_macro::ProcMacroArtifact;
+use crate::products::ProductMacroExport;
 use crate::types::Type;
 
 use super::{CrateManifest, ModuleTree};
@@ -65,6 +66,8 @@ pub(crate) struct ExternCrateMetadata {
     resolver: ResolverTables,
     prelude_export_ids: BTreeMap<String, ArtifactExport>,
     proc_macros: Vec<ProcMacroArtifact>,
+    macros: Vec<ProductMacroExport>,
+    prelude_macros: BTreeMap<String, String>,
     language_items: HirLanguageItems,
 }
 
@@ -79,8 +82,30 @@ impl ExternCrateMetadata {
             resolver,
             prelude_export_ids,
             proc_macros: Vec::new(),
+            macros: Vec::new(),
+            prelude_macros: BTreeMap::new(),
             language_items: HirLanguageItems::default(),
         }
+    }
+
+    pub(crate) fn with_macros(
+        mut self,
+        macros: Vec<ProductMacroExport>,
+        prelude_macros: BTreeMap<String, String>,
+    ) -> Self {
+        self.macros = macros;
+        self.prelude_macros = prelude_macros;
+        self
+    }
+
+    /// Exported declarative macros, with crate-relative paths.
+    pub(crate) fn macros(&self) -> &[ProductMacroExport] {
+        &self.macros
+    }
+
+    /// Prelude alias -> crate-relative path of an exported macro.
+    pub(crate) fn prelude_macros(&self) -> &BTreeMap<String, String> {
+        &self.prelude_macros
     }
 
     pub(crate) fn with_language_items(mut self, language_items: HirLanguageItems) -> Self {

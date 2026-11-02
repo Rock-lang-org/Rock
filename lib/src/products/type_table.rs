@@ -52,6 +52,10 @@ pub(super) struct SerializedProductInterface {
     pub effective_trait_methods: BTreeMap<(ProductDefId, ProductDefId), ProductDefId>,
     #[serde(default)]
     pub language_items: ProductLanguageItems,
+    #[serde(default)]
+    pub macros: Vec<super::ProductMacroExport>,
+    #[serde(default)]
+    pub prelude_macros: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1256,6 +1260,8 @@ impl SerializedProductInterface {
             )?,
             effective_trait_methods: interface.effective_trait_methods.clone(),
             language_items: interface.language_items.clone(),
+            macros: interface.macros.clone(),
+            prelude_macros: interface.prelude_macros.clone(),
         })
     }
 
@@ -1290,6 +1296,8 @@ impl SerializedProductInterface {
             )?,
             effective_trait_methods: self.effective_trait_methods,
             language_items: self.language_items,
+            macros: self.macros,
+            prelude_macros: self.prelude_macros,
         })
     }
 }

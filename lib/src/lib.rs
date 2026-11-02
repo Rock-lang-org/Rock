@@ -145,6 +145,8 @@ struct FrontendOutput {
     fingerprint_source_files: Vec<PathBuf>,
     source_db: source_loader::SourceDatabase,
     effective_current_crate_name: String,
+    exported_macros: Vec<products::ProductMacroExport>,
+    prelude_macros: BTreeMap<String, String>,
 }
 
 fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
@@ -191,6 +193,15 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
     for artifact in ctx.proc_macro_artifacts() {
         macro_context = macro_context.with_proc_macro_artifact(artifact.clone());
     }
+    for (path, decl) in ctx.dependency_macros() {
+        macro_context = macro_context.with_dependency_macro(path, decl);
+    }
+    // Only the std prelude is injected, and only when std was passed explicitly.
+    if !config.no_prelude {
+        for (alias, decl) in ctx.prelude_macros("std") {
+            macro_context = macro_context.with_prelude_macro(alias, decl);
+        }
+    }
     let ast = macro_expansion::expand_macros_with_context(ast, &macro_context)
         .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
 
@@ -213,6 +224,8 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
         return Err(source_load_errors_to_diagnostics(errors).with_sources(&sources));
     }
     diagnostic_sources = diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
+    let (exported_macros, prelude_macros) =
+        crate_macro_exports(&ast.module, &source_graph, config.current_crate_name.as_deref());
 
     let declarations = collect::collect_with_source_graph(
         &ast,
@@ -250,7 +263,52 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
         fingerprint_source_files,
         source_db,
         effective_current_crate_name,
+        exported_macros,
+        prelude_macros,
     })
+}
+
+/// Collects this crate's `< macro` declarations with their crate-relative
+/// paths, and, for std, the prelude aliases that re-export them.
+fn crate_macro_exports(
+    root: &ast::Module,
+    source_graph: &source_loader::ModuleGraph,
+    current_crate_name: Option<&str>,
+) -> (Vec<products::ProductMacroExport>, BTreeMap<String, String>) {
+    // The graph can list a file module twice (as parsed, then as expanded);
+    // the later, expanded entry wins.
+    let file_modules = source_graph
+        .modules()
+        .map(|loaded| (loaded.qualified_name.as_str(), &loaded.module))
+        .collect::<BTreeMap<_, _>>();
+    let crate_relative = |qualified: &str| -> String {
+        current_crate_name
+            .and_then(|name| qualified.strip_prefix(name)?.strip_prefix("::"))
+            .unwrap_or(qualified)
+            .to_string()
+    };
+
+    let mut exported = Vec::new();
+    macro_expansion::exports::collect_exported_macros(root, "", &mut exported);
+    for (qualified, module) in &file_modules {
+        macro_expansion::exports::collect_exported_macros(
+            module,
+            &crate_relative(qualified),
+            &mut exported,
+        );
+    }
+
+    let prelude_macros = match current_crate_name {
+        Some(name @ "std") => file_modules
+            .get(format!("{name}::prelude").as_str())
+            .map(|prelude| {
+                macro_expansion::exports::prelude_macro_aliases(prelude, name, &exported)
+            })
+            .unwrap_or_default(),
+        _ => BTreeMap::new(),
+    };
+
+    (exported, prelude_macros)
 }
 
 fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, Diagnostics> {
@@ -263,6 +321,8 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
         fingerprint_source_files,
         source_db,
         effective_current_crate_name,
+        exported_macros,
+        prelude_macros,
     } = compile_frontend(config)?;
     let crate_ctx = &ctx;
 
@@ -302,6 +362,8 @@ fn compile_impl(config: &Config, emit_products: bool) -> Result<CompileOutput, D
             );
         }
         products.infix_precedence = infix_precedence.into_iter().collect();
+        products.interface.macros = exported_macros;
+        products.interface.prelude_macros = prelude_macros;
         (Some(products), Some(product_id_remap))
     } else {
         (None, None)
@@ -2298,6 +2360,70 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n")
         })
+    }
+
+    fn std_like_products(prelude: &str) -> CompilerProducts {
+        let base = PathBuf::from("/virtual/macro_prelude/std");
+        let sources = [
+            ("lib.rk", "< mod fmt\n< mod text\nmod prelude\n"),
+            (
+                "fmt.rk",
+                "< macro format\n    $x:expr =>\n        $x\n\nmacro hidden\n    =>\n        1\n",
+            ),
+            ("text.rk", "< macro shout\n    $x:expr =>\n        $x\n"),
+            ("prelude.rk", prelude),
+        ];
+        compile_with_products(&Config {
+            entry_file: base.join("lib.rk"),
+            output_dir: std::env::temp_dir()
+                .join(format!("rock_macro_prelude_{}", std::process::id())),
+            no_std: true,
+            no_prelude: true,
+            no_link: true,
+            current_crate_name: Some("std".to_string()),
+            source_providers: sources
+                .iter()
+                .map(|(path, text)| SourceProvider::Virtual {
+                    path: base.join(path),
+                    text: text.to_string(),
+                })
+                .collect(),
+            ..Config::default()
+        })
+        .expect("std-like crate should compile")
+        .products
+        .expect("products should be emitted")
+    }
+
+    #[test]
+    fn std_prelude_records_reexported_macro_aliases() {
+        let products = std_like_products("< std::fmt::format\n< std::text::*\n");
+
+        let mut exported = products
+            .interface
+            .macros
+            .iter()
+            .map(|export| export.path.clone())
+            .collect::<Vec<_>>();
+        exported.sort();
+        assert_eq!(exported, vec!["fmt::format", "text::shout"]);
+        assert_eq!(
+            products.interface.prelude_macros,
+            BTreeMap::from([
+                ("format".to_string(), "fmt::format".to_string()),
+                ("shout".to_string(), "text::shout".to_string()),
+            ])
+        );
+    }
+
+    #[test]
+    fn std_prelude_ignores_macros_it_does_not_reexport() {
+        let products = std_like_products("< std::fmt::format\n");
+
+        assert_eq!(
+            products.interface.prelude_macros,
+            BTreeMap::from([("format".to_string(), "fmt::format".to_string())])
+        );
     }
 
     #[test]

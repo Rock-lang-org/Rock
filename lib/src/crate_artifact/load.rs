@@ -1616,7 +1616,11 @@ fn extern_crate_from_products(
         crate_name,
         ExternCrateMetadata::new(interface, resolver, prelude_export_ids)
             .with_language_items(language_items)
-            .with_proc_macros(products.proc_macros.clone()),
+            .with_proc_macros(products.proc_macros.clone())
+            .with_macros(
+                products.interface.macros.clone(),
+                products.interface.prelude_macros.clone(),
+            ),
         ExternCrateBodies::from_cross_crate_hir(cross_crate_hir),
         link,
     ))

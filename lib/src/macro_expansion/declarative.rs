@@ -434,6 +434,7 @@ mod tests {
                     MacroFragment::Token(Token::from(TokenType::Equal)),
                 ],
             }],
+            exported: false,
         };
 
         let compiled = DeclarativeMacro::from_ast(&decl);

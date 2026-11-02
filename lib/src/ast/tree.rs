@@ -329,6 +329,8 @@ pub struct TypeHole {
 pub struct MacroDecl {
     pub name: Ident,
     pub entries: Vec<MacroEntry>,
+    /// Declared with `< macro`: recorded in the crate artifact for dependents.
+    pub exported: bool,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]

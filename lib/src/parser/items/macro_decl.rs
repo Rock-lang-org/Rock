@@ -12,7 +12,11 @@ pub fn macro_decl(stream: Input) -> IResult<MacroDecl> {
         TokenType::Eol,
         indented(many(macro_entry)),
     )
-        .map(|(_, name, _, entries)| MacroDecl { name, entries })
+        .map(|(_, name, _, entries)| MacroDecl {
+            name,
+            entries,
+            exported: false,
+        })
         .process(stream)
 }
 

@@ -156,6 +156,29 @@ In an expression, a macro call takes every token up to the end of its line, comm
 
 A template may call other macros, including from an expression. Each expansion is expanded again until no macro call is left, up to a fixed depth that stops runaway recursion with a diagnostic.
 
+## Sharing macros between crates
+
+A macro is private to the module that declares it. Prefix the declaration with `<` to export it from its crate, the same way `<` exports a function or a type:
+
+```rock
+< macro join
+    $first:expr $( , $rest:expr )* =>
+        ($first).show! $( .concat (($rest).show!) )*
+```
+
+If this declaration lives in the module `text` of a library crate named `mylib`, a program that depends on `mylib` imports it by its full path and then calls it by name:
+
+```rock
+> mylib::text::join
+
+main = !->
+    (%join "a", 1, true).println!
+```
+
+The program prints `a1true`. Without the import, `%join` is reported as an unknown macro. A macro declared without `<` cannot be imported from another crate.
+
+An exported macro expands in the program that calls it, so the names in its template are looked up there, not in the library. The `join` template only calls the methods `show` and `concat`, which every program that uses the std prelude can see. A template that names other items, or calls another macro, needs those names to be visible where the macro is called. Glob imports such as `> mylib::text::*` do not bring macros into scope.
+
 ## Expansion workflow and design rules
 
 Use `rock expand` to inspect generated source before debugging type or ownership errors. A generated `~@` method still consumes its receiver, and a generated mutable method still requires a mutable binding; macros do not weaken the borrow checker. Prefer ordinary functions for behavior, generics for type reuse, and a macro only when the repeated declaration shape itself is the useful abstraction.
