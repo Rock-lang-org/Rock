@@ -198,13 +198,19 @@ fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
         println!("{:#?}", ast);
     }
 
+    let mut expand_child_module = |module: ast::Module| {
+        macro_expansion::expand_macros_with_context(Program { module }, &macro_context)
+            .map(|program| program.module)
+    };
     if let Err(errors) = source_db.load_module_declarations(
         &mut source_graph,
         &ast.module,
         config.current_crate_name.as_deref(),
         config,
+        &mut expand_child_module,
     ) {
-        return Err(source_load_errors_to_diagnostics(errors));
+        let sources = diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
+        return Err(source_load_errors_to_diagnostics(errors).with_sources(&sources));
     }
     diagnostic_sources = diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
 
@@ -640,6 +646,12 @@ pub fn source_load_errors_to_diagnostics(
                     }
                 }
                 diagnostics.merge(parse_diagnostics);
+            }
+            source_loader::SourceLoadError::Expansion {
+                diagnostics: expansion_diagnostics,
+                ..
+            } => {
+                diagnostics.merge(expansion_diagnostics);
             }
             source_loader::SourceLoadError::CircularModule { path, stack } => {
                 let stack = stack
@@ -2254,6 +2266,102 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&base);
+    }
+
+    fn compile_virtual_sources(name: &str, sources: &[(&str, &str)]) -> Result<(), String> {
+        let base = PathBuf::from(format!("/virtual/macro_child_modules/{name}"));
+        compile_with_products(&Config {
+            entry_file: base.join(sources[0].0),
+            output_dir: std::env::temp_dir().join(format!(
+                "rock_macro_child_modules_{}_{name}",
+                std::process::id()
+            )),
+            no_std: true,
+            no_prelude: true,
+            no_link: true,
+            current_crate_name: Some("demo".to_string()),
+            source_providers: sources
+                .iter()
+                .map(|(path, text)| SourceProvider::Virtual {
+                    path: base.join(path),
+                    text: text.to_string(),
+                })
+                .collect(),
+            ..Config::default()
+        })
+        .map(|_| ())
+        .map_err(|diagnostics| {
+            diagnostics
+                .0
+                .iter()
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+    }
+
+    #[test]
+    fn macros_expand_inside_child_file_modules() {
+        compile_virtual_sources(
+            "child",
+            &[
+                ("main.rk", "mod util\n> util::answer\nmain = -> answer!\n"),
+                (
+                    "util.rk",
+                    "macro make_answer\n    $name:ident =>\n        $name = -> 42\n\n%make_answer answer\n< answer\n",
+                ),
+            ],
+        )
+        .expect("macro invocation in a child file should expand");
+    }
+
+    #[test]
+    fn macros_expand_inside_nested_child_file_modules() {
+        compile_virtual_sources(
+            "nested",
+            &[
+                ("main.rk", "mod util\n> util::deep::answer\nmain = -> answer!\n"),
+                ("util.rk", "< mod deep\n"),
+                (
+                    "deep.rk",
+                    "macro make_answer\n    $name:ident =>\n        $name = -> 42\n\n%make_answer answer\n< answer\n",
+                ),
+            ],
+        )
+        .expect("macro invocation in a nested child file should expand");
+    }
+
+    #[test]
+    fn macro_generated_mod_in_child_file_loads_its_module() {
+        compile_virtual_sources(
+            "generated_mod",
+            &[
+                ("main.rk", "mod util\n> util::deep::answer\nmain = -> answer!\n"),
+                (
+                    "util.rk",
+                    "macro include_deep\n    =>\n        < mod deep\n\n%include_deep\n",
+                ),
+                ("deep.rk", "< answer = -> 42\n"),
+            ],
+        )
+        .expect("a macro-generated mod in a child file should be loaded");
+    }
+
+    #[test]
+    fn macro_errors_in_child_file_modules_are_reported() {
+        let error = compile_virtual_sources(
+            "child_error",
+            &[
+                ("main.rk", "mod util\nmain = -> 0\n"),
+                (
+                    "util.rk",
+                    "macro make_answer\n    $name:ident =>\n        $name = -> 42\n\n%make_answer 1 2\n",
+                ),
+            ],
+        )
+        .expect_err("a non-matching macro call in a child file should fail");
+
+        assert!(!error.is_empty());
     }
 
     #[test]
