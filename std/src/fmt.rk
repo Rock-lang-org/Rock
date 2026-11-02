@@ -1,0 +1,19 @@
+// Formatting macros: build a String from text and values that implement Show.
+//
+//     name = String::from "rock"
+//     s = %format "Hello ", name, ", you are ", 42
+//     %println "Hello ", name, "!"
+//
+// Each argument is turned into a String with `show` and the results are joined
+// in order. `show` borrows its receiver, so arguments stay usable afterwards.
+// A call takes the rest of its line; wrap it in parentheses to use the result
+// inside a larger expression, and wrap calls that take arguments, as in
+// `"sum: ", (add 1, 2)`.
+
+< macro format
+    $first:expr $( , $rest:expr )* =>
+        ($first).show! $( .concat (($rest).show!) )*
+
+< macro println
+    $first:expr $( , $rest:expr )* =>
+        (%format $first $( , $rest )*).println!

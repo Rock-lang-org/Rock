@@ -3495,6 +3495,42 @@ main = !->
 }
 
 #[test]
+fn test_std_format_and_println_macros_come_from_the_prelude() {
+    let output = compile_and_run(
+        r#"add = a, b -> a + b
+
+main = !->
+    name = String::from "rock"
+    greeting = %format "Hello ", name, ", you are ", 42
+    greeting.println!
+    name.println!
+    %println "sum: ", (add 1, 2), " bool: ", true, " char: ", 'c'
+    %println "alone"
+"#,
+    );
+
+    assert_eq!(
+        output,
+        "Hello rock, you are 42\nrock\nsum: 3 bool: true char: c\nalone\n"
+    );
+}
+
+#[test]
+fn test_local_macro_shadows_std_prelude_macro() {
+    let output = compile_and_run(
+        r#"macro format
+    $x:expr =>
+        ("local ").show! .concat (($x).show!)
+
+main = !->
+    (%format 1).println!
+"#,
+    );
+
+    assert_eq!(output, "local 1\n");
+}
+
+#[test]
 fn test_exported_macros_are_imported_across_crates() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);

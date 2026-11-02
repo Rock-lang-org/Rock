@@ -12,6 +12,7 @@ The prelude exports the everyday vocabulary used by the examples in this chapter
 - callable and thread-safety traits: `Fn`, `FnMut`, `FnOnce`, `Send`, and `Sync`;
 - functional traits: `Bifunctor`, `Functor`, `Applicative`, `Monad`, `Foldable`, `Traversable`, and the concrete-source `FoldableValue` bridge;
 - effect-only traversal: `for_each values, action`, for bounded ranges, foldable containers, borrowed vectors, and borrowed slices;
+- the formatting macros `%format` and `%println`;
 - the arithmetic, comparison, logical, bitwise, negation, and functional operator declarations provided by those modules.
 
 The prelude does not turn a missing implementation into a compiler fallback: an operator still needs a matching library trait implementation. Files, process arguments, networking handles, and thread-spawning functions remain explicit imports because they are not universal vocabulary.
@@ -49,6 +50,28 @@ main = !->
 ```
 
 The output is `Point(3, 4)`. The `<` markers export `Point` and its fields for use by other modules. In this example, `main` is in the same module and could construct `Point` even if its fields were private; outside modules would need an exported constructor or factory function to initialize private fields.
+
+## Formatting text with `%format` and `%println`
+
+Building a message from several values with `show` and `+` gets long quickly. The prelude provides two macros for this. `%format` takes a comma-separated list of values, turns each one into a `String` with `show`, and joins them in order. `%println` does the same and prints the result on its own line.
+
+```rock
+add = a, b -> a + b
+
+main = !->
+    name = String::from "Rock"
+    greeting = %format "Hello, ", name, "! You are ", 42, " years old."
+    greeting.println!
+    %println "1 + 2 = ", (add 1, 2), ", flag: ", true
+    name.println!
+```
+
+The output is `Hello, Rock! You are 42 years old.`, then `1 + 2 = 3, flag: true`, then `Rock`. There are no placeholders: text pieces and values are listed in the order they should appear, so the number of values can never disagree with the text. Every argument only needs a `Show` implementation, so `Point` from the previous section works as well.
+
+`show` borrows its receiver, which is why `name` is still usable on the last line. A macro call takes every token up to the end of its line, so two details follow from that:
+
+- An argument that is itself a function call with arguments must be wrapped in parentheses, as `(add 1, 2)` is above. Without them, `add` would take every value that follows it as an argument.
+- To use the result of `%format` inside a larger expression, wrap the call in parentheses: `(%format "id-", 7).len!`.
 
 ## Numeric behavior and generic bounds
 
