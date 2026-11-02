@@ -400,6 +400,7 @@ pub fn walk_operand<'a, V: Visitor<'a>>(visitor: &mut V, operand: &'a Operand) {
         Operand::Expression(e) => visitor.visit_expression(e),
         Operand::Match(m) => visitor.visit_match(m),
         Operand::Unsafe(block, _) => visitor.visit_block(block),
+        Operand::MacroInvoc(m) => visitor.visit_macro_invoc(m),
     }
 }
 

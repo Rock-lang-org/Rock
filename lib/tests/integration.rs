@@ -3462,6 +3462,39 @@ fn test_declarative_macro_can_produce_call_argument_holes() {
 }
 
 #[test]
+fn test_declarative_macros_expand_in_expression_position() {
+    let output = compile_and_run(
+        r#"macro format
+    $first:expr $( , $rest:expr )* =>
+        ($first).show! $( .concat (($rest).show!) )*
+
+macro println
+    $first:expr $( , $rest:expr )* =>
+        (%format $first $( , $rest )*).println!
+
+add = a, b -> a + b
+
+main = !->
+    name = String::from "rock"
+    greeting = %format "Hello ", name, ", you are ", 42
+    greeting.println!
+    name.println!
+    %println "sum: ", (add 1, 2), " bool: ", true
+    %println "alone"
+    joined = (%format "a", 1).concat (%format "b", 2)
+    joined.println!
+    for x in [1, 2]
+        %println "x = ", x
+"#,
+    );
+
+    assert_eq!(
+        output,
+        "Hello rock, you are 42\nrock\nsum: 3 bool: true\nalone\na1b2\nx = 1\nx = 2\n"
+    );
+}
+
+#[test]
 fn test_arithmetic() {
     let output = compile_example("arithmetic");
     let lines: Vec<&str> = output.trim().lines().collect();

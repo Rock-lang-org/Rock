@@ -468,6 +468,8 @@ pub enum Operand {
     Loop(Box<Loop>),
     Unsafe(Block, Span),
     Expression(Box<Expression>), // parenthesis
+    /// `%name tokens...` in expression position; replaced during macro expansion.
+    MacroInvoc(MacroInvoc),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -257,7 +257,9 @@ pub fn primary_expr(stream: Input) -> IResult<PrimaryExpr> {
 }
 
 pub fn operand(stream: Input) -> IResult<Operand> {
-    super::do_expression
+    super::macro_invoc_expr
+        .map(Operand::MacroInvoc)
+        .or(super::do_expression)
         .or(reset_inside_argument_list(parse_if)
             .map(Box::new)
             .map(Operand::If))
