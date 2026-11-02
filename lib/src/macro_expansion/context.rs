@@ -1,10 +1,11 @@
 use std::{
     cell::RefCell,
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     path::PathBuf,
 };
 
 use crate::{
+    ast::MacroDecl,
     diagnostic::{Diagnostic, DiagnosticLocation, Diagnostics},
     lexer::Span,
     macro_expansion::proc_macro::ProcMacroArtifact,
@@ -18,6 +19,11 @@ pub struct MacroExpansionContext<'a> {
     pub config: &'a Config,
     pub max_depth: usize,
     pub proc_macro_artifacts: Vec<ProcMacroArtifact>,
+    /// Macros exported by dependencies, keyed by `dependency::path::name`.
+    /// A module sees one after importing it with `>`.
+    pub dependency_macros: BTreeMap<String, MacroDecl>,
+    /// Std prelude macros, keyed by alias; visible in every module.
+    pub prelude_macros: BTreeMap<String, MacroDecl>,
     source_map: RefCell<MacroSourceMap>,
     latest_expansion: RefCell<Option<ExpansionId>>,
     generated_invocation_parents: RefCell<HashMap<SpanKey, VecDeque<ExpansionId>>>,
@@ -36,6 +42,8 @@ impl<'a> MacroExpansionContext<'a> {
             config,
             max_depth: 100,
             proc_macro_artifacts: Vec::new(),
+            dependency_macros: BTreeMap::new(),
+            prelude_macros: BTreeMap::new(),
             source_map: RefCell::new(MacroSourceMap::new()),
             latest_expansion: RefCell::new(None),
             generated_invocation_parents: RefCell::new(HashMap::new()),
@@ -49,6 +57,16 @@ impl<'a> MacroExpansionContext<'a> {
 
     pub fn with_proc_macro_artifact(mut self, artifact: ProcMacroArtifact) -> Self {
         self.proc_macro_artifacts.push(artifact);
+        self
+    }
+
+    pub fn with_dependency_macro(mut self, path: String, decl: MacroDecl) -> Self {
+        self.dependency_macros.insert(path, decl);
+        self
+    }
+
+    pub fn with_prelude_macro(mut self, alias: String, decl: MacroDecl) -> Self {
+        self.prelude_macros.insert(alias, decl);
         self
     }
 

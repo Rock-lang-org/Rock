@@ -202,6 +202,35 @@ impl CrateContext {
             .flat_map(|dep| dep.metadata().proc_macros().iter())
     }
 
+    /// Exported declarative macros of every dependency, keyed by the path a
+    /// dependent imports them with (`dependency::module::name`).
+    pub(crate) fn dependency_macros(&self) -> Vec<(String, crate::ast::MacroDecl)> {
+        self.extern_crates()
+            .flat_map(|dep| {
+                dep.metadata().macros().iter().map(move |export| {
+                    (format!("{}::{}", dep.name(), export.path), export.decl.clone())
+                })
+            })
+            .collect()
+    }
+
+    /// Prelude macros of the dependency named `crate_name`, keyed by alias.
+    pub(crate) fn prelude_macros(&self, crate_name: &str) -> Vec<(String, crate::ast::MacroDecl)> {
+        self.extern_crates()
+            .filter(|dep| dep.name() == crate_name)
+            .flat_map(|dep| {
+                let metadata = dep.metadata();
+                metadata.prelude_macros().iter().filter_map(|(alias, path)| {
+                    metadata
+                        .macros()
+                        .iter()
+                        .find(|export| &export.path == path)
+                        .map(|export| (alias.clone(), export.decl.clone()))
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn has_extern_crate(&self, name: &str) -> bool {
         self.extern_crates.contains_name(name)
     }

@@ -3495,6 +3495,74 @@ main = !->
 }
 
 #[test]
+fn test_exported_macros_are_imported_across_crates() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(dir.join("mylib")).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+
+    let library_entry = dir.join("mylib").join("lib.rk");
+    fs::write(&library_entry, "< mod text\n").unwrap();
+    fs::write(
+        dir.join("mylib").join("text.rk"),
+        r#"< macro join
+    $first:expr $( , $rest:expr )* =>
+        ($first).show! $( .concat (($rest).show!) )*
+
+macro secret
+    =>
+        1
+"#,
+    )
+    .unwrap();
+    let mut library_config = test_config(library_entry, dir.join("mylib_build"));
+    library_config.current_crate_name = Some("mylib".to_string());
+    library_config.no_link = true;
+    let products = rock_lib::compile_with_products(&library_config)
+        .expect("library with an exported macro should compile")
+        .products
+        .expect("library products");
+    let exported = products
+        .interface
+        .macros
+        .iter()
+        .map(|export| export.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(exported, vec!["text::join"]);
+    let artifact = dir.join("mylib.rkca");
+    products.write_artifact_to_path(&artifact).unwrap();
+
+    let consumer = |name: &str, source: &str| {
+        let entry = dir.join(format!("{name}.rk"));
+        fs::write(&entry, source).unwrap();
+        let mut config = test_config(entry, dir.clone());
+        config
+            .extern_artifacts
+            .push(("mylib".to_string(), artifact.clone()));
+        rock_lib::compile(&config).map(|_| {
+            let output = Command::new(dir.join(name)).output().unwrap();
+            String::from_utf8_lossy(&output.stdout).to_string()
+        })
+    };
+    let main_body = "main = !->\n    (%join \"a\", 1, true).println!\n";
+
+    let imported = consumer("imported", &format!("> mylib::text::join\n{main_body}"))
+        .expect("an imported macro should expand");
+    assert_eq!(imported, "a1true\n");
+
+    let missing = consumer("missing", main_body)
+        .expect_err("a dependency macro is not visible without an import");
+    assert!(missing.contains("Unknown macro '%join'"), "{missing:?}");
+
+    let private = consumer(
+        "private",
+        "> mylib::text::secret\nmain = !->\n    x = %secret\n",
+    )
+    .expect_err("a macro declared without `<` is not exported");
+    assert!(private.contains("Unknown macro '%secret'"), "{private:?}");
+}
+
+#[test]
 fn test_arithmetic() {
     let output = compile_example("arithmetic");
     let lines: Vec<&str> = output.trim().lines().collect();

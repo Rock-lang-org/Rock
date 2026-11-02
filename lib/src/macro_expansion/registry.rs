@@ -24,17 +24,24 @@ impl MacroRegistry {
 
     pub fn from_module(module: &Module) -> Self {
         let mut registry = Self::new();
+        registry.add_module_declarations(module);
+        registry
+    }
+
+    /// Adds the macros declared in `module`, replacing same-named ones.
+    pub fn add_module_declarations(&mut self, module: &Module) {
         for top_level in &module.top_levels {
             if let TopLevel::MacroDecl(decl) = top_level {
-                registry
-                    .declarative
-                    .insert(decl.name.name.clone(), DeclarativeMacro::from_ast(decl));
-                registry
-                    .declarations
-                    .insert(decl.name.name.clone(), decl.clone());
+                self.insert_declaration(decl.name.name.clone(), decl.clone());
             }
         }
-        registry
+    }
+
+    /// Makes `decl` callable as `%name`, replacing any macro of that name.
+    pub fn insert_declaration(&mut self, name: String, decl: MacroDecl) {
+        self.declarative
+            .insert(name.clone(), DeclarativeMacro::from_ast(&decl));
+        self.declarations.insert(name, decl);
     }
 
     pub fn declarative(&self, name: &str) -> Option<&DeclarativeMacro> {
@@ -76,6 +83,7 @@ mod tests {
                 span: Span::test(),
             },
             entries: Vec::new(),
+            exported: false,
         }
     }
 

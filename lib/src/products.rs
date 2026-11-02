@@ -60,7 +60,7 @@ impl From<DefId> for ProductDefId {
     }
 }
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 50;
+pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 51;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;
@@ -291,6 +291,20 @@ pub struct ProductInterface {
     pub effective_trait_methods: BTreeMap<(ProductDefId, ProductDefId), ProductDefId>,
     #[serde(default)]
     pub language_items: ProductLanguageItems,
+    /// Declarative macros exported with `< macro`.
+    #[serde(default)]
+    pub macros: Vec<ProductMacroExport>,
+    /// Prelude aliases of exported macros, such as `format` -> `fmt::format`.
+    #[serde(default)]
+    pub prelude_macros: BTreeMap<String, String>,
+}
+
+/// A declarative macro exported with `< macro name`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProductMacroExport {
+    /// Path of the macro inside its crate, without the crate name (`fmt::format`).
+    pub path: String,
+    pub decl: crate::ast::MacroDecl,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -7137,7 +7151,7 @@ mod tests {
 
     #[test]
     fn product_artifact_format_version_matches_shared_contract() {
-        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 50);
+        assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 51);
         assert_eq!(
             PRODUCT_ARTIFACT_FORMAT_VERSION,
             rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION

@@ -293,6 +293,14 @@ pub fn top_level(stream: Input) -> IResult<TopLevel> {
             .map(TopLevel::TraitDecl))
             .or(preceded(
                 TokenType::Operator("<".to_string()),
+                macro_decl.map(|mut md| {
+                    md.exported = true;
+                    md
+                }),
+            )
+            .map(TopLevel::MacroDecl))
+            .or(preceded(
+                TokenType::Operator("<".to_string()),
                 preceded(
                     TokenType::Keyword("extern".to_string()),
                     function_sig.map(|mut sig| {

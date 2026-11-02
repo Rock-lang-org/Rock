@@ -6,6 +6,9 @@ use super::{FormatContext, FormatNode};
 
 impl FormatNode for MacroDecl {
     fn fmt_with<W: Write>(&self, context: &mut FormatContext, f: &mut W) -> fmt::Result {
+        if self.exported {
+            write!(f, "< ")?;
+        }
         write!(f, "macro ")?;
         self.name.fmt_with(context, f)?;
         writeln!(f)?;
