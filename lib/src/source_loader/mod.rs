@@ -1,16 +1,23 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::ast;
+use crate::diagnostic::Diagnostics;
 use crate::lexer::Span;
 use crate::parser::{self, ParseError};
 use crate::Config;
+
+/// Expands the macros of one loaded file module. The loader applies it before
+/// loading the module's own `mod` children, so generated `mod` items load too.
+pub type ModuleExpander<'a> = dyn FnMut(ast::Module) -> Result<ast::Module, Diagnostics> + 'a;
 
 #[derive(Debug, Clone)]
 pub struct SourceDatabase {
     registered_sources: BTreeMap<PathBuf, RegisteredSource>,
     files: BTreeMap<PathBuf, SourceFile>,
     modules: BTreeMap<PathBuf, ast::Module>,
+    /// Canonical paths whose cached module has already been macro-expanded.
+    expanded_modules: BTreeSet<PathBuf>,
     load_states: BTreeMap<PathBuf, ModuleLoadState>,
     loaded_files: Vec<PathBuf>,
 }
@@ -87,6 +94,10 @@ pub enum SourceLoadError {
     CircularModule {
         path: PathBuf,
         stack: Vec<PathBuf>,
+    },
+    Expansion {
+        path: PathBuf,
+        diagnostics: Diagnostics,
     },
 }
 
@@ -247,6 +258,7 @@ impl SourceDatabase {
             registered_sources: BTreeMap::new(),
             files: BTreeMap::new(),
             modules: BTreeMap::new(),
+            expanded_modules: BTreeSet::new(),
             load_states: BTreeMap::new(),
             loaded_files: Vec::new(),
         }
@@ -328,17 +340,28 @@ impl SourceDatabase {
         self.load_graph(lib_path, Some(crate_name.to_string()), config)
     }
 
+    /// Loads the `mod` children of an already expanded root module, expanding
+    /// each child file's macros with `expander` before loading its own children.
     pub fn load_module_declarations(
         &mut self,
         graph: &mut ModuleGraph,
         module: &ast::Module,
         root_prefix: Option<&str>,
         config: &Config,
+        expander: &mut ModuleExpander<'_>,
     ) -> Result<(), Vec<SourceLoadError>> {
         graph.root_module = module.clone();
         let mut stack = Vec::new();
         let mut errors = Vec::new();
-        self.load_children(module, root_prefix, config, &mut stack, graph, &mut errors);
+        self.load_children(
+            module,
+            root_prefix,
+            config,
+            &mut stack,
+            graph,
+            &mut errors,
+            Some(expander),
+        );
 
         if errors.is_empty() {
             Ok(())
@@ -361,6 +384,7 @@ impl SourceDatabase {
         self.registered_sources.insert(path.clone(), source);
         self.files.remove(&path);
         self.modules.remove(&path);
+        self.expanded_modules.remove(&path);
         self.load_states.remove(&path);
         self
     }
@@ -381,6 +405,7 @@ impl SourceDatabase {
             &mut stack,
             &mut graph,
             &mut errors,
+            None,
         );
 
         if let Some(root_module) = root_module {
@@ -402,6 +427,7 @@ impl SourceDatabase {
         stack: &mut Vec<PathBuf>,
         graph: &mut ModuleGraph,
         errors: &mut Vec<SourceLoadError>,
+        mut expander: Option<&mut ModuleExpander<'_>>,
     ) -> Option<ast::Module> {
         let canonical_path = match self.canonical_key(&path) {
             Ok(path) => path,
@@ -421,6 +447,19 @@ impl SourceDatabase {
 
         if let Some(mut module) = self.modules.get(&canonical_path).cloned() {
             module.filepath = Some(path.clone());
+            if let Some(expander) = expander.as_deref_mut() {
+                if !self.expanded_modules.contains(&canonical_path) {
+                    module = match expander(module) {
+                        Ok(module) => module,
+                        Err(diagnostics) => {
+                            errors.push(SourceLoadError::Expansion { path, diagnostics });
+                            return None;
+                        }
+                    };
+                    self.modules.insert(canonical_path.clone(), module.clone());
+                    self.expanded_modules.insert(canonical_path.clone());
+                }
+            }
             self.record_graph_loaded_file(graph, path.clone());
             if let Some(qualified_name) = qualified_name.clone() {
                 self.record_loaded_module(
@@ -441,6 +480,7 @@ impl SourceDatabase {
                 stack,
                 graph,
                 errors,
+                expander,
             );
             stack.pop();
             self.load_states
@@ -475,6 +515,24 @@ impl SourceDatabase {
                 return None;
             }
         };
+        let module = match expander.as_deref_mut() {
+            Some(expander) => match expander(module) {
+                Ok(module) => {
+                    self.expanded_modules.insert(canonical_path.clone());
+                    module
+                }
+                Err(diagnostics) => {
+                    errors.push(SourceLoadError::Expansion {
+                        path: path.clone(),
+                        diagnostics,
+                    });
+                    stack.pop();
+                    self.load_states.remove(&canonical_path);
+                    return None;
+                }
+            },
+            None => module,
+        };
 
         self.modules.insert(canonical_path.clone(), module.clone());
         if !self.loaded_files.contains(&path) {
@@ -499,6 +557,7 @@ impl SourceDatabase {
             stack,
             graph,
             errors,
+            expander,
         );
         stack.pop();
         self.load_states
@@ -602,6 +661,7 @@ impl SourceDatabase {
         stack: &mut Vec<PathBuf>,
         graph: &mut ModuleGraph,
         errors: &mut Vec<SourceLoadError>,
+        mut expander: Option<&mut ModuleExpander<'_>>,
     ) {
         for top_level in &module.top_levels {
             match top_level {
@@ -622,6 +682,7 @@ impl SourceDatabase {
                         stack,
                         graph,
                         errors,
+                        expander.as_deref_mut(),
                     );
                 }
                 ast::TopLevel::Mod(ident, _) => {
@@ -642,6 +703,7 @@ impl SourceDatabase {
                         stack,
                         graph,
                         errors,
+                        expander.as_deref_mut(),
                     );
                 }
                 _ => {}
@@ -988,6 +1050,7 @@ mod tests {
             &mut stack,
             &mut graph,
             &mut errors,
+            None,
         );
 
         assert!(errors.is_empty(), "expected no load errors, got {errors:?}");

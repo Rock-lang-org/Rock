@@ -1,7 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use crate::{
-    ast::{MacroDecl, Module, Program, TopLevel},
+    ast::{MacroDecl, Module, ModuleDecl, Program, TopLevel},
     diagnostic::{Diagnostic, Diagnostics},
     lexer::{Span, Token, TokenType},
     parser::ParseError,
@@ -91,9 +91,29 @@ pub fn expand_macros_with_context(
         }
     }
 
-    program.module = module;
+    program.module = expand_inline_modules(module, context)?;
 
     Ok(program)
+}
+
+/// Expands each inline `mod name` block with the macros declared inside it.
+fn expand_inline_modules(
+    mut module: Module,
+    context: &MacroExpansionContext<'_>,
+) -> Result<Module, Diagnostics> {
+    let top_levels = std::mem::take(&mut module.top_levels);
+    module.top_levels = top_levels
+        .into_iter()
+        .map(|top_level| match top_level {
+            TopLevel::Module(ModuleDecl(inner)) => {
+                let expanded = expand_macros_with_context(Program { module: inner }, context)?;
+                Ok(TopLevel::Module(ModuleDecl(expanded.module)))
+            }
+            other => Ok(other),
+        })
+        .collect::<Result<_, Diagnostics>>()?;
+
+    Ok(module)
 }
 
 fn expand_macros_once(
