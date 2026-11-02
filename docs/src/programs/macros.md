@@ -59,12 +59,12 @@ Here `$name:ty` captures `Number` and `$inner:ty` captures `I64`. The expansion 
 
 ## Repetition
 
-A repetition matcher uses `$(` and `)*`. The following syntax is covered by the expansion tests and is deliberately flat.
+A repetition starts with `$(` and ends with `)*`, in the matcher and in the template alike. A plain `)` inside a repetition is an ordinary token, so a repetition may contain parentheses. Forgetting the `*` is a compile-time error that points at the unclosed `$(`. The following syntax is covered by the expansion tests and is deliberately flat.
 
 ```rock
 macro define_values
     $( $name:ident )* =>
-        $( $name = -> 9 )
+        $( $name = -> 9 )*
 
 %define_values first second third
 
@@ -76,12 +76,32 @@ main = !->
 
 The matcher captures three identifiers and the template emits three functions. The output is `9`, `9`, and `9`. Repetition consumes the captured tokens into generated declarations; it does not clone a runtime value and does not create a runtime loop. Captures in one repeated group must have the same number of elements.
 
+Where the repeated copies land depends on where the repetition sits in the template:
+
+- A repetition written on one line, with nothing else on that line, repeats **lines**. Each copy becomes its own line at the same indentation, which is how `define_values` emits three separate functions.
+- Any other repetition repeats **inline**. Its copies are placed one after another inside the surrounding line.
+
+The next macro uses an inline repetition. The matcher takes a first expression followed by any number of `, expression` groups, and the template chains one `.concat` call per extra expression onto the same line:
+
+```rock
+macro make_greeting
+    $name:ident $first:expr $( , $rest:expr )* =>
+        $name = -> ($first).show! $( .concat (($rest).show!) )*
+
+%make_greeting greeting "Hello ", 42, "!"
+
+main = !->
+    greeting! .println!
+```
+
+The invocation expands to `greeting = -> ("Hello ").show! .concat ((42).show!) .concat (("!").show!)`, so the program prints `Hello 42!`. With no extra expressions, as in `%make_greeting alone "hi"`, the repetition produces nothing and the rest of the line is kept. An `expr` capture stops at a comma, except that a function call with arguments takes every comma-separated argument that follows it; wrap such a call in parentheses, as in `"a", (add 1, 2), "b"`.
+
 The compiler also tests a direct capture used inside a repeated template. This form is useful when several generated functions should return one already-declared value:
 
 ```rock
 macro define_aliases
     $source:ident $( $name:ident )* =>
-        $( $name = -> $source! )
+        $( $name = -> $source! )*
 
 source = -> 7
 %define_aliases source left right

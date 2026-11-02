@@ -42,9 +42,17 @@ pub enum MatcherFragment {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TemplateFragment {
-    Capture { name: String },
+    Capture {
+        name: String,
+    },
     Token(Token),
-    Repetition(Vec<TemplateFragment>),
+    /// `line_indent` is the indentation of the template line when a single-line
+    /// repetition fills that whole line: each copy is then emitted as its own
+    /// line. Any other repetition repeats its copies inline.
+    Repetition {
+        fragments: Vec<TemplateFragment>,
+        line_indent: Option<Token>,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -150,7 +158,10 @@ fn expand_template_fragments(
             TemplateFragment::Token(token) => {
                 trees.extend(TokenStream::from_tokens(vec![token.clone()]).trees);
             }
-            TemplateFragment::Repetition(inner) => {
+            TemplateFragment::Repetition {
+                fragments: inner,
+                line_indent,
+            } => {
                 let capture_names = capture_names_in_template(inner);
                 let mut len = None;
 
@@ -173,20 +184,11 @@ fn expand_template_fragments(
 
                 for index in 0..len {
                     let expanded = expand_template_fragments(inner, captures, Some(index))?;
-                    let last_token_type = expanded
-                        .to_tokens()
-                        .last()
-                        .map(|token| token.token_type.clone());
                     trees.extend(expanded.trees);
-                    if index + 1 < len {
-                        match last_token_type {
-                            Some(TokenType::Indent(_)) => {}
-                            Some(TokenType::Eol) => trees.extend(
-                                TokenStream::from_tokens(vec![Token::from(TokenType::Indent(0))])
-                                    .trees,
-                            ),
-                            _ => {}
-                        }
+                    if let (Some(indent), true) = (line_indent, index + 1 < len) {
+                        trees.extend(
+                            TokenStream::from_tokens(line_break_tokens(indent)).trees,
+                        );
                     }
                 }
             }
@@ -233,7 +235,10 @@ fn expand_template_fragments_with_origins(
                     .trees,
                 );
             }
-            TemplateFragment::Repetition(inner) => {
+            TemplateFragment::Repetition {
+                fragments: inner,
+                line_indent,
+            } => {
                 let capture_names = capture_names_in_template(inner);
                 let mut len = None;
 
@@ -262,30 +267,16 @@ fn expand_template_fragments_with_origins(
                         expansion,
                         generated_source,
                     )?;
-                    let last_token = expanded.to_tokens().last().cloned();
                     trees.extend(expanded.trees);
-                    if index + 1 < len {
-                        match last_token {
-                            Some(Token {
-                                token_type: TokenType::Indent(_),
-                                ..
-                            }) => {}
-                            Some(Token {
-                                token_type: TokenType::Eol,
-                                span,
-                            }) => trees.extend(
-                                TokenStream::generated_from_tokens(
-                                    vec![Token {
-                                        token_type: TokenType::Indent(0),
-                                        span,
-                                    }],
-                                    expansion,
-                                    generated_source,
-                                )
-                                .trees,
-                            ),
-                            _ => {}
-                        }
+                    if let (Some(indent), true) = (line_indent, index + 1 < len) {
+                        trees.extend(
+                            TokenStream::generated_from_tokens(
+                                line_break_tokens(indent),
+                                expansion,
+                                generated_source,
+                            )
+                            .trees,
+                        );
                     }
                 }
             }
@@ -304,7 +295,9 @@ fn capture_names_in_template(fragments: &[TemplateFragment]) -> Vec<String> {
                 }
             }
             TemplateFragment::Token(_) => {}
-            TemplateFragment::Repetition(inner) => {
+            TemplateFragment::Repetition {
+                fragments: inner, ..
+            } => {
                 for name in capture_names_in_template(inner) {
                     if !names.contains(&name) {
                         names.push(name);
@@ -333,9 +326,9 @@ fn compile_matcher_fragments(fragments: &[MacroFragment]) -> Vec<MatcherFragment
                 kind: CaptureKind::Type,
             },
             MacroFragment::Token(token) => MatcherFragment::Token(token.clone()),
-            MacroFragment::Repetition(inner) => MatcherFragment::Repetition(
-                compile_matcher_fragments(&trim_repetition_close(inner)),
-            ),
+            MacroFragment::Repetition(inner) => {
+                MatcherFragment::Repetition(compile_matcher_fragments(inner))
+            }
         })
         .collect()
 }
@@ -343,41 +336,68 @@ fn compile_matcher_fragments(fragments: &[MacroFragment]) -> Vec<MatcherFragment
 fn compile_template_fragments(fragments: &[MacroFragment]) -> Vec<TemplateFragment> {
     fragments
         .iter()
-        .map(|fragment| match fragment {
+        .enumerate()
+        .map(|(index, fragment)| match fragment {
             MacroFragment::Ident(name) | MacroFragment::Expr(name) | MacroFragment::Type(name) => {
                 TemplateFragment::Capture {
                     name: name.name.clone(),
                 }
             }
             MacroFragment::Token(token) => TemplateFragment::Token(token.clone()),
-            MacroFragment::Repetition(inner) => TemplateFragment::Repetition(
-                compile_template_fragments(&trim_repetition_close(inner)),
-            ),
+            MacroFragment::Repetition(inner) => TemplateFragment::Repetition {
+                fragments: compile_template_fragments(inner),
+                line_indent: whole_line_repetition_indent(fragments, index),
+            },
         })
         .collect()
 }
 
-fn trim_repetition_close(fragments: &[MacroFragment]) -> Vec<MacroFragment> {
-    let mut fragments = fragments.to_vec();
-    let close_index = fragments.iter().rposition(|fragment| {
-        !matches!(
-            fragment,
-            MacroFragment::Token(Token {
-                token_type: TokenType::Eol | TokenType::Indent(_),
-                ..
-            })
-        )
-    });
-    if matches!(
-        close_index.and_then(|index| fragments.get(index)),
-        Some(MacroFragment::Token(Token {
-            token_type: TokenType::CloseParen,
-            ..
-        }))
-    ) {
-        fragments.remove(close_index.unwrap());
+/// Returns the line's indent token when the repetition at `index` is written
+/// on a single line and is the only thing on that line.
+fn whole_line_repetition_indent(fragments: &[MacroFragment], index: usize) -> Option<Token> {
+    let MacroFragment::Repetition(inner) = &fragments[index] else {
+        return None;
+    };
+    if contains_line_break(inner) {
+        return None;
     }
-    fragments
+
+    let indent = match index.checked_sub(1).map(|previous| &fragments[previous]) {
+        Some(MacroFragment::Token(
+            token @ Token {
+                token_type: TokenType::Indent(_),
+                ..
+            },
+        )) => token.clone(),
+        _ => return None,
+    };
+    let ends_line = match fragments.get(index + 1) {
+        None => true,
+        Some(MacroFragment::Token(token)) => {
+            matches!(token.token_type, TokenType::Eol | TokenType::Eof)
+        }
+        Some(_) => false,
+    };
+
+    ends_line.then_some(indent)
+}
+
+fn contains_line_break(fragments: &[MacroFragment]) -> bool {
+    fragments.iter().any(|fragment| match fragment {
+        MacroFragment::Token(token) => matches!(token.token_type, TokenType::Eol),
+        MacroFragment::Repetition(inner) => contains_line_break(inner),
+        _ => false,
+    })
+}
+
+fn line_break_tokens(indent: &Token) -> Vec<Token> {
+    vec![
+        Token {
+            token_type: TokenType::Eol,
+            span: indent.span.clone(),
+        },
+        indent.clone(),
+    ]
 }
 
 #[cfg(test)]
@@ -543,12 +563,15 @@ mod tests {
             ],
         );
         let template = MacroTemplate {
-            fragments: vec![TemplateFragment::Repetition(vec![
-                TemplateFragment::Capture {
-                    name: "name".to_string(),
-                },
-                TemplateFragment::Token(Token::from(TokenType::Equal)),
-            ])],
+            fragments: vec![TemplateFragment::Repetition {
+                fragments: vec![
+                    TemplateFragment::Capture {
+                        name: "name".to_string(),
+                    },
+                    TemplateFragment::Token(Token::from(TokenType::Equal)),
+                ],
+                line_indent: None,
+            }],
         };
 
         let expanded = template.expand(&captures).unwrap().to_tokens();
@@ -581,16 +604,19 @@ mod tests {
             ],
         );
         let template = MacroTemplate {
-            fragments: vec![TemplateFragment::Repetition(vec![
-                TemplateFragment::Capture {
-                    name: "name".to_string(),
-                },
-                TemplateFragment::Token(Token::from(TokenType::Equal)),
-                TemplateFragment::Token(Token::from(TokenType::Arrow)),
-                TemplateFragment::Capture {
-                    name: "ret".to_string(),
-                },
-            ])],
+            fragments: vec![TemplateFragment::Repetition {
+                fragments: vec![
+                    TemplateFragment::Capture {
+                        name: "name".to_string(),
+                    },
+                    TemplateFragment::Token(Token::from(TokenType::Equal)),
+                    TemplateFragment::Token(Token::from(TokenType::Arrow)),
+                    TemplateFragment::Capture {
+                        name: "ret".to_string(),
+                    },
+                ],
+                line_indent: None,
+            }],
         };
 
         let expanded = template.expand(&captures).unwrap().to_tokens();
