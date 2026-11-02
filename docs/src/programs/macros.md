@@ -1,6 +1,6 @@
 # Macros
 
-Rock has declarative token macros that generate top-level syntax before ordinary declaration collection and type checking. Macro expansion is useful when the repeated source shape cannot be expressed as a function, trait, or generic. It also makes ownership and generated control flow less obvious, so a small conventional expansion is easier to review than a clever one.
+Rock has declarative token macros that generate declarations or expressions before ordinary declaration collection and type checking. Macro expansion is useful when the repeated source shape cannot be expressed as a function, trait, or generic. It also makes ownership and generated control flow less obvious, so a small conventional expansion is easier to review than a clever one.
 
 > **Current status:** Declarative macro parsing, direct captures, expression captures, and flat repetition are covered by compiler tests. Macro use remains experimental: nested repetition, indentation-sensitive arguments, diagnostics, and formatter support are incomplete. The examples below use parser- and expansion-tested syntax; inspect generated source with `rock expand` before depending on it in a package.
 
@@ -133,6 +133,28 @@ main = !->
 ```
 
 The output is `8` and `0`. Put the more specific arm first; a broad arm can consume input before a later arm gets a chance. Invalid input is reported near the invocation, but expansion-origin labels and indentation diagnostics are still being improved.
+
+## Macros in expressions
+
+A macro can also be called wherever an expression is expected: on the right of an assignment, as a statement, or as a call argument. Its template must then produce exactly one expression. The macro below joins any number of values into a `String` by calling `show` on each one:
+
+```rock
+macro join
+    $first:expr $( , $rest:expr )* =>
+        ($first).show! $( .concat (($rest).show!) )*
+
+main = !->
+    name = String::from "rock"
+    greeting = %join "Hello ", name, ", you are ", 42
+    greeting.println!
+    name.println!
+```
+
+The program prints `Hello rock, you are 42` and then `rock`. `show` borrows its receiver, so `name` is still usable after the call.
+
+In an expression, a macro call takes every token up to the end of its line, commas included. To use the result in a larger expression, wrap the call in parentheses: `(%join "a", 1).concat (%join "b", 2)` evaluates both calls and joins them into `a1b2`. The expansion itself is treated as parenthesized, so it never mixes with the operators around the call. A template that produces something other than one expression, such as an assignment, is reported at the call site.
+
+A template may call other macros, including from an expression. Each expansion is expanded again until no macro call is left, up to a fixed depth that stops runaway recursion with a diagnostic.
 
 ## Expansion workflow and design rules
 

@@ -166,6 +166,7 @@ impl FormatNode for Operand {
                 write!(f, "unsafe")?;
                 display_block(context, block, true, f)
             }
+            Operand::MacroInvoc(invocation) => invocation.fmt_with(context, f),
         }
     }
 }

@@ -18,6 +18,7 @@ use self::{
 mod context;
 mod correspondances;
 pub mod declarative;
+mod expression;
 pub mod generated_parser;
 mod macro_arg_matcher;
 pub mod proc_macro;
@@ -91,6 +92,12 @@ pub fn expand_macros_with_context(
         }
     }
 
+    let mut registry = registry::MacroRegistry::from_module(&module);
+    for artifact in &context.proc_macro_artifacts {
+        registry.add_proc_macro_artifact(artifact.clone());
+    }
+    expression::expand_module_expressions(&mut module, &registry, context)?;
+
     program.module = expand_inline_modules(module, context)?;
 
     Ok(program)
@@ -158,6 +165,26 @@ fn expand_top_level(
     context: &MacroExpansionContext<'_>,
 ) -> Result<Vec<TopLevel>, Diagnostics> {
     let parent = context.take_parent_expansion_for_invocation(&invoc_span);
+    let (body, expansion_id) =
+        expand_declarative_tokens(macro_decl, &args, invoc_span, parent, context)?;
+
+    let top_levels = parse_generated_top_levels(body, context, Some(expansion_id))?;
+    if top_levels.is_empty() {
+        return Err(Diagnostics::default());
+    }
+
+    Ok(top_levels)
+}
+
+/// Records one expansion of `macro_decl`, matches `args` against its arms in
+/// order, and fills the template of the first arm that matches.
+fn expand_declarative_tokens(
+    macro_decl: &MacroDecl,
+    args: &[Token],
+    invoc_span: Span,
+    parent: Option<ExpansionId>,
+    context: &MacroExpansionContext<'_>,
+) -> Result<(TokenStream, ExpansionId), Diagnostics> {
     let expansion_id = context.record_expansion(MacroExpansionRecord {
         macro_name: macro_decl.name.name.clone(),
         invocation_span: invoc_span.clone(),
@@ -165,12 +192,11 @@ fn expand_top_level(
         parent,
     });
     let declarative_macro = DeclarativeMacro::from_ast(macro_decl);
-    let mut top_levels = vec![];
     let mut diagnostics = Diagnostics::default();
 
     for arm in &declarative_macro.arms {
         let mut macro_matcher = MacroArgMatcher::new(
-            &args,
+            args,
             arm.matcher.fragments.clone(),
             macro_decl.name.span.clone(),
             invoc_span.clone(),
@@ -188,31 +214,19 @@ fn expand_top_level(
             .generated_source_id(expansion_id)
             .unwrap_or(GeneratedSourceId(0));
         let captures = capture_set_from_correspondance(&correspondances, expansion_id, &invoc_span);
-        let body = match arm
+        return match arm
             .template
             .expand_with_origins(&captures, expansion_id, generated_source)
         {
-            Ok(expanded) => expanded,
+            Ok(body) => Ok((body, expansion_id)),
             Err(message) => {
                 diagnostics.push(ParseError::HardError(message, invoc_span.clone()));
-                return Err(with_expansion_trace(diagnostics, context, expansion_id));
+                Err(with_expansion_trace(diagnostics, context, expansion_id))
             }
         };
-
-        top_levels.extend(parse_generated_top_levels(
-            body,
-            context,
-            Some(expansion_id),
-        )?);
-
-        break;
     }
 
-    if top_levels.is_empty() {
-        return Err(diagnostics);
-    }
-
-    Ok(top_levels)
+    Err(diagnostics)
 }
 
 fn expand_proc_macro_top_level(
@@ -1018,6 +1032,94 @@ two = -> value"#;
             &format!("{declaration}%defs one two"),
             &format!("{declaration}one = -> 1\ntwo = -> 1\nlast = -> 2"),
         );
+    }
+
+    const TWICE_MACRO: &str = r#"macro twice
+    $x:expr =>
+        ($x) + ($x)
+"#;
+
+    #[test]
+    fn expression_macro_expands_inside_function_body() {
+        assert_expands_to(
+            &format!("{TWICE_MACRO}main = ->\n    a = %twice 1\n    a\n"),
+            &format!("{TWICE_MACRO}main = ->\n    a = ((1) + (1))\n    a\n"),
+        );
+    }
+
+    #[test]
+    fn expression_macro_expands_inside_call_arguments_and_nested_blocks() {
+        assert_expands_to(
+            &format!(
+                "{TWICE_MACRO}main = ->\n    if true\n        f (%twice 1), (%twice 2)\n    else\n        0\n"
+            ),
+            &format!(
+                "{TWICE_MACRO}main = ->\n    if true\n        f (((1) + (1))), (((2) + (2)))\n    else\n        0\n"
+            ),
+        );
+    }
+
+    #[test]
+    fn expression_macro_expands_calls_produced_by_its_expansion() {
+        let declarations = format!(
+            "{TWICE_MACRO}macro quad\n    $x:expr =>\n        %twice (%twice $x)\n"
+        );
+        assert_expands_to(
+            &format!("{declarations}main = -> %quad 3\n"),
+            &format!("{declarations}main = -> ((((((3) + (3)))) + ((((3) + (3))))))\n"),
+        );
+    }
+
+    #[test]
+    fn expression_macro_inline_repetition_joins_arguments() {
+        let declaration = r#"macro join
+    $first:expr $( , $rest:expr )* =>
+        ($first).show! $( .concat (($rest).show!) )*
+"#;
+        assert_expands_to(
+            &format!("{declaration}main = ->\n    s = %join \"a\", b, 1\n    s\n"),
+            &format!(
+                "{declaration}main = ->\n    s = ((\"a\").show! .concat ((b).show!) .concat ((1).show!))\n    s\n"
+            ),
+        );
+    }
+
+    #[test]
+    fn expression_macro_errors_name_unknown_macros() {
+        let config = test_config();
+        let context = MacroExpansionContext::new(&config);
+        let program = parse_string("main = -> %missing 1\n", &config).unwrap();
+
+        let diagnostics = expand_macros_with_context(program, &context)
+            .expect_err("an unknown expression macro should be reported");
+
+        assert!(diagnostics.contains("Unknown macro '%missing'"));
+    }
+
+    #[test]
+    fn expression_macro_errors_when_expansion_is_not_an_expression() {
+        let config = test_config();
+        let context = MacroExpansionContext::new(&config);
+        let input = "macro assign\n    $x:expr =>\n        y = $x\nmain = -> %assign 1\n";
+        let program = parse_string(input, &config).unwrap();
+
+        let diagnostics = expand_macros_with_context(program, &context)
+            .expect_err("a non-expression expansion should be reported");
+
+        assert!(diagnostics.contains("single expression"));
+    }
+
+    #[test]
+    fn expression_macro_depth_limit_stops_runaway_expansion() {
+        let config = test_config();
+        let context = MacroExpansionContext::new(&config).with_max_depth(5);
+        let input = "macro forever\n    $x:expr =>\n        %forever $x\nmain = -> %forever 1\n";
+        let program = parse_string(input, &config).unwrap();
+
+        let diagnostics = expand_macros_with_context(program, &context)
+            .expect_err("runaway expression expansion should stop");
+
+        assert!(diagnostics.contains("depth exceeded"));
     }
 
     #[test]

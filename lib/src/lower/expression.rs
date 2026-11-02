@@ -45,6 +45,7 @@ fn ast_expr_operand_span(operand: &AstExprOperand<'_>) -> Option<Span> {
                 None
             }
             ast::Operand::NativeOperator(operator) => Some(operator.span.clone()),
+            ast::Operand::MacroInvoc(invocation) => Some(invocation.name.span.clone()),
         }
     }
 
@@ -2113,6 +2114,15 @@ impl Lowerer {
                     kind: HirExprKind::UnsafeBlock(body),
                     span: span.clone(),
                 }
+            }
+            ast::Operand::MacroInvoc(invocation) => {
+                // Expansion replaces every macro call it can resolve, so one
+                // reaching lowering names an unknown macro.
+                self.diagnostics.push_type_with_span(
+                    format!("Unknown macro '%{}'", invocation.name.name),
+                    invocation.name.span.clone(),
+                );
+                self.error_expression_at(invocation.name.span.clone())
             }
             ast::Operand::NativeOperator(op) => {
                 let ty = if super::intrinsics::is_intrinsic_name(&op.name) {

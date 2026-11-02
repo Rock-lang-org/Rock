@@ -62,6 +62,51 @@ pub fn macro_invoc(stream: Input) -> IResult<MacroInvoc> {
         .process(stream)
 }
 
+/// Parses `%name tokens...` in expression position. The arguments run to the
+/// end of the line, or to the first closing delimiter that has no matching
+/// opener inside the arguments, so `(%name a, b).method!` works.
+pub fn macro_invoc_expr(stream: Input) -> IResult<MacroInvoc> {
+    let (stream, (span, name)) = (get_span, macro_invoc_token).process(stream)?;
+
+    let mut depth = 0usize;
+    let mut end = 0;
+    for token in stream.tokens {
+        match token.token_type {
+            TokenType::OpenParen | TokenType::OpenBracket | TokenType::OpenBrace => depth += 1,
+            TokenType::CloseParen
+            | TokenType::CloseBracket
+            | TokenType::CloseBrace
+            | TokenType::MacroRepeatClose => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            TokenType::Eol | TokenType::Eof | TokenType::Indent(_) if depth == 0 => break,
+            _ => {}
+        }
+        end += 1;
+    }
+
+    let args = stream.tokens[..end]
+        .iter()
+        .filter(|token| !matches!(token.token_type, TokenType::Eol | TokenType::Indent(_)))
+        .cloned()
+        .collect();
+    let stream = Input {
+        tokens: &stream.tokens[end..],
+        ..stream
+    };
+
+    Ok((
+        stream,
+        MacroInvoc {
+            name: Ident { name, span },
+            args,
+        },
+    ))
+}
+
 fn parse_macro_head_recursive(stream: Input<'_>) -> IResult<'_, Vec<MacroFragment>> {
     let (defs, tokens) = parse_macro_head_recursive_inner(stream.tokens, stream, None)?;
 
