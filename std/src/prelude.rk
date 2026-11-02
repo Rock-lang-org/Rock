@@ -49,6 +49,10 @@
 < std::collections::vec::*
 < std::collections::hash_map::*
 
+// Macros
+< std::fmt::format
+< std::fmt::println
+
 // Traits
 < std::show::*
 < std::ops::deref::*
