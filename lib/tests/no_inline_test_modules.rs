@@ -31,10 +31,16 @@ fn visit(dir: &Path, offenders: &mut Vec<String>) {
 #[test]
 fn source_files_have_no_inline_test_modules() {
     let mut offenders = Vec::new();
-    visit(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut offenders,
-    );
+    // Check every crate in the workspace, not only this one.
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    for entry in std::fs::read_dir(workspace).expect("readable workspace") {
+        let crate_dir = entry.expect("readable dir entry").path();
+        if crate_dir.join("Cargo.toml").is_file() && crate_dir.join("src").is_dir() {
+            visit(&crate_dir.join("src"), &mut offenders);
+        }
+    }
     assert!(
         offenders.is_empty(),
         "move these test modules into a sibling `tests.rs` (declare `#[cfg(test)] mod tests;`):\n{}",
