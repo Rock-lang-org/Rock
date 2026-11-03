@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::{
     constants::{
         BIN_DIR, COMPONENTS_MANIFEST_NAME, DEFAULT_TOOLCHAIN_FILE, LIB_DIR, ROCKC_BIN_NAME,
-        ROCK_BIN_NAME, ROCK_LSP_BIN_NAME, ROCK_TOOLCHAIN_FILE, STD_ARTIFACT_NAME,
-        STD_OBJECT_NAME, TOOLCHAIN_MANIFEST_NAME,
+        ROCK_BIN_NAME, ROCK_LSP_BIN_NAME, ROCK_TOOLCHAIN_FILE, STD_ARTIFACT_NAME, STD_OBJECT_NAME,
+        TOOLCHAIN_MANIFEST_NAME,
     },
     home::RockupHome,
     layout::host_target_triple,

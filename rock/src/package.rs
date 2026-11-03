@@ -123,19 +123,26 @@ impl Package {
     }
 
     pub(crate) fn executable_path(&self, name: &str) -> PathBuf {
-        let filename = if cfg!(target_os = "windows") { format!("{}.exe", name) } else { name.to_string() };
+        let filename = if cfg!(target_os = "windows") {
+            format!("{}.exe", name)
+        } else {
+            name.to_string()
+        };
         self.build_dir().join(filename)
     }
 }
 
 fn filename_component(value: &str) -> String {
-    value.chars().map(|ch| {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '+') {
-            ch
-        } else {
-            '_'
-        }
-    }).collect()
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '+') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -178,7 +185,10 @@ mod tests {
         let mut package = load_package(root.clone());
         package.manifest.crate_.name = "../../escape".to_string();
         package.manifest.crate_.version = "../../../escape".to_string();
-        assert_eq!(package.artifact_path().parent().unwrap(), package.build_dir().join("artifacts"));
+        assert_eq!(
+            package.artifact_path().parent().unwrap(),
+            package.build_dir().join("artifacts")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

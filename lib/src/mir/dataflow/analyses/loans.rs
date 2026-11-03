@@ -158,7 +158,9 @@ impl LoanState {
             return false;
         };
         self.ensure_len(id.index() + 1);
-        let inherited = loan.reborrow_source.as_ref()
+        let inherited = loan
+            .reborrow_source
+            .as_ref()
             .is_some_and(|source| self.copy_owner(source.local, loan.initial_owner));
         let active_changed = self.active.insert(id);
         let owner_changed = self.owners[id.index()].insert(loan.initial_owner);
@@ -308,9 +310,14 @@ impl LoanAnalysis {
         active_loans: &LoanState,
     ) -> Result<(), LoanId> {
         Self::check_aliasing_with_owner(
-            place, kind,
-            through.projection.contains(&Projection::Deref).then_some(through.local),
-            table, active_loans,
+            place,
+            kind,
+            through
+                .projection
+                .contains(&Projection::Deref)
+                .then_some(through.local),
+            table,
+            active_loans,
         )
     }
 

@@ -35,14 +35,22 @@ pub fn resolve_analysis_project(project_root: &Path) -> Result<AnalysisProject, 
 }
 
 /// Select an explicitly declared entry when that entry is opened in the editor.
-pub fn resolve_analysis_project_for_source(project_root: &Path, source_path: &Path) -> Result<AnalysisProject, String> {
+pub fn resolve_analysis_project_for_source(
+    project_root: &Path,
+    source_path: &Path,
+) -> Result<AnalysisProject, String> {
     resolve_project(project_root, Some(source_path))
 }
 
-fn resolve_project(project_root: &Path, source_path: Option<&Path>) -> Result<AnalysisProject, String> {
+fn resolve_project(
+    project_root: &Path,
+    source_path: Option<&Path>,
+) -> Result<AnalysisProject, String> {
     let mut package = Package::load(project_root.to_path_buf())?;
     if let Some(source_path) = source_path {
-        let source_path = source_path.canonicalize().unwrap_or_else(|_| source_path.to_path_buf());
+        let source_path = source_path
+            .canonicalize()
+            .unwrap_or_else(|_| source_path.to_path_buf());
         if let Some(target) = package.manifest.targets.iter().find(|target| {
             let entry = package.root_dir.join(target.path());
             entry.canonicalize().unwrap_or(entry) == source_path
@@ -91,7 +99,14 @@ mod tests {
     #[test]
     fn resolves_library_entry_for_project_analysis() {
         let root = temp_test_dir("analysis_library");
-        write_package_with_options(&root, "library", "src/lib.rk", &[], "< answer = -> 42\n", true);
+        write_package_with_options(
+            &root,
+            "library",
+            "src/lib.rk",
+            &[],
+            "< answer = -> 42\n",
+            true,
+        );
         let project = resolve_analysis_project(&root).unwrap();
         assert_eq!(project.entry_file, root.join("src/lib.rk"));
         assert!(project.no_std);
@@ -154,12 +169,18 @@ mod tests {
         let app = root.join("app");
         write_package_with_options(&dep, "dep", "lib.rk", &[], "< answer = -> 42\n", true);
         write_package_with_options(
-            &app, "app", "src/main.rk", &[("dep", dep.display().to_string())],
-            "> dep::answer\nmain = -> answer!\n", true,
+            &app,
+            "app",
+            "src/main.rk",
+            &[("dep", dep.display().to_string())],
+            "> dep::answer\nmain = -> answer!\n",
+            true,
         );
         let project = resolve_analysis_project(&app).unwrap();
         assert_eq!(project.extern_artifacts.len(), 1);
-        assert!(project.extern_artifacts[0].1.starts_with(app.join("build/debug/deps")));
+        assert!(project.extern_artifacts[0]
+            .1
+            .starts_with(app.join("build/debug/deps")));
         assert!(project.extern_artifacts[0].1.exists());
         assert!(!dep.join("build").exists());
         fs::remove_dir_all(root).unwrap();

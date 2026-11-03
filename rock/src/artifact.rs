@@ -8,9 +8,7 @@ use std::{
 use rock_shared::fs::{collect_package_source_inputs, file_modified};
 
 use crate::{
-    bundled_sysroot::{
-        ensure_sysroot_std_available, package_requires_sysroot_std, STD_CRATE_NAME,
-    },
+    bundled_sysroot::{ensure_sysroot_std_available, package_requires_sysroot_std, STD_CRATE_NAME},
     deps::resolve_dependency_root,
     package::{BuildProfile, Package},
     progress,
@@ -56,12 +54,7 @@ impl ArtifactBuildState {
         dependency_artifacts: &[(String, PathBuf)],
     ) -> bool {
         dependency_artifacts.iter().any(|(name, artifact_path)| {
-            name != STD_CRATE_NAME
-                && self
-                    .uses_std
-                    .get(artifact_path)
-                    .copied()
-                    .unwrap_or(false)
+            name != STD_CRATE_NAME && self.uses_std.get(artifact_path).copied().unwrap_or(false)
         })
     }
 }
@@ -204,8 +197,7 @@ pub(crate) fn ensure_artifact(
                 let dep_root = resolve_dependency_root(&package.root_dir, dep_name, dependency)?;
                 let artifact = ensure_artifact(&dep_root, state)?;
                 if dep_name != STD_CRATE_NAME {
-                    dependencies_use_std |=
-                        state.uses_std.get(&artifact).copied().unwrap_or(false);
+                    dependencies_use_std |= state.uses_std.get(&artifact).copied().unwrap_or(false);
                 }
                 // Loaded dependencies also require their complete artifact closure.
                 // Retain it in the build state so cached sources need not be re-read.
@@ -280,7 +272,9 @@ pub(crate) fn ensure_artifact(
         state
             .artifacts
             .insert(canonical_root.clone(), artifact_path.clone());
-        state.artifact_dependencies.insert(artifact_path.clone(), dependency_artifacts);
+        state
+            .artifact_dependencies
+            .insert(artifact_path.clone(), dependency_artifacts);
         state.uses_std.insert(
             artifact_path.clone(),
             package_requires_sysroot_std(&package) || dependencies_use_std,

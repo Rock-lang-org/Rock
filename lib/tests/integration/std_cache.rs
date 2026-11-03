@@ -1,9 +1,9 @@
+use crate::std_cache_key::std_cache_key;
 use crate::support::*;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use crate::std_cache_key::std_cache_key;
 
 fn write_minimal_std_artifact_for_cache_test(path: &Path) {
     rock_lib::products::CompilerProducts {
@@ -47,15 +47,8 @@ fn std_cache_key_changes_when_std_source_changes() {
     std::fs::write(std_dir.join("rock.toml"), "[crate]\nname = \"std\"\n").unwrap();
     let with_manifest = std_cache_key(&std_dir, "compiler-stamp");
     assert_ne!(changed, with_manifest);
-    std::fs::write(
-        std_dir.join("rock.toml"),
-        "[crate]\nname = \"renamed\"\n",
-    )
-    .unwrap();
-    assert_ne!(
-        with_manifest,
-        std_cache_key(&std_dir, "compiler-stamp")
-    );
+    std::fs::write(std_dir.join("rock.toml"), "[crate]\nname = \"renamed\"\n").unwrap();
+    assert_ne!(with_manifest, std_cache_key(&std_dir, "compiler-stamp"));
     let _ = std::fs::remove_dir_all(dir);
 }
 

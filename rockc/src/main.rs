@@ -1226,20 +1226,16 @@ mod tests {
 
     #[test]
     fn test_build_profiles() {
-        for (flags, expected) in [
-            (vec![], 0),
-            (vec!["--debug"], 0),
-            (vec!["--release"], 3),
-        ] {
+        for (flags, expected) in [(vec![], 0), (vec!["--debug"], 0), (vec!["--release"], 3)] {
             let mut args = vec!["rockc", "--entry-file", "main.rk"];
             args.extend(flags);
-            let config = Config::try_parse_from(args).unwrap().into_compiler_config().unwrap();
+            let config = Config::try_parse_from(args)
+                .unwrap()
+                .into_compiler_config()
+                .unwrap();
             assert_eq!(config.opt_level, expected);
         }
-        for flags in [
-            vec!["--debug", "--release"],
-            vec!["--release", "--debug"],
-        ] {
+        for flags in [vec!["--debug", "--release"], vec!["--release", "--debug"]] {
             let mut args = vec!["rockc", "--entry-file", "main.rk"];
             args.extend(flags);
             assert!(Config::try_parse_from(args).is_err());
@@ -1251,8 +1247,16 @@ mod tests {
         for (profile, expected_opt) in [("--debug", 0), ("--release", 3)] {
             for (flag, expected) in [("true", true), ("false", false)] {
                 let config = Config::try_parse_from([
-                    "rockc", "--entry-file", "main.rk", profile, "--overflow-checks", flag,
-                ]).unwrap().into_compiler_config().unwrap();
+                    "rockc",
+                    "--entry-file",
+                    "main.rk",
+                    profile,
+                    "--overflow-checks",
+                    flag,
+                ])
+                .unwrap()
+                .into_compiler_config()
+                .unwrap();
                 assert_eq!(config.opt_level, expected_opt);
                 assert_eq!(config.overflow_checks, Some(expected));
             }
@@ -1280,7 +1284,9 @@ mod tests {
             let error = Config::try_parse_from(args).unwrap_err();
             assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
         }
-        let help = <Config as clap::CommandFactory>::command().render_long_help().to_string();
+        let help = <Config as clap::CommandFactory>::command()
+            .render_long_help()
+            .to_string();
         assert!(!help.contains("-O"));
         assert!(!help.contains("--opt-level"));
     }
@@ -1289,20 +1295,33 @@ mod tests {
     fn test_build_profile_flags_compile_unit_main_with_zero_exit_status() {
         let dir = artifact_deps_test_dir("profile_unit_main");
         let entry = dir.join("main.rk");
-        std::fs::write(&entry, "extern putchar: I32 -> I32\nmain = !-> putchar (65 as I32)\n").unwrap();
+        std::fs::write(
+            &entry,
+            "extern putchar: I32 -> I32\nmain = !-> putchar (65 as I32)\n",
+        )
+        .unwrap();
         for flag in [None, Some("--debug"), Some("--release")] {
             let output_dir = dir.join(flag.unwrap_or("default").trim_start_matches('-'));
             let mut args = vec![
-                "rockc".to_string(), "--entry-file".to_string(), entry.display().to_string(),
-                "--output-dir".to_string(), output_dir.display().to_string(),
-                "--no-std".to_string(), "--no-prelude".to_string(),
+                "rockc".to_string(),
+                "--entry-file".to_string(),
+                entry.display().to_string(),
+                "--output-dir".to_string(),
+                output_dir.display().to_string(),
+                "--no-std".to_string(),
+                "--no-prelude".to_string(),
             ];
             if let Some(flag) = flag {
                 args.push(flag.to_string());
             }
-            let config = Config::try_parse_from(args).unwrap().into_compiler_config().unwrap();
+            let config = Config::try_parse_from(args)
+                .unwrap()
+                .into_compiler_config()
+                .unwrap();
             rock_lib::compile(&config).unwrap();
-            let output = std::process::Command::new(output_dir.join("main")).output().unwrap();
+            let output = std::process::Command::new(output_dir.join("main"))
+                .output()
+                .unwrap();
             assert_eq!(output.status.code(), Some(0), "profile {flag:?}");
             assert_eq!(output.stdout, b"A", "profile {flag:?}");
         }

@@ -208,7 +208,10 @@ impl CrateContext {
         self.extern_crates()
             .flat_map(|dep| {
                 dep.metadata().macros().iter().map(move |export| {
-                    (format!("{}::{}", dep.name(), export.path), export.decl.clone())
+                    (
+                        format!("{}::{}", dep.name(), export.path),
+                        export.decl.clone(),
+                    )
                 })
             })
             .collect()
@@ -220,13 +223,16 @@ impl CrateContext {
             .filter(|dep| dep.name() == crate_name)
             .flat_map(|dep| {
                 let metadata = dep.metadata();
-                metadata.prelude_macros().iter().filter_map(|(alias, path)| {
-                    metadata
-                        .macros()
-                        .iter()
-                        .find(|export| &export.path == path)
-                        .map(|export| (alias.clone(), export.decl.clone()))
-                })
+                metadata
+                    .prelude_macros()
+                    .iter()
+                    .filter_map(|(alias, path)| {
+                        metadata
+                            .macros()
+                            .iter()
+                            .find(|export| &export.path == path)
+                            .map(|export| (alias.clone(), export.decl.clone()))
+                    })
             })
             .collect()
     }

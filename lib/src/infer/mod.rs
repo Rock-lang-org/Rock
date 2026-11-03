@@ -465,7 +465,10 @@ pub fn finalize(hir: PartialHir) -> Result<ResolvedHirProgram, Vec<ResolveError>
     finalize_with_constant_methods(hir, HashMap::new())
 }
 
-pub(crate) fn finalize_with_crates(hir: PartialHir, ctx: &crate::crate_system::CrateContext) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
+pub(crate) fn finalize_with_crates(
+    hir: PartialHir,
+    ctx: &crate::crate_system::CrateContext,
+) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
     let mut summaries = HashMap::new();
     for dependency in ctx.extern_crates() {
         for imp in dependency.metadata().interface().impls.values() {
@@ -479,7 +482,10 @@ pub(crate) fn finalize_with_crates(hir: PartialHir, ctx: &crate::crate_system::C
     finalize_with_constant_methods(hir, summaries)
 }
 
-fn finalize_with_constant_methods(mut hir: PartialHir, summaries: HashMap<DefId, constants::ArithmeticSummary>) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
+fn finalize_with_constant_methods(
+    mut hir: PartialHir,
+    summaries: HashMap<DefId, constants::ArithmeticSummary>,
+) -> Result<ResolvedHirProgram, Vec<ResolveError>> {
     hir.validate_item_ids()?;
     validate_method_ids(&hir)?;
     drive_inference_to_quiescence(&mut hir)?;
@@ -769,17 +775,32 @@ fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), Vec<Resolve
     // A value determined by a function parameter is inferred generically, not
     // an unconstrained construction site eligible for a declaration fallback.
     let mut parameter_vars = HashSet::new();
-    for function in hir.functions.values().chain(hir.impls.values().flat_map(|item| item.methods.values()))
-        .chain(hir.traits.values().flat_map(|item| item.methods.values())) {
+    for function in hir
+        .functions
+        .values()
+        .chain(hir.impls.values().flat_map(|item| item.methods.values()))
+        .chain(hir.traits.values().flat_map(|item| item.methods.values()))
+    {
         for param in &function.params {
-            crate::type_services::visit::visit_type(&hir.engine.resolve(&param.ty), &mut |ty: &Type| {
-                if let Type::TypeVar(id) = ty { parameter_vars.insert(*id); }
-            });
+            crate::type_services::visit::visit_type(
+                &hir.engine.resolve(&param.ty),
+                &mut |ty: &Type| {
+                    if let Type::TypeVar(id) = ty {
+                        parameter_vars.insert(*id);
+                    }
+                },
+            );
         }
     }
-    hir.engine.apply_generic_defaults(&parameter_vars).map_err(|error| vec![ResolveError::from_optional_span_code(
-        error.error.render(&hir.engine), error.span, crate::diagnostic::DiagnosticCode::Type,
-    )])?;
+    hir.engine
+        .apply_generic_defaults(&parameter_vars)
+        .map_err(|error| {
+            vec![ResolveError::from_optional_span_code(
+                error.error.render(&hir.engine),
+                error.span,
+                crate::diagnostic::DiagnosticCode::Type,
+            )]
+        })?;
     for (_, owners, authority_obligations) in &mut component_work {
         solve_component_worklist(hir, &owners, authority_obligations, true)?;
         if authority_obligations.iter().any(|obligation| {

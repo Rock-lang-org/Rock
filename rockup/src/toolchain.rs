@@ -322,10 +322,7 @@ fn validate_cargo_build_dir(layout: &CargoBuildDirLayout) -> Result<(), String> 
             &layout.target_libdir.join(STD_ARTIFACT_NAME),
             "std artifact",
         ),
-        (
-            &layout.target_libdir.join(STD_OBJECT_NAME),
-            "std object",
-        ),
+        (&layout.target_libdir.join(STD_OBJECT_NAME), "std object"),
         (
             &layout.target_libdir.join(TOOLCHAIN_MANIFEST_NAME),
             "toolchain manifest",

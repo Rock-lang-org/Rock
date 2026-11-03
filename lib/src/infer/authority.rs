@@ -1523,19 +1523,27 @@ fn propagate_call_instance(
                 };
                 for bound in hir.engine.get_bounds(source_id) {
                     if bound.type_args.len() != 2
-                        || !hir.language_items.callable_protocols()
+                        || !hir
+                            .language_items
+                            .callable_protocols()
                             .any(|(_, id, _)| id == bound.trait_id)
                     {
                         continue;
                     }
                     for (source, actual) in bound.type_args.iter().zip([&packed, ret.as_ref()]) {
                         propagate_instance_relation(
-                            &mut hir.engine, source, actual, &mut instance_bindings, &shared_vars,
+                            &mut hir.engine,
+                            source,
+                            actual,
+                            &mut instance_bindings,
+                            &shared_vars,
                         );
                     }
                     let instantiated = crate::types::TraitBound {
                         trait_id: bound.trait_id,
-                        type_args: bound.type_args.iter()
+                        type_args: bound
+                            .type_args
+                            .iter()
                             .map(|ty| hir.engine.resolve(ty).substitute(&instance_bindings))
                             .collect(),
                     };
@@ -1549,7 +1557,10 @@ fn propagate_call_instance(
                     });
                     if !already_recorded {
                         hir.constraint_store.add_trait(
-                            instance.clone(), instantiated, callee.span.clone(), "inferred callable argument",
+                            instance.clone(),
+                            instantiated,
+                            callee.span.clone(),
+                            "inferred callable argument",
                         );
                     }
                 }
@@ -2953,22 +2964,33 @@ impl MethodAuthorityContext<'_> {
                 param.ty.collect_generic_params(&mut generics);
             }
             for generic in generics {
-                substitution.entry(generic).or_insert(Type::Generic(generic));
+                substitution
+                    .entry(generic)
+                    .or_insert(Type::Generic(generic));
             }
         }
-        candidate.substituted_params.iter().zip(args).all(|(param, arg)| {
-            let expected = self.resolved_type(&param.ty);
-            let actual = self.resolved_type(&arg.ty);
-            if contains_recovery_type(&actual) || contains_recovery_type(&expected)
-                || type_pattern_matches(&expected, &actual, &mut substitution)
-            {
-                return true;
-            }
-            if let Type::Reference { mutable: false, inner } = &expected {
-                return type_pattern_matches(inner, &actual, &mut substitution);
-            }
-            false
-        })
+        candidate
+            .substituted_params
+            .iter()
+            .zip(args)
+            .all(|(param, arg)| {
+                let expected = self.resolved_type(&param.ty);
+                let actual = self.resolved_type(&arg.ty);
+                if contains_recovery_type(&actual)
+                    || contains_recovery_type(&expected)
+                    || type_pattern_matches(&expected, &actual, &mut substitution)
+                {
+                    return true;
+                }
+                if let Type::Reference {
+                    mutable: false,
+                    inner,
+                } = &expected
+                {
+                    return type_pattern_matches(inner, &actual, &mut substitution);
+                }
+                false
+            })
     }
 
     fn select_deferred_method(
@@ -2981,21 +3003,20 @@ impl MethodAuthorityContext<'_> {
     ) -> Option<SelectedMethod> {
         let receiver_candidates = self.receiver_adjustment_candidates(receiver.clone());
         let unresolved_inputs = contains_recovery_type(&self.resolved_type(&receiver.ty))
-            || args.iter().any(|arg| contains_recovery_type(&self.resolved_type(&arg.ty)));
+            || args
+                .iter()
+                .any(|arg| contains_recovery_type(&self.resolved_type(&arg.ty)));
         if let Type::TypeVar(id) = self.resolved_type(&receiver.ty) {
             let bounds = self.engine.borrow().get_bounds(id);
             if !bounds.is_empty() {
-                if let Ok(selected) = self
-                    .service()
-                    .select_bound_method_matching(
-                        &receiver_candidates,
-                        &bounds,
-                        method_name,
-                        Type::TypeVar(id),
-                        matches!(receiver.kind, HirExprKind::Call(_, _, _)),
-                        |candidate| self.deferred_method_accepts_args(candidate, args),
-                    )
-                {
+                if let Ok(selected) = self.service().select_bound_method_matching(
+                    &receiver_candidates,
+                    &bounds,
+                    method_name,
+                    Type::TypeVar(id),
+                    matches!(receiver.kind, HirExprKind::Call(_, _, _)),
+                    |candidate| self.deferred_method_accepts_args(candidate, args),
+                ) {
                     return Some(selected);
                 }
             }
@@ -3003,17 +3024,14 @@ impl MethodAuthorityContext<'_> {
         if let Type::Generic(param) = self.resolved_type(&receiver.ty) {
             let bounds = self.bounds.get(&param).cloned().unwrap_or_default();
             if !bounds.is_empty() {
-                if let Ok(selected) = self
-                    .service()
-                    .select_bound_method_matching(
-                        &receiver_candidates,
-                        &bounds,
-                        method_name,
-                        Type::Generic(param),
-                        matches!(receiver.kind, HirExprKind::Call(_, _, _)),
-                        |candidate| self.deferred_method_accepts_args(candidate, args),
-                    )
-                {
+                if let Ok(selected) = self.service().select_bound_method_matching(
+                    &receiver_candidates,
+                    &bounds,
+                    method_name,
+                    Type::Generic(param),
+                    matches!(receiver.kind, HirExprKind::Call(_, _, _)),
+                    |candidate| self.deferred_method_accepts_args(candidate, args),
+                ) {
                     return Some(selected);
                 }
             }
@@ -3275,8 +3293,11 @@ impl MethodAuthorityContext<'_> {
                     Some(&expr.ty),
                     errors,
                 ) else {
-                    if !self.strict && (contains_recovery_type(&self.resolved_type(&receiver.ty))
-                        || args.iter().any(|arg| contains_recovery_type(&self.resolved_type(&arg.ty))))
+                    if !self.strict
+                        && (contains_recovery_type(&self.resolved_type(&receiver.ty))
+                            || args
+                                .iter()
+                                .any(|arg| contains_recovery_type(&self.resolved_type(&arg.ty))))
                     {
                         return;
                     }
@@ -3319,10 +3340,20 @@ impl MethodAuthorityContext<'_> {
                     let mut actual = self.engine.borrow().resolve(&arg.ty);
                     let expected = param.ty.substitute_generics(&substitution);
                     let borrow_argument = match &expected {
-                        Type::Reference { mutable: false, inner } => {
+                        Type::Reference {
+                            mutable: false,
+                            inner,
+                        } => {
                             !matches!(actual, Type::Reference { .. })
-                                || (!type_pattern_matches(&expected, &actual, &mut substitution.clone())
-                                    && type_pattern_matches(inner, &actual, &mut substitution.clone()))
+                                || (!type_pattern_matches(
+                                    &expected,
+                                    &actual,
+                                    &mut substitution.clone(),
+                                ) && type_pattern_matches(
+                                    inner,
+                                    &actual,
+                                    &mut substitution.clone(),
+                                ))
                         }
                         _ => false,
                     };

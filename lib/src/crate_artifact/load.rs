@@ -1741,7 +1741,9 @@ fn validate_product_interface_rows(products: &CompilerProducts) -> Result<(), St
         }
         for (signature_name, signature) in &trait_def.signatures {
             validate_product_interface_signature_name("trait", *id, signature_name, signature)?;
-            if let Some(method) = trait_def.methods.get(signature_name)
+            if let Some(method) = trait_def
+                .methods
+                .get(signature_name)
                 .filter(|method| method.id == signature.id)
             {
                 // This is one member with both a declaration and a default body,
@@ -2592,37 +2594,76 @@ fn remap_generic_param_decls(
             let owner = ProductDefId::from(decl.id.owner);
             let subject_index = validator.trait_generic_counts.get(&owner).copied();
             if let Some(index) = subject_index {
-                let subject = GenericParamId { owner: decl.id.owner, index: index as u32 };
-                if TypeNormalizer::new(&env).kind_of(&Type::Generic(subject)).is_err() {
+                let subject = GenericParamId {
+                    owner: decl.id.owner,
+                    index: index as u32,
+                };
+                if TypeNormalizer::new(&env)
+                    .kind_of(&Type::Generic(subject))
+                    .is_err()
+                {
                     env.register_generic_kind(subject, crate::type_services::kind::Kind::Type);
                 }
             }
             let mut invalid_generic = false;
             crate::type_services::visit::visit_type(default, &mut |ty: &Type| {
                 if let Type::Generic(param) = ty {
-                    if param.owner != decl.id.owner || (param.index >= decl.id.index && Some(param.index as usize) != subject_index) {
+                    if param.owner != decl.id.owner
+                        || (param.index >= decl.id.index
+                            && Some(param.index as usize) != subject_index)
+                    {
                         invalid_generic = true;
                     }
                 }
             });
-            if invalid_generic { return Err("Product artifact generic default references an out-of-scope parameter".into()); }
-            struct BoundScope { groups: Vec<Vec<Kind>>, valid: bool }
+            if invalid_generic {
+                return Err(
+                    "Product artifact generic default references an out-of-scope parameter".into(),
+                );
+            }
+            struct BoundScope {
+                groups: Vec<Vec<Kind>>,
+                valid: bool,
+            }
             impl crate::type_services::visit::TypeVisitor for BoundScope {
-                fn enter_binders(&mut self, params: &[Kind]) { self.groups.push(params.to_vec()); }
-                fn exit_binders(&mut self) { self.groups.pop(); }
+                fn enter_binders(&mut self, params: &[Kind]) {
+                    self.groups.push(params.to_vec());
+                }
+                fn exit_binders(&mut self) {
+                    self.groups.pop();
+                }
                 fn visit_type(&mut self, ty: &Type) {
                     if let Type::BoundVar { depth, index, kind } = ty {
-                        self.valid &= self.groups.iter().rev().nth(*depth as usize)
-                            .and_then(|group| group.get(*index as usize)) == Some(kind);
+                        self.valid &= self
+                            .groups
+                            .iter()
+                            .rev()
+                            .nth(*depth as usize)
+                            .and_then(|group| group.get(*index as usize))
+                            == Some(kind);
                     }
                     crate::type_services::visit::visit_type_children(ty, self);
                 }
             }
-            let mut scope = BoundScope { groups: Vec::new(), valid: true };
+            let mut scope = BoundScope {
+                groups: Vec::new(),
+                valid: true,
+            };
             crate::type_services::visit::visit_type(default, &mut scope);
-            if !scope.valid { return Err("Product artifact generic default contains an escaping type binder".into()); }
-            let kind = TypeNormalizer::new(&env).kind_of(default).map_err(|error| error.to_string())?;
-            if kind != decl.kind { return Err(format!("Product artifact generic default has kind {kind}, expected {}", decl.kind)); }
+            if !scope.valid {
+                return Err(
+                    "Product artifact generic default contains an escaping type binder".into(),
+                );
+            }
+            let kind = TypeNormalizer::new(&env)
+                .kind_of(default)
+                .map_err(|error| error.to_string())?;
+            if kind != decl.kind {
+                return Err(format!(
+                    "Product artifact generic default has kind {kind}, expected {}",
+                    decl.kind
+                ));
+            }
             remap_type_def_ids(default, remap, validator)?;
         } else if default_seen {
             return Err("Product artifact required parameter follows a defaulted parameter".into());

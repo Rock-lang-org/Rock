@@ -473,25 +473,47 @@ impl InferenceEngine {
         self.fresh_type_var_of_kind(Kind::Type)
     }
 
-    pub(crate) fn fresh_generic_args(&mut self, params: &[crate::types::GenericParamDecl], span: &Span) -> Vec<Type> {
-        let args = params.iter().map(|param| self.fresh_type_var_at_kind(span.clone(), param.kind.clone())).collect::<Vec<_>>();
+    pub(crate) fn fresh_generic_args(
+        &mut self,
+        params: &[crate::types::GenericParamDecl],
+        span: &Span,
+    ) -> Vec<Type> {
+        let args = params
+            .iter()
+            .map(|param| self.fresh_type_var_at_kind(span.clone(), param.kind.clone()))
+            .collect::<Vec<_>>();
         self.register_generic_defaults(params, &args);
         args
     }
 
-    pub(crate) fn register_generic_defaults(&mut self, params: &[crate::types::GenericParamDecl], args: &[Type]) {
-        let substitutions = params.iter().zip(args).map(|(param, arg)| (param.id, arg.clone())).collect();
+    pub(crate) fn register_generic_defaults(
+        &mut self,
+        params: &[crate::types::GenericParamDecl],
+        args: &[Type],
+    ) {
+        let substitutions = params
+            .iter()
+            .zip(args)
+            .map(|(param, arg)| (param.id, arg.clone()))
+            .collect();
         for (param, arg) in params.iter().zip(args) {
             if let Some(default) = &param.default {
-                self.generic_defaults.push((arg.clone(), default.substitute_generics(&substitutions)));
+                self.generic_defaults
+                    .push((arg.clone(), default.substitute_generics(&substitutions)));
             }
         }
     }
 
-    pub(crate) fn apply_generic_defaults(&mut self, parameter_vars: &HashSet<TypeVarId>) -> Result<(), InferenceError> {
+    pub(crate) fn apply_generic_defaults(
+        &mut self,
+        parameter_vars: &HashSet<TypeVarId>,
+    ) -> Result<(), InferenceError> {
         for (arg, default) in std::mem::take(&mut self.generic_defaults) {
             if matches!(self.resolve(&arg), Type::TypeVar(id) if !parameter_vars.contains(&id)) {
-                self.unify(&arg, &default).map_err(|error| InferenceError { error, span: self.span_for_type(&arg) })?;
+                self.unify(&arg, &default).map_err(|error| InferenceError {
+                    error,
+                    span: self.span_for_type(&arg),
+                })?;
             }
         }
         Ok(())

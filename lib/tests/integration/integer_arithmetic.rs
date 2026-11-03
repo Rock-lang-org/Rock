@@ -37,17 +37,32 @@ fn test_ordinary_constant_integer_arithmetic_is_diagnosed() {
         let errors = rock_lib::compile(&rock_lib::Config {
             no_link: true,
             ..test_config(entry.clone(), dir)
-        }).unwrap_err();
+        })
+        .unwrap_err();
         assert!(errors.0.iter().any(|error| {
             error.message.contains("invalid constant integer arithmetic")
                 && matches!(&error.location, rock_lib::diagnostic::DiagnosticLocation::Source(span) if span.file_path == entry)
         }), "{expression}: {errors:?}");
         if expression.contains("println") {
             let source = fs::read_to_string(&entry).unwrap();
-            let diagnostic = errors.0.iter().find(|error| error.message.contains("invalid constant integer arithmetic")).unwrap();
-            let rock_lib::diagnostic::DiagnosticLocation::Source(span) = &diagnostic.location else { panic!("missing source span"); };
+            let diagnostic = errors
+                .0
+                .iter()
+                .find(|error| {
+                    error
+                        .message
+                        .contains("invalid constant integer arithmetic")
+                })
+                .unwrap();
+            let rock_lib::diagnostic::DiagnosticLocation::Source(span) = &diagnostic.location
+            else {
+                panic!("missing source span");
+            };
             let highlighted = &source[span.start..span.end];
-            assert!(highlighted.contains('+') && !highlighted.contains("println"), "wrong operation highlighted: {highlighted}");
+            assert!(
+                highlighted.contains('+') && !highlighted.contains("println"),
+                "wrong operation highlighted: {highlighted}"
+            );
         }
     }
 }
@@ -84,18 +99,27 @@ impl Sub for I8
             no_link: true,
             ..Default::default()
         };
-        rock_lib::compile_with_products(&config).unwrap().products.unwrap()
-            .write_artifact_to_path(&artifact).unwrap();
+        rock_lib::compile_with_products(&config)
+            .unwrap()
+            .products
+            .unwrap()
+            .write_artifact_to_path(&artifact)
+            .unwrap();
         fs::remove_file(dependency).unwrap();
         for (expression, invalid, opt_level) in [
             ("(127 as I8) + (1 as I8)", checked),
             ("(127 as I8) - (1 as I8)", true),
             ("(1 as I8) - (2 as I8)", false),
-        ].into_iter().flat_map(|(expression, invalid)| [0, 3].map(move |opt| (expression, invalid, opt))) {
+        ]
+        .into_iter()
+        .flat_map(|(expression, invalid)| [0, 3].map(move |opt| (expression, invalid, opt)))
+        {
             let entry = dir.join("consumer.rk");
-            fs::write(&entry, format!(
-                "> operators::Add\n> operators::Sub\nmain = !->\n    {expression}\n"
-            )).unwrap();
+            fs::write(
+                &entry,
+                format!("> operators::Add\n> operators::Sub\nmain = !->\n    {expression}\n"),
+            )
+            .unwrap();
             let result = rock_lib::compile(&rock_lib::Config {
                 entry_file: entry,
                 current_crate_name: None,
@@ -104,9 +128,18 @@ impl Sub for I8
                 extern_artifacts: vec![("operators".to_string(), artifact.clone())],
                 ..config.clone()
             });
-            assert_eq!(result.is_err(), invalid, "checks={checked}, {expression}: {result:?}");
+            assert_eq!(
+                result.is_err(),
+                invalid,
+                "checks={checked}, {expression}: {result:?}"
+            );
             if let Err(errors) = result {
-                assert!(errors.0.iter().any(|error| error.message.contains("invalid constant integer arithmetic")), "{errors:?}");
+                assert!(
+                    errors.0.iter().any(|error| error
+                        .message
+                        .contains("invalid constant integer arithmetic")),
+                    "{errors:?}"
+                );
             }
         }
     }
@@ -114,7 +147,9 @@ impl Sub for I8
 
 #[test]
 fn test_constant_integer_arithmetic_keeps_explicit_nontrapping_families() {
-    assert_eq!(compile_and_run(r#"
+    assert_eq!(
+        compile_and_run(
+            r#"
 main = !->
     ((127 as I8).wrapping_add (1 as I8) == (-128 as I8)).println!
     ((127 as I8).saturating_add (1 as I8) == (127 as I8)).println!
@@ -124,7 +159,10 @@ main = !->
     ((127 as I8).overflowing_add (1 as I8)).1.println!
     ((-128 as I8).wrapping_neg! == (-128 as I8)).println!
     ((~IntWrappingMul (-1 as U64), (-1 as U64)) == (1 as U64)).println!
-"#), "true\n".repeat(6));
+"#
+        ),
+        "true\n".repeat(6)
+    );
 }
 
 #[test]
@@ -152,14 +190,21 @@ impl Divide for I8
     let entry = dir.join("library.rk");
     fs::write(&entry, library).unwrap();
     let config = rock_lib::Config {
-        entry_file: entry.clone(), output_dir: dir.clone(),
+        entry_file: entry.clone(),
+        output_dir: dir.clone(),
         current_crate_name: Some("arithmetic".to_string()),
-        no_std: true, no_prelude: true, no_link: true,
+        no_std: true,
+        no_prelude: true,
+        no_link: true,
         ..Default::default()
     };
     let artifact = dir.join("arithmetic.rkca");
-    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
-        .write_artifact_to_path(&artifact).unwrap();
+    rock_lib::compile_with_products(&config)
+        .unwrap()
+        .products
+        .unwrap()
+        .write_artifact_to_path(&artifact)
+        .unwrap();
     fs::remove_file(entry).unwrap();
     for imported in [false, true] {
         for (expression, invalid) in [
@@ -169,43 +214,88 @@ impl Divide for I8
             ("(6 as I8).wrapped (2 as I8)", false),
         ] {
             let entry = dir.join("consumer.rk");
-            let prefix = if imported { "> arithmetic::Divide" } else { library };
+            let prefix = if imported {
+                "> arithmetic::Divide"
+            } else {
+                library
+            };
             fs::write(&entry, format!("{prefix}\nmain = !->\n    {expression}\n")).unwrap();
             let result = rock_lib::compile(&rock_lib::Config {
-                entry_file: entry, current_crate_name: None,
-                extern_artifacts: if imported { vec![("arithmetic".to_string(), artifact.clone())] } else { Vec::new() },
+                entry_file: entry,
+                current_crate_name: None,
+                extern_artifacts: if imported {
+                    vec![("arithmetic".to_string(), artifact.clone())]
+                } else {
+                    Vec::new()
+                },
                 ..config.clone()
             });
-            assert_eq!(result.is_err(), invalid, "imported={imported}, {expression}: {result:?}");
+            assert_eq!(
+                result.is_err(),
+                invalid,
+                "imported={imported}, {expression}: {result:?}"
+            );
             if let Err(errors) = result {
-                assert!(errors.0.iter().any(|error| error.message.contains("invalid constant integer arithmetic")), "{errors:?}");
+                assert!(
+                    errors.0.iter().any(|error| error
+                        .message
+                        .contains("invalid constant integer arithmetic")),
+                    "{errors:?}"
+                );
             }
         }
     }
     let bridge = dir.join("bridge.rk");
-    fs::write(&bridge, r#"
+    fs::write(
+        &bridge,
+        r#"
 > arithmetic::Divide
 < trait Relay
     @relay: I8 -> I8
 impl Relay for I8
     @relay = other -> self.wrapped other
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let bridge_artifact = dir.join("bridge.rkca");
     rock_lib::compile_with_products(&rock_lib::Config {
-        entry_file: bridge.clone(), current_crate_name: Some("bridge".to_string()),
+        entry_file: bridge.clone(),
+        current_crate_name: Some("bridge".to_string()),
         extern_artifacts: vec![("arithmetic".to_string(), artifact.clone())],
         ..config.clone()
-    }).unwrap().products.unwrap().write_artifact_to_path(&bridge_artifact).unwrap();
+    })
+    .unwrap()
+    .products
+    .unwrap()
+    .write_artifact_to_path(&bridge_artifact)
+    .unwrap();
     fs::remove_file(bridge).unwrap();
     let entry = dir.join("consumer.rk");
-    fs::write(&entry, "> bridge::Relay\nmain = !->\n    (1 as I8).relay (0 as I8)\n").unwrap();
+    fs::write(
+        &entry,
+        "> bridge::Relay\nmain = !->\n    (1 as I8).relay (0 as I8)\n",
+    )
+    .unwrap();
     let errors = rock_lib::compile(&rock_lib::Config {
-        entry_file: entry, current_crate_name: None,
-        extern_artifacts: vec![("arithmetic".to_string(), artifact), ("bridge".to_string(), bridge_artifact)],
+        entry_file: entry,
+        current_crate_name: None,
+        extern_artifacts: vec![
+            ("arithmetic".to_string(), artifact),
+            ("bridge".to_string(), bridge_artifact),
+        ],
         ..config
-    }).unwrap_err();
-    assert!(errors.0.iter().any(|error| error.message.contains("invalid constant integer arithmetic")), "{errors:?}");
-    compile_should_fail("main = !->\n    (1 as I8).wrapping_div (0 as I8)\n", "invalid constant integer arithmetic");
+    })
+    .unwrap_err();
+    assert!(
+        errors.0.iter().any(|error| error
+            .message
+            .contains("invalid constant integer arithmetic")),
+        "{errors:?}"
+    );
+    compile_should_fail(
+        "main = !->\n    (1 as I8).wrapping_div (0 as I8)\n",
+        "invalid constant integer arithmetic",
+    );
 }
 
 #[test]
@@ -239,17 +329,25 @@ main = ->
             rock_lib::compile(&config).unwrap();
             let result = Command::new(dir.join("policy")).output().unwrap();
             let checked = override_checks.unwrap_or(opt_level == 0);
-            assert_eq!(result.status.success(), !checked, "optimization={opt_level}, checks={override_checks:?}");
+            assert_eq!(
+                result.status.success(),
+                !checked,
+                "optimization={opt_level}, checks={override_checks:?}"
+            );
 
             let dependency = dir.join("dependency.rk");
-            fs::write(&dependency, r#"
+            fs::write(
+                &dependency,
+                r#"
 compute: I8 -> I8
 < compute = value ->
     if ~OverflowChecks!
         ~IntCheckedAdd value, (1 as I8)
     else
         ~IntWrappingAdd value, (1 as I8)
-"#).unwrap();
+"#,
+            )
+            .unwrap();
             let artifact = dir.join("dependency.rkca");
             let output = rock_lib::compile_with_products(&rock_lib::Config {
                 entry_file: dependency.clone(),
@@ -257,25 +355,39 @@ compute: I8 -> I8
                 no_link: true,
                 emit_object: Some(dir.join("dependency.o")),
                 ..config.clone()
-            }).unwrap();
-            output.products.unwrap().write_artifact_to_path(&artifact).unwrap();
+            })
+            .unwrap();
+            output
+                .products
+                .unwrap()
+                .write_artifact_to_path(&artifact)
+                .unwrap();
             fs::remove_file(dependency).unwrap();
             let consumer = dir.join("consumer.rk");
-            fs::write(&consumer, r#"
+            fs::write(
+                &consumer,
+                r#"
 > dependency::compute
 main = ->
     result = compute (127 as I8)
     if ~I8Eq result, (~I8Not (127 as I8)) then 0 else 1
-"#).unwrap();
+"#,
+            )
+            .unwrap();
             rock_lib::compile(&rock_lib::Config {
                 entry_file: consumer,
                 overflow_checks: Some(!checked),
                 opt_level: if opt_level == 0 { 3 } else { 0 },
                 extern_artifacts: vec![("dependency".to_string(), artifact)],
                 ..config
-            }).unwrap();
+            })
+            .unwrap();
             let result = Command::new(dir.join("consumer")).output().unwrap();
-            assert_eq!(result.status.success(), !checked, "dependency policy changed across artifact boundary");
+            assert_eq!(
+                result.status.success(),
+                !checked,
+                "dependency policy changed across artifact boundary"
+            );
         }
     }
 }
@@ -285,7 +397,10 @@ fn test_std_release_artifact_keeps_wrapping_operators_in_checked_consumers() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     fs::create_dir_all(&dir).unwrap();
-    let std_entry = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("std/src/lib.rk");
+    let std_entry = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("std/src/lib.rk");
     let artifact = dir.join("std.rkca");
     rock_lib::compile_with_products(&rock_lib::Config {
         entry_file: std_entry,
@@ -296,9 +411,16 @@ fn test_std_release_artifact_keeps_wrapping_operators_in_checked_consumers() {
         no_link: true,
         emit_object: Some(dir.join("std.o")),
         ..Default::default()
-    }).unwrap().products.unwrap().write_artifact_to_path(&artifact).unwrap();
+    })
+    .unwrap()
+    .products
+    .unwrap()
+    .write_artifact_to_path(&artifact)
+    .unwrap();
     let entry = dir.join("consumer.rk");
-    fs::write(&entry, r#"
+    fs::write(
+        &entry,
+        r#"
 main = !->
     high = 127 as I8
     low = high + (1 as I8)
@@ -308,7 +430,9 @@ main = !->
     ((-low) == low).println!
     (((1 as I8) << (8 as I8)) == (1 as I8)).println!
     (((2 as I8) >> (9 as I8)) == (1 as I8)).println!
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     for opt_level in [0, 3] {
         rock_lib::compile(&rock_lib::Config {
             entry_file: entry.clone(),
@@ -317,7 +441,8 @@ main = !->
             opt_level,
             overflow_checks: Some(true),
             ..Default::default()
-        }).unwrap();
+        })
+        .unwrap();
         let output = Command::new(dir.join("consumer")).output().unwrap();
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "true\n".repeat(6));
@@ -328,7 +453,10 @@ main = !->
 fn test_integer_intrinsics_reject_bad_operands_and_invalid_constants() {
     for (expression, expected) in [
         ("~IntOverflowingAdd true, false", "integer operands"),
-        ("~IntOverflowingAdd (1 as I8), (2 as I16)", "integer operands"),
+        (
+            "~IntOverflowingAdd (1 as I8), (2 as I16)",
+            "integer operands",
+        ),
         ("~IntOverflowingNeg (1 as F64)", "integer operands"),
         ("~IntOverflowingMul (1 as I64)", "integer operands"),
         ("~IntCheckedAdd (127 as I8), (1 as I8)", "invalid constant"),
@@ -346,8 +474,15 @@ fn test_integer_intrinsics_reject_bad_operands_and_invalid_constants() {
             no_std: true,
             no_prelude: true,
             ..Default::default()
-        }).unwrap_err();
-        assert!(errors.0.iter().any(|error| error.message.contains(expected)), "{expression}: {errors:?}");
+        })
+        .unwrap_err();
+        assert!(
+            errors
+                .0
+                .iter()
+                .any(|error| error.message.contains(expected)),
+            "{expression}: {errors:?}"
+        );
     }
 }
 
@@ -359,8 +494,14 @@ fn test_integer_runtime_failures_never_reach_llvm_poison() {
         for (operation, operand) in [
             ("~IntWrappingDiv (1 as I8), value", "0 as I8"),
             ("~IntOverflowingRem (1 as I8), value", "0 as I8"),
-            ("~IntCheckedDiv (~I8Not (127 as I8)), value", "~I8Not (0 as I8)"),
-            ("~IntCheckedRem (~I8Not (127 as I8)), value", "~I8Not (0 as I8)"),
+            (
+                "~IntCheckedDiv (~I8Not (127 as I8)), value",
+                "~I8Not (0 as I8)",
+            ),
+            (
+                "~IntCheckedRem (~I8Not (127 as I8)), value",
+                "~I8Not (0 as I8)",
+            ),
             ("~IntCheckedNeg value", "~I8Not (127 as I8)"),
             ("~IntCheckedShl (1 as I8), value", "8 as I8"),
             ("~IntCheckedShr (1 as I8), value", "~I8Not (0 as I8)"),
@@ -369,10 +510,18 @@ fn test_integer_runtime_failures_never_reach_llvm_poison() {
             let dir = test_temp_dir(id);
             fs::create_dir_all(&dir).unwrap();
             let entry = dir.join("trap.rk");
-            let result = if operation.starts_with("~IntOverflowing") { "(I8, Bool)" } else { "I8" };
-            fs::write(&entry, format!(
+            let result = if operation.starts_with("~IntOverflowing") {
+                "(I8, Bool)"
+            } else {
+                "I8"
+            };
+            fs::write(
+                &entry,
+                format!(
                 "bad: I8 -> {result}\nbad = value -> {operation}\nmain = !->\n    bad ({operand})\n"
-            )).unwrap();
+            ),
+            )
+            .unwrap();
             rock_lib::compile(&rock_lib::Config {
                 entry_file: entry,
                 output_dir: dir.clone(),
@@ -381,9 +530,13 @@ fn test_integer_runtime_failures_never_reach_llvm_poison() {
                 opt_level,
                 overflow_checks: Some(false),
                 ..Default::default()
-            }).unwrap();
+            })
+            .unwrap();
             let output = Command::new(dir.join("trap")).output().unwrap();
-            assert!(output.status.signal().is_some(), "{operation} must trap even with checks disabled");
+            assert!(
+                output.status.signal().is_some(),
+                "{operation} must trap even with checks disabled"
+            );
         }
     }
 }
@@ -391,15 +544,25 @@ fn test_integer_runtime_failures_never_reach_llvm_poison() {
 #[test]
 fn test_integer_arithmetic_families_all_widths() {
     for (ty, bits, signed) in [
-        ("I8", 8, true), ("I16", 16, true), ("I32", 32, true), ("I64", 64, true),
-        ("U8", 8, false), ("U16", 16, false), ("U32", 32, false), ("U64", 64, false),
+        ("I8", 8, true),
+        ("I16", 16, true),
+        ("I32", 32, true),
+        ("I64", 64, true),
+        ("U8", 8, false),
+        ("U16", 16, false),
+        ("U32", 32, false),
+        ("U64", 64, false),
     ] {
         let mut source = String::from("main = !->\n");
         let mut count = 0;
         source.push_str(&format!(
             "    z{ty} = 0 as {ty}\n    one{ty} = 1 as {ty}\n    two{ty} = 2 as {ty}\n    lo{ty} = z{ty}.min_value!\n    hi{ty} = z{ty}.max_value!\n"
         ));
-        let wrapped_max = if signed { format!("lo{ty}") } else { format!("z{ty}") };
+        let wrapped_max = if signed {
+            format!("lo{ty}")
+        } else {
+            format!("z{ty}")
+        };
         let expressions = [
             format!("(hi{ty}.wrapping_add one{ty}) == {wrapped_max}"),
             format!("(hi{ty}.overflowing_add one{ty}).1"),
@@ -439,8 +602,14 @@ fn test_integer_arithmetic_families_all_widths() {
             (format!("two{ty}.checked_div two{ty}"), format!("one{ty}")),
             (format!("one{ty}.checked_rem two{ty}"), format!("one{ty}")),
             (format!("z{ty}.checked_neg!"), format!("z{ty}")),
-            (format!("one{ty}.checked_shl (1 as U32)"), format!("two{ty}")),
-            (format!("two{ty}.checked_shr (1 as U32)"), format!("one{ty}")),
+            (
+                format!("one{ty}.checked_shl (1 as U32)"),
+                format!("two{ty}"),
+            ),
+            (
+                format!("two{ty}.checked_shr (1 as U32)"),
+                format!("one{ty}"),
+            ),
         ] {
             source.push_str(&format!("    match ({expression})\n        Option::None => false.println!\n        Option::Some value => (value == {expected}).println!\n"));
             count += 1;
@@ -462,13 +631,21 @@ fn test_integer_arithmetic_families_all_widths() {
                 source.push_str(&format!("    ({expression}).println!\n"));
                 count += 1;
             }
-            for expression in [format!("lo{ty}.checked_neg!"), format!("lo{ty}.checked_div minus{ty}"), format!("lo{ty}.checked_rem minus{ty}")] {
+            for expression in [
+                format!("lo{ty}.checked_neg!"),
+                format!("lo{ty}.checked_div minus{ty}"),
+                format!("lo{ty}.checked_rem minus{ty}"),
+            ] {
                 source.push_str(&format!("    match ({expression})\n        Option::None => true.println!\n        Option::Some value => false.println!\n"));
                 count += 1;
             }
         }
         for opt_level in [0, 3] {
-            assert_eq!(compile_and_run_at_opt(&source, opt_level), "true\n".repeat(count), "{ty}, O{opt_level}");
+            assert_eq!(
+                compile_and_run_at_opt(&source, opt_level),
+                "true\n".repeat(count),
+                "{ty}, O{opt_level}"
+            );
         }
     }
 }
@@ -488,8 +665,10 @@ main = !->
     (%format "unit=", unit_value).println!
 "#;
     for opt_level in [0, 3] {
-        assert_eq!(compile_and_run_at_opt(source, opt_level),
-            "-128,127,-32768,32767\n0,65535,0,4294967295\n(),Some(())\nunit=()\n");
+        assert_eq!(
+            compile_and_run_at_opt(source, opt_level),
+            "-128,127,-32768,32767\n0,65535,0,4294967295\n(),Some(())\nunit=()\n"
+        );
     }
 }
 
@@ -524,8 +703,10 @@ main = !->
     0.println!
 "#;
     for opt_level in [0, 3] {
-        assert_eq!(compile_and_run_at_opt(source, opt_level),
-            "-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-1\n0\n");
+        assert_eq!(
+            compile_and_run_at_opt(source, opt_level),
+            "-9223372036854775808\n-9223372036854775808\n9223372036854775807\n-1\n0\n"
+        );
     }
 }
 
@@ -552,7 +733,8 @@ fn test_std_primitive_arithmetic_and_ordering_complete_integer_coverage() {
             source.push_str(&format!("    ({expression}).println!\n"));
         }
     }
-    source.push_str(r#"
+    source.push_str(
+        r#"
     ((-(7 as I8)) == ((0 as I8) - (7 as I8))).println!
     ((-(7 as I16)) == ((0 as I16) - (7 as I16))).println!
     ((255 as U8) > (127 as U8)).println!
@@ -563,13 +745,15 @@ fn test_std_primitive_arithmetic_and_ordering_complete_integer_coverage() {
     (((255 as U8) / (2 as U8)) == (127 as U8)).println!
     (((-8 as I8) >> (1 as I8)) == (-4 as I8)).println!
     (((128 as U8) >> (1 as U8)) == (64 as U8)).println!
-"#);
+"#,
+    );
     assert_eq!(compile_and_run(&source), "true\n".repeat(97));
 }
 
 #[test]
 fn test_std_bitwise_traits_are_independent_and_support_bool() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Flag
     < value: Bool
 
@@ -591,7 +775,8 @@ main = !->
     (true ^ false).println!
     (true ^ true).println!
     (((5 as U16) ^ (3 as U16)) == (6 as U16)).println!
-"#);
+"#,
+    );
     assert_eq!(output, "false\ntrue\ntrue\ntrue\nfalse\ntrue\n");
 }
 
@@ -607,7 +792,8 @@ fn test_std_bitwise_bool_shifts_are_rejected() {
 
 #[test]
 fn test_float_intrinsic_inequality_matches_partial_equality_for_nan() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     nan64 = (0 as F64) / (0 as F64)
     nan32 = (0 as F32) / (0 as F32)
@@ -619,13 +805,15 @@ main = !->
     (~F32Ne (1 as F32), nan32).println!
     (~F64Ne (0 as F64), (-0.0 as F64)).println!
     (~F32Ne (2 as F32), (2 as F32)).println!
-"#);
+"#,
+    );
     assert_eq!(output, "true\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\nfalse\n");
 }
 
 #[test]
 fn test_std_partial_and_total_comparison_contracts() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 describe: Option Ordering -> I64
 describe = comparison ->
     match comparison
@@ -673,7 +861,8 @@ main = !->
     (() <= ()).println!
     (() < ()).println!
     (Ordering::Less < Ordering::Equal).println!
-"#);
+"#,
+    );
     assert_eq!(output, "-1\n1\n0\ntrue\ntrue\n2\n2\nfalse\nfalse\nfalse\nfalse\nfalse\ntrue\n0\n0\n-1\ntrue\ntrue\ntrue\ntrue\ntrue\n0\ntrue\nfalse\ntrue\nfalse\ntrue\n");
 }
 
@@ -693,7 +882,8 @@ fn test_std_floats_do_not_satisfy_total_comparison_bounds() {
 
 #[test]
 fn test_std_wrapping_negation_and_pointer_subtraction_boundaries() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Empty
 
 main = !->
@@ -720,17 +910,21 @@ main = !->
     empty_ptr = &empty as *Empty
     shifted = unsafe empty_ptr - smallest
     ((shifted as I64) == (empty_ptr as I64)).println!
-"#);
+"#,
+    );
     assert_eq!(output, "true\n".repeat(9));
 }
 
 #[test]
 fn test_std_total_equality_requires_partial_equality() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 struct MissingEquality
 
 impl Eq for MissingEquality
 
 main = !-> return
-"#, "supertrait obligation");
+"#,
+        "supertrait obligation",
+    );
 }

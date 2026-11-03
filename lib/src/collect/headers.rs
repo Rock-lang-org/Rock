@@ -375,18 +375,39 @@ fn lower_where_clauses(
             }
             subject => context.lower_parse_type(subject),
         };
-        let argument_kinds = context.traits.values().find(|item| item.id == trait_id)
-            .map(|item| item.generic_params.iter().map(|param| param.kind.clone()).collect::<Vec<_>>()).unwrap_or_default();
+        let argument_kinds = context
+            .traits
+            .values()
+            .find(|item| item.id == trait_id)
+            .map(|item| {
+                item.generic_params
+                    .iter()
+                    .map(|param| param.kind.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let mut type_args = type_args
             .iter()
             .enumerate()
-            .map(|(index, generic)| crate::type_lowering::TypeLowerer::lower_type_argument(context, generic,
-                argument_kinds.get(index).unwrap_or(&crate::type_services::kind::Kind::Type)))
+            .map(|(index, generic)| {
+                crate::type_lowering::TypeLowerer::lower_type_argument(
+                    context,
+                    generic,
+                    argument_kinds
+                        .get(index)
+                        .unwrap_or(&crate::type_services::kind::Kind::Type),
+                )
+            })
             .collect::<Vec<_>>();
         if let Some(trait_def) = context.traits.values().find(|item| item.id == trait_id) {
-            match crate::type_lowering::complete_generic_args(&trait_def.generic_params, type_args.clone(), Some(&subject)) {
+            match crate::type_lowering::complete_generic_args(
+                &trait_def.generic_params,
+                type_args.clone(),
+                Some(&subject),
+            ) {
                 Ok(completed) => type_args = completed,
-                Err(message) => context.push_error_with_span(message, clause.trait_bound.as_ref().unwrap().span()),
+                Err(message) => context
+                    .push_error_with_span(message, clause.trait_bound.as_ref().unwrap().span()),
             }
         }
         bounds.predicates.push(crate::types::Predicate::Trait {
@@ -480,11 +501,19 @@ pub(crate) fn build_nominal_generic_params(
     id: DefId,
 ) -> Vec<GenericParamDecl> {
     let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, syntax);
-    let spans = syntax.iter().map(|param| param.span.clone()).collect::<Vec<_>>();
+    let spans = syntax
+        .iter()
+        .map(|param| param.span.clone())
+        .collect::<Vec<_>>();
     let previous = context.push_generic_context_with_kinds_at(
         id,
-        GenericParamDecl::names(&generic_params).map(str::to_string).collect(),
-        generic_params.iter().map(|param| param.kind.clone()).collect(),
+        GenericParamDecl::names(&generic_params)
+            .map(str::to_string)
+            .collect(),
+        generic_params
+            .iter()
+            .map(|param| param.kind.clone())
+            .collect(),
         &spans,
     );
     crate::type_lowering::lower_param_defaults(context, &mut generic_params, syntax, None);
@@ -1148,7 +1177,8 @@ pub(crate) fn build_trait_with_id(
     id: DefId,
     member_ids: &CollectedTraitMemberIds,
 ) -> HirTrait {
-    let mut generic_params = crate::type_lowering::lower_generic_param_decls(id, &td.generic_params);
+    let mut generic_params =
+        crate::type_lowering::lower_generic_param_decls(id, &td.generic_params);
     let generic_param_names = GenericParamDecl::names(&generic_params)
         .map(str::to_string)
         .collect::<Vec<_>>();
@@ -1192,14 +1222,28 @@ pub(crate) fn build_trait_with_id(
         &generic_context_spans,
     );
 
-    let subject_name = td.for_.as_ref().map(|param| param.name.name.clone()).unwrap_or_else(|| "Self".into());
+    let subject_name = td
+        .for_
+        .as_ref()
+        .map(|param| param.name.name.clone())
+        .unwrap_or_else(|| "Self".into());
     let subject = GenericParamDecl::new(
-        GenericParamId { owner: id, index: generic_params.len() as u32 },
+        GenericParamId {
+            owner: id,
+            index: generic_params.len() as u32,
+        },
         subject_name.clone(),
-        td.for_.as_ref().map(|param| crate::type_lowering::lower_generic_param_kind(param.kind.as_ref()))
+        td.for_
+            .as_ref()
+            .map(|param| crate::type_lowering::lower_generic_param_kind(param.kind.as_ref()))
             .unwrap_or(crate::type_services::kind::Kind::Type),
     );
-    crate::type_lowering::lower_param_defaults(context, &mut generic_params, &td.generic_params, Some((subject_name, subject)));
+    crate::type_lowering::lower_param_defaults(
+        context,
+        &mut generic_params,
+        &td.generic_params,
+        Some((subject_name, subject)),
+    );
     let associated_types: Vec<HirAssociatedTypeDecl> = td
         .associated_types
         .iter()
@@ -1512,9 +1556,17 @@ pub(crate) fn build_impl_with_id(
         .generics()
         .iter()
         .enumerate()
-        .map(|(index, generic)| crate::type_lowering::TypeLowerer::lower_type_argument(context, generic,
-            trait_def.as_ref().and_then(|item| item.generic_params.get(index)).map(|param| &param.kind)
-                .unwrap_or(&crate::type_services::kind::Kind::Type)))
+        .map(|(index, generic)| {
+            crate::type_lowering::TypeLowerer::lower_type_argument(
+                context,
+                generic,
+                trait_def
+                    .as_ref()
+                    .and_then(|item| item.generic_params.get(index))
+                    .map(|param| &param.kind)
+                    .unwrap_or(&crate::type_services::kind::Kind::Type),
+            )
+        })
         .collect();
     let trait_id = trait_def.as_ref().map(|trait_def| trait_def.id);
     let impl_target_ty = match &receiver_pattern {
@@ -1525,7 +1577,11 @@ pub(crate) fn build_impl_with_id(
         }
     };
     if let Some(trait_def) = trait_def.as_ref() {
-        match crate::type_lowering::complete_generic_args(&trait_def.generic_params, trait_arg_types.clone(), Some(&impl_target_ty)) {
+        match crate::type_lowering::complete_generic_args(
+            &trait_def.generic_params,
+            trait_arg_types.clone(),
+            Some(&impl_target_ty),
+        ) {
             Ok(completed) => trait_arg_types = completed,
             Err(message) => context.push_error_with_span(message, imp.name.span()),
         }
@@ -1630,7 +1686,9 @@ pub(crate) fn build_impl_with_id(
                     &impl_target_ty,
                 )
             });
-        let explicit_signature = imp.signatures.iter()
+        let explicit_signature = imp
+            .signatures
+            .iter()
             .find(|(name, _)| name.name == ident.name)
             .map(|(_, signature)| build_function_sig_with_id(context, signature, method_id));
         let mut func = if let Some(signature) = explicit_signature.or(trait_signature) {
@@ -1641,9 +1699,14 @@ pub(crate) fn build_impl_with_id(
         // Receiver identity is already known at collection time, even when
         // this method's body is lowered after its callers in another module.
         if imp.for_.is_none() && imp.signatures.contains_key(ident) {
-            if let (Some(receiver_mode), Some(receiver)) = (func.self_receiver, func.params.first_mut()) {
+            if let (Some(receiver_mode), Some(receiver)) =
+                (func.self_receiver, func.params.first_mut())
+            {
                 receiver.ty = match (receiver_mode, impl_target_ty.clone()) {
-                    (crate::types::ReceiverMode::Mut, target @ Type::Reference { mutable: true, .. }) => target,
+                    (
+                        crate::types::ReceiverMode::Mut,
+                        target @ Type::Reference { mutable: true, .. },
+                    ) => target,
                     (crate::types::ReceiverMode::Shared, target) => Type::Reference {
                         mutable: false,
                         inner: Box::new(target),

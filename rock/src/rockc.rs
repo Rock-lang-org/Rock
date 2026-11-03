@@ -74,11 +74,14 @@ pub(crate) fn ensure_dev_binary_built(package: &str) -> Result<(), String> {
         .ok_or("Failed to resolve workspace root for dev binary build")?;
     let binary = process::dev_target_binary_from_current_exe(package)?;
     let mut command = Command::new("cargo");
-    command.current_dir(workspace_root).args(["build", "-p", package]);
+    command
+        .current_dir(workspace_root)
+        .args(["build", "-p", package]);
     if binary.parent().and_then(|dir| dir.file_name()) == Some(std::ffi::OsStr::new("release")) {
         command.arg("--release");
     }
-    let output = command.output()
+    let output = command
+        .output()
         .map_err(|e| format!("Failed to spawn cargo build for {}: {}", package, e))?;
     if !output.status.success() {
         return Err(format!(
@@ -203,14 +206,16 @@ pub(crate) fn run_invocation(
 
     #[cfg(not(test))]
     {
-        let status = crate::progress::run_command(&mut invocation.into_command(), package, progress).map_err(|e| {
-            format!(
-                "Failed to spawn rockc for {} using {}: {}",
-                context,
-                executable.display(),
-                e
-            )
-        })?;
+        let status =
+            crate::progress::run_command(&mut invocation.into_command(), package, progress)
+                .map_err(|e| {
+                    format!(
+                        "Failed to spawn rockc for {} using {}: {}",
+                        context,
+                        executable.display(),
+                        e
+                    )
+                })?;
 
         if !status.success() {
             return Err(format!(
@@ -265,7 +270,10 @@ mod tests {
         let executable = PathBuf::from("rockc");
         for profile in [BuildProfile::Debug, BuildProfile::Release] {
             package.profile = profile;
-            assert_eq!(package.build_dir(), package.root_dir.join("build").join(profile.directory()));
+            assert_eq!(
+                package.build_dir(),
+                package.root_dir.join("build").join(profile.directory())
+            );
             assert!(package.artifact_path().starts_with(package.build_dir()));
             assert!(package.object_path().starts_with(package.build_dir()));
             for invocation in [
@@ -274,8 +282,14 @@ mod tests {
             ] {
                 let args = args_as_strings(&invocation);
                 assert!(args.contains(&profile.flag().to_string()));
-                let other = if profile == BuildProfile::Debug { "--release" } else { "--debug" };
-                assert!(!args.iter().any(|arg| arg == other || arg == "-O" || arg == "--opt-level"));
+                let other = if profile == BuildProfile::Debug {
+                    "--release"
+                } else {
+                    "--debug"
+                };
+                assert!(!args
+                    .iter()
+                    .any(|arg| arg == other || arg == "-O" || arg == "--opt-level"));
             }
         }
         let _ = std::fs::remove_dir_all(temp_dir);
@@ -331,9 +345,9 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair[0] == "--extern-artifact" && pair[1] == "dep_a=/tmp/dep_a.rkca"));
-        assert!(args.windows(2).any(|pair| {
-            pair[0] == "--extern-artifact" && pair[1] == "std=/tmp/std.rkca"
-        }));
+        assert!(args
+            .windows(2)
+            .any(|pair| { pair[0] == "--extern-artifact" && pair[1] == "std=/tmp/std.rkca" }));
 
         let _ = std::fs::remove_dir_all(temp_dir);
     }
@@ -363,15 +377,16 @@ mod tests {
             pair[0] == "--entry-file" && pair[1] == package.entry_file().to_string_lossy().as_ref()
         }));
         assert!(args.windows(2).any(|pair| {
-            pair[0] == "--output-dir" && pair[1] == package.binary_build_dir().to_string_lossy().as_ref()
+            pair[0] == "--output-dir"
+                && pair[1] == package.binary_build_dir().to_string_lossy().as_ref()
         }));
         assert!(!args.contains(&"--extern-product-artifact".to_string()));
         assert!(args
             .windows(2)
             .any(|pair| pair[0] == "--extern-artifact" && pair[1] == "dep=/tmp/dep.rkca"));
-        assert!(args.windows(2).any(|pair| {
-            pair[0] == "--extern-artifact" && pair[1] == "std=/tmp/std.rkca"
-        }));
+        assert!(args
+            .windows(2)
+            .any(|pair| { pair[0] == "--extern-artifact" && pair[1] == "std=/tmp/std.rkca" }));
         assert!(!args.contains(&"--emit-artifact".to_string()));
         assert!(!args.contains(&"--no-link".to_string()));
 

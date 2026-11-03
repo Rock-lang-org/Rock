@@ -1569,7 +1569,11 @@ impl SerializedProductTraitInterface {
             target: value
                 .target
                 .as_ref()
-                .map(|target| encode_generic_param_decls(std::slice::from_ref(target), encoder).map(|mut params| params.remove(0))).transpose()?,
+                .map(|target| {
+                    encode_generic_param_decls(std::slice::from_ref(target), encoder)
+                        .map(|mut params| params.remove(0))
+                })
+                .transpose()?,
             predicates: value
                 .predicates
                 .iter()
@@ -1601,7 +1605,11 @@ impl SerializedProductTraitInterface {
             generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
             target: self
                 .target
-                .map(|target| decode_generic_param_decls(vec![target], decoder).map(|mut params| params.remove(0))).transpose()?,
+                .map(|target| {
+                    decode_generic_param_decls(vec![target], decoder)
+                        .map(|mut params| params.remove(0))
+                })
+                .transpose()?,
             predicates: self
                 .predicates
                 .into_iter()
@@ -3089,27 +3097,41 @@ fn decode_generic_bounds(
     Ok(decoded)
 }
 
-fn encode_generic_param_decls(decls: &[GenericParamDecl], encoder: &mut ProductTypeEncoder) -> Result<Vec<ProductGenericParamDecl>, String> {
+fn encode_generic_param_decls(
+    decls: &[GenericParamDecl],
+    encoder: &mut ProductTypeEncoder,
+) -> Result<Vec<ProductGenericParamDecl>, String> {
     decls
         .iter()
-        .map(|decl| Ok(ProductGenericParamDecl {
-            id: encode_generic_param_id(decl.id),
-            name: decl.name.clone(),
-            kind: decl.kind.clone(),
-            default: decl.default.as_ref().map(|ty| encoder.encode_type(ty)).transpose()?,
-        }))
+        .map(|decl| {
+            Ok(ProductGenericParamDecl {
+                id: encode_generic_param_id(decl.id),
+                name: decl.name.clone(),
+                kind: decl.kind.clone(),
+                default: decl
+                    .default
+                    .as_ref()
+                    .map(|ty| encoder.encode_type(ty))
+                    .transpose()?,
+            })
+        })
         .collect()
 }
 
-fn decode_generic_param_decls(decls: Vec<ProductGenericParamDecl>, decoder: &mut ProductTypeDecoder<'_>) -> Result<Vec<GenericParamDecl>, String> {
+fn decode_generic_param_decls(
+    decls: Vec<ProductGenericParamDecl>,
+    decoder: &mut ProductTypeDecoder<'_>,
+) -> Result<Vec<GenericParamDecl>, String> {
     decls
         .into_iter()
-        .map(|decl| Ok(GenericParamDecl {
-            id: decode_generic_param_id(decl.id),
-            name: decl.name,
-            kind: decl.kind,
-            default: decl.default.map(|ty| decoder.decode_type(ty)).transpose()?,
-        }))
+        .map(|decl| {
+            Ok(GenericParamDecl {
+                id: decode_generic_param_id(decl.id),
+                name: decl.name,
+                kind: decl.kind,
+                default: decl.default.map(|ty| decoder.decode_type(ty)).transpose()?,
+            })
+        })
         .collect()
 }
 

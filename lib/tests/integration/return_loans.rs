@@ -7,10 +7,21 @@ use std::sync::atomic::Ordering;
 fn test_return_loan_mixed_inputs_preserve_shared_access() {
     for (result, value, shared, exclusive) in [
         ("(&I64, &mut I64)", "(a, b)", "pair.0", "pair.1"),
-        ("((&I64, I64), &mut I64)", "((a, 0), b)", "(pair.0).0", "pair.1"),
-        ("Views", "Views\n        shared: a\n        exclusive: b", "pair.shared", "pair.exclusive"),
+        (
+            "((&I64, I64), &mut I64)",
+            "((a, 0), b)",
+            "(pair.0).0",
+            "pair.1",
+        ),
+        (
+            "Views",
+            "Views\n        shared: a\n        exclusive: b",
+            "pair.shared",
+            "pair.exclusive",
+        ),
     ] {
-        let source = format!(r#"
+        let source = format!(
+            r#"
 struct Views
     < shared: &I64
     < exclusive: &mut I64
@@ -27,11 +38,17 @@ main = !->
     *{exclusive} = 7
     (*shared + *{shared}).println!
     (*{exclusive}).println!
-"#);
+"#
+        );
         assert_eq!(compile_and_run(&source), "2\n7\n");
         for mutation in ["a = 9", "b = 9"] {
-            compile_should_fail(&source.replace("    pair = split &a, &mut b\n",
-                &format!("    pair = split &a, &mut b\n    {mutation}\n")), "borrow conflict");
+            compile_should_fail(
+                &source.replace(
+                    "    pair = split &a, &mut b\n",
+                    &format!("    pair = split &a, &mut b\n    {mutation}\n"),
+                ),
+                "borrow conflict",
+            );
         }
     }
 }
@@ -40,7 +57,8 @@ main = !->
 fn test_return_loan_raw_forwarding_preserves_selected_authority() {
     for selected in ["first", "second"] {
         let unselected = if selected == "first" { "b" } else { "a" };
-        let source = format!(r#"
+        let source = format!(
+            r#"
 identity: *I64 -> *I64
 identity = ptr -> ptr
 
@@ -58,10 +76,16 @@ main = !->
     *view = 7
     (*view).println!
     unsafe (*{selected}).println!
-"#);
+"#
+        );
         assert_eq!(compile_and_run(&source), "7\n7\n");
-        compile_should_fail(&source.replace("    *view = 7", &format!("    {} = 9",
-            if selected == "first" { "a" } else { "b" })), "borrow conflict");
+        compile_should_fail(
+            &source.replace(
+                "    *view = 7",
+                &format!("    {} = 9", if selected == "first" { "a" } else { "b" }),
+            ),
+            "borrow conflict",
+        );
         compile_should_fail(&source.replace("    view = unsafe &mut *forwarded",
             &format!("    sibling = unsafe &*{selected}\n    view = unsafe &mut *forwarded\n    (*sibling).println!")), "borrow conflict");
     }
@@ -74,24 +98,37 @@ fn test_return_loan_repairs_survive_deleted_source_artifacts() {
     fs::create_dir_all(&dir).unwrap();
     let _cleanup = TestDirCleanup(dir.clone());
     let dependency = dir.join("loans.rk");
-    fs::write(&dependency, r#"
+    fs::write(
+        &dependency,
+        r#"
 split: &I64 -> &mut I64 -> (&I64, &mut I64)
 < split = a, b -> (a, b)
 
 identity: *I64 -> *I64
 < identity = ptr -> ptr
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let config = rock_lib::Config {
-        entry_file: dependency.clone(), output_dir: dir.clone(),
+        entry_file: dependency.clone(),
+        output_dir: dir.clone(),
         current_crate_name: Some("loans".to_string()),
-        no_std: true, no_prelude: true, no_link: true,
+        no_std: true,
+        no_prelude: true,
+        no_link: true,
         ..Default::default()
     };
     let artifact = dir.join("loans.rkca");
-    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
-        .write_artifact_to_path(&artifact).unwrap();
+    rock_lib::compile_with_products(&config)
+        .unwrap()
+        .products
+        .unwrap()
+        .write_artifact_to_path(&artifact)
+        .unwrap();
     fs::remove_file(dependency).unwrap();
-    for (source, exit_code) in [(r#"
+    for (source, exit_code) in [
+        (
+            r#"
 > loans::split
 main = ->
     mut a = 1
@@ -101,7 +138,11 @@ main = ->
     *pair.1 = 7
     result = ~I64Add *shared, *pair.0
     ~I64Add result, *pair.1
-"#, 9), (r#"
+"#,
+            9,
+        ),
+        (
+            r#"
 > loans::identity
 main = ->
     mut value = 1
@@ -111,7 +152,10 @@ main = ->
     *view = 7
     result = *view
     unsafe ~I64Add result, *ptr
-"#, 14)] {
+"#,
+            14,
+        ),
+    ] {
         for opt_level in [0, 3] {
             for invalid in [false, true] {
                 let entry = dir.join("consumer.rk");
@@ -119,17 +163,27 @@ main = ->
                     source.replace("    *pair.1 = 7", "    a = 9\n    *pair.1 = 7")
                         .replace("    view = unsafe &mut *forwarded",
                             "    sibling = unsafe &*ptr\n    view = unsafe &mut *forwarded\n    *sibling")
-                } else { source.to_string() };
+                } else {
+                    source.to_string()
+                };
                 fs::write(&entry, source).unwrap();
                 let result = rock_lib::compile(&rock_lib::Config {
-                    entry_file: entry, current_crate_name: None, opt_level,
+                    entry_file: entry,
+                    current_crate_name: None,
+                    opt_level,
                     extern_artifacts: vec![("loans".to_string(), artifact.clone())],
                     no_link: invalid,
                     ..config.clone()
                 });
                 if invalid {
                     let errors = result.unwrap_err();
-                    assert!(errors.0.iter().any(|error| error.message.contains("borrow conflict")), "{errors:?}");
+                    assert!(
+                        errors
+                            .0
+                            .iter()
+                            .any(|error| error.message.contains("borrow conflict")),
+                        "{errors:?}"
+                    );
                 } else {
                     result.unwrap();
                     let output = run_test_command(&mut Command::new(dir.join("consumer")));
@@ -142,7 +196,8 @@ main = ->
 
 #[test]
 fn test_raw_pointer_mixed_return_arguments_retain_all_loans() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 unsafe choose: &I64 -> *I64 -> Bool -> &I64
 unsafe choose = first, second, flag ->
     if flag then first else unsafe &*second
@@ -154,20 +209,35 @@ main = ->
     view = unsafe choose &a, data, false
     b = 9
     *view
-"#, "borrow conflict");
+"#,
+        "borrow conflict",
+    );
 }
 
 #[test]
 fn test_raw_pointer_aggregate_arguments_retain_return_loans() {
     for reference in ["&I64", "&mut I64"] {
         for (argument, projection, value) in [
-            ("Holder", "holder.ptr", "Holder\n        ptr: &mut value as *I64"),
+            (
+                "Holder",
+                "holder.ptr",
+                "Holder\n        ptr: &mut value as *I64",
+            ),
             ("(*I64, I64)", "holder.0", "(&mut value as *I64, 0)"),
-            ("((*I64, I64), Bool)", "(holder.0).0", "((&mut value as *I64, 0), true)"),
-        ].into_iter().chain((reference == "&I64").then_some(
-            ("[*I64; 1]", "holder[0]", "[&mut value as *I64]"),
-        )) {
-            let source = format!(r#"
+            (
+                "((*I64, I64), Bool)",
+                "(holder.0).0",
+                "((&mut value as *I64, 0), true)",
+            ),
+        ]
+        .into_iter()
+        .chain((reference == "&I64").then_some((
+            "[*I64; 1]",
+            "holder[0]",
+            "[&mut value as *I64]",
+        ))) {
+            let source = format!(
+                r#"
 struct Holder
     < ptr: *I64
 
@@ -180,12 +250,20 @@ main = !->
     view = unsafe borrow holder
     value = 9
     (*view).println!
-"#, reference_expr = if reference == "&I64" { "&" } else { "&mut " });
+"#,
+                reference_expr = if reference == "&I64" { "&" } else { "&mut " }
+            );
             compile_should_fail(&source, "borrow conflict");
             let valid = source.replace("    value = 9\n", "");
             assert_eq!(compile_and_run(&valid), "1\n");
             if reference == "&mut I64" {
-                assert_eq!(compile_and_run(&valid.replace("    (*view).println!", "    *view = 7\n    (*view).println!")), "7\n");
+                assert_eq!(
+                    compile_and_run(&valid.replace(
+                        "    (*view).println!",
+                        "    *view = 7\n    (*view).println!"
+                    )),
+                    "7\n"
+                );
             }
         }
     }
@@ -196,12 +274,25 @@ fn test_raw_pointer_aggregate_results_retain_return_loans() {
     for reference in ["&I64", "&mut I64"] {
         for (result, value, projection) in [
             (format!("({reference}, I64)"), "(view, 0)", "pair.0"),
-            (format!("(({reference}, I64), Bool)"), "((view, 0), true)", "(pair.0).0"),
-            ("View".to_string(), "View\n        value: view", "pair.value"),
-        ].into_iter().chain((reference == "&I64").then_some(
-            (format!("[{reference}; 1]"), "[view]", "pair[0]"),
-        )) {
-            let source = format!(r#"
+            (
+                format!("(({reference}, I64), Bool)"),
+                "((view, 0), true)",
+                "(pair.0).0",
+            ),
+            (
+                "View".to_string(),
+                "View\n        value: view",
+                "pair.value",
+            ),
+        ]
+        .into_iter()
+        .chain((reference == "&I64").then_some((
+            format!("[{reference}; 1]"),
+            "[view]",
+            "pair[0]",
+        ))) {
+            let source = format!(
+                r#"
 struct View
     < value: {reference}
 
@@ -216,13 +307,17 @@ main = !->
     pair = unsafe borrow ptr
     value = 9
     (*{projection}).println!
-"#, reference_expr = if reference == "&I64" { "&" } else { "&mut " });
+"#,
+                reference_expr = if reference == "&I64" { "&" } else { "&mut " }
+            );
             compile_should_fail(&source, "borrow conflict");
             let valid = source.replace("    value = 9\n", "");
             assert_eq!(compile_and_run(&valid), "1\n");
             if reference == "&mut I64" {
-                let write = valid.replace(&format!("    (*{projection}).println!"),
-                    &format!("    *{projection} = 7\n    (*{projection}).println!"));
+                let write = valid.replace(
+                    &format!("    (*{projection}).println!"),
+                    &format!("    *{projection} = 7\n    (*{projection}).println!"),
+                );
                 assert_eq!(compile_and_run(&write), "7\n");
                 compile_should_fail(&valid.replace("    pair = unsafe borrow ptr",
                     "    sibling = unsafe &*ptr\n    pair = unsafe borrow ptr\n    (*sibling).println!"), "borrow conflict");
@@ -234,7 +329,8 @@ main = !->
 #[test]
 fn test_raw_pointer_enum_arguments_and_results_retain_return_loans() {
     for reference in ["&I64", "&mut I64"] {
-        let source = format!(r#"
+        let source = format!(
+            r#"
 enum Input
     Value *I64
 
@@ -253,9 +349,14 @@ main = !->
         Output::Value view => view
     value = 9
     (*view).println!
-"#, reference_expr = if reference == "&I64" { "&" } else { "&mut " });
+"#,
+            reference_expr = if reference == "&I64" { "&" } else { "&mut " }
+        );
         compile_should_fail(&source, "borrow conflict");
-        assert_eq!(compile_and_run(&source.replace("    value = 9\n", "")), "1\n");
+        assert_eq!(
+            compile_and_run(&source.replace("    value = 9\n", "")),
+            "1\n"
+        );
     }
 }
 
@@ -293,7 +394,9 @@ fn test_raw_pointer_aggregate_return_loans_survive_deleted_source_artifacts() {
     fs::create_dir_all(&dir).unwrap();
     let _cleanup = TestDirCleanup(dir.clone());
     let dependency = dir.join("loans.rk");
-    fs::write(&dependency, r#"
+    fs::write(
+        &dependency,
+        r#"
 < struct Holder
     < ptr: *I64
 
@@ -302,22 +405,40 @@ unsafe borrow: Holder -> (&I64, I64)
 
 unsafe borrow_mut: Holder -> (&mut I64, I64)
 < unsafe borrow_mut = holder -> (unsafe &mut *holder.ptr, 0)
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let config = rock_lib::Config {
-        entry_file: dependency.clone(), output_dir: dir.clone(),
+        entry_file: dependency.clone(),
+        output_dir: dir.clone(),
         current_crate_name: Some("loans".to_string()),
-        no_std: true, no_prelude: true, no_link: true,
+        no_std: true,
+        no_prelude: true,
+        no_link: true,
         ..Default::default()
     };
     let artifact = dir.join("loans.rkca");
-    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
-        .write_artifact_to_path(&artifact).unwrap();
+    rock_lib::compile_with_products(&config)
+        .unwrap()
+        .products
+        .unwrap()
+        .write_artifact_to_path(&artifact)
+        .unwrap();
     fs::remove_file(dependency).unwrap();
     for method in ["borrow", "borrow_mut"] {
         for invalid in [false, true] {
             let entry = dir.join("consumer.rk");
-            let mutation = if invalid { "value = 9" } else if method == "borrow_mut" { "*pair.0 = 7" } else { "*pair.0" };
-            fs::write(&entry, format!(r#"
+            let mutation = if invalid {
+                "value = 9"
+            } else if method == "borrow_mut" {
+                "*pair.0 = 7"
+            } else {
+                "*pair.0"
+            };
+            fs::write(
+                &entry,
+                format!(
+                    r#"
 > loans::Holder
 > loans::{method}
 
@@ -328,15 +449,25 @@ main = ->
     pair = unsafe {method} holder
     {mutation}
     *pair.0
-"#)).unwrap();
+"#
+                ),
+            )
+            .unwrap();
             let result = rock_lib::compile(&rock_lib::Config {
-                entry_file: entry, current_crate_name: None,
+                entry_file: entry,
+                current_crate_name: None,
                 extern_artifacts: vec![("loans".to_string(), artifact.clone())],
                 ..config.clone()
             });
             assert_eq!(result.is_err(), invalid, "{method}, {mutation}: {result:?}");
             if let Err(errors) = result {
-                assert!(errors.0.iter().any(|error| error.message.contains("borrow conflict")), "{errors:?}");
+                assert!(
+                    errors
+                        .0
+                        .iter()
+                        .any(|error| error.message.contains("borrow conflict")),
+                    "{errors:?}"
+                );
             }
         }
     }
@@ -345,7 +476,8 @@ main = ->
 #[test]
 fn test_raw_pointer_return_reborrow_uses_selected_argument() {
     for selected in ["first", "second"] {
-        let source = format!(r#"
+        let source = format!(
+            r#"
 unsafe choose: *I64 -> *I64 -> &mut I64
 unsafe choose = first, second -> unsafe &mut *{selected}
 
@@ -359,9 +491,14 @@ main = !->
     *view = 9
     (*view).println!
     unsafe (*{selected}_ptr).println!
-"#, unselected = if selected == "first" { "b" } else { "a" });
+"#,
+            unselected = if selected == "first" { "b" } else { "a" }
+        );
         assert_eq!(compile_and_run(&source), "9\n9\n");
-        let conflicting = source.replace("    *view = 9", &format!("    {} = 9", if selected == "first" { "a" } else { "b" }));
+        let conflicting = source.replace(
+            "    *view = 9",
+            &format!("    {} = 9", if selected == "first" { "a" } else { "b" }),
+        );
         compile_should_fail(&conflicting, "borrow conflict");
     }
 }
@@ -373,23 +510,34 @@ fn test_raw_pointer_return_loans_survive_deleted_source_artifacts() {
     fs::create_dir_all(&dir).unwrap();
     let _cleanup = TestDirCleanup(dir.clone());
     let dependency = dir.join("loans.rk");
-    fs::write(&dependency, r#"
+    fs::write(
+        &dependency,
+        r#"
 unsafe choose: &I64 -> *I64 -> Bool -> &I64
 < unsafe choose = first, second, flag ->
     if flag then first else unsafe &*second
 
 unsafe second: *I64 -> *I64 -> &mut I64
 < unsafe second = first, second -> unsafe &mut *second
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let config = rock_lib::Config {
-        entry_file: dependency.clone(), output_dir: dir.clone(),
+        entry_file: dependency.clone(),
+        output_dir: dir.clone(),
         current_crate_name: Some("loans".to_string()),
-        no_std: true, no_prelude: true, no_link: true,
+        no_std: true,
+        no_prelude: true,
+        no_link: true,
         ..Default::default()
     };
     let artifact = dir.join("loans.rkca");
-    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
-        .write_artifact_to_path(&artifact).unwrap();
+    rock_lib::compile_with_products(&config)
+        .unwrap()
+        .products
+        .unwrap()
+        .write_artifact_to_path(&artifact)
+        .unwrap();
     fs::remove_file(dependency).unwrap();
     for (call, mutation, invalid) in [
         ("choose &a, holder.ptr, false", "b = 9", true),
@@ -398,7 +546,10 @@ unsafe second: *I64 -> *I64 -> &mut I64
         ("second (&mut a as *I64), (holder.ptr)", "b = 9", true),
     ] {
         let entry = dir.join("consumer.rk");
-        fs::write(&entry, format!(r#"
+        fs::write(
+            &entry,
+            format!(
+                r#"
 > loans::choose
 > loans::second
 struct Holder
@@ -411,15 +562,25 @@ main = ->
     view = unsafe {call}
     {mutation}
     *view
-"#)).unwrap();
+"#
+            ),
+        )
+        .unwrap();
         let result = rock_lib::compile(&rock_lib::Config {
-            entry_file: entry, current_crate_name: None,
+            entry_file: entry,
+            current_crate_name: None,
             extern_artifacts: vec![("loans".to_string(), artifact.clone())],
             ..config.clone()
         });
         assert_eq!(result.is_err(), invalid, "{call}, {mutation}: {result:?}");
         if let Err(errors) = result {
-            assert!(errors.0.iter().any(|error| error.message.contains("borrow conflict")), "{errors:?}");
+            assert!(
+                errors
+                    .0
+                    .iter()
+                    .any(|error| error.message.contains("borrow conflict")),
+                "{errors:?}"
+            );
         }
     }
 }

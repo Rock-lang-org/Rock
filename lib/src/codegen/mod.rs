@@ -11,8 +11,8 @@
 
 #![cfg_attr(not(test), allow(dead_code))]
 
-mod intrinsics;
 mod integer;
+mod intrinsics;
 pub(crate) mod mir_llvm;
 mod output;
 mod runtime;

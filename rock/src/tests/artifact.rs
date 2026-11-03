@@ -1,12 +1,12 @@
 use std::fs;
 
-use crate::artifact::{collect_dependency_artifacts, ensure_artifact, ArtifactBuildState};
 use super::support::build_project;
+use crate::artifact::{collect_dependency_artifacts, ensure_artifact, ArtifactBuildState};
 use crate::package::BuildProfile;
 
 use super::support::{
-    assert_executable_exit_code, assert_sysroot_std_files_exist, load_dependency_package, load_package,
-    temp_test_dir, write_package, write_package_with_options,
+    assert_executable_exit_code, assert_sysroot_std_files_exist, load_dependency_package,
+    load_package, temp_test_dir, write_package, write_package_with_options,
 };
 
 #[test]

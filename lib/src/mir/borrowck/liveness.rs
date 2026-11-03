@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::mir::{
-    BasicBlock, BasicBlockId, Local, MirBackendContract, MirFunction, MirFunctionId, MirProjectionKey, Operand,
-    Place, Projection, Rvalue, StatementData, StatementKind, Terminator,
+    BasicBlock, BasicBlockId, Local, MirBackendContract, MirFunction, MirFunctionId,
+    MirProjectionKey, Operand, Place, Projection, Rvalue, StatementData, StatementKind, Terminator,
 };
 
 use crate::ids::{AssocTypeId, DefId, LoanId, TypeId};
@@ -268,7 +268,12 @@ pub(super) fn apply_active_loan_statement_transfer(
         }
         StatementKind::Assign(dest, Rvalue::Ref(_, place))
             if place.projection.contains(&crate::mir::Projection::Deref)
-                && tracks_local_reference_liveness(func, type_context, backend_contract, place.local) =>
+                && tracks_local_reference_liveness(
+                    func,
+                    type_context,
+                    backend_contract,
+                    place.local,
+                ) =>
         {
             state.copy_owner(place.local, dest.local);
         }
@@ -318,23 +323,32 @@ fn apply_active_loan_terminator_transfer(
     term: &Terminator,
 ) {
     let Terminator::Call {
-        func: callee, args, destination, ..
+        func: callee,
+        args,
+        destination,
+        ..
     } = term
     else {
         return;
     };
 
-    let Some(destination_ty) = backend_contract.place_type_id(type_context, func, destination) else {
+    let Some(destination_ty) = backend_contract.place_type_id(type_context, func, destination)
+    else {
         return;
     };
     let view = TypeView::new(type_context);
     let raw_result = super::type_id_contains_pointer(view, backend_contract, destination_ty);
-    let reference_result = type_id_contains_reference_with_contract(view, backend_contract, destination_ty);
+    let reference_result =
+        type_id_contains_reference_with_contract(view, backend_contract, destination_ty);
     if !raw_result && !reference_result {
         return;
     }
     let origins = ReferenceEscapeAnalysis::new(
-        func, type_context, backend_contract, return_summaries, MissingSummaryMode::Conservative,
+        func,
+        type_context,
+        backend_contract,
+        return_summaries,
+        MissingSummaryMode::Conservative,
     );
     for index in origins.call_return_argument_indices(callee, args) {
         let Some(Operand::Copy(source) | Operand::Move(source)) = args.get(index) else {
@@ -346,8 +360,10 @@ fn apply_active_loan_terminator_transfer(
         // Raw forwarding preserves pointer authority, not a temporary borrow of
         // an accessor's receiver. References formed from raw storage instead
         // inherit through their recovered, checked reborrow.
-        let forwards_pointer = raw_result && super::type_id_contains_pointer(view, backend_contract, source_ty);
-        let forwards_reference = reference_result && type_id_contains_reference_with_contract(view, backend_contract, source_ty);
+        let forwards_pointer =
+            raw_result && super::type_id_contains_pointer(view, backend_contract, source_ty);
+        let forwards_reference = reference_result
+            && type_id_contains_reference_with_contract(view, backend_contract, source_ty);
         if !forwards_pointer && !forwards_reference {
             continue;
         }

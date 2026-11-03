@@ -33,47 +33,87 @@ fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLevel)> {
             crate::ast::visit::walk_parse_type_inner(self, inner);
         }
     }
-    let owners = module.top_levels.iter().enumerate().filter_map(|(index, item)| {
-        match item {
-            ast::TopLevel::StructDecl(_) | ast::TopLevel::EnumDecl(_)
-            | ast::TopLevel::TraitDecl(_) | ast::TopLevel::NewType(_, _, _)
-                => item.get_ident().map(|name| (name.clone(), index)),
-            ast::TopLevel::Module(declaration) => declaration.0.name.as_ref().map(|name| (name.name.clone(), index)),
+    let owners = module
+        .top_levels
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| match item {
+            ast::TopLevel::StructDecl(_)
+            | ast::TopLevel::EnumDecl(_)
+            | ast::TopLevel::TraitDecl(_)
+            | ast::TopLevel::NewType(_, _, _) => item.get_ident().map(|name| (name.clone(), index)),
+            ast::TopLevel::Module(declaration) => declaration
+                .0
+                .name
+                .as_ref()
+                .map(|name| (name.name.clone(), index)),
             ast::TopLevel::Mod(name, _) => Some((name.name.clone(), index)),
             ast::TopLevel::Import(path) => {
-                let segments = match path { ast::Path::Ident(path) => &path.path, ast::Path::Type(path) => &path.path };
-                path_names(segments).last().filter(|name| name.starts_with(char::is_uppercase)).cloned().map(|name| (name, index))
+                let segments = match path {
+                    ast::Path::Ident(path) => &path.path,
+                    ast::Path::Type(path) => &path.path,
+                };
+                path_names(segments)
+                    .last()
+                    .filter(|name| name.starts_with(char::is_uppercase))
+                    .cloned()
+                    .map(|name| (name, index))
             }
             _ => None,
-        }
-    }).collect::<HashMap<_, _>>();
-    let dependencies = module.top_levels.iter().map(|item| {
-        let mut names = Names(Vec::new());
-        match item {
-            ast::TopLevel::StructDecl(decl) => {
-                for param in &decl.generic_params { names.visit_generic_param_decl(param); }
+        })
+        .collect::<HashMap<_, _>>();
+    let dependencies = module
+        .top_levels
+        .iter()
+        .map(|item| {
+            let mut names = Names(Vec::new());
+            match item {
+                ast::TopLevel::StructDecl(decl) => {
+                    for param in &decl.generic_params {
+                        names.visit_generic_param_decl(param);
+                    }
+                }
+                ast::TopLevel::EnumDecl(decl) => {
+                    for param in &decl.generic_params {
+                        names.visit_generic_param_decl(param);
+                    }
+                }
+                _ => names.visit_top_level(item),
             }
-            ast::TopLevel::EnumDecl(decl) => {
-                for param in &decl.generic_params { names.visit_generic_param_decl(param); }
+            match item {
+                ast::TopLevel::Import(path) => {
+                    let segments = match path {
+                        ast::Path::Ident(path) => &path.path,
+                        ast::Path::Type(path) => &path.path,
+                    };
+                    names.0.push(path_names(segments).join("::"));
+                }
+                ast::TopLevel::GlobImport(path) => names.0.push(path.join("::")),
+                _ => {}
             }
-            _ => names.visit_top_level(item),
-        }
-        match item {
-            ast::TopLevel::Import(path) => {
-                let segments = match path { ast::Path::Ident(path) => &path.path, ast::Path::Type(path) => &path.path };
-                names.0.push(path_names(segments).join("::"));
-            }
-            ast::TopLevel::GlobImport(path) => names.0.push(path.join("::")),
-            _ => {}
-        }
-        names.0.into_iter().filter_map(|name| {
-            owners.get(&name).or_else(|| name.split_once("::").and_then(|(module, _)| owners.get(module))).copied()
-        }).collect::<Vec<_>>()
-    }).collect::<Vec<_>>();
+            names
+                .0
+                .into_iter()
+                .filter_map(|name| {
+                    owners
+                        .get(&name)
+                        .or_else(|| {
+                            name.split_once("::")
+                                .and_then(|(module, _)| owners.get(module))
+                        })
+                        .copied()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
     fn visit(index: usize, deps: &[Vec<usize>], state: &mut [u8], order: &mut Vec<usize>) {
-        if state[index] != 0 { return; }
+        if state[index] != 0 {
+            return;
+        }
         state[index] = 1;
-        for dependency in &deps[index] { visit(*dependency, deps, state, order); }
+        for dependency in &deps[index] {
+            visit(*dependency, deps, state, order);
+        }
         state[index] = 2;
         order.push(index);
     }
@@ -81,9 +121,16 @@ fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLevel)> {
     let mut state = vec![0; module.top_levels.len()];
     let mut types = owners.values().copied().collect::<Vec<_>>();
     types.sort_unstable();
-    for index in types { visit(index, &dependencies, &mut state, &mut order); }
-    for index in 0..module.top_levels.len() { visit(index, &dependencies, &mut state, &mut order); }
-    order.into_iter().map(|index| (index, &module.top_levels[index])).collect()
+    for index in types {
+        visit(index, &dependencies, &mut state, &mut order);
+    }
+    for index in 0..module.top_levels.len() {
+        visit(index, &dependencies, &mut state, &mut order);
+    }
+    order
+        .into_iter()
+        .map(|index| (index, &module.top_levels[index]))
+        .collect()
 }
 
 pub(crate) struct LocalCollector {
@@ -94,27 +141,41 @@ pub(crate) struct LocalCollector {
 
 impl LocalCollector {
     fn collect_struct_header(&mut self, sd: &ast::StructDecl, id: DefId) -> HirStruct {
-        self.pending_nominal_fields.insert(id, PendingNominalFields {
-            declaration: NominalDeclaration::Struct(sd.clone()),
-            module_path: self.context.current_module_path.clone(),
-        });
+        self.pending_nominal_fields.insert(
+            id,
+            PendingNominalFields {
+                declaration: NominalDeclaration::Struct(sd.clone()),
+                module_path: self.context.current_module_path.clone(),
+            },
+        );
         HirStruct {
             id,
             name: sd.name.name.clone(),
-            generic_params: headers::build_nominal_generic_params(&mut self.context, &sd.generic_params, id),
+            generic_params: headers::build_nominal_generic_params(
+                &mut self.context,
+                &sd.generic_params,
+                id,
+            ),
             fields: Vec::new(),
         }
     }
 
     fn collect_enum_header(&mut self, ed: &ast::EnumDecl, id: DefId) -> HirEnum {
-        self.pending_nominal_fields.insert(id, PendingNominalFields {
-            declaration: NominalDeclaration::Enum(ed.clone()),
-            module_path: self.context.current_module_path.clone(),
-        });
+        self.pending_nominal_fields.insert(
+            id,
+            PendingNominalFields {
+                declaration: NominalDeclaration::Enum(ed.clone()),
+                module_path: self.context.current_module_path.clone(),
+            },
+        );
         HirEnum {
             id,
             name: ed.name.name.clone(),
-            generic_params: headers::build_nominal_generic_params(&mut self.context, &ed.generic_params, id),
+            generic_params: headers::build_nominal_generic_params(
+                &mut self.context,
+                &ed.generic_params,
+                id,
+            ),
             variants: Vec::new(),
         }
     }
@@ -127,16 +188,33 @@ impl LocalCollector {
             self.context.current_module_path = pending.module_path;
             match pending.declaration {
                 NominalDeclaration::Struct(sd) => {
-                    let params = self.context.structs.values().find(|item| item.id == id)
-                        .expect("nominal descriptors precede fields").generic_params.clone();
+                    let params = self
+                        .context
+                        .structs
+                        .values()
+                        .find(|item| item.id == id)
+                        .expect("nominal descriptors precede fields")
+                        .generic_params
+                        .clone();
                     let strukt = headers::build_struct_with_id(&mut self.context, &sd, id, params);
-                    for alias in self.context.structs.values_mut().filter(|item| item.id == id) {
+                    for alias in self
+                        .context
+                        .structs
+                        .values_mut()
+                        .filter(|item| item.id == id)
+                    {
                         alias.clone_from(&strukt);
                     }
                 }
                 NominalDeclaration::Enum(ed) => {
-                    let params = self.context.enums.values().find(|item| item.id == id)
-                        .expect("nominal descriptors precede fields").generic_params.clone();
+                    let params = self
+                        .context
+                        .enums
+                        .values()
+                        .find(|item| item.id == id)
+                        .expect("nominal descriptors precede fields")
+                        .generic_params
+                        .clone();
                     let enum_ = headers::build_enum_with_id(&mut self.context, &ed, id, params);
                     for alias in self.context.enums.values_mut().filter(|item| item.id == id) {
                         alias.clone_from(&enum_);
@@ -208,10 +286,7 @@ impl LocalCollector {
             let alias = HirTypeAlias {
                 id,
                 name: name.name.clone(),
-                generic_params: crate::type_lowering::lower_generic_param_decls(
-                    id,
-                    params,
-                ),
+                generic_params: crate::type_lowering::lower_generic_param_decls(id, params),
                 ty: Type::Error,
             };
             self.context
@@ -304,8 +379,13 @@ impl LocalCollector {
                     ) else {
                         continue;
                     };
-                    let alias =
-                        headers::build_type_alias_with_id(&mut self.context, name, params, target, id);
+                    let alias = headers::build_type_alias_with_id(
+                        &mut self.context,
+                        name,
+                        params,
+                        target,
+                        id,
+                    );
                     self.context
                         .type_aliases
                         .insert(name.name.clone(), alias.clone());
@@ -431,44 +511,59 @@ impl LocalCollector {
             match top_level {
                 ast::TopLevel::StructDecl(sd) => {
                     let Some(id) = self.item_id_at_source(
-                        module_id, top_level_index, top_level, &sd.name.span,
+                        module_id,
+                        top_level_index,
+                        top_level,
+                        &sd.name.span,
                     ) else {
                         continue;
                     };
                     let name = prefix
                         .map(|prefix| format!("{}::{}", prefix, sd.name.name))
                         .unwrap_or_else(|| sd.name.name.clone());
-                    self.context.structs.insert(name, HirStruct {
-                        id,
-                        name: sd.name.name.clone(),
-                        generic_params: crate::type_lowering::lower_generic_param_decls(
-                            id, &sd.generic_params,
-                        ),
-                        fields: Vec::new(),
-                    });
+                    self.context.structs.insert(
+                        name,
+                        HirStruct {
+                            id,
+                            name: sd.name.name.clone(),
+                            generic_params: crate::type_lowering::lower_generic_param_decls(
+                                id,
+                                &sd.generic_params,
+                            ),
+                            fields: Vec::new(),
+                        },
+                    );
                 }
                 ast::TopLevel::EnumDecl(ed) => {
                     let Some(id) = self.item_id_at_source(
-                        module_id, top_level_index, top_level, &ed.name.span,
+                        module_id,
+                        top_level_index,
+                        top_level,
+                        &ed.name.span,
                     ) else {
                         continue;
                     };
                     let name = prefix
                         .map(|prefix| format!("{}::{}", prefix, ed.name.name))
                         .unwrap_or_else(|| ed.name.name.clone());
-                    self.context.enums.insert(name, HirEnum {
-                        id,
-                        name: ed.name.name.clone(),
-                        generic_params: crate::type_lowering::lower_generic_param_decls(
-                            id, &ed.generic_params,
-                        ),
-                        variants: Vec::new(),
-                    });
+                    self.context.enums.insert(
+                        name,
+                        HirEnum {
+                            id,
+                            name: ed.name.name.clone(),
+                            generic_params: crate::type_lowering::lower_generic_param_decls(
+                                id,
+                                &ed.generic_params,
+                            ),
+                            variants: Vec::new(),
+                        },
+                    );
                 }
                 ast::TopLevel::Module(module_decl) => {
                     let inner = &module_decl.0;
                     if let Some(name) = &inner.name {
-                        let Some(child_id) = self.child_module_id(module_id, name, &name.span) else {
+                        let Some(child_id) = self.child_module_id(module_id, name, &name.span)
+                        else {
                             continue;
                         };
                         let child_prefix = prefix
@@ -486,21 +581,31 @@ impl LocalCollector {
                     let loading_prefix = prefix
                         .map(str::to_owned)
                         .or_else(|| self.context.current_module_prefix());
-                    let loaded = match self.context.load_module_with_prefix(&ident.name, loading_prefix.as_deref()) {
+                    let loaded = match self
+                        .context
+                        .load_module_with_prefix(&ident.name, loading_prefix.as_deref())
+                    {
                         Ok(module) => module,
                         Err(err) => {
                             self.context.push_error_with_span(err, ident.span.clone());
                             continue;
                         }
                     };
-                    let Some(path) = self.context.loaded_module_path_for_prefix(&ident.name, loading_prefix.as_deref()) else {
+                    let Some(path) = self
+                        .context
+                        .loaded_module_path_for_prefix(&ident.name, loading_prefix.as_deref())
+                    else {
                         self.context.push_error_with_span(
-                            format!("Module '{}' was not loaded by the source database", ident.name),
+                            format!(
+                                "Module '{}' was not loaded by the source database",
+                                ident.name
+                            ),
                             ident.span.clone(),
                         );
                         continue;
                     };
-                    let child_prefix = loading_prefix.as_deref()
+                    let child_prefix = loading_prefix
+                        .as_deref()
                         .map(|prefix| format!("{}::{}", prefix, ident.name))
                         .unwrap_or_else(|| ident.name.clone());
                     let old_path = std::mem::replace(&mut self.context.current_module_path, path);
@@ -536,10 +641,7 @@ impl LocalCollector {
             let alias = HirTypeAlias {
                 id,
                 name: name.name.clone(),
-                generic_params: crate::type_lowering::lower_generic_param_decls(
-                    id,
-                    params,
-                ),
+                generic_params: crate::type_lowering::lower_generic_param_decls(id, params),
                 ty: Type::Error,
             };
             self.context
@@ -598,8 +700,13 @@ impl LocalCollector {
                     else {
                         continue;
                     };
-                    let alias =
-                        headers::build_type_alias_with_id(&mut self.context, name, params, target, id);
+                    let alias = headers::build_type_alias_with_id(
+                        &mut self.context,
+                        name,
+                        params,
+                        target,
+                        id,
+                    );
                     if local_prefix.is_some() {
                         self.context
                             .type_aliases
@@ -1370,10 +1477,7 @@ impl LocalCollector {
             let alias = HirTypeAlias {
                 id,
                 name: name.name.clone(),
-                generic_params: crate::type_lowering::lower_generic_param_decls(
-                    id,
-                    params,
-                ),
+                generic_params: crate::type_lowering::lower_generic_param_decls(id, params),
                 ty: Type::Error,
             };
             self.context
@@ -1466,8 +1570,13 @@ impl LocalCollector {
                     else {
                         continue;
                     };
-                    let alias =
-                        headers::build_type_alias_with_id(&mut self.context, name, params, target, id);
+                    let alias = headers::build_type_alias_with_id(
+                        &mut self.context,
+                        name,
+                        params,
+                        target,
+                        id,
+                    );
                     self.context
                         .type_aliases
                         .insert(qualified_name, alias.clone());

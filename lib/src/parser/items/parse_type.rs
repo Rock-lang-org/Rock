@@ -361,7 +361,8 @@ pub(super) fn parse_default_generic_param(stream: Input) -> IResult<GenericParam
     let (stream, mut param) = if matches!(stream.seek()?.token_type, TokenType::OpenParen) {
         parse_parenthesized_constructor_param(stream)?
     } else {
-        parse_constructor_param_inner(stream, true).or_else(|_| parse_plain_generic_param(stream))?
+        parse_constructor_param_inner(stream, true)
+            .or_else(|_| parse_plain_generic_param(stream))?
     };
     let (stream, _) = TokenType::Equal.process(stream)?;
     let (stream, default) = parse_type(stream)?;

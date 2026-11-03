@@ -343,9 +343,22 @@ pub(crate) struct LocalCollection {
 
 impl TypeLoweringContext for CollectContext {
     fn constructor_params(&self, id: DefId) -> Option<Vec<crate::types::GenericParamDecl>> {
-        self.structs.values().find(|item| item.id == id).map(|item| item.generic_params.clone())
-            .or_else(|| self.enums.values().find(|item| item.id == id).map(|item| item.generic_params.clone()))
-            .or_else(|| self.type_aliases.values().find(|item| item.id == id).map(|item| item.generic_params.clone()))
+        self.structs
+            .values()
+            .find(|item| item.id == id)
+            .map(|item| item.generic_params.clone())
+            .or_else(|| {
+                self.enums
+                    .values()
+                    .find(|item| item.id == id)
+                    .map(|item| item.generic_params.clone())
+            })
+            .or_else(|| {
+                self.type_aliases
+                    .values()
+                    .find(|item| item.id == id)
+                    .map(|item| item.generic_params.clone())
+            })
     }
     fn push_type_error(&mut self, message: String, span: Span) {
         self.push_error_with_span(message, span);
@@ -1132,7 +1145,9 @@ impl CollectContext {
             return;
         }
 
-        if self.structs.contains_key(&canonical_source) || self.type_aliases.contains_key(&canonical_source) {
+        if self.structs.contains_key(&canonical_source)
+            || self.type_aliases.contains_key(&canonical_source)
+        {
             self.import_aliases
                 .insert(short_name.clone(), canonical_source.clone());
             if is_explicit && record_canonical_aliases {
@@ -1261,7 +1276,8 @@ impl CollectContext {
         // their canonical paths, including while collecting function signatures.
         for (alias, id) in &metadata.resolver().export_aliases {
             if let Some(source) = metadata.resolver().canonical_name(*id) {
-                self.export_aliases.insert(alias.clone(), source.to_string());
+                self.export_aliases
+                    .insert(alias.clone(), source.to_string());
             }
         }
 
@@ -1463,10 +1479,7 @@ impl CollectContext {
         &mut self,
         imp: &ast::Impl,
     ) -> (String, Vec<String>, crate::hir::HirImplReceiverPattern) {
-        let receiver = imp
-            .for_
-            .clone()
-            .unwrap_or_else(|| imp.name.clone());
+        let receiver = imp.for_.clone().unwrap_or_else(|| imp.name.clone());
         let mut type_generics = Vec::new();
         collect_generic_names_from_parse_type(&receiver, &mut type_generics, &|name| {
             is_known_nominal_type_name(self, name)

@@ -2,27 +2,34 @@ use crate::support::*;
 
 #[test]
 fn test_removed_make_arr_intrinsic_is_rejected() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 main = !->
     values = [1, 2]
     unsafe ~MakeArr values.as_ptr!, 2
-"#, "MakeArr");
+"#,
+        "MakeArr",
+    );
 }
 
 #[test]
 fn test_mutable_raw_slice_borrow_requires_unsafe() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 main = !->
     mut values = [1, 2]
     raw: *[I64] = ~PtrFromParts values.as_mut_ptr!, 2
     view = &mut *raw
     view[0].println!
-"#, "requires an unsafe block");
+"#,
+        "requires an unsafe block",
+    );
 }
 
 #[test]
 fn test_slice_methods_lengths_and_empty_views() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 inspect: &[I64] -> ()
 inspect = values !->
     values.len!.println!
@@ -45,13 +52,18 @@ main = !->
     empty: [U8; 0] = []
     empty.len!.println!
     empty.is_empty!.println!
-"#);
-    assert_eq!(output, "3\nfalse\n3\nfalse\n2\nfalse\n0\ntrue\n3\nfalse\n42\n3\n0\ntrue\n");
+"#,
+    );
+    assert_eq!(
+        output,
+        "3\nfalse\n3\nfalse\n2\nfalse\n0\ntrue\n3\nfalse\n42\n3\n0\ntrue\n"
+    );
 }
 
 #[test]
 fn test_slice_methods_pointer_identity_and_mutation() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     mut values = [10, 20, 30]
     original = values.as_ptr! as I64
@@ -65,13 +77,15 @@ main = !->
     unsafe *ptr = 42
     values[0].println!
     values[1].println!
-"#);
+"#,
+    );
     assert_eq!(output, "true\ntrue\ntrue\n42\n20\n");
 }
 
 #[test]
 fn test_slice_methods_do_not_move_non_copy_elements() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     values = [(String::from "first"), (String::from "second")]
     values.len!.println!
@@ -79,13 +93,15 @@ main = !->
     (unsafe &*ptr).println!
     values[1].println!
     values.len!.println!
-"#);
+"#,
+    );
     assert_eq!(output, "2\nfirst\nsecond\n2\n");
 }
 
 #[test]
 fn test_slice_methods_borrowed_str_bytes_and_pointer() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     text = "aé🦀"
     text.len!.println!
@@ -99,34 +115,42 @@ main = !->
     owned = String::from text
     owned.as_str!.as_bytes!.len!.println!
     owned.println!
-"#);
+"#,
+    );
     assert_eq!(output, "7\nfalse\ntrue\n7\n97\n195\ntrue\n7\naé🦀\n");
 }
 
 #[test]
 fn test_slice_methods_shared_slice_cannot_get_mut_pointer() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 main = !->
     values = [1, 2]
     shared = &values[..]
     ptr = shared.as_mut_ptr!
     unsafe *ptr = 42
-"#, "as_mut_ptr");
+"#,
+        "as_mut_ptr",
+    );
 }
 
 #[test]
 fn test_slice_methods_immutable_array_cannot_get_mut_pointer() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 main = !->
     values = [1, 2]
     ptr = values.as_mut_ptr!
     unsafe *ptr = 42
-"#, "mutable receiver");
+"#,
+        "mutable receiver",
+    );
 }
 
 #[test]
 fn test_slice_methods_byte_view_cannot_escape_local_string() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 make_bytes: () -> &[U8]
 make_bytes = ->
     text = String::from "local"
@@ -134,7 +158,9 @@ make_bytes = ->
 
 main = !->
     make_bytes!.len!.println!
-"#, "does not live long enough");
+"#,
+        "does not live long enough",
+    );
 }
 
 #[test]

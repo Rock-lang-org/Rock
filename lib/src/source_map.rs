@@ -473,7 +473,10 @@ impl SemanticSourceMap {
                     .collect::<HashMap<_, _>>();
                 if let Some(trait_id) = impl_def.trait_id {
                     self.record_reference(
-                        implementation.name.named_inner().map(type_inner_name_span)
+                        implementation
+                            .name
+                            .named_inner()
+                            .map(type_inner_name_span)
                             .unwrap_or_else(|| implementation.name.span()),
                         SourceSymbol::Definition(trait_id),
                         None,
@@ -1276,8 +1279,13 @@ fn top_level_name_span(top_level: &ast::TopLevel, indexed: &Span) -> Span {
         ast::TopLevel::StructDecl(decl) => (&decl.name.name, &decl.name.span),
         ast::TopLevel::EnumDecl(decl) => (&decl.name.name, &decl.name.span),
         ast::TopLevel::TraitDecl(decl) => (&decl.name.name, &decl.name.span),
-        ast::TopLevel::Impl(decl) => return decl.name.named_inner()
-            .map(type_inner_name_span).unwrap_or_else(|| decl.name.span()),
+        ast::TopLevel::Impl(decl) => {
+            return decl
+                .name
+                .named_inner()
+                .map(type_inner_name_span)
+                .unwrap_or_else(|| decl.name.span())
+        }
         _ => return indexed.clone(),
     };
     Span::new(span.file_path.clone(), span.start, span.start + name.len())

@@ -1,7 +1,8 @@
-use std::io::Read;
-use std::os::unix::process::CommandExt;
-use std::io::Write;
+use crate::std_cache_key::{std_cache_compiler_stamp, std_cache_key};
 use std::fs;
+use std::io::Read;
+use std::io::Write;
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Child;
@@ -15,7 +16,6 @@ use std::time::Duration;
 use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
-use crate::std_cache_key::{std_cache_compiler_stamp, std_cache_key};
 
 pub(crate) static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -58,11 +58,7 @@ pub(crate) fn acquire_cache_lock(path: &Path) -> Option<CacheLock> {
             Ok(mut file) => {
                 if let Err(err) = file.write_all(cache_lock_metadata().as_bytes()) {
                     let _ = std::fs::remove_file(path);
-                    panic!(
-                        "failed to write std cache lock {}: {}",
-                        path.display(),
-                        err
-                    );
+                    panic!("failed to write std cache lock {}: {}", path.display(), err);
                 }
                 return Some(CacheLock {
                     path: path.to_path_buf(),
@@ -120,8 +116,7 @@ pub(crate) fn std_cache_lock_is_stale(path: &Path, stale_after: Duration) -> boo
 }
 
 pub(crate) fn recover_stale_cache_lock(path: &Path, stale_after: Duration) -> bool {
-    if std_cache_entry_is_ready_for_lock(path) || !std_cache_lock_is_stale(path, stale_after)
-    {
+    if std_cache_entry_is_ready_for_lock(path) || !std_cache_lock_is_stale(path, stale_after) {
         return false;
     }
 

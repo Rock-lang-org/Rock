@@ -5,7 +5,8 @@ use std::sync::atomic::Ordering;
 
 #[test]
 fn test_default_type_arguments_annotations_and_overrides() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Pair A, {B = A}
     < first: A
     < second: B
@@ -41,13 +42,15 @@ main = !->
         second: true
     mixed.second.println!
     (read (Choice::Value 9)).println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "42\n7\ntrue\n9");
 }
 
 #[test]
 fn test_default_type_arguments_inference_and_fallback() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Value {T = Bool}
     < value: T
 
@@ -84,13 +87,15 @@ main = !->
     match unconstrained
         Choice::Empty => 12.println!
         Choice::Value value => 13.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "7\n11\n42\n8\n42\n12");
 }
 
 #[test]
 fn test_default_type_arguments_trait_self_and_explicit_rhs() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 trait Compare {Rhs = Self}
     @same: &Rhs -> Bool
 
@@ -106,13 +111,15 @@ same = left, right -> left.same &right
 main = !->
     (same 4, 4).println!
     (true.same &4).println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "true\ntrue");
 }
 
 #[test]
 fn test_default_type_arguments_recursive_nominal_fields() {
-    compile_should_pass(r#"
+    compile_should_pass(
+        r#"
 struct Node {T = I64}
     value: T
     next: *Node
@@ -122,7 +129,8 @@ enum Chain {T = I64}
     Link T, *Chain
 
 main = !-> return
-"#);
+"#,
+    );
 }
 
 #[test]
@@ -144,7 +152,9 @@ fn test_default_type_arguments_mutual_fields_in_deleted_source_artifacts() {
     let dir = test_temp_dir(id);
     fs::create_dir_all(&dir).unwrap();
     let _cleanup = TestDirCleanup(dir.clone());
-    fs::write(dir.join("models.rk"), r#"
+    fs::write(
+        dir.join("models.rk"),
+        r#"
 < struct First {T = I64}
     < value: T
     < other: *Second
@@ -152,21 +162,32 @@ fn test_default_type_arguments_mutual_fields_in_deleted_source_artifacts() {
 < enum Second {T = Bool}
     End
     Link T, *First
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let entry = dir.join("lib.rk");
     fs::write(&entry, "< mod models\n").unwrap();
     let config = rock_lib::Config {
-        entry_file: entry.clone(), output_dir: dir.clone(),
+        entry_file: entry.clone(),
+        output_dir: dir.clone(),
         current_crate_name: Some("recursive".to_string()),
-        no_std: true, no_prelude: true, no_link: true,
+        no_std: true,
+        no_prelude: true,
+        no_link: true,
         ..Default::default()
     };
     let artifact = dir.join("recursive.rkca");
-    rock_lib::compile_with_products(&config).unwrap().products.unwrap()
-        .write_artifact_to_path(&artifact).unwrap();
+    rock_lib::compile_with_products(&config)
+        .unwrap()
+        .products
+        .unwrap()
+        .write_artifact_to_path(&artifact)
+        .unwrap();
     fs::remove_file(dir.join("models.rk")).unwrap();
     fs::remove_file(&entry).unwrap();
-    fs::write(&entry, r#"
+    fs::write(
+        &entry,
+        r#"
 > recursive::models::First
 > recursive::models::Second
 
@@ -179,12 +200,16 @@ main = ->
         value: 7
         other: &second as *Second
     read first
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     rock_lib::compile(&rock_lib::Config {
-        entry_file: entry, current_crate_name: None,
+        entry_file: entry,
+        current_crate_name: None,
         extern_artifacts: vec![("recursive".to_string(), artifact)],
         ..config
-    }).expect("mutual defaults must survive publication and remapping");
+    })
+    .expect("mutual defaults must survive publication and remapping");
 }
 
 #[test]
@@ -193,24 +218,35 @@ fn test_default_type_arguments_mutual_fields_across_file_modules() {
     let dir = test_temp_dir(id);
     fs::create_dir_all(&dir).unwrap();
     let _cleanup = TestDirCleanup(dir.clone());
-    fs::write(dir.join("first.rk"), r#"
+    fs::write(
+        dir.join("first.rk"),
+        r#"
 > second::Second
 type Seed = I64
 < struct First {T = Seed}
     < value: T
     < tag: Seed
     < other: *Second
-"#).unwrap();
-    fs::write(dir.join("second.rk"), r#"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("second.rk"),
+        r#"
 > first::First
 type Seed = Bool
 < enum Second {T = Seed}
     End
     Link T, Seed, *First
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let entry = dir.join("main.rk");
     for modules in ["mod first\nmod second", "mod second\nmod first"] {
-        fs::write(&entry, format!(r#"
+        fs::write(
+            &entry,
+            format!(
+                r#"
 {modules}
 > first::First
 > second::Second
@@ -224,18 +260,27 @@ main = ->
         tag: 8
         other: &other as *Second
     read value
-"#)).unwrap();
+"#
+            ),
+        )
+        .unwrap();
         rock_lib::compile(&rock_lib::Config {
-            entry_file: entry.clone(), output_dir: dir.clone(),
-            no_std: true, no_prelude: true, no_link: true,
+            entry_file: entry.clone(),
+            output_dir: dir.clone(),
+            no_std: true,
+            no_prelude: true,
+            no_link: true,
             ..Default::default()
-        }).expect("mutual field defaults and aliases must keep their module scope");
+        })
+        .expect("mutual field defaults and aliases must keep their module scope");
     }
 }
 
 #[test]
 fn test_default_type_arguments_static_factory_fallback_and_inference() {
-    assert_eq!(compile_and_run(r#"
+    assert_eq!(
+        compile_and_run(
+            r#"
 struct Phantom {T = I64}
 
 impl Phantom T
@@ -255,7 +300,10 @@ main = !->
     explicit: Phantom Bool = Phantom::new!
     value = Value::new 42
     value.value.println!
-"#), "42\n");
+"#
+        ),
+        "42\n"
+    );
 }
 
 #[test]
@@ -264,7 +312,9 @@ fn test_default_type_arguments_forward_declarations_in_file_modules() {
     let dir = test_temp_dir(id);
     fs::create_dir_all(&dir).unwrap();
     let _cleanup = TestDirCleanup(dir.clone());
-    fs::write(dir.join("models.rk"), r#"
+    fs::write(
+        dir.join("models.rk"),
+        r#"
 read: Outer -> I64
 < read = value -> value.value.value
 
@@ -273,7 +323,9 @@ read: Outer -> I64
 
 < struct Inner {T = I64}
     < value: T
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     fs::write(dir.join("test.rk"), "mod models\nmain = !-> return\n").unwrap();
     rock_lib::compile(&test_config(dir.join("test.rk"), dir.clone())).expect("Compilation failed");
 }
@@ -281,15 +333,42 @@ read: Outer -> I64
 #[test]
 fn test_default_type_arguments_reject_invalid_defaults() {
     for (source, expected) in [
-        ("struct Bad {T = Missing}\nmain = !->\n    ()\n", "unknown type 'Missing' in generic default"),
-        ("struct Bad {T = T}\nmain = !->\n    ()\n", "default cannot reference current or later parameter 'T'"),
-        ("struct Bad {T = U}, {U = I64}\nmain = !->\n    ()\n", "default cannot reference current or later parameter 'U'"),
-        ("struct Bad {T = I64}, U\nmain = !->\n    ()\n", "required parameters must precede defaulted parameters"),
-        ("struct Bad {F _ = I64}\nmain = !->\n    ()\n", "has kind Type, expected Type -> Type"),
-        ("type Bad {T = Bad} = T\nmain = !->\n    ()\n", "invalid or cyclic type in generic default"),
-        ("type First {T = Second} = T\ntype Second {T = First} = T\nmain = !->\n    ()\n", "invalid or cyclic type in generic default"),
-        ("struct First {T = Second}\nstruct Second {T = First}\nmain = !-> return\n", "default"),
-        ("struct Bad {T = Self}\nmain = !->\n    ()\n", "unknown type 'Self' in generic default"),
+        (
+            "struct Bad {T = Missing}\nmain = !->\n    ()\n",
+            "unknown type 'Missing' in generic default",
+        ),
+        (
+            "struct Bad {T = T}\nmain = !->\n    ()\n",
+            "default cannot reference current or later parameter 'T'",
+        ),
+        (
+            "struct Bad {T = U}, {U = I64}\nmain = !->\n    ()\n",
+            "default cannot reference current or later parameter 'U'",
+        ),
+        (
+            "struct Bad {T = I64}, U\nmain = !->\n    ()\n",
+            "required parameters must precede defaulted parameters",
+        ),
+        (
+            "struct Bad {F _ = I64}\nmain = !->\n    ()\n",
+            "has kind Type, expected Type -> Type",
+        ),
+        (
+            "type Bad {T = Bad} = T\nmain = !->\n    ()\n",
+            "invalid or cyclic type in generic default",
+        ),
+        (
+            "type First {T = Second} = T\ntype Second {T = First} = T\nmain = !->\n    ()\n",
+            "invalid or cyclic type in generic default",
+        ),
+        (
+            "struct First {T = Second}\nstruct Second {T = First}\nmain = !-> return\n",
+            "default",
+        ),
+        (
+            "struct Bad {T = Self}\nmain = !->\n    ()\n",
+            "unknown type 'Self' in generic default",
+        ),
     ] {
         compile_should_fail(source, expected);
     }
@@ -297,7 +376,8 @@ fn test_default_type_arguments_reject_invalid_defaults() {
 
 #[test]
 fn test_default_type_arguments_declaration_order_and_constructor_kinds() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 read: Outer -> I64
 read = value -> value.value.value
 
@@ -343,7 +423,8 @@ main = !->
         value: Inner
             value: 42
     (explicit_constructor applied).println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "42\n9\n7\n42");
 }
 
@@ -353,7 +434,9 @@ fn test_default_type_arguments_use_declaration_module_scope() {
     let dir = test_temp_dir(id);
     fs::create_dir_all(&dir).unwrap();
     let _cleanup = TestDirCleanup(dir.clone());
-    fs::write(dir.join("models.rk"), r#"
+    fs::write(
+        dir.join("models.rk"),
+        r#"
 struct Seed
     < value: I64
 
@@ -363,8 +446,12 @@ struct Seed
 < make = -> Envelope
     value: Seed
         value: 42
-"#).unwrap();
-    fs::write(dir.join("test.rk"), r#"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("test.rk"),
+        r#"
 struct Holder {T = Envelope}
     < value: T
 
@@ -383,7 +470,9 @@ main = !->
     holder = Holder
         value: make!
     (read holder).println!
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     rock_lib::compile(&test_config(dir.join("test.rk"), dir.clone())).expect("Compilation failed");
     let output = run_test_command(&mut Command::new(dir.join("test")));
     assert!(output.status.success());

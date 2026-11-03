@@ -4,9 +4,8 @@ use crate::lexer::Span;
 use crate::mir::borrowck::location::{Location, StatementIndex};
 use crate::mir::BasicBlockId;
 use crate::mir::{
-    Local, MirBackendContract, MirFunction, MirFunctionId,
-    Operand, Place, Projection, ReferenceOrigin, Rvalue, StatementData,
-    StatementKind, Terminator,
+    Local, MirBackendContract, MirFunction, MirFunctionId, Operand, Place, Projection,
+    ReferenceOrigin, Rvalue, StatementData, StatementKind, Terminator,
 };
 use crate::type_context::{Ty, TypeContext, TypeView};
 
@@ -70,15 +69,23 @@ pub fn collect_function_borrows_with_contract(
     let mut borrows = Vec::new();
     use crate::mir::dataflow::{run_fixpoint, Analysis};
     let origins = super::ReferenceEscapeAnalysis::new(
-        func, type_context, backend_contract, return_summaries, super::MissingSummaryMode::Conservative,
+        func,
+        type_context,
+        backend_contract,
+        return_summaries,
+        super::MissingSummaryMode::Conservative,
     );
-    let needs_raw_roots = func.local_decls.iter().enumerate().any(|(index, _)|
-        origins.local_type_tracks_origin(Local(index))
-    );
+    let needs_raw_roots = func
+        .local_decls
+        .iter()
+        .enumerate()
+        .any(|(index, _)| origins.local_type_tracks_origin(Local(index)));
     let entries = needs_raw_roots.then(|| run_fixpoint(&origins, func));
 
     for (block_idx, block) in func.basic_blocks.iter().enumerate() {
-        let mut state = entries.as_ref().map(|entries| entries.entry_sets[block_idx].clone())
+        let mut state = entries
+            .as_ref()
+            .map(|entries| entries.entry_sets[block_idx].clone())
             .unwrap_or_default();
         for (stmt_idx, stmt) in block.statements.iter().enumerate() {
             let mut statement_borrows = collect_statement_borrows(
@@ -88,7 +95,8 @@ pub fn collect_function_borrows_with_contract(
             if let StatementKind::Assign(_, Rvalue::Ref(_, place)) = &stmt.kind {
                 if let Some(source) = origins.raw_pointer_source(place) {
                     if let Some(template) = statement_borrows.first().cloned() {
-                        let replacements = recover_raw_borrows(&origins, &state, &source, &template);
+                        let replacements =
+                            recover_raw_borrows(&origins, &state, &source, &template);
                         if !replacements.is_empty() {
                             statement_borrows = replacements;
                         }
@@ -122,33 +130,52 @@ fn recover_raw_borrows(
     source: &Place,
     template: &BorrowData,
 ) -> Vec<BorrowData> {
-    let mut roots = origins.origins_for_place(state, source).into_iter().filter_map(|origin| {
-        let (local, deref) = match origin {
-            ReferenceOrigin::Local(local) | ReferenceOrigin::Temporary(local) => (local, false),
-            ReferenceOrigin::Param(local) => (local,
-                origins.local_type_is_pointer(local) || origins.local_type_is_reference(local)),
-            _ => return None,
-        };
-        Some((local, deref))
-    }).collect::<Vec<_>>();
+    let mut roots = origins
+        .origins_for_place(state, source)
+        .into_iter()
+        .filter_map(|origin| {
+            let (local, deref) = match origin {
+                ReferenceOrigin::Local(local) | ReferenceOrigin::Temporary(local) => (local, false),
+                ReferenceOrigin::Param(local) => (
+                    local,
+                    origins.local_type_is_pointer(local) || origins.local_type_is_reference(local),
+                ),
+                _ => return None,
+            };
+            Some((local, deref))
+        })
+        .collect::<Vec<_>>();
     roots.sort_by_key(|(local, deref)| (local.0, *deref));
     roots.dedup();
-    roots.into_iter().map(|(local, deref)| {
-        let mut borrow = template.clone();
-        borrow.place = Place { local, projection: if deref { vec![Projection::Deref] } else { Vec::new() } };
-        let mut through = source.clone();
-        if origins.place_type_is_pointer(source) {
-            through.projection.push(Projection::Deref);
-        }
-        borrow.reborrow_source = Some(through);
-        borrow
-    }).collect()
+    roots
+        .into_iter()
+        .map(|(local, deref)| {
+            let mut borrow = template.clone();
+            borrow.place = Place {
+                local,
+                projection: if deref {
+                    vec![Projection::Deref]
+                } else {
+                    Vec::new()
+                },
+            };
+            let mut through = source.clone();
+            if origins.place_type_is_pointer(source) {
+                through.projection.push(Projection::Deref);
+            }
+            borrow.reborrow_source = Some(through);
+            borrow
+        })
+        .collect()
 }
 
 fn collect_terminator_borrows_with_context(
     term: &Terminator,
     created_at: Location,
-    context: Option<(&super::ReferenceEscapeAnalysis<'_>, &super::ReferenceOriginState)>,
+    context: Option<(
+        &super::ReferenceEscapeAnalysis<'_>,
+        &super::ReferenceOriginState,
+    )>,
 ) -> Vec<BorrowData> {
     let term_span = context
         .as_ref()
@@ -163,46 +190,74 @@ fn collect_terminator_borrows_with_context(
         return Vec::new();
     };
 
-    let Some((origins, state)) = context else { return Vec::new(); };
+    let Some((origins, state)) = context else {
+        return Vec::new();
+    };
     let mir_func = origins.func;
     let type_context = origins.type_context;
     let Some(destination_decl) = mir_func.local_decls.get(destination.local.0) else {
         return Vec::new();
     };
     let type_view = TypeView::new(type_context);
-    if !super::type_id_contains_reference(type_view, origins.backend_contract, destination_decl.ty) {
+    if !super::type_id_contains_reference(type_view, origins.backend_contract, destination_decl.ty)
+    {
         return Vec::new();
     }
-    let kind = if super::type_id_contains_mutable_reference(type_view, origins.backend_contract, destination_decl.ty) {
+    let kind = if super::type_id_contains_mutable_reference(
+        type_view,
+        origins.backend_contract,
+        destination_decl.ty,
+    ) {
         AccessKind::BorrowMut
     } else {
         AccessKind::BorrowShared
     };
-    origins.call_return_argument_indices(func, args)
+    origins
+        .call_return_argument_indices(func, args)
         .into_iter()
         .flat_map(|index| {
-            let Some(arg) = args.get(index) else { return Vec::new(); };
+            let Some(arg) = args.get(index) else {
+                return Vec::new();
+            };
             if let Operand::Copy(source) | Operand::Move(source) = arg {
-                let source_ty = origins.backend_contract.place_type_id(type_context, mir_func, source);
+                let source_ty =
+                    origins
+                        .backend_contract
+                        .place_type_id(type_context, mir_func, source);
                 // Aggregate arguments carry a conservative origin/loan envelope.
                 // Recover it at the call just as for a direct raw pointer; do not
                 // invent a dereference projection on the aggregate itself.
-                if source_ty.is_some_and(|ty| !matches!(type_view.ty(ty), Ty::Reference { .. })
-                    && super::type_id_contains_pointer(type_view, origins.backend_contract, ty)) {
-                    return recover_raw_borrows(origins, state, source, &BorrowData {
-                        owner: destination.local,
-                        place: source.clone(),
-                        reborrow_source: None,
-                        kind,
-                        created_at,
-                        origin_span: term_span.clone(),
-                    });
+                if source_ty.is_some_and(|ty| {
+                    !matches!(type_view.ty(ty), Ty::Reference { .. })
+                        && super::type_id_contains_pointer(type_view, origins.backend_contract, ty)
+                }) {
+                    return recover_raw_borrows(
+                        origins,
+                        state,
+                        source,
+                        &BorrowData {
+                            owner: destination.local,
+                            place: source.clone(),
+                            reborrow_source: None,
+                            kind,
+                            created_at,
+                            origin_span: term_span.clone(),
+                        },
+                    );
                 }
             }
             borrow_from_reference_argument(
-                arg, destination.local, kind, created_at,
-                mir_func, type_context, origins.backend_contract, term_span.clone(),
-            ).into_iter().collect()
+                arg,
+                destination.local,
+                kind,
+                created_at,
+                mir_func,
+                type_context,
+                origins.backend_contract,
+                term_span.clone(),
+            )
+            .into_iter()
+            .collect()
         })
         .collect()
 }
@@ -223,7 +278,10 @@ fn borrow_from_reference_argument(
     let type_view = TypeView::new(type_context);
     let mut source_ty = backend_contract.place_type_id(type_context, func, source)?;
     // A shared input stays shared even if a different returned field is mutable.
-    let kind = if matches!(type_view.ty(source_ty), Ty::Reference { mutable: false, .. }) {
+    let kind = if matches!(
+        type_view.ty(source_ty),
+        Ty::Reference { mutable: false, .. }
+    ) {
         AccessKind::BorrowShared
     } else {
         kind

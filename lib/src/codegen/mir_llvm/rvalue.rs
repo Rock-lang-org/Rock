@@ -477,7 +477,9 @@ impl<'ctx> CodeGen<'ctx> {
                     .iter()
                     .map(|(_, ty)| {
                         let ty = self.structural_type_for(*ty);
-                                self.llvm_type(&self.normalize_projection_type(&ty.substitute_generics(&subst)))
+                        self.llvm_type(
+                            &self.normalize_projection_type(&ty.substitute_generics(&subst)),
+                        )
                     })
                     .collect();
                 let struct_ty = self.context.struct_type(&field_types, false);

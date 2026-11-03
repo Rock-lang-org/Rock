@@ -88,7 +88,10 @@ pub fn r#impl(stream: Input) -> IResult<Impl> {
         })
         .process(stream)?;
     if implementation.for_.is_some() && !matches!(implementation.name, ParseType::Type(_)) {
-        return Err(ParseError::UnexpectedToken("trait name before 'for'".to_string(), start.seek()?));
+        return Err(ParseError::UnexpectedToken(
+            "trait name before 'for'".to_string(),
+            start.seek()?,
+        ));
     }
     Ok((rest, implementation))
 }

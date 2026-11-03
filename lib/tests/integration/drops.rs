@@ -383,7 +383,12 @@ main = ->
 
 #[test]
 fn test_std_has_no_keep_alive_lifetime_workarounds() {
-    let std_files = ["src/convert.rk", "src/control/option.rk", "src/control/result.rk", "src/show.rk"];
+    let std_files = [
+        "src/convert.rk",
+        "src/control/option.rk",
+        "src/control/result.rk",
+        "src/show.rk",
+    ];
     let offenders = std_files
         .iter()
         .filter_map(|file| {

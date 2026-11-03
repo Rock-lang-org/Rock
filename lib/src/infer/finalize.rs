@@ -388,15 +388,37 @@ fn finalize_expr(ctx: &mut FinalizeCtx<'_>, expr: &mut HirExpr) {
             }
             let intrinsic = IntegerIntrinsic::from_name(name).unwrap();
             let operand = args.first().map(|arg| &arg.ty);
-            let integer = matches!(operand, Some(Type::I8 | Type::I16 | Type::I32 | Type::I64
-                | Type::U8 | Type::U16 | Type::U32 | Type::U64));
-            let valid = integer && args.len() == intrinsic.arity()
-                && (intrinsic.arity() == 1 || if matches!(intrinsic.op, IntegerOp::Shl | IntegerOp::Shr) {
-                    matches!(args[1].ty, Type::I8 | Type::I16 | Type::I32 | Type::I64
-                        | Type::U8 | Type::U16 | Type::U32 | Type::U64)
-                } else {
-                    args[0].ty == args[1].ty
-                });
+            let integer = matches!(
+                operand,
+                Some(
+                    Type::I8
+                        | Type::I16
+                        | Type::I32
+                        | Type::I64
+                        | Type::U8
+                        | Type::U16
+                        | Type::U32
+                        | Type::U64
+                )
+            );
+            let valid = integer
+                && args.len() == intrinsic.arity()
+                && (intrinsic.arity() == 1
+                    || if matches!(intrinsic.op, IntegerOp::Shl | IntegerOp::Shr) {
+                        matches!(
+                            args[1].ty,
+                            Type::I8
+                                | Type::I16
+                                | Type::I32
+                                | Type::I64
+                                | Type::U8
+                                | Type::U16
+                                | Type::U32
+                                | Type::U64
+                        )
+                    } else {
+                        args[0].ty == args[1].ty
+                    });
             if !valid {
                 ctx.errors.push(InferenceError {
                     error: UnifyError::Message(format!(
@@ -413,8 +435,10 @@ fn finalize_expr(ctx: &mut FinalizeCtx<'_>, expr: &mut HirExpr) {
             let valid = match (&expr.ty, args.as_slice()) {
                 (Type::Pointer(target), [data, length]) if length.ty == Type::I64 => {
                     match (target.as_ref(), &data.ty) {
-                        (Type::Slice(element), Type::Pointer(source)) => element == source
-                            && !matches!(element.as_ref(), Type::Slice(_) | Type::Str),
+                        (Type::Slice(element), Type::Pointer(source)) => {
+                            element == source
+                                && !matches!(element.as_ref(), Type::Slice(_) | Type::Str)
+                        }
                         (Type::Str, Type::Pointer(source)) => source.as_ref() == &Type::U8,
                         _ => false,
                     }

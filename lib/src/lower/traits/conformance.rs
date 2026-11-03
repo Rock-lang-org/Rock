@@ -876,7 +876,9 @@ impl TraitConformancePhase {
         // are injected. Publish their exact member bindings, not name fallbacks.
         let mut output = TraitConformanceOutput::default();
         collect_effective_trait_methods(&lowerer.items, lowerer.root_crate_id, &mut output);
-        lowerer.imported_effective_trait_methods.extend(output.effective_trait_methods);
+        lowerer
+            .imported_effective_trait_methods
+            .extend(output.effective_trait_methods);
         lowerer.diagnostics.extend(output.diagnostics);
     }
 

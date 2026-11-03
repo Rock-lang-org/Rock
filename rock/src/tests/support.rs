@@ -19,17 +19,24 @@ pub(crate) fn run_isolated_test(name: &str, env: &[(&str, &OsStr)]) -> bool {
         return false;
     }
     let mut command = ProcessCommand::new(std::env::current_exe().unwrap());
-    command.args([name, "--exact", "--nocapture"])
+    command
+        .args([name, "--exact", "--nocapture"])
         .env(ISOLATED_TEST, name)
         .env("ROCKC", crate::rockc::resolve_rockc_path().unwrap());
     for (key, value) in env {
         command.env(key, value);
     }
     let output = run_command_output(&mut command);
-    assert!(output.status.success(), "isolated test {name} failed; stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"),
-        "isolated test filter must execute exactly one test: {name}");
+    assert!(
+        output.status.success(),
+        "isolated test {name} failed; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+        "isolated test filter must execute exactly one test: {name}"
+    );
     true
 }
 
@@ -86,14 +93,25 @@ pub(crate) fn write_package_with_options(
     fs::write(lib_file, source).unwrap();
 }
 
-pub(crate) fn build_project(root: &Path, profile: crate::package::BuildProfile) -> Result<PathBuf, String> {
+pub(crate) fn build_project(
+    root: &Path,
+    profile: crate::package::BuildProfile,
+) -> Result<PathBuf, String> {
     let products = crate::build::build_project(root, profile)?;
     let paths = products.paths().cloned().collect::<Vec<_>>();
-    assert_eq!(paths.len(), 1, "single-target fixture must have one build output");
+    assert_eq!(
+        paths.len(),
+        1,
+        "single-target fixture must have one build output"
+    );
     Ok(paths[0].clone())
 }
 
-pub(crate) fn run_project(root: &Path, profile: crate::package::BuildProfile, args: &[String]) -> Result<i32, String> {
+pub(crate) fn run_project(
+    root: &Path,
+    profile: crate::package::BuildProfile,
+    args: &[String],
+) -> Result<i32, String> {
     crate::build::run_project(root, profile, args, None)
 }
 
@@ -165,7 +183,10 @@ fn isolated_test_overrides_are_child_local() {
         assert_eq!(std::env::current_dir().unwrap(), previous_dir);
         return;
     }
-    assert_eq!(std::env::var("ROCK_TEST_CHILD_VALUE").unwrap(), "child-only");
+    assert_eq!(
+        std::env::var("ROCK_TEST_CHILD_VALUE").unwrap(),
+        "child-only"
+    );
     let root = temp_test_dir("isolated_cwd");
     std::env::set_current_dir(&root).unwrap();
     assert_eq!(std::env::current_dir().unwrap(), root);

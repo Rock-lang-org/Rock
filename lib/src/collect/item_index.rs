@@ -535,11 +535,9 @@ fn item_name_and_kind(top_level: &ast::TopLevel) -> Option<(String, ItemKind, cr
             ItemKind::Enum,
             enum_.name.span.clone(),
         )),
-        ast::TopLevel::Impl(impl_) => Some((
-            impl_.name.type_name(),
-            ItemKind::Impl,
-            impl_.name.span(),
-        )),
+        ast::TopLevel::Impl(impl_) => {
+            Some((impl_.name.type_name(), ItemKind::Impl, impl_.name.span()))
+        }
         ast::TopLevel::NewType(name, _, _) => {
             Some((name.name.clone(), ItemKind::NewType, name.span.clone()))
         }

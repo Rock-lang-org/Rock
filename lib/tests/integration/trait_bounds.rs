@@ -318,7 +318,8 @@ main = ->
 
 #[test]
 fn test_parameterized_equality_selects_rhs_and_inherits_not_equal() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Tag
     < id: I64
 
@@ -349,13 +350,18 @@ main = !->
     same.id.println!
     compare_both tag, 7, false .println!
     compare_both same, true, 8 .println!
-"#);
-    assert_eq!(output, "true\nfalse\ntrue\ntrue\ntrue\ntrue\n7\n7\ntrue\ntrue\n");
+"#,
+    );
+    assert_eq!(
+        output,
+        "true\nfalse\ntrue\ntrue\ntrue\ntrue\n7\n7\ntrue\ntrue\n"
+    );
 }
 
 #[test]
 fn test_parameterized_equality_borrows_owned_strings_in_both_directions() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 same_then_use_right: T -> U -> U where T: PartialEq U
 same_then_use_right = left, right ->
     (left == right).println!
@@ -375,13 +381,18 @@ main = !->
     (String::from "é" == "é").println!
     same_then_use_right "Rock", owned .println!
     same.println!
-"#);
-    assert_eq!(output, "true\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\nRock\nRock\n");
+"#,
+    );
+    assert_eq!(
+        output,
+        "true\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\nfalse\nRock\nRock\n"
+    );
 }
 
 #[test]
 fn test_parameterized_equality_generic_impl_preserves_rhs_substitution() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Wrapper T
     < value: T
 
@@ -397,13 +408,15 @@ main = !->
     (left != right).println!
     left.value.println!
     right.value.println!
-"#);
+"#,
+    );
     assert_eq!(output, "true\nfalse\nRock\nRock\n");
 }
 
 #[test]
 fn test_parameterized_equality_infers_signatureless_operands() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 same = left, right -> left == right
 different = left, right -> left != right
 
@@ -411,13 +424,15 @@ main = !->
     owned = String::from "Rock"
     same owned, "Rock" .println!
     different "Rock", (String::from "rock") .println!
-"#);
+"#,
+    );
     assert_eq!(output, "true\ntrue\n");
 }
 
 #[test]
 fn test_parameterized_equality_does_not_imply_reverse_impl() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 struct Tag
     < id: I64
 
@@ -428,12 +443,15 @@ main = !->
     tag = Tag
         id: 7
     (7 == tag).println!
-"#, "No implementation found");
+"#,
+        "No implementation found",
+    );
 }
 
 #[test]
 fn test_parameterized_equality_cross_type_impl_does_not_satisfy_eq() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 struct Tag
     < id: I64
 
@@ -443,7 +461,9 @@ impl PartialEq I64 for Tag
 impl Eq for Tag
 
 main = !-> return
-"#, "supertrait obligation");
+"#,
+        "supertrait obligation",
+    );
 }
 
 #[test]
@@ -474,5 +494,8 @@ main = ->
 "#;
 
     let output = compile_and_run(src);
-    assert_eq!(output, "true\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\n");
+    assert_eq!(
+        output,
+        "true\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\n"
+    );
 }

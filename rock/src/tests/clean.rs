@@ -33,7 +33,10 @@ fn test_clean_removes_all_profiles_but_preserves_sources_and_other_caches() {
     assert!(clean_project(&app).unwrap());
     assert!(!app.join("build").exists());
     assert!(app.join("rock.toml").exists());
-    assert_eq!(fs::read_to_string(app.join("src/main.rk")).unwrap(), "main = !-> ()\n");
+    assert_eq!(
+        fs::read_to_string(app.join("src/main.rk")).unwrap(),
+        "main = !-> ()\n"
+    );
     assert!(dependency.join("build/keep").exists());
     assert!(!clean_project(&app).unwrap());
     fs::remove_dir_all(root).unwrap();
@@ -49,8 +52,13 @@ fn test_clean_requires_a_project_and_refuses_a_build_file() {
     fs::remove_dir_all(root.join("build")).unwrap();
     write_package_with_options(&root, "app", "src/main.rk", &[], "main = !-> ()\n", true);
     fs::write(root.join("build"), "not a directory").unwrap();
-    assert!(clean_project(&root).unwrap_err().contains("Refusing to clean"));
-    assert_eq!(fs::read_to_string(root.join("build")).unwrap(), "not a directory");
+    assert!(clean_project(&root)
+        .unwrap_err()
+        .contains("Refusing to clean"));
+    assert_eq!(
+        fs::read_to_string(root.join("build")).unwrap(),
+        "not a directory"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -66,7 +74,9 @@ fn test_clean_does_not_follow_build_symlinks() {
     fs::create_dir_all(&outside).unwrap();
     fs::write(outside.join("keep"), "preserve").unwrap();
     symlink(&outside, app.join("build")).unwrap();
-    assert!(clean_project(&app).unwrap_err().contains("Refusing to clean"));
+    assert!(clean_project(&app)
+        .unwrap_err()
+        .contains("Refusing to clean"));
     assert!(outside.join("keep").exists());
     fs::remove_file(app.join("build")).unwrap();
     fs::create_dir_all(app.join("build")).unwrap();
@@ -83,32 +93,64 @@ fn test_cli_clean_removes_central_dependency_cache_and_rebuilds() {
     let app = root.join("app");
     write_package_with_options(&dep, "dep", "lib.rk", &[], "< answer = -> 42\n", true);
     write_package_with_options(
-        &app, "app", "src/main.rk", &[("dep", dep.display().to_string())],
-        "> dep::answer\nmain = -> answer!\n", true,
+        &app,
+        "app",
+        "src/main.rk",
+        &[("dep", dep.display().to_string())],
+        "> dep::answer\nmain = -> answer!\n",
+        true,
     );
     ensure_dev_binary_built("rock").unwrap();
     let rock = rock_shared::process::dev_target_binary_from_current_exe("rock").unwrap();
     let rockc = resolve_rockc_path().unwrap();
     for profile in ["--debug", "--release"] {
-        let output = run_command_output(Command::new(&rock).current_dir(&app).args(["build", profile]).env("ROCKC", &rockc));
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        assert!(app.join("build").join(profile.trim_start_matches("--")).join("deps").exists());
+        let output = run_command_output(
+            Command::new(&rock)
+                .current_dir(&app)
+                .args(["build", profile])
+                .env("ROCKC", &rockc),
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(app
+            .join("build")
+            .join(profile.trim_start_matches("--"))
+            .join("deps")
+            .exists());
         assert!(!dep.join("build").exists());
     }
     for expected in ["removed", "already clean"] {
         let output = run_command_output(
-            Command::new(&rock).current_dir(&app).arg("clean")
+            Command::new(&rock)
+                .current_dir(&app)
+                .arg("clean")
                 .env("ROCKC", root.join("missing-rockc"))
                 .env("ROCK_SYSROOT", root.join("missing-sysroot")),
         );
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         assert!(String::from_utf8_lossy(&output.stderr).contains(expected));
         assert!(output.stdout.is_empty());
         assert!(!app.join("build").exists());
         assert!(dep.join("lib.rk").exists());
     }
-    let output = run_command_output(Command::new(&rock).current_dir(&app).arg("build").env("ROCKC", &rockc));
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let output = run_command_output(
+        Command::new(&rock)
+            .current_dir(&app)
+            .arg("build")
+            .env("ROCKC", &rockc),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(String::from_utf8_lossy(&output.stderr).contains("◆ compile dep"));
     assert!(!dep.join("build").exists());
     fs::remove_dir_all(root).unwrap();

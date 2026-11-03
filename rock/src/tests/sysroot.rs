@@ -6,8 +6,8 @@ use crate::bundled_sysroot::STD_CRATE_NAME;
 use crate::package::BuildProfile;
 
 use super::support::{
-    assert_executable_exit_code, assert_sysroot_std_files_exist, run_isolated_test,
-    temp_test_dir, write_answer_std, write_package,
+    assert_executable_exit_code, assert_sysroot_std_files_exist, run_isolated_test, temp_test_dir,
+    write_answer_std, write_package,
 };
 
 #[test]

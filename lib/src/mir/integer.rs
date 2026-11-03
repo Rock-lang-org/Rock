@@ -4,12 +4,21 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum IntegerOp {
-    Add, Sub, Mul, Div, Rem, Neg, Shl, Shr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Neg,
+    Shl,
+    Shr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum IntegerMode {
-    Checked, Wrapping, Overflowing,
+    Checked,
+    Wrapping,
+    Overflowing,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -54,7 +63,11 @@ integer_names! {
 
 impl IntegerIntrinsic {
     pub fn arity(self) -> usize {
-        if self.op == IntegerOp::Neg { 1 } else { 2 }
+        if self.op == IntegerOp::Neg {
+            1
+        } else {
+            2
+        }
     }
 }
 

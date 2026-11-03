@@ -80,9 +80,11 @@ impl<'ctx> CodeGen<'ctx> {
             MirIntrinsicId::U8Div
             | MirIntrinsicId::U16Div
             | MirIntrinsicId::U32Div
-            | MirIntrinsicId::U64Div => {
-                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Div, false)
-            }
+            | MirIntrinsicId::U64Div => self.compile_typed_integer(
+                compiled_args,
+                crate::mir::integer::IntegerOp::Div,
+                false,
+            ),
             MirIntrinsicId::I8Mod
             | MirIntrinsicId::I16Mod
             | MirIntrinsicId::I32Mod
@@ -92,9 +94,11 @@ impl<'ctx> CodeGen<'ctx> {
             MirIntrinsicId::U8Mod
             | MirIntrinsicId::U16Mod
             | MirIntrinsicId::U32Mod
-            | MirIntrinsicId::U64Mod => {
-                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Rem, false)
-            }
+            | MirIntrinsicId::U64Mod => self.compile_typed_integer(
+                compiled_args,
+                crate::mir::integer::IntegerOp::Rem,
+                false,
+            ),
             MirIntrinsicId::I8Neg
             | MirIntrinsicId::I16Neg
             | MirIntrinsicId::I32Neg
@@ -184,9 +188,11 @@ impl<'ctx> CodeGen<'ctx> {
             MirIntrinsicId::U8Shl
             | MirIntrinsicId::U16Shl
             | MirIntrinsicId::U32Shl
-            | MirIntrinsicId::U64Shl => {
-                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Shl, false)
-            }
+            | MirIntrinsicId::U64Shl => self.compile_typed_integer(
+                compiled_args,
+                crate::mir::integer::IntegerOp::Shl,
+                false,
+            ),
             MirIntrinsicId::I8Shr
             | MirIntrinsicId::I16Shr
             | MirIntrinsicId::I32Shr
@@ -196,9 +202,11 @@ impl<'ctx> CodeGen<'ctx> {
             MirIntrinsicId::U8Shr
             | MirIntrinsicId::U16Shr
             | MirIntrinsicId::U32Shr
-            | MirIntrinsicId::U64Shr => {
-                self.compile_typed_integer(compiled_args, crate::mir::integer::IntegerOp::Shr, false)
-            }
+            | MirIntrinsicId::U64Shr => self.compile_typed_integer(
+                compiled_args,
+                crate::mir::integer::IntegerOp::Shr,
+                false,
+            ),
             MirIntrinsicId::I8Lt
             | MirIntrinsicId::I16Lt
             | MirIntrinsicId::I32Lt
@@ -354,13 +362,19 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(Some(value.into()))
             }
             MirIntrinsicId::PtrFromParts => {
-                let [BasicValueEnum::PointerValue(ptr), BasicValueEnum::IntValue(len)] = compiled_args else {
-                    return Err(CodegenError::backend_contract("PtrFromParts requires a pointer and length"));
+                let [BasicValueEnum::PointerValue(ptr), BasicValueEnum::IntValue(len)] =
+                    compiled_args
+                else {
+                    return Err(CodegenError::backend_contract(
+                        "PtrFromParts requires a pointer and length",
+                    ));
                 };
                 if len.get_type().get_bit_width() != 64
                     || !matches!(ret_ty, Type::Pointer(inner) if matches!(inner.as_ref(), Type::Slice(_) | Type::Str))
                 {
-                    return Err(CodegenError::backend_contract("invalid raw wide-pointer signature"));
+                    return Err(CodegenError::backend_contract(
+                        "invalid raw wide-pointer signature",
+                    ));
                 }
                 let str_ref_ty = self.slice_layout_type();
                 let mut val = str_ref_ty.get_undef();
@@ -610,7 +624,10 @@ impl<'ctx> CodeGen<'ctx> {
         ret_type_id: TypeId,
     ) -> Result<Option<BasicValueEnum<'ctx>>, CodegenError> {
         if let MirIntrinsicId::Integer(integer) = intrinsic {
-            let types = arg_type_ids.iter().map(|id| self.structural_type_for(*id)).collect::<Vec<_>>();
+            let types = arg_type_ids
+                .iter()
+                .map(|id| self.structural_type_for(*id))
+                .collect::<Vec<_>>();
             return self.compile_integer_intrinsic(integer, compiled_args, &types);
         }
         if self.type_id_contains_projection(ret_type_id)
@@ -751,7 +768,9 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(Some(result.into()))
             }
             MirIntrinsicId::ArrPtr => match self.type_view().ty(arg_type_ids[0]) {
-                Ty::Reference { inner, .. } if matches!(self.type_view().ty(*inner), Ty::Array { .. }) => {
+                Ty::Reference { inner, .. }
+                    if matches!(self.type_view().ty(*inner), Ty::Array { .. }) =>
+                {
                     Ok(Some(compiled_args[0]))
                 }
                 Ty::Slice(_) => {

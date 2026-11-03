@@ -196,10 +196,7 @@ impl Lowerer {
         &mut self,
         imp: &ast::Impl,
     ) -> (String, Vec<String>, crate::hir::HirImplReceiverPattern) {
-        let receiver = imp
-            .for_
-            .clone()
-            .unwrap_or_else(|| imp.name.clone());
+        let receiver = imp.for_.clone().unwrap_or_else(|| imp.name.clone());
         let mut type_generics = Vec::new();
         collect_generic_names_from_parse_type(&receiver, &mut type_generics, &|name| {
             is_known_nominal_type_name(self, name)

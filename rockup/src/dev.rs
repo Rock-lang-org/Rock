@@ -51,7 +51,9 @@ pub(crate) fn build_std_package_invocation(
             manifest.crate_.name
         ));
     }
-    let library = manifest.library().ok_or("The std crate must declare a [lib] target")?;
+    let library = manifest
+        .library()
+        .ok_or("The std crate must declare a [lib] target")?;
 
     Ok(RockcInvocation {
         executable,

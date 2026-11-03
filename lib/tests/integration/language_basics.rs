@@ -271,11 +271,27 @@ fn unit_arrow_main_exits_zero_without_std() {
 #[test]
 fn test_main_exit_status_at_all_optimization_levels() {
     let cases = [
-        ("std_effect", "main = !-> true.println!\n", true, true, 0, "true\n"),
-        ("raw_effect", "extern putchar: I32 -> I32\nmain = !-> putchar (65 as I32)\n", false, true, 0, "A"),
+        (
+            "std_effect",
+            "main = !-> true.println!\n",
+            true,
+            true,
+            0,
+            "true\n",
+        ),
+        (
+            "raw_effect",
+            "extern putchar: I32 -> I32\nmain = !-> putchar (65 as I32)\n",
+            false,
+            true,
+            0,
+            "A",
+        ),
         ("discard_integer", "main = !-> 42\n", false, true, 0, ""),
         ("explicit_unit", "main = -> ()\n", false, true, 0, ""),
-        ("early_cleanup", r#"
+        (
+            "early_cleanup",
+            r#"
 struct Cleanup
     < value: I64
 
@@ -287,7 +303,12 @@ main = !->
         value: 17
     true.println!
     return
-"#, true, true, 0, "true\n17\n"),
+"#,
+            true,
+            true,
+            0,
+            "true\n17\n",
+        ),
         ("integer_i64", "main = -> 7\n", false, false, 7, ""),
         ("integer_i32", "main = -> 13 as I32\n", false, false, 13, ""),
     ];
@@ -307,14 +328,29 @@ main = !->
                 config.no_std = true;
                 config.no_prelude = true;
             }
-            rock_lib::compile(&config).unwrap_or_else(|error| panic!("{name} at -O {opt_level}: {error:?}"));
+            rock_lib::compile(&config)
+                .unwrap_or_else(|error| panic!("{name} at -O {opt_level}: {error:?}"));
             let output = run_test_command(&mut Command::new(dir.join(name)));
-            assert_eq!(output.status.code(), Some(exit_code), "{name} at -O {opt_level}");
-            assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{name} at -O {opt_level}");
+            assert_eq!(
+                output.status.code(),
+                Some(exit_code),
+                "{name} at -O {opt_level}"
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                stdout,
+                "{name} at -O {opt_level}"
+            );
             if unit_return {
                 let ir = fs::read_to_string(dir.join(format!("{name}.ll"))).unwrap();
-                assert!(ir.contains("define internal void @__rock_main()"), "{name} must retain its unit ABI");
-                assert!(ir.contains("ret i32 0"), "{name} must return zero from the C entry wrapper");
+                assert!(
+                    ir.contains("define internal void @__rock_main()"),
+                    "{name} must retain its unit ABI"
+                );
+                assert!(
+                    ir.contains("ret i32 0"),
+                    "{name} must return zero from the C entry wrapper"
+                );
             }
         }
     }

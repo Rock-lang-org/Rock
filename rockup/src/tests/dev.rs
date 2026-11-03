@@ -51,24 +51,17 @@ fn test_package_dev_std_writes_sysroot_layout() {
     assert!(packaged.join(STD_OBJECT_NAME).exists());
     assert!(packaged.join(TOOLCHAIN_MANIFEST_NAME).exists());
     assert!(packaged.join(COMPONENTS_MANIFEST_NAME).exists());
-    let manifest: serde_json::Value = serde_json::from_slice(
-        &fs::read(packaged.join(TOOLCHAIN_MANIFEST_NAME)).unwrap(),
-    )
-    .unwrap();
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(packaged.join(TOOLCHAIN_MANIFEST_NAME)).unwrap()).unwrap();
     assert_eq!(manifest["std"]["artifact"], "std.rkca");
     assert_eq!(manifest["std"]["object"], "std.o");
-    let components: serde_json::Value = serde_json::from_slice(
-        &fs::read(packaged.join(COMPONENTS_MANIFEST_NAME)).unwrap(),
-    )
-    .unwrap();
+    let components: serde_json::Value =
+        serde_json::from_slice(&fs::read(packaged.join(COMPONENTS_MANIFEST_NAME)).unwrap())
+            .unwrap();
     assert_eq!(components["components"]["std"]["present"], true);
     assert_eq!(components["components"]["std"]["artifact"], "std.rkca");
     assert_eq!(components["components"]["std"]["object"], "std.o");
-    assert!(sysroot
-        .join("src")
-        .join("std")
-        .join("rock.toml")
-        .exists());
+    assert!(sysroot.join("src").join("std").join("rock.toml").exists());
     assert_eq!(
         fs::read(sysroot.join("src/std/src/lib.rk")).unwrap(),
         fs::read(std.join("src/lib.rk")).unwrap()
@@ -199,9 +192,14 @@ fn test_std_package_invocation_uses_rockc_product_outputs() {
 #[test]
 fn test_std_packaging_rejects_a_binary_target() {
     let root = temp_test_dir("std_binary_target");
-    fs::write(root.join("rock.toml"), "[crate]\nname = \"std\"\nversion = \"0.1.0\"\n\n[[bin]]\n").unwrap();
+    fs::write(
+        root.join("rock.toml"),
+        "[crate]\nname = \"std\"\nversion = \"0.1.0\"\n\n[[bin]]\n",
+    )
+    .unwrap();
     let layout = crate::layout::ToolchainLayout::new(root.join("sysroot"));
-    let error = crate::dev::build_std_package_invocation(PathBuf::from("rockc"), &root, &layout).unwrap_err();
+    let error = crate::dev::build_std_package_invocation(PathBuf::from("rockc"), &root, &layout)
+        .unwrap_err();
     assert!(error.contains("must declare a [lib] target"), "{error}");
     fs::remove_dir_all(root).unwrap();
 }

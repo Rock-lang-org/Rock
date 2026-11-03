@@ -1198,7 +1198,11 @@ impl CompilerProducts {
                 );
                 record_id_remap(&mut id_remap, requested_signature_id, signature_id);
                 trait_member_product_ids.insert(original_signature_id, signature_id);
-                if trt.methods.get(&signature_name).is_some_and(|method| method.id == original_signature_id) {
+                if trt
+                    .methods
+                    .get(&signature_name)
+                    .is_some_and(|method| method.id == original_signature_id)
+                {
                     signature_backed_method_ids.insert(signature_name.clone(), signature_id);
                 }
                 record_display_name(
@@ -1216,14 +1220,18 @@ impl CompilerProducts {
                 let requested_method_id = ProductDefId::from(original_method_id);
                 // A default body and its signature share one canonical member ID.
                 // Reserving it twice makes call-target remapping ambiguous.
-                let method_id = signature_backed_method_ids.get(&method_name).copied()
-                    .unwrap_or_else(|| reserve_product_id(
-                        requested_method_id,
-                        &mut used_ids,
-                        fallback_crate,
-                        &mut next_fallback_local,
-                        false,
-                    ));
+                let method_id = signature_backed_method_ids
+                    .get(&method_name)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        reserve_product_id(
+                            requested_method_id,
+                            &mut used_ids,
+                            fallback_crate,
+                            &mut next_fallback_local,
+                            false,
+                        )
+                    });
                 record_id_remap(&mut id_remap, requested_method_id, method_id);
                 trait_member_product_ids.insert(original_method_id, method_id);
                 record_display_name(
@@ -1369,14 +1377,37 @@ impl CompilerProducts {
         }
 
         remap_product_type_def_ids(&mut interface, &mut bodies, &id_remap);
-        let summaries = hir.constant_arithmetic.iter().flat_map(|(id, summary)| {
-            let product_id = ProductDefId::from(*id);
-            id_remap.get(&product_id).into_iter().flatten().map(move |id| (*id, summary))
-        }).collect::<BTreeMap<_, _>>();
-        for function in interface.functions.values_mut()
-            .chain(interface.impls.values_mut().flat_map(|imp| imp.methods.values_mut()))
-            .chain(interface.traits.values_mut().flat_map(|trt| trt.methods.values_mut())) {
-            function.constant_arithmetic = summaries.get(&ProductDefId::from(function.id)).map(|summary| (*summary).clone());
+        let summaries = hir
+            .constant_arithmetic
+            .iter()
+            .flat_map(|(id, summary)| {
+                let product_id = ProductDefId::from(*id);
+                id_remap
+                    .get(&product_id)
+                    .into_iter()
+                    .flatten()
+                    .map(move |id| (*id, summary))
+            })
+            .collect::<BTreeMap<_, _>>();
+        for function in interface
+            .functions
+            .values_mut()
+            .chain(
+                interface
+                    .impls
+                    .values_mut()
+                    .flat_map(|imp| imp.methods.values_mut()),
+            )
+            .chain(
+                interface
+                    .traits
+                    .values_mut()
+                    .flat_map(|trt| trt.methods.values_mut()),
+            )
+        {
+            function.constant_arithmetic = summaries
+                .get(&ProductDefId::from(function.id))
+                .map(|summary| (*summary).clone());
         }
         interface.language_items =
             product_language_items_from_program(&hir.program, &hir.current_def_ids, &id_remap)?;
@@ -2302,8 +2333,11 @@ fn remap_generic_param_decls_product_ids(
             generic_decl.id.owner = product_def_id_to_def_id(product_id);
         }
         if let Some(default) = &mut generic_decl.default {
-            default.remap_def_ids(&mut |id| unambiguous_product_id(ProductDefId::from(id), id_remap)
-                .map(product_def_id_to_def_id).unwrap_or(id));
+            default.remap_def_ids(&mut |id| {
+                unambiguous_product_id(ProductDefId::from(id), id_remap)
+                    .map(product_def_id_to_def_id)
+                    .unwrap_or(id)
+            });
         }
     }
 }

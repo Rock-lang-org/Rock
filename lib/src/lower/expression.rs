@@ -373,7 +373,9 @@ impl Lowerer {
         // types even when both instantiate the same trait member.
         let rigid_generics = matches!(selected.origin, SelectedOrigin::TraitBound { .. });
         if !rigid_generics
-            && selected.substituted_params.iter()
+            && selected
+                .substituted_params
+                .iter()
                 .any(|param| Self::type_has_unresolved_parameter(&param.ty))
         {
             return true;
@@ -1087,16 +1089,16 @@ impl Lowerer {
                 .unwrap_or_default();
             let receiver_candidates = self.receiver_adjustment_candidates(left.clone());
 
-            let result = self
-                .selection_service()
-                .select_bound_method_matching(
-                    &receiver_candidates,
-                    &bounds,
-                    op_str,
-                    resolved_ty.clone(),
-                    matches!(&left.kind, HirExprKind::Call(_, _, _)),
-                    |selected| self.operator_method_accepts_args(selected, std::slice::from_ref(&right)),
-                );
+            let result = self.selection_service().select_bound_method_matching(
+                &receiver_candidates,
+                &bounds,
+                op_str,
+                resolved_ty.clone(),
+                matches!(&left.kind, HirExprKind::Call(_, _, _)),
+                |selected| {
+                    self.operator_method_accepts_args(selected, std::slice::from_ref(&right))
+                },
+            );
             let span = left.span.clone();
             if let Some(selected) = self.handle_optional_selection(result, span) {
                 let adjusted_recv = self.apply_receiver_adjustment(
@@ -1132,16 +1134,16 @@ impl Lowerer {
         if let Type::TypeVar(id) = &resolved_ty {
             let bounds = self.engine.get_bounds(*id);
             let receiver_candidates = self.receiver_adjustment_candidates(left.clone());
-            let result = self
-                .selection_service()
-                .select_bound_method_matching(
-                    &receiver_candidates,
-                    &bounds,
-                    op_str,
-                    resolved_ty.clone(),
-                    matches!(&left.kind, HirExprKind::Call(_, _, _)),
-                    |selected| self.operator_method_accepts_args(selected, std::slice::from_ref(&right)),
-                );
+            let result = self.selection_service().select_bound_method_matching(
+                &receiver_candidates,
+                &bounds,
+                op_str,
+                resolved_ty.clone(),
+                matches!(&left.kind, HirExprKind::Call(_, _, _)),
+                |selected| {
+                    self.operator_method_accepts_args(selected, std::slice::from_ref(&right))
+                },
+            );
             let span = left.span.clone();
             if let Some(selected) = self.handle_optional_selection(result, span) {
                 let adjusted_recv = self.apply_receiver_adjustment(
@@ -2129,7 +2131,8 @@ impl Lowerer {
                     self.engine.fresh_type_var_at(op.span.clone())
                 } else {
                     self.diagnostics.push_type_with_span(
-                        format!("Unknown intrinsic '~{}'", op.name), op.span.clone(),
+                        format!("Unknown intrinsic '~{}'", op.name),
+                        op.span.clone(),
                     );
                     Type::Error
                 };

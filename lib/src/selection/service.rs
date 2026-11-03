@@ -206,8 +206,13 @@ impl<'a> SelectionService<'a> {
                     .into_iter()
                     .filter_map(|id| self.impls.get(&id))
                     .filter_map(|imp| {
-                        self.select_impl_method_candidate(imp, candidate, &candidate_ty, method_name)
-                            .map(|selected| (imp.id, selected))
+                        self.select_impl_method_candidate(
+                            imp,
+                            candidate,
+                            &candidate_ty,
+                            method_name,
+                        )
+                        .map(|selected| (imp.id, selected))
                     })
                     .collect::<Vec<_>>();
                 candidates.sort_by_key(|candidate| candidate.0);
@@ -285,7 +290,8 @@ impl<'a> SelectionService<'a> {
                     can_autoref_mut: false,
                 };
                 let candidate_ty = normalize(&candidate.expr.ty);
-                let selected = self.select_impl_method_candidate(imp, &candidate, &candidate_ty, method_name)?;
+                let selected =
+                    self.select_impl_method_candidate(imp, &candidate, &candidate_ty, method_name)?;
                 selected.pending_impl_bounds.is_empty().then_some(selected)
             })
             .collect()
@@ -1452,11 +1458,19 @@ impl<'a> SelectionService<'a> {
             method_name,
             self_param_ty.clone(),
         );
-        let matching = candidates.iter().filter(|candidate| matches(candidate)).cloned().collect::<Vec<_>>();
+        let matching = candidates
+            .iter()
+            .filter(|candidate| matches(candidate))
+            .cloned()
+            .collect::<Vec<_>>();
         // Keep a unique declared candidate on mismatch so argument checking can
         // report its expected type rather than hiding an available trait bound.
         Self::prefer_non_ref_receiver_candidate(
-            if matching.is_empty() { candidates } else { matching },
+            if matching.is_empty() {
+                candidates
+            } else {
+                matching
+            },
             receiver_is_call,
             method_name,
             &self_param_ty,

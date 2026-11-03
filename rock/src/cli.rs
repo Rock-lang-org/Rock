@@ -31,7 +31,13 @@ pub fn run() -> Result<CliOutcome, String> {
             }
             Ok(CliOutcome::Success)
         }
-        Command::Run { profile, args, bin } => run_project(&current_project_root()?, profile.selected(), &args, bin.as_deref()).map(CliOutcome::Exit),
+        Command::Run { profile, args, bin } => run_project(
+            &current_project_root()?,
+            profile.selected(),
+            &args,
+            bin.as_deref(),
+        )
+        .map(CliOutcome::Exit),
         Command::Expand => expand_project().map(|_| CliOutcome::Success),
     }
 }
@@ -91,6 +97,10 @@ pub(crate) struct ProfileArgs {
 
 impl ProfileArgs {
     pub(crate) fn selected(&self) -> BuildProfile {
-        if self.release { BuildProfile::Release } else { BuildProfile::Debug }
+        if self.release {
+            BuildProfile::Release
+        } else {
+            BuildProfile::Debug
+        }
     }
 }

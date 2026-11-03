@@ -1,13 +1,13 @@
-use bincode::Options;
-use std::os::unix::fs::PermissionsExt;
 use crate::support::*;
+use bincode::Options;
+use serde::Serialize;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
-use serde::Serialize;
 
 #[test]
 fn test_declarative_macro_expands_user_program() {

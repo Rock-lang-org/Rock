@@ -106,7 +106,10 @@ main = !->
 #[test]
 fn test_std_string_from_rejects_integer_sources() {
     for ty in ["I64", "U64"] {
-        compile_should_fail(&format!("main = !->\n    value = 1 as {ty}\n    String::from value .println!\n"), "does not implement trait");
+        compile_should_fail(
+            &format!("main = !->\n    value = 1 as {ty}\n    String::from value .println!\n"),
+            "does not implement trait",
+        );
     }
 }
 

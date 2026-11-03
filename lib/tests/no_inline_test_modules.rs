@@ -17,7 +17,10 @@ fn visit(dir: &Path, offenders: &mut Vec<String>) {
             let source = std::fs::read_to_string(&path).expect("readable source file");
             for (index, line) in source.lines().enumerate() {
                 let line = line.trim_start();
-                if line.starts_with("mod ") && line.trim_end().ends_with('{') && line.contains("tests") {
+                if line.starts_with("mod ")
+                    && line.trim_end().ends_with('{')
+                    && line.contains("tests")
+                {
                     offenders.push(format!("{}:{}", path.display(), index + 1));
                 }
             }
@@ -28,7 +31,10 @@ fn visit(dir: &Path, offenders: &mut Vec<String>) {
 #[test]
 fn source_files_have_no_inline_test_modules() {
     let mut offenders = Vec::new();
-    visit(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut offenders);
+    visit(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut offenders,
+    );
     assert!(
         offenders.is_empty(),
         "move these test modules into a sibling `tests.rs` (declare `#[cfg(test)] mod tests;`):\n{}",

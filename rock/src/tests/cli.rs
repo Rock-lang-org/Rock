@@ -47,18 +47,21 @@ fn test_build_profiles_parse_for_build_and_run() {
             };
             assert_eq!(profile.selected(), expected);
         }
-        for flags in [
-            vec!["--debug", "--release"],
-            vec!["--release", "--debug"],
-        ] {
+        for flags in [vec!["--debug", "--release"], vec!["--release", "--debug"]] {
             let mut args = vec!["rock", command];
             args.extend(flags);
             assert!(<Config as clap::Parser>::try_parse_from(args).is_err());
         }
     }
     let config = <Config as clap::Parser>::try_parse_from([
-        "rock", "run", "--release", "--", "--debug", "--release",
-    ]).unwrap();
+        "rock",
+        "run",
+        "--release",
+        "--",
+        "--debug",
+        "--release",
+    ])
+    .unwrap();
     match config.command {
         Command::Run { profile, args, .. } => {
             assert_eq!(profile.selected(), BuildProfile::Release);
@@ -71,8 +74,16 @@ fn test_build_profiles_parse_for_build_and_run() {
 #[test]
 fn test_run_selects_a_named_binary_and_preserves_trailing_arguments() {
     let config = <Config as clap::Parser>::try_parse_from([
-        "rock", "run", "--bin", "server", "--release", "--", "--bin", "client",
-    ]).unwrap();
+        "rock",
+        "run",
+        "--bin",
+        "server",
+        "--release",
+        "--",
+        "--bin",
+        "client",
+    ])
+    .unwrap();
     match config.command {
         Command::Run { profile, bin, args } => {
             assert_eq!(profile.selected(), BuildProfile::Release);
@@ -109,7 +120,8 @@ fn test_numeric_optimization_flags_are_unknown() {
         let help = match command {
             Some(name) => cli.find_subcommand_mut(name).unwrap().render_long_help(),
             None => cli.render_long_help(),
-        }.to_string();
+        }
+        .to_string();
         assert!(!help.contains("-O"));
         assert!(!help.contains("--opt-level"));
     }
@@ -124,12 +136,17 @@ fn test_unimplemented_test_command_is_not_exposed() {
 fn test_artifact_command_is_not_exposed() {
     assert!(<Config as clap::Parser>::try_parse_from(["rock", "artifact"]).is_err());
     let cli = <Config as clap::CommandFactory>::command();
-    assert!(!cli.get_subcommands().any(|command| command.get_name() == "artifact"));
+    assert!(!cli
+        .get_subcommands()
+        .any(|command| command.get_name() == "artifact"));
 }
 
 #[test]
 fn test_format_project_formats_entry_file_with_rockc() {
-    if run_isolated_test("tests::cli::test_format_project_formats_entry_file_with_rockc", &[]) {
+    if run_isolated_test(
+        "tests::cli::test_format_project_formats_entry_file_with_rockc",
+        &[],
+    ) {
         return;
     }
     let temp_dir = temp_test_dir("format_project");
@@ -157,7 +174,10 @@ fn test_format_project_formats_entry_file_with_rockc() {
 
 #[test]
 fn test_expand_project_with_dependency_does_not_require_artifacts() {
-    if run_isolated_test("tests::cli::test_expand_project_with_dependency_does_not_require_artifacts", &[]) {
+    if run_isolated_test(
+        "tests::cli::test_expand_project_with_dependency_does_not_require_artifacts",
+        &[],
+    ) {
         return;
     }
     let temp_dir = temp_test_dir("expand_project_dep");

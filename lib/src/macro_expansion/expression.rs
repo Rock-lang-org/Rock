@@ -14,9 +14,7 @@ use crate::lexer::{Span, Token, TokenType};
 use crate::parser;
 
 use super::registry::MacroRegistry;
-use super::{
-    expand_declarative_tokens, with_expansion_trace, ExpansionId, MacroExpansionContext,
-};
+use super::{expand_declarative_tokens, with_expansion_trace, ExpansionId, MacroExpansionContext};
 
 /// Expands every expression-position macro call in the items of `module`.
 /// Inline `mod` blocks are left to their own expansion pass.
@@ -268,8 +266,11 @@ impl ExpressionExpander<'_, '_> {
                 let mut diagnostics = Diagnostics::from(error);
                 self.context
                     .map_generated_diagnostics(&mut diagnostics, expansion_id);
-                self.diagnostics
-                    .merge(with_expansion_trace(diagnostics, self.context, expansion_id));
+                self.diagnostics.merge(with_expansion_trace(
+                    diagnostics,
+                    self.context,
+                    expansion_id,
+                ));
                 return None;
             }
         };

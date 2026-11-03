@@ -239,10 +239,16 @@ impl FormatNode for TopLevel {
                 inner.fmt_with(context, f)?;
                 for (index, param) in params.iter().enumerate() {
                     write!(f, " ")?;
-                    if param.kind.is_some() && param.default.is_none() { write!(f, "(")?; }
+                    if param.kind.is_some() && param.default.is_none() {
+                        write!(f, "(")?;
+                    }
                     param.fmt_with(context, f)?;
-                    if param.kind.is_some() && param.default.is_none() { write!(f, ")")?; }
-                    if index + 1 < params.len() { write!(f, ",")?; }
+                    if param.kind.is_some() && param.default.is_none() {
+                        write!(f, ")")?;
+                    }
+                    if index + 1 < params.len() {
+                        write!(f, ",")?;
+                    }
                 }
                 write!(f, " = ")?;
                 ty.fmt_with(context, f)?;
@@ -307,10 +313,16 @@ impl FormatNode for EnumDecl {
         self.name.fmt_with(context, f)?;
         for (index, param) in self.generic_params.iter().enumerate() {
             write!(f, " ")?;
-            if param.kind.is_some() && param.default.is_none() { write!(f, "(")?; }
+            if param.kind.is_some() && param.default.is_none() {
+                write!(f, "(")?;
+            }
             param.fmt_with(context, f)?;
-            if param.kind.is_some() && param.default.is_none() { write!(f, ")")?; }
-            if index + 1 < self.generic_params.len() { write!(f, ",")?; }
+            if param.kind.is_some() && param.default.is_none() {
+                write!(f, ")")?;
+            }
+            if index + 1 < self.generic_params.len() {
+                write!(f, ",")?;
+            }
         }
         writeln!(f)?;
 

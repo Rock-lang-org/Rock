@@ -63,7 +63,10 @@ fn parenthesized_macro_invoc_accepts_method_calls() {
         panic!("expected a primary expression, got {expr:?}");
     };
     let Operand::Expression(inner) = &primary.operand else {
-        panic!("expected a parenthesized operand, got {:?}", primary.operand);
+        panic!(
+            "expected a parenthesized operand, got {:?}",
+            primary.operand
+        );
     };
     assert!(matches!(operand_of(inner), Operand::MacroInvoc(_)));
     assert!(matches!(
@@ -74,8 +77,11 @@ fn parenthesized_macro_invoc_accepts_method_calls() {
 
 #[test]
 fn macro_invoc_expr_can_be_assigned() {
-    let program = parse_string("main = ->\n    s = %format \"a\", b\n    s\n", &Config::default())
-        .expect("assignment from a macro call should parse");
+    let program = parse_string(
+        "main = ->\n    s = %format \"a\", b\n    s\n",
+        &Config::default(),
+    )
+    .expect("assignment from a macro call should parse");
 
     let crate::ast::TopLevel::FunctionDecl(main) = &program.module.top_levels[0] else {
         panic!("expected main");

@@ -101,10 +101,7 @@ pub(crate) fn ensure_sysroot_std_available() -> Result<SysrootLayout, String> {
     Ok(layout)
 }
 
-fn can_auto_rebuild_std(
-    resolution: &SysrootResolution,
-    workspace_std_root: Option<&Path>,
-) -> bool {
+fn can_auto_rebuild_std(resolution: &SysrootResolution, workspace_std_root: Option<&Path>) -> bool {
     matches!(resolution.source, SysrootSource::CurrentDirTarget)
         && workspace_std_root
             .map(|root| root.join("rock.toml").exists())
@@ -189,10 +186,7 @@ fn resolve_rockup_path() -> Result<PathBuf, String> {
     rock_shared::process::dev_target_binary_from_current_exe("rockup")
 }
 
-fn package_sysroot_std_with_rockup(
-    std_root: &Path,
-    layout: &SysrootLayout,
-) -> Result<(), String> {
+fn package_sysroot_std_with_rockup(std_root: &Path, layout: &SysrootLayout) -> Result<(), String> {
     let rockup = resolve_rockup_path()?;
     let rockc = crate::rockc::resolve_rockc_path()?;
     let mut command = std::process::Command::new(&rockup);

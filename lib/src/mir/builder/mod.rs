@@ -803,9 +803,9 @@ impl<'a> MirBuilder<'a> {
                         function
                             .params
                             .iter()
-                        .map(|param| type_context.intern_canonical_type(&param.ty))
+                            .map(|param| type_context.intern_canonical_type(&param.ty))
                             .collect(),
-                    type_context.intern_canonical_type(&function.ret_type),
+                        type_context.intern_canonical_type(&function.ret_type),
                         function.is_method,
                     )
                 } else {
@@ -951,7 +951,10 @@ impl<'a> MirBuilder<'a> {
                                 .fields
                                 .iter()
                                 .map(|field| {
-                                    (field.name.clone(), type_context.intern_canonical_type(&field.ty))
+                                    (
+                                        field.name.clone(),
+                                        type_context.intern_canonical_type(&field.ty),
+                                    )
                                 })
                                 .collect(),
                             generic_params: Self::mir_generic_param_ids(&structure.generic_params),
@@ -1195,14 +1198,19 @@ impl<'a> MirBuilder<'a> {
                         super::MirVariantLayoutFields::Positional(
                             fields
                                 .iter()
-                        .map(|ty| type_context.intern_canonical_type(ty))
+                                .map(|ty| type_context.intern_canonical_type(ty))
                                 .collect(),
                         )
                     }
                     HirVariantFields::Named(fields) => super::MirVariantLayoutFields::Named(
                         fields
                             .iter()
-                        .map(|field| (field.name.clone(), type_context.intern_canonical_type(&field.ty)))
+                            .map(|field| {
+                                (
+                                    field.name.clone(),
+                                    type_context.intern_canonical_type(&field.ty),
+                                )
+                            })
                             .collect(),
                     ),
                 },

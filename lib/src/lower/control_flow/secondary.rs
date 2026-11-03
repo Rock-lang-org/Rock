@@ -1149,7 +1149,8 @@ impl Lowerer {
                         if name == "OverflowChecks" {
                             if !hir_args.is_empty() {
                                 self.diagnostics.push_type_with_span(
-                                    "OverflowChecks expects no arguments".to_string(), span.clone(),
+                                    "OverflowChecks expects no arguments".to_string(),
+                                    span.clone(),
                                 );
                             }
                             return HirExpr {
@@ -1158,12 +1159,20 @@ impl Lowerer {
                                 span,
                             };
                         }
-                        if let Some(integer) = crate::mir::integer::IntegerIntrinsic::from_name(name) {
-                            if !matches!(integer.op, crate::mir::integer::IntegerOp::Shl | crate::mir::integer::IntegerOp::Shr) {
+                        if let Some(integer) =
+                            crate::mir::integer::IntegerIntrinsic::from_name(name)
+                        {
+                            if !matches!(
+                                integer.op,
+                                crate::mir::integer::IntegerOp::Shl
+                                    | crate::mir::integer::IntegerOp::Shr
+                            ) {
                                 if let [left, right] = hir_args.as_slice() {
                                     if self.engine.unify(&left.ty, &right.ty).is_err() {
                                         self.diagnostics.push_type_with_span(
-                                            format!("{name} requires integer operands of the same type"),
+                                            format!(
+                                                "{name} requires integer operands of the same type"
+                                            ),
                                             span.clone(),
                                         );
                                     }
@@ -1201,7 +1210,10 @@ impl Lowerer {
                             if self.engine.unify(&arg.ty, expected_ty).is_err() {
                                 let expected = self.display_type(expected_ty);
                                 self.diagnostics.push_type_with_span(
-                                    format!("Intrinsic '~{}' expected argument type {}", name, expected),
+                                    format!(
+                                        "Intrinsic '~{}' expected argument type {}",
+                                        name, expected
+                                    ),
                                     arg.span.clone(),
                                 );
                             }
@@ -1230,12 +1242,14 @@ impl Lowerer {
                                 );
                             } else {
                                 let element = self.engine.fresh_type_var_at(span.clone());
-                                for (arg, expected) in hir_args.iter().zip([
-                                    Type::Pointer(Box::new(element)), Type::I64,
-                                ]) {
+                                for (arg, expected) in hir_args
+                                    .iter()
+                                    .zip([Type::Pointer(Box::new(element)), Type::I64])
+                                {
                                     if self.engine.unify(&arg.ty, &expected).is_err() {
                                         self.diagnostics.push_type_with_span(
-                                            "PtrFromParts requires a data pointer and I64 length".to_string(),
+                                            "PtrFromParts requires a data pointer and I64 length"
+                                                .to_string(),
                                             arg.span.clone(),
                                         );
                                     }
@@ -1243,7 +1257,10 @@ impl Lowerer {
                             }
                             return HirExpr {
                                 ty: self.engine.fresh_type_var_at(span.clone()),
-                                kind: HirExprKind::Intrinsic { name: name.clone(), args: hir_args },
+                                kind: HirExprKind::Intrinsic {
+                                    name: name.clone(),
+                                    args: hir_args,
+                                },
                                 span,
                             };
                         }
@@ -1260,10 +1277,15 @@ impl Lowerer {
                                     }
                                 }
                                 Type::Reference { inner, .. }
-                                    if matches!(inner.as_ref(), Type::Slice(_) | Type::Array(_, _)) =>
+                                    if matches!(
+                                        inner.as_ref(),
+                                        Type::Slice(_) | Type::Array(_, _)
+                                    ) =>
                                 {
                                     if name == "ArrPtr" {
-                                        if let Type::Slice(element) | Type::Array(element, _) = inner.as_ref() {
+                                        if let Type::Slice(element) | Type::Array(element, _) =
+                                            inner.as_ref()
+                                        {
                                             arrptr_elem_ty = Some(element.as_ref().clone());
                                         }
                                     }

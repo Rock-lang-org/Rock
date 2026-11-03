@@ -186,9 +186,7 @@ fn expand_template_fragments(
                     let expanded = expand_template_fragments(inner, captures, Some(index))?;
                     trees.extend(expanded.trees);
                     if let (Some(indent), true) = (line_indent, index + 1 < len) {
-                        trees.extend(
-                            TokenStream::from_tokens(line_break_tokens(indent)).trees,
-                        );
+                        trees.extend(TokenStream::from_tokens(line_break_tokens(indent)).trees);
                     }
                 }
             }

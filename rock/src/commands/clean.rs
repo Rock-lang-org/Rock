@@ -8,7 +8,13 @@ pub(crate) fn clean_project(project_root: &Path) -> Result<bool, String> {
     let metadata = match fs::symlink_metadata(&build_dir) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(format!("Failed to inspect {}: {}", build_dir.display(), error)),
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect {}: {}",
+                build_dir.display(),
+                error
+            ))
+        }
     };
 
     // Never resolve a build symlink into another project's cache or source tree.

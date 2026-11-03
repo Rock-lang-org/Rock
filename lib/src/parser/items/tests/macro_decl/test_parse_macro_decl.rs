@@ -79,5 +79,8 @@ fn test_parse_macro_template_repetition_requires_star_close() {
 fn test_parse_macro_rejects_stray_repetition_close() {
     let message = parse_macro_decl_error("macro m\n    $a:ident )* =>\n        x = -> 1");
 
-    assert!(message.contains("outside of a macro repetition"), "{message}");
+    assert!(
+        message.contains("outside of a macro repetition"),
+        "{message}"
+    );
 }

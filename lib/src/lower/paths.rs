@@ -505,9 +505,12 @@ impl Lowerer {
 
     fn constructor_target_for_path_segment(&mut self, segment: &ast::IdentOrType) -> Option<Type> {
         match segment {
-            ast::IdentOrType::Type(ast::ParseType::Type(inner)) if inner.generics.is_empty() => Some(
-                crate::type_lowering::TypeLowerer::lower_constructor(self, &ast::ParseType::Type(inner.clone())),
-            ),
+            ast::IdentOrType::Type(ast::ParseType::Type(inner)) if inner.generics.is_empty() => {
+                Some(crate::type_lowering::TypeLowerer::lower_constructor(
+                    self,
+                    &ast::ParseType::Type(inner.clone()),
+                ))
+            }
             ast::IdentOrType::Type(parse_type) => Some(
                 crate::type_lowering::TypeLowerer::lower_parse_type(self, parse_type),
             ),
@@ -678,14 +681,20 @@ impl Lowerer {
             Type::Constructor { id, .. } | Type::Struct { id, .. } | Type::Enum { id, .. } => *id,
             _ => return,
         };
-        let Some(params) = crate::type_lowering::TypeLoweringContext::constructor_params(self, owner) else { return; };
+        let Some(params) =
+            crate::type_lowering::TypeLoweringContext::constructor_params(self, owner)
+        else {
+            return;
+        };
         let mut arguments = match owner_ty {
             Type::Struct { args, .. } | Type::Enum { args, .. } => Some(args.clone()),
             _ => None,
         };
         crate::type_services::visit::visit_type(signature, &mut |nested: &Type| {
             if let Type::Struct { id, args } | Type::Enum { id, args } = nested {
-                if *id == owner && arguments.is_none() { arguments = Some(args.clone()); }
+                if *id == owner && arguments.is_none() {
+                    arguments = Some(args.clone());
+                }
             }
         });
         if let Some(arguments) = arguments {
@@ -2033,7 +2042,9 @@ impl Lowerer {
                                     },
                                 );
                                 // For generic enums, create fresh type vars
-                                let type_args = self.engine.fresh_generic_args(&enum_info.generic_params, &span);
+                                let type_args = self
+                                    .engine
+                                    .fresh_generic_args(&enum_info.generic_params, &span);
                                 return HirExpr {
                                     ty: Type::Enum {
                                         id: enum_info.id,
@@ -2175,7 +2186,9 @@ impl Lowerer {
                     },
                 );
                 // For generic enums, create fresh type vars for type params
-                let type_args = self.engine.fresh_generic_args(&enum_info.generic_params, &span);
+                let type_args = self
+                    .engine
+                    .fresh_generic_args(&enum_info.generic_params, &span);
                 let ty = Type::Enum {
                     id: enum_info.id,
                     args: type_args,
@@ -2408,9 +2421,15 @@ impl Lowerer {
             // Handle generic enum type params
             let type_args = if !enum_info.generic_params.is_empty() {
                 // Create fresh type vars for each generic param
-                let fresh = self.engine.fresh_generic_args(&enum_info.generic_params, &span);
-                let type_var_mapping: HashMap<GenericParamId, Type> = enum_info.generic_params.iter().zip(fresh)
-                    .map(|(param, ty)| (param.id, ty)).collect();
+                let fresh = self
+                    .engine
+                    .fresh_generic_args(&enum_info.generic_params, &span);
+                let type_var_mapping: HashMap<GenericParamId, Type> = enum_info
+                    .generic_params
+                    .iter()
+                    .zip(fresh)
+                    .map(|(param, ty)| (param.id, ty))
+                    .collect();
                 // Unify type vars with arg types based on variant field types
                 match &variant.fields {
                     HirVariantFields::Positional(field_types) => {
@@ -2488,8 +2507,11 @@ impl Lowerer {
 
             // Create a mapping from generic param names to fresh type variables
             let fresh = self.engine.fresh_generic_args(&generic_params, &span);
-            let type_var_mapping: HashMap<GenericParamId, Type> = generic_params.iter().zip(fresh)
-                .map(|(param, ty)| (param.id, ty)).collect();
+            let type_var_mapping: HashMap<GenericParamId, Type> = generic_params
+                .iter()
+                .zip(fresh)
+                .map(|(param, ty)| (param.id, ty))
+                .collect();
 
             let mut fields = Vec::new();
             for (ident, expr) in &inst.fields {

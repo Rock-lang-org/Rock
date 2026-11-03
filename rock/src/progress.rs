@@ -23,7 +23,11 @@ impl Default for BuildProgress {
 
 impl BuildProgress {
     pub(crate) fn new(total: usize) -> Self {
-        Self { completed: 0, total, started: Instant::now() }
+        Self {
+            completed: 0,
+            total,
+            started: Instant::now(),
+        }
     }
 
     pub(crate) fn complete(&mut self) {
@@ -34,7 +38,10 @@ impl BuildProgress {
     }
 
     fn percent(&self) -> usize {
-        self.completed.saturating_mul(100).checked_div(self.total).unwrap_or(0)
+        self.completed
+            .saturating_mul(100)
+            .checked_div(self.total)
+            .unwrap_or(0)
     }
 }
 
@@ -52,7 +59,12 @@ pub(crate) fn compiling(package: &Package) {
 }
 
 pub(crate) fn cleaned(removed: bool) {
-    status("✓", "clean", "build", format_args!("· {}", if removed { "removed" } else { "already clean" }));
+    status(
+        "✓",
+        "clean",
+        "build",
+        format_args!("· {}", if removed { "removed" } else { "already clean" }),
+    );
 }
 
 pub(crate) fn finished(profile: BuildProfile, elapsed: Duration, progress: &BuildProgress) {
@@ -66,7 +78,11 @@ pub(crate) fn finished(profile: BuildProfile, elapsed: Duration, progress: &Buil
         profile.directory(),
         format_args!(
             "· {} · {}/{} crates · {}% · {:.2}s",
-            description, progress.completed, progress.total, progress.percent(), elapsed.as_secs_f64(),
+            description,
+            progress.completed,
+            progress.total,
+            progress.percent(),
+            elapsed.as_secs_f64(),
         ),
     );
 }
@@ -79,8 +95,7 @@ fn status(marker: &str, label: &str, subject: &str, details: fmt::Arguments<'_>)
 }
 
 fn interactive() -> bool {
-    io::stderr().is_terminal()
-        && std::env::var_os("TERM").is_none_or(|term| term != "dumb")
+    io::stderr().is_terminal() && std::env::var_os("TERM").is_none_or(|term| term != "dumb")
 }
 
 /// Keep compiler output above a live last line without changing either output stream.
@@ -102,7 +117,10 @@ pub(crate) fn run_command(
         command.env("CLICOLOR_FORCE", "1");
     }
 
-    let mut child = command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let (Some(stdout), Some(stderr)) = (stdout, stderr) else {
@@ -132,7 +150,8 @@ pub(crate) fn run_command(
         while streams_closed < 2 || status.is_none() {
             // Only redraw between complete lines, never over a partial diagnostic.
             if at_line_start && render_enabled {
-                let elapsed = progress.map_or_else(|| started.elapsed(), |progress| progress.started.elapsed());
+                let elapsed = progress
+                    .map_or_else(|| started.elapsed(), |progress| progress.started.elapsed());
                 if line.draw(package, progress, frame, elapsed, color).is_err() {
                     render_enabled = false;
                 }
@@ -186,7 +205,13 @@ fn forward_output(mut reader: impl Read, stdout: bool, sender: SyncSender<Event>
         match reader.read(&mut buffer) {
             Ok(0) => break Ok(()),
             Ok(length) => {
-                if sender.send(Event::Output { stdout, bytes: buffer[..length].to_vec() }).is_err() {
+                if sender
+                    .send(Event::Output {
+                        stdout,
+                        bytes: buffer[..length].to_vec(),
+                    })
+                    .is_err()
+                {
                     return;
                 }
             }
@@ -203,12 +228,24 @@ struct LiveLine {
 }
 
 impl LiveLine {
-    fn draw(&mut self, package: &Package, progress: Option<&BuildProgress>, frame: usize, elapsed: Duration, color: bool) -> io::Result<()> {
+    fn draw(
+        &mut self,
+        package: &Package,
+        progress: Option<&BuildProgress>,
+        frame: usize,
+        elapsed: Duration,
+        color: bool,
+    ) -> io::Result<()> {
         self.visible = true;
         let mut stderr = io::stderr().lock();
         write_activity(
-            &mut stderr, color, &package.manifest.crate_.name,
-            package.profile, progress, frame, elapsed,
+            &mut stderr,
+            color,
+            &package.manifest.crate_.name,
+            package.profile,
+            progress,
+            frame,
+            elapsed,
         )?;
         stderr.flush()
     }
@@ -244,18 +281,43 @@ fn write_activity(
     let (rail, counts) = if let Some(progress) = progress {
         // Crates, not elapsed time, determine the filled portion of the bar.
         let filled = progress.completed.saturating_mul(10) / progress.total;
-        let rail = (0..10).map(|index| {
-            if index < filled { '━' } else if index == filled { '◆' } else { '─' }
-        }).collect::<String>();
-        (rail, format!("{}/{} · {}% · ", progress.completed, progress.total, progress.percent()))
+        let rail = (0..10)
+            .map(|index| {
+                if index < filled {
+                    '━'
+                } else if index == filled {
+                    '◆'
+                } else {
+                    '─'
+                }
+            })
+            .collect::<String>();
+        (
+            rail,
+            format!(
+                "{}/{} · {}% · ",
+                progress.completed,
+                progress.total,
+                progress.percent()
+            ),
+        )
     } else {
         // Toolchain preparation is not part of the project crate graph.
         let position = frame % 18;
-        let position = if position > 9 { 18 - position } else { position };
-        let rail = (0..10).map(|index| if index == position { '◆' } else { '─' }).collect::<String>();
+        let position = if position > 9 {
+            18 - position
+        } else {
+            position
+        };
+        let rail = (0..10)
+            .map(|index| if index == position { '◆' } else { '─' })
+            .collect::<String>();
         (rail, String::new())
     };
-    let name = name.chars().filter(|ch| !ch.is_control()).collect::<String>();
+    let name = name
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .collect::<String>();
     // Disable wrapping for this write only, so narrow terminals keep one live row.
     write!(writer, "\r\x1b[2K\x1b[?7l")?;
     let result = if color {
@@ -265,7 +327,12 @@ fn write_activity(
             profile.directory(), elapsed.as_secs_f64(),
         )
     } else {
-        write!(writer, "  {pulse} [{rail}] {counts}{name} · {} · {:.1}s", profile.directory(), elapsed.as_secs_f64())
+        write!(
+            writer,
+            "  {pulse} [{rail}] {counts}{name} · {} · {:.1}s",
+            profile.directory(),
+            elapsed.as_secs_f64()
+        )
     };
     let restore = writer.write_all(b"\x1b[?7h");
     result.and(restore)
@@ -291,7 +358,12 @@ fn write_status(
 
 #[cfg(test)]
 mod tests {
-    use std::{io::{self, Read}, process::Command, sync::mpsc, time::Duration};
+    use std::{
+        io::{self, Read},
+        process::Command,
+        sync::mpsc,
+        time::Duration,
+    };
 
     use crate::package::BuildProfile;
     use crate::tests::support::{load_package, temp_test_dir, write_package};
@@ -303,16 +375,30 @@ mod tests {
         let root = temp_test_dir("progress_child_status");
         write_package(&root, "app", "src/main.rk", &[], "main = !-> ()\n");
         let package = load_package(root.clone());
-        let status = run_command(Command::new("sh").args(["-c", "exit 7"]), &package, None).unwrap();
+        let status =
+            run_command(Command::new("sh").args(["-c", "exit 7"]), &package, None).unwrap();
         assert_eq!(status.code(), Some(7));
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
     fn test_toolchain_preparation_remains_indeterminate() {
-        for (frame, pulse, rail) in [(0, '◆', "◆─────────"), (3, '◇', "───◆──────"), (12, '◆', "──────◆───")] {
+        for (frame, pulse, rail) in [
+            (0, '◆', "◆─────────"),
+            (3, '◇', "───◆──────"),
+            (12, '◆', "──────◆───"),
+        ] {
             let mut output = Vec::new();
-            write_activity(&mut output, false, "app", BuildProfile::Release, None, frame, Duration::from_millis(1250)).unwrap();
+            write_activity(
+                &mut output,
+                false,
+                "app",
+                BuildProfile::Release,
+                None,
+                frame,
+                Duration::from_millis(1250),
+            )
+            .unwrap();
             assert_eq!(
                 String::from_utf8(output).unwrap(),
                 format!("\r\x1b[2K\x1b[?7l  {pulse} [{rail}] app · release · 1.2s\x1b[?7h"),
@@ -324,14 +410,32 @@ mod tests {
     fn test_overall_progress_advances_only_for_completed_crates() {
         let mut progress = BuildProgress::new(4);
         for (completed, rail) in [
-            (0, "◆─────────"), (1, "━━◆───────"), (2, "━━━━━◆────"),
-            (3, "━━━━━━━◆──"), (4, "━━━━━━━━━━"),
+            (0, "◆─────────"),
+            (1, "━━◆───────"),
+            (2, "━━━━━◆────"),
+            (3, "━━━━━━━◆──"),
+            (4, "━━━━━━━━━━"),
         ] {
             for frame in [0, 5] {
                 let mut output = Vec::new();
-                write_activity(&mut output, false, "app", BuildProfile::Debug, Some(&progress), frame, Duration::from_secs(2)).unwrap();
+                write_activity(
+                    &mut output,
+                    false,
+                    "app",
+                    BuildProfile::Debug,
+                    Some(&progress),
+                    frame,
+                    Duration::from_secs(2),
+                )
+                .unwrap();
                 let output = String::from_utf8(output).unwrap();
-                assert!(output.contains(&format!("[{rail}] {completed}/4 · {}% · app", completed * 25)), "{output}");
+                assert!(
+                    output.contains(&format!(
+                        "[{rail}] {completed}/4 · {}% · app",
+                        completed * 25
+                    )),
+                    "{output}"
+                );
             }
             if completed < 4 {
                 progress.complete();
@@ -342,7 +446,16 @@ mod tests {
     #[test]
     fn test_activity_sanitizes_terminal_controls_in_crate_names() {
         let mut output = Vec::new();
-        write_activity(&mut output, true, "app\r\n\x1b", BuildProfile::Debug, None, 0, Duration::ZERO).unwrap();
+        write_activity(
+            &mut output,
+            true,
+            "app\r\n\x1b",
+            BuildProfile::Debug,
+            None,
+            0,
+            Duration::ZERO,
+        )
+        .unwrap();
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("\x1b[1;38;5;147mapp\x1b[0m"));
         assert!(!output.contains('\n'));
@@ -359,7 +472,10 @@ mod tests {
             let mut closed = false;
             for event in receiver {
                 match event {
-                    Event::Output { stdout: stream, bytes } => {
+                    Event::Output {
+                        stdout: stream,
+                        bytes,
+                    } => {
                         assert_eq!(stream, stdout);
                         output.extend(bytes);
                     }
@@ -380,7 +496,11 @@ mod tests {
         struct FailingReader(bool);
         impl Read for FailingReader {
             fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-                let kind = if self.0 { io::ErrorKind::Other } else { io::ErrorKind::Interrupted };
+                let kind = if self.0 {
+                    io::ErrorKind::Other
+                } else {
+                    io::ErrorKind::Interrupted
+                };
                 self.0 = true;
                 Err(io::Error::from(kind))
             }
@@ -396,16 +516,33 @@ mod tests {
     #[test]
     fn test_progress_is_plain_text_when_redirected() {
         let mut output = Vec::new();
-        write_status(&mut output, false, "◆", "compile", "dep", format_args!("v0.1.0 · /dep"))
-            .unwrap();
-        assert_eq!(String::from_utf8(output).unwrap(), "  ◆ compile dep v0.1.0 · /dep\n");
+        write_status(
+            &mut output,
+            false,
+            "◆",
+            "compile",
+            "dep",
+            format_args!("v0.1.0 · /dep"),
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(output).unwrap(),
+            "  ◆ compile dep v0.1.0 · /dep\n"
+        );
     }
 
     #[test]
     fn test_progress_uses_teal_lavender_and_muted_metadata() {
         let mut output = Vec::new();
-        write_status(&mut output, true, "✓", "ready", "debug", format_args!("· 0.42s"))
-            .unwrap();
+        write_status(
+            &mut output,
+            true,
+            "✓",
+            "ready",
+            "debug",
+            format_args!("· 0.42s"),
+        )
+        .unwrap();
         assert_eq!(
             String::from_utf8(output).unwrap(),
             "  \x1b[1;38;5;80m✓ ready  \x1b[0m \x1b[1;38;5;147mdebug\x1b[0m \x1b[2;38;5;245m· 0.42s\x1b[0m\n",

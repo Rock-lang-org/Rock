@@ -5,7 +5,8 @@ use crate::types::Type;
 
 /// Check if a name refers to an intrinsic function
 pub fn is_intrinsic_name(name: &str) -> bool {
-    if name == "OverflowChecks" || crate::mir::integer::IntegerIntrinsic::from_name(name).is_some() {
+    if name == "OverflowChecks" || crate::mir::integer::IntegerIntrinsic::from_name(name).is_some()
+    {
         return true;
     }
     matches!(
@@ -74,7 +75,10 @@ pub fn is_intrinsic_name(name: &str) -> bool {
 /// Infer the return type of an intrinsic based on its name and arguments
 pub fn infer_intrinsic_return_type(name: &str, args: &[HirExpr]) -> Type {
     if let Some(integer) = crate::mir::integer::IntegerIntrinsic::from_name(name) {
-        let operand = args.first().map(|arg| arg.ty.clone()).unwrap_or(Type::Error);
+        let operand = args
+            .first()
+            .map(|arg| arg.ty.clone())
+            .unwrap_or(Type::Error);
         return if integer.mode == crate::mir::integer::IntegerMode::Overflowing {
             Type::Tuple(vec![operand, Type::Bool])
         } else {
@@ -126,7 +130,9 @@ pub fn infer_intrinsic_return_type(name: &str, args: &[HirExpr]) -> Type {
                 match &args[0].ty {
                     Type::Slice(elem_ty) => return Type::Pointer(elem_ty.clone()),
                     Type::Reference { inner, .. } => match inner.as_ref() {
-                        Type::Slice(elem_ty) | Type::Array(elem_ty, _) => return Type::Pointer(elem_ty.clone()),
+                        Type::Slice(elem_ty) | Type::Array(elem_ty, _) => {
+                            return Type::Pointer(elem_ty.clone())
+                        }
                         Type::Str => return Type::Pointer(Box::new(Type::U8)),
                         _ => {}
                     },

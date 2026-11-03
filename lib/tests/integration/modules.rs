@@ -74,7 +74,11 @@ main = !->
         config.no_prelude = true;
         rock_lib::compile(&config).unwrap();
         let output = run_test_command(&mut Command::new(dir.join("sizeof")));
-        assert_eq!(output.status.code(), Some(0), "optimization level {opt_level}");
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "optimization level {opt_level}"
+        );
         assert_eq!(
             String::from_utf8_lossy(&output.stdout),
             "1\n2\n4\n8\n1\n4\n0\n24\n16\n16\n16\n0\n8\n8\n8\n73\n8\nend\n73\n",
@@ -195,7 +199,8 @@ fn test_std_old_flat_module_paths_are_not_aliases() {
         std::fs::write(&entry, format!("> {path}\nmain = !->\n    {value}\n")).unwrap();
         let mut config = test_config(entry.clone(), dir.clone());
         config.no_prelude = true;
-        let diagnostics = rock_lib::compile(&config).expect_err("old module paths must not resolve");
+        let diagnostics =
+            rock_lib::compile(&config).expect_err("old module paths must not resolve");
         assert!(format!("{diagnostics:?}").contains(path));
     }
     let _ = std::fs::remove_dir_all(&dir);

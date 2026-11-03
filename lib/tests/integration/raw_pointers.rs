@@ -5,7 +5,8 @@ use std::sync::atomic::Ordering;
 
 #[test]
 fn test_raw_wide_pointers_and_utf8_constructors() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     mut values = [10, 20, 30]
     data = values.as_mut_ptr!
@@ -29,7 +30,8 @@ main = !->
     borrowed = unsafe &mut *wide
     borrowed[0] = 8
     borrowed[0].println!
-"#);
+"#,
+    );
     assert_eq!(output, "42\né\ninvalid\n0\n8\n");
 }
 
@@ -53,7 +55,9 @@ fn test_source_free_raw_slice_constructor_preserves_origins() {
         let dir = test_temp_dir(id);
         fs::create_dir_all(&dir).unwrap();
         let dependency = dir.join("raw_slices.rk");
-        fs::write(&dependency, r#"
+        fs::write(
+            &dependency,
+            r#"
 unsafe borrow: *I64 -> I64 -> &[I64]
 < unsafe borrow = data, len ->
     raw: *[I64] = ~PtrFromParts data, len
@@ -62,7 +66,9 @@ unsafe borrow_mut: *I64 -> I64 -> &mut [I64]
 < unsafe borrow_mut = data, len ->
     raw: *[I64] = ~PtrFromParts data, len
     unsafe &mut *raw
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let config = rock_lib::Config {
             entry_file: dependency.clone(),
             current_crate_name: Some("raw_slices".to_string()),
@@ -75,8 +81,12 @@ unsafe borrow_mut: *I64 -> I64 -> &mut [I64]
             ..Default::default()
         };
         let artifact = dir.join("raw_slices.rkca");
-        rock_lib::compile_with_products(&config).unwrap().products.unwrap()
-            .write_artifact_to_path(&artifact).unwrap();
+        rock_lib::compile_with_products(&config)
+            .unwrap()
+            .products
+            .unwrap()
+            .write_artifact_to_path(&artifact)
+            .unwrap();
         fs::remove_file(dependency).unwrap();
         let entry = dir.join("consumer.rk");
         let config = rock_lib::Config {
@@ -87,17 +97,25 @@ unsafe borrow_mut: *I64 -> I64 -> &mut [I64]
             emit_object: None,
             ..config
         };
-        fs::write(&entry, r#"
+        fs::write(
+            &entry,
+            r#"
 > raw_slices::borrow
 main = ->
     values = [1, 2]
     view = unsafe borrow (~ArrPtr (&values)), 2
     if ~I64Eq (~ArrayLen *view), 2 then 0 else 1
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         rock_lib::compile(&config).unwrap();
-        assert!(Command::new(dir.join("consumer")).status().unwrap().success());
+        assert!(Command::new(dir.join("consumer"))
+            .status()
+            .unwrap()
+            .success());
         for (source, expected) in [
-            (r#"
+            (
+                r#"
 > raw_slices::borrow
 escape: () -> &[I64]
 escape = ->
@@ -105,8 +123,11 @@ escape = ->
     unsafe borrow (~ArrPtr (&values)), 2
 main = !->
     escape!
-"#, "local"),
-            (r#"
+"#,
+                "local",
+            ),
+            (
+                r#"
 > raw_slices::borrow_mut
 main = ->
     mut values = [1, 2]
@@ -114,18 +135,27 @@ main = ->
     first = unsafe borrow_mut data, 2
     second = unsafe borrow_mut data, 2
     ~I64Add (~ArrayLen *first), (~ArrayLen *second)
-"#, "borrow"),
+"#,
+                "borrow",
+            ),
         ] {
             fs::write(&entry, source).unwrap();
             let diagnostics = rock_lib::compile(&config).unwrap_err();
-            assert!(diagnostics.0.iter().any(|error| error.message.contains(expected)), "{diagnostics:?}");
+            assert!(
+                diagnostics
+                    .0
+                    .iter()
+                    .any(|error| error.message.contains(expected)),
+                "{diagnostics:?}"
+            );
         }
     }
 }
 
 #[test]
 fn test_raw_wide_pointer_borrow_cannot_escape_local_storage() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 escape: () -> &[I64]
 escape = ->
     values = [1, 2]
@@ -135,12 +165,15 @@ escape = ->
 main = !->
     escaped = escape!
     escaped[0].println!
-"#, "local");
+"#,
+        "local",
+    );
 }
 
 #[test]
 fn test_raw_wide_pointer_borrows_preserve_exclusivity() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 main = !->
     mut values = [1, 2]
     raw: *[I64] = ~PtrFromParts values.as_mut_ptr!, 2
@@ -148,8 +181,11 @@ main = !->
     second = unsafe &mut *raw
     first[0].println!
     second[0].println!
-"#, "borrow");
-    compile_should_fail(r#"
+"#,
+        "borrow",
+    );
+    compile_should_fail(
+        r#"
 main = !->
     mut values = [1, 2]
     data = values.as_mut_ptr!
@@ -157,15 +193,20 @@ main = !->
     second = unsafe slice_from_raw_parts_mut data, 2
     first[0].println!
     second[0].println!
-"#, "borrow");
-    compile_should_fail(r#"
+"#,
+        "borrow",
+    );
+    compile_should_fail(
+        r#"
 main = !->
     mut values = [1, 2]
     raw: *[I64] = ~PtrFromParts values.as_ptr!, 2
     view = unsafe &*raw
     values[0] = 9
     view[0].println!
-"#, "borrow");
+"#,
+        "borrow",
+    );
 }
 
 #[test]
@@ -178,21 +219,24 @@ fn test_raw_slice_constructors_validate_scalar_preconditions_and_allow_zsts() {
         let (_, success) = compile_and_run_with_status(source);
         assert!(!success, "raw slice construction must reject invalid scalar metadata");
     }
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Empty
 main = !->
     empty = Empty
     data = &empty as *Empty
     view = unsafe slice_from_raw_parts data, 9223372036854775807
     view.len!.println!
-"#);
+"#,
+    );
     assert_eq!(output, "9223372036854775807\n");
 }
 
 #[test]
 fn test_raw_pointer_projected_borrows_retain_storage_loans() {
     for pointer in ["holder.ptr", "pair.0"] {
-        let source = format!(r#"
+        let source = format!(
+            r#"
 struct Holder
     < ptr: *[I64]
 
@@ -205,10 +249,17 @@ main = ->
     view = unsafe &*{pointer}
     values[0] = 9
     view[0]
-"#);
+"#
+        );
         compile_should_fail(&source, "borrow conflict");
-        assert_eq!(compile_and_run(&source.replace("    values[0] = 9\n", "")
-            .replace("    view[0]\n", "    view[0].println!\n    0\n")), "1\n");
+        assert_eq!(
+            compile_and_run(
+                &source
+                    .replace("    values[0] = 9\n", "")
+                    .replace("    view[0]\n", "    view[0].println!\n    0\n")
+            ),
+            "1\n"
+        );
     }
 }
 

@@ -339,10 +339,7 @@ mod tests {
             layout.target_libdir,
             PathBuf::from("/toolchains/stable/lib/rocklib").join(&layout.target_triple)
         );
-        assert_eq!(
-            layout.std_artifact,
-            layout.target_libdir.join("std.rkca")
-        );
+        assert_eq!(layout.std_artifact, layout.target_libdir.join("std.rkca"));
         assert_eq!(layout.std_object, layout.target_libdir.join("std.o"));
         assert_eq!(
             layout.manifest_path,

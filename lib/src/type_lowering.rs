@@ -24,7 +24,9 @@ pub(crate) trait TypeLoweringContext {
     fn resolve_trait_type(&self, name: &str) -> Option<HirTrait>;
     fn resolve_type_alias(&self, name: &str) -> Option<HirTypeAlias>;
     fn generic_type_for_name(&mut self, name: &str, span: crate::lexer::Span) -> Type;
-    fn scoped_generic_type(&mut self, _name: &str, _span: crate::lexer::Span) -> Option<Type> { None }
+    fn scoped_generic_type(&mut self, _name: &str, _span: crate::lexer::Span) -> Option<Type> {
+        None
+    }
     fn populate_type_normalization_env(&self, env: &mut TypeNormalizationEnv);
     fn constructor_params(&self, _id: crate::ids::DefId) -> Option<Vec<GenericParamDecl>> {
         None
@@ -38,13 +40,25 @@ pub(crate) fn complete_generic_args(
     subject: Option<&Type>,
 ) -> Result<Vec<Type>, String> {
     if args.len() > params.len() {
-        return Err(format!("expected at most {} type arguments, got {}", params.len(), args.len()));
+        return Err(format!(
+            "expected at most {} type arguments, got {}",
+            params.len(),
+            args.len()
+        ));
     }
-    let mut substitutions = params.iter().zip(&args)
+    let mut substitutions = params
+        .iter()
+        .zip(&args)
         .map(|(param, arg)| (param.id, arg.clone()))
         .collect::<std::collections::HashMap<_, _>>();
     if let (Some(param), Some(subject)) = (params.first(), subject) {
-        substitutions.insert(GenericParamId { owner: param.id.owner, index: params.len() as u32 }, subject.clone());
+        substitutions.insert(
+            GenericParamId {
+                owner: param.id.owner,
+                index: params.len() as u32,
+            },
+            subject.clone(),
+        );
     }
     for param in &params[args.len()..] {
         let Some(default) = &param.default else {
@@ -72,34 +86,74 @@ pub(crate) fn lower_param_defaults<C: TypeLoweringContext + ?Sized>(
         subject: &'a Option<(String, GenericParamDecl)>,
     }
     impl<C: TypeLoweringContext + ?Sized> TypeLoweringContext for DefaultContext<'_, C> {
-        fn push_type_error(&mut self, message: String, span: crate::lexer::Span) { self.context.push_type_error(message, span); }
-        fn current_module_prefix(&self) -> Option<String> { self.context.current_module_prefix() }
-        fn current_trait_name(&self) -> Option<String> { self.context.current_trait_name() }
+        fn push_type_error(&mut self, message: String, span: crate::lexer::Span) {
+            self.context.push_type_error(message, span);
+        }
+        fn current_module_prefix(&self) -> Option<String> {
+            self.context.current_module_prefix()
+        }
+        fn current_trait_name(&self) -> Option<String> {
+            self.context.current_trait_name()
+        }
         fn resolve_nominal_type(&self, name: &str) -> Option<ResolvedNominalType> {
-            if self.params.iter().any(|param| param.name == name) { None } else { self.context.resolve_nominal_type(name) }
+            if self.params.iter().any(|param| param.name == name) {
+                None
+            } else {
+                self.context.resolve_nominal_type(name)
+            }
         }
-        fn resolve_trait_type(&self, name: &str) -> Option<HirTrait> { self.context.resolve_trait_type(name) }
+        fn resolve_trait_type(&self, name: &str) -> Option<HirTrait> {
+            self.context.resolve_trait_type(name)
+        }
         fn resolve_type_alias(&self, name: &str) -> Option<HirTypeAlias> {
-            if self.params.iter().any(|param| param.name == name) { None } else { self.context.resolve_type_alias(name) }
+            if self.params.iter().any(|param| param.name == name) {
+                None
+            } else {
+                self.context.resolve_type_alias(name)
+            }
         }
-        fn constructor_params(&self, id: crate::ids::DefId) -> Option<Vec<GenericParamDecl>> { self.context.constructor_params(id) }
+        fn constructor_params(&self, id: crate::ids::DefId) -> Option<Vec<GenericParamDecl>> {
+            self.context.constructor_params(id)
+        }
         fn scoped_generic_type(&mut self, name: &str, span: crate::lexer::Span) -> Option<Type> {
             if self.params.iter().any(|param| param.name == name)
-                || self.subject.as_ref().is_some_and(|(subject, _)| name == subject || name == "Self") {
+                || self
+                    .subject
+                    .as_ref()
+                    .is_some_and(|(subject, _)| name == subject || name == "Self")
+            {
                 Some(self.generic_type_for_name(name, span))
-            } else { None }
+            } else {
+                None
+            }
         }
         fn populate_type_normalization_env(&self, env: &mut TypeNormalizationEnv) {
             self.context.populate_type_normalization_env(env);
-            for param in self.params { env.register_generic_kind(param.id, param.kind.clone()); }
-            if let Some((_, param)) = self.subject { env.register_generic_kind(param.id, param.kind.clone()); }
+            for param in self.params {
+                env.register_generic_kind(param.id, param.kind.clone());
+            }
+            if let Some((_, param)) = self.subject {
+                env.register_generic_kind(param.id, param.kind.clone());
+            }
         }
         fn generic_type_for_name(&mut self, name: &str, span: crate::lexer::Span) -> Type {
-            if let Some((index, param)) = self.params.iter().enumerate().find(|(_, param)| param.name == name) {
-                if index < self.index { return Type::Generic(param.id); }
-                self.push_type_error(format!("default cannot reference current or later parameter '{name}'"), span);
+            if let Some((index, param)) = self
+                .params
+                .iter()
+                .enumerate()
+                .find(|(_, param)| param.name == name)
+            {
+                if index < self.index {
+                    return Type::Generic(param.id);
+                }
+                self.push_type_error(
+                    format!("default cannot reference current or later parameter '{name}'"),
+                    span,
+                );
             } else if let Some((subject_name, param)) = self.subject {
-                if name == subject_name || name == "Self" { return Type::Generic(param.id); }
+                if name == subject_name || name == "Self" {
+                    return Type::Generic(param.id);
+                }
                 self.push_type_error(format!("unknown type '{name}' in generic default"), span);
             } else {
                 self.push_type_error(format!("unknown type '{name}' in generic default"), span);
@@ -111,27 +165,54 @@ pub(crate) fn lower_param_defaults<C: TypeLoweringContext + ?Sized>(
     let mut names = std::collections::HashSet::new();
     for (index, declaration) in syntax.iter().enumerate() {
         if !names.insert(&declaration.name.name) {
-            context.push_type_error(format!("duplicate generic parameter '{}'", declaration.name.name), declaration.name.span.clone());
+            context.push_type_error(
+                format!("duplicate generic parameter '{}'", declaration.name.name),
+                declaration.name.span.clone(),
+            );
         }
         let Some(default) = &declaration.default else {
-            if default_seen { context.push_type_error("required parameters must precede defaulted parameters".into(), declaration.span.clone()); }
+            if default_seen {
+                context.push_type_error(
+                    "required parameters must precede defaulted parameters".into(),
+                    declaration.span.clone(),
+                );
+            }
             continue;
         };
         default_seen = true;
         let expected = params[index].kind.clone();
-        let mut scoped = DefaultContext { context, params, index, subject: &subject };
+        let mut scoped = DefaultContext {
+            context,
+            params,
+            index,
+            subject: &subject,
+        };
         let mut env = TypeNormalizationEnv::new();
         scoped.populate_type_normalization_env(&mut env);
         let raw = TypeLowerer::lower_raw(&mut scoped, default, false, &env, &mut Vec::new());
         let raw = TypeLowerer::complete_type(&mut scoped, raw, &expected, &env, &default.span());
         let ty = TypeLowerer::normalize(&mut scoped, &env, raw, default.span());
         let mut invalid = false;
-        crate::type_services::visit::visit_type(&ty, &mut |nested: &Type| invalid |= matches!(nested, Type::Error | Type::TypeVar(_)));
-        if invalid { scoped.push_type_error("invalid or cyclic type in generic default".into(), default.span()); }
+        crate::type_services::visit::visit_type(&ty, &mut |nested: &Type| {
+            invalid |= matches!(nested, Type::Error | Type::TypeVar(_))
+        });
+        if invalid {
+            scoped.push_type_error(
+                "invalid or cyclic type in generic default".into(),
+                default.span(),
+            );
+        }
         match TypeNormalizer::new(&env).kind_of(&ty) {
             Ok(kind) if kind != expected => scoped.push_type_error(
-                format!("default for '{}' has kind {kind}, expected {expected}", declaration.name.name), default.span()),
-            Err(error) if ty != Type::Error => scoped.push_type_error(error.to_string(), default.span()),
+                format!(
+                    "default for '{}' has kind {kind}, expected {expected}",
+                    declaration.name.name
+                ),
+                default.span(),
+            ),
+            Err(error) if ty != Type::Error => {
+                scoped.push_type_error(error.to_string(), default.span())
+            }
             _ => {}
         }
         params[index].default = Some(ty);
@@ -269,14 +350,21 @@ impl TypeLowerer {
         Self::complete_type(context, raw, &Kind::Type, &env, &parse_type.span())
     }
 
-    pub(crate) fn lower_constructor<C: TypeLoweringContext + ?Sized>(context: &mut C, parse_type: &ast::ParseType) -> Type {
+    pub(crate) fn lower_constructor<C: TypeLoweringContext + ?Sized>(
+        context: &mut C,
+        parse_type: &ast::ParseType,
+    ) -> Type {
         let mut env = TypeNormalizationEnv::new();
         context.populate_type_normalization_env(&mut env);
         let raw = Self::lower_raw(context, parse_type, false, &env, &mut Vec::new());
         Self::normalize(context, &env, raw, parse_type.span())
     }
 
-    pub(crate) fn lower_type_argument<C: TypeLoweringContext + ?Sized>(context: &mut C, parse_type: &ast::ParseType, kind: &Kind) -> Type {
+    pub(crate) fn lower_type_argument<C: TypeLoweringContext + ?Sized>(
+        context: &mut C,
+        parse_type: &ast::ParseType,
+        kind: &Kind,
+    ) -> Type {
         let mut env = TypeNormalizationEnv::new();
         context.populate_type_normalization_env(&mut env);
         let raw = Self::lower_raw(context, parse_type, false, &env, &mut Vec::new());
@@ -311,13 +399,21 @@ impl TypeLowerer {
         match ty {
             Type::Constructor { id, flavor } => {
                 let constructor = Type::Constructor { id, flavor };
-                let Some(params) = context.constructor_params(id) else { return constructor; };
+                let Some(params) = context.constructor_params(id) else {
+                    return constructor;
+                };
                 if params.is_empty() || params.iter().any(|param| param.default.is_none()) {
                     return constructor;
                 }
                 match complete_generic_args(&params, Vec::new(), None) {
-                    Ok(args) => Type::Apply { constructor: Box::new(constructor), args },
-                    Err(message) => { context.push_type_error(message, span.clone()); Type::Error }
+                    Ok(args) => Type::Apply {
+                        constructor: Box::new(constructor),
+                        args,
+                    },
+                    Err(message) => {
+                        context.push_type_error(message, span.clone());
+                        Type::Error
+                    }
                 }
             }
             Type::Apply { constructor, args } => {
@@ -326,31 +422,61 @@ impl TypeLowerer {
                     _ => None,
                 };
                 let mut kind = TypeNormalizer::new(env).kind_of(&constructor).ok();
-                let args = args.into_iter().map(|arg| {
-                    let expected = match kind.take() {
-                        Some(Kind::Arrow(input, output)) => { kind = Some(*output); *input }
-                        _ => Kind::Type,
-                    };
-                    Self::complete_type(context, arg, &expected, env, span)
-                }).collect::<Vec<_>>();
+                let args = args
+                    .into_iter()
+                    .map(|arg| {
+                        let expected = match kind.take() {
+                            Some(Kind::Arrow(input, output)) => {
+                                kind = Some(*output);
+                                *input
+                            }
+                            _ => Kind::Type,
+                        };
+                        Self::complete_type(context, arg, &expected, env, span)
+                    })
+                    .collect::<Vec<_>>();
                 let args = if let Some(params) = params {
-                    if args.len() < params.len() && params[args.len()..].iter().all(|param| param.default.is_some()) {
+                    if args.len() < params.len()
+                        && params[args.len()..]
+                            .iter()
+                            .all(|param| param.default.is_some())
+                    {
                         match complete_generic_args(&params, args, None) {
                             Ok(args) => args,
-                            Err(message) => { context.push_type_error(message, span.clone()); return Type::Error; }
+                            Err(message) => {
+                                context.push_type_error(message, span.clone());
+                                return Type::Error;
+                            }
                         }
-                    } else { args }
-                } else { args };
+                    } else {
+                        args
+                    }
+                } else {
+                    args
+                };
                 Type::Apply { constructor, args }
             }
             other => {
-                struct Complete<'a, C: ?Sized> { context: &'a mut C, env: &'a TypeNormalizationEnv, span: &'a crate::lexer::Span }
+                struct Complete<'a, C: ?Sized> {
+                    context: &'a mut C,
+                    env: &'a TypeNormalizationEnv,
+                    span: &'a crate::lexer::Span,
+                }
                 impl<C: TypeLoweringContext + ?Sized> crate::type_services::visit::TypeFolder for Complete<'_, C> {
                     fn fold_type(&mut self, ty: Type) -> Type {
-                        TypeLowerer::complete_type(self.context, ty, &Kind::Type, self.env, self.span)
+                        TypeLowerer::complete_type(
+                            self.context,
+                            ty,
+                            &Kind::Type,
+                            self.env,
+                            self.span,
+                        )
                     }
                 }
-                crate::type_services::visit::fold_type_children(other, &mut Complete { context, env, span })
+                crate::type_services::visit::fold_type_children(
+                    other,
+                    &mut Complete { context, env, span },
+                )
             }
         }
     }
@@ -628,7 +754,14 @@ impl TypeLowerer {
                     .map(|prefix| format!("{}::{}", prefix, name));
 
                 if let Some(generic) = context.scoped_generic_type(name, inner.span.clone()) {
-                    return if generics.is_empty() { generic } else { Type::Apply { constructor: Box::new(generic), args: generics } };
+                    return if generics.is_empty() {
+                        generic
+                    } else {
+                        Type::Apply {
+                            constructor: Box::new(generic),
+                            args: generics,
+                        }
+                    };
                 }
 
                 if let Some(alias) = current_module_name
