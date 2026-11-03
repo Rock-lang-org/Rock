@@ -23,9 +23,7 @@ use crate::types::Type;
 
 use crate::types::{GenericParamDecl, GenericParamId};
 
-use crate::mono::{InstanceImplOwner, InstanceOrigin};
-
-use super::Monomorphizer;
+use crate::mono::{InstanceImplOwner, InstanceOrigin, Monomorphizer};
 
 fn empty_body(ty: Type) -> HirBlock {
     HirBlock { stmts: vec![], ty }

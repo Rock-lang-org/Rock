@@ -3,6 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::*;
 
+use crate::lexer::LexerError;
+use crate::parser::ParseError;
 use crate::{Config, SourceProvider};
 
 #[test]

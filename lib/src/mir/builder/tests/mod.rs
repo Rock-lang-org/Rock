@@ -4,10 +4,17 @@ use crate::hir::{
     HirLiteralPattern, HirNameTables, HirParam, HirPattern, HirStruct, HirVarRef, HirVarTarget,
     HirVariantFields, HirVariantLocation, UnaryOp,
 };
-use crate::ids::{AssocTypeId, CrateId, DefId, FieldId, InstanceId, LocalDefId, VariantId};
+use crate::ids::{AssocTypeId, CrateId, DefId, FieldId, InstanceId, LocalDefId, TypeId, VariantId};
 use crate::lexer::Span;
-use crate::mir::{AggregateKind, Constant, MirCallableKey, Operand, StatementKind, Terminator};
+use crate::mir::{
+    AggregateKind, Constant, LocalSource, MirCallable, MirCallableKey, MirClosureId,
+    MirInstanceBodies, MirIntrinsicId, MirProgram, Mutability, Operand, Projection,
+    ReferenceOrigin, Rvalue, StatementData, StatementKind, Terminator,
+};
+use crate::type_services::projection::ProjectionProvider;
 use crate::types::{GenericParamDecl, GenericParamId, Type};
+
+use super::projection_provider::MirProjectionResolutionProvider;
 
 type HirMatchArm = crate::hir::HirMatchArmFor<AcceptedHir>;
 

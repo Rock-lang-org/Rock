@@ -4,7 +4,7 @@ use crate::ast::{Ident, Module, ParseType, ParseTypeInner};
 use crate::hir::HirAssociatedTypeDecl;
 use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId};
 use crate::lexer::Span;
-use crate::types::GenericParamDecl;
+use crate::types::{GenericParamDecl, GenericParamId, Type};
 
 fn named_type(name: &str) -> ParseType {
     ParseType::Type(ParseTypeInner {

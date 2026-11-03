@@ -6,7 +6,7 @@ use crate::ast::{GenericParamDecl as AstGenericParamDecl, Ident, ParseType, Pars
 use crate::hir::{HirAssociatedTypeDecl, HirEnum, HirStruct, HirTrait};
 use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId};
 use crate::lexer::Span;
-use crate::types::{AssociatedTypeKey, GenericParamDecl, GenericParamId};
+use crate::types::{AssociatedTypeKey, GenericParamDecl, GenericParamId, NominalTypeKind};
 
 #[derive(Default)]
 struct TestTypeContext {

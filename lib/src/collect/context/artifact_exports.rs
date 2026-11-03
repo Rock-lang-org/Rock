@@ -1,0 +1,259 @@
+use super::CollectContext;
+use crate::crate_artifact::ArtifactExport;
+use crate::hir::HirTrait;
+use crate::ids::DefId;
+use crate::types::Type;
+
+impl CollectContext {
+    pub(crate) fn trait_by_name(&self, name: &str) -> Option<&HirTrait> {
+        if let Some(trait_def) = self.traits.get(name) {
+            return Some(trait_def);
+        }
+
+        let mut by_source_name = self
+            .traits
+            .values()
+            .filter(|trait_def| trait_def.name == name);
+        if let Some(candidate) = by_source_name.next() {
+            if by_source_name.all(|other| other.id == candidate.id) {
+                return Some(candidate);
+            }
+        }
+
+        if let Some(id) = self.canonical_import_aliases.get(name).copied() {
+            if let Some(trait_def) = self.traits.values().find(|trait_def| trait_def.id == id) {
+                return Some(trait_def);
+            }
+        }
+
+        self.import_aliases
+            .get(name)
+            .and_then(|qualified| self.traits.get(qualified))
+    }
+
+    pub(super) fn record_canonical_alias(&mut self, alias: String, export: &ArtifactExport) {
+        let first_segment = export.source.split("::").next().unwrap_or(&export.source);
+        if self
+            .current_crate_name
+            .as_deref()
+            .is_some_and(|crate_name| crate_name == first_segment || !export.source.contains("::"))
+        {
+            return;
+        }
+
+        self.canonical_import_aliases
+            .entry(alias)
+            .or_insert(export.id);
+        self.canonical_names_by_id
+            .entry(export.id)
+            .or_insert_with(|| export.source.clone());
+    }
+
+    pub(super) fn record_canonical_item_name(&mut self, id: DefId, name: &str) {
+        if let Some(existing_name) = self.canonical_names_by_id.get(&id) {
+            if existing_name != name {
+                self.push_error(format!(
+                    "conflicting canonical declaration names for DefId {id:?}: '{existing_name}' and '{name}'"
+                ));
+            }
+            return;
+        }
+
+        self.canonical_names_by_id.insert(id, name.to_string());
+    }
+
+    fn record_scoped_module_alias(
+        &mut self,
+        module_prefix: Option<&str>,
+        alias: String,
+        id: DefId,
+    ) {
+        let Some(module_prefix) = module_prefix.filter(|prefix| !prefix.is_empty()) else {
+            return;
+        };
+
+        self.scoped_module_aliases
+            .entry(module_prefix.to_string())
+            .or_default()
+            .insert(alias, id);
+    }
+
+    pub(super) fn record_resolved_import_alias(
+        &mut self,
+        module_prefix: Option<&str>,
+        short_name: &str,
+        export: &ArtifactExport,
+    ) {
+        let resolver_alias = module_prefix.map_or_else(
+            || short_name.to_string(),
+            |prefix| format!("{}::{}", prefix, short_name),
+        );
+        self.record_canonical_alias(resolver_alias, export);
+        self.record_scoped_module_alias(module_prefix, short_name.to_string(), export.id);
+    }
+
+    pub(crate) fn export_for_registered_item(
+        &self,
+        qualified_name: &str,
+    ) -> Option<ArtifactExport> {
+        if let Some(function) = self.functions.get(qualified_name) {
+            return Some(ArtifactExport {
+                source: qualified_name.to_string(),
+                id: function.id,
+            });
+        }
+        if let Some(strukt) = self.structs.get(qualified_name) {
+            return Some(ArtifactExport {
+                source: qualified_name.to_string(),
+                id: strukt.id,
+            });
+        }
+        if let Some(enum_) = self.enums.get(qualified_name) {
+            return Some(ArtifactExport {
+                source: qualified_name.to_string(),
+                id: enum_.id,
+            });
+        }
+        if let Some(alias) = self.type_aliases.get(qualified_name) {
+            return Some(ArtifactExport {
+                source: qualified_name.to_string(),
+                id: alias.id,
+            });
+        }
+        if let Some(trait_) = self.traits.get(qualified_name) {
+            return Some(ArtifactExport {
+                source: qualified_name.to_string(),
+                id: trait_.id,
+            });
+        }
+        self.externs
+            .iter()
+            .find(|ext| ext.name == qualified_name)
+            .map(|ext| ArtifactExport {
+                source: qualified_name.to_string(),
+                id: ext.id,
+            })
+    }
+
+    pub(super) fn export_for_import_source(&self, qualified_name: &str) -> Option<ArtifactExport> {
+        let mut parts = qualified_name.split("::");
+        if let (Some(crate_name), Some(export_name), None) =
+            (parts.next(), parts.next(), parts.next())
+        {
+            if let Some(export) = self
+                .dependency_root_export_ids
+                .get(crate_name)
+                .and_then(|exports| exports.get(export_name))
+            {
+                return Some(export.clone());
+            }
+        }
+
+        self.export_for_registered_item(qualified_name)
+    }
+
+    pub(super) fn artifact_root_export_for_import(
+        &self,
+        qualified_name: &str,
+    ) -> Option<ArtifactExport> {
+        let mut parts = qualified_name.split("::");
+        let (Some(crate_name), Some(export_name), None) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            return None;
+        };
+
+        self.dependency_root_export_ids
+            .get(crate_name)
+            .and_then(|exports| exports.get(export_name))
+            .cloned()
+    }
+
+    pub(super) fn import_artifact_root_export(
+        &mut self,
+        short_name: String,
+        qualified_name: String,
+        export: ArtifactExport,
+        is_explicit: bool,
+        record_canonical_aliases: bool,
+        canonical_prefix: Option<&str>,
+    ) {
+        let canonical_source = export.source.clone();
+
+        if let Some(func) = self.functions.get(&canonical_source) {
+            let param_types: Vec<Type> = func.params.iter().map(|param| param.ty.clone()).collect();
+            let func_type = Type::function_with_safety(
+                param_types,
+                func.ret_type.clone(),
+                crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
+            );
+            self.scope.define(short_name.clone(), func_type, false);
+            self.import_aliases
+                .insert(short_name.clone(), canonical_source.clone());
+            if is_explicit && record_canonical_aliases {
+                self.explicit_import_aliases
+                    .insert(short_name.clone(), canonical_source);
+                self.record_canonical_alias(short_name.clone(), &export);
+            }
+            self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
+            return;
+        }
+
+        if let Some(binding) = self.scope.lookup(&canonical_source) {
+            self.scope
+                .define(short_name.clone(), binding.ty.clone(), false);
+            self.import_aliases
+                .insert(short_name.clone(), canonical_source.clone());
+            if is_explicit && record_canonical_aliases {
+                self.explicit_import_aliases
+                    .insert(short_name.clone(), canonical_source);
+                self.record_canonical_alias(short_name.clone(), &export);
+            }
+            self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
+            return;
+        }
+
+        if self.structs.contains_key(&canonical_source)
+            || self.type_aliases.contains_key(&canonical_source)
+        {
+            self.import_aliases
+                .insert(short_name.clone(), canonical_source.clone());
+            if is_explicit && record_canonical_aliases {
+                self.explicit_import_aliases
+                    .insert(short_name.clone(), canonical_source);
+                self.record_canonical_alias(short_name.clone(), &export);
+            }
+            self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
+            return;
+        }
+
+        if self.enums.contains_key(&canonical_source) {
+            self.import_aliases
+                .insert(short_name.clone(), canonical_source.clone());
+            if is_explicit && record_canonical_aliases {
+                self.explicit_import_aliases
+                    .insert(short_name.clone(), canonical_source);
+                self.record_canonical_alias(short_name.clone(), &export);
+            }
+            self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
+            return;
+        }
+
+        if self.traits.contains_key(&canonical_source) {
+            self.import_aliases
+                .insert(short_name.clone(), canonical_source.clone());
+            if is_explicit && record_canonical_aliases {
+                self.explicit_import_aliases
+                    .insert(short_name.clone(), canonical_source);
+                self.record_canonical_alias(short_name.clone(), &export);
+            }
+            self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
+            return;
+        }
+
+        self.push_error(format!(
+            "Failed to import '{}': canonical declaration '{}' not found",
+            qualified_name, export.source
+        ));
+    }
+}

@@ -8,11 +8,16 @@ use crate::ast::{
     Pattern, PatternKind, SelfReceiverMode, StructDecl, StructDeclField, TraitDecl, WhereClause,
 };
 use crate::collect::context::CollectContext;
-use crate::hir::{HirFunctionSig, HirVariantFields};
-use crate::ids::{CrateId, LocalDefId};
+use crate::collect::CollectedTraitMemberIds;
+use crate::hir::*;
+use crate::ids::{AssocTypeId, CrateId, DefId, FieldId, LocalDefId, TypeVarId, VariantId};
 use crate::language_items::SizedLanguageItems;
 use crate::lexer::Span;
-use crate::types::{AssociatedTypeKey, GenericParamId, Type};
+use crate::types::{AssociatedTypeKey, GenericParamDecl, GenericParamId, TraitBound, Type};
+
+use super::functions::collect_type_var_ids;
+use super::generic_names::collect_constructor_generic_kinds;
+use super::where_clauses::lower_where_clauses;
 
 fn ident(name: &str) -> Ident {
     Ident {
