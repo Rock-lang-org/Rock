@@ -2,8 +2,17 @@ use super::exports::collect_exports;
 use super::type_names::path_names;
 use super::CollectContext;
 use crate::ast;
+use crate::crate_artifact::ArtifactExport;
 use crate::types::Type;
 use std::collections::HashMap;
+
+/// What an imported name resolved to.
+pub(super) enum ImportTarget {
+    /// A function or binding: it also needs a scope entry with this type.
+    Value(Type),
+    /// A struct, enum, type alias or trait.
+    TypeItem,
+}
 
 impl CollectContext {
     pub(crate) fn handle_import(
@@ -78,222 +87,84 @@ impl CollectContext {
             }
         }
 
-        if let Some(func) = self.functions.get(&qualified_name) {
-            let param_types: Vec<Type> = func.params.iter().map(|param| param.ty.clone()).collect();
-            let func_type = Type::function_with_safety(
-                param_types,
-                func.ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
+        if let Some(target) = self.lookup_import_target(&qualified_name) {
+            let export = self.export_for_import_source(&qualified_name);
+            let explicit_target =
+                (is_explicit && record_canonical_aliases).then_some(qualified_name.as_str());
+            self.bind_import(
+                &short_name,
+                target,
+                &qualified_name,
+                explicit_target,
+                export,
+                canonical_prefix,
             );
-            self.scope.define(short_name.clone(), func_type, false);
-            self.import_aliases
-                .insert(short_name.clone(), qualified_name.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), qualified_name.clone());
-                if let Some(export) = self.export_for_import_source(&qualified_name) {
-                    self.record_canonical_alias(short_name.clone(), &export);
-                }
-            }
-            if let Some(export) = self.export_for_import_source(&qualified_name) {
-                self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-            }
-            return;
-        }
-
-        if let Some(binding) = self.scope.lookup(&qualified_name) {
-            self.scope
-                .define(short_name.clone(), binding.ty.clone(), false);
-            self.import_aliases
-                .insert(short_name.clone(), qualified_name.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), qualified_name.clone());
-                if let Some(export) = self.export_for_import_source(&qualified_name) {
-                    self.record_canonical_alias(short_name.clone(), &export);
-                }
-            }
-            if let Some(export) = self.export_for_import_source(&qualified_name) {
-                self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-            }
-            return;
-        }
-
-        if self.structs.contains_key(&qualified_name) {
-            self.import_aliases
-                .insert(short_name.clone(), qualified_name.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), qualified_name.clone());
-                if let Some(export) = self.export_for_import_source(&qualified_name) {
-                    self.record_canonical_alias(short_name.clone(), &export);
-                }
-            }
-            if let Some(export) = self.export_for_import_source(&qualified_name) {
-                self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-            }
-            return;
-        }
-
-        if self.enums.contains_key(&qualified_name) {
-            self.import_aliases
-                .insert(short_name.clone(), qualified_name.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), qualified_name.clone());
-                if let Some(export) = self.export_for_import_source(&qualified_name) {
-                    self.record_canonical_alias(short_name.clone(), &export);
-                }
-            }
-            if let Some(export) = self.export_for_import_source(&qualified_name) {
-                self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-            }
-            return;
-        }
-
-        if self.type_aliases.contains_key(&qualified_name) {
-            self.import_aliases
-                .insert(short_name.clone(), qualified_name.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), qualified_name.clone());
-                if let Some(export) = self.export_for_import_source(&qualified_name) {
-                    self.record_canonical_alias(short_name.clone(), &export);
-                }
-            }
-            if let Some(export) = self.export_for_import_source(&qualified_name) {
-                self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-            }
-            return;
-        }
-
-        if self.traits.contains_key(&qualified_name) {
-            self.import_aliases
-                .insert(short_name.clone(), qualified_name.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), qualified_name.clone());
-                if let Some(export) = self.export_for_import_source(&qualified_name) {
-                    self.record_canonical_alias(short_name.clone(), &export);
-                }
-            }
-            if let Some(export) = self.export_for_import_source(&qualified_name) {
-                self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-            }
             return;
         }
 
         if let Some(canonical_qualified_name) = canonical_qualified_name {
-            if let Some(func) = self.functions.get(&canonical_qualified_name) {
-                let param_types: Vec<Type> =
-                    func.params.iter().map(|param| param.ty.clone()).collect();
-                let func_type = Type::function_with_safety(
-                    param_types,
-                    func.ret_type.clone(),
-                    crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
+            if let Some(target) = self.lookup_import_target(&canonical_qualified_name) {
+                let export = self.export_for_registered_item(&canonical_qualified_name);
+                let explicit_target = is_explicit.then_some(canonical_qualified_name.as_str());
+                self.bind_import(
+                    &short_name,
+                    target,
+                    &canonical_qualified_name,
+                    explicit_target,
+                    export,
+                    canonical_prefix,
                 );
-                self.scope.define(short_name.clone(), func_type, false);
-                self.import_aliases
-                    .insert(short_name.clone(), qualified_name.clone());
-                if is_explicit {
-                    self.explicit_import_aliases
-                        .insert(short_name.clone(), canonical_qualified_name.clone());
-                    if let Some(export) = self.export_for_registered_item(&canonical_qualified_name)
-                    {
-                        self.record_canonical_alias(short_name.clone(), &export);
-                    }
-                }
-                if let Some(export) = self.export_for_registered_item(&canonical_qualified_name) {
-                    self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-                }
-                return;
             }
+        }
+    }
 
-            if let Some(binding) = self.scope.lookup(&canonical_qualified_name) {
-                self.scope
-                    .define(short_name.clone(), binding.ty.clone(), false);
-                self.import_aliases
-                    .insert(short_name.clone(), qualified_name.clone());
-                if is_explicit {
-                    self.explicit_import_aliases
-                        .insert(short_name.clone(), canonical_qualified_name.clone());
-                    if let Some(export) = self.export_for_registered_item(&canonical_qualified_name)
-                    {
-                        self.record_canonical_alias(short_name.clone(), &export);
-                    }
-                }
-                if let Some(export) = self.export_for_registered_item(&canonical_qualified_name) {
-                    self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-                }
-                return;
-            }
+    /// Finds what `name` refers to among the registered declarations.
+    pub(super) fn lookup_import_target(&self, name: &str) -> Option<ImportTarget> {
+        if let Some(func) = self.functions.get(name) {
+            let param_types: Vec<Type> = func.params.iter().map(|param| param.ty.clone()).collect();
+            return Some(ImportTarget::Value(Type::function_with_safety(
+                param_types,
+                func.ret_type.clone(),
+                crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
+            )));
+        }
 
-            if self.structs.contains_key(&canonical_qualified_name) {
-                self.import_aliases
-                    .insert(short_name.clone(), canonical_qualified_name.clone());
-                if is_explicit {
-                    self.explicit_import_aliases
-                        .insert(short_name.clone(), canonical_qualified_name.clone());
-                    if let Some(export) = self.export_for_registered_item(&canonical_qualified_name)
-                    {
-                        self.record_canonical_alias(short_name.clone(), &export);
-                    }
-                }
-                if let Some(export) = self.export_for_registered_item(&canonical_qualified_name) {
-                    self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-                }
-                return;
-            }
+        if let Some(binding) = self.scope.lookup(name) {
+            return Some(ImportTarget::Value(binding.ty.clone()));
+        }
 
-            if self.enums.contains_key(&canonical_qualified_name) {
-                self.import_aliases
-                    .insert(short_name.clone(), canonical_qualified_name.clone());
-                if is_explicit {
-                    self.explicit_import_aliases
-                        .insert(short_name.clone(), canonical_qualified_name.clone());
-                    if let Some(export) = self.export_for_registered_item(&canonical_qualified_name)
-                    {
-                        self.record_canonical_alias(short_name.clone(), &export);
-                    }
-                }
-                if let Some(export) = self.export_for_registered_item(&canonical_qualified_name) {
-                    self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-                }
-                return;
-            }
+        let is_type_item = self.structs.contains_key(name)
+            || self.enums.contains_key(name)
+            || self.type_aliases.contains_key(name)
+            || self.traits.contains_key(name);
+        is_type_item.then_some(ImportTarget::TypeItem)
+    }
 
-            if self.type_aliases.contains_key(&canonical_qualified_name) {
-                self.import_aliases
-                    .insert(short_name.clone(), canonical_qualified_name.clone());
-                if is_explicit {
-                    self.explicit_import_aliases
-                        .insert(short_name.clone(), canonical_qualified_name.clone());
-                    if let Some(export) = self.export_for_registered_item(&canonical_qualified_name)
-                    {
-                        self.record_canonical_alias(short_name.clone(), &export);
-                    }
-                }
-                if let Some(export) = self.export_for_registered_item(&canonical_qualified_name) {
-                    self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-                }
-                return;
+    /// Records every alias table entry for `short_name` once its target is known.
+    /// `explicit_target` is `Some` when the import must also land in the explicit alias table.
+    pub(super) fn bind_import(
+        &mut self,
+        short_name: &str,
+        target: ImportTarget,
+        alias_target: &str,
+        explicit_target: Option<&str>,
+        export: Option<ArtifactExport>,
+        canonical_prefix: Option<&str>,
+    ) {
+        if let ImportTarget::Value(ty) = target {
+            self.scope.define(short_name.to_string(), ty, false);
+        }
+        self.import_aliases
+            .insert(short_name.to_string(), alias_target.to_string());
+        if let Some(explicit_target) = explicit_target {
+            self.explicit_import_aliases
+                .insert(short_name.to_string(), explicit_target.to_string());
+            if let Some(export) = &export {
+                self.record_canonical_alias(short_name.to_string(), export);
             }
-
-            if self.traits.contains_key(&canonical_qualified_name) {
-                self.import_aliases
-                    .insert(short_name.clone(), canonical_qualified_name.clone());
-                if is_explicit {
-                    self.explicit_import_aliases
-                        .insert(short_name.clone(), canonical_qualified_name.clone());
-                    if let Some(export) = self.export_for_registered_item(&canonical_qualified_name)
-                    {
-                        self.record_canonical_alias(short_name.clone(), &export);
-                    }
-                }
-                if let Some(export) = self.export_for_registered_item(&canonical_qualified_name) {
-                    self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-                }
-            }
+        }
+        if let Some(export) = &export {
+            self.record_resolved_import_alias(canonical_prefix, short_name, export);
         }
     }
 

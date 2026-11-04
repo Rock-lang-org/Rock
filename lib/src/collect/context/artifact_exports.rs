@@ -2,7 +2,6 @@ use super::CollectContext;
 use crate::crate_artifact::ArtifactExport;
 use crate::hir::HirTrait;
 use crate::ids::DefId;
-use crate::types::Type;
 
 impl CollectContext {
     pub(crate) fn trait_by_name(&self, name: &str) -> Option<&HirTrait> {
@@ -180,74 +179,17 @@ impl CollectContext {
     ) {
         let canonical_source = export.source.clone();
 
-        if let Some(func) = self.functions.get(&canonical_source) {
-            let param_types: Vec<Type> = func.params.iter().map(|param| param.ty.clone()).collect();
-            let func_type = Type::function_with_safety(
-                param_types,
-                func.ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
+        if let Some(target) = self.lookup_import_target(&canonical_source) {
+            let explicit_target =
+                (is_explicit && record_canonical_aliases).then_some(canonical_source.as_str());
+            self.bind_import(
+                &short_name,
+                target,
+                &canonical_source,
+                explicit_target,
+                Some(export),
+                canonical_prefix,
             );
-            self.scope.define(short_name.clone(), func_type, false);
-            self.import_aliases
-                .insert(short_name.clone(), canonical_source.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), canonical_source);
-                self.record_canonical_alias(short_name.clone(), &export);
-            }
-            self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-            return;
-        }
-
-        if let Some(binding) = self.scope.lookup(&canonical_source) {
-            self.scope
-                .define(short_name.clone(), binding.ty.clone(), false);
-            self.import_aliases
-                .insert(short_name.clone(), canonical_source.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), canonical_source);
-                self.record_canonical_alias(short_name.clone(), &export);
-            }
-            self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-            return;
-        }
-
-        if self.structs.contains_key(&canonical_source)
-            || self.type_aliases.contains_key(&canonical_source)
-        {
-            self.import_aliases
-                .insert(short_name.clone(), canonical_source.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), canonical_source);
-                self.record_canonical_alias(short_name.clone(), &export);
-            }
-            self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-            return;
-        }
-
-        if self.enums.contains_key(&canonical_source) {
-            self.import_aliases
-                .insert(short_name.clone(), canonical_source.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), canonical_source);
-                self.record_canonical_alias(short_name.clone(), &export);
-            }
-            self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
-            return;
-        }
-
-        if self.traits.contains_key(&canonical_source) {
-            self.import_aliases
-                .insert(short_name.clone(), canonical_source.clone());
-            if is_explicit && record_canonical_aliases {
-                self.explicit_import_aliases
-                    .insert(short_name.clone(), canonical_source);
-                self.record_canonical_alias(short_name.clone(), &export);
-            }
-            self.record_resolved_import_alias(canonical_prefix, &short_name, &export);
             return;
         }
 
