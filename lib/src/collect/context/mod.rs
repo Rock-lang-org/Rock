@@ -44,7 +44,6 @@ pub(crate) struct CollectContext {
     pub(crate) loaded_modules: HashSet<PathBuf>,
     pub(crate) loaded_module_paths: Vec<(String, PathBuf)>,
     pub(crate) import_aliases: HashMap<String, String>,
-    pub(crate) explicit_import_aliases: HashMap<String, String>,
     pub(crate) current_trait: Option<String>,
     pub(crate) current_trait_generics: Vec<String>,
     pub(crate) current_generic_owner: Option<DefId>,
@@ -105,7 +104,6 @@ impl CollectContext {
             loaded_modules: HashSet::new(),
             loaded_module_paths: Vec::new(),
             import_aliases: HashMap::new(),
-            explicit_import_aliases: HashMap::new(),
             current_trait: None,
             current_trait_generics: Vec::new(),
             current_generic_owner: None,
@@ -202,7 +200,6 @@ impl CollectContext {
             loaded_modules: _,
             loaded_module_paths,
             import_aliases: _,
-            explicit_import_aliases,
             current_trait: _,
             current_trait_generics: _,
             current_generic_owner: _,
@@ -220,23 +217,14 @@ impl CollectContext {
             export_function_aliases,
         } = self;
 
-        let mut explicit_import_aliases = explicit_import_aliases;
-        super::canonicalize_import_alias_targets(
-            &mut explicit_import_aliases,
-            &export_aliases,
-            current_crate_name,
-        );
         let mut resolver = build_resolver_tables(
             item_index,
             root_module_id,
             current_crate_name,
-            &explicit_import_aliases,
             &export_aliases,
             &export_function_aliases,
         );
-        for (alias, def_id) in canonical_import_aliases {
-            resolver.import_aliases.entry(alias).or_insert(def_id);
-        }
+        resolver.import_aliases.extend(canonical_import_aliases);
         for (def_id, name) in canonical_names_by_id {
             resolver.item_names_by_id.entry(def_id).or_insert(name);
         }

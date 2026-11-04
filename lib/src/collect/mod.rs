@@ -135,41 +135,6 @@ impl CollectedIdEnvironment {
     }
 }
 
-fn canonicalize_import_alias_targets(
-    import_aliases: &mut HashMap<String, String>,
-    export_aliases: &HashMap<String, String>,
-    current_crate_name: Option<&str>,
-) {
-    for target in import_aliases.values_mut() {
-        if let Some(canonical_source) =
-            resolve_export_alias_source(target.as_str(), export_aliases, current_crate_name)
-        {
-            *target = canonical_source;
-        }
-    }
-}
-
-fn resolve_export_alias_source(
-    target: &str,
-    export_aliases: &HashMap<String, String>,
-    current_crate_name: Option<&str>,
-) -> Option<String> {
-    let direct = export_aliases.get(target).cloned();
-    if direct.is_some() {
-        return direct;
-    }
-
-    let crate_name = current_crate_name?;
-    let root = target.split("::").next().unwrap_or(target);
-    if root == crate_name {
-        return None;
-    }
-
-    export_aliases
-        .get(&format!("{}::{}", crate_name, target))
-        .cloned()
-}
-
 /// Run the first-pass declaration collection.
 ///
 /// Builds collect-owned bootstrap state, gathers declarations, and extracts

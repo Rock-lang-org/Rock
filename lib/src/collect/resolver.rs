@@ -93,7 +93,6 @@ pub fn build_resolver_tables(
     item_index: &ItemIndex,
     root_module_id: ModuleId,
     current_crate_name: Option<&str>,
-    import_aliases: &HashMap<String, String>,
     export_aliases: &HashMap<String, String>,
     _export_function_aliases: &HashMap<String, String>,
 ) -> ResolverTables {
@@ -166,16 +165,6 @@ pub fn build_resolver_tables(
         canonical_item_names_by_id.insert(item.def_id, canonical_path);
     }
 
-    let resolved_import_aliases = import_aliases
-        .iter()
-        .filter_map(|(alias, target_path)| {
-            canonical_item_paths
-                .get(target_path)
-                .copied()
-                .map(|def_id| (alias.clone(), def_id))
-        })
-        .collect();
-
     let resolved_export_aliases = export_aliases
         .iter()
         .filter_map(|(alias_path, source_path)| {
@@ -191,7 +180,7 @@ pub fn build_resolver_tables(
         module_names_by_id: canonical_module_names_by_id,
         item_paths: canonical_item_paths,
         item_names_by_id: canonical_item_names_by_id,
-        import_aliases: resolved_import_aliases,
+        import_aliases: HashMap::new(),
         export_aliases: resolved_export_aliases,
         scoped_module_aliases,
         module_aliases: HashMap::new(),

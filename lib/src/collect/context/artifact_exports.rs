@@ -208,13 +208,11 @@ impl CollectContext {
         let canonical_source = export.source.clone();
 
         if let Some(target) = self.lookup_import_target(&canonical_source) {
-            let explicit_target =
-                (is_explicit && record_canonical_aliases).then_some(canonical_source.as_str());
             self.bind_import(
                 &short_name,
                 target,
                 &canonical_source,
-                explicit_target,
+                is_explicit && record_canonical_aliases,
                 Some(export),
                 canonical_prefix,
             );

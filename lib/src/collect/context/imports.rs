@@ -89,13 +89,11 @@ impl CollectContext {
 
         if let Some(target) = self.lookup_import_target(&qualified_name) {
             let export = self.export_for_import_source(&qualified_name);
-            let explicit_target =
-                (is_explicit && record_canonical_aliases).then_some(qualified_name.as_str());
             self.bind_import(
                 &short_name,
                 target,
                 &qualified_name,
-                explicit_target,
+                is_explicit && record_canonical_aliases,
                 export,
                 canonical_prefix,
             );
@@ -105,12 +103,11 @@ impl CollectContext {
         if let Some(canonical_qualified_name) = canonical_qualified_name {
             if let Some(target) = self.lookup_import_target(&canonical_qualified_name) {
                 let export = self.export_for_registered_item(&canonical_qualified_name);
-                let explicit_target = is_explicit.then_some(canonical_qualified_name.as_str());
                 self.bind_import(
                     &short_name,
                     target,
                     &canonical_qualified_name,
-                    explicit_target,
+                    is_explicit,
                     export,
                     canonical_prefix,
                 );
@@ -141,13 +138,13 @@ impl CollectContext {
     }
 
     /// Records every alias table entry for `short_name` once its target is known.
-    /// `explicit_target` is `Some` when the import must also land in the explicit alias table.
+    /// `explicit` imports replace any alias the prelude or a glob import already recorded.
     pub(super) fn bind_import(
         &mut self,
         short_name: &str,
         target: ImportTarget,
         alias_target: &str,
-        explicit_target: Option<&str>,
+        explicit: bool,
         export: Option<ArtifactExport>,
         canonical_prefix: Option<&str>,
     ) {
@@ -156,14 +153,10 @@ impl CollectContext {
         }
         self.import_aliases
             .insert(short_name.to_string(), alias_target.to_string());
-        if let Some(explicit_target) = explicit_target {
-            self.explicit_import_aliases
-                .insert(short_name.to_string(), explicit_target.to_string());
-            if let Some(export) = &export {
+        if let Some(export) = &export {
+            if explicit {
                 self.record_explicit_canonical_alias(short_name.to_string(), export);
             }
-        }
-        if let Some(export) = &export {
             self.record_resolved_import_alias(canonical_prefix, short_name, export);
         }
     }

@@ -235,9 +235,6 @@ impl LocalCollector {
 
         let resolver_alias = format!("{}::{}", prefix, short_name);
         self.context
-            .explicit_import_aliases
-            .insert(resolver_alias.clone(), export.source.clone());
-        self.context
             .canonical_import_aliases
             .insert(resolver_alias, export.id);
         self.context
@@ -253,9 +250,6 @@ impl LocalCollector {
         local_resolver_alias: Option<String>,
     ) {
         let resolver_alias = local_resolver_alias.unwrap_or_else(|| short_name.clone());
-        self.context
-            .explicit_import_aliases
-            .insert(resolver_alias.clone(), qualified_name.clone());
         if let Some(id) = item_id {
             self.context
                 .canonical_import_aliases
