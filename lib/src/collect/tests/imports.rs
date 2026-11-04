@@ -12,7 +12,7 @@ fn function_at_canonical_name<'a>(
 }
 
 #[test]
-fn resolver_contract_keeps_unresolved_imports_out_of_alias_metadata() {
+fn collect_reports_unresolved_import() {
     let program = Program {
         module: Module {
             name: None,
@@ -29,11 +29,13 @@ fn resolver_contract_keeps_unresolved_imports_out_of_alias_metadata() {
         },
     };
 
-    let decls = collect(&program, &CrateContext::new(), false, Some("test"))
-        .expect("collection should leave unresolved imports for lowering diagnostics");
+    let errors = match collect(&program, &CrateContext::new(), false, Some("test")) {
+        Ok(_) => panic!("an import that matches nothing must be an error"),
+        Err(errors) => errors,
+    };
 
-    assert_eq!(decls.resolver.import_aliases.get("value"), None);
-    assert_eq!(decls.resolver.item_paths.get("missing::value"), None);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].message, "unresolved import 'missing::value'");
 }
 
 #[test]

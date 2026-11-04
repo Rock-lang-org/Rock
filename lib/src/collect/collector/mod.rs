@@ -21,6 +21,7 @@ pub(crate) struct LocalCollector {
     context: CollectContext,
     id_environment: CollectedIdEnvironment,
     pending_nominal_fields: BTreeMap<DefId, PendingNominalFields>,
+    pending_imports: Vec<imports::PendingImport>,
 }
 
 impl LocalCollector {
@@ -37,6 +38,7 @@ impl LocalCollector {
             context,
             id_environment,
             pending_nominal_fields: BTreeMap::new(),
+            pending_imports: Vec::new(),
         }
     }
 
@@ -63,6 +65,7 @@ impl LocalCollector {
         current_crate_name: Option<&str>,
     ) -> LocalCollection {
         self.complete_nominal_fields();
+        self.report_unresolved_imports();
         self.context
             .into_local_collection(item_index, root_module_id, current_crate_name)
     }

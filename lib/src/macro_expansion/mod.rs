@@ -92,6 +92,15 @@ pub fn expand_macros_with_context(
     let registry = module_registry(&module, context);
     expression::expand_module_expressions(&mut module, &registry, context)?;
 
+    // Imports of dependency macros are fully consumed by expansion; later passes
+    // would otherwise see them as imports of items that do not exist.
+    module.top_levels.retain(|top_level| match top_level {
+        TopLevel::Import(path) => !context
+            .dependency_macros
+            .contains_key(&exports::path_segments(path).join("::")),
+        _ => true,
+    });
+
     program.module = expand_inline_modules(module, context)?;
 
     Ok(program)

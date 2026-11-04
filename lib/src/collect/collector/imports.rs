@@ -5,7 +5,9 @@ use super::path_qualification::{
 use super::LocalCollector;
 use crate::ast;
 use crate::collect::context::path_names;
+use crate::collect::context::CollectContext;
 use crate::ids::DefId;
+use crate::lexer::Span;
 use crate::types::Type;
 use std::collections::HashMap;
 
@@ -47,14 +49,15 @@ impl LocalCollector {
 
     pub(super) fn handle_import(&mut self, path: &ast::Path) {
         let canonical_prefix = self.context.current_module_prefix();
-        self.context
-            .handle_import(path, true, canonical_prefix.as_deref());
+        let mut pending = PendingImport::new(path);
+        let mut resolved =
+            pending.try_import(&mut self.context, path, true, canonical_prefix.as_deref());
         let names = match path {
             ast::Path::Ident(path) => path_names(&path.path),
             ast::Path::Type(path) => path_names(&path.path),
         };
         if let Some(short_name) = names.last().cloned() {
-            self.import_type_alias_local(
+            resolved |= self.import_type_alias_local(
                 canonical_prefix.as_deref().unwrap_or_default(),
                 short_name,
                 names.join("::"),
@@ -62,19 +65,27 @@ impl LocalCollector {
         }
 
         if let Some(qualified_path) = qualify_local_path(&self.context, path) {
-            self.context
-                .handle_import(&qualified_path, true, canonical_prefix.as_deref());
+            resolved |= pending.try_import(
+                &mut self.context,
+                &qualified_path,
+                true,
+                canonical_prefix.as_deref(),
+            );
             let names = match &qualified_path {
                 ast::Path::Ident(path) => path_names(&path.path),
                 ast::Path::Type(path) => path_names(&path.path),
             };
             if let Some(short_name) = names.last().cloned() {
-                self.import_type_alias_local(
+                resolved |= self.import_type_alias_local(
                     canonical_prefix.as_deref().unwrap_or_default(),
                     short_name,
                     names.join("::"),
                 );
             }
+        }
+
+        if !resolved {
+            self.pending_imports.push(pending);
         }
     }
 
@@ -83,21 +94,26 @@ impl LocalCollector {
             ast::Path::Ident(ip) => path_names(&ip.path),
             ast::Path::Type(tp) => path_names(&tp.path),
         };
+        let mut pending = PendingImport::new(path);
+        let mut resolved = false;
         if let (Some(first_segment), Some(short_name)) =
             (original_names.first(), original_names.last().cloned())
         {
             if local_path_segment_is_absolute(&self.context, first_segment) {
-                self.context.handle_import(path, false, Some(prefix));
+                resolved |= pending.try_import(&mut self.context, path, false, Some(prefix));
                 let qualified_name = original_names.join("::");
-                self.record_module_local_artifact_root_alias(prefix, &short_name, &qualified_name);
-                self.import_type_alias_local(prefix, short_name, qualified_name);
+                resolved |= self.record_module_local_artifact_root_alias(
+                    prefix,
+                    &short_name,
+                    &qualified_name,
+                );
+                resolved |= self.import_type_alias_local(prefix, short_name, qualified_name);
             }
         }
 
         let resolved_path = qualify_local_path_with_prefix(&self.context, path, prefix)
             .unwrap_or_else(|| path.clone());
-        self.context
-            .handle_import(&resolved_path, false, Some(prefix));
+        resolved |= pending.try_import(&mut self.context, &resolved_path, false, Some(prefix));
         let names = match &resolved_path {
             ast::Path::Ident(ip) => path_names(&ip.path),
             ast::Path::Type(tp) => path_names(&tp.path),
@@ -105,8 +121,28 @@ impl LocalCollector {
 
         if let Some(short_name) = names.last().cloned() {
             let qualified_name = names.join("::");
-            self.record_module_local_artifact_root_alias(prefix, &short_name, &qualified_name);
-            self.import_type_alias_local(prefix, short_name, qualified_name);
+            resolved |=
+                self.record_module_local_artifact_root_alias(prefix, &short_name, &qualified_name);
+            resolved |= self.import_type_alias_local(prefix, short_name, qualified_name);
+        }
+
+        if !resolved {
+            self.pending_imports.push(pending);
+        }
+    }
+
+    /// Reports imports that matched nothing when they were collected and still match
+    /// nothing now that every declaration is registered.
+    pub(super) fn report_unresolved_imports(&mut self) {
+        for pending in std::mem::take(&mut self.pending_imports) {
+            if pending.resolves_now(&self.context) {
+                continue;
+            }
+            let message = format!("unresolved import '{}'", pending.label);
+            match pending.span {
+                Some(span) => self.context.push_error_with_span(message, span),
+                None => self.context.push_error(message),
+            }
         }
     }
 
@@ -145,7 +181,7 @@ impl LocalCollector {
         prefix: &str,
         short_name: String,
         qualified_name: String,
-    ) {
+    ) -> bool {
         if let Some(strukt) = self.context.structs.get(&qualified_name).cloned() {
             let item_id = Some(strukt.id);
             self.context.structs.insert(short_name.clone(), strukt);
@@ -156,7 +192,7 @@ impl LocalCollector {
                 item_id,
                 Some(resolver_alias),
             );
-            return;
+            return true;
         }
 
         if let Some(enum_) = self.context.enums.get(&qualified_name).cloned() {
@@ -169,7 +205,7 @@ impl LocalCollector {
                 item_id,
                 Some(resolver_alias),
             );
-            return;
+            return true;
         }
 
         if let Some(alias) = self.context.type_aliases.get(&qualified_name).cloned() {
@@ -178,7 +214,7 @@ impl LocalCollector {
             let resolver_alias =
                 (!prefix.is_empty()).then(|| format!("{}::{}", prefix, short_name));
             self.record_import_type_alias(short_name, qualified_name, item_id, resolver_alias);
-            return;
+            return true;
         }
 
         if let Some(trait_) = self.context.traits.get(&qualified_name).cloned() {
@@ -191,7 +227,10 @@ impl LocalCollector {
                 item_id,
                 Some(resolver_alias),
             );
+            return true;
         }
+
+        false
     }
 
     pub(super) fn record_module_local_artifact_root_alias(
@@ -199,12 +238,12 @@ impl LocalCollector {
         prefix: &str,
         short_name: &str,
         qualified_name: &str,
-    ) {
+    ) -> bool {
         let mut parts = qualified_name.split("::");
         let (Some(crate_name), Some(export_name), None) =
             (parts.next(), parts.next(), parts.next())
         else {
-            return;
+            return false;
         };
 
         let Some(export) = self
@@ -214,7 +253,7 @@ impl LocalCollector {
             .and_then(|exports| exports.get(export_name))
             .cloned()
         else {
-            return;
+            return false;
         };
 
         let resolver_alias = format!("{}::{}", prefix, short_name);
@@ -224,6 +263,7 @@ impl LocalCollector {
         self.context
             .canonical_names_by_id
             .insert(export.id, export.source);
+        true
     }
 
     pub(super) fn record_import_type_alias(
@@ -243,4 +283,75 @@ impl LocalCollector {
                 .insert(id, qualified_name);
         }
     }
+}
+
+/// An import that matched nothing when it was collected, kept so it can be
+/// checked again once every declaration is registered.
+pub(super) struct PendingImport {
+    label: String,
+    span: Option<Span>,
+    /// Each `(qualified_name, record_canonical_aliases, canonical_prefix)` tried.
+    attempts: Vec<(String, bool, Option<String>)>,
+}
+
+impl PendingImport {
+    fn new(path: &ast::Path) -> Self {
+        let segments = match path {
+            ast::Path::Ident(path) => &path.path,
+            ast::Path::Type(path) => &path.path,
+        };
+        Self {
+            label: path_names(segments).join("::"),
+            span: path_span(segments),
+            attempts: Vec::new(),
+        }
+    }
+
+    fn try_import(
+        &mut self,
+        context: &mut CollectContext,
+        path: &ast::Path,
+        record_canonical_aliases: bool,
+        canonical_prefix: Option<&str>,
+    ) -> bool {
+        let names = match path {
+            ast::Path::Ident(path) => path_names(&path.path),
+            ast::Path::Type(path) => path_names(&path.path),
+        };
+        self.attempts.push((
+            names.join("::"),
+            record_canonical_aliases,
+            canonical_prefix.map(str::to_string),
+        ));
+        context.handle_import(path, record_canonical_aliases, canonical_prefix)
+    }
+
+    fn resolves_now(&self, context: &CollectContext) -> bool {
+        self.attempts.iter().any(
+            |(qualified_name, record_canonical_aliases, canonical_prefix)| {
+                context
+                    .resolve_import(
+                        qualified_name,
+                        *record_canonical_aliases,
+                        canonical_prefix.as_deref(),
+                    )
+                    .is_some()
+                    || context
+                        .externs
+                        .iter()
+                        .any(|ext| &ext.name == qualified_name)
+            },
+        )
+    }
+}
+
+/// Span covering every segment of an import path.
+fn path_span(segments: &[ast::IdentOrType]) -> Option<Span> {
+    let segment_span = |segment: &ast::IdentOrType| match segment {
+        ast::IdentOrType::Ident(ident) => ident.span.clone(),
+        ast::IdentOrType::Type(ty) => ty.span(),
+    };
+    let first = segment_span(segments.first()?);
+    let last = segment_span(segments.last()?);
+    Some(Span::new(first.file_path, first.start, last.end))
 }

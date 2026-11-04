@@ -7,27 +7,38 @@ use crate::types::Type;
 use std::collections::HashMap;
 
 /// What an imported name resolved to.
-pub(super) enum ImportTarget {
+pub(crate) enum ImportTarget {
     /// A function or binding: it also needs a scope entry with this type.
     Value(Type),
     /// A struct, enum, type alias or trait.
     TypeItem,
 }
 
+/// Where an import resolved, before anything is bound.
+pub(crate) enum ImportResolution {
+    /// A dependency or re-exported item, bound through its artifact export.
+    ArtifactExport(ArtifactExport),
+    /// A declaration registered under the path as written.
+    Declared(ImportTarget),
+    /// A declaration registered under the canonical form of the path.
+    CanonicalDeclared(String, ImportTarget),
+}
+
 impl CollectContext {
+    /// Imports `path`. Returns `false` when nothing matches it yet.
     pub(crate) fn handle_import(
         &mut self,
         path: &ast::Path,
         record_canonical_aliases: bool,
         canonical_prefix: Option<&str>,
-    ) {
+    ) -> bool {
         let names = match path {
             ast::Path::Ident(path) => path_names(&path.path),
             ast::Path::Type(path) => path_names(&path.path),
         };
 
         if names.is_empty() {
-            return;
+            return false;
         }
 
         let qualified_name = names.join("::");
@@ -38,9 +49,11 @@ impl CollectContext {
             true,
             record_canonical_aliases,
             canonical_prefix,
-        );
+        )
     }
 
+    /// Binds `short_name` to the item at `qualified_name`. Returns `false` when no
+    /// declaration matches it yet.
     pub(crate) fn import_qualified_name(
         &mut self,
         short_name: String,
@@ -48,60 +61,34 @@ impl CollectContext {
         is_explicit: bool,
         record_canonical_aliases: bool,
         canonical_prefix: Option<&str>,
-    ) {
-        let canonical_qualified_name = canonical_prefix
-            .map(|prefix| self.qualify_import_source(&qualified_name, Some(prefix)))
-            .or_else(|| {
-                record_canonical_aliases
-                    .then(|| self.qualify_import_source(&qualified_name, canonical_prefix))
-            });
+    ) -> bool {
+        let Some(resolution) =
+            self.resolve_import(&qualified_name, record_canonical_aliases, canonical_prefix)
+        else {
+            return false;
+        };
 
-        if let Some(export) = self.artifact_root_export_for_import(&qualified_name) {
-            self.import_artifact_root_export(
+        match resolution {
+            ImportResolution::ArtifactExport(export) => self.import_artifact_root_export(
                 short_name,
                 qualified_name,
                 export,
                 is_explicit,
                 record_canonical_aliases,
                 canonical_prefix,
-            );
-            return;
-        }
-
-        if let Some(export_source) = canonical_qualified_name
-            .as_ref()
-            .and_then(|name| self.export_aliases.get(name))
-            .or_else(|| self.export_aliases.get(&qualified_name))
-            .cloned()
-        {
-            if let Some(export) = self.export_for_registered_item(&export_source) {
-                self.import_artifact_root_export(
-                    short_name,
-                    qualified_name,
+            ),
+            ImportResolution::Declared(target) => {
+                let export = self.export_for_import_source(&qualified_name);
+                self.bind_import(
+                    &short_name,
+                    target,
+                    &qualified_name,
+                    is_explicit && record_canonical_aliases,
                     export,
-                    is_explicit,
-                    record_canonical_aliases,
                     canonical_prefix,
                 );
-                return;
             }
-        }
-
-        if let Some(target) = self.lookup_import_target(&qualified_name) {
-            let export = self.export_for_import_source(&qualified_name);
-            self.bind_import(
-                &short_name,
-                target,
-                &qualified_name,
-                is_explicit && record_canonical_aliases,
-                export,
-                canonical_prefix,
-            );
-            return;
-        }
-
-        if let Some(canonical_qualified_name) = canonical_qualified_name {
-            if let Some(target) = self.lookup_import_target(&canonical_qualified_name) {
+            ImportResolution::CanonicalDeclared(canonical_qualified_name, target) => {
                 let export = self.export_for_registered_item(&canonical_qualified_name);
                 self.bind_import(
                     &short_name,
@@ -113,6 +100,46 @@ impl CollectContext {
                 );
             }
         }
+        true
+    }
+
+    /// Finds what an import of `qualified_name` refers to, without binding anything.
+    pub(crate) fn resolve_import(
+        &self,
+        qualified_name: &str,
+        record_canonical_aliases: bool,
+        canonical_prefix: Option<&str>,
+    ) -> Option<ImportResolution> {
+        let canonical_qualified_name = canonical_prefix
+            .map(|prefix| self.qualify_import_source(qualified_name, Some(prefix)))
+            .or_else(|| {
+                record_canonical_aliases
+                    .then(|| self.qualify_import_source(qualified_name, canonical_prefix))
+            });
+
+        if let Some(export) = self.artifact_root_export_for_import(qualified_name) {
+            return Some(ImportResolution::ArtifactExport(export));
+        }
+
+        if let Some(export) = canonical_qualified_name
+            .as_ref()
+            .and_then(|name| self.export_aliases.get(name))
+            .or_else(|| self.export_aliases.get(qualified_name))
+            .and_then(|export_source| self.export_for_registered_item(export_source))
+        {
+            return Some(ImportResolution::ArtifactExport(export));
+        }
+
+        if let Some(target) = self.lookup_import_target(qualified_name) {
+            return Some(ImportResolution::Declared(target));
+        }
+
+        let canonical_qualified_name = canonical_qualified_name?;
+        let target = self.lookup_import_target(&canonical_qualified_name)?;
+        Some(ImportResolution::CanonicalDeclared(
+            canonical_qualified_name,
+            target,
+        ))
     }
 
     /// Finds what `name` refers to among the registered declarations.

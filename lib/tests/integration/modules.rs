@@ -369,6 +369,36 @@ fn test_missing_module_reports_all_searched_paths() {
 }
 
 #[test]
+fn test_unresolved_import_reports_diagnostic() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    std::fs::write(dir.join("util.rk"), "answer = -> 42\n\n< answer\n").unwrap();
+    std::fs::write(
+        dir.join("test.rk"),
+        "mod util\n> util::answr\n\nmain = -> 0\n",
+    )
+    .unwrap();
+
+    let config = test_config(dir.join("test.rk"), dir.clone());
+    let diagnostics =
+        rock_lib::compile(&config).expect_err("an import of a missing item should fail");
+    let text = diagnostics
+        .0
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        text.contains("unresolved import 'util::answr'"),
+        "diagnostics were {text}"
+    );
+}
+
+#[test]
 fn test_circular_module_load_reports_diagnostic() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
