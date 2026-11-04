@@ -22,6 +22,9 @@ use std_cache_key::{std_cache_compiler_stamp, std_cache_key};
 #[path = "support/callable.rs"]
 mod callable;
 
+#[path = "support/json.rs"]
+mod json;
+
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[test]

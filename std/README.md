@@ -15,6 +15,7 @@ children and re-exports its public API.
 | `string` | Owned strings and borrowed UTF-8 operations |
 | `control` | Option, Result, and short-circuiting protocols |
 | `io` | Shared I/O contracts, files, and networking |
+| `json` | Owned JSON values, parsing, and compact serialization |
 | `concurrency` | Shared ownership, mutexes, thread-safety markers, and threads |
 | `ffi` | C library declarations |
 
@@ -80,3 +81,8 @@ The atomic implementation module remains private.
 
 The former flat module paths are not retained as aliases. Rebuild std
 artifacts alongside the compiler and update explicit imports to the new paths.
+
+`std::json::parse` (`&Str -> Result Value, Error`) and `std::json::stringify`
+(`&Value -> Result String, Error`) preserve number spellings and duplicate object
+keys, with a 128-container nesting limit. Errors include a message and byte offset.
+Run tests with `cargo test --locked -p rock-lib --test integration json::`.

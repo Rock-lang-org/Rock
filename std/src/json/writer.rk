@@ -1,0 +1,77 @@
+> std::collections::Vec
+> std::string::String
+> std::convert::From
+> std::control::Result
+> std::json::Value
+> std::json::Error
+> std::json::constants::*
+
+append: &mut (Vec U8) -> &Str -> ()
+append = output, text !->
+    for byte in text.as_bytes!
+        output.push *byte
+
+write_string: &mut (Vec U8) -> &Str -> ()
+write_string = output, text !->
+    output.push ('"' as U8)
+    for item in text.as_bytes!
+        byte = *item
+        match byte as Char
+            '"' => append &mut *output, "\\\""
+            '\\' => append &mut *output, "\\\\"
+            '\n' => append &mut *output, "\\n"
+            '\r' => append &mut *output, "\\r"
+            '\t' => append &mut *output, "\\t"
+            _ =>
+                if byte == (backspace! as U8)
+                    append &mut *output, "\\b"
+                else if byte == (form_feed! as U8)
+                    append &mut *output, "\\f"
+                else if byte < (control_character_limit! as U8)
+                    append &mut *output, "\\u00"
+                    hex = "0123456789abcdef".as_bytes!
+                    output.push hex[(byte as I64) / 16]
+                    output.push hex[(byte as I64) % 16]
+                else
+                    output.push byte
+    output.push ('"' as U8)
+
+write_value: &mut (Vec U8) -> &Value -> I64 -> Result (), Error
+write_value = output, value, depth ->
+    match *value
+        Value::Null => append &mut *output, "null"
+        Value::Bool flag => append &mut *output, (if flag then "true" else "false")
+        Value::Number number => append &mut *output, number.as_str!
+        Value::String text => write_string &mut *output, text.as_str!
+        Value::Array items =>
+            if depth >= max_nesting_depth!
+                result: Result (), Error = Result::Err (Error::new output.len!, "nesting limit exceeded")
+                return result
+            output.push ('[' as U8)
+            for i in 0..items.len!
+                if i > 0
+                    output.push (',' as U8)
+                write_value &mut *output, &items[i], (depth + 1)?
+            output.push (']' as U8)
+        Value::Object members =>
+            if depth >= max_nesting_depth!
+                result: Result (), Error = Result::Err (Error::new output.len!, "nesting limit exceeded")
+                return result
+            output.push ('{' as U8)
+            for i in 0..members.len!
+                if i > 0
+                    output.push (',' as U8)
+                member: &(String, Value) = &members[i]
+                key: &String = &((*member).0)
+                write_string &mut *output, key.as_str!
+                output.push (':' as U8)
+                item: &Value = &((*member).1)
+                write_value &mut *output, item, (depth + 1)?
+            output.push ('}' as U8)
+    Result::Ok ()
+
+stringify: &Value -> Result String, Error
+< stringify = value ->
+    mut output: Vec U8 = Vec::new!
+    write_value &mut output, value, 0?
+    Result::Ok (String::from output.as_slice!)

@@ -1,0 +1,218 @@
+> std::collections::Vec
+> std::string::String
+> std::convert::From
+> std::control::Result
+> std::json::Value
+> std::json::Number
+> std::json::Error
+> std::json::constants::*
+> std::json::number::byte_at
+> std::json::number::is_digit
+> std::json::number::number_end
+
+< struct Parser
+    < input: &Str
+    < offset: I64
+
+impl Parser
+    @peek: I64
+    @peek = -> byte_at self.input.as_bytes!, self.offset
+
+    @error: &Str -> Error
+    @error = message -> Error::new self.offset, message
+
+    ^@skip_space: ()
+    ^@skip_space = !->
+        loop
+            byte = self.peek!
+            if byte != (' ' as I64) && byte != ('\t' as I64) && byte != ('\n' as I64) && byte != ('\r' as I64)
+                break
+            self.offset = self.offset + 1
+
+    ^@literal: &Str -> Value -> Result Value, Error
+    ^@literal = text, value ->
+        for byte in text.as_bytes!
+            if self.peek! != *byte as I64
+                result: Result Value, Error = Result::Err (self.error "invalid literal")
+                return result
+            self.offset = self.offset + 1
+        Result::Ok value
+
+    ^@hex_quad: Result I64, Error
+    ^@hex_quad = ->
+        mut value = 0
+        for _ in 0..unicode_escape_digits!
+            byte = self.peek!
+            digit = if is_digit byte then byte - ('0' as I64)
+                else if byte >= ('A' as I64) && byte <= ('F' as I64) then byte - ('A' as I64) + 10
+                else if byte >= ('a' as I64) && byte <= ('f' as I64) then byte - ('a' as I64) + 10
+                else -1
+            if digit < 0
+                result: Result I64, Error = Result::Err (self.error "expected four hexadecimal digits")
+                return result
+            value = value * 16 + digit
+            self.offset = self.offset + 1
+        Result::Ok value
+
+    ^@unicode_escape: Result I64, Error
+    ^@unicode_escape = ->
+        first = self.hex_quad!?
+        if first >= high_surrogate_start! && first <= high_surrogate_end!
+            if self.peek! != ('\\' as I64)
+                result: Result I64, Error = Result::Err (self.error "expected low surrogate")
+                return result
+            self.offset = self.offset + 1
+            if self.peek! != ('u' as I64)
+                result: Result I64, Error = Result::Err (self.error "expected low surrogate")
+                return result
+            self.offset = self.offset + 1
+            second = self.hex_quad!?
+            if second < low_surrogate_start! || second > low_surrogate_end!
+                result: Result I64, Error = Result::Err (self.error "invalid low surrogate")
+                return result
+            Result::Ok (supplementary_plane_start! + (first - high_surrogate_start!) * surrogate_range_size! + second - low_surrogate_start!)
+        else if first >= low_surrogate_start! && first <= low_surrogate_end!
+            Result::Err (self.error "unpaired low surrogate")
+        else
+            Result::Ok first
+
+    ^@string: Result String, Error
+    ^@string = ->
+        self.offset = self.offset + 1
+        mut bytes: Vec U8 = Vec::new!
+        loop
+            byte = self.peek!
+            if byte < 0
+                result: Result String, Error = Result::Err (self.error "unterminated string")
+                return result
+            if byte == ('"' as I64)
+                self.offset = self.offset + 1
+                result: Result String, Error = Result::Ok (String::from bytes.as_slice!)
+                return result
+            if byte < control_character_limit!
+                result: Result String, Error = Result::Err (self.error "unescaped control character")
+                return result
+            self.offset = self.offset + 1
+            if byte == ('\\' as I64)
+                escape = self.peek!
+                if escape < 0
+                    result: Result String, Error = Result::Err (self.error "unterminated escape")
+                    return result
+                self.offset = self.offset + 1
+                if escape == ('u' as I64)
+                    scalar = self.unicode_escape!?
+                    encoded = String::from (scalar as Char)
+                    for part in encoded.as_bytes!
+                        bytes.push *part
+                else
+                    decoded = match escape as Char
+                        '"' => '"' as I64
+                        '\\' => '\\' as I64
+                        '/' => '/' as I64
+                        'b' => backspace!
+                        'f' => form_feed!
+                        'n' => '\n' as I64
+                        'r' => '\r' as I64
+                        't' => '\t' as I64
+                        _ => -1
+                    if decoded < 0
+                        result: Result String, Error = Result::Err (Error::new (self.offset - 1), "invalid escape")
+                        return result
+                    bytes.push (decoded as U8)
+            else
+                bytes.push (byte as U8)
+        Result::Err (self.error "unterminated string")
+
+    ^@array: I64 -> Result Value, Error
+    ^@array = depth ->
+        self.offset = self.offset + 1
+        self.skip_space!
+        mut items: Vec Value = Vec::new!
+        if self.peek! == (']' as I64)
+            self.offset = self.offset + 1
+            result: Result Value, Error = Result::Ok (Value::Array items)
+            return result
+        loop
+            item = self.value depth?
+            items.push item
+            self.skip_space!
+            byte = self.peek!
+            self.offset = self.offset + 1
+            if byte == (']' as I64)
+                result: Result Value, Error = Result::Ok (Value::Array items)
+                return result
+            if byte != (',' as I64)
+                result: Result Value, Error = Result::Err (Error::new (self.offset - 1), "expected ',' or ']'")
+                return result
+        Result::Err (self.error "unterminated array")
+
+    ^@object: I64 -> Result Value, Error
+    ^@object = depth ->
+        self.offset = self.offset + 1
+        self.skip_space!
+        mut members: Vec (String, Value) = Vec::new!
+        if self.peek! == ('}' as I64)
+            self.offset = self.offset + 1
+            result: Result Value, Error = Result::Ok (Value::Object members)
+            return result
+        loop
+            self.skip_space!
+            if self.peek! != ('"' as I64)
+                result: Result Value, Error = Result::Err (self.error "expected object key")
+                return result
+            key = self.string!?
+            self.skip_space!
+            if self.peek! != (':' as I64)
+                result: Result Value, Error = Result::Err (self.error "expected ':'")
+                return result
+            self.offset = self.offset + 1
+            value = self.value depth?
+            members.push (key, value)
+            self.skip_space!
+            byte = self.peek!
+            self.offset = self.offset + 1
+            if byte == ('}' as I64)
+                result: Result Value, Error = Result::Ok (Value::Object members)
+                return result
+            if byte != (',' as I64)
+                result: Result Value, Error = Result::Err (Error::new (self.offset - 1), "expected ',' or '}'")
+                return result
+        Result::Err (self.error "unterminated object")
+
+    ^@value: I64 -> Result Value, Error
+    ^@value = depth ->
+        self.skip_space!
+        byte = self.peek!
+        if byte == ('[' as I64) || byte == ('{' as I64)
+            if depth >= max_nesting_depth!
+                result: Result Value, Error = Result::Err (self.error "nesting limit exceeded")
+                return result
+            if byte == ('[' as I64) then self.array (depth + 1) else self.object (depth + 1)
+        else if byte == ('"' as I64)
+            text = self.string!?
+            Result::Ok (Value::String text)
+        else if byte == ('n' as I64)
+            self.literal "null", Value::Null
+        else if byte == ('t' as I64)
+            self.literal "true", (Value::Bool true)
+        else if byte == ('f' as I64)
+            self.literal "false", (Value::Bool false)
+        else if byte == ('-' as I64) || is_digit byte
+            start = self.offset
+            self.offset = number_end self.input.as_bytes!, start?
+            number = Number::parse (&self.input[start..self.offset])?
+            Result::Ok (Value::Number number)
+        else
+            Result::Err (self.error "expected JSON value")
+
+parse: &Str -> Result Value, Error
+< parse = input ->
+    mut parser: Parser = Parser
+        input: input
+        offset: 0
+    value = parser.value 0?
+    parser.skip_space!
+    if parser.offset != input.len!
+        Result::Err (parser.error "trailing characters")
+    else
+        Result::Ok value
