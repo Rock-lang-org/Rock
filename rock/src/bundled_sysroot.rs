@@ -35,11 +35,6 @@ fn current_sysroot_resolution() -> Result<SysrootResolution, String> {
     sysroot::resolve_sysroot(None).map_err(|e| format!("Failed to resolve sysroot: {}", e))
 }
 
-#[cfg(test)]
-pub(crate) fn current_sysroot_layout() -> Result<SysrootLayout, String> {
-    current_sysroot_resolution().map(|resolution| resolution.into_layout())
-}
-
 fn sysroot_std_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -231,4 +226,4 @@ fn package_sysroot_std_with_rockup(std_root: &Path, layout: &SysrootLayout) -> R
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

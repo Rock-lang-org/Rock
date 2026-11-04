@@ -14,14 +14,6 @@ pub(crate) struct RockcInvocation {
 }
 
 impl RockcInvocation {
-    #[cfg(test)]
-    pub(crate) fn args_as_strings(&self) -> Vec<String> {
-        self.args
-            .iter()
-            .map(|arg| arg.to_string_lossy().into_owned())
-            .collect()
-    }
-
     fn into_command(self) -> Command {
         let mut command = Command::new(self.executable);
         command.args(self.args);
@@ -229,3 +221,6 @@ fn install_std_source_component(std_root: &Path, sysroot_root: &Path) -> Result<
 
     copy_directory_recursive(std_root, &destination)
 }
+
+#[cfg(test)]
+mod tests;

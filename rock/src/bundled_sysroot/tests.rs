@@ -1,3 +1,4 @@
+use super::*;
 use std::{
     fs,
     path::PathBuf,
@@ -71,4 +72,8 @@ fn test_sysroot_std_is_fresh_with_current_artifact_format() {
     assert!(sysroot_std_is_fresh(&layout, None).unwrap());
 
     let _ = fs::remove_dir_all(root);
+}
+
+pub(crate) fn current_sysroot_layout() -> Result<SysrootLayout, String> {
+    current_sysroot_resolution().map(|resolution| resolution.into_layout())
 }

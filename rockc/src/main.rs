@@ -9,13 +9,9 @@ mod artifact_validation;
 mod print_request;
 mod source_commands;
 use artifact_emit::normalize_product_object_path;
-#[cfg(test)]
-use artifact_validation::resolve_artifact_object_path;
 use artifact_validation::validate_artifact;
 use print_request::print_request_output;
 use source_commands::{expand_config, format_config};
-#[cfg(test)]
-use source_commands::{load_program_for_source_command, load_program_with_source_database};
 
 fn main() {
     if let Err(e) = run() {

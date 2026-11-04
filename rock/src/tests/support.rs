@@ -5,7 +5,7 @@ use std::process::{Command as ProcessCommand, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
-    bundled_sysroot::{current_sysroot_layout, STD_CRATE_NAME},
+    bundled_sysroot::{tests::current_sysroot_layout, STD_CRATE_NAME},
     package::Package,
 };
 

@@ -1,7 +1,6 @@
-use super::{
-    load_program_for_source_command, load_program_with_source_database, print_request_output,
-    resolve_artifact_object_path, run_config, Config,
-};
+use super::artifact_validation::resolve_artifact_object_path;
+use super::source_commands::{load_program_for_source_command, load_program_with_source_database};
+use super::{print_request_output, run_config, Config};
 use clap::Parser;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
