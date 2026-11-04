@@ -647,3 +647,91 @@ pub(super) fn error_details(errors: Vec<ResolveError>) -> Vec<(String, Option<(u
         })
         .collect()
 }
+
+pub(super) struct CurrentCrateCanonicalFixture {
+    pub(super) program: ast::Program,
+    pub(super) graph: crate::source_loader::ModuleGraph,
+    temp_dir: PathBuf,
+}
+
+impl Drop for CurrentCrateCanonicalFixture {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.temp_dir);
+    }
+}
+
+pub(super) fn current_crate_canonical_fixture() -> CurrentCrateCanonicalFixture {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "rock_collect_canonical_paths_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let root_path = temp_dir.join("main.rk");
+    let io_path = temp_dir.join("io.rk");
+    std::fs::write(&root_path, "mod io\n").unwrap();
+    std::fs::write(&io_path, "struct Writer\n").unwrap();
+    let config = crate::Config {
+        entry_file: root_path.clone(),
+        no_std: true,
+        no_prelude: true,
+        current_crate_name: Some("test".to_string()),
+        ..crate::Config::default()
+    };
+    let mut db = crate::source_loader::SourceDatabase::new();
+    let graph = db.load_entry(root_path.clone(), &config).unwrap();
+
+    CurrentCrateCanonicalFixture {
+        program: ast::Program {
+            module: ast::Module {
+                name: None,
+                top_levels: vec![
+                    ast::TopLevel::StructDecl(ast::StructDecl {
+                        name: ast::ParseTypeInner {
+                            name: "RootThing".to_string(),
+                            generics: vec![],
+                            span: crate::lexer::Span::test(),
+                        },
+                        generic_params: vec![],
+                        fields: vec![],
+                        exported: false,
+                    }),
+                    ast::TopLevel::Module(ast::ModuleDecl(ast::Module {
+                        name: Some(ast::Ident {
+                            name: "math".to_string(),
+                            span: crate::lexer::Span::test(),
+                        }),
+                        top_levels: vec![ast::TopLevel::StructDecl(ast::StructDecl {
+                            name: ast::ParseTypeInner {
+                                name: "Vector".to_string(),
+                                generics: vec![],
+                                span: crate::lexer::Span::test(),
+                            },
+                            generic_params: vec![],
+                            fields: vec![],
+                            exported: false,
+                        })],
+                        is_inline: true,
+                        filepath: None,
+                    })),
+                    ast::TopLevel::Mod(
+                        ast::Ident {
+                            name: "io".to_string(),
+                            span: crate::lexer::Span::test(),
+                        },
+                        false,
+                    ),
+                ],
+                is_inline: false,
+                filepath: Some(root_path),
+            },
+        },
+        graph,
+        temp_dir,
+    }
+}
