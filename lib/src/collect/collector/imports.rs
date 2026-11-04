@@ -90,10 +90,7 @@ impl LocalCollector {
                 self.context.handle_import(path, false, Some(prefix));
                 let qualified_name = original_names.join("::");
                 self.record_module_local_artifact_root_alias(prefix, &short_name, &qualified_name);
-                self.import_type_alias_local(prefix, short_name.clone(), qualified_name.clone());
-                self.context
-                    .import_aliases
-                    .insert(short_name, qualified_name);
+                self.import_type_alias_local(prefix, short_name, qualified_name);
             }
         }
 
@@ -109,20 +106,7 @@ impl LocalCollector {
         if let Some(short_name) = names.last().cloned() {
             let qualified_name = names.join("::");
             self.record_module_local_artifact_root_alias(prefix, &short_name, &qualified_name);
-            self.import_type_alias_local(prefix, short_name.clone(), qualified_name.clone());
-
-            let first_segment = qualified_name.split("::").next().unwrap_or(&qualified_name);
-            let is_dependency_prefix = self
-                .context
-                .loaded_module_paths
-                .iter()
-                .any(|(name, _)| name == first_segment);
-
-            if !is_dependency_prefix {
-                self.context
-                    .import_aliases
-                    .insert(short_name, qualified_name);
-            }
+            self.import_type_alias_local(prefix, short_name, qualified_name);
         }
     }
 
