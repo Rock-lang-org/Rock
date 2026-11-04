@@ -160,7 +160,7 @@ impl CollectContext {
             self.explicit_import_aliases
                 .insert(short_name.to_string(), explicit_target.to_string());
             if let Some(export) = &export {
-                self.record_canonical_alias(short_name.to_string(), export);
+                self.record_explicit_canonical_alias(short_name.to_string(), export);
             }
         }
         if let Some(export) = &export {

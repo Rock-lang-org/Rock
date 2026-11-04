@@ -31,6 +31,37 @@ impl CollectContext {
     }
 
     pub(super) fn record_canonical_alias(&mut self, alias: String, export: &ArtifactExport) {
+        self.record_canonical_alias_inner(alias, export, false);
+    }
+
+    /// Like `record_canonical_alias`, but replaces an existing entry: an explicit
+    /// import must shadow a name the prelude or a glob import brought in.
+    pub(super) fn record_explicit_canonical_alias(
+        &mut self,
+        alias: String,
+        export: &ArtifactExport,
+    ) {
+        self.record_canonical_alias_inner(alias, export, true);
+    }
+
+    fn record_canonical_alias_inner(
+        &mut self,
+        alias: String,
+        export: &ArtifactExport,
+        overwrite: bool,
+    ) {
+        // Always record the alias by DefId, local items included, so the resolver
+        // never depends on re-resolving a path string later.
+        if overwrite {
+            self.canonical_import_aliases.insert(alias, export.id);
+        } else {
+            self.canonical_import_aliases
+                .entry(alias)
+                .or_insert(export.id);
+        }
+
+        // Local items register their own canonical name when declared; the import
+        // path may not be canonical, so only foreign items take their name from here.
         let first_segment = export.source.split("::").next().unwrap_or(&export.source);
         if self
             .current_crate_name
@@ -40,9 +71,6 @@ impl CollectContext {
             return;
         }
 
-        self.canonical_import_aliases
-            .entry(alias)
-            .or_insert(export.id);
         self.canonical_names_by_id
             .entry(export.id)
             .or_insert_with(|| export.source.clone());
