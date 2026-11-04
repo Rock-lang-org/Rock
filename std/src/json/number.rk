@@ -1,0 +1,68 @@
+> std::string::String
+> std::convert::From
+> std::control::Result
+> std::json::Error
+> std::json::Number
+
+byte_at: &[U8] -> I64 -> I64
+< byte_at = bytes, offset ->
+    if offset >= 0 && offset < bytes.len! then bytes[offset] as I64 else -1
+
+is_digit: I64 -> Bool
+< is_digit = byte -> byte >= ('0' as I64) && byte <= ('9' as I64)
+
+// Scan one number; the caller checks what may follow it.
+number_end: &[U8] -> I64 -> Result I64, Error
+< number_end = bytes, start ->
+    mut i = start
+    if (byte_at bytes, i) == ('-' as I64)
+        i = i + 1
+    first = byte_at bytes, i
+    if first == ('0' as I64)
+        i = i + 1
+        if is_digit (byte_at bytes, i)
+            result: Result I64, Error = Result::Err (Error::new i, "leading zero in number")
+            return result
+    else if first >= ('1' as I64) && first <= ('9' as I64)
+        while is_digit (byte_at bytes, i)
+            i = i + 1
+    else
+        result: Result I64, Error = Result::Err (Error::new i, "expected digit")
+        return result
+    if (byte_at bytes, i) == ('.' as I64)
+        i = i + 1
+        if !(is_digit (byte_at bytes, i))
+            result: Result I64, Error = Result::Err (Error::new i, "expected fraction digit")
+            return result
+        while is_digit (byte_at bytes, i)
+            i = i + 1
+    exponent = byte_at bytes, i
+    if exponent == ('e' as I64) || exponent == ('E' as I64)
+        i = i + 1
+        sign = byte_at bytes, i
+        if sign == ('+' as I64) || sign == ('-' as I64)
+            i = i + 1
+        if !(is_digit (byte_at bytes, i))
+            result: Result I64, Error = Result::Err (Error::new i, "expected exponent digit")
+            return result
+        while is_digit (byte_at bytes, i)
+            i = i + 1
+    Result::Ok i
+
+impl Number
+    parse: &Str -> Result Number, Error
+    parse = text ->
+        end = number_end text.as_bytes!, 0?
+        if end != text.len!
+            Result::Err (Error::new end, "invalid number")
+        else
+            number = Number
+                text: String::from text
+            Result::Ok number
+
+    from_i64: I64 -> Number
+    from_i64 = value -> Number
+        text: String::from value
+
+    @as_str: &Str
+    @as_str = -> self.text.as_str!

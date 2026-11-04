@@ -1,0 +1,14 @@
+// Rock uses zero-argument functions for named constants.
+< max_nesting_depth = -> 128
+< control_character_limit = -> 32
+< backspace = -> 8
+< form_feed = -> 12
+< unicode_escape_digits = -> 4
+
+// UTF-16 surrogate ranges: U+D800..U+DBFF and U+DC00..U+DFFF.
+< high_surrogate_start = -> 55296
+< high_surrogate_end = -> 56319
+< low_surrogate_start = -> 56320
+< low_surrogate_end = -> 57343
+< surrogate_range_size = -> 1024
+< supplementary_plane_start = -> 65536

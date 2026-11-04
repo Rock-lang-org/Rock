@@ -51,6 +51,7 @@ infix 10 %
 < mod concurrency
 < mod env
 < mod io
+< mod json
 
 // Prelude module - re-exports of all items available without qualification
 mod prelude

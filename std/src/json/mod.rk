@@ -1,0 +1,42 @@
+// Owned JSON values, strict parsing, and compact serialization.
+
+> std::collections::Vec
+> std::string::String
+> std::show::Show
+> std::convert::From
+
+mod constants
+mod number
+mod parser
+mod writer
+
+< parser::parse
+< writer::stringify
+
+// Keep the validated spelling instead of rounding through a machine float.
+< struct Number
+    text: String
+
+< enum Value
+    Null
+    Bool Bool
+    Number Number
+    String String
+    Array (Vec Value)
+    Object (Vec (String, Value))
+
+// Zero-based byte offset in the input (or partial output when serializing).
+< struct Error
+    < offset: I64
+    < message: String
+
+impl Error
+    new: I64 -> &Str -> Error
+    new = offset, message -> Error
+        offset: offset
+        message: String::from message
+
+impl Show for Error
+    @show = ->
+        text = String::from self.message.as_str!
+        text.concat (String::from " at byte ").concat (String::from self.offset)
