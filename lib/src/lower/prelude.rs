@@ -80,12 +80,7 @@ impl PreludeImports {
             );
 
             if let Some(func) = items.function(export.id) {
-                let param_types: Vec<Type> = func.params.iter().map(|p| p.ty.clone()).collect();
-                let func_type = Type::function_with_safety(
-                    param_types,
-                    func.ret_type.clone(),
-                    crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
-                );
+                let func_type = func.fn_type();
                 scope.define_alias(short_name.clone(), func_type, false);
             } else if let Some(extern_def) = items.extern_def(export.id) {
                 let func_type = Type::function_with_safety(

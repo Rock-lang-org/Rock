@@ -602,6 +602,16 @@ pub enum Path {
     Type(TypePath),
 }
 
+impl Path {
+    /// The path's segments, whichever kind of path it is.
+    pub fn segments(&self) -> &[IdentOrType] {
+        match self {
+            Path::Ident(path) => &path.path,
+            Path::Type(path) => &path.path,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IdentifierPath {
     pub path: Vec<IdentOrType>,

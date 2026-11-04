@@ -384,14 +384,9 @@ impl<'a> LowerResolutionContext<'a> {
         method_name: &str,
         method: &HirFunction,
     ) -> LowerResolvedValue {
-        let param_types: Vec<Type> = method.params.iter().map(|param| param.ty.clone()).collect();
         LowerResolvedValue {
             name: format!("{}::{}", type_name, method_name),
-            ty: Type::function_with_safety(
-                param_types,
-                method.ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(method.is_unsafe),
-            ),
+            ty: method.fn_type(),
             target: Some(HirVarTarget::Function(method.id)),
             is_alias: false,
             scope_index: None,

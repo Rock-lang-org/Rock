@@ -156,13 +156,8 @@ impl Monomorphizer {
         let needs_specialization = has_method_generics || !imp.type_generics.is_empty();
 
         if !needs_specialization {
-            let param_types = method.params.iter().map(|param| param.ty.clone()).collect();
             let ret_type = method.ret_type.clone();
-            let func_ty = Type::function_with_safety(
-                param_types,
-                ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(method.is_unsafe),
-            );
+            let func_ty = method.fn_type();
             let instance_key = crate::mono::InstanceKey::new(
                 self.method_instance_origin(&imp, method),
                 Vec::new(),
@@ -235,13 +230,8 @@ impl Monomorphizer {
             (instance_id, specialized_func)
         };
 
-        let param_types = body.params.iter().map(|param| param.ty.clone()).collect();
         let ret_type = body.ret_type.clone();
-        let func_ty = Type::function_with_safety(
-            param_types,
-            ret_type.clone(),
-            crate::types::FunctionSafety::from_is_unsafe(body.is_unsafe),
-        );
+        let func_ty = body.fn_type();
         let callee = self.instance_callable_expr(display_name, instance_id, func_ty, span);
         Ok((callee, HirCallTarget::Instance(instance_id), ret_type))
     }

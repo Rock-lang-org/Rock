@@ -17,10 +17,7 @@ use super::{
 };
 
 fn path_segments(path: &crate::ast::Path) -> Vec<String> {
-    let segments = match path {
-        crate::ast::Path::Ident(path) => &path.path,
-        crate::ast::Path::Type(path) => &path.path,
-    };
+    let segments = path.segments();
 
     segments
         .iter()

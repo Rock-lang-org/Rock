@@ -32,10 +32,7 @@ impl CollectContext {
         record_canonical_aliases: bool,
         canonical_prefix: Option<&str>,
     ) -> bool {
-        let names = match path {
-            ast::Path::Ident(path) => path_names(&path.path),
-            ast::Path::Type(path) => path_names(&path.path),
-        };
+        let names = path_names(path.segments());
 
         if names.is_empty() {
             return false;
@@ -145,12 +142,7 @@ impl CollectContext {
     /// Finds what `name` refers to among the registered declarations.
     pub(super) fn lookup_import_target(&self, name: &str) -> Option<ImportTarget> {
         if let Some(func) = self.functions.get(name) {
-            let param_types: Vec<Type> = func.params.iter().map(|param| param.ty.clone()).collect();
-            return Some(ImportTarget::Value(Type::function_with_safety(
-                param_types,
-                func.ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
-            )));
+            return Some(ImportTarget::Value(func.fn_type()));
         }
 
         if let Some(binding) = self.scope.lookup(name) {

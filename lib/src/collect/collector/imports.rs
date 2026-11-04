@@ -8,7 +8,6 @@ use crate::collect::context::path_names;
 use crate::collect::context::CollectContext;
 use crate::ids::DefId;
 use crate::lexer::Span;
-use crate::types::Type;
 use std::collections::HashMap;
 
 impl LocalCollector {
@@ -30,12 +29,7 @@ impl LocalCollector {
                 .insert(qualified_export.clone(), qualified_source.clone());
 
             if let Some(func) = self.context.functions.get(&qualified_source) {
-                let param_types: Vec<Type> = func.params.iter().map(|p| p.ty.clone()).collect();
-                let func_type = Type::function_with_safety(
-                    param_types,
-                    func.ret_type.clone(),
-                    crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
-                );
+                let func_type = func.fn_type();
                 self.context
                     .scope
                     .define(qualified_export.clone(), func_type, false);
@@ -52,10 +46,7 @@ impl LocalCollector {
         let mut pending = PendingImport::new(path);
         let mut resolved =
             pending.try_import(&mut self.context, path, true, canonical_prefix.as_deref());
-        let names = match path {
-            ast::Path::Ident(path) => path_names(&path.path),
-            ast::Path::Type(path) => path_names(&path.path),
-        };
+        let names = path_names(path.segments());
         if let Some(short_name) = names.last().cloned() {
             resolved |= self.import_type_alias_local(
                 canonical_prefix.as_deref().unwrap_or_default(),
@@ -71,10 +62,7 @@ impl LocalCollector {
                 true,
                 canonical_prefix.as_deref(),
             );
-            let names = match &qualified_path {
-                ast::Path::Ident(path) => path_names(&path.path),
-                ast::Path::Type(path) => path_names(&path.path),
-            };
+            let names = path_names(qualified_path.segments());
             if let Some(short_name) = names.last().cloned() {
                 resolved |= self.import_type_alias_local(
                     canonical_prefix.as_deref().unwrap_or_default(),
@@ -90,10 +78,7 @@ impl LocalCollector {
     }
 
     pub(super) fn handle_import_in_context(&mut self, path: &ast::Path, prefix: &str) {
-        let original_names = match path {
-            ast::Path::Ident(ip) => path_names(&ip.path),
-            ast::Path::Type(tp) => path_names(&tp.path),
-        };
+        let original_names = path_names(path.segments());
         let mut pending = PendingImport::new(path);
         let mut resolved = false;
         if let (Some(first_segment), Some(short_name)) =
@@ -114,10 +99,7 @@ impl LocalCollector {
         let resolved_path = qualify_local_path_with_prefix(&self.context, path, prefix)
             .unwrap_or_else(|| path.clone());
         resolved |= pending.try_import(&mut self.context, &resolved_path, false, Some(prefix));
-        let names = match &resolved_path {
-            ast::Path::Ident(ip) => path_names(&ip.path),
-            ast::Path::Type(tp) => path_names(&tp.path),
-        };
+        let names = path_names(resolved_path.segments());
 
         if let Some(short_name) = names.last().cloned() {
             let qualified_name = names.join("::");
@@ -296,10 +278,7 @@ pub(super) struct PendingImport {
 
 impl PendingImport {
     fn new(path: &ast::Path) -> Self {
-        let segments = match path {
-            ast::Path::Ident(path) => &path.path,
-            ast::Path::Type(path) => &path.path,
-        };
+        let segments = path.segments();
         Self {
             label: path_names(segments).join("::"),
             span: path_span(segments),
@@ -314,10 +293,7 @@ impl PendingImport {
         record_canonical_aliases: bool,
         canonical_prefix: Option<&str>,
     ) -> bool {
-        let names = match path {
-            ast::Path::Ident(path) => path_names(&path.path),
-            ast::Path::Type(path) => path_names(&path.path),
-        };
+        let names = path_names(path.segments());
         self.attempts.push((
             names.join("::"),
             record_canonical_aliases,

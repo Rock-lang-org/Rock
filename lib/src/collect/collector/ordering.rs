@@ -29,10 +29,7 @@ pub(super) fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLeve
                 .map(|name| (name.name.clone(), index)),
             ast::TopLevel::Mod(name, _) => Some((name.name.clone(), index)),
             ast::TopLevel::Import(path) => {
-                let segments = match path {
-                    ast::Path::Ident(path) => &path.path,
-                    ast::Path::Type(path) => &path.path,
-                };
+                let segments = path.segments();
                 path_names(segments)
                     .last()
                     .filter(|name| name.starts_with(char::is_uppercase))
@@ -62,10 +59,7 @@ pub(super) fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLeve
             }
             match item {
                 ast::TopLevel::Import(path) => {
-                    let segments = match path {
-                        ast::Path::Ident(path) => &path.path,
-                        ast::Path::Type(path) => &path.path,
-                    };
+                    let segments = path.segments();
                     names.0.push(path_names(segments).join("::"));
                 }
                 ast::TopLevel::GlobImport(path) => names.0.push(path.join("::")),

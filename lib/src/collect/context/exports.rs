@@ -7,10 +7,7 @@ pub(crate) fn collect_exports(module: &ast::Module) -> HashMap<String, Option<St
     for top_level in &module.top_levels {
         match top_level {
             ast::TopLevel::Export(path) => {
-                let names = match path {
-                    ast::Path::Ident(ip) => path_names(&ip.path),
-                    ast::Path::Type(tp) => path_names(&tp.path),
-                };
+                let names = path_names(path.segments());
                 if let Some(short_name) = names.last().cloned() {
                     let source = if names.len() > 1 {
                         Some(names.join("::"))

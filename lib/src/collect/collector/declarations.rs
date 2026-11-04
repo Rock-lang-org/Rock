@@ -180,13 +180,7 @@ impl LocalCollector {
                     self.collect_function_header(fd, lookup_name, id);
                     if local_prefix.is_some() && !had_short_function {
                         if let Some(func) = self.context.functions.get(&fd.name.name).cloned() {
-                            let param_types: Vec<Type> =
-                                func.params.iter().map(|p| p.ty.clone()).collect();
-                            let func_type = Type::function_with_safety(
-                                param_types,
-                                func.ret_type.clone(),
-                                crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
-                            );
+                            let func_type = func.fn_type();
                             self.context
                                 .scope
                                 .define(fd.name.name.clone(), func_type, false);
@@ -196,13 +190,7 @@ impl LocalCollector {
                             .get(&local_item_lookup_name(local_prefix, &fd.name.name))
                             .cloned()
                         {
-                            let param_types: Vec<Type> =
-                                func.params.iter().map(|p| p.ty.clone()).collect();
-                            let func_type = Type::function_with_safety(
-                                param_types,
-                                func.ret_type.clone(),
-                                crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
-                            );
+                            let func_type = func.fn_type();
                             self.context
                                 .scope
                                 .define(fd.name.name.clone(), func_type, false);
@@ -364,12 +352,7 @@ impl LocalCollector {
             headers::build_function_header_with_id(&mut self.context, fd, function_id)
         };
 
-        let param_types: Vec<Type> = func.params.iter().map(|p| p.ty.clone()).collect();
-        let func_type = Type::function_with_safety(
-            param_types,
-            func.ret_type.clone(),
-            crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
-        );
+        let func_type = func.fn_type();
         self.context.scope.define(name.clone(), func_type, false);
         self.context.functions.insert(name, func);
     }

@@ -15,6 +15,17 @@ pub struct HirFunctionFor<P: HirPhase> {
     pub is_unsafe: bool,
 }
 
+impl<P: HirPhase> HirFunctionFor<P> {
+    /// The function's callable type: its parameter types, return type and safety.
+    pub fn fn_type(&self) -> Type {
+        Type::function_with_safety(
+            self.params.iter().map(|param| param.ty.clone()).collect(),
+            self.ret_type.clone(),
+            crate::types::FunctionSafety::from_is_unsafe(self.is_unsafe),
+        )
+    }
+}
+
 pub type HirFunction = HirFunctionFor<UnresolvedHir>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

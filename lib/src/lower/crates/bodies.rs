@@ -60,10 +60,7 @@ impl Lowerer {
                 ast::TopLevel::Import(path) => {
                     // Bring an explicitly imported name into scope as a short alias.
                     // e.g. `> std::ffi::libc::malloc` resolves to its canonical extern in HIR.
-                    let names = match path {
-                        crate::ast::Path::Ident(ip) => crate::lower::path_names(&ip.path),
-                        crate::ast::Path::Type(tp) => crate::lower::path_names(&tp.path),
-                    };
+                    let names = crate::lower::path_names(path.segments());
                     if let Some(short) = names.last().cloned() {
                         let qualified = qualify_module_local_path(self, prefix, &names);
                         if self

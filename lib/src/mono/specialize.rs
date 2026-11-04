@@ -27,25 +27,11 @@ impl Monomorphizer {
         let instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
         if let Some(instance_id) = self.instances.get(&instance_key) {
             if let Some(body) = self.instances.pre_mir_body(instance_id) {
-                let param_types: Vec<Type> = body.params.iter().map(|p| p.ty.clone()).collect();
-                let func_type = Type::function_with_safety(
-                    param_types,
-                    body.ret_type.clone(),
-                    crate::types::FunctionSafety::from_is_unsafe(body.is_unsafe),
-                );
+                let func_type = body.fn_type();
                 return Some((instance_id, func_type, body.ret_type.clone()));
             }
             let pending = self.create_specialization_signature(generic_func, &type_args);
-            let param_types = pending
-                .params
-                .iter()
-                .map(|param| param.ty.clone())
-                .collect();
-            let func_type = Type::function_with_safety(
-                param_types,
-                pending.ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(pending.is_unsafe),
-            );
+            let func_type = pending.fn_type();
             return Some((instance_id, func_type, pending.ret_type));
         }
 
@@ -81,12 +67,7 @@ impl Monomorphizer {
         self.instances
             .insert_pre_mir_body(instance_id, specialized_func.clone());
         if let Some(body) = self.instances.pre_mir_body(instance_id) {
-            let param_types: Vec<Type> = body.params.iter().map(|p| p.ty.clone()).collect();
-            let func_type = Type::function_with_safety(
-                param_types,
-                body.ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(body.is_unsafe),
-            );
+            let func_type = body.fn_type();
             return Some((instance_id, func_type, body.ret_type.clone()));
         }
 
@@ -728,12 +709,7 @@ impl Monomorphizer {
         let instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
         if let Some(instance_id) = self.instances.get(&instance_key) {
             if let Some(body) = self.instances.pre_mir_body(instance_id) {
-                let param_types: Vec<Type> = body.params.iter().map(|p| p.ty.clone()).collect();
-                let func_type = Type::function_with_safety(
-                    param_types,
-                    body.ret_type.clone(),
-                    crate::types::FunctionSafety::from_is_unsafe(body.is_unsafe),
-                );
+                let func_type = body.fn_type();
                 return Some((instance_id, func_type, body.ret_type.clone()));
             }
         }
@@ -770,12 +746,7 @@ impl Monomorphizer {
         self.instances
             .insert_pre_mir_body(instance_id, specialized_func.clone());
         if let Some(body) = self.instances.pre_mir_body(instance_id) {
-            let param_types: Vec<Type> = body.params.iter().map(|p| p.ty.clone()).collect();
-            let func_type = Type::function_with_safety(
-                param_types,
-                body.ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(body.is_unsafe),
-            );
+            let func_type = body.fn_type();
             return Some((instance_id, func_type, body.ret_type.clone()));
         }
 

@@ -31,12 +31,7 @@ impl CollectContext {
 
     fn inject_prelude_alias(&mut self, short_name: String, qualified_name: &str) -> bool {
         if let Some(func) = self.functions.get(qualified_name) {
-            let param_types: Vec<Type> = func.params.iter().map(|p| p.ty.clone()).collect();
-            let func_type = Type::function_with_safety(
-                param_types,
-                func.ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
-            );
+            let func_type = func.fn_type();
             self.scope.define(short_name.clone(), func_type, false);
             self.import_aliases
                 .entry(short_name.clone())
@@ -115,12 +110,7 @@ impl CollectContext {
         }
 
         for (name, func) in interface.function_items() {
-            let param_types: Vec<Type> = func.params.iter().map(|param| param.ty.clone()).collect();
-            let func_type = Type::function_with_safety(
-                param_types,
-                func.ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
-            );
+            let func_type = func.fn_type();
             self.scope.define(name.clone(), func_type, false);
             self.record_canonical_item_name(func.id, &name);
             self.functions.insert(name.clone(), func.clone());

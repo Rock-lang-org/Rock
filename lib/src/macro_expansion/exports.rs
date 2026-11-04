@@ -74,10 +74,7 @@ fn direct_child<'a>(path: &'a str, module: &str) -> Option<&'a str> {
 /// Path segments as written. Segments that are not plain names, which can
 /// never name a macro or its module, become empty strings.
 pub(crate) fn path_segments(path: &Path) -> Vec<String> {
-    let segments = match path {
-        Path::Ident(path) => &path.path,
-        Path::Type(path) => &path.path,
-    };
+    let segments = path.segments();
     segments
         .iter()
         .map(|segment| match segment {

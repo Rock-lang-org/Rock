@@ -44,12 +44,7 @@ impl Lowerer {
             let Some(func) = lower_items.function(*id) else {
                 continue;
             };
-            let param_types: Vec<Type> = func.params.iter().map(|p| p.ty.clone()).collect();
-            let func_type = Type::function_with_safety(
-                param_types,
-                func.ret_type.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
-            );
+            let func_type = func.fn_type();
             scope.define_top_level(name.clone(), func_type, false);
         }
         let mut function_ids: Vec<_> = lower_items.functions().map(|(id, _)| id).collect();
@@ -89,12 +84,7 @@ impl Lowerer {
         // are visible during body lowering.
         for (short_name, def_id) in &resolver.import_aliases {
             if let Some(func) = lower_items.function(*def_id) {
-                let param_types: Vec<Type> = func.params.iter().map(|p| p.ty.clone()).collect();
-                let func_type = Type::function_with_safety(
-                    param_types,
-                    func.ret_type.clone(),
-                    crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
-                );
+                let func_type = func.fn_type();
                 scope.define_alias(short_name.clone(), func_type, false);
             } else if let Some(ext) = lower_items.extern_def(*def_id) {
                 let func_type = Type::function_with_safety(
