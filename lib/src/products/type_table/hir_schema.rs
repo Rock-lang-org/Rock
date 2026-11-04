@@ -23,29 +23,6 @@ pub(in crate::products) struct SerializedHirField {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(in crate::products) struct SerializedHirStruct {
-    pub id: crate::ids::DefId,
-    pub name: String,
-    pub generic_params: Vec<ProductGenericParamDecl>,
-    pub fields: Vec<SerializedHirField>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(in crate::products) struct SerializedHirEnum {
-    pub id: crate::ids::DefId,
-    pub name: String,
-    pub generic_params: Vec<ProductGenericParamDecl>,
-    pub variants: Vec<SerializedHirVariant>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(in crate::products) struct SerializedHirVariant {
-    pub id: crate::ids::VariantId,
-    pub name: String,
-    pub fields: SerializedHirVariantFields,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in crate::products) enum SerializedHirVariantFields {
     Named(Vec<SerializedHirField>),
     Positional(Vec<ProductTypeId>),
@@ -105,17 +82,6 @@ pub(in crate::products) struct SerializedPredicate {
     pub subject: ProductTypeId,
     pub trait_id: ProductDefId,
     pub args: Vec<ProductTypeId>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(in crate::products) struct SerializedHirExtern {
-    pub id: crate::ids::DefId,
-    pub name: String,
-    pub params: Vec<ProductTypeId>,
-    pub ret: ProductTypeId,
-    pub variadic: bool,
-    #[serde(default)]
-    pub is_unsafe: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

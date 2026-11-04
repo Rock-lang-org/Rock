@@ -255,18 +255,8 @@ impl ModuleLoweringContext {
         self.current_crate_name.as_deref()
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn set_current_crate_name(&mut self, crate_name: Option<String>) {
-        self.current_crate_name = crate_name;
-    }
-
     pub(crate) fn root_file_path(&self) -> Option<&Path> {
         (!self.file_path.as_os_str().is_empty()).then_some(self.file_path.as_path())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn current_module_path(&self) -> &Path {
-        self.current_module_path.as_path()
     }
 
     pub(crate) fn set_current_module_path(&mut self, path: PathBuf) {
@@ -275,22 +265,6 @@ impl ModuleLoweringContext {
 
     pub(crate) fn replace_current_module_path(&mut self, path: PathBuf) -> PathBuf {
         std::mem::replace(&mut self.current_module_path, path)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn with_current_module_path<F, R>(&mut self, path: PathBuf, visit: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        let previous_path = self.replace_current_module_path(path);
-        let result = visit(self);
-        self.current_module_path = previous_path;
-        result
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn set_current_qualified_module_prefix(&mut self, prefix: Option<String>) {
-        self.current_qualified_module_prefix = prefix;
     }
 
     pub(crate) fn replace_qualified_module_prefix(
@@ -307,17 +281,6 @@ impl ModuleLoweringContext {
 
     pub(crate) fn restore_qualified_module_prefix(&mut self, previous_prefix: Option<String>) {
         self.current_qualified_module_prefix = previous_prefix;
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn with_qualified_module_prefix<F, R>(&mut self, prefix: Option<&str>, visit: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        let previous_prefix = self.replace_qualified_module_prefix(prefix);
-        let result = visit(self);
-        self.current_qualified_module_prefix = previous_prefix;
-        result
     }
 
     pub(crate) fn current_module_prefix(
@@ -497,14 +460,6 @@ impl ModuleSourceProvider {
         self.modules.modules()
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn source_module_paths(&self) -> Vec<(String, PathBuf)> {
-        self.modules
-            .modules()
-            .map(|module| (module.qualified_name.clone(), module.path.clone()))
-            .collect()
-    }
-
     pub(crate) fn loaded_module_paths(&self) -> Vec<(String, PathBuf)> {
         self.modules.loaded_module_paths()
     }
@@ -540,6 +495,31 @@ impl ModuleSourceProvider {
 
     pub(crate) fn source_root_path(&self, root_name: &str) -> Option<PathBuf> {
         self.modules.root_path(root_name)
+    }
+}
+
+#[cfg(test)]
+impl ModuleLoweringContext {
+    pub(crate) fn set_current_qualified_module_prefix(&mut self, prefix: Option<String>) {
+        self.current_qualified_module_prefix = prefix;
+    }
+
+    pub(crate) fn set_current_crate_name(&mut self, crate_name: Option<String>) {
+        self.current_crate_name = crate_name;
+    }
+
+    pub(crate) fn current_module_path(&self) -> &Path {
+        self.current_module_path.as_path()
+    }
+
+    pub(crate) fn with_current_module_path<F, R>(&mut self, path: PathBuf, visit: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let previous_path = self.replace_current_module_path(path);
+        let result = visit(self);
+        self.current_module_path = previous_path;
+        result
     }
 }
 

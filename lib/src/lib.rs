@@ -22,8 +22,6 @@ pub mod parser;
 mod pipeline;
 pub mod products;
 pub mod selection;
-#[cfg(test)]
-mod semantic_identity_audit;
 pub mod source_loader;
 pub mod source_map;
 pub mod sysroot;

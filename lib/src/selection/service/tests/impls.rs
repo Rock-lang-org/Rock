@@ -110,7 +110,6 @@ fn selection_service_selects_current_trait_self_method_by_trait_identity() {
         },
     )]);
     let impls: HashMap<DefId, HirImpl> = HashMap::new();
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let service =
         SelectionService::new(&traits, &impls, None, Some(trait_id), &current_impl_bounds);
@@ -169,7 +168,6 @@ fn selection_service_current_trait_signature_uses_canonical_params_without_dupli
         },
     )]);
     let impls: HashMap<DefId, HirImpl> = HashMap::new();
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let service =
         SelectionService::new(&traits, &impls, None, Some(trait_id), &current_impl_bounds);
@@ -411,7 +409,6 @@ fn selection_service_selects_generic_fixed_array_builtin_slice_impl() {
     let mut traits = HashMap::new();
     register_trait_member(&mut traits, &imp, "echo");
     let impls = HashMap::from([(imp.id, imp)]);
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let effective = effective_trait_methods_for(&traits, &impls);
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds)

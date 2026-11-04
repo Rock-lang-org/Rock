@@ -4,9 +4,8 @@ use super::generic_conversion::{
     encode_generic_param_decls,
 };
 use super::hir_schema::{
-    SerializedHirAssociatedTypeDef, SerializedHirBlock, SerializedHirEnum, SerializedHirExtern,
-    SerializedHirField, SerializedHirFunctionSig, SerializedHirImpl, SerializedHirParam,
-    SerializedHirStruct, SerializedHirVariant, SerializedHirVariantFields,
+    SerializedHirAssociatedTypeDef, SerializedHirBlock, SerializedHirField,
+    SerializedHirFunctionSig, SerializedHirImpl, SerializedHirParam, SerializedHirVariantFields,
 };
 use super::product_schema::{SerializedHirFunction, SerializedHirImplReceiverPattern};
 use super::type_codec::{ProductTypeDecoder, ProductTypeEncoder};
@@ -88,37 +87,6 @@ impl SerializedHirParam {
     }
 }
 
-impl SerializedHirStruct {
-    fn encode(
-        value: &crate::hir::HirStruct,
-        encoder: &mut ProductTypeEncoder,
-    ) -> Result<Self, String> {
-        Ok(Self {
-            id: value.id,
-            name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
-            fields: value
-                .fields
-                .iter()
-                .map(|field| SerializedHirField::encode(field, encoder))
-                .collect::<Result<_, _>>()?,
-        })
-    }
-
-    fn decode(self, decoder: &mut ProductTypeDecoder<'_>) -> Result<crate::hir::HirStruct, String> {
-        Ok(crate::hir::HirStruct {
-            id: self.id,
-            name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
-            fields: self
-                .fields
-                .into_iter()
-                .map(|field| field.decode(decoder))
-                .collect::<Result<_, _>>()?,
-        })
-    }
-}
-
 impl SerializedHirField {
     fn encode(
         value: &crate::hir::HirField,
@@ -162,61 +130,6 @@ impl SerializedHirField {
             name: self.name,
             ty: decoder.decode_type(self.ty)?,
             public: self.public,
-        })
-    }
-}
-
-impl SerializedHirEnum {
-    fn encode(
-        value: &crate::hir::HirEnum,
-        encoder: &mut ProductTypeEncoder,
-    ) -> Result<Self, String> {
-        Ok(Self {
-            id: value.id,
-            name: value.name.clone(),
-            generic_params: encode_generic_param_decls(&value.generic_params, encoder)?,
-            variants: value
-                .variants
-                .iter()
-                .map(|variant| SerializedHirVariant::encode(variant, encoder))
-                .collect::<Result<_, _>>()?,
-        })
-    }
-
-    fn decode(self, decoder: &mut ProductTypeDecoder<'_>) -> Result<crate::hir::HirEnum, String> {
-        Ok(crate::hir::HirEnum {
-            id: self.id,
-            name: self.name,
-            generic_params: decode_generic_param_decls(self.generic_params, decoder)?,
-            variants: self
-                .variants
-                .into_iter()
-                .map(|variant| variant.decode(decoder))
-                .collect::<Result<_, _>>()?,
-        })
-    }
-}
-
-impl SerializedHirVariant {
-    fn encode(
-        value: &crate::hir::HirVariant,
-        encoder: &mut ProductTypeEncoder,
-    ) -> Result<Self, String> {
-        Ok(Self {
-            id: value.id,
-            name: value.name.clone(),
-            fields: SerializedHirVariantFields::encode(&value.fields, encoder)?,
-        })
-    }
-
-    fn decode(
-        self,
-        decoder: &mut ProductTypeDecoder<'_>,
-    ) -> Result<crate::hir::HirVariant, String> {
-        Ok(crate::hir::HirVariant {
-            id: self.id,
-            name: self.name,
-            fields: self.fields.decode(decoder)?,
         })
     }
 }
@@ -394,33 +307,6 @@ impl SerializedHirAssociatedTypeDef {
             name: self.name,
             kind: self.kind,
             ty: decoder.decode_type(self.ty)?,
-        })
-    }
-}
-
-impl SerializedHirExtern {
-    fn encode(
-        value: &crate::hir::HirExtern,
-        encoder: &mut ProductTypeEncoder,
-    ) -> Result<Self, String> {
-        Ok(Self {
-            id: value.id,
-            name: value.name.clone(),
-            params: encoder.encode_types(&value.params)?,
-            ret: encoder.encode_type(&value.ret)?,
-            variadic: value.variadic,
-            is_unsafe: value.is_unsafe,
-        })
-    }
-
-    fn decode(self, decoder: &mut ProductTypeDecoder<'_>) -> Result<crate::hir::HirExtern, String> {
-        Ok(crate::hir::HirExtern {
-            id: self.id,
-            name: self.name,
-            params: decoder.decode_types(&self.params)?,
-            ret: decoder.decode_type(self.ret)?,
-            variadic: self.variadic,
-            is_unsafe: self.is_unsafe,
         })
     }
 }

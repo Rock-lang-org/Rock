@@ -181,7 +181,6 @@ fn selection_uses_mut_to_shared_ref_for_reference_owned_impl() {
     let mut traits = HashMap::new();
     register_trait_member(&mut traits, &imp, "show");
     let impls = HashMap::from([(imp.id, imp)]);
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let effective = effective_trait_methods_for(&traits, &impls);
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds)
@@ -266,7 +265,6 @@ fn selection_autorefs_value_for_reference_owned_shared_method() {
     let mut traits = HashMap::new();
     register_trait_member(&mut traits, &imp, "show");
     let impls = HashMap::from([(imp.id, imp)]);
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let effective = effective_trait_methods_for(&traits, &impls);
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds)
@@ -518,7 +516,7 @@ fn selection_service_rejects_trait_receiver_display_name_collision() {
 }
 
 #[test]
-fn selection_authority_uses_dependency_resolver_for_artifact_backed_receiver() {
+fn selection_authority_selects_dependency_impl_by_receiver_def_id() {
     let dependency_owner = DefId::new(CrateId(7), LocalDefId(3));
     let impl_id = DefId::new(CrateId(7), LocalDefId(4));
     let method_id = DefId::new(CrateId(7), LocalDefId(5));
@@ -541,12 +539,6 @@ fn selection_authority_uses_dependency_resolver_for_artifact_backed_receiver() {
     };
     let traits: HashMap<DefId, HirTrait> = HashMap::new();
     let impls = HashMap::from([(imp.id, imp)]);
-    let resolver = ResolverTables::default();
-    let mut dependency_resolver = ResolverTables::default();
-    dependency_resolver
-        .item_names_by_id
-        .insert(dependency_owner, "dep::Box".to_string());
-    let dependency_resolvers = HashMap::from([("dep".to_string(), dependency_resolver)]);
     let current_impl_bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
     let receiver = HirExpr {
@@ -592,7 +584,6 @@ fn selection_service_rejects_unrelated_empty_receiver_arg_impl_without_identity(
     };
     let traits: HashMap<DefId, HirTrait> = HashMap::new();
     let impls = HashMap::from([(unrelated_impl.id, unrelated_impl)]);
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
     let receiver = HirExpr {

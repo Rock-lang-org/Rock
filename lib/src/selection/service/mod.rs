@@ -32,9 +32,7 @@ pub struct SelectionService<'a> {
     impls: &'a HashMap<DefId, HirImpl>,
     impl_ids: Vec<DefId>,
     sized_trait_id: Option<DefId>,
-    #[allow(dead_code)]
     current_trait: Option<DefId>,
-    #[allow(dead_code)]
     current_impl_bounds: &'a HirGenericBounds,
     effective_trait_methods: &'a HashMap<(DefId, DefId), DefId>,
     active_obligations: RefCell<HashSet<(Type, TraitBound)>>,
@@ -184,5 +182,4 @@ fn inferred_rigid_receiver_type(pattern: &HirImplReceiverPattern) -> Option<Type
 }
 
 #[cfg(test)]
-#[allow(unused_variables)]
 mod tests;

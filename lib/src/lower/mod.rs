@@ -164,7 +164,6 @@ impl Lowerer {
         Self::from_services(LowererServices::new(inject_prelude))
     }
 
-    #[allow(dead_code)]
     pub(crate) fn fresh_local_id(&mut self) -> HirLocalId {
         self.body_context
             .as_mut()
@@ -231,14 +230,6 @@ impl Lowerer {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn current_function_name(&self) -> Option<&str> {
-        self.body_context
-            .as_ref()
-            .map(BodyLoweringContext::function_name)
-    }
-
-    #[allow(dead_code)]
     pub(crate) fn current_body_owner(&self) -> Option<BodyOwner> {
         self.body_context
             .as_ref()
@@ -415,7 +406,6 @@ impl Lowerer {
     pub(crate) fn with_test_body_context<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         self.with_body_context(
             BodyLoweringContext::new(
-                "test".to_string(),
                 BodyOwner::Function(DefId::new(CrateId(0), LocalDefId(u32::MAX - 1))),
                 self.current_generic_owner(),
                 self.current_generic_params().to_vec(),
@@ -446,58 +436,14 @@ impl Lowerer {
         self.diagnostics.errors()
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn resolve_item_def_id(&self, name: &str) -> Option<DefId> {
-        crate::lower::resolution::LowerResolutionContext::new(self).resolve_item_id(name)
-    }
-
     // Staging facades retained while lower resolution call sites migrate task-by-task.
-    #[allow(dead_code)]
     pub(crate) fn resolve_module_alias_or_item_def_id(&self, name: &str) -> Option<DefId> {
         crate::lower::resolution::LowerResolutionContext::new(self)
             .resolve_module_alias_or_item_id(name)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn resolve_item_def_id_for_path(&self, name: &str) -> Option<DefId> {
-        crate::lower::resolution::LowerResolutionContext::new(self).resolve_item_id_for_path(name)
-    }
-
     pub(crate) fn canonical_name_for_def_id(&self, id: DefId) -> Option<&str> {
         crate::lower::resolution::LowerResolutionContext::new(self).canonical_name(id)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn canonical_name_for_alias_or_item(&self, name: &str) -> Option<String> {
-        crate::lower::resolution::LowerResolutionContext::new(self).canonical_name_for_item(name)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn canonical_name_for_alias_or_item_lossy(&self, name: &str) -> String {
-        self.canonical_name_for_alias_or_item(name)
-            .unwrap_or_else(|| name.to_string())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn canonical_name_for_module_alias_or_item_lossy(&self, name: &str) -> String {
-        crate::lower::resolution::LowerResolutionContext::new(self)
-            .canonical_name_for_module_alias_or_item(name)
-            .unwrap_or_else(|| name.to_string())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn function_by_def_id(&self, id: DefId) -> Option<&HirFunction> {
-        self.items.function(id)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn extern_by_def_id(&self, id: DefId) -> Option<&HirExtern> {
-        self.items.extern_def(id)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn top_level_var_target_by_def_id(&self, id: DefId) -> Option<HirVarTarget> {
-        crate::lower::resolution::LowerResolutionContext::new(self).top_level_var_target_by_id(id)
     }
 
     pub(crate) fn generic_substitution_for_owner(
@@ -589,7 +535,6 @@ impl Lowerer {
         (result, params)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn trait_by_name(&self, name: &str) -> Option<&HirTrait> {
         let id = crate::lower::resolution::LowerResolutionContext::new(self)
             .resolve_trait_type(name)?
@@ -669,13 +614,6 @@ impl Lowerer {
         Some(field.ty.substitute_generics(&subst))
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn canonical_owner_path(&self, name: &str) -> String {
-        crate::lower::resolution::LowerResolutionContext::new(self)
-            .try_canonical_owner_path(name)
-            .unwrap_or_else(|| panic!("missing canonical owner path for impl type: {}", name))
-    }
-
     pub(crate) fn try_canonical_owner_path(&self, name: &str) -> Option<String> {
         crate::lower::resolution::LowerResolutionContext::new(self).try_canonical_owner_path(name)
     }
@@ -703,6 +641,17 @@ impl Lowerer {
 impl Default for Lowerer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+impl Lowerer {
+    pub(crate) fn resolve_item_def_id(&self, name: &str) -> Option<DefId> {
+        crate::lower::resolution::LowerResolutionContext::new(self).resolve_item_id(name)
+    }
+
+    pub(crate) fn canonical_name_for_alias_or_item(&self, name: &str) -> Option<String> {
+        crate::lower::resolution::LowerResolutionContext::new(self).canonical_name_for_item(name)
     }
 }
 

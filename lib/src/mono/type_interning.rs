@@ -17,7 +17,6 @@ impl Monomorphizer {
             .expect("mono type normalization must preserve accepted HIR invariants")
     }
 
-    #[allow(dead_code)]
     pub(super) fn type_for(&self, id: crate::ids::TypeId) -> Type {
         self.type_context.type_for(id)
     }

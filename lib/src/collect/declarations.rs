@@ -64,30 +64,6 @@ impl DeclarationItems {
         Ok(items)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn from_named_maps(
-        functions: HashMap<String, HirFunction>,
-        function_sigs: HashMap<String, HirFunctionSig>,
-        structs: HashMap<String, HirStruct>,
-        enums: HashMap<String, HirEnum>,
-        traits: HashMap<String, HirTrait>,
-        impls: Vec<HirImpl>,
-        externs: Vec<HirExtern>,
-        canonical_names_by_id: &HashMap<DefId, String>,
-    ) -> Result<Self, Vec<ResolveError>> {
-        Self::from_named_maps_with_aliases(
-            functions,
-            function_sigs,
-            structs,
-            enums,
-            traits,
-            impls,
-            externs,
-            HashMap::new(),
-            canonical_names_by_id,
-        )
-    }
-
     pub(crate) fn from_named_maps_with_aliases(
         functions: HashMap<String, HirFunction>,
         function_sigs: HashMap<String, HirFunctionSig>,
@@ -264,10 +240,6 @@ impl DeclarationItems {
         self.functions.get(&id)
     }
 
-    pub(crate) fn function_mut(&mut self, id: DefId) -> Option<&mut HirFunction> {
-        self.functions.get_mut(&id)
-    }
-
     pub(crate) fn function_defs(&self) -> impl Iterator<Item = (DefId, &HirFunction)> {
         self.functions.iter().map(|(&id, function)| (id, function))
     }
@@ -276,16 +248,8 @@ impl DeclarationItems {
         self.functions.insert(function.id, function)
     }
 
-    pub(crate) fn remove_function(&mut self, id: DefId) -> Option<HirFunction> {
-        self.functions.remove(&id)
-    }
-
     pub(crate) fn function_sig(&self, id: DefId) -> Option<&HirFunctionSig> {
         self.function_sigs.get(&id)
-    }
-
-    pub(crate) fn function_sig_mut(&mut self, id: DefId) -> Option<&mut HirFunctionSig> {
-        self.function_sigs.get_mut(&id)
     }
 
     pub(crate) fn function_sig_defs(&self) -> impl Iterator<Item = (DefId, &HirFunctionSig)> {
@@ -294,57 +258,22 @@ impl DeclarationItems {
             .map(|(&id, signature)| (id, signature))
     }
 
-    pub(crate) fn insert_function_sig(
-        &mut self,
-        signature: HirFunctionSig,
-    ) -> Option<HirFunctionSig> {
-        self.function_sigs.insert(signature.id, signature)
-    }
-
-    pub(crate) fn remove_function_sig(&mut self, id: DefId) -> Option<HirFunctionSig> {
-        self.function_sigs.remove(&id)
-    }
-
     pub(crate) fn structure(&self, id: DefId) -> Option<&HirStruct> {
         self.structs.get(&id)
-    }
-
-    pub(crate) fn structure_mut(&mut self, id: DefId) -> Option<&mut HirStruct> {
-        self.structs.get_mut(&id)
     }
 
     pub(crate) fn structure_defs(&self) -> impl Iterator<Item = (DefId, &HirStruct)> {
         self.structs.iter().map(|(&id, structure)| (id, structure))
     }
 
-    pub(crate) fn insert_structure(&mut self, structure: HirStruct) -> Option<HirStruct> {
-        self.structs.insert(structure.id, structure)
-    }
-
-    pub(crate) fn remove_structure(&mut self, id: DefId) -> Option<HirStruct> {
-        self.structs.remove(&id)
-    }
-
     pub(crate) fn enumeration(&self, id: DefId) -> Option<&HirEnum> {
         self.enums.get(&id)
-    }
-
-    pub(crate) fn enumeration_mut(&mut self, id: DefId) -> Option<&mut HirEnum> {
-        self.enums.get_mut(&id)
     }
 
     pub(crate) fn enumeration_defs(&self) -> impl Iterator<Item = (DefId, &HirEnum)> {
         self.enums
             .iter()
             .map(|(&id, enumeration)| (id, enumeration))
-    }
-
-    pub(crate) fn insert_enumeration(&mut self, enumeration: HirEnum) -> Option<HirEnum> {
-        self.enums.insert(enumeration.id, enumeration)
-    }
-
-    pub(crate) fn remove_enumeration(&mut self, id: DefId) -> Option<HirEnum> {
-        self.enums.remove(&id)
     }
 
     pub(crate) fn trait_def(&self, id: DefId) -> Option<&HirTrait> {
@@ -357,14 +286,6 @@ impl DeclarationItems {
 
     pub(crate) fn trait_defs(&self) -> impl Iterator<Item = (DefId, &HirTrait)> {
         self.traits.iter().map(|(&id, trait_def)| (id, trait_def))
-    }
-
-    pub(crate) fn insert_trait_def(&mut self, trait_def: HirTrait) -> Option<HirTrait> {
-        self.traits.insert(trait_def.id, trait_def)
-    }
-
-    pub(crate) fn remove_trait_def(&mut self, id: DefId) -> Option<HirTrait> {
-        self.traits.remove(&id)
     }
 
     pub(crate) fn impl_def(&self, id: DefId) -> Option<&HirImpl> {
@@ -383,16 +304,8 @@ impl DeclarationItems {
         self.impls.insert(impl_def.id, impl_def)
     }
 
-    pub(crate) fn remove_impl(&mut self, id: DefId) -> Option<HirImpl> {
-        self.impls.remove(&id)
-    }
-
     pub(crate) fn extern_def(&self, id: DefId) -> Option<&HirExtern> {
         self.externs.get(&id)
-    }
-
-    pub(crate) fn extern_mut(&mut self, id: DefId) -> Option<&mut HirExtern> {
-        self.externs.get_mut(&id)
     }
 
     pub(crate) fn extern_defs(&self) -> impl Iterator<Item = (DefId, &HirExtern)> {
@@ -401,24 +314,12 @@ impl DeclarationItems {
             .map(|(&id, extern_def)| (id, extern_def))
     }
 
-    pub(crate) fn insert_extern(&mut self, extern_def: HirExtern) -> Option<HirExtern> {
-        self.externs.insert(extern_def.id, extern_def)
-    }
-
-    pub(crate) fn remove_extern(&mut self, id: DefId) -> Option<HirExtern> {
-        self.externs.remove(&id)
-    }
-
     pub(crate) fn type_alias(&self, id: DefId) -> Option<&HirTypeAlias> {
         self.type_aliases.get(&id)
     }
 
     pub(crate) fn type_alias_defs(&self) -> impl Iterator<Item = (DefId, &HirTypeAlias)> {
         self.type_aliases.iter().map(|(&id, alias)| (id, alias))
-    }
-
-    pub(crate) fn insert_type_alias(&mut self, alias: HirTypeAlias) -> Option<HirTypeAlias> {
-        self.type_aliases.insert(alias.id, alias)
     }
 
     pub(crate) fn into_id_maps(
@@ -655,6 +556,67 @@ where
                 .get(key)
                 .is_some_and(|right_value| same_value(left_value, right_value))
         })
+}
+
+#[cfg(test)]
+impl DeclarationItems {
+    pub(crate) fn from_named_maps(
+        functions: HashMap<String, HirFunction>,
+        function_sigs: HashMap<String, HirFunctionSig>,
+        structs: HashMap<String, HirStruct>,
+        enums: HashMap<String, HirEnum>,
+        traits: HashMap<String, HirTrait>,
+        impls: Vec<HirImpl>,
+        externs: Vec<HirExtern>,
+        canonical_names_by_id: &HashMap<DefId, String>,
+    ) -> Result<Self, Vec<ResolveError>> {
+        Self::from_named_maps_with_aliases(
+            functions,
+            function_sigs,
+            structs,
+            enums,
+            traits,
+            impls,
+            externs,
+            HashMap::new(),
+            canonical_names_by_id,
+        )
+    }
+}
+
+#[cfg(test)]
+impl DeclarationItems {
+    pub(crate) fn insert_trait_def(&mut self, trait_def: HirTrait) -> Option<HirTrait> {
+        self.traits.insert(trait_def.id, trait_def)
+    }
+
+    pub(crate) fn insert_structure(&mut self, structure: HirStruct) -> Option<HirStruct> {
+        self.structs.insert(structure.id, structure)
+    }
+
+    pub(crate) fn insert_enumeration(&mut self, enumeration: HirEnum) -> Option<HirEnum> {
+        self.enums.insert(enumeration.id, enumeration)
+    }
+
+    pub(crate) fn insert_extern(&mut self, extern_def: HirExtern) -> Option<HirExtern> {
+        self.externs.insert(extern_def.id, extern_def)
+    }
+
+    pub(crate) fn function_mut(&mut self, id: DefId) -> Option<&mut HirFunction> {
+        self.functions.get_mut(&id)
+    }
+
+    pub(crate) fn structure_mut(&mut self, id: DefId) -> Option<&mut HirStruct> {
+        self.structs.get_mut(&id)
+    }
+
+    pub(crate) fn extern_mut(&mut self, id: DefId) -> Option<&mut HirExtern> {
+        self.externs.get_mut(&id)
+    }
+
+    pub(crate) fn enumeration_mut(&mut self, id: DefId) -> Option<&mut HirEnum> {
+        self.enums.get_mut(&id)
+    }
 }
 
 #[cfg(test)]

@@ -2,20 +2,6 @@ use crate::{lexer::Span, parser};
 
 use super::*;
 
-#[test]
-fn formatter_does_not_expose_ast_display_compatibility() {
-    for source in [
-        include_str!("mod.rs"),
-        include_str!("decl.rs"),
-        include_str!("expr.rs"),
-        include_str!("macros.rs"),
-        include_str!("pattern.rs"),
-    ] {
-        assert!(!source.contains(concat!("impl", "_display_with_context")));
-        assert!(!source.contains(concat!("impl std::fmt::", "Display")));
-    }
-}
-
 fn ident(name: &str) -> Ident {
     Ident {
         name: name.to_string(),

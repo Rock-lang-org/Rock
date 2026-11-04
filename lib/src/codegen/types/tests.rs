@@ -46,30 +46,6 @@ fn load_projection_contract(
 }
 
 #[test]
-fn codegen_lowers_llvm_type_from_type_id() {
-    let context = inkwell::context::Context::create();
-    let mut type_context = crate::type_context::TypeContext::new();
-    let i64_id = type_context.intern_type(&Type::I64);
-    let mut codegen = CodeGen::new(&context, "type_id_codegen_test");
-    codegen.set_type_context(type_context.clone());
-
-    assert_eq!(
-        codegen.llvm_type_id(i64_id).into_int_type().get_bit_width(),
-        64
-    );
-    assert!(codegen.type_view().is_copy(i64_id));
-    assert_eq!(
-        codegen
-            .default_value_id(i64_id)
-            .unwrap()
-            .into_int_value()
-            .get_type()
-            .get_bit_width(),
-        64
-    );
-}
-
-#[test]
 fn codegen_lowers_projection_type_id_through_contract_resolution() {
     let context = inkwell::context::Context::create();
     let mut type_context = crate::type_context::TypeContext::new();
@@ -105,47 +81,6 @@ fn codegen_lowers_projection_type_id_through_contract_resolution() {
         codegen
             .llvm_type_id(projection_id)
             .into_int_type()
-            .get_bit_width(),
-        8
-    );
-}
-
-#[test]
-fn default_value_lowers_projection_through_contract_resolution() {
-    let context = inkwell::context::Context::create();
-    let mut codegen = CodeGen::new(&context, "projection_default_value_codegen_test");
-    let mut type_context = crate::type_context::TypeContext::new();
-    let trait_id = DefId::new(CrateId(1), LocalDefId(3));
-    let assoc_type_id = AssocTypeId(0);
-    let base_ty = Type::Struct {
-        id: DefId::new(CrateId(1), LocalDefId(4)),
-        args: Vec::new(),
-    };
-    let projection = Type::Projection {
-        ty: Box::new(base_ty.clone()),
-        trait_id,
-        assoc_type: AssociatedTypeKey {
-            owner: trait_id,
-            assoc_type_id,
-        },
-        trait_args: Vec::new(),
-    };
-    type_context.intern_type(&projection);
-    load_projection_contract(
-        &mut codegen,
-        type_context,
-        &base_ty,
-        trait_id,
-        assoc_type_id,
-        &[],
-        &Type::U8,
-    );
-
-    assert_eq!(
-        codegen
-            .default_value(&projection)
-            .into_int_value()
-            .get_type()
             .get_bit_width(),
         8
     );
@@ -253,18 +188,6 @@ fn test_llvm_type_for_sized_reference_stays_thin() {
     });
 
     assert!(matches!(ty, BasicTypeEnum::PointerType(_)));
-}
-
-#[test]
-fn test_default_value_for_char_uses_i32() {
-    let context = Context::create();
-    let codegen = CodeGen::new(&context, "test");
-
-    let value = codegen.default_value(&Type::Char);
-    let int_value = value.into_int_value();
-
-    assert_eq!(int_value.get_type().get_bit_width(), 32);
-    assert_eq!(int_value.get_zero_extended_constant(), Some(0));
 }
 
 #[test]

@@ -14,6 +14,7 @@ pub(crate) struct RockcInvocation {
 }
 
 impl RockcInvocation {
+    #[cfg(test)]
     pub(crate) fn args_as_strings(&self) -> Vec<String> {
         self.args
             .iter()

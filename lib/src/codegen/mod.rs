@@ -9,8 +9,6 @@
 //! - `runtime`: MIR/backend-shaped runtime helpers
 //! - `output`: Object file writing, linking, and IR output
 
-#![cfg_attr(not(test), allow(dead_code))]
-
 mod callable_resolution;
 mod codegen_error;
 mod contract_validation;
@@ -61,7 +59,6 @@ pub(crate) struct CodeGen<'ctx> {
     type_context: Option<crate::type_context::TypeContext>,
     /// Known functions
     functions: HashMap<String, FunctionValue<'ctx>>,
-    #[allow(dead_code)]
     mir_function_symbols: HashMap<MirFunctionId, String>,
     callable_symbols_by_key: HashMap<MirCallableKey, String>,
     callable_signatures_by_key: HashMap<MirCallableKey, MirCallableSignature>,
@@ -87,10 +84,6 @@ pub(crate) struct CodeGen<'ctx> {
 }
 
 impl<'ctx> CodeGen<'ctx> {
-    pub(crate) fn new(context: &'ctx Context, module_name: &str) -> Self {
-        Self::new_inner(context, module_name, None)
-    }
-
     pub(crate) fn new_with_symbol_namespace(
         context: &'ctx Context,
         module_name: &str,
@@ -177,6 +170,13 @@ impl<'ctx> CodeGen<'ctx> {
         mir: &crate::mir::MirProgram,
     ) -> Result<(), CodegenError> {
         mir_llvm::compile_mir_program(self, mir)
+    }
+}
+
+#[cfg(test)]
+impl<'ctx> CodeGen<'ctx> {
+    pub(crate) fn new(context: &'ctx Context, module_name: &str) -> Self {
+        Self::new_inner(context, module_name, None)
     }
 }
 

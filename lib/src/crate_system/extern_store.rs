@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
@@ -170,12 +168,6 @@ impl ExternCrateBodies {
     pub(crate) fn providers(&self) -> &ExternBodyProviders {
         &self.providers
     }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.providers.generic_functions_by_id.is_empty()
-            && self.providers.traits_with_defaults_by_id.is_empty()
-            && self.providers.generic_impls_by_id.is_empty()
-    }
 }
 
 impl ExternBodyProviders {
@@ -219,10 +211,6 @@ impl ExternBodyProviders {
 
     pub(crate) fn traits_with_defaults(&self) -> &BTreeMap<DefId, HirTrait> {
         &self.traits_with_defaults_by_id
-    }
-
-    pub(crate) fn trait_with_defaults(&self, id: DefId) -> Option<&HirTrait> {
-        self.traits_with_defaults_by_id.get(&id)
     }
 
     pub(crate) fn generic_impls(&self) -> &BTreeMap<DefId, HirImpl> {
@@ -403,10 +391,6 @@ impl<'a> ExternCrateRef<'a> {
         self.record.metadata().prelude_export_ids()
     }
 
-    pub(crate) fn bodies(&self) -> &'a ExternCrateBodies {
-        self.record.bodies()
-    }
-
     pub(crate) fn body_providers(&self) -> &'a ExternBodyProviders {
         self.record.bodies().providers()
     }
@@ -502,17 +486,6 @@ impl ExternCrateStore {
         Ok(())
     }
 
-    pub(crate) fn by_name(&self, name: &str) -> Option<ExternCrateRef<'_>> {
-        self.names
-            .get(name)
-            .and_then(|crate_id| self.records.get(crate_id))
-            .map(ExternCrateRef::new)
-    }
-
-    pub(crate) fn by_crate_id(&self, crate_id: CrateId) -> Option<ExternCrateRef<'_>> {
-        self.records.get(&crate_id).map(ExternCrateRef::new)
-    }
-
     pub(crate) fn contains_name(&self, name: &str) -> bool {
         self.names.contains_key(name)
     }
@@ -522,10 +495,6 @@ impl ExternCrateStore {
             .values()
             .filter_map(|crate_id| self.records.get(crate_id))
             .map(ExternCrateRef::new)
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.records.len()
     }
 
     pub(crate) fn link_inputs(&self) -> DependencyLinkInputs {
@@ -543,5 +512,26 @@ impl ExternCrateStore {
             object_crate_names,
             object_paths,
         }
+    }
+}
+
+#[cfg(test)]
+impl ExternCrateStore {
+    pub(crate) fn by_name(&self, name: &str) -> Option<ExternCrateRef<'_>> {
+        self.names
+            .get(name)
+            .and_then(|crate_id| self.records.get(crate_id))
+            .map(ExternCrateRef::new)
+    }
+
+    pub(crate) fn by_crate_id(&self, crate_id: CrateId) -> Option<ExternCrateRef<'_>> {
+        self.records.get(&crate_id).map(ExternCrateRef::new)
+    }
+}
+
+#[cfg(test)]
+impl ExternBodyProviders {
+    pub(crate) fn trait_with_defaults(&self, id: DefId) -> Option<&HirTrait> {
+        self.traits_with_defaults_by_id.get(&id)
     }
 }

@@ -11,11 +11,10 @@ use inkwell::{AddressSpace, IntPredicate};
 
 use crate::codegen::{CodeGen, CodegenError, MirClosureCodegenMetadata};
 use crate::mir::{
-    AggregateKind, Constant, MirCallableKey, MirClosureId, MirFunction, MirFunctionId, MirPassMode,
-    MirProgram, Operand, Rvalue, StatementData, StatementKind, Terminator,
+    AggregateKind, Constant, MirCallableKey, MirFunction, MirFunctionId, MirPassMode, MirProgram,
+    Operand, Rvalue, StatementData, StatementKind, Terminator,
 };
 
-#[allow(dead_code)]
 pub(crate) struct MirFunctionContext<'ctx> {
     function: FunctionValue<'ctx>,
     locals: Vec<Option<(PointerValue<'ctx>, crate::ids::TypeId)>>,
@@ -31,7 +30,6 @@ pub(crate) fn compile_mir_program(
     codegen.compile_mir_program_bodies(program)
 }
 
-#[allow(dead_code)]
 impl<'ctx> CodeGen<'ctx> {
     fn compile_mir_program_bodies(&mut self, program: &MirProgram) -> Result<(), CodegenError> {
         self.ensure_mir_type_context(program)
@@ -245,28 +243,6 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         Ok(())
-    }
-
-    fn mir_closure_symbol(parent_symbol: &str, closure_id: &MirClosureId) -> String {
-        format!(
-            "__mir_closure_{}_{}_{}",
-            Self::sanitize_symbol(parent_symbol),
-            Self::mir_function_id_symbol_key(&closure_id.owner),
-            closure_id.local_index
-        )
-    }
-
-    fn mir_function_id_symbol_key(id: &MirFunctionId) -> String {
-        match id {
-            MirFunctionId::Function(id) => format!("fn_{}_{}", id.crate_id.0, id.local.0),
-            MirFunctionId::Extern(id) => format!("extern_{}_{}", id.crate_id.0, id.local.0),
-            MirFunctionId::Instance(id) => format!("instance_{}", id.0),
-            MirFunctionId::Closure(id) => format!(
-                "closure_{}_{}",
-                Self::mir_function_id_symbol_key(&id.owner),
-                id.local_index
-            ),
-        }
     }
 
     fn compile_mir_function(&mut self, mir_function: &MirFunction) -> Result<(), CodegenError> {
@@ -738,6 +714,37 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder.position_at_end(done_block);
 
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+impl<'ctx> CodeGen<'ctx> {
+    fn mir_closure_symbol(
+        parent_symbol: &str,
+        closure_id: &crate::mir::identity::MirClosureId,
+    ) -> String {
+        format!(
+            "__mir_closure_{}_{}_{}",
+            Self::sanitize_symbol(parent_symbol),
+            Self::mir_function_id_symbol_key(&closure_id.owner),
+            closure_id.local_index
+        )
+    }
+}
+
+#[cfg(test)]
+impl<'ctx> CodeGen<'ctx> {
+    fn mir_function_id_symbol_key(id: &MirFunctionId) -> String {
+        match id {
+            MirFunctionId::Function(id) => format!("fn_{}_{}", id.crate_id.0, id.local.0),
+            MirFunctionId::Extern(id) => format!("extern_{}_{}", id.crate_id.0, id.local.0),
+            MirFunctionId::Instance(id) => format!("instance_{}", id.0),
+            MirFunctionId::Closure(id) => format!(
+                "closure_{}_{}",
+                Self::mir_function_id_symbol_key(&id.owner),
+                id.local_index
+            ),
+        }
     }
 }
 

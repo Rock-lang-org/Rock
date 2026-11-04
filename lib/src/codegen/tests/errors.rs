@@ -48,24 +48,6 @@ fn codegen_output_failure_is_file_classified() {
 }
 
 #[test]
-fn codegen_project_and_artifact_failures_keep_public_location_codes() {
-    let project_path = std::path::PathBuf::from("/project/rock.toml");
-    let artifact_path = std::path::PathBuf::from("/project/dep.rkca");
-
-    let project = CodegenError::project("invalid project", project_path.clone()).into_diagnostic();
-    let artifact =
-        CodegenError::artifact("invalid artifact", artifact_path.clone()).into_diagnostic();
-
-    assert_eq!(project.code, Some(DiagnosticCode::Project));
-    assert_eq!(project.location, DiagnosticLocation::Project(project_path));
-    assert_eq!(artifact.code, Some(DiagnosticCode::Artifact));
-    assert_eq!(
-        artifact.location,
-        DiagnosticLocation::Artifact(artifact_path)
-    );
-}
-
-#[test]
 fn llvm_details_are_kept_as_notes_without_a_fabricated_source_span() {
     let diagnostic = CodegenError::new("LLVM rejected the module".to_string()).into_diagnostic();
 

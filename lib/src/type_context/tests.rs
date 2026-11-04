@@ -185,17 +185,6 @@ fn type_view_reports_shape_without_structural_type_storage() {
 }
 
 #[test]
-fn type_view_delegates_semantic_facts_to_type_facts() {
-    let source = include_str!("view.rs");
-    let impl_start = source.find("impl<'a> TypeView<'a>").unwrap();
-    let impl_body = &source[impl_start..];
-
-    assert!(impl_body.contains("TypeFacts::is_copy_id"));
-    assert!(!impl_body.contains("Ty::I8"));
-    assert!(!impl_body.contains("Ty::Array { inner"));
-}
-
-#[test]
 fn type_view_exposes_callable_metadata() {
     let mut context = TypeContext::new();
     let capture_ty = context.intern_type(&Type::I64);

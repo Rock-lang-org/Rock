@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
@@ -160,23 +158,6 @@ pub struct MonomorphizedProgram {
     pub type_context: TypeContext,
     /// Session-only source locations; products and artifacts never serialize this map.
     pub(crate) source_map: crate::source_map::SemanticSourceMap,
-}
-
-impl MonomorphizedProgram {
-    pub(crate) fn new(
-        program: HirProgram,
-        type_context: TypeContext,
-        source_map: crate::source_map::SemanticSourceMap,
-    ) -> Self {
-        Self {
-            program,
-            instances: BTreeMap::new(),
-            pre_mir_instance_bodies: PreMirInstanceBodies::new(),
-            generated_drop_instances: BTreeMap::new(),
-            type_context,
-            source_map,
-        }
-    }
 }
 
 pub struct InstanceRegistry {

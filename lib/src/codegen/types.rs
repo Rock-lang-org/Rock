@@ -204,14 +204,6 @@ impl<'ctx> CodeGen<'ctx> {
         self.llvm_type(&structural)
     }
 
-    pub(crate) fn default_value_id(
-        &self,
-        ty: crate::ids::TypeId,
-    ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
-        let structural = self.structural_type_for(ty);
-        Ok(self.default_value(&structural))
-    }
-
     pub(crate) fn build_callable_value(
         &self,
         code_ptr: PointerValue<'ctx>,
@@ -403,60 +395,6 @@ impl<'ctx> CodeGen<'ctx> {
                 .build_int_z_extend(l, r.get_type(), "zext")
                 .map_err(|e| CodegenError::from(format!("Failed to extend unsigned int: {}", e)))?;
             Ok((l_ext, r))
-        }
-    }
-
-    /// Get a default (zero) value for a given type
-    pub(crate) fn default_value(&self, ty: &Type) -> BasicValueEnum<'ctx> {
-        if matches!(ty, Type::Projection { .. }) {
-            let resolved = self.resolve_projection_type(ty);
-            if &resolved != ty {
-                return self.default_value(&resolved);
-            }
-        }
-
-        match ty {
-            Type::I8 | Type::U8 => self.context.i8_type().const_int(0, false).into(),
-            Type::I16 | Type::U16 => self.context.i16_type().const_int(0, false).into(),
-            Type::I32 | Type::U32 => self.context.i32_type().const_int(0, false).into(),
-            Type::I64 | Type::U64 => self.context.i64_type().const_int(0, false).into(),
-            Type::F32 => self.context.f32_type().const_float(0.0).into(),
-            Type::F64 => self.context.f64_type().const_float(0.0).into(),
-            Type::Bool => self.context.bool_type().const_int(0, false).into(),
-            Type::Char => self.context.i32_type().const_int(0, false).into(),
-            Type::Unit | Type::Never => self.context.i64_type().const_int(0, false).into(),
-            // Str is a fat pointer - use zero struct
-            Type::Str => {
-                let llvm_ty = self.llvm_type(&Type::Str);
-                llvm_ty.const_zero().into()
-            }
-            Type::Slice(_)
-            | Type::Array(_, _)
-            | Type::Struct { .. }
-            | Type::Enum { .. }
-            | Type::Tuple(_) => {
-                let llvm_ty = self.llvm_type(ty);
-                llvm_ty.const_zero().into()
-            }
-            Type::Function { .. } => self.callable_type().const_zero().into(),
-            Type::Reference { .. } | Type::Pointer(_) if self.is_fat_pointer_type(ty) => {
-                self.llvm_type(ty).const_zero().into()
-            }
-            Type::Reference { .. } | Type::Pointer(_) => self
-                .context
-                .ptr_type(AddressSpace::default())
-                .const_null()
-                .into(),
-            Type::TypeVar(_)
-            | Type::Generic(_)
-            | Type::Projection { .. }
-            | Type::Constructor { .. }
-            | Type::Apply { .. }
-            | Type::Lambda { .. }
-            | Type::BoundVar { .. }
-            | Type::Error => {
-                panic!("backend-forbidden type reached LLVM default-value lowering: {ty}")
-            }
         }
     }
 }

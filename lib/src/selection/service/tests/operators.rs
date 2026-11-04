@@ -126,7 +126,6 @@ fn selection_service_records_unresolved_generic_trait_operator_target() {
         },
     )]);
     let impls: HashMap<DefId, HirImpl> = HashMap::new();
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
     let receiver = HirExpr {
@@ -180,7 +179,6 @@ fn selection_service_records_unresolved_generic_index_target() {
         },
     )]);
     let impls: HashMap<DefId, HirImpl> = HashMap::new();
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
     let receiver = HirExpr {

@@ -113,7 +113,6 @@ fn selection_service_bound_signature_uses_canonical_params_without_duplicate_sel
         },
     )]);
     let impls: HashMap<DefId, HirImpl> = HashMap::new();
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
     let receiver = HirExpr {
@@ -180,7 +179,6 @@ fn selection_service_bound_mut_receiver_uses_autoref_mut_candidate() {
         },
     )]);
     let impls: HashMap<DefId, HirImpl> = HashMap::new();
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
     let receiver = HirExpr {
@@ -245,7 +243,6 @@ fn selection_service_bound_shared_receiver_on_ref_uses_deref_candidate() {
         },
     )]);
     let impls: HashMap<DefId, HirImpl> = HashMap::new();
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
     let receiver = HirExpr {
@@ -322,7 +319,6 @@ fn selection_service_rejects_bound_signature_receiver_missing_from_params() {
         },
     )]);
     let impls: HashMap<DefId, HirImpl> = HashMap::new();
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
     let receiver = HirExpr {
@@ -500,7 +496,6 @@ fn selection_service_selects_type_var_bound_signature_by_trait_identity() {
     };
     let traits = HashMap::from([(trait_def.id, trait_def)]);
     let impls: HashMap<DefId, HirImpl> = HashMap::new();
-    let resolver = ResolverTables::default();
     let current_impl_bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &current_impl_bounds);
     let receiver = HirExpr {

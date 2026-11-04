@@ -164,7 +164,6 @@ impl Lowerer {
                 });
 
             let mut context = BodyLoweringContext::new(
-                format!("{}::{}", trait_context_name, method_name),
                 BodyOwner::TraitMethod {
                     trait_id: trait_def.id,
                     method_id: func.id,

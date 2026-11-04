@@ -45,9 +45,6 @@ impl GenericLoweringContext {
 }
 
 pub(crate) struct BodyLoweringContext {
-    #[allow(dead_code)]
-    function_name: String,
-    #[allow(dead_code)]
     owner: BodyOwner,
     generic_owner: Option<DefId>,
     generic_params: Vec<String>,
@@ -61,7 +58,6 @@ pub(crate) struct BodyLoweringContext {
 
 impl BodyLoweringContext {
     pub(crate) fn new(
-        function_name: String,
         owner: BodyOwner,
         generic_owner: Option<DefId>,
         generic_params: Vec<String>,
@@ -69,7 +65,6 @@ impl BodyLoweringContext {
         in_unsafe: bool,
     ) -> Self {
         Self {
-            function_name,
             owner,
             generic_owner,
             generic_params,
@@ -80,10 +75,6 @@ impl BodyLoweringContext {
             local_ids: IdGen::<HirLocalId>::new(),
             scope: Scope::new(),
         }
-    }
-
-    pub(crate) fn function_name(&self) -> &str {
-        &self.function_name
     }
 
     pub(crate) fn owner(&self) -> &BodyOwner {

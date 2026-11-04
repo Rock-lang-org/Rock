@@ -168,20 +168,6 @@ impl<'a> LowerResolutionContext<'a> {
         }
     }
 
-    pub(crate) fn current_function_owns_import_name(
-        &self,
-        short_name: &str,
-        imported_id: DefId,
-    ) -> bool {
-        self.resolve_item_id(short_name)
-            .and_then(|id| self.lowerer.items.function(id))
-            .is_some_and(|existing| {
-                existing.id != imported_id
-                    && self.lowerer.current_def_ids.contains(&existing.id)
-                    && self.resolve_item_id(short_name) == Some(existing.id)
-            })
-    }
-
     pub(crate) fn canonicalize_first_path_segment(&self, segments: &[String]) -> Vec<String> {
         let Some((first, rest)) = segments.split_first() else {
             return Vec::new();

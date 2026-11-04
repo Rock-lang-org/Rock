@@ -157,14 +157,8 @@ impl CrateContext {
         names.len()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn add_extern_crate(&mut self, record: ExternCrateRecord) -> Result<(), String> {
         self.extern_crates.insert(record)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn extern_crate(&self, name: &str) -> Option<ExternCrateRef<'_>> {
-        self.extern_crates.by_name(name)
     }
 
     pub(crate) fn extern_crates(&self) -> impl Iterator<Item = ExternCrateRef<'_>> + '_ {
@@ -241,12 +235,10 @@ impl CrateContext {
         self.extern_crates.contains_name(name)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn source_crate(&self, name: &str) -> Option<&CurrentCrateSource> {
         self.source_crates.get(name)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn source_crate_mut(&mut self, name: &str) -> Option<&mut CurrentCrateSource> {
         self.source_crates.get_mut(name)
     }
@@ -428,5 +420,12 @@ impl CrateContext {
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+impl CrateContext {
+    pub(crate) fn extern_crate(&self, name: &str) -> Option<ExternCrateRef<'_>> {
+        self.extern_crates.by_name(name)
     }
 }

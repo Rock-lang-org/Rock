@@ -48,7 +48,6 @@ fn ambiguous_static_bound_method_is_an_error_without_internal_candidate_ids() {
 
     let expr = lowerer.with_body_context(
         BodyLoweringContext::new(
-            "test".to_string(),
             BodyOwner::Function(def_id(58)),
             Some(generic_owner),
             vec!["T".to_string()],
@@ -120,7 +119,6 @@ fn static_bound_method_lookup_expands_supertraits() {
 
     let expr = lowerer.with_body_context(
         BodyLoweringContext::new(
-            "test".to_string(),
             BodyOwner::Function(def_id(63)),
             Some(generic_owner),
             vec!["T".to_string()],
@@ -177,7 +175,6 @@ fn distinct_static_bound_trait_args_remain_ambiguous() {
 
     let expr = lowerer.with_body_context(
         BodyLoweringContext::new(
-            "test".to_string(),
             BodyOwner::Function(def_id(67)),
             Some(generic_owner),
             vec!["T".to_string()],
@@ -257,7 +254,6 @@ fn generic_static_bound_method_instantiates_method_generics_without_replacing_ow
 
     let expr = lowerer.with_body_context(
         BodyLoweringContext::new(
-            "test".to_string(),
             BodyOwner::Function(def_id(71)),
             Some(generic_owner),
             vec!["T".to_string()],
@@ -335,7 +331,6 @@ fn identical_generic_static_bounds_select_one_fresh_method_target() {
 
     let expr = lowerer.with_body_context(
         BodyLoweringContext::new(
-            "test".to_string(),
             BodyOwner::Function(def_id(75)),
             Some(generic_owner),
             vec!["T".to_string()],

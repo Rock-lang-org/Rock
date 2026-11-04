@@ -18,6 +18,7 @@ macro_rules! lower_service_wrapper {
                 Self(inner)
             }
 
+            // Generated for every service; only some of them are unwrapped.
             #[allow(dead_code)]
             pub(crate) fn into_inner(self) -> $inner {
                 self.0
@@ -82,11 +83,6 @@ impl LowerModuleService {
         self.context.associate_current_crate_module_ids(item_index);
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn source_module_paths(&self) -> Vec<(String, std::path::PathBuf)> {
-        self.source_provider.source_module_paths()
-    }
-
     pub(crate) fn into_loaded_module_paths(self) -> Vec<(String, std::path::PathBuf)> {
         self.source_provider.loaded_module_paths()
     }
@@ -116,15 +112,6 @@ impl LowerModuleService {
     ) -> Option<std::path::PathBuf> {
         self.context
             .source_path_for_module_name(&self.source_provider, qualified_module_name)
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn source_path_for_exact_module_name(
-        &self,
-        qualified_module_name: &str,
-    ) -> Option<std::path::PathBuf> {
-        self.source_provider
-            .source_path_for_exact_module_name(qualified_module_name)
     }
 
     pub(crate) fn has_loaded_root_name(&self, root_name: &str) -> bool {

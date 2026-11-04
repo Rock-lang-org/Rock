@@ -1,31 +1,11 @@
 use super::*;
 
 use crate::ids::{CrateId, DefId, LocalDefId};
-use crate::mono::hir_types::{HirBlock, HirFunction};
 use crate::types::Type;
 
 fn i64_type_id() -> crate::ids::TypeId {
     let mut context = crate::type_context::TypeContext::new();
     context.intern_type(&Type::I64)
-}
-
-fn empty_function(id: DefId, name: &str) -> HirFunction {
-    HirFunction {
-        id,
-        name: name.to_string(),
-        generic_params: Vec::new(),
-        generic_bounds: std::collections::HashMap::new().into(),
-        params: Vec::new(),
-        ret_type: Type::Unit,
-        body: HirBlock {
-            stmts: Vec::new(),
-            ty: Type::Unit,
-        },
-        is_curried: false,
-        is_method: false,
-        self_receiver: None,
-        is_unsafe: false,
-    }
 }
 
 #[test]

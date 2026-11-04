@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 mod collection_codec;
 mod expr_conversion;
 mod generic_conversion;

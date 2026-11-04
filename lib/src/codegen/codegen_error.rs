@@ -5,6 +5,10 @@ use crate::lexer::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CodegenErrorKind {
+    // TODO: no code path builds a source-operation error yet, so
+    // `with_operation_span` never attaches a span. Kept until codegen reports
+    // span-carrying failures through `with_span`.
+    #[allow(dead_code)]
     SourceOperation,
     BackendContract,
     Layout,
@@ -19,8 +23,6 @@ enum CodegenErrorKind {
 enum CodegenErrorLocation {
     Source(Span),
     File(PathBuf),
-    Project(PathBuf),
-    Artifact(PathBuf),
     Toolchain,
 }
 
@@ -43,6 +45,7 @@ impl CodegenError {
         }
     }
 
+    #[allow(dead_code)]
     pub(super) fn with_span(message: String, span: Span) -> Self {
         Self {
             message,
@@ -75,24 +78,6 @@ impl CodegenError {
             message: message.into(),
             kind: CodegenErrorKind::Layout,
             location: CodegenErrorLocation::Toolchain,
-            notes: Vec::new(),
-        }
-    }
-
-    pub(super) fn project(message: impl Into<String>, path: impl Into<PathBuf>) -> Self {
-        Self {
-            message: message.into(),
-            kind: CodegenErrorKind::Internal,
-            location: CodegenErrorLocation::Project(path.into()),
-            notes: Vec::new(),
-        }
-    }
-
-    pub(super) fn artifact(message: impl Into<String>, path: impl Into<PathBuf>) -> Self {
-        Self {
-            message: message.into(),
-            kind: CodegenErrorKind::Internal,
-            location: CodegenErrorLocation::Artifact(path.into()),
             notes: Vec::new(),
         }
     }
@@ -158,12 +143,6 @@ impl CodegenError {
             }
             CodegenErrorLocation::File(path) => {
                 Diagnostic::for_file(message, path).with_code(DiagnosticCode::Codegen)
-            }
-            CodegenErrorLocation::Project(path) => {
-                Diagnostic::for_project(message, path).with_code(DiagnosticCode::Project)
-            }
-            CodegenErrorLocation::Artifact(path) => {
-                Diagnostic::for_artifact(message, path).with_code(DiagnosticCode::Artifact)
             }
             CodegenErrorLocation::Toolchain => match kind {
                 CodegenErrorKind::Internal

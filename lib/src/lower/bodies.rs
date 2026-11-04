@@ -288,7 +288,6 @@ impl Lowerer {
         }
 
         let body_context = BodyLoweringContext::new(
-            name.clone(),
             BodyOwner::Function(func.id),
             (!func.generic_params.is_empty()).then_some(func.id),
             func.generic_params
@@ -447,7 +446,6 @@ impl Lowerer {
                     .methods
                     .insert(method_name.clone(), func.clone());
                 let local_id_context = BodyLoweringContext::new(
-                    method_name.clone(),
                     BodyOwner::ImplMethod {
                         impl_id,
                         method_id: func.id,
@@ -627,7 +625,6 @@ impl Lowerer {
                     )
                 };
                 let mut body_context = BodyLoweringContext::new(
-                    method_name.clone(),
                     BodyOwner::ImplMethod {
                         impl_id,
                         method_id: func.id,

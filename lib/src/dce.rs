@@ -269,13 +269,11 @@ fn current_crate_main_function_id(
         .find_map(|(id, name, _)| (id.crate_id == CrateId(0) && name == "main").then_some(id))
 }
 
-#[allow(dead_code)]
 struct InstanceReachabilityIndexes {
     zero_substitution_functions: BTreeMap<DefId, InstanceId>,
     known_instances: BTreeSet<InstanceId>,
 }
 
-#[allow(dead_code)]
 impl InstanceReachabilityIndexes {
     fn new(program: &MonomorphizedProgram) -> Self {
         let mut zero_substitution_functions = BTreeMap::new();

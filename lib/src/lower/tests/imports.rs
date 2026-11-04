@@ -513,39 +513,6 @@ fn glob_import_targets_uses_dependency_resolver_exports() {
 }
 
 #[test]
-fn handle_glob_import_records_dependency_resolver_export_ids() {
-    let dependency_id = DefId::new(CrateId(7), LocalDefId(3));
-    let mut lowerer = Lowerer::new_for_test();
-    lowerer
-        .items
-        .insert_function(test_function(dependency_id, "dep::answer", Vec::new()));
-    let mut dep_resolver = ResolverTables::default();
-    dep_resolver.insert_export_alias_with_name(
-        "answer".to_string(),
-        "dep::answer".to_string(),
-        dependency_id,
-    );
-    lowerer
-        .dependency_resolvers
-        .insert("dep".to_string(), dep_resolver);
-
-    lowerer.handle_glob_import(&["dep".to_string()]);
-
-    assert_eq!(
-        lowerer.resolver.import_aliases.get("answer").copied(),
-        Some(dependency_id)
-    );
-    assert_eq!(
-        lowerer
-            .resolver
-            .item_names_by_id
-            .get(&dependency_id)
-            .map(String::as_str),
-        Some("dep::answer")
-    );
-}
-
-#[test]
 fn injected_prelude_function_alias_remains_id_backed_view() {
     let prelude_id = DefId::new(CrateId(7), LocalDefId(3));
     let mut lowerer = Lowerer::new_for_test();

@@ -17,10 +17,9 @@ pub use rock_shared::manifest::{CrateConfig, CrateManifest, CrateTarget, Depende
 
 pub(crate) use extern_artifacts::{load_extern_artifacts, validate_extern_artifact_names};
 
-#[allow(unused_imports)]
 pub(crate) use extern_store::{
     CurrentCrateSource, DependencyLinkInputs, ExternCrateBodies, ExternCrateLink,
-    ExternCrateLinkage, ExternCrateMetadata, ExternCrateRecord, ExternCrateRef, ExternCrateStore,
+    ExternCrateMetadata, ExternCrateRecord, ExternCrateRef, ExternCrateStore,
 };
 
 /// A hierarchical tree of modules within a crate

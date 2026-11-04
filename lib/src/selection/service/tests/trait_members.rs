@@ -262,7 +262,6 @@ fn trait_lookup_does_not_select_payload_under_a_different_map_key() {
         },
     )]);
     let impls: HashMap<DefId, HirImpl> = HashMap::new();
-    let resolver = ResolverTables::default();
     let bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &bounds);
 
@@ -319,7 +318,6 @@ fn impl_method_does_not_select_trait_default_under_a_different_map_key() {
         methods: HashMap::new(),
     };
     let impls = HashMap::from([(imp.id, imp.clone())]);
-    let resolver = ResolverTables::default();
     let bounds = HirGenericBounds::new();
     let service = SelectionService::new(&traits, &impls, None, None, &bounds);
 

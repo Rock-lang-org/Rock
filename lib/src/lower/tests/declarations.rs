@@ -215,7 +215,6 @@ fn body_lowering_context_owns_body_local_ids_and_restores_lowerer_state() {
 
     let body_owner = DefId::new(CrateId(0), LocalDefId(7));
     let context = crate::lower::body_context::BodyLoweringContext::new(
-        "body".to_string(),
         BodyOwner::Function(body_owner),
         Some(body_owner),
         vec!["T".to_string()],
@@ -224,7 +223,6 @@ fn body_lowering_context_owns_body_local_ids_and_restores_lowerer_state() {
     );
 
     let ids = lowerer.with_body_context(context, |lowerer| {
-        assert_eq!(lowerer.current_function_name(), Some("body"));
         assert_eq!(
             lowerer.current_body_owner(),
             Some(BodyOwner::Function(body_owner))
@@ -240,7 +238,6 @@ fn body_lowering_context_owns_body_local_ids_and_restores_lowerer_state() {
     assert_eq!(lowerer.current_generic_owner(), Some(outer_owner));
     assert_eq!(lowerer.current_generic_params(), &["Outer".to_string()]);
     assert!(!lowerer.is_in_unsafe());
-    assert!(lowerer.current_function_name().is_none());
     assert!(lowerer.current_body_owner().is_none());
 }
 
@@ -260,7 +257,6 @@ fn body_owner_mismatched_method_name_and_id_does_not_rediscover_method() {
     lowerer.items.insert_impl(impl_def).unwrap();
 
     let context = BodyLoweringContext::new(
-        "first".to_string(),
         BodyOwner::ImplMethod {
             impl_id,
             method_id: second_method_id,

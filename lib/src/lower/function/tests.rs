@@ -17,17 +17,6 @@ fn ident(name: &str) -> Ident {
     }
 }
 
-fn unit_signature(name: &str) -> FunctionSig {
-    FunctionSig {
-        name: ident(name),
-        sig: ParseType::Unit(crate::lexer::Span::test()),
-        where_clauses: vec![],
-        self_receiver: None,
-        is_unsafe: false,
-        exported: false,
-    }
-}
-
 fn named_type(name: &str) -> ParseType {
     ParseType::Type(ParseTypeInner {
         name: name.to_string(),
@@ -129,18 +118,6 @@ fn lower_method_signature_injects_shared_self_receiver_type() {
         )]
     );
     assert_eq!(hir_sig.ret, Type::Bool);
-}
-
-#[test]
-fn collect_function_sig_uses_explicit_declaration_id() {
-    let mut lowerer = Lowerer::new_for_test();
-    let declaration = single_param_function_decl("identity", "value");
-    let function_id = def_id(31);
-
-    lowerer.collect_function_sig(&declaration, function_id);
-
-    assert_eq!(lowerer.items.function(function_id).unwrap().id, function_id);
-    assert_eq!(lowerer.items.function_sigs().count(), 0);
 }
 
 #[test]
@@ -315,39 +292,6 @@ fn collect_type_var_ids_visits_projection_base_and_trait_args() {
 
     assert!(type_vars.contains(&base_var));
     assert!(type_vars.contains(&arg_var));
-}
-
-#[test]
-#[should_panic(expected = "missing canonical function signature identity")]
-fn lower_function_sig_panics_without_current_trait_signature_identity() {
-    let mut lowerer = Lowerer::new_for_test();
-    let trait_id = DefId::new(CrateId(0), LocalDefId(10));
-    lowerer.current_trait = Some("Show".to_string());
-    lowerer.generic_context = Some(crate::lower::body_context::GenericLoweringContext::new(
-        trait_id,
-        vec!["Self".to_string()],
-    ));
-
-    lowerer.lower_function_sig(&unit_signature("show"));
-}
-
-#[test]
-#[should_panic(expected = "missing canonical function signature identity")]
-fn lower_function_sig_rejects_top_level_collision_in_trait_context() {
-    let mut lowerer = Lowerer::new_for_test();
-    let trait_id = DefId::new(CrateId(0), LocalDefId(10));
-    let top_level_id = DefId::new(CrateId(0), LocalDefId(11));
-    lowerer.current_trait = Some("Show".to_string());
-    lowerer.generic_context = Some(crate::lower::body_context::GenericLoweringContext::new(
-        trait_id,
-        vec!["Self".to_string()],
-    ));
-    lowerer
-        .resolver
-        .item_paths
-        .insert("show".to_string(), top_level_id);
-
-    lowerer.lower_function_sig(&unit_signature("show"));
 }
 
 #[test]
