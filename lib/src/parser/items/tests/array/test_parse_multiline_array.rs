@@ -1,3 +1,4 @@
+use crate::parser::items::tests::common::lex_test;
 use crate::parser::items::*;
 use crate::parser::*;
 use crate::Config;

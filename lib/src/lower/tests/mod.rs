@@ -1,6 +1,7 @@
 use super::*;
 use crate::ast::{Ident, IdentOrType, IdentifierPath, Program};
 use crate::collect::item_index::{IndexingIds, ItemIndex};
+use crate::collect::resolver::ResolverTables;
 use crate::collect::{DeclarationItems, DeclarationTypeVars, Declarations};
 use crate::crate_artifact::ArtifactExport;
 use crate::crate_system::CrateContext;
@@ -50,4 +51,34 @@ fn declaration_items(
         externs,
     )
     .unwrap()
+}
+
+impl Lowerer {
+    pub(crate) fn resolve_item_def_id(&self, name: &str) -> Option<DefId> {
+        crate::lower::resolution::LowerResolutionContext::new(self).resolve_item_id(name)
+    }
+
+    pub(crate) fn canonical_name_for_alias_or_item(&self, name: &str) -> Option<String> {
+        crate::lower::resolution::LowerResolutionContext::new(self).canonical_name_for_item(name)
+    }
+}
+
+impl Lowerer {
+    pub(crate) fn new_for_test() -> Self {
+        let lowerer = Self::new();
+        lowerer
+    }
+
+    pub(crate) fn with_test_body_context<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.with_body_context(
+            BodyLoweringContext::new(
+                BodyOwner::Function(DefId::new(CrateId(0), LocalDefId(u32::MAX - 1))),
+                self.current_generic_owner(),
+                self.current_generic_params().to_vec(),
+                self.current_impl_bounds().clone(),
+                false,
+            ),
+            f,
+        )
+    }
 }

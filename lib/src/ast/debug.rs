@@ -10,8 +10,6 @@ pub fn debug_ast(ast: &Program) {
 #[derive(Default)]
 struct AstPrinter {
     indent_level: usize,
-    #[cfg(test)]
-    visited_idents: Vec<String>,
 }
 
 impl AstPrinter {
@@ -94,8 +92,6 @@ macro_rules! ast_printer {
             {}
 
             fn visit_ident(&mut self, ident: &'a Ident) {
-                #[cfg(test)]
-                self.visited_idents.push(ident.name.clone());
                 self.name_value(ident.name(), &ident.name);
             }
 

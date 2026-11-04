@@ -249,3 +249,11 @@ fn test_indentation() {
     assert!(indent_levels.contains(&4), "Expected indent level 4");
     assert!(indent_levels.contains(&8), "Expected indent level 8");
 }
+
+impl Lexer {
+    pub fn with_newline_at_end(mut self, add_empty_newline_at_end: bool) -> Self {
+        self.add_empty_newline_at_end = add_empty_newline_at_end;
+
+        self
+    }
+}

@@ -42,11 +42,6 @@ impl DeclarationTypeVars {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn fresh_type_var(&mut self) -> Type {
-        Type::TypeVar(self.next_var.fresh())
-    }
-
     pub(crate) fn fresh_type_var_at(&mut self, span: crate::lexer::Span) -> Type {
         let id = self.next_var.fresh();
         self.var_spans.insert(id, span);
@@ -67,3 +62,6 @@ impl Default for DeclarationTypeVars {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests;

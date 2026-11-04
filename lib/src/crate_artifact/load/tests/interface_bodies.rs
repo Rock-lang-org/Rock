@@ -208,7 +208,7 @@ fn product_interface_shared_default_member_id_requires_matching_signature() {
             signatures: HashMap::from([("value".to_string(), signature)]),
         },
     );
-    super::super::validate_product_interface_rows(&products).unwrap();
+    super::validate_product_interface_rows(&products).unwrap();
     for change in 0..3 {
         let mut malformed = products.clone();
         let signature = malformed
@@ -224,7 +224,7 @@ fn product_interface_shared_default_member_id_requires_matching_signature() {
             1 => signature.params.push(Type::I64),
             _ => signature.is_unsafe = true,
         }
-        assert!(super::super::validate_product_interface_rows(&malformed)
+        assert!(super::validate_product_interface_rows(&malformed)
             .unwrap_err()
             .contains("disagrees"));
     }
@@ -232,7 +232,7 @@ fn product_interface_shared_default_member_id_requires_matching_signature() {
     let mut unrelated = trait_def.signatures["value"].clone();
     unrelated.name = "other".to_string();
     trait_def.signatures.insert("other".to_string(), unrelated);
-    assert!(super::super::validate_product_interface_rows(&products)
+    assert!(super::validate_product_interface_rows(&products)
         .unwrap_err()
         .contains("duplicate callable ID"));
 }

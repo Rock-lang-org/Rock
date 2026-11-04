@@ -1,5 +1,6 @@
 use super::*;
 use crate::ids::{CrateId, DefId, LocalDefId, TypeVarId};
+use crate::infer::constraints::ConstraintStore;
 
 fn test_def(index: u32) -> DefId {
     DefId::new(CrateId(0), LocalDefId(index))

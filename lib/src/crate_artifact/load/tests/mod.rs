@@ -1,3 +1,16 @@
+use super::body_remap::remap_function_child_locations;
+use super::child_location_validator::{
+    ProductChildLocationValidator, MAX_ARTIFACT_HIR_REMAP_DEPTH,
+};
+use super::dependency_definitions::ProductDependencyDefinitions;
+use super::extern_crate_record::{artifact_hir_name_tables, intern_loaded_interface_types};
+use super::generic_remap::remap_type_def_ids;
+use super::method_authority::validate_product_method_authority_maps;
+use super::nominal_validator::ProductNominalTypeValidator;
+use super::product_validation::{validate_product_interface_rows, validate_product_type_fields};
+use super::products_to_interface::{cross_crate_hir_from_products, resolver_from_products};
+use super::target_remap::{remap_pattern_child_locations, remap_var_target_child_location};
+use super::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::PathBuf;
@@ -258,7 +271,55 @@ fn validate_artifact_expr(products: &CompilerProducts, expr: &mut HirExpr) -> Re
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::ProductChildLocationValidator::from_products(products);
-    let type_validator = super::ProductNominalTypeValidator::from_products(products, &remap);
-    super::remap_expr_child_locations(expr, &remap, &child_validator, &type_validator, 0)
+    let child_validator = ProductChildLocationValidator::from_products(products);
+    let type_validator = ProductNominalTypeValidator::from_products(products, &remap);
+    remap_expr_child_locations(expr, &remap, &child_validator, &type_validator, 0)
+}
+
+impl CrateContext {
+    pub(crate) fn load_product_artifact_from_path_as(
+        &mut self,
+        expected_name: &str,
+        artifact_path: PathBuf,
+    ) -> Result<(), String> {
+        let mut context = crate::type_context::TypeContext::new();
+        self.load_product_artifact_from_path_as_with_type_context(
+            expected_name,
+            artifact_path,
+            &mut context,
+        )
+    }
+
+    pub(crate) fn load_product_artifact_from_path_as_with_type_context(
+        &mut self,
+        expected_name: &str,
+        artifact_path: PathBuf,
+        context: &mut crate::type_context::TypeContext,
+    ) -> Result<(), String> {
+        let header = ProductArtifactHeader::read_from_path_bounded(&artifact_path)?;
+        self.load_product_artifact_from_header_as_with_type_context(
+            expected_name,
+            artifact_path,
+            &header,
+            context,
+        )
+    }
+}
+
+pub(crate) fn remap_expr_child_locations<P: crate::hir::HirPhase>(
+    expr: &mut crate::hir::HirExprFor<P>,
+    remap: &ProductIdentityRemap,
+    validator: &ProductChildLocationValidator,
+    type_validator: &ProductNominalTypeValidator,
+    depth: usize,
+) -> Result<(), String> {
+    let mut local_scope = BTreeSet::new();
+    super::body_remap::remap_expr_child_locations_with_scope(
+        expr,
+        remap,
+        validator,
+        type_validator,
+        &mut local_scope,
+        depth,
+    )
 }

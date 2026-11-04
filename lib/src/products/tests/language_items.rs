@@ -327,7 +327,7 @@ fn product_mapping_rejects_mixed_drop_bundle() {
         &HashMap::new(),
     );
 
-    let error = super::super::product_language_items_from_program(
+    let error = super::product_language_items_from_program(
         &program,
         &BTreeSet::from([current_drop_trait]),
         &super::super::ProductIdRemap::new(),
@@ -374,7 +374,7 @@ fn product_mapping_rejects_current_index_mut_without_current_index() {
             BTreeSet::from([ProductDefId::from(id)]),
         );
     }
-    let error = super::super::product_language_items_from_program(
+    let error = super::product_language_items_from_program(
         &program,
         &BTreeSet::from([index_mut_trait, index_mut_method]),
         &remap,
@@ -424,7 +424,7 @@ fn product_mapping_rejects_current_index_without_current_index_mut() {
             BTreeSet::from([ProductDefId::from(id)]),
         );
     }
-    let error = super::super::product_language_items_from_program(
+    let error = super::product_language_items_from_program(
         &program,
         &BTreeSet::from([index_trait, index_method]),
         &remap,
@@ -474,7 +474,7 @@ fn product_mapping_maps_current_index_mut_bundle_preserving_output_id() {
         );
     }
 
-    let items = super::super::product_language_items_from_program(
+    let items = super::product_language_items_from_program(
         &program,
         &BTreeSet::from([index_trait, index_method, index_mut_trait, index_mut_method]),
         &remap,

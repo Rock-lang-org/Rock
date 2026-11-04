@@ -116,16 +116,6 @@ impl PartialEq for Token {
 
 impl Eq for Token {}
 
-#[cfg(test)]
-impl From<TokenType> for Token {
-    fn from(token_type: TokenType) -> Self {
-        Self {
-            token_type,
-            span: Span::test(),
-        }
-    }
-}
-
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.token_type.to_string())
@@ -181,3 +171,6 @@ impl TokenType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

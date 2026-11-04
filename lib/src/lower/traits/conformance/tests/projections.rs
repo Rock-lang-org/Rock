@@ -30,18 +30,17 @@ fn trait_conformance_display_context_renders_generic_projection_names() {
         signatures: HashMap::new(),
     });
 
-    let service =
-        super::super::TraitConformanceService::new(super::super::TraitConformanceContext {
-            items: &mut lowerer.items,
-            engine: &mut lowerer.engine,
-            resolver: &lowerer.resolver,
-            dependency_resolvers: &lowerer.dependency_resolvers,
-            root_crate_id: lowerer.root_crate_id,
-            local_def_ids: &mut lowerer.local_def_ids,
-            current_def_ids: &mut lowerer.current_def_ids,
-            source_map: &lowerer.source_map,
-            index_protocol_ids: None,
-        });
+    let service = super::TraitConformanceService::new(super::TraitConformanceContext {
+        items: &mut lowerer.items,
+        engine: &mut lowerer.engine,
+        resolver: &lowerer.resolver,
+        dependency_resolvers: &lowerer.dependency_resolvers,
+        root_crate_id: lowerer.root_crate_id,
+        local_def_ids: &mut lowerer.local_def_ids,
+        current_def_ids: &mut lowerer.current_def_ids,
+        source_map: &lowerer.source_map,
+        index_protocol_ids: None,
+    });
     let ty = Type::Projection {
         ty: Box::new(Type::Generic(GenericParamId {
             owner: trait_id,

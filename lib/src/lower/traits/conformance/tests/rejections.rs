@@ -77,23 +77,22 @@ fn index_mut_pair_diagnostic_uses_index_mut_method_span() {
     );
 
     let output = {
-        let mut service =
-            super::super::TraitConformanceService::new(super::super::TraitConformanceContext {
-                items: &mut lowerer.items,
-                engine: &mut lowerer.engine,
-                resolver: &lowerer.resolver,
-                dependency_resolvers: &lowerer.dependency_resolvers,
-                root_crate_id: lowerer.root_crate_id,
-                local_def_ids: &mut lowerer.local_def_ids,
-                current_def_ids: &mut lowerer.current_def_ids,
-                source_map: &lowerer.source_map,
-                index_protocol_ids: Some(super::super::IndexProtocolIds {
-                    index_trait: index_trait_id,
-                    index_output: AssocTypeId(1),
-                    index_mut_trait: index_mut_trait_id,
-                    index_mut_output: AssocTypeId(2),
-                }),
-            });
+        let mut service = super::TraitConformanceService::new(super::TraitConformanceContext {
+            items: &mut lowerer.items,
+            engine: &mut lowerer.engine,
+            resolver: &lowerer.resolver,
+            dependency_resolvers: &lowerer.dependency_resolvers,
+            root_crate_id: lowerer.root_crate_id,
+            local_def_ids: &mut lowerer.local_def_ids,
+            current_def_ids: &mut lowerer.current_def_ids,
+            source_map: &lowerer.source_map,
+            index_protocol_ids: Some(super::IndexProtocolIds {
+                index_trait: index_trait_id,
+                index_output: AssocTypeId(1),
+                index_mut_trait: index_mut_trait_id,
+                index_mut_output: AssocTypeId(2),
+            }),
+        });
         service.validate_index_mut_pairs();
         service.finish()
     };

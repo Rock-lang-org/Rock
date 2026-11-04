@@ -585,23 +585,6 @@ impl<'a> LowerResolutionContext<'a> {
             })
     }
 
-    #[cfg(test)]
-    pub(crate) fn canonical_type_name_for_method_lookup(&self, ty: &Type) -> Option<String> {
-        match ty {
-            Type::Struct { id, .. } | Type::Enum { id, .. } => self
-                .canonical_name(*id)
-                .map(str::to_string)
-                .or_else(|| crate::lower::Lowerer::get_type_name_for_method_lookup(ty)),
-            Type::Reference { inner, .. }
-                if matches!(inner.as_ref(), Type::Slice(_) | Type::Str) =>
-            {
-                Some(ty.to_string())
-            }
-            Type::Reference { inner, .. } => self.canonical_type_name_for_method_lookup(inner),
-            _ => crate::lower::Lowerer::get_type_name_for_method_lookup(ty),
-        }
-    }
-
     pub(crate) fn resolve_trait_id(&self, name: &str) -> Option<DefId> {
         self.resolve_trait_type(name).map(|trait_def| trait_def.id)
     }

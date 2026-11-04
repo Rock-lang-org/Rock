@@ -24,11 +24,6 @@ impl Span {
             end,
         }
     }
-
-    #[cfg(test)]
-    pub fn test() -> Self {
-        Self::new(PathBuf::from("/test.rk"), 0, 0)
-    }
 }
 
 #[cfg(test)]

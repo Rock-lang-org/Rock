@@ -13,9 +13,9 @@ fn product_artifact_rejects_receiver_pattern_missing_impl_generic() {
         .unwrap()
         .receiver_pattern = crate::hir::HirImplReceiverPattern::Exact(Type::Unit);
 
-    let error = super::super::validate_product_method_authority_maps(
+    let error = super::validate_product_method_authority_maps(
         &products,
-        &super::super::ProductDependencyDefinitions::default(),
+        &super::ProductDependencyDefinitions::default(),
     )
     .expect_err("receiver pattern must bind every impl generic");
 
@@ -43,9 +43,9 @@ fn product_artifact_allows_impl_generic_bound_by_trait_argument() {
     })];
     insert_interface_impl(&mut products, impl_id, imp);
 
-    super::super::validate_product_method_authority_maps(
+    super::validate_product_method_authority_maps(
         &products,
-        &super::super::ProductDependencyDefinitions::default(),
+        &super::ProductDependencyDefinitions::default(),
     )
     .expect("trait arguments may bind impl generics absent from the receiver");
 }
@@ -307,12 +307,9 @@ fn product_artifact_rejects_invalid_generic_defaults() {
             local_crate: ProductCrateId(0),
             crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
         };
-        assert!(super::super::validate_product_type_fields(
-            &products,
-            &remap,
-            &CrateContext::new()
-        )
-        .is_err());
+        assert!(
+            super::validate_product_type_fields(&products, &remap, &CrateContext::new()).is_err()
+        );
     }
 }
 

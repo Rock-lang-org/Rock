@@ -1,4 +1,7 @@
+use super::mechanisms::{integer, mechanism, width};
 use super::*;
+use crate::mir::integer::{IntegerIntrinsic, IntegerMode, IntegerOp};
+use crate::types::Type;
 
 #[test]
 fn integer_constants_preserve_width_and_report_only_trapping_modes() {

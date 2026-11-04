@@ -117,11 +117,6 @@ impl LoanTable {
         &self.place_paths
     }
 
-    #[cfg(test)]
-    pub(crate) fn replace_place_paths_for_test(&mut self, place_paths: PlacePathTable) {
-        self.place_paths = place_paths;
-    }
-
     pub fn len(&self) -> usize {
         self.loans.len()
     }

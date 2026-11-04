@@ -523,3 +523,100 @@ fn trait_impl_selection_uses_typed_receiver_pattern() {
         )
         .is_ok());
 }
+
+impl Lowerer {
+    pub(crate) fn get_type_name_for_method_lookup_in_context(&self, ty: &Type) -> Option<String> {
+        crate::lower::resolution::LowerResolutionContext::new(self)
+            .canonical_type_name_for_method_lookup(ty)
+    }
+
+    pub(crate) fn type_pattern_matches_after_subst(pattern: &Type, actual: &Type) -> bool {
+        match (pattern, actual) {
+            (
+                Type::Struct {
+                    id: expected_id,
+                    args: expected_args,
+                },
+                Type::Struct {
+                    id: actual_id,
+                    args: actual_args,
+                },
+            )
+            | (
+                Type::Enum {
+                    id: expected_id,
+                    args: expected_args,
+                },
+                Type::Enum {
+                    id: actual_id,
+                    args: actual_args,
+                },
+            ) => {
+                expected_args.len() == actual_args.len()
+                    && expected_id == actual_id
+                    && expected_args
+                        .iter()
+                        .zip(actual_args.iter())
+                        .all(|(expected, actual)| {
+                            Self::type_pattern_matches_after_subst(expected, actual)
+                        })
+            }
+            (
+                Type::Reference {
+                    mutable: left_mut,
+                    inner: left,
+                },
+                Type::Reference {
+                    mutable: right_mut,
+                    inner: right,
+                },
+            ) => left_mut == right_mut && Self::type_pattern_matches_after_subst(left, right),
+            (Type::Slice(left), Type::Slice(right))
+            | (Type::Pointer(left), Type::Pointer(right)) => {
+                Self::type_pattern_matches_after_subst(left, right)
+            }
+            (Type::Array(left, left_len), Type::Array(right, right_len)) => {
+                left_len == right_len && Self::type_pattern_matches_after_subst(left, right)
+            }
+            _ => pattern == actual,
+        }
+    }
+
+    pub(crate) fn seed_receiver_substitution_from_impl(
+        imp: &crate::hir::HirImpl,
+        recv_ty: &Type,
+        subst: &mut HashMap<GenericParamId, Type>,
+    ) {
+        crate::selection::seed_receiver_substitution_from_impl(imp, recv_ty, subst);
+    }
+
+    /// Get the type name for method lookup, supporting both struct/enum and primitive types
+    pub(crate) fn get_type_name_for_method_lookup(ty: &Type) -> Option<String> {
+        match ty {
+            Type::Struct { .. } | Type::Enum { .. } => Some(ty.to_string()),
+            // Support primitive types for trait implementations
+            Type::I64 => Some("I64".to_string()),
+            Type::I32 => Some("I32".to_string()),
+            Type::I16 => Some("I16".to_string()),
+            Type::I8 => Some("I8".to_string()),
+            Type::U64 => Some("U64".to_string()),
+            Type::U32 => Some("U32".to_string()),
+            Type::U16 => Some("U16".to_string()),
+            Type::U8 => Some("U8".to_string()),
+            Type::F64 => Some("F64".to_string()),
+            Type::F32 => Some("F32".to_string()),
+            Type::Bool => Some("Bool".to_string()),
+            Type::Str => Some("Str".to_string()),
+            Type::Slice(_) => Some("Array".to_string()),
+            Type::Array(_, _) => Some(ty.to_string()),
+            Type::Pointer(_) => Some(ty.to_string()),
+            Type::Reference { inner, .. }
+                if matches!(inner.as_ref(), Type::Slice(_) | Type::Str) =>
+            {
+                Some(ty.to_string())
+            }
+            Type::Reference { inner, .. } => Self::get_type_name_for_method_lookup(inner),
+            _ => None,
+        }
+    }
+}

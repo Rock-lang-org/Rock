@@ -1,3 +1,4 @@
+use crate::parser::items::tests::common::{lex_test, lex_test_toplevel};
 use crate::ast::*;
 use crate::lexer::Span;
 use crate::new_parser::items::*;

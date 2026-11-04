@@ -299,7 +299,7 @@ fn compiler_products_prefer_exact_trait_default_method_identity() {
     )
     .expect("fixture HIR is accepted");
     let exact_method = accepted.function_by_id(shared_id).unwrap().1.clone();
-    let preferred = super::super::PreferredTraitDefaultMethods {
+    let preferred = super::PreferredTraitDefaultMethods {
         by_id: HashMap::from([(shared_id, exact_method)]),
     };
 

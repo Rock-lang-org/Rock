@@ -67,3 +67,23 @@ fn inject_loaded_prelude_reports_missing_declarations_by_short_name() {
         ]
     );
 }
+
+impl PreludeImports {
+    pub(crate) fn export_source(&self, short_name: &str) -> Option<&str> {
+        self.loaded_exports
+            .get(short_name)
+            .map(|export| export.source.as_str())
+    }
+
+    pub(crate) fn export_short_name_is_user_owned(
+        resolver: &ResolverTables,
+        short_name: &str,
+        export_id: DefId,
+    ) -> bool {
+        resolver.item_paths.contains_key(short_name)
+            || resolver
+                .import_aliases
+                .get(short_name)
+                .is_some_and(|alias_id| *alias_id != export_id)
+    }
+}

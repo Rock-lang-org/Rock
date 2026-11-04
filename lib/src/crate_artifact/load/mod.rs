@@ -25,27 +25,6 @@ use crate::products::{
 };
 use extern_crate_record::{extern_crate_from_products, intern_loaded_extern_crate_types};
 
-#[cfg(test)]
-use body_remap::{remap_expr_child_locations, remap_function_child_locations};
-#[cfg(test)]
-use child_location_validator::{ProductChildLocationValidator, MAX_ARTIFACT_HIR_REMAP_DEPTH};
-#[cfg(test)]
-use dependency_definitions::ProductDependencyDefinitions;
-#[cfg(test)]
-use extern_crate_record::{artifact_hir_name_tables, intern_loaded_interface_types};
-#[cfg(test)]
-use generic_remap::remap_type_def_ids;
-#[cfg(test)]
-use method_authority::validate_product_method_authority_maps;
-#[cfg(test)]
-use nominal_validator::ProductNominalTypeValidator;
-#[cfg(test)]
-use product_validation::{validate_product_interface_rows, validate_product_type_fields};
-#[cfg(test)]
-use products_to_interface::{cross_crate_hir_from_products, resolver_from_products};
-#[cfg(test)]
-use target_remap::{remap_pattern_child_locations, remap_var_target_child_location};
-
 #[derive(Debug, Clone)]
 pub(super) struct ProductIdentityRemap {
     local_crate: ProductCrateId,
@@ -148,36 +127,6 @@ impl CrateContext {
         *context = staged_context;
 
         Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn load_product_artifact_from_path_as(
-        &mut self,
-        expected_name: &str,
-        artifact_path: PathBuf,
-    ) -> Result<(), String> {
-        let mut context = crate::type_context::TypeContext::new();
-        self.load_product_artifact_from_path_as_with_type_context(
-            expected_name,
-            artifact_path,
-            &mut context,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn load_product_artifact_from_path_as_with_type_context(
-        &mut self,
-        expected_name: &str,
-        artifact_path: PathBuf,
-        context: &mut crate::type_context::TypeContext,
-    ) -> Result<(), String> {
-        let header = ProductArtifactHeader::read_from_path_bounded(&artifact_path)?;
-        self.load_product_artifact_from_header_as_with_type_context(
-            expected_name,
-            artifact_path,
-            &header,
-            context,
-        )
     }
 
     pub(crate) fn load_product_artifact_from_header_as_with_type_context(

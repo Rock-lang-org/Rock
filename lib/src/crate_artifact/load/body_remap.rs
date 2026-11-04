@@ -132,26 +132,7 @@ fn remap_stmt_child_locations<P: crate::hir::HirPhase>(
     }
 }
 
-#[cfg(test)]
-pub(super) fn remap_expr_child_locations<P: crate::hir::HirPhase>(
-    expr: &mut crate::hir::HirExprFor<P>,
-    remap: &ProductIdentityRemap,
-    validator: &ProductChildLocationValidator,
-    type_validator: &ProductNominalTypeValidator,
-    depth: usize,
-) -> Result<(), String> {
-    let mut local_scope = BTreeSet::new();
-    remap_expr_child_locations_with_scope(
-        expr,
-        remap,
-        validator,
-        type_validator,
-        &mut local_scope,
-        depth,
-    )
-}
-
-fn remap_expr_child_locations_with_scope<P: crate::hir::HirPhase>(
+pub(super) fn remap_expr_child_locations_with_scope<P: crate::hir::HirPhase>(
     expr: &mut crate::hir::HirExprFor<P>,
     remap: &ProductIdentityRemap,
     validator: &ProductChildLocationValidator,

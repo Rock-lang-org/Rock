@@ -7,7 +7,4 @@ mod method_candidates;
 mod try_operator;
 
 #[cfg(test)]
-use crate::lower::Lowerer;
-
-#[cfg(test)]
 mod tests;

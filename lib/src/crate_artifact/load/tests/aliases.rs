@@ -19,12 +19,9 @@ fn intern_loaded_interface_types_rejects_one_display_alias_for_distinct_ids() {
     interface.insert_function("same_alias".to_string(), second_function);
     let mut context = crate::type_context::TypeContext::new();
 
-    let error = super::super::intern_loaded_interface_types(
-        &interface,
-        &ResolverTables::default(),
-        &mut context,
-    )
-    .expect_err("distinct artifact IDs must not share one display alias");
+    let error =
+        super::intern_loaded_interface_types(&interface, &ResolverTables::default(), &mut context)
+            .expect_err("distinct artifact IDs must not share one display alias");
 
     assert!(error.contains("artifact function display alias 'same_alias'"));
 }
@@ -43,7 +40,7 @@ fn artifact_name_tables_keep_resolver_aliases_on_the_payload_def_id() {
     let unresolved =
         crate::crate_artifact::types::hir_function_from_interface(&interface.functions[&id]);
 
-    let names = super::super::artifact_hir_name_tables(
+    let names = super::artifact_hir_name_tables(
         &interface,
         &resolver,
         &HashMap::from([(id, unresolved)]),
@@ -89,7 +86,7 @@ fn artifact_alias_conflicts_are_stable_across_reverse_insertion() {
             ),
         ]);
 
-        super::super::artifact_hir_name_tables(
+        super::artifact_hir_name_tables(
             &ArtifactCrateInterface::default(),
             &resolver,
             &functions,
@@ -201,8 +198,7 @@ fn resolver_from_products_ignores_impl_display_names() {
         crate_ids: BTreeMap::new(),
     };
     let resolver =
-        super::super::resolver_from_products(&products, "dep", &remap, &CrateContext::new())
-            .unwrap();
+        super::resolver_from_products(&products, "dep", &remap, &CrateContext::new()).unwrap();
 
     assert!(!resolver.item_paths.contains_key("Box as Show"));
 }

@@ -11,8 +11,6 @@ mod service;
 mod trait_impl_substitution;
 
 pub(crate) use service::TraitConformancePhase;
-#[cfg(test)]
-pub(crate) use service::{IndexProtocolIds, TraitConformanceContext, TraitConformanceService};
 
 #[cfg(test)]
 mod tests;

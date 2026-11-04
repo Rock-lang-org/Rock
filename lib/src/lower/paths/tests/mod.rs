@@ -1,12 +1,14 @@
-use super::*;
+use crate::ast;
 use crate::ast::{
     Block, Expression, Ident, IdentOrType, IdentPattern, IdentifierPath, LambdaArrowKind,
     LambdaDecl, Operand, Pattern, PatternKind, PrimaryExpr, Statement, UnaryExpr,
 };
 use crate::crate_system::CrateContext;
+use crate::hir::*;
 use crate::ids::{CrateId, DefId, FieldId, HirLocalId, LocalDefId, VariantId};
 use crate::infer::ResolvedHirProgram;
 use crate::lower::body_context::{BodyLoweringContext, BodyOwner};
+use crate::lower::Lowerer;
 use crate::types::{
     CallableKind, CaptureKind, GenericParamDecl, GenericParamId, Predicate, TraitBound, Type,
 };

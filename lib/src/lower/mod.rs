@@ -47,8 +47,6 @@ use body_context::{BodyLoweringContext, BodyOwner, GenericLoweringContext};
 
 use crate::ast;
 use crate::collect::item_index::ItemIndex;
-#[cfg(test)]
-use crate::collect::resolver::ResolverTables;
 use crate::hir::*;
 use crate::ids::{CrateId, DefId, HirLocalId, IdGen, LocalDefId, TypeVarId};
 use crate::infer::constraints::ConstraintOwner;
@@ -98,12 +96,6 @@ pub struct Lowerer {
 impl Lowerer {
     pub fn new() -> Self {
         Self::with_options(true)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_for_test() -> Self {
-        let lowerer = Self::new();
-        lowerer
     }
 
     pub(crate) fn from_services(services: LowererServices) -> Self {
@@ -402,20 +394,6 @@ impl Lowerer {
             .is_some_and(BodyLoweringContext::in_unsafe)
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_test_body_context<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.with_body_context(
-            BodyLoweringContext::new(
-                BodyOwner::Function(DefId::new(CrateId(0), LocalDefId(u32::MAX - 1))),
-                self.current_generic_owner(),
-                self.current_generic_params().to_vec(),
-                self.current_impl_bounds().clone(),
-                false,
-            ),
-            f,
-        )
-    }
-
     fn current_generic_params_mut(&mut self) -> Option<&mut Vec<String>> {
         if let Some(context) = self.body_context.as_mut() {
             Some(context.generic_params_mut())
@@ -641,17 +619,6 @@ impl Lowerer {
 impl Default for Lowerer {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-impl Lowerer {
-    pub(crate) fn resolve_item_def_id(&self, name: &str) -> Option<DefId> {
-        crate::lower::resolution::LowerResolutionContext::new(self).resolve_item_id(name)
-    }
-
-    pub(crate) fn canonical_name_for_alias_or_item(&self, name: &str) -> Option<String> {
-        crate::lower::resolution::LowerResolutionContext::new(self).canonical_name_for_item(name)
     }
 }
 

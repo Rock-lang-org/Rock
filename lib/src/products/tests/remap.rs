@@ -55,8 +55,8 @@ fn remap_expr_location_product_ids_remaps_new_reference_sidecars() {
         span: Span::test(),
     };
 
-    super::super::remap_expr_location_product_ids(&mut struct_expr, &remap);
-    super::super::remap_expr_location_product_ids(&mut extern_expr, &remap);
+    super::remap_expr_location_product_ids(&mut struct_expr, &remap);
+    super::remap_expr_location_product_ids(&mut extern_expr, &remap);
 
     let crate::hir::HirExprKindFor::StructLiteral(_, Some(struct_id), fields) = &struct_expr.kind
     else {
@@ -117,8 +117,8 @@ fn remap_expr_location_product_ids_remaps_call_target_sidecars() {
         span: Span::test(),
     };
 
-    super::super::remap_expr_location_product_ids(&mut function_call, &remap);
-    super::super::remap_expr_location_product_ids(&mut extern_call, &remap);
+    super::remap_expr_location_product_ids(&mut function_call, &remap);
+    super::remap_expr_location_product_ids(&mut extern_call, &remap);
 
     let crate::hir::HirExprKindFor::Call(_, _, Some(function_target)) = &function_call.kind else {
         panic!("expected function call target");
@@ -161,7 +161,7 @@ fn remap_pattern_owned_type_ids_remaps_new_pattern_sidecars() {
         )],
     );
 
-    super::super::remap_pattern_owned_type_ids(&mut pattern, old_id, new_id);
+    super::remap_pattern_owned_type_ids(&mut pattern, old_id, new_id);
 
     let HirPattern::Enum(_, _, Some(location), payloads) = pattern else {
         panic!("expected enum pattern");
@@ -232,7 +232,7 @@ fn remap_expr_location_product_ids_remaps_match_pattern_sidecars() {
         span: Span::test(),
     };
 
-    super::super::remap_expr_location_product_ids(&mut expr, &remap);
+    super::remap_expr_location_product_ids(&mut expr, &remap);
 
     let crate::hir::HirExprKindFor::Match { arms, .. } = &expr.kind else {
         panic!("expected match expression");

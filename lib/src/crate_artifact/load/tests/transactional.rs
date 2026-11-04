@@ -9,7 +9,9 @@ fn load_product_artifact_reinterns_structural_types_for_consumer_context() {
     let artifact_path = base.join("dep.rkca");
     products.write_artifact_to_path(&artifact_path).unwrap();
     let bytes = std::fs::read(&artifact_path).unwrap();
-    assert!(crate::products::artifact_type_table_len_for_test(&bytes).unwrap() > 0);
+    assert!(
+        crate::products::type_table::tests::artifact_type_table_len_for_test(&bytes).unwrap() > 0
+    );
 
     let mut type_context = crate::type_context::TypeContext::new();
     let mut ctx = CrateContext::new();
@@ -36,7 +38,9 @@ fn load_product_artifact_as_reinterns_structural_types_for_consumer_context() {
     let artifact_path = base.join("dep.rkca");
     products.write_artifact_to_path(&artifact_path).unwrap();
     let bytes = std::fs::read(&artifact_path).unwrap();
-    assert!(crate::products::artifact_type_table_len_for_test(&bytes).unwrap() > 0);
+    assert!(
+        crate::products::type_table::tests::artifact_type_table_len_for_test(&bytes).unwrap() > 0
+    );
 
     let mut type_context = crate::type_context::TypeContext::new();
     let mut ctx = CrateContext::new();

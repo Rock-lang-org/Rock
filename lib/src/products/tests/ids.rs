@@ -331,7 +331,7 @@ fn compiler_products_preserve_link_records_for_real_local_id_zero() {
     assert_eq!(impl_id, ProductDefId::from(impl_def_id));
     assert_eq!(
         products.interface.impls[&impl_id].id,
-        super::super::product_def_id_to_def_id(impl_id)
+        super::product_def_id_to_def_id(impl_id)
     );
     assert_eq!(
         products

@@ -60,19 +60,6 @@ impl BorrowChecker {
         }
     }
 
-    #[cfg(test)]
-    fn check_function(
-        func: &MirFunction,
-        type_context: &crate::type_context::TypeContext,
-    ) -> Result<(), Diagnostics> {
-        Self::check_function_with_contract(
-            func,
-            type_context,
-            &MirBackendContract::default(),
-            &HashMap::new(),
-        )
-    }
-
     fn check_function_with_contract(
         func: &MirFunction,
         type_context: &crate::type_context::TypeContext,

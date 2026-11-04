@@ -8,8 +8,6 @@ mod interface_conversion;
 mod product_schema;
 mod products_conversion;
 mod string_limits;
-#[cfg(test)]
-mod test_support;
 mod type_codec;
 mod type_graph_validation;
 mod type_rows;
@@ -21,23 +19,6 @@ use type_codec::{ProductTypeDecoder, ProductTypeEncoder};
 
 pub(super) use product_schema::SerializedProductArtifact;
 pub(super) use string_limits::validate_portable_artifact_limits_with_initial_string_bytes;
-
-#[cfg(test)]
-use generic_conversion::{decode_generic_param_decls, encode_generic_param_decls};
-#[cfg(test)]
-use hir_schema::{SerializedHirExpr, SerializedHirExprKind};
-#[cfg(test)]
-pub(super) use test_support::{
-    artifact_type_table_contains_type_for_test, artifact_type_table_len_for_test,
-};
-#[cfg(test)]
-use test_support::{decode_type_for_test, encode_types_for_test};
-#[cfg(test)]
-use type_codec::product_def_id;
-#[cfg(test)]
-use type_graph_validation::validate_type_table_graph;
-#[cfg(test)]
-use type_rows::{ProductTypeId, ProductTypeRow, ProductTypeTable};
 
 pub(super) fn products_to_artifact(
     products: &CompilerProducts,
@@ -63,4 +44,4 @@ pub(super) fn artifact_to_products(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

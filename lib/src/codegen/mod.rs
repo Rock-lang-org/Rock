@@ -174,11 +174,4 @@ impl<'ctx> CodeGen<'ctx> {
 }
 
 #[cfg(test)]
-impl<'ctx> CodeGen<'ctx> {
-    pub(crate) fn new(context: &'ctx Context, module_name: &str) -> Self {
-        Self::new_inner(context, module_name, None)
-    }
-}
-
-#[cfg(test)]
 mod tests;

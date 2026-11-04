@@ -3,8 +3,8 @@ use super::super::borrows::BorrowData;
 use super::{
     apply_active_loan_statement_transfer, compute_active_loan_entries,
     compute_active_loan_entries_with_contract, compute_reference_liveness,
-    compute_reference_liveness_with_contract, compute_successors, type_id_contains_reference,
-    ActiveLoanAnalysis, LoanLocationIndex,
+    compute_reference_liveness_with_contract, compute_successors, ActiveLoanAnalysis,
+    LoanLocationIndex,
 };
 use crate::ids::{AssocTypeId, CrateId, DefId, LoanId, LocalDefId};
 use crate::mir::borrowck::location::{Location, StatementIndex};
@@ -146,3 +146,15 @@ mod dataflow;
 mod owner_release;
 mod owner_transfer;
 mod reference_types;
+
+pub(super) fn type_id_contains_reference(
+    view: crate::type_context::TypeView<'_>,
+    ty: crate::ids::TypeId,
+) -> bool {
+    let backend_contract = MirBackendContract::default();
+    super::type_contains_reference::type_id_contains_reference_with_contract(
+        view,
+        &backend_contract,
+        ty,
+    )
+}

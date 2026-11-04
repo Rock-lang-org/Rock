@@ -307,3 +307,62 @@ fn declaration_item_diagnostics_are_deterministic_across_input_orders() {
         );
     }
 }
+
+impl DeclarationItems {
+    pub(crate) fn from_named_maps(
+        functions: HashMap<String, HirFunction>,
+        function_sigs: HashMap<String, HirFunctionSig>,
+        structs: HashMap<String, HirStruct>,
+        enums: HashMap<String, HirEnum>,
+        traits: HashMap<String, HirTrait>,
+        impls: Vec<HirImpl>,
+        externs: Vec<HirExtern>,
+        canonical_names_by_id: &HashMap<DefId, String>,
+    ) -> Result<Self, Vec<ResolveError>> {
+        Self::from_named_maps_with_aliases(
+            functions,
+            function_sigs,
+            structs,
+            enums,
+            traits,
+            impls,
+            externs,
+            HashMap::new(),
+            canonical_names_by_id,
+        )
+    }
+}
+
+impl DeclarationItems {
+    pub(crate) fn insert_trait_def(&mut self, trait_def: HirTrait) -> Option<HirTrait> {
+        self.traits.insert(trait_def.id, trait_def)
+    }
+
+    pub(crate) fn insert_structure(&mut self, structure: HirStruct) -> Option<HirStruct> {
+        self.structs.insert(structure.id, structure)
+    }
+
+    pub(crate) fn insert_enumeration(&mut self, enumeration: HirEnum) -> Option<HirEnum> {
+        self.enums.insert(enumeration.id, enumeration)
+    }
+
+    pub(crate) fn insert_extern(&mut self, extern_def: HirExtern) -> Option<HirExtern> {
+        self.externs.insert(extern_def.id, extern_def)
+    }
+
+    pub(crate) fn function_mut(&mut self, id: DefId) -> Option<&mut HirFunction> {
+        self.functions.get_mut(&id)
+    }
+
+    pub(crate) fn structure_mut(&mut self, id: DefId) -> Option<&mut HirStruct> {
+        self.structs.get_mut(&id)
+    }
+
+    pub(crate) fn extern_mut(&mut self, id: DefId) -> Option<&mut HirExtern> {
+        self.externs.get_mut(&id)
+    }
+
+    pub(crate) fn enumeration_mut(&mut self, id: DefId) -> Option<&mut HirEnum> {
+        self.enums.get_mut(&id)
+    }
+}

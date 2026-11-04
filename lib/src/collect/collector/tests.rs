@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 use crate::ast::{
     FunctionDecl, FunctionSig, Ident, Impl, LambdaArrowKind, LambdaDecl, Module, ParseType,
@@ -167,4 +168,10 @@ fn local_collector_errors_when_member_id_environment_is_missing() {
     assert!(collected.errors.iter().any(|error| error
         .message
         .contains("missing canonical current-crate impl method identity for impl.show")));
+}
+
+impl LocalCollector {
+    pub(crate) fn new(context: CollectContext) -> Self {
+        Self::new_with_id_environment(context, CollectedIdEnvironment::default())
+    }
 }

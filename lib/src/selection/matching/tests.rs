@@ -1,3 +1,4 @@
+pub(crate) use super::type_patterns::type_pattern_matches_after_subst;
 use super::*;
 use crate::hir::{HirImpl, HirImplOwner, HirMethodCallTarget};
 use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId};

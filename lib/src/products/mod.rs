@@ -19,8 +19,6 @@ use crate::ids::{CrateId, DefId, Idx, LocalDefId};
 use serde::{Deserialize, Serialize};
 
 use artifact_codec::check_product_artifact_string;
-#[cfg(test)]
-pub(crate) use artifact_format::artifact_type_table_len_for_test;
 pub use artifact_format::{
     PortableProductArtifact, ProductArtifactHeader, ProductArtifactPreamble,
     MAX_PRODUCT_ARTIFACT_BYTES, MAX_PRODUCT_ARTIFACT_DECLARATIONS,
@@ -42,25 +40,10 @@ pub use interface_types::{
     ProductStructInterface, ProductTraitInterface, ProductTypeAliasInterface,
 };
 
-#[cfg(test)]
-use artifact_codec::{
-    encode_product_artifact, read_product_artifact_header, serialized_artifact_from_bytes_for_test,
-};
-#[cfg(test)]
-use identity_recording::{
-    product_def_id_to_def_id, record_export_name, PreferredTraitDefaultMethods,
-};
-#[cfg(test)]
-use language_items_build::product_language_items_from_program;
-#[cfg(test)]
-use location_id_remap::remap_expr_location_product_ids;
-#[cfg(test)]
-use owned_type_id_remap::remap_pattern_owned_type_ids;
-
 pub(crate) mod fingerprint;
 pub(crate) mod identity;
 pub(crate) mod link;
-mod type_table;
+pub(crate) mod type_table;
 
 pub use crate::infer::constants::{ArithmeticSummary, ArithmeticType};
 

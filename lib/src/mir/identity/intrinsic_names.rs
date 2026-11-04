@@ -377,8 +377,6 @@ impl MirIntrinsicId {
             Self::AtomicU64FetchAdd => "AtomicU64FetchAdd",
             Self::AtomicU64FetchSub => "AtomicU64FetchSub",
             Self::AtomicU64Store => "AtomicU64Store",
-            #[cfg(test)]
-            Self::DisplayNameI64Add => "I64Add",
         }
     }
 }

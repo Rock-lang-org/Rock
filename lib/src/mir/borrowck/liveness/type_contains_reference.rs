@@ -6,12 +6,6 @@ use crate::ids::{AssocTypeId, DefId, TypeId};
 use crate::type_context::{Ty, TypeView};
 use crate::types::{GenericParamId, Type};
 
-#[cfg(test)]
-pub(super) fn type_id_contains_reference(view: TypeView<'_>, ty: TypeId) -> bool {
-    let backend_contract = MirBackendContract::default();
-    type_id_contains_reference_with_contract(view, &backend_contract, ty)
-}
-
 pub(super) fn type_id_contains_reference_with_contract(
     view: TypeView<'_>,
     backend_contract: &MirBackendContract,

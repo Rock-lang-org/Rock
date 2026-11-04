@@ -457,27 +457,6 @@ fn compile_intrinsic_values_with_type_ids_dispatches_type_only_intrinsic_by_type
 }
 
 #[test]
-fn compile_intrinsic_values_dispatches_by_enum_variant_not_display_name() {
-    let context = Context::create();
-    let mut codegen = CodeGen::new(&context, "test");
-    let function_type = context.i64_type().fn_type(
-        &[context.i64_type().into(), context.i64_type().into()],
-        false,
-    );
-    let function = codegen.module.add_function("test", function_type, None);
-    let entry = context.append_basic_block(function, "entry");
-    codegen.builder.position_at_end(entry);
-
-    let lhs = function.get_nth_param(0).unwrap();
-    let rhs = function.get_nth_param(1).unwrap();
-    let error = codegen
-        .compile_intrinsic_values(MirIntrinsicId::DisplayNameI64Add, &[lhs, rhs], &Type::I64)
-        .expect_err("display-only test variant must not dispatch as I64Add");
-
-    assert!(error.message.contains("Unknown intrinsic"));
-}
-
-#[test]
 fn compile_intrinsic_values_zero_extends_u8_less_than_integer_constant() {
     let context = Context::create();
     let mut codegen = CodeGen::new(&context, "test");

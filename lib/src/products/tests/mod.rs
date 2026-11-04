@@ -1,3 +1,11 @@
+use super::artifact_codec::tests::serialized_artifact_from_bytes_for_test;
+use super::artifact_codec::{encode_product_artifact, read_product_artifact_header};
+use super::identity_recording::{
+    product_def_id_to_def_id, record_export_name, PreferredTraitDefaultMethods,
+};
+use super::language_items_build::product_language_items_from_program;
+use super::location_id_remap::remap_expr_location_product_ids;
+use super::owned_type_id_remap::remap_pattern_owned_type_ids;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
@@ -20,7 +28,6 @@ use crate::language_items::{
 use crate::lexer::Span;
 use crate::products::type_table;
 use crate::products::{
-    encode_product_artifact, read_product_artifact_header, serialized_artifact_from_bytes_for_test,
     CompilerProducts, ProductArtifactHeader, ProductArtifactPreamble, ProductBodies,
     ProductCrateId, ProductCrateIdentity, ProductDefId, ProductDependencyCapabilities,
     ProductDependencyIdentity, ProductDependencyLinkCapability, ProductIdentityTable,

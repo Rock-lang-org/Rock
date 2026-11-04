@@ -18,13 +18,13 @@ fn remap_var_target_child_location_rejects_serialized_instance_target() {
         infix_precedence: BTreeMap::new(),
         proc_macros: Vec::new(),
     };
-    let validator = super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
     let mut reference = HirVarRef {
         name: "identity".to_string(),
         target: HirVarTarget::Instance(crate::ids::InstanceId(5)),
     };
 
-    let err = super::super::remap_var_target_child_location(
+    let err = super::remap_var_target_child_location(
         &mut reference,
         &remap,
         &validator,
@@ -87,8 +87,8 @@ fn remap_pattern_child_locations_remaps_new_pattern_sidecars() {
         .interface
         .enums
         .insert(old_enum, ProductEnumInterface::from(&enum_def));
-    let validator = super::super::ProductNominalTypeValidator::from_products(&products, &remap);
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
+    let validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
     let mut pattern = HirPattern::Enum(
         "dep::Option".to_string(),
         "Some".to_string(),
@@ -116,14 +116,8 @@ fn remap_pattern_child_locations_remaps_new_pattern_sidecars() {
         )],
     );
 
-    super::super::remap_pattern_child_locations(
-        &mut pattern,
-        &remap,
-        &child_validator,
-        &validator,
-        0,
-    )
-    .unwrap();
+    super::remap_pattern_child_locations(&mut pattern, &remap, &child_validator, &validator, 0)
+        .unwrap();
 
     let expected_struct = remap.def_id(old_struct).unwrap();
     let expected_enum = remap.def_id(old_enum).unwrap();
@@ -174,9 +168,8 @@ fn remap_expr_child_locations_remaps_call_target_sidecars() {
             is_unsafe: false,
         },
     );
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
     let mut expr = HirExpr {
         kind: HirExprKindFor::TupleLiteral(vec![
             HirExpr {
@@ -210,14 +203,8 @@ fn remap_expr_child_locations_remaps_call_target_sidecars() {
         span: Span::test(),
     };
 
-    super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap();
+    super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+        .unwrap();
 
     let HirExprKindFor::TupleLiteral(items) = &expr.kind else {
         panic!("expected tuple literal");
@@ -252,9 +239,8 @@ fn remap_function_child_locations_rejects_unknown_local_call_target() {
         function_product_id.local_id.0,
         PathBuf::from("dep.o"),
     );
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
     let mut function = products.bodies.functions[&function_product_id].clone();
     function.body = HirBlock {
         stmts: vec![HirStmt::Expr(HirExpr {
@@ -273,7 +259,7 @@ fn remap_function_child_locations_rejects_unknown_local_call_target() {
         ty: Type::I64,
     };
 
-    let err = super::super::remap_function_child_locations(
+    let err = super::remap_function_child_locations(
         &mut function,
         &remap,
         &child_validator,
@@ -301,9 +287,8 @@ fn remap_function_child_locations_rejects_unknown_local_resolved_var_target() {
         function_product_id.local_id.0,
         PathBuf::from("dep.o"),
     );
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
     let mut function = products.bodies.functions[&function_product_id].clone();
     function.body = HirBlock {
         stmts: vec![HirStmt::Expr(HirExpr {
@@ -317,7 +302,7 @@ fn remap_function_child_locations_rejects_unknown_local_resolved_var_target() {
         ty: Type::function(Vec::new(), Type::I64),
     };
 
-    let err = super::super::remap_function_child_locations(
+    let err = super::remap_function_child_locations(
         &mut function,
         &remap,
         &child_validator,
@@ -346,9 +331,8 @@ fn remap_function_child_locations_rejects_call_target_to_lambda_local() {
         function_product_id.local_id.0,
         PathBuf::from("dep.o"),
     );
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
     let mut function = products.bodies.functions[&function_product_id].clone();
     function.body = HirBlock {
         stmts: vec![
@@ -387,7 +371,7 @@ fn remap_function_child_locations_rejects_call_target_to_lambda_local() {
         ty: Type::I64,
     };
 
-    let err = super::super::remap_function_child_locations(
+    let err = super::remap_function_child_locations(
         &mut function,
         &remap,
         &child_validator,
@@ -416,9 +400,8 @@ fn remap_function_child_locations_rejects_call_target_to_current_let_local() {
         function_product_id.local_id.0,
         PathBuf::from("dep.o"),
     );
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
     let mut function = products.bodies.functions[&function_product_id].clone();
     function.body = HirBlock {
         stmts: vec![HirStmt::Let {
@@ -443,7 +426,7 @@ fn remap_function_child_locations_rejects_call_target_to_current_let_local() {
         ty: Type::I64,
     };
 
-    let err = super::super::remap_function_child_locations(
+    let err = super::remap_function_child_locations(
         &mut function,
         &remap,
         &child_validator,
@@ -624,7 +607,7 @@ fn product_child_location_validator_rejects_mismatched_field_sidecar() {
         },
     );
 
-    let validator = super::super::ProductChildLocationValidator::from_products(&products);
+    let validator = super::ProductChildLocationValidator::from_products(&products);
     let err = validator
         .validate_field(struct_product_id, FieldId(0), "other", "value")
         .unwrap_err();
@@ -646,11 +629,11 @@ fn product_child_location_remap_rejects_excessive_depth() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::new(),
     };
-    let validator = super::super::ProductChildLocationValidator {
+    let validator = super::ProductChildLocationValidator {
         fields_by_id: HashMap::new(),
         variants_by_id: HashMap::new(),
     };
-    let type_validator = super::super::ProductNominalTypeValidator {
+    let type_validator = super::ProductNominalTypeValidator {
         normalization_env: Default::default(),
         local_crate: ProductCrateId(0),
         structs: BTreeSet::new(),
@@ -689,12 +672,12 @@ fn product_child_location_remap_rejects_excessive_depth() {
         dependency_externs: BTreeSet::new(),
     };
 
-    let err = super::super::remap_expr_child_locations(
+    let err = super::remap_expr_child_locations(
         &mut expr,
         &remap,
         &validator,
         &type_validator,
-        super::super::MAX_ARTIFACT_HIR_REMAP_DEPTH + 1,
+        super::MAX_ARTIFACT_HIR_REMAP_DEPTH + 1,
     )
     .unwrap_err();
 

@@ -2,8 +2,6 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::collect::resolver::ResolverTables;
 use crate::crate_artifact::ArtifactExport;
-#[cfg(test)]
-use crate::ids::DefId;
 use crate::lower::items::LowerItems;
 use crate::lower::scope::Scope;
 use crate::types::Type;
@@ -50,13 +48,6 @@ impl PreludeImports {
                 .iter()
                 .map(|(name, export)| (name.clone(), export.clone())),
         );
-    }
-
-    #[cfg(test)]
-    pub(crate) fn export_source(&self, short_name: &str) -> Option<&str> {
-        self.loaded_exports
-            .get(short_name)
-            .map(|export| export.source.as_str())
     }
 
     pub(crate) fn inject_loaded_prelude(
@@ -108,19 +99,6 @@ impl PreludeImports {
         }
 
         errors
-    }
-
-    #[cfg(test)]
-    pub(crate) fn export_short_name_is_user_owned(
-        resolver: &ResolverTables,
-        short_name: &str,
-        export_id: DefId,
-    ) -> bool {
-        resolver.item_paths.contains_key(short_name)
-            || resolver
-                .import_aliases
-                .get(short_name)
-                .is_some_and(|alias_id| *alias_id != export_id)
     }
 
     fn short_name_is_user_owned(resolver: &ResolverTables, short_name: &str) -> bool {

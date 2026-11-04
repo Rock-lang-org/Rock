@@ -30,10 +30,4 @@ type Environment = HashMap<HirLocalId, Constant>;
 type Evaluation = Result<Option<Constant>, &'static str>;
 
 #[cfg(test)]
-use crate::mir::integer::{IntegerIntrinsic, IntegerMode, IntegerOp};
-#[cfg(test)]
-use crate::types::Type;
-#[cfg(test)]
-use mechanisms::{integer, mechanism, width};
-#[cfg(test)]
 mod tests;

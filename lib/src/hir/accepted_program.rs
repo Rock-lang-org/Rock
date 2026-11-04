@@ -1,11 +1,6 @@
 use super::*;
 
 impl HirProgramFor<AcceptedHir> {
-    #[cfg(test)]
-    pub(crate) fn rebuild_indexes(&mut self) {
-        self.rebuild_indexes_with_canonical_names(&HashMap::new());
-    }
-
     pub(crate) fn from_accepted_id_parts_with_names_and_canonical_names(
         functions: HashMap<DefId, HirFunctionFor<AcceptedHir>>,
         structs: HashMap<DefId, HirStruct>,
@@ -90,27 +85,6 @@ impl HirProgramFor<AcceptedHir> {
                 .unwrap_or(function.name.as_str());
             (name, function)
         })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_function_by_name(
-        &self,
-        name: &str,
-    ) -> Option<(DefId, &HirFunctionFor<AcceptedHir>)> {
-        let id = *self.names.functions_by_name.get(name)?;
-        self.functions.get(&id).map(|function| (id, function))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_struct_by_name(&self, name: &str) -> Option<(DefId, &HirStruct)> {
-        let id = *self.names.structs_by_name.get(name)?;
-        self.structs.get(&id).map(|structure| (id, structure))
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_enum_by_name(&self, name: &str) -> Option<(DefId, &HirEnum)> {
-        let id = *self.names.enums_by_name.get(name)?;
-        self.enums.get(&id).map(|enumeration| (id, enumeration))
     }
 
     pub fn functions_by_id(
@@ -221,3 +195,6 @@ impl HirProgramFor<AcceptedHir> {
             .filter_map(|id| self.externs.get(&id).map(|ext| (id, ext)))
     }
 }
+
+#[cfg(test)]
+mod tests;

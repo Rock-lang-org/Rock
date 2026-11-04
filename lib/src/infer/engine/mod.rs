@@ -38,8 +38,6 @@ pub struct InferenceEngine {
 }
 
 #[cfg(test)]
-use crate::infer::constraints::ConstraintStore;
-#[cfg(test)]
 mod tests;
 
 impl Default for InferenceEngine {

@@ -1,5 +1,6 @@
 use crate::ast::*;
-use crate::parser::{expression, lex_test, ParseCtx, Parser};
+use crate::parser::items::tests::common::lex_test;
+use crate::parser::{expression, ParseCtx, Parser};
 use crate::Config;
 
 fn parse(source: &str) -> Expression {

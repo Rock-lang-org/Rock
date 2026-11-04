@@ -116,7 +116,7 @@ fn product_artifact_load_rejects_receiver_trait_member_mapped_to_static_impl_met
     };
 
     let error =
-        super::super::cross_crate_hir_from_products(&products, "dep", &remap, &CrateContext::new())
+        super::cross_crate_hir_from_products(&products, "dep", &remap, &CrateContext::new())
             .expect_err("malformed effective trait-member relation must fail artifact loading");
 
     assert!(
@@ -404,18 +404,12 @@ fn product_artifact_rejects_trait_target_on_inherent_impl_method_call() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let err =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(
         err.contains("impl target") && err.contains("trait target"),
@@ -482,18 +476,12 @@ fn product_artifact_rejects_trait_signature_target_using_trait_id_sentinel() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let err =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(
         err.contains("does not own selected member"),

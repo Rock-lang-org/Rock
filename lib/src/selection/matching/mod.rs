@@ -12,8 +12,6 @@ pub use receiver_patterns::{
     constructor_target_from_applied_type, constructor_target_substitution,
     impl_receiver_pattern_substitution, receiver_pattern, receiver_pattern_substitution,
 };
-#[cfg(test)]
-pub(crate) use type_patterns::type_pattern_matches_after_subst;
 pub use type_patterns::{infer_generic_subst_from_types, type_pattern_matches};
 
 pub fn seed_receiver_substitution_from_impl(

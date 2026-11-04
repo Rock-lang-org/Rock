@@ -5,8 +5,6 @@ use super::hir_types::{
     HirMethodCallTarget, HirStmt, HirVarRef, HirVarTarget,
 };
 use crate::ids::DefId;
-#[cfg(test)]
-use crate::types::ReceiverMode;
 use crate::types::Type;
 
 use super::{InstanceKey, InstanceOrigin, Monomorphizer};
@@ -42,30 +40,6 @@ impl Monomorphizer {
                 .copied()?,
         };
         imp.methods.values().find(|method| method.id == method_id)
-    }
-
-    #[cfg(test)]
-    fn lookup_self_receiver(&self, target: Option<&HirMethodCallTarget>) -> Option<ReceiverMode> {
-        let target = target?;
-        if let Some(impl_id) = target.impl_id() {
-            let method_id = target.method_id()?;
-            return self
-                .generic_impls
-                .values()
-                .chain(self.trait_impls.values().flat_map(|impls| impls.iter()))
-                .find(|imp| imp.id == impl_id)
-                .and_then(|imp| imp.methods.values().find(|method| method.id == method_id))
-                .and_then(|method| method.self_receiver);
-        }
-
-        let trait_id = target.trait_id()?;
-        let member_id = target.method_id()?;
-        self.trait_impls
-            .values()
-            .flat_map(|impls| impls.iter())
-            .filter(|imp| imp.trait_id == Some(trait_id))
-            .find_map(|imp| imp.methods.values().find(|method| method.id == member_id))
-            .and_then(|method| method.self_receiver)
     }
 
     fn zero_substitution_function_instance(&self, id: DefId) -> Option<crate::mono::InstanceId> {

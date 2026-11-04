@@ -1,4 +1,3 @@
-use super::Lowerer;
 use crate::ast::{
     Expression, Ident, IdentOrNumber, IdentOrType, IdentifierPath, Literal, LiteralKind, Operand,
     PrimaryExpr, SecondaryExpr, UnaryExpr,
@@ -11,6 +10,7 @@ use crate::ids::{AssocTypeId, CrateId, DefId, FieldId, LocalDefId, VariantId};
 use crate::language_items::{IndexLanguageItems, TryLanguageItems};
 use crate::lexer::Span;
 use crate::lower::expression::ExprUse;
+use crate::lower::Lowerer;
 use crate::types::{GenericParamDecl, GenericParamId, TraitBound, Type};
 use std::collections::HashMap;
 

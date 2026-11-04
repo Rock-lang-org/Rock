@@ -222,6 +222,4 @@ pub(super) fn artifact_bincode() -> impl Options {
 }
 
 #[cfg(test)]
-pub(crate) fn artifact_type_table_len_for_test(bytes: &[u8]) -> Result<usize, String> {
-    type_table::artifact_type_table_len_for_test(bytes)
-}
+mod tests;

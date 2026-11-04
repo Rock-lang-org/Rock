@@ -439,3 +439,27 @@ fn module_context_duplicate_module_aliases_use_scoped_resolver_output() {
         Some(previous_id)
     );
 }
+
+impl ModuleLoweringContext {
+    pub(crate) fn set_current_qualified_module_prefix(&mut self, prefix: Option<String>) {
+        self.current_qualified_module_prefix = prefix;
+    }
+
+    pub(crate) fn set_current_crate_name(&mut self, crate_name: Option<String>) {
+        self.current_crate_name = crate_name;
+    }
+
+    pub(crate) fn current_module_path(&self) -> &std::path::Path {
+        self.current_module_path.as_path()
+    }
+
+    pub(crate) fn with_current_module_path<F, R>(&mut self, path: PathBuf, visit: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let previous_path = self.replace_current_module_path(path);
+        let result = visit(self);
+        self.current_module_path = previous_path;
+        result
+    }
+}

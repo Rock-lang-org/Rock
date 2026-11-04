@@ -36,3 +36,21 @@ fn test_function(id: DefId, name: &str) -> HirFunction {
         is_unsafe: false,
     }
 }
+
+impl<'a> LowerResolutionContext<'a> {
+    pub(crate) fn canonical_type_name_for_method_lookup(&self, ty: &Type) -> Option<String> {
+        match ty {
+            Type::Struct { id, .. } | Type::Enum { id, .. } => self
+                .canonical_name(*id)
+                .map(str::to_string)
+                .or_else(|| crate::lower::Lowerer::get_type_name_for_method_lookup(ty)),
+            Type::Reference { inner, .. }
+                if matches!(inner.as_ref(), Type::Slice(_) | Type::Str) =>
+            {
+                Some(ty.to_string())
+            }
+            Type::Reference { inner, .. } => self.canonical_type_name_for_method_lookup(inner),
+            _ => crate::lower::Lowerer::get_type_name_for_method_lookup(ty),
+        }
+    }
+}

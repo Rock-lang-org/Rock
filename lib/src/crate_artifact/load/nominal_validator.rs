@@ -55,15 +55,6 @@ pub(super) struct ProductNominalTypeValidator {
 }
 
 impl ProductNominalTypeValidator {
-    #[cfg(test)]
-    pub(super) fn from_products(products: &CompilerProducts, remap: &ProductIdentityRemap) -> Self {
-        Self::from_products_with_dependencies(
-            products,
-            remap,
-            ProductDependencyDefinitions::default(),
-        )
-    }
-
     pub(super) fn from_products_with_context(
         products: &CompilerProducts,
         remap: &ProductIdentityRemap,
@@ -297,3 +288,6 @@ impl ProductNominalTypeValidator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

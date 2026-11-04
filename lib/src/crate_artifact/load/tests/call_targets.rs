@@ -15,18 +15,12 @@ fn product_artifact_rejects_unknown_resolved_var_function_target() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let err =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(err.contains("unknown function"), "unexpected error: {err}");
 }
@@ -63,18 +57,12 @@ fn product_artifact_rejects_resolved_var_function_target_to_extern() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let err =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(
         err.contains("function") && err.contains("extern"),
@@ -98,18 +86,12 @@ fn product_artifact_rejects_resolved_var_extern_target_to_function() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let err =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(
         err.contains("extern") && err.contains("function"),
@@ -415,13 +397,13 @@ fn product_artifact_rejects_receiver_method_as_function_target() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let validator = super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
     let mut reference = HirVarRef {
         name: "Box_value".to_string(),
         target: HirVarTarget::Function(method_def),
     };
 
-    let err = super::super::remap_var_target_child_location(
+    let err = super::remap_var_target_child_location(
         &mut reference,
         &remap,
         &validator,
@@ -465,19 +447,14 @@ fn product_artifact_accepts_static_method_function_display_name_mismatch() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let validator = super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
     let mut reference = HirVarRef {
         name: "not_make".to_string(),
         target: HirVarTarget::Function(method_def),
     };
 
-    super::super::remap_var_target_child_location(
-        &mut reference,
-        &remap,
-        &validator,
-        &BTreeSet::new(),
-    )
-    .unwrap();
+    super::remap_var_target_child_location(&mut reference, &remap, &validator, &BTreeSet::new())
+        .unwrap();
 }
 
 #[test]
@@ -491,9 +468,9 @@ fn product_artifact_rejects_dependency_receiver_method_as_function_target() {
         ]),
     };
     let method_id = product_def_id(1, 11);
-    let mut dependencies = super::super::ProductDependencyDefinitions::default();
+    let mut dependencies = super::ProductDependencyDefinitions::default();
     dependencies.methods.insert(method_id);
-    let validator = super::super::ProductNominalTypeValidator::from_products_with_dependencies(
+    let validator = super::ProductNominalTypeValidator::from_products_with_dependencies(
         &app_products,
         &remap,
         dependencies,
@@ -503,7 +480,7 @@ fn product_artifact_rejects_dependency_receiver_method_as_function_target() {
         target: HirVarTarget::Function(product_hir_def_id(method_id)),
     };
 
-    let err = super::super::remap_var_target_child_location(
+    let err = super::remap_var_target_child_location(
         &mut reference,
         &remap,
         &validator,
@@ -567,23 +544,15 @@ fn product_artifact_allows_dependency_static_impl_method_canonical_name_as_funct
     ))
     .unwrap();
 
-    let validator = super::super::ProductNominalTypeValidator::from_products_with_context(
-        &app_products,
-        &remap,
-        &ctx,
-    );
+    let validator =
+        super::ProductNominalTypeValidator::from_products_with_context(&app_products, &remap, &ctx);
     let mut reference = HirVarRef {
         name: "dep::Box::make".to_string(),
         target: HirVarTarget::Function(product_hir_def_id(dep_method_product_id)),
     };
 
-    super::super::remap_var_target_child_location(
-        &mut reference,
-        &remap,
-        &validator,
-        &BTreeSet::new(),
-    )
-    .unwrap();
+    super::remap_var_target_child_location(&mut reference, &remap, &validator, &BTreeSet::new())
+        .unwrap();
 
     assert_eq!(
         reference.target,
@@ -644,16 +613,13 @@ fn product_dependency_definitions_ignore_body_provider_generic_impls() {
     ))
     .unwrap();
 
-    let validator = super::super::ProductChildLocationValidator::from_products_with_context(
+    let validator = super::ProductChildLocationValidator::from_products_with_context(
         &app_products,
         &remap,
         &ctx,
     );
-    let type_validator = super::super::ProductNominalTypeValidator::from_products_with_context(
-        &app_products,
-        &remap,
-        &ctx,
-    );
+    let type_validator =
+        super::ProductNominalTypeValidator::from_products_with_context(&app_products, &remap, &ctx);
     let mut expr = HirExpr {
         kind: HirExprKindFor::MethodCall(
             Box::new(HirExpr {
@@ -674,9 +640,8 @@ fn product_dependency_definitions_ignore_body_provider_generic_impls() {
         span: Span::test(),
     };
 
-    let err =
-        super::super::remap_expr_child_locations(&mut expr, &remap, &validator, &type_validator, 0)
-            .expect_err("dependency body providers must not authorize method targets");
+    let err = super::remap_expr_child_locations(&mut expr, &remap, &validator, &type_validator, 0)
+        .expect_err("dependency body providers must not authorize method targets");
 
     assert!(
         err.contains("unknown dependency impl target"),
@@ -812,16 +777,9 @@ fn product_artifact_accepts_ambiguous_display_name_with_exact_function_target() 
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap();
+    super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+        .unwrap();
 }

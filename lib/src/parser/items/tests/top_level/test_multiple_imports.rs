@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::parser::items::tests::common::lex_test_toplevel;
 use crate::parser::items::*;
 use crate::parser::*;
 use crate::Config;

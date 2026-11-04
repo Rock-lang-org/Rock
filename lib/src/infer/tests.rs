@@ -1,4 +1,6 @@
 use super::*;
+use crate::hir::HirProgram;
+use crate::ids::CrateId;
 
 use crate::hir::{
     HirBlock, HirExpr, HirExprKind, HirImpl, HirImplOwner, HirImplReceiverPattern, HirParam,
@@ -256,7 +258,7 @@ fn finalization_exempts_only_resolver_root_entrypoint_from_generalization() {
 
 #[test]
 fn finalization_item_id_errors_are_sorted() {
-    fn partial(reverse_functions: bool) -> PartialHir {
+    pub(crate) fn partial(reverse_functions: bool) -> PartialHir {
         let first_key = DefId::new(CrateId(0), LocalDefId(1));
         let second_key = DefId::new(CrateId(0), LocalDefId(2));
         let mut functions = HashMap::new();
@@ -331,7 +333,7 @@ fn finalization_item_id_errors_are_sorted() {
 
 #[test]
 fn finalize_reports_impl_method_identity_errors_in_def_id_order() {
-    fn diagnostics(reverse_insertion: bool) -> Vec<String> {
+    pub(crate) fn diagnostics(reverse_insertion: bool) -> Vec<String> {
         let duplicate_method_id = DefId::new(CrateId(0), LocalDefId(8));
         let first_impl_id = DefId::new(CrateId(0), LocalDefId(20));
         let second_impl_id = DefId::new(CrateId(0), LocalDefId(21));
@@ -613,4 +615,24 @@ fn finalize_reports_function_key_payload_id_mismatch() {
     assert!(errors
         .iter()
         .any(|error| error.message.contains("function declaration ID mismatch")));
+}
+
+impl ResolvedHirProgram {
+    pub fn new(
+        program: HirProgram,
+        resolver: ResolverTables,
+        current_def_ids: BTreeSet<DefId>,
+        root_crate_id: crate::ids::CrateId,
+        local_def_ids: IdGen<LocalDefId>,
+    ) -> Self {
+        let program = AcceptedHirProgram::try_from(program)
+            .expect("ResolvedHirProgram requires validated method authority");
+        Self::from_accepted(
+            program,
+            resolver,
+            current_def_ids,
+            root_crate_id,
+            local_def_ids,
+        )
+    }
 }

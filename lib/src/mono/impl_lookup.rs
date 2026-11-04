@@ -75,27 +75,10 @@ impl Monomorphizer {
             .map(|imp| &imp.receiver_pattern)
     }
 
-    #[cfg(test)]
-    pub(super) fn set_impl_receiver_pattern_for_test(
-        &mut self,
-        impl_id: DefId,
-        pattern: HirImplReceiverPattern,
-    ) {
-        if let Some(imp) = self.generic_impls.get_mut(&impl_id) {
-            imp.receiver_pattern = pattern;
-            return;
-        }
-        if let Some(imp) = self
-            .trait_impls
-            .values_mut()
-            .flat_map(|impls| impls.iter_mut())
-            .find(|imp| imp.id == impl_id)
-        {
-            imp.receiver_pattern = pattern;
-        }
-    }
-
     pub(super) fn drop_receiver_matches(&self, imp: &HirImpl, recv_ty: &Type) -> bool {
         self.impl_receiver_pattern_matches(imp, recv_ty)
     }
 }
+
+#[cfg(test)]
+mod tests;

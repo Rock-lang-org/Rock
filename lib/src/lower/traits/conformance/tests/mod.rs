@@ -1,3 +1,6 @@
+pub(crate) use super::service::{
+    IndexProtocolIds, TraitConformanceContext, TraitConformanceService,
+};
 use crate::collect::resolver::ResolverTables;
 use crate::hir::{
     HirAssociatedTypeDecl, HirAssociatedTypeDef, HirBlock, HirClosureCapture,

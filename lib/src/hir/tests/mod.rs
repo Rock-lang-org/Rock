@@ -143,3 +143,13 @@ mod aliases;
 mod indexes;
 mod rebuild;
 mod targets;
+
+impl From<Vec<Type>> for HirImplReceiverPattern {
+    fn from(mut parts: Vec<Type>) -> Self {
+        match parts.len() {
+            0 => Self::Exact(Type::Unit),
+            1 => Self::Exact(parts.pop().expect("one receiver test part")),
+            _ => Self::Exact(Type::Tuple(parts)),
+        }
+    }
+}

@@ -35,18 +35,6 @@ impl LowerDiagnosticSink {
         self.push_with_code(message, span, DiagnosticCode::Resolve);
     }
 
-    #[cfg(test)]
-    pub(crate) fn push_once(&mut self, message: String, span: Span) {
-        if !self
-            .diagnostics
-            .errors
-            .iter()
-            .any(|error| error.message == message)
-        {
-            self.push(message, span);
-        }
-    }
-
     pub(crate) fn push_with_span(&mut self, message: String, span: Span) {
         self.push(message, span);
     }

@@ -107,11 +107,6 @@ impl DeclarativeMacro {
 }
 
 impl MacroTemplate {
-    #[cfg(test)]
-    pub fn expand(&self, captures: &CaptureSet) -> Result<TokenStream, String> {
-        expand_template_fragments(&self.fragments, captures, None)
-    }
-
     pub fn expand_with_origins(
         &self,
         captures: &CaptureSet,
@@ -126,73 +121,6 @@ impl MacroTemplate {
             generated_source,
         )
     }
-}
-
-#[cfg(test)]
-fn expand_template_fragments(
-    fragments: &[TemplateFragment],
-    captures: &CaptureSet,
-    repeated_index: Option<usize>,
-) -> Result<TokenStream, String> {
-    let mut trees = Vec::new();
-    for fragment in fragments {
-        match fragment {
-            TemplateFragment::Capture { name } => {
-                if let Some(index) = repeated_index {
-                    if let Some(streams) = captures.get_repeated(name) {
-                        let Some(stream) = streams.get(index) else {
-                            return Err(format!("missing repeated macro capture '{}'", name));
-                        };
-                        trees.extend(stream.trees.clone());
-                        continue;
-                    }
-                }
-
-                let Some(streams) = captures.get_direct(name) else {
-                    return Err(format!("missing macro capture '{}'", name));
-                };
-                for stream in streams {
-                    trees.extend(stream.trees.clone());
-                }
-            }
-            TemplateFragment::Token(token) => {
-                trees.extend(TokenStream::from_tokens(vec![token.clone()]).trees);
-            }
-            TemplateFragment::Repetition {
-                fragments: inner,
-                line_indent,
-            } => {
-                let capture_names = capture_names_in_template(inner);
-                let mut len = None;
-
-                for name in &capture_names {
-                    if let Some(streams) = captures.get_repeated(name) {
-                        match len {
-                            Some(len) if streams.len() != len => {
-                                return Err(format!(
-                                    "mismatched repeated macro capture lengths for '{}'",
-                                    name
-                                ));
-                            }
-                            None => len = Some(streams.len()),
-                            _ => {}
-                        }
-                    };
-                }
-
-                let Some(len) = len else { continue };
-
-                for index in 0..len {
-                    let expanded = expand_template_fragments(inner, captures, Some(index))?;
-                    trees.extend(expanded.trees);
-                    if let (Some(indent), true) = (line_indent, index + 1 < len) {
-                        trees.extend(TokenStream::from_tokens(line_break_tokens(indent)).trees);
-                    }
-                }
-            }
-        }
-    }
-    Ok(TokenStream { trees })
 }
 
 fn expand_template_fragments_with_origins(

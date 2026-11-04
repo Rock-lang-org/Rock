@@ -247,17 +247,6 @@ pub enum HirImplReceiverPattern {
 
 pub type HirImplTarget = HirImplReceiverPattern;
 
-#[cfg(test)]
-impl From<Vec<Type>> for HirImplReceiverPattern {
-    fn from(mut parts: Vec<Type>) -> Self {
-        match parts.len() {
-            0 => Self::Exact(Type::Unit),
-            1 => Self::Exact(parts.pop().expect("one receiver test part")),
-            _ => Self::Exact(Type::Tuple(parts)),
-        }
-    }
-}
-
 /// Display and serialization aliases for HIR definitions.
 ///
 /// Production compiler phases should use ID-keyed maps, resolved targets, or

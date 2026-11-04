@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+pub(crate) use super::body_types::collect_pattern_type_ids;
 use super::*;
 use crate::hir::{
     HirAssociatedTypeDef, HirBlock, HirEnum, HirExpr, HirExprKind, HirExtern, HirField,

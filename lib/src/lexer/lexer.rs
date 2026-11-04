@@ -39,13 +39,6 @@ impl Lexer {
         })
     }
 
-    #[cfg(test)]
-    pub fn with_newline_at_end(mut self, add_empty_newline_at_end: bool) -> Self {
-        self.add_empty_newline_at_end = add_empty_newline_at_end;
-
-        self
-    }
-
     pub fn next(&mut self) -> Result<Token, LexerError> {
         let token = self.match_current_char()?;
 

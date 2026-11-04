@@ -718,35 +718,4 @@ impl<'ctx> CodeGen<'ctx> {
 }
 
 #[cfg(test)]
-impl<'ctx> CodeGen<'ctx> {
-    fn mir_closure_symbol(
-        parent_symbol: &str,
-        closure_id: &crate::mir::identity::MirClosureId,
-    ) -> String {
-        format!(
-            "__mir_closure_{}_{}_{}",
-            Self::sanitize_symbol(parent_symbol),
-            Self::mir_function_id_symbol_key(&closure_id.owner),
-            closure_id.local_index
-        )
-    }
-}
-
-#[cfg(test)]
-impl<'ctx> CodeGen<'ctx> {
-    fn mir_function_id_symbol_key(id: &MirFunctionId) -> String {
-        match id {
-            MirFunctionId::Function(id) => format!("fn_{}_{}", id.crate_id.0, id.local.0),
-            MirFunctionId::Extern(id) => format!("extern_{}_{}", id.crate_id.0, id.local.0),
-            MirFunctionId::Instance(id) => format!("instance_{}", id.0),
-            MirFunctionId::Closure(id) => format!(
-                "closure_{}_{}",
-                Self::mir_function_id_symbol_key(&id.owner),
-                id.local_index
-            ),
-        }
-    }
-}
-
-#[cfg(test)]
 mod tests;

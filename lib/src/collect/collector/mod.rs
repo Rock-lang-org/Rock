@@ -14,8 +14,6 @@ use crate::collect::CollectedIdEnvironment;
 use crate::ids::{DefId, ModuleId};
 use nominal_fields::PendingNominalFields;
 use std::collections::BTreeMap;
-#[cfg(test)]
-use std::collections::HashMap;
 
 pub(crate) struct LocalCollector {
     context: CollectContext,
@@ -25,11 +23,6 @@ pub(crate) struct LocalCollector {
 }
 
 impl LocalCollector {
-    #[cfg(test)]
-    pub(crate) fn new(context: CollectContext) -> Self {
-        Self::new_with_id_environment(context, CollectedIdEnvironment::default())
-    }
-
     pub(crate) fn new_with_id_environment(
         context: CollectContext,
         id_environment: CollectedIdEnvironment,

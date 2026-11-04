@@ -26,18 +26,12 @@ fn product_artifact_rejects_unknown_method_call_target_impl_id() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let err =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(
         err.contains("unknown impl target"),
@@ -225,18 +219,12 @@ fn product_artifact_rejects_method_call_target_method_from_other_impl() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let err =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(
         err.contains("method target") && err.contains("impl target"),
@@ -315,18 +303,12 @@ fn product_artifact_rejects_method_call_target_method_from_other_trait() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let err =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(
         err.contains("does not own selected member"),

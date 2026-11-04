@@ -168,39 +168,4 @@ impl LowerItems {
 }
 
 #[cfg(test)]
-impl LowerItems {
-    pub(crate) fn insert_trait_def(&mut self, trait_def: HirTrait) -> Option<HirTrait> {
-        self.declarations.insert_trait_def(trait_def)
-    }
-
-    pub(crate) fn insert_structure(&mut self, structure: HirStruct) -> Option<HirStruct> {
-        self.declarations.insert_structure(structure)
-    }
-
-    pub(crate) fn insert_enumeration(&mut self, enumeration: HirEnum) -> Option<HirEnum> {
-        self.declarations.insert_enumeration(enumeration)
-    }
-
-    pub(crate) fn insert_extern(&mut self, extern_def: HirExtern) -> Option<HirExtern> {
-        self.declarations.insert_extern(extern_def)
-    }
-
-    pub(crate) fn function_mut(&mut self, id: DefId) -> Option<&mut HirFunction> {
-        self.declarations.function_mut(id)
-    }
-
-    pub(crate) fn structure_mut(&mut self, id: DefId) -> Option<&mut HirStruct> {
-        self.declarations.structure_mut(id)
-    }
-
-    pub(crate) fn extern_mut(&mut self, id: DefId) -> Option<&mut HirExtern> {
-        self.declarations.extern_mut(id)
-    }
-
-    pub(crate) fn enumeration_mut(&mut self, id: DefId) -> Option<&mut HirEnum> {
-        self.declarations.enumeration_mut(id)
-    }
-}
-
-#[cfg(test)]
 mod tests;

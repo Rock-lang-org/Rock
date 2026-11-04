@@ -28,8 +28,8 @@ fn product_artifact_rejects_nested_error_in_unexported_interface_type() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let error = super::super::validate_product_type_fields(&products, &remap, &CrateContext::new())
-        .unwrap_err();
+    let error =
+        super::validate_product_type_fields(&products, &remap, &CrateContext::new()).unwrap_err();
 
     assert!(error.contains("Type::Error"), "unexpected error: {error}");
 }
@@ -53,8 +53,8 @@ fn product_artifact_rejects_nested_type_var_in_unexported_body_type() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let error = super::super::validate_product_type_fields(&products, &remap, &CrateContext::new())
-        .unwrap_err();
+    let error =
+        super::validate_product_type_fields(&products, &remap, &CrateContext::new()).unwrap_err();
 
     assert!(
         error.contains("unresolved type"),
@@ -524,7 +524,7 @@ fn product_with_projection_trait(
 ) -> (
     CompilerProducts,
     super::super::ProductIdentityRemap,
-    super::super::ProductNominalTypeValidator,
+    super::ProductNominalTypeValidator,
 ) {
     let trait_product_id = ProductDefId {
         crate_id: ProductCrateId(0),
@@ -555,7 +555,7 @@ fn product_with_projection_trait(
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let validator = super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
     (products, remap, validator)
 }
@@ -573,7 +573,7 @@ fn product_artifact_remaps_projection_type_ids() {
         trait_args: Vec::new(),
     };
 
-    super::super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap();
+    super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap();
 
     assert_eq!(
         ty,
@@ -597,7 +597,7 @@ fn product_artifact_rejects_unknown_projection_trait_id() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let validator = super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
     let mut ty = Type::Projection {
         ty: Box::new(Type::I64),
         trait_id: DefId::new(CrateId(0), LocalDefId(4)),
@@ -608,7 +608,7 @@ fn product_artifact_rejects_unknown_projection_trait_id() {
         trait_args: Vec::new(),
     };
 
-    let err = super::super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap_err();
+    let err = super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap_err();
 
     assert!(
         err.contains("unknown trait definition"),
@@ -623,23 +623,17 @@ fn product_artifact_rejects_error_type_in_executable_body() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
     let mut expr = HirExpr {
         kind: HirExprKindFor::IntLiteral(1),
         ty: Type::Error,
         span: Span::test(),
     };
 
-    let error = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let error =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(
         error.contains("unresolved type"),
@@ -670,9 +664,9 @@ fn product_artifact_rejects_error_type_in_impl_receiver_metadata() {
         },
     );
 
-    let error = super::super::validate_product_method_authority_maps(
+    let error = super::validate_product_method_authority_maps(
         &products,
-        &super::super::ProductDependencyDefinitions::default(),
+        &super::ProductDependencyDefinitions::default(),
     )
     .unwrap_err();
 
@@ -695,7 +689,7 @@ fn product_artifact_rejects_unknown_projection_assoc_type_id() {
         trait_args: Vec::new(),
     };
 
-    let err = super::super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap_err();
+    let err = super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap_err();
 
     assert!(
         err.contains("unknown associated type ID"),
@@ -717,7 +711,7 @@ fn product_artifact_rejects_projection_assoc_owner_mismatch_across_crates() {
         trait_args: Vec::new(),
     };
 
-    let err = super::super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap_err();
+    let err = super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap_err();
 
     assert!(
         err.contains("does not match associated type owner"),
@@ -739,7 +733,7 @@ fn product_artifact_rejects_unknown_dependency_projection_trait_id() {
         trait_args: Vec::new(),
     };
 
-    let err = super::super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap_err();
+    let err = super::remap_type_def_ids(&mut ty, &remap, &validator).unwrap_err();
 
     assert!(
         err.contains("unknown dependency trait definition"),

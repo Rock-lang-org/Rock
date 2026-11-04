@@ -1,7 +1,10 @@
+use super::instance_relation::propagate_instance_relation;
 use super::*;
 use crate::collect::resolver::ResolverTables;
 use crate::hir::HirLanguageItems;
+use crate::hir::{HirBlock, HirExpr, HirExprKind, HirStmt};
 use crate::ids::{CrateId, IdGen, LocalDefId};
+use crate::infer::PartialHir;
 
 fn function(id: DefId, var: crate::ids::TypeVarId) -> HirFunction {
     HirFunction {

@@ -83,13 +83,6 @@ pub fn monomorphize(
     })
 }
 
-#[cfg(test)]
-pub(super) fn monomorphize_for_tests(
-    program: AcceptedHirProgram,
-) -> Result<MonomorphizedProgram, Diagnostics> {
-    monomorphize(program, SemanticSourceMap::default())
-}
-
 /// Monomorphize a program with external crate support
 ///
 /// This function accepts a CrateContext containing loaded external crates and

@@ -12,7 +12,7 @@ fn ident(name: &str) -> Ident {
 }
 
 #[test]
-fn ast_printer_walks_associated_types_and_signatures_in_traits() {
+fn ast_walk_visits_associated_types_and_signatures_in_traits() {
     let signature_name = ident("split");
     let trait_decl = TraitDecl {
         where_clauses: Vec::new(),
@@ -42,10 +42,20 @@ fn ast_printer_walks_associated_types_and_signatures_in_traits() {
         exported: false,
         language_items: Default::default(),
     };
-    let mut printer = AstPrinter::default();
+    let mut collector = IdentCollector::default();
 
-    trait_decl.visit(&mut printer);
+    trait_decl.visit(&mut collector);
 
-    assert!(printer.visited_idents.iter().any(|name| name == "Value"));
-    assert!(printer.visited_idents.iter().any(|name| name == "split"));
+    assert!(collector.0.iter().any(|name| name == "Value"));
+    assert!(collector.0.iter().any(|name| name == "split"));
+}
+
+/// Records every identifier the AST walk reaches.
+#[derive(Default)]
+struct IdentCollector(Vec<String>);
+
+impl<'a> crate::ast::visit::Visitor<'a> for IdentCollector {
+    fn visit_ident(&mut self, ident: &'a Ident) {
+        self.0.push(ident.name.clone());
+    }
 }

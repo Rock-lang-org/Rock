@@ -142,12 +142,17 @@ fn serialized_product_artifact_roundtrips_struct_enum_trait_impl_and_extern_type
         other => panic!("expected positional variant fields, got {other:?}"),
     }
     assert!(
-        super::super::type_table::artifact_type_table_contains_type_for_test(&bytes, &field_ty)
-            .unwrap()
+        super::super::type_table::tests::artifact_type_table_contains_type_for_test(
+            &bytes, &field_ty
+        )
+        .unwrap()
     );
     assert!(
-        super::super::type_table::artifact_type_table_contains_type_for_test(&bytes, &variant_ty)
-            .unwrap()
+        super::super::type_table::tests::artifact_type_table_contains_type_for_test(
+            &bytes,
+            &variant_ty
+        )
+        .unwrap()
     );
     assert!(roundtrip
         .interface
@@ -342,8 +347,10 @@ fn compiler_products_type_table_roundtrips_nested_body_type_locations() {
         &lambda_body_ty,
     ] {
         assert!(
-            super::super::type_table::artifact_type_table_contains_type_for_test(&bytes, expected)
-                .unwrap(),
+            super::super::type_table::tests::artifact_type_table_contains_type_for_test(
+                &bytes, expected
+            )
+            .unwrap(),
             "artifact type table should contain body-only type {expected:?}"
         );
     }
@@ -426,7 +433,7 @@ fn compiler_products_type_table_roundtrips_struct_pattern_type_args() {
 
     assert_eq!(type_args, &vec![pattern_arg_ty.clone()]);
     assert!(
-        super::super::type_table::artifact_type_table_contains_type_for_test(
+        super::super::type_table::tests::artifact_type_table_contains_type_for_test(
             &bytes,
             &pattern_arg_ty
         )

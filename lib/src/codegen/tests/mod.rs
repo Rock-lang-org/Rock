@@ -56,3 +56,9 @@ fn local_instance_contract(
     contract.function_bodies.insert(function_id, key);
     contract
 }
+
+impl<'ctx> CodeGen<'ctx> {
+    pub(crate) fn new(context: &'ctx Context, module_name: &str) -> Self {
+        Self::new_inner(context, module_name, None)
+    }
+}

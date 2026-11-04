@@ -1,6 +1,7 @@
+use super::*;
 use super::{
-    monomorphize_for_tests, CompilationIdentityContext, InstanceImplOwner, InstanceKey,
-    InstanceOrigin, MonoError, MonoErrorKind, Monomorphizer,
+    CompilationIdentityContext, InstanceImplOwner, InstanceKey, InstanceOrigin, MonoError,
+    MonoErrorKind, Monomorphizer,
 };
 
 use crate::diagnostic::{DiagnosticCode, DiagnosticLocation};
@@ -691,4 +692,10 @@ fn named_impl_method_origin_uses_impl_and_method_def_ids() {
             method: debug_method_id,
         }
     );
+}
+
+pub(crate) fn monomorphize_for_tests(
+    program: AcceptedHirProgram,
+) -> Result<MonomorphizedProgram, Diagnostics> {
+    monomorphize(program, SemanticSourceMap::default())
 }

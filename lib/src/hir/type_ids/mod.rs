@@ -13,8 +13,6 @@ mod body_types;
 mod definition_types;
 mod location;
 
-#[cfg(test)]
-pub(crate) use body_types::collect_pattern_type_ids;
 use body_types::*;
 use definition_types::*;
 pub use location::HirTypeLocation;

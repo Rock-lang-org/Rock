@@ -1,13 +1,14 @@
+use super::generic_conversion::{decode_generic_param_decls, encode_generic_param_decls};
+use super::hir_schema::{SerializedHirExpr, SerializedHirExprKind};
+use super::type_codec::product_def_id;
+use super::type_codec::{ProductTypeDecoder, ProductTypeEncoder};
+use super::type_graph_validation::validate_type_table_graph;
+use super::type_rows::{ProductTypeId, ProductTypeRow, ProductTypeTable};
 use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId, TypeVarId, VariantId};
 use crate::type_services::kind::Kind;
 use crate::types::{
     AssociatedTypeKey, CallableKind, CaptureKind, FunctionCapture, GenericParamDecl,
     GenericParamId, Type,
-};
-
-use super::{
-    decode_type_for_test, encode_types_for_test, ProductTypeId, ProductTypeRow, ProductTypeTable,
-    SerializedHirExpr, SerializedHirExprKind,
 };
 
 fn def(local: u32) -> DefId {
@@ -34,14 +35,14 @@ fn product_generic_param_decl_roundtrips_kind_name_and_id() {
     )];
 
     let mut encoder = super::ProductTypeEncoder::new();
-    let encoded = super::encode_generic_param_decls(&declarations, &mut encoder).unwrap();
-    assert_eq!(encoded[0].id.owner, super::product_def_id(def(7)));
+    let encoded = encode_generic_param_decls(&declarations, &mut encoder).unwrap();
+    assert_eq!(encoded[0].id.owner, product_def_id(def(7)));
     assert_eq!(encoded[0].name, "F");
     assert_eq!(encoded[0].kind, Kind::arrow(Kind::Type, Kind::Type));
     let table = encoder.finish();
     let mut decoder = super::ProductTypeDecoder::new(&table);
     assert_eq!(
-        super::decode_generic_param_decls(encoded, &mut decoder).unwrap(),
+        decode_generic_param_decls(encoded, &mut decoder).unwrap(),
         declarations
     );
 }
@@ -245,7 +246,7 @@ fn portable_type_table_validates_lambda_binder_scope() {
             },
         ],
     };
-    super::validate_type_table_graph(&valid).unwrap();
+    validate_type_table_graph(&valid).unwrap();
 
     let invalid = ProductTypeTable {
         rows: vec![ProductTypeRow::BoundVar {
@@ -254,7 +255,7 @@ fn portable_type_table_validates_lambda_binder_scope() {
             kind: Kind::Type,
         }],
     };
-    let error = super::validate_type_table_graph(&invalid).unwrap_err();
+    let error = validate_type_table_graph(&invalid).unwrap_err();
     assert!(error.contains("out-of-scope"), "{error}");
 }
 
@@ -264,7 +265,7 @@ fn portable_type_table_rejects_excessive_type_depth() {
     for index in 0..crate::products::MAX_PRODUCT_ARTIFACT_TYPE_DEPTH {
         rows.push(ProductTypeRow::Slice(ProductTypeId(index as u32)));
     }
-    let error = super::validate_type_table_graph(&ProductTypeTable { rows }).unwrap_err();
+    let error = validate_type_table_graph(&ProductTypeTable { rows }).unwrap_err();
 
     assert!(error.contains("type depth limit exceeded"), "{error}");
 }
@@ -433,7 +434,9 @@ fn serialized_product_artifact_uses_type_table_shell_for_empty_products() {
     };
 
     let bytes = products.to_artifact_bytes().unwrap();
-    let artifact = crate::products::serialized_artifact_from_bytes_for_test(&bytes).unwrap();
+    let artifact =
+        crate::products::artifact_codec::tests::serialized_artifact_from_bytes_for_test(&bytes)
+            .unwrap();
 
     assert_eq!(
         artifact.format_version,
@@ -441,4 +444,42 @@ fn serialized_product_artifact_uses_type_table_shell_for_empty_products() {
     );
     assert_eq!(artifact.type_table.rows.len(), 0);
     assert_eq!(artifact.products.crate_identity.name, "empty");
+}
+
+pub(in crate::products) fn encode_types_for_test(
+    types: &[Type],
+) -> Result<(ProductTypeTable, Vec<ProductTypeId>), String> {
+    let mut encoder = ProductTypeEncoder::new();
+    let ids = encoder.encode_types(types)?;
+    Ok((encoder.finish(), ids))
+}
+
+pub(in crate::products) fn decode_type_for_test(
+    table: &ProductTypeTable,
+    id: ProductTypeId,
+) -> Result<Type, String> {
+    ProductTypeDecoder::new(table).decode_type(id)
+}
+
+pub(crate) fn artifact_type_table_len_for_test(bytes: &[u8]) -> Result<usize, String> {
+    let artifact =
+        crate::products::artifact_codec::tests::serialized_artifact_from_bytes_for_test(bytes)?;
+    Ok(artifact.type_table.rows.len())
+}
+
+pub(crate) fn artifact_type_table_contains_type_for_test(
+    bytes: &[u8],
+    expected: &Type,
+) -> Result<bool, String> {
+    let artifact =
+        crate::products::artifact_codec::tests::serialized_artifact_from_bytes_for_test(bytes)?;
+    let mut decoder = ProductTypeDecoder::new(&artifact.type_table);
+
+    for index in 0..artifact.type_table.rows.len() {
+        if decoder.decode_type(ProductTypeId(index as u32))? == *expected {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }

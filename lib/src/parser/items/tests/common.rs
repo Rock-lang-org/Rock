@@ -1,7 +1,8 @@
 use crate::ast::{Literal, LiteralKind};
 use crate::fmt::{FormatContext, FormatNode};
 use crate::lexer::Span;
-use crate::parser::{lex_test, literal, ParseCtx, Parser};
+use crate::lexer::Token;
+use crate::parser::{literal, ParseCtx, Parser};
 use crate::Config;
 
 /// Helper function to parse a literal from input string
@@ -53,4 +54,36 @@ pub fn lex(input: &str) -> Vec<crate::lexer::Token> {
         .with_newline_at_end(false)
         .collect()
         .unwrap()
+}
+
+pub(crate) fn lex_test(input: &str) -> Vec<Token> {
+    use crate::lexer::Lexer;
+
+    let mut tokens = Lexer::new(std::path::PathBuf::from("/test.rk"), input)
+        .unwrap()
+        .with_newline_at_end(false)
+        .collect()
+        .unwrap();
+
+    //ignore indent
+    tokens.remove(0);
+
+    //ignore EOF
+    tokens.pop();
+
+    tokens
+}
+
+pub(crate) fn lex_test_toplevel(input: &str) -> Vec<Token> {
+    use crate::lexer::Lexer;
+
+    let mut tokens = Lexer::new(std::path::PathBuf::from("/test.rk"), input)
+        .unwrap()
+        .collect()
+        .unwrap();
+
+    //ignore EOF
+    tokens.pop();
+
+    tokens
 }

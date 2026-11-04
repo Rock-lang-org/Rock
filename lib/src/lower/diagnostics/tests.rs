@@ -82,3 +82,16 @@ fn diagnostic_sink_assigns_stable_type_and_selection_codes() {
     assert_eq!(diagnostics.errors()[1].code, DiagnosticCode::Selection);
     assert!(diagnostics.errors()[1].message.contains("unsafe function"));
 }
+
+impl LowerDiagnosticSink {
+    pub(crate) fn push_once(&mut self, message: String, span: Span) {
+        if !self
+            .diagnostics
+            .errors
+            .iter()
+            .any(|error| error.message == message)
+        {
+            self.push(message, span);
+        }
+    }
+}

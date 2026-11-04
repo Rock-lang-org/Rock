@@ -203,12 +203,4 @@ pub(crate) fn solve_constraints_in_place_for_owners(
 }
 
 #[cfg(test)]
-use crate::hir::HirImplReceiverPattern;
-#[cfg(test)]
-use crate::infer::constraints::ObligationState;
-#[cfg(test)]
-use crate::types::GenericParamId;
-#[cfg(test)]
-use impl_lookup::impl_exists_for;
-#[cfg(test)]
 mod tests;

@@ -20,9 +20,7 @@ impl Monomorphizer {
     pub(super) fn type_for(&self, id: crate::ids::TypeId) -> Type {
         self.type_context.type_for(id)
     }
-
-    #[cfg(test)]
-    pub(super) fn intern_types(&mut self, types: &[Type]) -> Vec<crate::ids::TypeId> {
-        types.iter().map(|ty| self.intern_type(ty)).collect()
-    }
 }
+
+#[cfg(test)]
+mod tests;

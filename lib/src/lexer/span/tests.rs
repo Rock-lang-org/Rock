@@ -1,4 +1,5 @@
 use super::Span;
+use super::*;
 
 #[test]
 fn span_equality_compares_path_and_range() {
@@ -10,4 +11,10 @@ fn span_equality_compares_path_and_range() {
         Span::new("/virtual/main.rk".into(), 1, 3),
         Span::new("/virtual/main.rk".into(), 2, 3)
     );
+}
+
+impl Span {
+    pub fn test() -> Self {
+        Self::new(PathBuf::from("/test.rk"), 0, 0)
+    }
 }

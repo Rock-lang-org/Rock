@@ -1,4 +1,8 @@
+use super::impl_lookup::impl_exists_for;
 use super::*;
+use crate::hir::HirImplReceiverPattern;
+use crate::infer::constraints::ObligationState;
+use crate::types::GenericParamId;
 
 use crate::hir::HirImplOwner;
 use crate::ids::{AssocTypeId, CrateId, LocalDefId, TypeVarId};

@@ -210,7 +210,7 @@ struct MirProgramFixtureBuilder {
 }
 
 impl MirProgramFixtureBuilder {
-    fn new(type_context: TypeContext, backend_contract: MirBackendContract) -> Self {
+    pub(crate) fn new(type_context: TypeContext, backend_contract: MirBackendContract) -> Self {
         Self {
             functions: BTreeMap::new(),
             type_context,
@@ -218,7 +218,12 @@ impl MirProgramFixtureBuilder {
         }
     }
 
-    fn with_local_body(mut self, function: MirFunction, symbol: &str, params: &[TypeId]) -> Self {
+    pub(crate) fn with_local_body(
+        mut self,
+        function: MirFunction,
+        symbol: &str,
+        params: &[TypeId],
+    ) -> Self {
         let function_id = function.id.clone();
         let callable_key = local_body_callable_key(&function_id);
         assert!(
@@ -243,7 +248,7 @@ impl MirProgramFixtureBuilder {
         self
     }
 
-    fn build(self) -> MirProgram {
+    pub(crate) fn build(self) -> MirProgram {
         let program = MirProgram {
             functions: self.functions,
             type_context: self.type_context,
@@ -461,5 +466,34 @@ fn downcast_field_place(local: usize, variant_id: VariantId, index: usize) -> Pl
                 identity: None,
             },
         ],
+    }
+}
+
+impl<'ctx> CodeGen<'ctx> {
+    pub(crate) fn mir_closure_symbol(
+        parent_symbol: &str,
+        closure_id: &crate::mir::identity::MirClosureId,
+    ) -> String {
+        format!(
+            "__mir_closure_{}_{}_{}",
+            Self::sanitize_symbol(parent_symbol),
+            Self::mir_function_id_symbol_key(&closure_id.owner),
+            closure_id.local_index
+        )
+    }
+}
+
+impl<'ctx> CodeGen<'ctx> {
+    pub(crate) fn mir_function_id_symbol_key(id: &MirFunctionId) -> String {
+        match id {
+            MirFunctionId::Function(id) => format!("fn_{}_{}", id.crate_id.0, id.local.0),
+            MirFunctionId::Extern(id) => format!("extern_{}_{}", id.crate_id.0, id.local.0),
+            MirFunctionId::Instance(id) => format!("instance_{}", id.0),
+            MirFunctionId::Closure(id) => format!(
+                "closure_{}_{}",
+                Self::mir_function_id_symbol_key(&id.owner),
+                id.local_index
+            ),
+        }
     }
 }

@@ -39,7 +39,7 @@ fn compiler_products_preserve_backend_symbols_in_link_records() {
 #[should_panic(expected = "trait default method should have a preferred body")]
 fn compiler_products_do_not_fallback_trait_defaults_by_display_name() {
     let missing_id = DefId::new(CrateId(0), LocalDefId(7));
-    let preferred = super::super::PreferredTraitDefaultMethods {
+    let preferred = super::PreferredTraitDefaultMethods {
         by_id: HashMap::new(),
     };
 
@@ -191,8 +191,8 @@ fn compiler_products_drop_ambiguous_export_name_collisions() {
         local_id: ProductLocalDefId(2),
     };
 
-    super::super::record_export_name(&mut identity_table, first, "same");
-    super::super::record_export_name(&mut identity_table, second, "same");
+    super::record_export_name(&mut identity_table, first, "same");
+    super::record_export_name(&mut identity_table, second, "same");
 
     assert!(!identity_table.export_names.contains_key("same"));
 }
@@ -213,9 +213,9 @@ fn compiler_products_keep_export_name_ambiguous_after_third_collision() {
         local_id: ProductLocalDefId(3),
     };
 
-    super::super::record_export_name(&mut identity_table, first, "same");
-    super::super::record_export_name(&mut identity_table, second, "same");
-    super::super::record_export_name(&mut identity_table, third, "same");
+    super::record_export_name(&mut identity_table, first, "same");
+    super::record_export_name(&mut identity_table, second, "same");
+    super::record_export_name(&mut identity_table, third, "same");
 
     assert!(!identity_table.export_names.contains_key("same"));
 }

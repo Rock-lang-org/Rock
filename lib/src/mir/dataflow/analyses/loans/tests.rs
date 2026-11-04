@@ -372,3 +372,9 @@ fn check_aliasing_ignores_diagnostic_place_when_indexed_loan_path_is_stale() {
 
     assert!(LoanAnalysis::check_aliasing(&place, LoanKind::Mut, &table, &active).is_ok());
 }
+
+impl LoanTable {
+    pub(crate) fn replace_place_paths_for_test(&mut self, place_paths: PlacePathTable) {
+        self.place_paths = place_paths;
+    }
+}

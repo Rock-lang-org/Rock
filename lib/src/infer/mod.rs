@@ -50,25 +50,6 @@ pub struct ResolvedHirProgram {
 }
 
 impl ResolvedHirProgram {
-    #[cfg(test)]
-    pub fn new(
-        program: HirProgram,
-        resolver: ResolverTables,
-        current_def_ids: BTreeSet<DefId>,
-        root_crate_id: crate::ids::CrateId,
-        local_def_ids: IdGen<LocalDefId>,
-    ) -> Self {
-        let program = AcceptedHirProgram::try_from(program)
-            .expect("ResolvedHirProgram requires validated method authority");
-        Self::from_accepted(
-            program,
-            resolver,
-            current_def_ids,
-            root_crate_id,
-            local_def_ids,
-        )
-    }
-
     pub fn from_accepted(
         program: AcceptedHirProgram,
         resolver: ResolverTables,
@@ -169,9 +150,5 @@ pub struct PartialHir {
     pub source_map: crate::source_map::SemanticSourceMap,
 }
 
-#[cfg(test)]
-use crate::hir::HirProgram;
-#[cfg(test)]
-use crate::ids::CrateId;
 #[cfg(test)]
 mod tests;

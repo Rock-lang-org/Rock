@@ -6,14 +6,6 @@ use crate::types::Type;
 use super::{InstanceImplOwner, InstanceOrigin, Monomorphizer};
 
 impl Monomorphizer {
-    #[cfg(test)]
-    pub(super) fn register_test_dependency_identity(&mut self, crate_id: crate::ids::CrateId) {
-        self.identity_context.dependencies.insert(
-            crate_id,
-            ProductCrateIdentity::local("test-dependency".to_string()),
-        );
-    }
-
     fn hash_canonical(bytes: &[u8]) -> u64 {
         let mut hash = 0xcbf29ce484222325u64;
         for byte in bytes {
@@ -324,3 +316,6 @@ impl Monomorphizer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

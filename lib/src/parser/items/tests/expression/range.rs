@@ -1,7 +1,7 @@
 use crate::ast::{Expression, LambdaArrowKind, Operand, SecondaryExpr, UnaryExpr};
 use crate::parser::engine::{ParseCtx, Parser};
 use crate::parser::items::expression;
-use crate::parser::lex_test;
+use crate::parser::items::tests::common::lex_test;
 use crate::Config;
 
 fn parse_range(source: &str) -> crate::ast::RangeExpr {

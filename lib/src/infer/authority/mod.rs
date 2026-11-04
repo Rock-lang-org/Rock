@@ -148,10 +148,4 @@ struct MethodAuthorityContext<'a> {
 }
 
 #[cfg(test)]
-use crate::hir::{HirBlock, HirExpr, HirExprKind, HirStmt};
-#[cfg(test)]
-use crate::infer::PartialHir;
-#[cfg(test)]
-use instance_relation::propagate_instance_relation;
-#[cfg(test)]
 mod tests;

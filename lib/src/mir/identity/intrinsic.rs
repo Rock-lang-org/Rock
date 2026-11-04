@@ -185,8 +185,6 @@ pub enum MirIntrinsicId {
     AtomicU64FetchAdd,
     AtomicU64FetchSub,
     AtomicU64Store,
-    #[cfg(test)]
-    DisplayNameI64Add,
 }
 
 impl MirIntrinsicId {

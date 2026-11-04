@@ -1,3 +1,4 @@
+use super::index_mut_impls::validate_product_index_mut_impls;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -19,7 +20,7 @@ use crate::products::{
 use crate::types::ReceiverMode;
 use crate::types::{AssociatedTypeKey, GenericParamDecl, GenericParamId, TraitBound, Type};
 
-use super::{product_def_id, validate_product_index_mut_impls, validate_product_language_items};
+use super::{product_def_id, validate_product_language_items};
 
 mod index_pairs;
 mod registry;

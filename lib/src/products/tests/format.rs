@@ -237,7 +237,7 @@ fn compiler_products_v25_artifact_contains_type_table() {
     .expect("test HIR has valid language items");
     let bytes = products.to_artifact_bytes().unwrap();
 
-    assert!(super::super::type_table::artifact_type_table_len_for_test(&bytes).unwrap() > 0);
+    assert!(super::super::type_table::tests::artifact_type_table_len_for_test(&bytes).unwrap() > 0);
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn product_artifact_schema_does_not_serialize_compiler_products_directly() {
         direct_products_decode.is_err(),
         "v25 artifacts must not be raw CompilerProducts payloads"
     );
-    assert!(super::super::type_table::artifact_type_table_len_for_test(&bytes).unwrap() > 0);
+    assert!(super::super::type_table::tests::artifact_type_table_len_for_test(&bytes).unwrap() > 0);
 }
 
 #[test]

@@ -31,18 +31,6 @@ impl<'a> MirBuilder<'a> {
             .collect()
     }
 
-    #[cfg(test)]
-    pub(super) fn needs_drop(ty: &Type) -> bool {
-        match ty {
-            Type::Array(_, _) => true,
-            Type::Struct { .. } => true,
-            Type::Enum { .. } => true,
-            Type::Tuple(elems) => elems.iter().any(Self::needs_drop),
-            Type::Function { .. } => true,
-            _ => false,
-        }
-    }
-
     pub(super) fn struct_field_types_with_substitution(
         program: &HirProgram,
         def_id: crate::ids::DefId,
@@ -208,3 +196,6 @@ impl<'a> MirBuilder<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

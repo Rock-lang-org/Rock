@@ -13,18 +13,12 @@ fn product_artifact_rejects_unknown_struct_literal_sidecar_without_fields() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let err =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(
         err.contains("unknown nominal type definition") && err.contains("as struct"),
@@ -46,11 +40,10 @@ fn product_artifact_rejects_unknown_struct_pattern_sidecar_without_fields() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_pattern_child_locations(
+    let err = super::remap_pattern_child_locations(
         &mut pattern,
         &remap,
         &child_validator,
@@ -133,18 +126,12 @@ fn product_artifact_rejects_struct_literal_field_owner_mismatch() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_expr_child_locations(
-        &mut expr,
-        &remap,
-        &child_validator,
-        &type_validator,
-        0,
-    )
-    .unwrap_err();
+    let err =
+        super::remap_expr_child_locations(&mut expr, &remap, &child_validator, &type_validator, 0)
+            .unwrap_err();
 
     assert!(
         err.contains("struct literal field owner mismatch"),
@@ -213,11 +200,10 @@ fn product_artifact_rejects_struct_pattern_field_owner_mismatch() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let child_validator = super::super::ProductChildLocationValidator::from_products(&products);
-    let type_validator =
-        super::super::ProductNominalTypeValidator::from_products(&products, &remap);
+    let child_validator = super::ProductChildLocationValidator::from_products(&products);
+    let type_validator = super::ProductNominalTypeValidator::from_products(&products, &remap);
 
-    let err = super::super::remap_pattern_child_locations(
+    let err = super::remap_pattern_child_locations(
         &mut pattern,
         &remap,
         &child_validator,

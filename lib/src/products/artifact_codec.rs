@@ -208,8 +208,4 @@ pub(super) fn portable_product_artifact_from_bytes(
 }
 
 #[cfg(test)]
-pub(super) fn serialized_artifact_from_bytes_for_test(
-    bytes: &[u8],
-) -> Result<type_table::SerializedProductArtifact, String> {
-    Ok(portable_product_artifact_from_bytes(bytes)?.artifact)
-}
+pub(crate) mod tests;

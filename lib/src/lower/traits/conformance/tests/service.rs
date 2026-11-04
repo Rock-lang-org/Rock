@@ -83,18 +83,17 @@ fn trait_conformance_service_uses_explicit_deps_for_selection_and_required_items
         .unwrap();
 
     let output = {
-        let mut service =
-            super::super::TraitConformanceService::new(super::super::TraitConformanceContext {
-                items: &mut lowerer.items,
-                engine: &mut lowerer.engine,
-                resolver: &lowerer.resolver,
-                dependency_resolvers: &lowerer.dependency_resolvers,
-                root_crate_id: lowerer.root_crate_id,
-                local_def_ids: &mut lowerer.local_def_ids,
-                current_def_ids: &mut lowerer.current_def_ids,
-                source_map: &lowerer.source_map,
-                index_protocol_ids: None,
-            });
+        let mut service = super::TraitConformanceService::new(super::TraitConformanceContext {
+            items: &mut lowerer.items,
+            engine: &mut lowerer.engine,
+            resolver: &lowerer.resolver,
+            dependency_resolvers: &lowerer.dependency_resolvers,
+            root_crate_id: lowerer.root_crate_id,
+            local_def_ids: &mut lowerer.local_def_ids,
+            current_def_ids: &mut lowerer.current_def_ids,
+            source_map: &lowerer.source_map,
+            index_protocol_ids: None,
+        });
         service.check_trait_conformance();
         service.finish()
     };

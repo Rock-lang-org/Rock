@@ -75,3 +75,17 @@ mod escapes;
 mod moves;
 mod projections;
 mod reference_returns;
+
+impl BorrowChecker {
+    pub(crate) fn check_function(
+        func: &MirFunction,
+        type_context: &crate::type_context::TypeContext,
+    ) -> Result<(), Diagnostics> {
+        Self::check_function_with_contract(
+            func,
+            type_context,
+            &MirBackendContract::default(),
+            &HashMap::new(),
+        )
+    }
+}
