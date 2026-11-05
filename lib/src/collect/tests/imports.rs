@@ -346,6 +346,47 @@ fn collect_records_import_alias_for_signature_only_declaration() {
 }
 
 #[test]
+fn collect_binds_import_of_item_declared_in_a_later_module() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "rock_collect_late_import_alias_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let root_path = temp_dir.join("main.rk");
+    std::fs::write(temp_dir.join("a.rk"), "> test::b::value\n").unwrap();
+    std::fs::write(temp_dir.join("b.rk"), "value = -> 0\n< value\n").unwrap();
+
+    let (program, graph) = load_source_program(root_path, "mod a\nmod b\n", Some("test"));
+
+    let decls =
+        collect_with_source_graph(&program, &graph, &CrateContext::new(), false, Some("test"))
+            .expect("an import of a later module's item should resolve");
+
+    let expected = *decls
+        .resolver
+        .item_paths
+        .get("test::b::value")
+        .expect("canonical item path should resolve");
+    assert!(
+        decls
+            .resolver
+            .import_aliases
+            .iter()
+            .any(|(alias, id)| alias.ends_with("value") && *id == expected),
+        "aliases were {:?}",
+        decls.resolver.import_aliases
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
 fn collect_skips_non_explicit_glob_import_aliases_in_canonical_import_table() {
     let temp_dir = std::env::temp_dir().join(format!(
         "rock_collect_non_explicit_glob_aliases_{}_{}",

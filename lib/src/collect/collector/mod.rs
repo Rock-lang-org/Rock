@@ -58,7 +58,7 @@ impl LocalCollector {
         current_crate_name: Option<&str>,
     ) -> LocalCollection {
         self.complete_nominal_fields();
-        self.report_unresolved_imports();
+        self.bind_or_report_pending_imports();
         self.context
             .into_local_collection(item_index, root_module_id, current_crate_name)
     }

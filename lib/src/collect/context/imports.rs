@@ -101,7 +101,7 @@ impl CollectContext {
     }
 
     /// Finds what an import of `qualified_name` refers to, without binding anything.
-    pub(crate) fn resolve_import(
+    fn resolve_import(
         &self,
         qualified_name: &str,
         record_canonical_aliases: bool,

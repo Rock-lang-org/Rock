@@ -113,11 +113,11 @@ impl LocalCollector {
         }
     }
 
-    /// Reports imports that matched nothing when they were collected and still match
-    /// nothing now that every declaration is registered.
-    pub(super) fn report_unresolved_imports(&mut self) {
+    /// Binds imports that matched nothing when they were collected but match a
+    /// declaration registered later, and reports the ones that still match nothing.
+    pub(super) fn bind_or_report_pending_imports(&mut self) {
         for pending in std::mem::take(&mut self.pending_imports) {
-            if pending.resolves_now(&self.context) {
+            if self.bind_pending_import(&pending) {
                 continue;
             }
             let message = format!("unresolved import '{}'", pending.label);
@@ -126,6 +126,39 @@ impl LocalCollector {
                 None => self.context.push_error(message),
             }
         }
+    }
+
+    /// Retries each form of `pending` the way it was first tried and binds the
+    /// first one that now matches.
+    fn bind_pending_import(&mut self, pending: &PendingImport) -> bool {
+        for (qualified_name, record_canonical_aliases, canonical_prefix) in &pending.attempts {
+            let short_name = qualified_name
+                .rsplit("::")
+                .next()
+                .unwrap_or(qualified_name)
+                .to_string();
+            let mut bound = self.context.import_qualified_name(
+                short_name.clone(),
+                qualified_name.clone(),
+                true,
+                *record_canonical_aliases,
+                canonical_prefix.as_deref(),
+            );
+            bound |= self.import_type_alias_local(
+                canonical_prefix.as_deref().unwrap_or_default(),
+                short_name,
+                qualified_name.clone(),
+            );
+            let is_extern = self
+                .context
+                .externs
+                .iter()
+                .any(|ext| &ext.name == qualified_name);
+            if bound || is_extern {
+                return true;
+            }
+        }
+        false
     }
 
     pub(super) fn handle_glob_import(&mut self, module_path: &[String]) {
@@ -300,24 +333,6 @@ impl PendingImport {
             canonical_prefix.map(str::to_string),
         ));
         context.handle_import(path, record_canonical_aliases, canonical_prefix)
-    }
-
-    fn resolves_now(&self, context: &CollectContext) -> bool {
-        self.attempts.iter().any(
-            |(qualified_name, record_canonical_aliases, canonical_prefix)| {
-                context
-                    .resolve_import(
-                        qualified_name,
-                        *record_canonical_aliases,
-                        canonical_prefix.as_deref(),
-                    )
-                    .is_some()
-                    || context
-                        .externs
-                        .iter()
-                        .any(|ext| &ext.name == qualified_name)
-            },
-        )
     }
 }
 
