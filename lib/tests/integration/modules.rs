@@ -399,6 +399,29 @@ fn test_unresolved_import_reports_diagnostic() {
 }
 
 #[test]
+fn test_unresolved_import_in_source_module_reports_one_diagnostic() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+
+    std::fs::write(dir.join("test.rk"), "mod util\nmain = -> 0\n").unwrap();
+    std::fs::write(dir.join("util.rk"), "> missing::answer\n").unwrap();
+
+    let mut config = test_config(dir.join("test.rk"), dir.clone());
+    config.no_std = true;
+    config.no_prelude = true;
+    let diagnostics =
+        rock_lib::compile(&config).expect_err("an import of a missing item should fail");
+
+    assert_eq!(diagnostics.0.len(), 1, "diagnostics were {diagnostics:?}");
+    assert_eq!(
+        diagnostics.0[0].message,
+        "unresolved import 'missing::answer'"
+    );
+}
+
+#[test]
 fn test_circular_module_load_reports_diagnostic() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);

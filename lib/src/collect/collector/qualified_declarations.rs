@@ -417,9 +417,6 @@ impl LocalCollector {
                         headers::build_impl_with_id(&mut self.context, imp, id, &method_ids);
                     self.context.impls.push(hir_impl);
                 }
-                ast::TopLevel::Import(path) => {
-                    self.handle_import_in_context(path, prefix);
-                }
                 ast::TopLevel::GlobImport(module_path) => {
                     self.handle_glob_import_in_context(module_path, prefix);
                 }
