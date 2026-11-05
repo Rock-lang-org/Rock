@@ -16,8 +16,8 @@ fn build_impl_resolves_trait_id_through_import_alias() {
     let trait_id = crate::ids::DefId::new(crate::ids::CrateId(0), crate::ids::LocalDefId(10));
     let assoc_id = crate::ids::AssocTypeId(7);
     context
-        .import_aliases
-        .insert("Deref".to_string(), "std::deref::Deref".to_string());
+        .names
+        .set_import_alias("Deref".to_string(), "std::deref::Deref".to_string());
     context.traits.insert(
         "std::deref::Deref".to_string(),
         HirTrait {
@@ -68,8 +68,8 @@ fn build_impl_resolves_trait_id_through_canonical_import_alias() {
     let mut context = CollectContext::new();
     let trait_id = crate::ids::DefId::new(crate::ids::CrateId(0), crate::ids::LocalDefId(10));
     context
-        .canonical_import_aliases
-        .insert("Clone".to_string(), trait_id);
+        .names
+        .record_canonical_alias("Clone".to_string(), trait_id, true);
     context.traits.insert(
         "std::clone::Clone".to_string(),
         HirTrait {

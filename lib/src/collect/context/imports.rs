@@ -127,8 +127,8 @@ impl CollectContext {
 
         if let Some(export) = canonical_qualified_name
             .as_ref()
-            .and_then(|name| self.export_aliases.get(name))
-            .or_else(|| self.export_aliases.get(qualified_name))
+            .and_then(|name| self.names.export_alias(name))
+            .or_else(|| self.names.export_alias(qualified_name))
             .and_then(|export_source| self.export_for_registered_item(export_source))
         {
             return Some(ImportResolution::ArtifactExport(export));
@@ -164,9 +164,7 @@ impl CollectContext {
             return Some(ImportTarget::TypeItem);
         }
 
-        self.declared_items
-            .get(name)
-            .map(|id| ImportTarget::Declared(*id))
+        self.names.declared_item(name).map(ImportTarget::Declared)
     }
 
     /// Registers every importable current-crate item by canonical path. Runs
@@ -191,14 +189,14 @@ impl CollectContext {
             if matches!(item.kind, ItemKind::Module | ItemKind::Impl) {
                 continue;
             }
-            self.declared_items.insert(path, id);
+            self.names.declare_item(path, id);
         }
     }
 
     /// Binds the imports that resolved before their target's header was
     /// lowered: values get their scope type, types their short-name entry.
     pub(crate) fn bind_deferred_imports(&mut self) {
-        for (short_name, id) in std::mem::take(&mut self.deferred_import_bindings) {
+        for (short_name, id) in self.names.take_deferred_import_bindings() {
             if let Some(ty) = self.declared_value_type(id) {
                 self.scope.define(short_name, ty, false);
                 continue;
@@ -246,13 +244,13 @@ impl CollectContext {
     ) {
         match target {
             ImportTarget::Value(ty) => self.scope.define(short_name.to_string(), ty, false),
-            ImportTarget::Declared(id) => self
-                .deferred_import_bindings
-                .push((short_name.to_string(), id)),
+            ImportTarget::Declared(id) => {
+                self.names.defer_import_binding(short_name.to_string(), id)
+            }
             ImportTarget::TypeItem => {}
         }
-        self.import_aliases
-            .insert(short_name.to_string(), alias_target.to_string());
+        self.names
+            .set_import_alias(short_name.to_string(), alias_target.to_string());
         if let Some(export) = &export {
             if explicit {
                 self.record_explicit_canonical_alias(short_name.to_string(), export);

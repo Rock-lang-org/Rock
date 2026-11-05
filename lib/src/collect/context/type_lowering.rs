@@ -49,7 +49,7 @@ impl TypeLoweringContext for CollectContext {
             return Some(ResolvedNominalType::Enum(enum_def));
         }
 
-        if let Some(id) = self.canonical_import_aliases.get(name).copied() {
+        if let Some(id) = self.names.canonical_alias(name) {
             if let Some(structure) = self
                 .structs
                 .values()
@@ -69,7 +69,7 @@ impl TypeLoweringContext for CollectContext {
             }
         }
 
-        if let Some(qualified) = self.import_aliases.get(name) {
+        if let Some(qualified) = self.names.import_alias(name) {
             if let Some(structure) = self.structs.get(qualified).cloned() {
                 return Some(ResolvedNominalType::Struct(structure));
             }
@@ -87,14 +87,14 @@ impl TypeLoweringContext for CollectContext {
             return Some(trait_def);
         }
 
-        if let Some(id) = self.canonical_import_aliases.get(name).copied() {
+        if let Some(id) = self.names.canonical_alias(name) {
             if let Some(trait_def) = self.traits.values().find(|trait_def| trait_def.id == id) {
                 return Some(trait_def.clone());
             }
         }
 
-        self.import_aliases
-            .get(name)
+        self.names
+            .import_alias(name)
             .and_then(|qualified| self.traits.get(qualified))
             .cloned()
     }
@@ -104,16 +104,16 @@ impl TypeLoweringContext for CollectContext {
             .get(name)
             .cloned()
             .or_else(|| {
-                self.canonical_import_aliases.get(name).and_then(|id| {
+                self.names.canonical_alias(name).and_then(|id| {
                     self.type_aliases
                         .values()
-                        .find(|alias| alias.id == *id)
+                        .find(|alias| alias.id == id)
                         .cloned()
                 })
             })
             .or_else(|| {
-                self.import_aliases
-                    .get(name)
+                self.names
+                    .import_alias(name)
                     .and_then(|qualified| self.type_aliases.get(qualified))
                     .cloned()
             })

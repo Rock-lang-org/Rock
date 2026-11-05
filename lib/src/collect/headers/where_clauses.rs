@@ -42,13 +42,9 @@ pub(super) fn lower_where_clauses(
             .map(|trait_def| trait_def.id)
             .or_else(|| {
                 let suffix = format!("::{}", trait_bound.name);
-                let mut candidates =
-                    context
-                        .canonical_names_by_id
-                        .iter()
-                        .filter_map(|(id, name)| {
-                            (name == &trait_bound.name || name.ends_with(&suffix)).then_some(*id)
-                        });
+                let mut candidates = context.names.canonical_names().filter_map(|(id, name)| {
+                    (name == trait_bound.name || name.ends_with(&suffix)).then_some(id)
+                });
                 let candidate = candidates.next()?;
                 candidates.next().is_none().then_some(candidate)
             })

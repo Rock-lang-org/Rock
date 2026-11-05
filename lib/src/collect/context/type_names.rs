@@ -88,23 +88,20 @@ pub(super) fn collect_generic_names_from_parse_type<F>(
     }
 }
 
-pub(super) fn is_known_nominal_type_name(context: &CollectContext, name: &str) -> bool {
+pub(crate) fn is_known_nominal_type_name(context: &CollectContext, name: &str) -> bool {
     if context.structs.contains_key(name) || context.enums.contains_key(name) {
         return true;
     }
 
-    if let Some(qualified) = context.import_aliases.get(name) {
+    if let Some(qualified) = context.names.import_alias(name) {
         if context.structs.contains_key(qualified) || context.enums.contains_key(qualified) {
             return true;
         }
     }
 
-    if let Some(id) = context.canonical_import_aliases.get(name) {
-        return context
-            .structs
-            .values()
-            .any(|structure| structure.id == *id)
-            || context.enums.values().any(|enum_def| enum_def.id == *id);
+    if let Some(id) = context.names.canonical_alias(name) {
+        return context.structs.values().any(|structure| structure.id == id)
+            || context.enums.values().any(|enum_def| enum_def.id == id);
     }
 
     false

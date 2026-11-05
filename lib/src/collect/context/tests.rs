@@ -318,11 +318,11 @@ fn collect_context_lowers_associated_type_through_canonical_trait_import_id() {
         },
     );
     context
-        .canonical_import_aliases
-        .insert("Iterable".to_string(), trait_id);
+        .names
+        .record_canonical_alias("Iterable".to_string(), trait_id, true);
     context
-        .canonical_names_by_id
-        .insert(trait_id, "dep::Iterable".to_string());
+        .names
+        .set_canonical_name(trait_id, "dep::Iterable".to_string());
     context.current_trait = Some("Iterable".to_string());
     context.current_generic_owner = Some(trait_id);
     context.current_generic_params = vec!["Self".to_string()];

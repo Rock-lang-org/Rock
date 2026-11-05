@@ -29,9 +29,8 @@ impl LocalCollector {
                 }
                 let qualified_source = qualify_export_source(&self.context, prefix, &source);
                 self.context
-                    .export_aliases
-                    .entry(format!("{}::{}", prefix, export_name))
-                    .or_insert(qualified_source);
+                    .names
+                    .default_export_alias(format!("{}::{}", prefix, export_name), qualified_source);
             }
         }
 
@@ -92,8 +91,8 @@ impl LocalCollector {
             let qualified_source = qualify_export_source(&self.context, prefix, source);
 
             self.context
-                .export_aliases
-                .insert(qualified_export.clone(), qualified_source.clone());
+                .names
+                .set_export_alias(qualified_export.clone(), qualified_source.clone());
 
             if let Some(func) = self.context.functions.get(&qualified_source) {
                 let func_type = func.fn_type();
@@ -302,12 +301,9 @@ impl LocalCollector {
         };
 
         let resolver_alias = format!("{}::{}", prefix, short_name);
-        self.context
-            .canonical_import_aliases
-            .insert(resolver_alias, export.id);
-        self.context
-            .canonical_names_by_id
-            .insert(export.id, export.source);
+        let names = &mut self.context.names;
+        names.record_canonical_alias(resolver_alias, export.id, true);
+        names.set_canonical_name(export.id, export.source);
         true
     }
 
@@ -320,12 +316,9 @@ impl LocalCollector {
     ) {
         let resolver_alias = local_resolver_alias.unwrap_or_else(|| short_name.clone());
         if let Some(id) = item_id {
-            self.context
-                .canonical_import_aliases
-                .insert(resolver_alias, id);
-            self.context
-                .canonical_names_by_id
-                .insert(id, qualified_name);
+            let names = &mut self.context.names;
+            names.record_canonical_alias(resolver_alias, id, true);
+            names.set_canonical_name(id, qualified_name);
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::ast;
-use crate::collect::context::CollectContext;
+pub(super) use crate::collect::context::is_known_nominal_type_name;
 use crate::types::{GenericParamId, Type};
 use std::collections::HashMap;
 
@@ -275,24 +275,4 @@ pub(super) fn collect_declared_generic_kinds<F>(
     }
 }
 
-pub(super) fn is_known_nominal_type_name(context: &CollectContext, name: &str) -> bool {
-    if context.structs.contains_key(name) || context.enums.contains_key(name) {
-        return true;
-    }
 
-    if let Some(qualified) = context.import_aliases.get(name) {
-        if context.structs.contains_key(qualified) || context.enums.contains_key(qualified) {
-            return true;
-        }
-    }
-
-    if let Some(id) = context.canonical_import_aliases.get(name) {
-        return context
-            .structs
-            .values()
-            .any(|structure| structure.id == *id)
-            || context.enums.values().any(|enum_def| enum_def.id == *id);
-    }
-
-    false
-}

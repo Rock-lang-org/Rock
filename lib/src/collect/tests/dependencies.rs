@@ -327,10 +327,7 @@ fn collect_context_bootstraps_interface_std_prelude() {
     context.register_crate_functions(&crate_ctx);
     context.inject_loaded_prelude(&crate_ctx);
 
-    assert_eq!(
-        context.import_aliases.get("print"),
-        Some(&"std::print".to_string())
-    );
+    assert_eq!(context.names.import_alias("print"), Some("std::print"));
     assert!(context.functions.contains_key("std::print"));
     assert!(!context.functions.contains_key("print"));
 }

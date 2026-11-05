@@ -151,12 +151,9 @@ impl LocalCollector {
                     let hir_trait =
                         headers::build_trait_with_id(&mut self.context, td, id, &member_ids);
                     if local_prefix.is_none() && self.context.current_crate_name.is_some() {
-                        self.context
-                            .canonical_import_aliases
-                            .insert(td.name.name.clone(), id);
-                        self.context
-                            .import_aliases
-                            .insert(td.name.name.clone(), lookup_name.clone());
+                        let names = &mut self.context.names;
+                        names.record_canonical_alias(td.name.name.clone(), id, true);
+                        names.set_import_alias(td.name.name.clone(), lookup_name.clone());
                         self.context
                             .traits
                             .insert(td.name.name.clone(), hir_trait.clone());

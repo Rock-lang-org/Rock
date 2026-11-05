@@ -19,14 +19,14 @@ impl CollectContext {
             }
         }
 
-        if let Some(id) = self.canonical_import_aliases.get(name).copied() {
+        if let Some(id) = self.names.canonical_alias(name) {
             if let Some(trait_def) = self.traits.values().find(|trait_def| trait_def.id == id) {
                 return Some(trait_def);
             }
         }
 
-        self.import_aliases
-            .get(name)
+        self.names
+            .import_alias(name)
             .and_then(|qualified| self.traits.get(qualified))
     }
 
@@ -52,13 +52,7 @@ impl CollectContext {
     ) {
         // Always record the alias by DefId, local items included, so the resolver
         // never depends on re-resolving a path string later.
-        if overwrite {
-            self.canonical_import_aliases.insert(alias, export.id);
-        } else {
-            self.canonical_import_aliases
-                .entry(alias)
-                .or_insert(export.id);
-        }
+        self.names.record_canonical_alias(alias, export.id, overwrite);
 
         // Local items register their own canonical name when declared; the import
         // path may not be canonical, so only foreign items take their name from here.
@@ -71,22 +65,22 @@ impl CollectContext {
             return;
         }
 
-        self.canonical_names_by_id
-            .entry(export.id)
-            .or_insert_with(|| export.source.clone());
+        self.names
+            .default_canonical_name(export.id, export.source.clone());
     }
 
     pub(super) fn record_canonical_item_name(&mut self, id: DefId, name: &str) {
-        if let Some(existing_name) = self.canonical_names_by_id.get(&id) {
+        if let Some(existing_name) = self.names.canonical_name(id) {
             if existing_name != name {
-                self.push_error(format!(
+                let message = format!(
                     "conflicting canonical declaration names for DefId {id:?}: '{existing_name}' and '{name}'"
-                ));
+                );
+                self.push_error(message);
             }
             return;
         }
 
-        self.canonical_names_by_id.insert(id, name.to_string());
+        self.names.set_canonical_name(id, name.to_string());
     }
 
     fn record_scoped_module_alias(
@@ -99,10 +93,8 @@ impl CollectContext {
             return;
         };
 
-        self.scoped_module_aliases
-            .entry(module_prefix.to_string())
-            .or_default()
-            .insert(alias, id);
+        self.names
+            .record_scoped_module_alias(module_prefix, alias, id);
     }
 
     pub(super) fn record_resolved_import_alias(
@@ -166,11 +158,11 @@ impl CollectContext {
             });
         }
         // Declared but not lowered yet: its identity is already known.
-        self.declared_items
-            .get(qualified_name)
+        self.names
+            .declared_item(qualified_name)
             .map(|id| ArtifactExport {
                 source: qualified_name.to_string(),
-                id: *id,
+                id,
             })
     }
 

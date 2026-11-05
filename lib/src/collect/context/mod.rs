@@ -3,6 +3,7 @@ mod exports;
 mod extern_crates;
 mod imports;
 mod module_loading;
+mod name_tables;
 mod type_lowering;
 mod type_names;
 
@@ -22,7 +23,9 @@ pub(crate) use exports::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-pub(crate) use type_names::path_names;
+pub(crate) use type_names::{is_known_nominal_type_name, path_names};
+
+use name_tables::{NameTables, ResolverNameTables};
 
 pub(crate) struct CollectContext {
     pub(crate) type_vars: DeclarationTypeVars,
@@ -43,7 +46,6 @@ pub(crate) struct CollectContext {
     pub(crate) current_module_path: PathBuf,
     pub(crate) loaded_modules: HashSet<PathBuf>,
     pub(crate) loaded_module_paths: Vec<(String, PathBuf)>,
-    pub(crate) import_aliases: HashMap<String, String>,
     pub(crate) current_trait: Option<String>,
     pub(crate) current_trait_generics: Vec<String>,
     pub(crate) current_generic_owner: Option<DefId>,
@@ -54,16 +56,8 @@ pub(crate) struct CollectContext {
     pub(crate) module_file_cache: HashMap<PathBuf, ast::Module>,
     pub(crate) dependency_root_export_ids: HashMap<String, HashMap<String, ArtifactExport>>,
     pub(crate) language_items: LanguageItems<DefId>,
-    pub(crate) canonical_import_aliases: HashMap<String, DefId>,
-    pub(crate) canonical_names_by_id: HashMap<DefId, String>,
-    pub(crate) scoped_module_aliases: HashMap<String, HashMap<String, DefId>>,
-    pub(crate) export_aliases: HashMap<String, String>,
-    /// Every current-crate item by canonical path, known before any header is
-    /// lowered, so imports resolve without waiting for their target's types.
-    pub(crate) declared_items: HashMap<String, DefId>,
-    /// Imports resolved to an item whose header was not lowered yet; bound by
-    /// `bind_deferred_imports` once every header is.
-    pub(crate) deferred_import_bindings: Vec<(String, DefId)>,
+    /// Import, re-export and canonical item names.
+    pub(crate) names: NameTables,
 }
 
 pub(crate) struct LocalCollection {
@@ -108,7 +102,6 @@ impl CollectContext {
             current_module_path: PathBuf::new(),
             loaded_modules: HashSet::new(),
             loaded_module_paths: Vec::new(),
-            import_aliases: HashMap::new(),
             current_trait: None,
             current_trait_generics: Vec::new(),
             current_generic_owner: None,
@@ -119,12 +112,7 @@ impl CollectContext {
             module_file_cache: HashMap::new(),
             dependency_root_export_ids: HashMap::new(),
             language_items: LanguageItems::default(),
-            canonical_import_aliases: HashMap::new(),
-            canonical_names_by_id: HashMap::new(),
-            scoped_module_aliases: HashMap::new(),
-            export_aliases: HashMap::new(),
-            declared_items: HashMap::new(),
-            deferred_import_bindings: Vec::new(),
+            names: NameTables::default(),
         }
     }
 
@@ -205,7 +193,6 @@ impl CollectContext {
             current_module_path: _,
             loaded_modules: _,
             loaded_module_paths,
-            import_aliases: _,
             current_trait: _,
             current_trait_generics: _,
             current_generic_owner: _,
@@ -216,13 +203,14 @@ impl CollectContext {
             module_file_cache,
             dependency_root_export_ids,
             language_items,
+            names,
+        } = self;
+        let ResolverNameTables {
             canonical_import_aliases,
             canonical_names_by_id,
             scoped_module_aliases,
             export_aliases,
-            declared_items: _,
-            deferred_import_bindings: _,
-        } = self;
+        } = names.into_resolver_tables();
 
         let mut resolver = build_resolver_tables(
             item_index,

@@ -32,35 +32,18 @@ impl CollectContext {
         if let Some(func) = self.functions.get(qualified_name) {
             let func_type = func.fn_type();
             self.scope.define(short_name.clone(), func_type, false);
-            self.import_aliases
-                .entry(short_name.clone())
-                .or_insert_with(|| qualified_name.to_string());
-            true
         } else if let Some(binding) = self.scope.lookup(qualified_name) {
             self.scope
                 .define(short_name.clone(), binding.ty.clone(), false);
-            self.import_aliases
-                .entry(short_name)
-                .or_insert_with(|| qualified_name.to_string());
-            true
-        } else if self.structs.contains_key(qualified_name) {
-            self.import_aliases
-                .entry(short_name)
-                .or_insert_with(|| qualified_name.to_string());
-            true
-        } else if self.enums.contains_key(qualified_name) {
-            self.import_aliases
-                .entry(short_name)
-                .or_insert_with(|| qualified_name.to_string());
-            true
-        } else if self.traits.contains_key(qualified_name) {
-            self.import_aliases
-                .entry(short_name)
-                .or_insert_with(|| qualified_name.to_string());
-            true
-        } else {
-            false
+        } else if !self.structs.contains_key(qualified_name)
+            && !self.enums.contains_key(qualified_name)
+            && !self.traits.contains_key(qualified_name)
+        {
+            return false;
         }
+        self.names
+            .default_import_alias(short_name, qualified_name.to_string());
+        true
     }
 
     pub(crate) fn register_crate_functions(&mut self, ctx: &CrateContext) {
@@ -85,8 +68,8 @@ impl CollectContext {
         // their canonical paths, including while collecting function signatures.
         for (alias, id) in &metadata.resolver().export_aliases {
             if let Some(source) = metadata.resolver().canonical_name(*id) {
-                self.export_aliases
-                    .insert(alias.clone(), source.to_string());
+                self.names
+                    .set_export_alias(alias.clone(), source.to_string());
             }
         }
 
