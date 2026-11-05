@@ -5,6 +5,9 @@ use crate::products::{
     ProductTraitInterface,
 };
 
+/// Checks that body rows and interface rows agree, in one linear pass. The
+/// producer guarantees this, but the artifact is read from disk: a missing
+/// generic body would otherwise surface as an internal error at instantiation.
 pub(super) fn validate_product_body_rows_have_interface(
     products: &CompilerProducts,
 ) -> Result<(), String> {

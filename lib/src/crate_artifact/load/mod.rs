@@ -114,7 +114,6 @@ impl CrateContext {
         let products =
             PortableProductArtifact::read_payload_from_path_bounded(&artifact_path, &header)?
                 .into_products()?;
-        super::language_items::validate_product_language_items(&products)?;
         let mut staged_crate_context = self.clone();
         let remap = ProductIdentityRemap::from_products(&mut staged_crate_context, &products)?;
         let extern_record =
@@ -148,8 +147,6 @@ impl CrateContext {
                 expected_name
             ));
         }
-
-        super::language_items::validate_product_language_items(&products)?;
 
         let mut staged_crate_context = self.clone();
         let remap = ProductIdentityRemap::from_products(&mut staged_crate_context, &products)?;

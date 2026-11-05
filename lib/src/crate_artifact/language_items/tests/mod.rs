@@ -20,7 +20,8 @@ use crate::products::{
 use crate::types::ReceiverMode;
 use crate::types::{AssociatedTypeKey, GenericParamDecl, GenericParamId, TraitBound, Type};
 
-use super::{product_def_id, validate_product_language_items};
+use super::product_def_id;
+use super::validation::validate_product_language_items;
 
 mod index_pairs;
 mod registry;

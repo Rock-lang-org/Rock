@@ -12,6 +12,9 @@ pub(in crate::crate_artifact) fn language_items_from_products(
     products: &CompilerProducts,
     remap: &ProductIdentityRemap,
 ) -> Result<HirLanguageItems, String> {
+    // The single language-item check per artifact load. The producer already
+    // validated these items, but the artifact is read from disk: a malformed
+    // one must fail here, not as an internal error during lowering.
     validate_product_language_items(products)?;
 
     let language_items = &products.interface.language_items;
