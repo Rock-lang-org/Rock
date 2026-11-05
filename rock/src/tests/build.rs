@@ -133,7 +133,7 @@ fn test_mixed_package_with_one_binary_runs_without_a_selector() {
 fn test_cli_build_lists_all_products_and_run_selects_a_binary() {
     let root = temp_test_dir("multi_target_cli");
     write_multi_target_package(&root, true);
-    crate::rockc::ensure_dev_binary_built("rock").unwrap();
+    super::support::prepare_rock_cli();
     let rock = rock_shared::process::dev_target_binary_from_current_exe("rock").unwrap();
     let output = run_command_output(
         std::process::Command::new(&rock)
@@ -222,7 +222,7 @@ fn test_library_run_cli_builds_and_reports_no_binary() {
         "< answer = -> 42\n",
         true,
     );
-    crate::rockc::ensure_dev_binary_built("rock").unwrap();
+    super::support::prepare_rock_cli();
     let rock = rock_shared::process::dev_target_binary_from_current_exe("rock").unwrap();
     let output = run_command_output(std::process::Command::new(rock).current_dir(&root).args([
         "run",

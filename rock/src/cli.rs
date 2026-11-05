@@ -11,6 +11,7 @@ use crate::{
 
 pub fn run() -> Result<CliOutcome, String> {
     let config = Config::parse();
+    progress::set_capture_tool_output(config.quiet);
 
     match config.command {
         Command::New { project_name } => {
@@ -54,6 +55,10 @@ fn current_project_root() -> Result<PathBuf, String> {
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub(crate) struct Config {
+    /// Hide the output of the compiler tools rock runs; a failing build step
+    /// still prints it
+    #[arg(long, short, global = true)]
+    pub(crate) quiet: bool,
     #[command(subcommand)]
     pub(crate) command: Command,
 }

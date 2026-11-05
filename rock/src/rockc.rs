@@ -4,9 +4,6 @@ use std::{
     process::Command,
 };
 
-#[cfg(test)]
-use std::{collections::HashSet, sync::Mutex};
-
 use rock_shared::{process, sysroot::STD_CRATE_NAME};
 
 use crate::package::Package;
@@ -52,54 +49,7 @@ pub(crate) fn resolve_rockc_path() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(path));
     }
 
-    #[cfg(test)]
-    ensure_dev_binary_built("rockc")?;
-
     process::dev_target_binary_from_current_exe("rockc")
-}
-
-#[cfg(test)]
-pub(crate) fn ensure_dev_binary_built(package: &str) -> Result<(), String> {
-    static BUILT_PACKAGES: std::sync::OnceLock<Mutex<HashSet<String>>> = std::sync::OnceLock::new();
-    let built_packages = BUILT_PACKAGES.get_or_init(|| Mutex::new(HashSet::new()));
-    let mut built_packages = built_packages
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if built_packages.contains(package) {
-        return Ok(());
-    }
-
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("Failed to resolve workspace root for dev binary build")?;
-    let binary = process::dev_target_binary_from_current_exe(package)?;
-    let mut command = Command::new("cargo");
-    command
-        .current_dir(workspace_root)
-        .args(["build", "-p", package]);
-    if binary.parent().and_then(|dir| dir.file_name()) == Some(std::ffi::OsStr::new("release")) {
-        command.arg("--release");
-    }
-    let output = command
-        .output()
-        .map_err(|e| format!("Failed to spawn cargo build for {}: {}", package, e))?;
-    if !output.status.success() {
-        return Err(format!(
-            "cargo build -p {} failed with status {}; stdout:\n{}\nstderr:\n{}",
-            package,
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-
-    built_packages.insert(package.to_string());
-    Ok(())
-}
-
-#[cfg(test)]
-fn rockc_path_from_current_exe(current_exe: &Path) -> Result<PathBuf, String> {
-    process::dev_target_binary_from_exe(current_exe, "rockc")
 }
 
 pub(crate) fn build_dependency_artifact_invocation(
@@ -178,19 +128,18 @@ pub(crate) fn run_invocation(
     context: &str,
 ) -> Result<(), String> {
     let executable = invocation.executable.clone();
+    let spawn_error = |e: std::io::Error| {
+        format!(
+            "Failed to spawn rockc for {} using {}: {}",
+            context,
+            executable.display(),
+            e
+        )
+    };
+    let mut command = invocation.into_command();
 
-    #[cfg(test)]
-    {
-        let _ = (package, progress);
-        let output = invocation.into_command().output().map_err(|e| {
-            format!(
-                "Failed to spawn rockc for {} using {}: {}",
-                context,
-                executable.display(),
-                e
-            )
-        })?;
-
+    if crate::progress::captures_tool_output() {
+        let output = command.output().map_err(spawn_error)?;
         if !output.status.success() {
             return Err(format!(
                 "rockc failed for {} with status {}; stdout:\n{}\nstderr:\n{}",
@@ -200,32 +149,19 @@ pub(crate) fn run_invocation(
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
-
         return Ok(());
     }
 
-    #[cfg(not(test))]
-    {
-        let status =
-            crate::progress::run_command(&mut invocation.into_command(), package, progress)
-                .map_err(|e| {
-                    format!(
-                        "Failed to spawn rockc for {} using {}: {}",
-                        context,
-                        executable.display(),
-                        e
-                    )
-                })?;
-
-        if !status.success() {
-            return Err(format!(
-                "rockc failed for {} with status {}",
-                context, status
-            ));
-        }
-
-        Ok(())
+    let status =
+        crate::progress::run_command(&mut command, package, progress).map_err(spawn_error)?;
+    if !status.success() {
+        return Err(format!(
+            "rockc failed for {} with status {}",
+            context, status
+        ));
     }
+
+    Ok(())
 }
 
 #[cfg(test)]

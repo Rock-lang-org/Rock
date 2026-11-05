@@ -1,8 +1,10 @@
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 
 use crate::{
     bundled_sysroot::{tests::current_sysroot_layout, STD_CRATE_NAME},
@@ -11,10 +13,69 @@ use crate::{
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Prepares the tools rock runs: builds the dev `rockc` and `rockup` next to
+/// the test binary, where rock looks for them, and captures their output so
+/// it shows up in failures instead of the test log. Runs once per process.
+pub(crate) fn prepare_dev_tools() {
+    static PREPARED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    PREPARED.get_or_init(|| {
+        crate::progress::set_capture_tool_output(true);
+        ensure_dev_binary_built("rockc").unwrap();
+        ensure_dev_binary_built("rockup").unwrap();
+    });
+}
+
+/// Prepares the dev tools and the `rock` binary itself, for tests that run the CLI.
+pub(crate) fn prepare_rock_cli() {
+    prepare_dev_tools();
+    ensure_dev_binary_built("rock").unwrap();
+}
+
+/// Builds the workspace `package` binary in the profile of the test binary,
+/// once per process.
+pub(crate) fn ensure_dev_binary_built(package: &str) -> Result<(), String> {
+    static BUILT_PACKAGES: std::sync::OnceLock<Mutex<HashSet<String>>> = std::sync::OnceLock::new();
+    let built_packages = BUILT_PACKAGES.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut built_packages = built_packages
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if built_packages.contains(package) {
+        return Ok(());
+    }
+
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("Failed to resolve workspace root for dev binary build")?;
+    let binary = rock_shared::process::dev_target_binary_from_current_exe(package)?;
+    let mut command = ProcessCommand::new("cargo");
+    command
+        .current_dir(workspace_root)
+        .args(["build", "-p", package]);
+    if binary.parent().and_then(|dir| dir.file_name()) == Some(OsStr::new("release")) {
+        command.arg("--release");
+    }
+    let output = command
+        .output()
+        .map_err(|e| format!("Failed to spawn cargo build for {}: {}", package, e))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo build -p {} failed with status {}; stdout:\n{}\nstderr:\n{}",
+            package,
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    built_packages.insert(package.to_string());
+    Ok(())
+}
+
 /// Re-run only this test when it needs process-local environment or cwd state.
 /// Overrides belong to the child command, never to the concurrent parent suite.
 pub(crate) fn run_isolated_test(name: &str, env: &[(&str, &OsStr)]) -> bool {
     const ISOLATED_TEST: &str = "ROCK_ISOLATED_TEST";
+    prepare_dev_tools();
     if std::env::var(ISOLATED_TEST).as_deref() == Ok(name) {
         return false;
     }
@@ -41,6 +102,7 @@ pub(crate) fn run_isolated_test(name: &str, env: &[(&str, &OsStr)]) -> bool {
 }
 
 pub(crate) fn temp_test_dir(name: &str) -> PathBuf {
+    prepare_dev_tools();
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!("rock_cli_{}_{}_{}", name, std::process::id(), id));
     let _ = fs::remove_dir_all(&dir);

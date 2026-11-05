@@ -2,6 +2,10 @@ use super::*;
 use crate::package::BuildProfile;
 use crate::tests::support::{load_package, temp_test_dir, write_package};
 
+fn rockc_path_from_current_exe(current_exe: &Path) -> Result<PathBuf, String> {
+    process::dev_target_binary_from_exe(current_exe, "rockc")
+}
+
 fn args_as_strings(invocation: &RockcInvocation) -> Vec<String> {
     invocation
         .args

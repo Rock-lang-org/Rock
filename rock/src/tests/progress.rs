@@ -1,11 +1,11 @@
 use std::{fs, path::Path, process::Command};
 
-use crate::rockc::{ensure_dev_binary_built, resolve_rockc_path};
+use crate::rockc::resolve_rockc_path;
 
 use super::support::{run_command_output, temp_test_dir, write_package_with_options};
 
 fn run_rock(root: &Path, command: &str, profile: &str) -> std::process::Output {
-    ensure_dev_binary_built("rock").unwrap();
+    super::support::prepare_rock_cli();
     let rock = rock_shared::process::dev_target_binary_from_current_exe("rock").unwrap();
     run_command_output(
         Command::new(rock)
@@ -134,7 +134,7 @@ fn test_cli_progress_reports_rebuilds_in_dependency_order_on_stderr() {
 fn test_overall_terminal_progress_counts_shared_crates_cache_hits_and_failures() {
     let root = temp_test_dir("cli_overall_progress");
     let (app, _) = write_progress_tree(&root);
-    ensure_dev_binary_built("rock").unwrap();
+    super::support::prepare_rock_cli();
     let rock = rock_shared::process::dev_target_binary_from_current_exe("rock").unwrap();
     let rockc = resolve_rockc_path().unwrap();
     let run = || {
@@ -254,7 +254,7 @@ fn test_cli_live_progress_in_a_terminal_preserves_output_and_clears_on_failure()
         "exit \"$ROCK_TEST_EXIT\"\n",
     )).unwrap();
     fs::set_permissions(&compiler, fs::Permissions::from_mode(0o755)).unwrap();
-    ensure_dev_binary_built("rock").unwrap();
+    super::support::prepare_rock_cli();
     let rock = rock_shared::process::dev_target_binary_from_current_exe("rock").unwrap();
     let stdout_path = root.join("stdout.txt");
 
@@ -336,7 +336,7 @@ fn test_cli_live_progress_preserves_real_compiler_diagnostic_colors() {
         "main = -> missing_color_probe\n",
         true,
     );
-    ensure_dev_binary_built("rock").unwrap();
+    super::support::prepare_rock_cli();
     let rock = rock_shared::process::dev_target_binary_from_current_exe("rock").unwrap();
     let rockc = resolve_rockc_path().unwrap();
     let stdout_path = root.join("stdout.txt");

@@ -175,9 +175,6 @@ fn resolve_rockup_path() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(path));
     }
 
-    #[cfg(test)]
-    crate::rockc::ensure_dev_binary_built("rockup")?;
-
     rock_shared::process::dev_target_binary_from_current_exe("rockup")
 }
 
@@ -199,16 +196,12 @@ fn package_sysroot_std_with_rockup(std_root: &Path, layout: &SysrootLayout) -> R
     let package = Package::load(std_root.to_path_buf())?;
     crate::progress::compiling(&package);
 
-    #[cfg(test)]
-    let status = command.output().map(|output| output.status).map_err(|e| {
-        format!(
-            "Failed to spawn rockup for dev sysroot std packaging: {}",
-            e
-        )
-    })?;
-
-    #[cfg(not(test))]
-    let status = crate::progress::run_command(&mut command, &package, None).map_err(|e| {
+    let status = if crate::progress::captures_tool_output() {
+        crate::progress::run_tool_status(&mut command)
+    } else {
+        crate::progress::run_command(&mut command, &package, None)
+    }
+    .map_err(|e| {
         format!(
             "Failed to spawn rockup for dev sysroot std packaging: {}",
             e

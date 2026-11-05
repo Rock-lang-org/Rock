@@ -3,7 +3,7 @@ use std::{fs, process::Command};
 use crate::{
     cli::{Command as CliCommand, Config},
     commands::clean_project,
-    rockc::{ensure_dev_binary_built, resolve_rockc_path},
+    rockc::resolve_rockc_path,
 };
 
 use super::support::{run_command_output, temp_test_dir, write_package_with_options};
@@ -100,7 +100,7 @@ fn test_cli_clean_removes_central_dependency_cache_and_rebuilds() {
         "> dep::answer\nmain = -> answer!\n",
         true,
     );
-    ensure_dev_binary_built("rock").unwrap();
+    super::support::prepare_rock_cli();
     let rock = rock_shared::process::dev_target_binary_from_current_exe("rock").unwrap();
     let rockc = resolve_rockc_path().unwrap();
     for profile in ["--debug", "--release"] {

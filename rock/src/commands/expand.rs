@@ -25,18 +25,6 @@ pub(crate) fn expand_project() -> Result<(), String> {
 }
 
 fn run_expand_command(command: &mut ProcessCommand) -> Result<ExitStatus, String> {
-    #[cfg(test)]
-    {
-        return command
-            .output()
-            .map(|output| output.status)
-            .map_err(|e| format!("Failed to spawn rockc for macro expansion: {}", e));
-    }
-
-    #[cfg(not(test))]
-    {
-        command
-            .status()
-            .map_err(|e| format!("Failed to spawn rockc for macro expansion: {}", e))
-    }
+    crate::progress::run_tool_status(command)
+        .map_err(|e| format!("Failed to spawn rockc for macro expansion: {}", e))
 }

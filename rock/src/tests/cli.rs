@@ -9,6 +9,16 @@ use crate::{
 use super::support::{run_isolated_test, temp_test_dir, write_package};
 
 #[test]
+fn test_quiet_flag_is_global_and_off_by_default() {
+    let config = <Config as clap::Parser>::try_parse_from(["rock", "build"]).unwrap();
+    assert!(!config.quiet);
+    let config = <Config as clap::Parser>::try_parse_from(["rock", "build", "--quiet"]).unwrap();
+    assert!(config.quiet);
+    let config = <Config as clap::Parser>::try_parse_from(["rock", "-q", "run"]).unwrap();
+    assert!(config.quiet);
+}
+
+#[test]
 fn test_new_command_requires_project_name() {
     let config = <Config as clap::Parser>::try_parse_from(["rock", "new", "hello-rock"]).unwrap();
     assert!(

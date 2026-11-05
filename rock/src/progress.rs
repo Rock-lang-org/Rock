@@ -2,12 +2,38 @@ use std::{
     fmt,
     io::{self, IsTerminal, Read, Write},
     process::{Command, ExitStatus, Stdio},
-    sync::mpsc::{self, RecvTimeoutError, SyncSender},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, RecvTimeoutError, SyncSender},
+    },
     thread,
     time::{Duration, Instant},
 };
 
 use crate::package::{BuildProfile, Package};
+
+static CAPTURE_TOOL_OUTPUT: AtomicBool = AtomicBool::new(false);
+
+/// Capture the output of the tools rock runs (rockc, rockup) instead of
+/// streaming it; a failing tool then reports its output in the error.
+pub(crate) fn set_capture_tool_output(capture: bool) {
+    CAPTURE_TOOL_OUTPUT.store(capture, Ordering::Relaxed);
+}
+
+pub(crate) fn captures_tool_output() -> bool {
+    CAPTURE_TOOL_OUTPUT.load(Ordering::Relaxed)
+}
+
+/// Runs a tool with its output captured or inherited, per
+/// `set_capture_tool_output`. For builds with a live progress line, use
+/// `run_command` when output is not captured.
+pub(crate) fn run_tool_status(command: &mut Command) -> io::Result<ExitStatus> {
+    if captures_tool_output() {
+        command.output().map(|output| output.status)
+    } else {
+        command.status()
+    }
+}
 
 pub(crate) struct BuildProgress {
     completed: usize,
