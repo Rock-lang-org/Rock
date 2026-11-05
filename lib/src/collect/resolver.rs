@@ -94,7 +94,7 @@ pub fn build_resolver_tables(
     root_module_id: ModuleId,
     current_crate_name: Option<&str>,
     export_aliases: &HashMap<String, String>,
-    _export_function_aliases: &HashMap<String, String>,
+    import_aliases: HashMap<String, DefId>,
 ) -> ResolverTables {
     let mut canonical_module_paths = HashMap::new();
     let mut canonical_module_names_by_id = HashMap::new();
@@ -180,7 +180,7 @@ pub fn build_resolver_tables(
         module_names_by_id: canonical_module_names_by_id,
         item_paths: canonical_item_paths,
         item_names_by_id: canonical_item_names_by_id,
-        import_aliases: HashMap::new(),
+        import_aliases,
         export_aliases: resolved_export_aliases,
         scoped_module_aliases,
         module_aliases: HashMap::new(),

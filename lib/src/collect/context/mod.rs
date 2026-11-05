@@ -58,7 +58,6 @@ pub(crate) struct CollectContext {
     pub(crate) canonical_names_by_id: HashMap<DefId, String>,
     pub(crate) scoped_module_aliases: HashMap<String, HashMap<String, DefId>>,
     pub(crate) export_aliases: HashMap<String, String>,
-    pub(crate) export_function_aliases: HashMap<String, String>,
 }
 
 pub(crate) struct LocalCollection {
@@ -118,7 +117,6 @@ impl CollectContext {
             canonical_names_by_id: HashMap::new(),
             scoped_module_aliases: HashMap::new(),
             export_aliases: HashMap::new(),
-            export_function_aliases: HashMap::new(),
         }
     }
 
@@ -214,7 +212,6 @@ impl CollectContext {
             canonical_names_by_id,
             scoped_module_aliases,
             export_aliases,
-            export_function_aliases,
         } = self;
 
         let mut resolver = build_resolver_tables(
@@ -222,9 +219,8 @@ impl CollectContext {
             root_module_id,
             current_crate_name,
             &export_aliases,
-            &export_function_aliases,
+            canonical_import_aliases,
         );
-        resolver.import_aliases.extend(canonical_import_aliases);
         for (def_id, name) in canonical_names_by_id {
             resolver.item_names_by_id.entry(def_id).or_insert(name);
         }
