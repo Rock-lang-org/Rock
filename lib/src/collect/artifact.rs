@@ -130,6 +130,7 @@ pub fn collect_artifact_declarations(
         crate_ctx,
     )?;
     context.language_items = language_items.clone();
+    context.register_declared_items(&item_index, root_module_id, Some(current_crate_name));
 
     let mut collector = collector::LocalCollector::new_with_id_environment(context, id_environment);
     collector.collect_crate_declarations(

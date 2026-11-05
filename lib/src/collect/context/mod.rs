@@ -58,6 +58,12 @@ pub(crate) struct CollectContext {
     pub(crate) canonical_names_by_id: HashMap<DefId, String>,
     pub(crate) scoped_module_aliases: HashMap<String, HashMap<String, DefId>>,
     pub(crate) export_aliases: HashMap<String, String>,
+    /// Every current-crate item by canonical path, known before any header is
+    /// lowered, so imports resolve without waiting for their target's types.
+    pub(crate) declared_items: HashMap<String, DefId>,
+    /// Imports resolved to an item whose header was not lowered yet; bound by
+    /// `bind_deferred_imports` once every header is.
+    pub(crate) deferred_import_bindings: Vec<(String, DefId)>,
 }
 
 pub(crate) struct LocalCollection {
@@ -117,6 +123,8 @@ impl CollectContext {
             canonical_names_by_id: HashMap::new(),
             scoped_module_aliases: HashMap::new(),
             export_aliases: HashMap::new(),
+            declared_items: HashMap::new(),
+            deferred_import_bindings: Vec::new(),
         }
     }
 
@@ -212,6 +220,8 @@ impl CollectContext {
             canonical_names_by_id,
             scoped_module_aliases,
             export_aliases,
+            declared_items: _,
+            deferred_import_bindings: _,
         } = self;
 
         let mut resolver = build_resolver_tables(

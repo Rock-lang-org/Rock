@@ -1,10 +1,14 @@
 use super::exports::collect_exports;
 use super::type_names::path_names;
 use super::CollectContext;
-use crate::ast;
-use crate::crate_artifact::ArtifactExport;
-use crate::types::Type;
 use std::collections::HashMap;
+
+use crate::ast;
+use crate::collect::item_index::{ItemIndex, ItemKind};
+use crate::collect::resolver::build_resolver_tables;
+use crate::crate_artifact::ArtifactExport;
+use crate::ids::{DefId, ModuleId};
+use crate::types::Type;
 
 /// What an imported name resolved to.
 pub(crate) enum ImportTarget {
@@ -12,6 +16,9 @@ pub(crate) enum ImportTarget {
     Value(Type),
     /// A struct, enum, type alias or trait.
     TypeItem,
+    /// A declared item whose header is not lowered yet; its binding waits for
+    /// `bind_deferred_imports`.
+    Declared(DefId),
 }
 
 /// Where an import resolved, before anything is bound.
@@ -153,7 +160,77 @@ impl CollectContext {
             || self.enums.contains_key(name)
             || self.type_aliases.contains_key(name)
             || self.traits.contains_key(name);
-        is_type_item.then_some(ImportTarget::TypeItem)
+        if is_type_item {
+            return Some(ImportTarget::TypeItem);
+        }
+
+        self.declared_items
+            .get(name)
+            .map(|id| ImportTarget::Declared(*id))
+    }
+
+    /// Registers every importable current-crate item by canonical path. Runs
+    /// before any header is lowered so every import resolves on first sight.
+    pub(crate) fn register_declared_items(
+        &mut self,
+        item_index: &ItemIndex,
+        root_module_id: ModuleId,
+        current_crate_name: Option<&str>,
+    ) {
+        let tables = build_resolver_tables(
+            item_index,
+            root_module_id,
+            current_crate_name,
+            &HashMap::new(),
+            HashMap::new(),
+        );
+        for (path, id) in tables.item_paths {
+            let Some(item) = item_index.get(id) else {
+                continue;
+            };
+            if matches!(item.kind, ItemKind::Module | ItemKind::Impl) {
+                continue;
+            }
+            self.declared_items.insert(path, id);
+        }
+    }
+
+    /// Binds the imports that resolved before their target's header was
+    /// lowered: values get their scope type, types their short-name entry.
+    pub(crate) fn bind_deferred_imports(&mut self) {
+        for (short_name, id) in std::mem::take(&mut self.deferred_import_bindings) {
+            if let Some(ty) = self.declared_value_type(id) {
+                self.scope.define(short_name, ty, false);
+                continue;
+            }
+            if let Some(item) = self.structs.values().find(|item| item.id == id).cloned() {
+                self.structs.entry(short_name).or_insert(item);
+            } else if let Some(item) = self.enums.values().find(|item| item.id == id).cloned() {
+                self.enums.entry(short_name).or_insert(item);
+            } else if let Some(item) = self
+                .type_aliases
+                .values()
+                .find(|item| item.id == id)
+                .cloned()
+            {
+                self.type_aliases.entry(short_name).or_insert(item);
+            } else if let Some(item) = self.traits.values().find(|item| item.id == id).cloned() {
+                self.traits.entry(short_name).or_insert(item);
+            }
+        }
+    }
+
+    fn declared_value_type(&self, id: DefId) -> Option<Type> {
+        if let Some(func) = self.functions.values().find(|func| func.id == id) {
+            return Some(func.fn_type());
+        }
+        if let Some(sig) = self.function_sigs.values().find(|sig| sig.id == id) {
+            return Some(sig.fn_type());
+        }
+        self.externs
+            .iter()
+            .find(|ext| ext.id == id)
+            .map(|ext| ext.fn_type())
     }
 
     /// Records every alias table entry for `short_name` once its target is known.
@@ -167,8 +244,12 @@ impl CollectContext {
         export: Option<ArtifactExport>,
         canonical_prefix: Option<&str>,
     ) {
-        if let ImportTarget::Value(ty) = target {
-            self.scope.define(short_name.to_string(), ty, false);
+        match target {
+            ImportTarget::Value(ty) => self.scope.define(short_name.to_string(), ty, false),
+            ImportTarget::Declared(id) => self
+                .deferred_import_bindings
+                .push((short_name.to_string(), id)),
+            ImportTarget::TypeItem => {}
         }
         self.import_aliases
             .insert(short_name.to_string(), alias_target.to_string());

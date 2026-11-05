@@ -18,6 +18,7 @@ impl LocalCollector {
         is_std: bool,
     ) {
         let root_exports = collect_exports(module);
+        self.predeclare_export_aliases(module, Some(crate_name), true);
 
         self.predeclare_source_backed_trait_identities(
             module,

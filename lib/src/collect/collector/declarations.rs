@@ -22,6 +22,23 @@ impl LocalCollector {
         local_prefix: Option<&str>,
         reference_exports: &HashMap<String, Option<String>>,
     ) {
+        // Every item is registered by name already, so imports bind before
+        // the headers that use them.
+        for top_level in &module.top_levels {
+            match (top_level, local_prefix) {
+                (ast::TopLevel::Import(path), Some(prefix)) => {
+                    self.handle_import_in_context(path, prefix)
+                }
+                (ast::TopLevel::Import(path), None) => self.handle_import(path),
+                (ast::TopLevel::GlobImport(module_path), Some(prefix)) => {
+                    self.handle_glob_import_in_context(module_path, prefix)
+                }
+                (ast::TopLevel::GlobImport(module_path), None) => {
+                    self.handle_glob_import(module_path)
+                }
+                _ => {}
+            }
+        }
         for (top_level_index, top_level) in module.top_levels.iter().enumerate() {
             let ast::TopLevel::NewType(name, params, _) = top_level else {
                 continue;
@@ -294,20 +311,6 @@ impl LocalCollector {
                             child_module_id,
                             reference_exports,
                         );
-                    }
-                }
-                ast::TopLevel::Import(path) => {
-                    if let Some(prefix) = local_prefix {
-                        self.handle_import_in_context(path, prefix);
-                    } else {
-                        self.handle_import(path);
-                    }
-                }
-                ast::TopLevel::GlobImport(module_path) => {
-                    if let Some(prefix) = local_prefix {
-                        self.handle_glob_import_in_context(module_path, prefix);
-                    } else {
-                        self.handle_glob_import(module_path);
                     }
                 }
                 ast::TopLevel::InfixOperator(precedence, name) => {

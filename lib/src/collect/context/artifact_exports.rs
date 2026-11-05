@@ -159,12 +159,18 @@ impl CollectContext {
                 id: sig.id,
             });
         }
-        self.externs
-            .iter()
-            .find(|ext| ext.name == qualified_name)
-            .map(|ext| ArtifactExport {
+        if let Some(ext) = self.externs.iter().find(|ext| ext.name == qualified_name) {
+            return Some(ArtifactExport {
                 source: qualified_name.to_string(),
                 id: ext.id,
+            });
+        }
+        // Declared but not lowered yet: its identity is already known.
+        self.declared_items
+            .get(qualified_name)
+            .map(|id| ArtifactExport {
+                source: qualified_name.to_string(),
+                id: *id,
             })
     }
 

@@ -19,7 +19,6 @@ pub(crate) struct LocalCollector {
     context: CollectContext,
     id_environment: CollectedIdEnvironment,
     pending_nominal_fields: BTreeMap<DefId, PendingNominalFields>,
-    pending_imports: Vec<imports::PendingImport>,
 }
 
 impl LocalCollector {
@@ -31,12 +30,12 @@ impl LocalCollector {
             context,
             id_environment,
             pending_nominal_fields: BTreeMap::new(),
-            pending_imports: Vec::new(),
         }
     }
 
     pub fn collect_local_declarations(&mut self, module: &ast::Module, root_module_id: ModuleId) {
         self.predeclare_nominal_identities(module, root_module_id, None);
+        self.predeclare_export_aliases(module, None, false);
         if let Some(crate_name) = self.context.current_crate_name.clone() {
             let root_exports = collect_exports(module);
             self.predeclare_source_backed_trait_identities(
@@ -58,7 +57,7 @@ impl LocalCollector {
         current_crate_name: Option<&str>,
     ) -> LocalCollection {
         self.complete_nominal_fields();
-        self.bind_or_report_pending_imports();
+        self.context.bind_deferred_imports();
         self.context
             .into_local_collection(item_index, root_module_id, current_crate_name)
     }

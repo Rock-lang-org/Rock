@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use crate::ast;
 use crate::collect::context::path_names;
-use std::collections::HashMap;
 
 /// Resolve descriptor dependencies first, then nominal fields. Field cycles do
 /// not imply default-expansion cycles and must not order descriptor publication.
+/// Imports themselves are not ordered: every walker binds them before any header.
 pub(super) fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLevel)> {
     use crate::ast::visit::Visitor;
     struct Names(Vec<String>);
@@ -28,17 +30,28 @@ pub(super) fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLeve
                 .as_ref()
                 .map(|name| (name.name.clone(), index)),
             ast::TopLevel::Mod(name, _) => Some((name.name.clone(), index)),
-            ast::TopLevel::Import(path) => {
-                let segments = path.segments();
-                path_names(segments)
-                    .last()
-                    .filter(|name| name.starts_with(char::is_uppercase))
-                    .cloned()
-                    .map(|name| (name, index))
-            }
             _ => None,
         })
         .collect::<HashMap<_, _>>();
+    // An imported type's header (generic defaults, kinds) is lowered with the
+    // local module that declares it, so users of the type wait for that module.
+    let imported_owners = module
+        .top_levels
+        .iter()
+        .filter_map(|item| {
+            let ast::TopLevel::Import(path) = item else {
+                return None;
+            };
+            let names = path_names(path.segments());
+            let short_name = names.last()?;
+            let owner = owners.get(names.first()?)?;
+            Some((short_name.clone(), *owner))
+        })
+        .collect::<Vec<_>>();
+    let mut owners = owners;
+    for (short_name, owner) in imported_owners {
+        owners.entry(short_name).or_insert(owner);
+    }
     let dependencies = module
         .top_levels
         .iter()
@@ -56,14 +69,6 @@ pub(super) fn ordered_headers(module: &ast::Module) -> Vec<(usize, &ast::TopLeve
                     }
                 }
                 _ => names.visit_top_level(item),
-            }
-            match item {
-                ast::TopLevel::Import(path) => {
-                    let segments = path.segments();
-                    names.0.push(path_names(segments).join("::"));
-                }
-                ast::TopLevel::GlobImport(path) => names.0.push(path.join("::")),
-                _ => {}
             }
             names
                 .0
