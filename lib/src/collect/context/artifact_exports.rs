@@ -153,6 +153,12 @@ impl CollectContext {
                 id: trait_.id,
             });
         }
+        if let Some(sig) = self.function_sigs.get(qualified_name) {
+            return Some(ArtifactExport {
+                source: qualified_name.to_string(),
+                id: sig.id,
+            });
+        }
         self.externs
             .iter()
             .find(|ext| ext.name == qualified_name)

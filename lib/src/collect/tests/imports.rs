@@ -314,6 +314,38 @@ fn collect_resolves_local_import_aliases_to_canonical_def_ids() {
 }
 
 #[test]
+fn collect_records_import_alias_for_signature_only_declaration() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "rock_collect_signature_import_alias_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let root_path = temp_dir.join("main.rk");
+    std::fs::write(temp_dir.join("io.rk"), "writer_name: I64\n< writer_name\n").unwrap();
+
+    let (program, graph) =
+        load_source_program(root_path, "mod io\n> io::writer_name\n", Some("test"));
+
+    let decls =
+        collect_with_source_graph(&program, &graph, &CrateContext::new(), false, Some("test"))
+            .expect("collect should resolve a signature-only import");
+
+    assert!(
+        decls.resolver.import_aliases.contains_key("writer_name"),
+        "aliases were {:?}",
+        decls.resolver.import_aliases
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
 fn collect_skips_non_explicit_glob_import_aliases_in_canonical_import_table() {
     let temp_dir = std::env::temp_dir().join(format!(
         "rock_collect_non_explicit_glob_aliases_{}_{}",
