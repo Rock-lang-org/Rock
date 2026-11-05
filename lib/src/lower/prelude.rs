@@ -4,7 +4,6 @@ use crate::collect::resolver::ResolverTables;
 use crate::crate_artifact::ArtifactExport;
 use crate::lower::items::LowerItems;
 use crate::lower::scope::Scope;
-use crate::types::Type;
 
 #[derive(Debug, Clone)]
 pub(crate) struct PreludeImports {
@@ -74,11 +73,7 @@ impl PreludeImports {
                 let func_type = func.fn_type();
                 scope.define_alias(short_name.clone(), func_type, false);
             } else if let Some(extern_def) = items.extern_def(export.id) {
-                let func_type = Type::function_with_safety(
-                    extern_def.params.clone(),
-                    extern_def.ret.clone(),
-                    crate::types::FunctionSafety::from_is_unsafe(extern_def.is_unsafe),
-                );
+                let func_type = extern_def.fn_type();
                 scope.define_alias(short_name.clone(), func_type, false);
             } else if let Some(ty) = scope
                 .lookup(&export.source)

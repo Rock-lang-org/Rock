@@ -237,22 +237,14 @@ pub(crate) fn build_extern_with_id(
     id: DefId,
 ) -> HirExtern {
     let hir_sig = build_function_sig_with_id(context, sig, id);
-    let params = hir_sig.params.clone();
-    let ret = hir_sig.ret.clone();
-
-    let func_type = Type::function_with_safety(
-        params.clone(),
-        ret.clone(),
-        crate::types::FunctionSafety::from_is_unsafe(sig.is_unsafe),
-    );
-    context.scope.define(name.clone(), func_type, false);
-
-    HirExtern {
+    let ext = HirExtern {
         id,
         name,
-        params,
-        ret,
+        params: hir_sig.params,
+        ret: hir_sig.ret,
         variadic: false,
         is_unsafe: sig.is_unsafe,
-    }
+    };
+    context.scope.define(ext.name.clone(), ext.fn_type(), false);
+    ext
 }

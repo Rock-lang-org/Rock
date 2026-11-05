@@ -327,11 +327,7 @@ impl LocalCollector {
         id: DefId,
     ) {
         let hir_sig = headers::build_function_sig_with_id(&mut self.context, sig, id);
-        let func_type = Type::function_with_safety(
-            hir_sig.params.clone(),
-            hir_sig.ret.clone(),
-            crate::types::FunctionSafety::from_is_unsafe(hir_sig.is_unsafe),
-        );
+        let func_type = hir_sig.fn_type();
         self.context.scope.define(name.clone(), func_type, false);
         self.context.function_sigs.insert(name.clone(), hir_sig);
     }

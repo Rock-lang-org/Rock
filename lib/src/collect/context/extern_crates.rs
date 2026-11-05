@@ -1,7 +1,6 @@
 use super::CollectContext;
 use crate::crate_artifact::ArtifactExport;
 use crate::crate_system::{CrateContext, ExternCrateRef};
-use crate::types::Type;
 
 impl CollectContext {
     pub(crate) fn inject_loaded_prelude(&mut self, _ctx: &CrateContext) {
@@ -117,11 +116,7 @@ impl CollectContext {
         }
 
         for ext in interface.extern_items() {
-            let func_type = Type::function_with_safety(
-                ext.params.clone(),
-                ext.ret.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(ext.is_unsafe),
-            );
+            let func_type = ext.fn_type();
             self.scope.define(ext.name.clone(), func_type, false);
             self.record_canonical_item_name(ext.id, &ext.name);
             self.externs.push(ext.clone());

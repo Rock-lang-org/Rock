@@ -315,5 +315,16 @@ pub struct HirExtern {
     pub is_unsafe: bool,
 }
 
+impl HirExtern {
+    /// The extern's callable type: its parameter types, return type and safety.
+    pub fn fn_type(&self) -> Type {
+        Type::function_with_safety(
+            self.params.clone(),
+            self.ret.clone(),
+            crate::types::FunctionSafety::from_is_unsafe(self.is_unsafe),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests;

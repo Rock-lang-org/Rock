@@ -108,6 +108,17 @@ pub struct HirFunctionSig {
     pub is_unsafe: bool,
 }
 
+impl HirFunctionSig {
+    /// The signature's callable type: its parameter types, return type and safety.
+    pub fn fn_type(&self) -> Type {
+        Type::function_with_safety(
+            self.params.clone(),
+            self.ret.clone(),
+            crate::types::FunctionSafety::from_is_unsafe(self.is_unsafe),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HirImplFor<P: HirPhase> {
     pub id: DefId,

@@ -575,13 +575,10 @@ impl<'a> LowerResolutionContext<'a> {
                 )
             })
             .or_else(|| {
-                self.lowerer.items.extern_def(id).map(|extern_| {
-                    Type::function_with_safety(
-                        extern_.params.clone(),
-                        extern_.ret.clone(),
-                        crate::types::FunctionSafety::from_is_unsafe(extern_.is_unsafe),
-                    )
-                })
+                self.lowerer
+                    .items
+                    .extern_def(id)
+                    .map(|extern_| extern_.fn_type())
             })
     }
 

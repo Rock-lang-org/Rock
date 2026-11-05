@@ -87,11 +87,7 @@ impl Lowerer {
                 let func_type = func.fn_type();
                 scope.define_alias(short_name.clone(), func_type, false);
             } else if let Some(ext) = lower_items.extern_def(*def_id) {
-                let func_type = Type::function_with_safety(
-                    ext.params.clone(),
-                    ext.ret.clone(),
-                    crate::types::FunctionSafety::from_is_unsafe(ext.is_unsafe),
-                );
+                let func_type = ext.fn_type();
                 scope.define_alias(short_name.clone(), func_type, false);
             }
         }
@@ -109,11 +105,7 @@ impl Lowerer {
             .collect();
         extern_names.sort_by_key(|(name, _)| *name);
         for (name, ext) in extern_names {
-            let func_type = Type::function_with_safety(
-                ext.params.clone(),
-                ext.ret.clone(),
-                crate::types::FunctionSafety::from_is_unsafe(ext.is_unsafe),
-            );
+            let func_type = ext.fn_type();
             scope.define_top_level(name.clone(), func_type, false);
         }
         let mut extern_ids: Vec<_> = lower_items.externs().map(|(id, _)| id).collect();
