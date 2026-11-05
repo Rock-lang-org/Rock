@@ -239,7 +239,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         if matches!(from_ty, Type::Pointer(_)) && matches!(target_ty, Type::Pointer(_)) {
             if from_is_fat_pointer || target_is_fat_pointer {
-                return Err(CodegenError::from(format!(
+                return Err(CodegenError::source_operation(format!(
                     "Cannot cast between thin and fat MIR pointers from {} to {}",
                     self.display_type_for_diagnostic(from_ty),
                     self.display_type_for_diagnostic(target_ty)
@@ -265,7 +265,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         if matches!(from_ty, Type::Pointer(_)) && target_ty.is_integer() {
             if from_is_fat_pointer {
-                return Err(CodegenError::from(format!(
+                return Err(CodegenError::source_operation(format!(
                     "Cannot cast fat MIR pointer {} to integer {}",
                     self.display_type_for_diagnostic(from_ty),
                     self.display_type_for_diagnostic(target_ty)
@@ -287,7 +287,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         if from_ty.is_integer() && matches!(target_ty, Type::Pointer(_)) {
             if target_is_fat_pointer {
-                return Err(CodegenError::from(format!(
+                return Err(CodegenError::source_operation(format!(
                     "Cannot cast integer to fat MIR pointer {} from {}",
                     self.display_type_for_diagnostic(target_ty),
                     self.display_type_for_diagnostic(from_ty)
@@ -318,7 +318,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         if matches!(from_ty, Type::Reference { .. }) && matches!(target_ty, Type::Pointer(_)) {
             if from_is_fat_pointer || target_is_fat_pointer {
-                return Err(CodegenError::from(format!(
+                return Err(CodegenError::source_operation(format!(
                     "Cannot cast fat MIR pointer {} to thin pointer {}",
                     self.display_type_for_diagnostic(from_ty),
                     self.display_type_for_diagnostic(target_ty)
@@ -338,8 +338,8 @@ impl<'ctx> CodeGen<'ctx> {
             return Ok(value);
         }
 
-        Err(CodegenError::from(format!(
-            "Unsupported MIR cast from {} to {}",
+        Err(CodegenError::source_operation(format!(
+            "Unsupported cast from {} to {}",
             self.display_type_for_diagnostic(from_ty),
             self.display_type_for_diagnostic(target_ty)
         )))

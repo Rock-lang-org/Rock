@@ -5,10 +5,8 @@ use crate::lexer::Span;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CodegenErrorKind {
-    // TODO: no code path builds a source-operation error yet, so
-    // `with_operation_span` never attaches a span. Kept until codegen reports
-    // span-carrying failures through `with_span`.
-    #[allow(dead_code)]
+    /// Caused by the source operation being compiled; `with_operation_span`
+    /// points it at that operation.
     SourceOperation,
     BackendContract,
     Layout,
@@ -45,12 +43,13 @@ impl CodegenError {
         }
     }
 
-    #[allow(dead_code)]
-    pub(super) fn with_span(message: String, span: Span) -> Self {
+    /// A failure the program itself causes, such as an unsupported cast. The
+    /// function compiler attaches the span of the statement or terminator.
+    pub(super) fn source_operation(message: impl Into<String>) -> Self {
         Self {
-            message,
+            message: message.into(),
             kind: CodegenErrorKind::SourceOperation,
-            location: CodegenErrorLocation::Source(span),
+            location: CodegenErrorLocation::Toolchain,
             notes: Vec::new(),
         }
     }

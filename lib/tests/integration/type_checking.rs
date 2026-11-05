@@ -248,3 +248,14 @@ main = -> 0
         "type alias cycle",
     );
 }
+
+#[test]
+fn test_unsupported_cast_points_at_the_cast() {
+    compile_should_fail_with_source_diagnostic(
+        r#"main = !->
+    x = true as F64
+    x.println!
+"#,
+        "Unsupported cast from Bool to F64",
+    );
+}

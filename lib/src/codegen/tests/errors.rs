@@ -3,8 +3,9 @@ use super::*;
 #[test]
 fn codegen_source_operation_keeps_exact_origin_and_code() {
     let span = crate::lexer::Span::new(std::path::PathBuf::from("/virtual/main.rk"), 4, 9);
-    let diagnostic =
-        CodegenError::with_span("operation failed".to_string(), span.clone()).into_diagnostic();
+    let diagnostic = CodegenError::source_operation("operation failed")
+        .with_operation_span(Some(span.clone()))
+        .into_diagnostic();
 
     assert_eq!(diagnostic.code, Some(DiagnosticCode::Codegen));
     assert_eq!(diagnostic.location, DiagnosticLocation::Source(span));
@@ -14,10 +15,10 @@ fn codegen_source_operation_keeps_exact_origin_and_code() {
 #[test]
 fn codegen_source_operation_hides_debug_identity_payloads() {
     let span = crate::lexer::Span::new(std::path::PathBuf::from("/virtual/main.rk"), 4, 9);
-    let diagnostic = CodegenError::with_span(
-        "MIR callable DefId { local: 1 } uses GenericParamId { index: 0 }".to_string(),
-        span.clone(),
+    let diagnostic = CodegenError::source_operation(
+        "MIR callable DefId { local: 1 } uses GenericParamId { index: 0 }",
     )
+    .with_operation_span(Some(span.clone()))
     .into_diagnostic();
 
     assert_eq!(diagnostic.location, DiagnosticLocation::Source(span));

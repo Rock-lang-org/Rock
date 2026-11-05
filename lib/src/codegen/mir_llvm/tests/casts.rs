@@ -92,7 +92,7 @@ fn mir_codegen_rejects_unsupported_cast_rvalue() {
     };
 
     let error = codegen.compile_program_from_mir(&mir).unwrap_err();
-    assert!(error.message.contains("Unsupported MIR cast"));
+    assert!(error.message.contains("Unsupported cast from"));
 }
 
 #[test]

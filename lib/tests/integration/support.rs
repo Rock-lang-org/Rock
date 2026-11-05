@@ -758,3 +758,58 @@ pub(crate) fn compile_should_pass_without_std(source: &str) {
     rock_lib::compile(&config).expect("expected compilation to pass");
     let _ = fs::remove_dir_all(dir);
 }
+
+/// Compiles `source` with std and expects a diagnostic containing
+/// `expected_error` that points into `source` without leaking compiler ids.
+pub(crate) fn compile_should_fail_with_source_diagnostic(source: &str, expected_error: &str) {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let source_path = dir.join("test.rk");
+    fs::write(&source_path, source).unwrap();
+    let config = test_config(source_path.clone(), dir.clone());
+
+    let diagnostics = rock_lib::compile(&config).expect_err("expected compilation to fail");
+    for diagnostic in &diagnostics.0 {
+        for forbidden in [
+            "struct#",
+            "enum#",
+            "generic#",
+            "trait#",
+            "?T",
+            "DefId",
+            "TypeVarId",
+            "GenericParamId",
+            "FieldId",
+            "VariantId",
+            "Local(",
+        ] {
+            assert!(
+                !diagnostic.message.contains(forbidden),
+                "source diagnostic exposed compiler identity {forbidden:?}: {}",
+                diagnostic.message
+            );
+        }
+    }
+    let diagnostic = diagnostics
+        .0
+        .iter()
+        .find(|diagnostic| diagnostic.message.contains(expected_error))
+        .unwrap_or_else(|| panic!("expected diagnostic containing {expected_error:?}"));
+    let rock_lib::diagnostic::DiagnosticLocation::Source(span) = &diagnostic.location else {
+        panic!("source diagnostic should have a source location");
+    };
+    assert_eq!(span.file_path, source_path);
+    assert!(span.start <= span.end);
+    let attached = diagnostic
+        .source
+        .as_ref()
+        .expect("source diagnostic should carry its loaded source");
+    assert_eq!(attached.text, source);
+    assert_eq!(
+        attached.origin,
+        rock_lib::diagnostic::DiagnosticSourceOrigin::FileSystem
+    );
+
+    let _ = fs::remove_dir_all(dir);
+}
