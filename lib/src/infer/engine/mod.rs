@@ -10,6 +10,7 @@ mod strict;
 mod type_var_state;
 mod unify;
 
+pub(crate) use errors::non_constructor_type_description;
 pub use errors::{InferenceError, UnifyError};
 
 use std::collections::HashMap;

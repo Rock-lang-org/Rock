@@ -1,6 +1,32 @@
 use crate::support::*;
 
 #[test]
+fn test_functor_operator_on_array_names_trait_and_implementors() {
+    compile_should_fail(
+        r#"
+main = !->
+    values = [1, 2, 3]
+    (values <&> (+ 1)).println!
+"#,
+        "`<&>` needs its argument to be a type constructor applied to a type (like `F A`) \
+         implementing `Functor`, but `[I64; 3]` is a built-in array type, which cannot be \
+         used that way; `Functor` is implemented for Option, Result, Vec",
+    );
+}
+
+#[test]
+fn test_constructor_pattern_rejects_tuple_with_clear_message() {
+    compile_should_fail(
+        r#"
+main = !->
+    (fmap (+ 1), (1, 2)).println!
+"#,
+        "`(I64, I64)` is a tuple type, not a type constructor applied to a type, \
+         so it cannot match `_ I64`",
+    );
+}
+
+#[test]
 fn constructor_trait_selection_option_pure_compiles() {
     compile_should_pass(
         r#"

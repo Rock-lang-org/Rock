@@ -421,7 +421,7 @@ impl MethodAuthorityContext<'_> {
             return;
         }
 
-        for (arg, expected) in args.iter_mut().zip(params) {
+        for (index, (arg, expected)) in args.iter_mut().zip(params).enumerate() {
             let actual = self.resolved_type(&arg.ty);
             let expected = self.resolved_type(&expected);
             if let (
@@ -455,15 +455,19 @@ impl MethodAuthorityContext<'_> {
             let mut probe = self.engine.borrow().clone_for_probe();
             match probe.unify(&actual, &expected) {
                 Ok(()) => self.engine.borrow_mut().commit_probe(probe),
-                Err(error) if self.strict => errors.push(ResolveError::with_span(
-                    format!(
-                        "callable argument type {} does not match {}: {}",
-                        self.display_type(&actual),
-                        self.display_type(&expected),
-                        error.render(&probe)
-                    ),
-                    arg.span.clone(),
-                )),
+                Err(error) if self.strict => {
+                    let message = self
+                        .constructor_argument_mismatch_message(callee, index, &actual, &error)
+                        .unwrap_or_else(|| {
+                            format!(
+                                "callable argument type {} does not match {}: {}",
+                                self.display_type(&actual),
+                                self.display_type(&expected),
+                                error.render(&probe)
+                            )
+                        });
+                    errors.push(ResolveError::with_span(message, arg.span.clone()));
+                }
                 Err(_) => self.ambiguous = true,
             }
         }

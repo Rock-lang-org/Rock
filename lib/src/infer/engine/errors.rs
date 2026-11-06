@@ -87,11 +87,21 @@ impl UnifyError {
                 ),
                 None => format!("kind mismatch while {context}: {expected} vs {found}"),
             },
-            Self::ConstructorInference { pattern, actual } => format!(
-                "cannot infer a type constructor from {} = {}; add an explicit constructor section annotation",
-                display(pattern),
-                display(actual)
-            ),
+            Self::ConstructorInference { pattern, actual } => {
+                match non_constructor_type_description(actual) {
+                    Some(description) => format!(
+                        "`{}` is {description}, not a type constructor applied to a type, \
+                         so it cannot match `{}`",
+                        display(actual),
+                        display(pattern)
+                    ),
+                    None => format!(
+                        "cannot infer a type constructor from {} = {}; add an explicit constructor section annotation",
+                        display(pattern),
+                        display(actual)
+                    ),
+                }
+            }
             Self::AmbiguousConstructorHeads { left, right } => format!(
                 "ambiguous constructor heads: {} vs {}",
                 display(left),
@@ -144,6 +154,32 @@ impl UnifyError {
             Self::Message(message) => message.clone(),
         }
     }
+}
+
+/// Names a built-in type that is not a type constructor application, such as
+/// an array, slice, tuple or function; `None` for types that are or may be.
+pub(crate) fn non_constructor_type_description(ty: &Type) -> Option<String> {
+    Some(match ty {
+        Type::Array(_, _) => "a built-in array type".to_string(),
+        Type::Slice(_) => "a built-in slice type".to_string(),
+        Type::Tuple(_) => "a tuple type".to_string(),
+        Type::Function { .. } => "a function type".to_string(),
+        Type::Reference { inner, .. } => {
+            let inner = non_constructor_type_description(inner)
+                .map(|description| description.trim_start_matches("a ").to_string())
+                .unwrap_or_else(|| "type".to_string());
+            format!("a reference to a {inner}")
+        }
+        Type::Pointer(_) => "a raw pointer type".to_string(),
+        Type::Struct { .. }
+        | Type::Enum { .. }
+        | Type::Apply { .. }
+        | Type::TypeVar(_)
+        | Type::Generic(_)
+        | Type::Projection { .. }
+        | Type::Lambda { .. } => return None,
+        _ => "a built-in type".to_string(),
+    })
 }
 
 fn display_normalize_error(error: &NormalizeError, display: &impl Fn(&Type) -> String) -> String {
