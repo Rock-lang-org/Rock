@@ -184,6 +184,25 @@ listen = -> 42
 }
 
 #[test]
+fn test_local_binding_shadows_top_level_function() {
+    let output = compile_and_run(
+        r#"
+offset = x -> x + 2
+
+uses_name_locally = ->
+    offset = 40
+    offset + 1
+
+main = !->
+    uses_name_locally!.println!
+    (offset 1).println!
+"#,
+    );
+
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), ["41", "3"]);
+}
+
+#[test]
 fn test_inline_program() {
     let output = compile_and_run(
         r#"

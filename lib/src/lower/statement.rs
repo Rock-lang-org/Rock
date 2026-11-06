@@ -123,8 +123,13 @@ impl Lowerer {
             } => {
                 let (name, mutable) = self.extract_pattern_binding(pattern);
 
-                // Check if variable already exists in scope (reassignment vs new binding)
-                if type_annotation.is_none() && self.scope.lookup(&name).is_some() {
+                // An existing local is reassigned. Top-level items are never
+                // reassigned: the name starts a new local that shadows them.
+                let reassigns_local = self
+                    .scope
+                    .lookup(&name)
+                    .is_some_and(|binding| binding.local_id.is_some() && !binding.is_top_level);
+                if type_annotation.is_none() && reassigns_local {
                     // Reassignment to existing variable
                     let binding = self.scope.lookup(&name).cloned();
                     let lhs_ty = binding
