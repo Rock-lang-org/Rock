@@ -212,8 +212,8 @@ impl<'ctx> CodeGen<'ctx> {
                     ))
                 })?;
             let symbol = self
-                .callable_symbols_by_key
-                .get(&closure_key)
+                .callables
+                .symbol_for_key(&closure_key)
                 .cloned()
                 .unwrap_or_else(|| declaration.llvm_symbol.clone());
             if !self.functions.contains_key(&symbol) {
@@ -230,8 +230,8 @@ impl<'ctx> CodeGen<'ctx> {
                 .collect::<Vec<_>>();
             let ret_type = declaration.signature.ret.semantic_ty;
 
-            self.mir_function_symbols
-                .insert(function.id.clone(), symbol.clone());
+            self.callables
+                .bind_function_symbol(function.id.clone(), symbol.clone());
             self.mir_closure_metadata.insert(
                 function.id.clone(),
                 MirClosureCodegenMetadata {
@@ -247,8 +247,8 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn compile_mir_function(&mut self, mir_function: &MirFunction) -> Result<(), CodegenError> {
         let symbol = self
-            .mir_function_symbols
-            .get(&mir_function.id)
+            .callables
+            .function_symbol(&mir_function.id)
             .cloned()
             .ok_or_else(|| {
                 CodegenError::internal(format!(
@@ -300,9 +300,8 @@ impl<'ctx> CodeGen<'ctx> {
             }
 
             let signature = self
-                .mir_function_symbols
-                .get(&mir_function.id)
-                .and_then(|symbol| self.callable_signatures_by_symbol.get(symbol))
+                .callables
+                .signature_for_function(&mir_function.id)
                 .cloned();
             let is_closure = matches!(mir_function.id, MirFunctionId::Closure(_));
             for param_index in 0..mir_function.arg_count {

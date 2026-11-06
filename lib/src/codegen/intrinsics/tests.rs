@@ -374,9 +374,6 @@ fn compile_intrinsic_values_with_type_ids_array_len_rejects_nominal_array_displa
     });
     let i64_id = type_context.intern_type(&Type::I64);
     codegen.set_type_context(type_context);
-    codegen
-        .struct_names_by_id
-        .insert(array_def, "Array".to_string());
 
     let slice_ty = codegen.slice_layout_type();
     let function_type = context.i64_type().fn_type(&[slice_ty.into()], false);
@@ -409,9 +406,6 @@ fn compile_intrinsic_values_with_type_ids_arr_ptr_rejects_nominal_array_display_
     });
     let ret_id = type_context.intern_type(&Type::Pointer(Box::new(Type::U8)));
     codegen.set_type_context(type_context);
-    codegen
-        .struct_names_by_id
-        .insert(array_def, "Array".to_string());
 
     let slice_ty = codegen.slice_layout_type();
     let ptr_ty = context.ptr_type(inkwell::AddressSpace::default());

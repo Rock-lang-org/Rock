@@ -355,7 +355,7 @@ impl<'ctx> CodeGen<'ctx> {
                 CodegenError::from(format!("MIR tuple field index {} is out of bounds", index))
             }),
             Type::Struct { id, args } => {
-                let fields = self.struct_layouts_by_id.get(id).ok_or_else(|| {
+                let fields = self.nominal_layouts.struct_fields(id).ok_or_else(|| {
                     CodegenError::from(format!("Unknown MIR struct DefId {:?}", id))
                 })?;
                 let (_, field_ty) = fields.get(index).ok_or_else(|| {

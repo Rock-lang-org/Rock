@@ -85,19 +85,15 @@ impl<'ctx> CodeGen<'ctx> {
                         display_name
                     )));
                 };
-                let layout_name = self
-                    .struct_names_by_id
-                    .get(id)
-                    .map(String::as_str)
-                    .unwrap_or(display_name.as_str());
+                let layout_name = display_name.as_str();
                 if id != ty_id {
                     return Err(CodegenError::layout(
                         "MIR struct aggregate identity does not match its destination",
                     ));
                 }
                 let fields = self
-                    .struct_layouts_by_id
-                    .get(id)
+                    .nominal_layouts
+                    .struct_fields(id)
                     .cloned()
                     .ok_or_else(|| CodegenError::layout("Unknown MIR struct layout"))?;
                 self.validate_mir_aggregate_operand_count(
@@ -144,11 +140,7 @@ impl<'ctx> CodeGen<'ctx> {
                         self.display_type_for_diagnostic(expected_ty)
                     )));
                 };
-                let layout_name = self
-                    .enum_names_by_id
-                    .get(enum_id)
-                    .map(String::as_str)
-                    .unwrap_or(enum_name.as_str());
+                let layout_name = enum_name.as_str();
                 if enum_id != ty_id {
                     return Err(CodegenError::layout(
                         "MIR enum aggregate identity does not match its destination",
@@ -242,7 +234,7 @@ impl<'ctx> CodeGen<'ctx> {
         variant_index: usize,
         display_name: &str,
     ) -> Result<usize, CodegenError> {
-        let variants = self.enum_layouts_by_id.get(&enum_id).ok_or_else(|| {
+        let variants = self.nominal_layouts.enum_variants(&enum_id).ok_or_else(|| {
             CodegenError::layout(format!("Unknown MIR enum layout: {}", display_name))
         })?;
         let variant = variants.get(variant_index).ok_or_else(|| {

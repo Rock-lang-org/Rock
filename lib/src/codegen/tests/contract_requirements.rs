@@ -181,8 +181,8 @@ fn mir_callable_resolved_key_missing_from_contract_fails_without_name_lookup() {
             .add_function("show", context.i64_type().fn_type(&[], false), None),
     );
     codegen
-        .callable_symbols_by_key
-        .insert(present_key.clone(), "Box_show_exact".to_string());
+        .callables
+        .bind_key_symbol(present_key.clone(), "Box_show_exact");
 
     let symbol = codegen
         .resolve_mir_callable_symbol(&crate::mir::MirCallable::Resolved(present_key))

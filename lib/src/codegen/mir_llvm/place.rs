@@ -357,8 +357,8 @@ impl<'ctx> CodeGen<'ctx> {
             }),
             Type::Struct { id, args } => {
                 let fields = self
-                    .struct_layouts_by_id
-                    .get(id)
+                    .nominal_layouts
+                    .struct_fields(id)
                     .ok_or_else(|| CodegenError::layout("Unknown MIR struct layout"))?;
                 let (_, field_ty) = fields.get(index).ok_or_else(|| {
                     CodegenError::layout(format!(

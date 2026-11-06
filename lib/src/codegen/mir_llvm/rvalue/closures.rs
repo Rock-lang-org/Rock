@@ -17,8 +17,8 @@ impl<'ctx> CodeGen<'ctx> {
         let closure_function_id = MirFunctionId::Closure(Box::new(closure.id.clone()));
         self.validate_mir_closure_value(context, closure, &closure_function_id, expected_ty)?;
         let symbol = self
-            .mir_function_symbols
-            .get(&closure_function_id)
+            .callables
+            .function_symbol(&closure_function_id)
             .cloned()
             .ok_or_else(|| {
                 CodegenError::backend_contract(

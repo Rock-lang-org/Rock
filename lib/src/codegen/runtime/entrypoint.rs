@@ -29,8 +29,8 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let user_main_symbol = self
-            .callable_symbols_by_key
-            .get(&declaration.key)
+            .callables
+            .symbol_for_key(&declaration.key)
             .ok_or_else(|| CodegenError::from("Rock entry function has no emitted symbol"))?
             .clone();
         let user_main = self

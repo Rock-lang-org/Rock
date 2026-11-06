@@ -11,12 +11,9 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Result<String, CodegenError> {
         let MirCallable::Resolved(key) = callable;
 
-        self.callable_symbols_by_key
-            .get(key)
-            .cloned()
-            .ok_or_else(|| {
-                CodegenError::backend_contract(format!("Unknown MIR callable key {:?}", key))
-            })
+        self.callables.symbol_for_key(key).cloned().ok_or_else(|| {
+            CodegenError::backend_contract(format!("Unknown MIR callable key {:?}", key))
+        })
     }
 
     pub(crate) fn resolve_mir_callable_signature(
@@ -24,14 +21,14 @@ impl<'ctx> CodeGen<'ctx> {
         callable: &MirCallable,
     ) -> Option<MirCallableSignature> {
         let MirCallable::Resolved(key) = callable;
-        self.callable_signatures_by_key.get(key).cloned()
+        self.callables.signature_for_key(key).cloned()
     }
 
     pub(crate) fn resolve_mir_drop_glue_symbol(&self, ty: TypeId) -> Result<String, CodegenError> {
         if let Some(key) = self.drop_glue_callables_by_type.get(&ty) {
             return self
-                .callable_symbols_by_key
-                .get(key)
+                .callables
+                .symbol_for_key(key)
                 .cloned()
                 .ok_or_else(|| {
                     CodegenError::backend_contract(format!(

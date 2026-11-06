@@ -357,7 +357,7 @@ fn compile_mir_program_lowers_resolved_intrinsic_from_backend_contract() {
     codegen.compile_program_from_mir(&mir).unwrap();
 
     let ir = codegen.get_ir();
-    assert!(codegen.callable_symbols_by_key.contains_key(&intrinsic_key));
+    assert!(codegen.callables.symbol_for_key(&intrinsic_key).is_some());
     assert!(!ir.contains("call i64 @I64Add"), "IR was:\n{}", ir);
     assert!(ir.contains("ret i64"), "IR was:\n{}", ir);
 }
@@ -400,8 +400,8 @@ fn compile_mir_program_declares_extern_from_backend_contract_without_hir_extern(
     assert!(codegen.module.get_function("answer").is_some());
     assert_eq!(
         codegen
-            .callable_symbols_by_key
-            .get(&crate::mir::MirCallableKey::Extern(extern_id))
+            .callables
+            .symbol_for_key(&crate::mir::MirCallableKey::Extern(extern_id))
             .map(String::as_str),
         Some("ffi::answer")
     );
@@ -487,7 +487,7 @@ fn compile_mir_program_registers_struct_layout_from_backend_contract_without_hir
     let ir = codegen.get_ir();
     assert!(ir.contains("{ i64 1, i64 2 }"), "IR was:\n{}", ir);
     assert_eq!(
-        codegen.struct_layouts_by_id.get(&struct_id),
+        codegen.nominal_layouts.struct_fields(&struct_id),
         Some(&vec![
             ("x".to_string(), i64_type),
             ("y".to_string(), i64_type),

@@ -184,8 +184,8 @@ impl<'ctx> CodeGen<'ctx> {
         })?;
         let arg = if let Some(key) = self.drop_glue_callables_by_type.get(&place_ty) {
             let param = self
-                .callable_signatures_by_key
-                .get(key)
+                .callables
+                .signature_for_key(key)
                 .and_then(|signature| signature.params.first())
                 .cloned()
                 .ok_or_else(|| {

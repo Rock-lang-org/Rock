@@ -24,9 +24,8 @@ impl<'ctx> CodeGen<'ctx> {
                     fields,
                     generic_params,
                 } => {
-                    self.struct_layouts_by_id.insert(*id, fields.clone());
-                    self.struct_generic_param_ids_by_id
-                        .insert(*id, generic_params.clone());
+                    self.nominal_layouts
+                        .register_struct(*id, fields.clone(), generic_params.clone());
                 }
                 MirNominalLayout::Enum {
                     id,
@@ -39,9 +38,8 @@ impl<'ctx> CodeGen<'ctx> {
                             fields: Self::codegen_variant_fields_from_mir(&variant.fields),
                         })
                         .collect::<Vec<_>>();
-                    self.enum_layouts_by_id.insert(*id, variants);
-                    self.enum_generic_param_ids_by_id
-                        .insert(*id, generic_params.clone());
+                    self.nominal_layouts
+                        .register_enum(*id, variants, generic_params.clone());
                 }
             }
         }
@@ -138,24 +136,7 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn register_mir_contract_callable_metadata(&mut self, declaration: &MirCallableDecl) {
-        self.callable_symbols_by_key
-            .insert(declaration.key.clone(), declaration.llvm_symbol.clone());
-        self.callable_signatures_by_key
-            .insert(declaration.key.clone(), declaration.signature.clone());
-        self.callable_signatures_by_symbol.insert(
-            declaration.llvm_symbol.clone(),
-            declaration.signature.clone(),
-        );
-
-        if let MirCallableKey::Closure(function_id) = &declaration.key {
-            self.mir_function_symbols
-                .insert(function_id.clone(), declaration.llvm_symbol.clone());
-        }
-
-        if let MirCallableKind::LocalBody { function_id } = &declaration.kind {
-            self.mir_function_symbols
-                .insert(function_id.clone(), declaration.llvm_symbol.clone());
-        }
+        self.callables.register_declaration(declaration);
     }
 
     fn declare_mir_contract_callable(
@@ -241,30 +222,13 @@ impl<'ctx> CodeGen<'ctx> {
             };
         self.functions
             .insert(declaration.llvm_symbol.clone(), llvm_function);
-        self.callable_signatures_by_symbol.insert(
-            declaration.llvm_symbol.clone(),
-            declaration.signature.clone(),
-        );
+        self.callables
+            .bind_symbol_signature(&declaration.llvm_symbol, &declaration.signature);
         Ok(llvm_function)
     }
 
     fn register_mir_contract_actual_symbol(&mut self, declaration: &MirCallableDecl, symbol: &str) {
-        self.callable_symbols_by_key
-            .insert(declaration.key.clone(), symbol.to_string());
-        if let Some(def_id) = declaration.source_def_id {
-            self.mir_contract_symbol_overrides
-                .insert(def_id, symbol.to_string());
-        }
-
-        if let MirCallableKey::Closure(function_id) = &declaration.key {
-            self.mir_function_symbols
-                .insert(function_id.clone(), symbol.to_string());
-        }
-
-        if let MirCallableKind::LocalBody { function_id } = &declaration.kind {
-            self.mir_function_symbols
-                .insert(function_id.clone(), symbol.to_string());
-        }
+        self.callables.register_actual_symbol(declaration, symbol);
     }
 
     fn declare_mir_contract_extern(
@@ -294,10 +258,8 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.functions
             .insert(declaration.llvm_symbol.clone(), llvm_function);
-        self.callable_signatures_by_symbol.insert(
-            declaration.llvm_symbol.clone(),
-            declaration.signature.clone(),
-        );
+        self.callables
+            .bind_symbol_signature(&declaration.llvm_symbol, &declaration.signature);
         Ok(llvm_function)
     }
 
@@ -340,10 +302,8 @@ impl<'ctx> CodeGen<'ctx> {
             .insert(lookup_symbol.to_string(), llvm_function);
         self.functions
             .insert(llvm_symbol.to_string(), llvm_function);
-        self.callable_signatures_by_symbol
-            .insert(lookup_symbol.to_string(), signature.clone());
-        self.callable_signatures_by_symbol
-            .insert(llvm_symbol.to_string(), signature.clone());
+        self.callables.bind_symbol_signature(lookup_symbol, signature);
+        self.callables.bind_symbol_signature(llvm_symbol, signature);
         Ok(llvm_function)
     }
 
@@ -356,7 +316,7 @@ impl<'ctx> CodeGen<'ctx> {
             return self.unique_rock_function_symbol_name(&declaration.llvm_symbol);
         }
 
-        let Some(namespace) = self.symbol_namespace.as_deref() else {
+        let Some(namespace) = self.callables.namespace() else {
             return self.unique_rock_function_symbol_name(&declaration.llvm_symbol);
         };
 

@@ -69,16 +69,7 @@ impl<'ctx> CodeGen<'ctx> {
         id: crate::ids::DefId,
         type_args: &[Type],
     ) -> HashMap<GenericParamId, Type> {
-        self.struct_generic_param_ids_by_id
-            .get(&id)
-            .map(|generic_param_ids| {
-                generic_param_ids
-                    .iter()
-                    .zip(type_args.iter())
-                    .map(|(generic_id, ty)| (*generic_id, ty.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.nominal_layouts.struct_substitution(id, type_args)
     }
 
     fn enum_substitution_by_id(
@@ -86,16 +77,7 @@ impl<'ctx> CodeGen<'ctx> {
         id: crate::ids::DefId,
         type_args: &[Type],
     ) -> HashMap<GenericParamId, Type> {
-        self.enum_generic_param_ids_by_id
-            .get(&id)
-            .map(|generic_param_ids| {
-                generic_param_ids
-                    .iter()
-                    .zip(type_args.iter())
-                    .map(|(generic_id, ty)| (*generic_id, ty.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.nominal_layouts.enum_substitution(id, type_args)
     }
 
     pub(crate) fn enum_variant_payload_type_by_id(
@@ -106,8 +88,8 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Option<Type> {
         let subst = self.enum_substitution_by_id(enum_id, type_args);
 
-        self.enum_layouts_by_id
-            .get(&enum_id)
+        self.nominal_layouts
+            .enum_variants(&enum_id)
             .and_then(|variants| variants.get(variant_idx))
             .map(|variant| match &variant.fields {
                 crate::codegen::CodegenEnumVariantFields::Unit => Type::Unit,
@@ -144,8 +126,8 @@ impl<'ctx> CodeGen<'ctx> {
         variant_index: usize,
     ) -> Result<bool, crate::codegen::CodegenError> {
         let variant = self
-            .enum_layouts_by_id
-            .get(&enum_id)
+            .nominal_layouts
+            .enum_variants(&enum_id)
             .and_then(|variants| variants.get(variant_index))
             .ok_or_else(|| {
                 crate::codegen::CodegenError::layout("Missing enum variant payload layout")
@@ -161,7 +143,7 @@ impl<'ctx> CodeGen<'ctx> {
         type_args: &[Type],
     ) -> Option<Vec<BasicTypeEnum<'ctx>>> {
         let mut field_types = vec![self.context.i32_type().into()];
-        let variants = self.enum_layouts_by_id.get(&id)?;
+        let variants = self.nominal_layouts.enum_variants(&id)?;
         for variant_idx in 0..variants.len() {
             let payload_ty = self.enum_variant_payload_type_by_id(id, type_args, variant_idx)?;
             field_types.push(self.llvm_type(&payload_ty));
@@ -258,8 +240,8 @@ impl<'ctx> CodeGen<'ctx> {
                 args: type_args,
             } => {
                 let fields = self
-                    .struct_layouts_by_id
-                    .get(id)
+                    .nominal_layouts
+                    .struct_fields(id)
                     .unwrap_or_else(|| panic!("unknown nominal struct DefId {:?}", id));
                 let subst = self.struct_substitution_by_id(*id, type_args);
                 let field_types: Vec<BasicTypeEnum<'ctx>> = fields
