@@ -21,7 +21,7 @@ fn test_build_trait_uses_temporary_trait_context_and_restores_it() {
     let mut lowerer = CollectContext::new();
     lowerer
         .generics
-        .enter_trait("Outer".to_string(), vec!["X".to_string()]);
+        .enter_trait("Outer".to_string());
 
     let decl = TraitDecl {
         where_clauses: Vec::new(),
@@ -70,7 +70,6 @@ fn test_build_trait_uses_temporary_trait_context_and_restores_it() {
         .function_type_vars
         .contains_key(&hir_trait.methods["next"].id));
     assert_eq!(lowerer.generics.trait_name(), Some("Outer"));
-    assert_eq!(lowerer.generics.trait_generics(), ["X".to_string()]);
     assert_eq!(
         hir_trait.signatures["collect"].ret,
         Type::Projection {

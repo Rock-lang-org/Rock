@@ -5,12 +5,6 @@ fn def_id(index: u32) -> DefId {
     DefId::new(CrateId(0), LocalDefId(index))
 }
 
-impl GenericScope {
-    pub(crate) fn trait_generics(&self) -> &[String] {
-        &self.trait_generics
-    }
-}
-
 #[test]
 fn generic_scope_leave_restores_the_entered_owner_and_params() {
     let outer = def_id(1);
@@ -44,12 +38,11 @@ fn generic_scope_restore_params_drops_declared_params() {
 #[test]
 fn generic_scope_leave_trait_restores_the_outer_trait() {
     let mut scope = GenericScope::default();
-    scope.enter_trait("Outer".to_string(), vec!["X".to_string()]);
+    scope.enter_trait("Outer".to_string());
 
-    let frame = scope.enter_trait("Inner".to_string(), Vec::new());
+    let frame = scope.enter_trait("Inner".to_string());
     assert_eq!(scope.trait_name(), Some("Inner"));
     scope.leave_trait(frame);
 
     assert_eq!(scope.trait_name(), Some("Outer"));
-    assert_eq!(scope.trait_generics(), ["X".to_string()]);
 }

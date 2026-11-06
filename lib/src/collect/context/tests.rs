@@ -325,7 +325,7 @@ fn collect_context_lowers_associated_type_through_canonical_trait_import_id() {
         .set_canonical_name(trait_id, "dep::Iterable".to_string());
     context
         .generics
-        .enter_trait("Iterable".to_string(), Vec::new());
+        .enter_trait("Iterable".to_string());
     context
         .generics
         .enter(trait_id, vec!["Self".to_string()], Vec::new());

@@ -9,7 +9,6 @@ use crate::type_services::kind::Kind;
 #[derive(Default)]
 pub(crate) struct GenericScope {
     trait_name: Option<String>,
-    trait_generics: Vec<String>,
     owner: Option<DefId>,
     params: Vec<String>,
     kinds: Vec<Kind>,
@@ -32,7 +31,6 @@ pub(crate) struct ParamsFrame {
 /// The trait context replaced by `GenericScope::enter_trait`.
 pub(crate) struct TraitFrame {
     name: Option<String>,
-    generics: Vec<String>,
 }
 
 impl GenericScope {
@@ -56,16 +54,14 @@ impl GenericScope {
         self.kinds = frame.kinds;
     }
 
-    pub(crate) fn enter_trait(&mut self, name: String, generics: Vec<String>) -> TraitFrame {
+    pub(crate) fn enter_trait(&mut self, name: String) -> TraitFrame {
         TraitFrame {
             name: self.trait_name.replace(name),
-            generics: std::mem::replace(&mut self.trait_generics, generics),
         }
     }
 
     pub(crate) fn leave_trait(&mut self, frame: TraitFrame) {
         self.trait_name = frame.name;
-        self.trait_generics = frame.generics;
     }
 
     pub(crate) fn trait_name(&self) -> Option<&str> {

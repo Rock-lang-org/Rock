@@ -22,7 +22,7 @@ pub(crate) fn build_trait_with_id(
 
     let outer_trait_scope = context
         .generics
-        .enter_trait(td.name.name.clone(), generic_param_names.clone());
+        .enter_trait(td.name.name.clone());
     let mut generic_context_params = generic_param_names.clone();
     generic_context_params.push(
         td.for_
