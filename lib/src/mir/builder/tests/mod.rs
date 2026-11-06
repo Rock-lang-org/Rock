@@ -8,7 +8,7 @@ use crate::ids::{AssocTypeId, CrateId, DefId, FieldId, InstanceId, LocalDefId, T
 use crate::lexer::Span;
 use crate::mir::{
     AggregateKind, Constant, LocalSource, MirCallable, MirCallableKey, MirClosureId,
-    MirInstanceBodies, MirIntrinsicId, MirProgram, Mutability, Operand, Projection,
+    MirFunction, MirInstanceBodies, MirIntrinsicId, MirProgram, Mutability, Operand, Projection,
     ReferenceOrigin, Rvalue, StatementData, StatementKind, Terminator,
 };
 use crate::type_services::projection::ProjectionProvider;
@@ -224,10 +224,11 @@ fn assert_builder_agreement_clean_with_contract(
 }
 
 fn builder_agreement_report_with_contract(
-    builder: MirBuilder<'_>,
+    mut builder: MirBuilder<'_>,
     ret_type: Type,
     backend_contract: crate::mir::MirBackendContract,
 ) -> crate::mir::agreement::MirAgreementReport {
+    let closure_captures = builder.closures.take_captures();
     let id = DefId::new(CrateId(0), LocalDefId(999));
     let function_id = MirFunctionId::Function(id);
     let ret_type = builder
@@ -244,7 +245,7 @@ fn builder_agreement_report_with_contract(
             name: "test".to_string(),
             basic_blocks: builder.blocks,
             local_decls: builder.locals,
-            closure_captures: builder.closure_captures,
+            closure_captures,
             arg_count: 0,
             ret_type,
             ownership: builder.ownership,

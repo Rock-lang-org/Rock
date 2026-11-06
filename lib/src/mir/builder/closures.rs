@@ -3,8 +3,7 @@ use crate::lexer::Span;
 use crate::types::Type;
 
 use crate::mir::{
-    LocalSource, MirClosureCapture, MirClosureCaptureKind, MirClosureId, MirFunction,
-    MirFunctionId, Mutability, Place, Rvalue,
+    LocalSource, MirClosureCapture, MirClosureCaptureKind, MirClosureId, MirFunctionId, Mutability, Place, Rvalue,
 };
 
 use super::*;
@@ -15,9 +14,7 @@ impl<'a> MirBuilder<'a> {
             .current_function_id
             .clone()
             .expect("closure lowering requires current MIR function id");
-        let index = self.lambda_counter as u32;
-        let name = format!("lambda_{}", self.lambda_counter);
-        self.lambda_counter += 1;
+        let (index, name) = self.closures.fresh_lambda();
         (
             MirClosureId {
                 owner,
@@ -25,10 +22,6 @@ impl<'a> MirBuilder<'a> {
             },
             name,
         )
-    }
-
-    pub(super) fn take_nested_functions(&mut self) -> Vec<MirFunction> {
-        std::mem::take(&mut self.nested_functions)
     }
 
     pub(super) fn lower_closure_captures(
@@ -135,7 +128,7 @@ impl<'a> MirBuilder<'a> {
         .with_source_map(&self.source_map);
         builder.callable_instances_by_def_id = self.callable_instances_by_def_id.clone();
         builder.method_def_ids = self.method_def_ids.clone();
-        builder.pending_closure_body_captures = captures;
+        builder.closures.set_pending_body_captures(captures);
         let function_id = MirFunctionId::Closure(Box::new(closure_id));
         let mir_func = builder.build_function(
             function_id,
@@ -145,8 +138,7 @@ impl<'a> MirBuilder<'a> {
             self.current_source_owner,
             Some(operation_span),
         );
-        self.nested_functions.push(mir_func);
-        self.nested_functions
-            .extend(builder.take_nested_functions());
+        self.closures.push_nested(mir_func);
+        self.closures.extend_nested(builder.closures.take_nested());
     }
 }

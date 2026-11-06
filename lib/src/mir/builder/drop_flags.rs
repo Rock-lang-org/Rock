@@ -10,7 +10,7 @@ use super::*;
 
 impl<'a> MirBuilder<'a> {
     pub(super) fn ensure_drop_flag(&mut self, local: Local) -> Option<Local> {
-        if let Some(flag) = self.drop_flags.get(&local).copied() {
+        if let Some(flag) = self.drops.drop_flag_for(local) {
             return Some(flag);
         }
 
@@ -28,7 +28,7 @@ impl<'a> MirBuilder<'a> {
             source: LocalSource::Temporary,
         });
         self.record_temporary_local(flag);
-        self.drop_flags.insert(local, flag);
+        self.drops.register_drop_flag(local, flag);
         self.ensure_projection_drop_flags(local, &ty);
         Some(flag)
     }
@@ -38,7 +38,7 @@ impl<'a> MirBuilder<'a> {
         self.collect_projection_drop_flag_entries(ty, Vec::new(), &mut entries);
         for (projection, _) in entries {
             let place = Place { local, projection };
-            if self.projection_drop_flags.contains_key(&place) {
+            if self.drops.has_projection_drop_flag(&place) {
                 continue;
             }
             let flag = Local(self.locals.len());
@@ -50,7 +50,7 @@ impl<'a> MirBuilder<'a> {
                 source: LocalSource::Temporary,
             });
             self.record_temporary_local(flag);
-            self.projection_drop_flags.insert(place, flag);
+            self.drops.register_projection_drop_flag(place, flag);
         }
     }
 
@@ -133,49 +133,20 @@ impl<'a> MirBuilder<'a> {
         }
     }
 
-    pub(super) fn drop_flag_for(&self, local: Local) -> Option<Local> {
-        self.drop_flags.get(&local).copied()
-    }
-
-    pub(super) fn drop_flag_for_place(&self, place: &Place) -> Option<Local> {
-        if place.projection.is_empty() {
-            self.drop_flag_for(place.local)
-        } else {
-            self.projection_drop_flags
-                .iter()
-                .find_map(|(candidate, flag)| {
-                    (candidate.local == place.local
-                        && candidate.projection.len() == place.projection.len()
-                        && Self::projection_is_prefix(&candidate.projection, &place.projection))
-                    .then_some(*flag)
-                })
-        }
-    }
-
-    pub(super) fn projection_drop_flags_for_local(&self, local: Local) -> Vec<Local> {
-        let mut flags = self
-            .projection_drop_flags
-            .iter()
-            .filter_map(|(place, flag)| (place.local == local).then_some(*flag))
-            .collect::<Vec<_>>();
-        flags.sort_by_key(|flag| flag.0);
-        flags
-    }
-
     pub(super) fn set_drop_flag_for_place(
         &mut self,
         place: &Place,
         initialized: bool,
         span: Option<Span>,
     ) {
-        let Some(flag) = self.drop_flag_for_place(place) else {
+        let Some(flag) = self.drops.drop_flag_for_place(place) else {
             return;
         };
         self.set_drop_flag_local(flag, initialized, span);
     }
 
     pub(super) fn set_drop_flag(&mut self, local: Local, initialized: bool, span: Option<Span>) {
-        let Some(flag) = self.drop_flag_for(local) else {
+        let Some(flag) = self.drops.drop_flag_for(local) else {
             return;
         };
         self.set_drop_flag_local(flag, initialized, span);
@@ -187,7 +158,7 @@ impl<'a> MirBuilder<'a> {
         initialized: bool,
         span: Option<Span>,
     ) {
-        for flag in self.projection_drop_flags_for_local(local) {
+        for flag in self.drops.projection_drop_flags_for_local(local) {
             self.set_drop_flag_local(flag, initialized, span.clone());
         }
     }
@@ -204,15 +175,7 @@ impl<'a> MirBuilder<'a> {
             return;
         }
 
-        let mut flags = self
-            .projection_drop_flags
-            .iter()
-            .filter_map(|(candidate, flag)| {
-                Self::place_projection_is_prefix(place, candidate).then_some(*flag)
-            })
-            .collect::<Vec<_>>();
-        flags.sort_by_key(|flag| flag.0);
-        for flag in flags {
+        for flag in self.drops.projection_drop_flags_under(place) {
             self.set_drop_flag_local(flag, initialized, span.clone());
         }
     }

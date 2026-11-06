@@ -22,10 +22,7 @@ impl<'a> MirBuilder<'a> {
         self.current_function_id = Some(id.clone());
         self.current_function_name = Some(display_name.to_string());
         self.current_source_owner = source_owner;
-        self.drop_flags.clear();
-        self.projection_drop_flags.clear();
-        self.moved_places.clear();
-        self.statically_moved_cleanup_places.clear();
+        self.drops.reset_for_function();
         self.ownership = MirOwnershipMetadata::default();
         let entry_block = self.new_block();
         self.current_block = Some(entry_block);
@@ -81,7 +78,7 @@ impl<'a> MirBuilder<'a> {
             );
         }
 
-        for capture in std::mem::take(&mut self.pending_closure_body_captures) {
+        for capture in self.closures.take_pending_body_captures() {
             let mutability = if capture.mutable
                 || capture.kind == crate::hir::HirClosureCaptureKind::MutableBorrow
             {
@@ -111,7 +108,7 @@ impl<'a> MirBuilder<'a> {
                 capture_span.clone(),
             );
             self.var_map.insert(capture.name.clone(), local);
-            self.closure_captures.push(MirClosureCapture {
+            self.closures.record_capture(MirClosureCapture {
                 name: capture.name,
                 local,
                 kind: MirClosureCaptureKind::from(capture.kind),
@@ -146,7 +143,7 @@ impl<'a> MirBuilder<'a> {
             name: display_name.to_string(),
             basic_blocks: std::mem::take(&mut self.blocks),
             local_decls: std::mem::take(&mut self.locals),
-            closure_captures: std::mem::take(&mut self.closure_captures),
+            closure_captures: self.closures.take_captures(),
             arg_count: func.params.len(),
             ret_type: self.type_id_for(&func.ret_type),
             ownership: std::mem::take(&mut self.ownership),

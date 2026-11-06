@@ -137,7 +137,7 @@ impl<'a> MirBuilder<'a> {
             .locals
             .get(place.local.0)
             .and_then(|local| local.span.clone());
-        if self.cleanup_mode {
+        if self.drops.in_cleanup() {
             crate::mir::MirOrigin::synthetic(crate::mir::MirSyntheticOrigin::Cleanup, span)
         } else {
             self.source_origin(span)

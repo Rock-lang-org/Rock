@@ -23,16 +23,10 @@ impl<'a> MirBuilder<'a> {
             var_map: HashMap::new(),
             loop_stack: Vec::new(),
             scope_locals: Vec::new(),
-            moved_places: HashSet::new(),
-            statically_moved_cleanup_places: HashSet::new(),
-            drop_flags: HashMap::new(),
-            projection_drop_flags: HashMap::new(),
-            closure_captures: Vec::new(),
-            lambda_counter: 0,
+            drops: DropState::default(),
+            closures: ClosureState::default(),
             current_function_id: None,
             current_function_name: None,
-            nested_functions: Vec::new(),
-            pending_closure_body_captures: Vec::new(),
             callable_instances_by_def_id: HashMap::new(),
             method_def_ids: program.indexes.methods_by_id.keys().copied().collect(),
             method_instance_receiver_modes: HashMap::new(),
@@ -40,7 +34,6 @@ impl<'a> MirBuilder<'a> {
             ownership: MirOwnershipMetadata::default(),
             source_map: SemanticSourceMap::default(),
             current_source_owner: None,
-            cleanup_mode: false,
         }
     }
 
@@ -74,7 +67,7 @@ impl<'a> MirBuilder<'a> {
             let mir_func =
                 builder.build_function(mir_id.clone(), name, func, false, Some(id), None);
             functions.insert(mir_id, mir_func);
-            for nested in builder.take_nested_functions() {
+            for nested in builder.closures.take_nested() {
                 functions.insert(nested.id.clone(), nested);
             }
         }
@@ -161,7 +154,7 @@ impl<'a> MirBuilder<'a> {
                     is_method: body.is_method,
                 },
             );
-            for nested in builder.take_nested_functions() {
+            for nested in builder.closures.take_nested() {
                 bodies.push_nested(nested);
             }
         }

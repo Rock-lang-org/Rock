@@ -1,10 +1,12 @@
 mod backend_contract;
 mod blocks;
 mod callables;
+mod closure_state;
 mod closures;
 mod contract_layouts;
 mod contract_types;
 mod drop_flags;
+mod drop_state;
 mod emit;
 mod entry;
 mod expr;
@@ -19,15 +21,17 @@ mod reference_origins;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use crate::hir::{AcceptedHir, HirClosureCapture};
+use closure_state::ClosureState;
+use drop_state::DropState;
+
+use crate::hir::AcceptedHir;
 use crate::ids::{DefId, InstanceId};
 use crate::source_map::SemanticSourceMap;
 use crate::type_context::TypeContext;
 use crate::types::Type;
 
 use super::{
-    BasicBlock, BasicBlockId, Local, LocalDecl, MirClosureCapture, MirFunction, MirFunctionId,
-    MirOwnershipMetadata, Place,
+    BasicBlock, BasicBlockId, Local, LocalDecl, MirFunctionId, MirOwnershipMetadata, Place,
 };
 
 type HirProgram = crate::hir::HirProgramFor<AcceptedHir>;
@@ -47,16 +51,10 @@ pub struct MirBuilder<'a> {
     var_map: HashMap<String, Local>,
     loop_stack: Vec<LoopTargets>,
     scope_locals: Vec<Vec<Local>>,
-    moved_places: HashSet<Place>,
-    statically_moved_cleanup_places: HashSet<Place>,
-    drop_flags: HashMap<Local, Local>,
-    projection_drop_flags: HashMap<Place, Local>,
-    closure_captures: Vec<MirClosureCapture>,
-    lambda_counter: usize,
+    drops: DropState,
+    closures: ClosureState,
     current_function_id: Option<MirFunctionId>,
     current_function_name: Option<String>,
-    nested_functions: Vec<MirFunction>,
-    pending_closure_body_captures: Vec<HirClosureCapture>,
     callable_instances_by_def_id: HashMap<DefId, InstanceId>,
     method_def_ids: HashSet<DefId>,
     method_instance_receiver_modes: HashMap<InstanceId, Option<crate::types::ReceiverMode>>,
@@ -64,7 +62,6 @@ pub struct MirBuilder<'a> {
     ownership: MirOwnershipMetadata,
     source_map: SemanticSourceMap,
     current_source_owner: Option<DefId>,
-    cleanup_mode: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

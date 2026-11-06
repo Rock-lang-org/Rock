@@ -1,7 +1,7 @@
 use crate::types::Type;
 
 use crate::mir::{
-    BasicBlockId, MirClosureCaptureKind, Operand, Place, Projection, Rvalue, Terminator,
+    BasicBlockId, MirClosureCaptureKind, Operand, Place, Rvalue, Terminator,
 };
 
 use super::*;
@@ -12,24 +12,11 @@ impl<'a> MirBuilder<'a> {
             if place.projection.is_empty() {
                 self.set_drop_flag(place.local, false, None);
                 self.set_projection_drop_flags_for_local(place.local, false, None);
-                self.moved_places.retain(|moved| moved.local != place.local);
+                self.drops.record_local_moved(place.local);
             } else {
                 self.set_drop_flags_for_place_tree(place, false, None);
-                self.moved_places.insert(place.clone());
+                self.drops.record_projection_moved(place.clone());
             }
-        }
-    }
-
-    pub(super) fn clear_moved_place(&mut self, place: &Place) {
-        if place.projection.is_empty() {
-            self.moved_places.retain(|moved| moved.local != place.local);
-            self.statically_moved_cleanup_places
-                .retain(|moved| moved.local != place.local);
-        } else {
-            self.moved_places
-                .retain(|moved| !Self::place_projection_is_prefix(place, moved));
-            self.statically_moved_cleanup_places
-                .retain(|moved| !Self::place_projection_is_prefix(place, moved));
         }
     }
 
@@ -37,63 +24,10 @@ impl<'a> MirBuilder<'a> {
         if place.projection.is_empty() {
             self.set_drop_flag(place.local, false, None);
             self.set_projection_drop_flags_for_local(place.local, false, None);
-            self.moved_places.retain(|moved| moved.local != place.local);
         } else {
             self.set_drop_flags_for_place_tree(&place, false, None);
-            self.moved_places
-                .retain(|moved| !Self::place_projection_is_prefix(&place, moved));
         }
-        self.moved_places.insert(place.clone());
-        self.statically_moved_cleanup_places.insert(place);
-    }
-
-    pub(super) fn place_may_be_moved(&self, place: &Place) -> bool {
-        self.moved_places
-            .iter()
-            .any(|moved| Self::place_projection_is_prefix(moved, place))
-    }
-
-    pub(super) fn place_was_statically_moved_for_cleanup(&self, place: &Place) -> bool {
-        self.statically_moved_cleanup_places
-            .iter()
-            .any(|moved| Self::place_projection_is_prefix(moved, place))
-    }
-
-    pub(super) fn place_has_moved_descendant(&self, place: &Place) -> bool {
-        self.moved_places
-            .iter()
-            .any(|moved| Self::place_projection_is_strict_prefix(place, moved))
-    }
-
-    pub(super) fn place_projection_is_prefix(prefix: &Place, place: &Place) -> bool {
-        prefix.local == place.local
-            && Self::projection_is_prefix(&prefix.projection, &place.projection)
-    }
-
-    fn place_projection_is_strict_prefix(prefix: &Place, place: &Place) -> bool {
-        prefix.local == place.local
-            && prefix.projection.len() < place.projection.len()
-            && Self::projection_is_prefix(&prefix.projection, &place.projection)
-    }
-
-    pub(super) fn projection_is_prefix(prefix: &[Projection], projection: &[Projection]) -> bool {
-        prefix.len() <= projection.len()
-            && prefix
-                .iter()
-                .zip(projection.iter())
-                .all(|(lhs, rhs)| Self::projection_component_matches(lhs, rhs))
-    }
-
-    fn projection_component_matches(lhs: &Projection, rhs: &Projection) -> bool {
-        match (lhs, rhs) {
-            (Projection::Deref, Projection::Deref) => true,
-            (Projection::Downcast(lhs), Projection::Downcast(rhs)) => lhs == rhs,
-            (Projection::Index(lhs), Projection::Index(rhs)) => lhs == rhs,
-            (Projection::Field { index: lhs, .. }, Projection::Field { index: rhs, .. }) => {
-                lhs == rhs
-            }
-            _ => false,
-        }
+        self.drops.record_statically_moved_for_cleanup(place);
     }
 
     pub(super) fn move_source_place_for_expr(&self, expr: &HirExpr) -> Option<Place> {

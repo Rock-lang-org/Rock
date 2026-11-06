@@ -404,7 +404,7 @@ fn test_lower_expr_lambda_emits_closure_rvalue() {
         &builder.blocks[0].statements.last().unwrap().kind,
         StatementKind::Assign(_, Rvalue::Closure(_))
     ));
-    let nested = builder.take_nested_functions();
+    let nested = builder.closures.take_nested();
     assert_eq!(nested.len(), 1);
     assert_eq!(nested[0].local_decls[0].span, Some(lambda.span.clone()));
     assert_eq!(nested[0].local_decls[1].span, Some(lambda.span.clone()));

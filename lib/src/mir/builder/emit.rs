@@ -9,7 +9,7 @@ impl<'a> MirBuilder<'a> {
     pub(super) fn emit_assign(&mut self, dest: Place, rvalue: Rvalue, span: Option<Span>) {
         self.record_rvalue_moves(&rvalue);
         self.record_reference_assignment(&dest, &rvalue);
-        self.clear_moved_place(&dest);
+        self.drops.reinitialize(&dest);
         if let Some(current) = self.current_block {
             self.blocks[current.0]
                 .statements
@@ -65,7 +65,7 @@ impl<'a> MirBuilder<'a> {
 
     pub(super) fn emit_storage_live(&mut self, local: Local, span: Option<Span>) {
         let flag = self.ensure_drop_flag(local);
-        let projection_flags = self.projection_drop_flags_for_local(local);
+        let projection_flags = self.drops.projection_drop_flags_for_local(local);
         if let Some(current) = self.current_block {
             self.blocks[current.0]
                 .statements

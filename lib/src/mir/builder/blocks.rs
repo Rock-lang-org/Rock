@@ -8,8 +8,7 @@ use crate::mir::{
 
 impl<'a> MirBuilder<'a> {
     pub(super) fn finish_scope_locals(&mut self, block_locals: Vec<crate::mir::Local>) {
-        let previous_cleanup_mode = self.cleanup_mode;
-        self.cleanup_mode = true;
+        let previous_cleanup_mode = self.drops.enter_cleanup();
         let mut current_opt = self.current_block;
         for local in block_locals.into_iter().rev() {
             if let Some(current) = current_opt {
@@ -28,7 +27,7 @@ impl<'a> MirBuilder<'a> {
                 }
             }
         }
-        self.cleanup_mode = previous_cleanup_mode;
+        self.drops.leave_cleanup(previous_cleanup_mode);
     }
 
     pub(super) fn emit_drop_for_place(
@@ -37,7 +36,7 @@ impl<'a> MirBuilder<'a> {
         place: Place,
         storage_dead: Option<crate::mir::Local>,
     ) {
-        if let Some(flag) = self.drop_flag_for_place(&place) {
+        if let Some(flag) = self.drops.drop_flag_for_place(&place) {
             let drop_block = self.new_block();
             let next_block = self.new_block();
             if let Some(current) = self.current_block {
@@ -61,8 +60,8 @@ impl<'a> MirBuilder<'a> {
             }
 
             if let Some(local) = storage_dead {
-                let flag = self.drop_flag_for(local);
-                let projection_flags = self.projection_drop_flags_for_local(local);
+                let flag = self.drops.drop_flag_for(local);
+                let projection_flags = self.drops.projection_drop_flags_for_local(local);
                 self.blocks[next_block.0]
                     .statements
                     .push(StatementData::storage_dead(local, None));
@@ -86,12 +85,12 @@ impl<'a> MirBuilder<'a> {
                 self.blocks[current.0]
                     .statements
                     .push(StatementData::storage_dead(local, None));
-                if let Some(flag) = self.drop_flag_for(local) {
+                if let Some(flag) = self.drops.drop_flag_for(local) {
                     self.blocks[current.0]
                         .statements
                         .push(StatementData::storage_dead(flag, None));
                 }
-                for flag in self.projection_drop_flags_for_local(local) {
+                for flag in self.drops.projection_drop_flags_for_local(local) {
                     self.blocks[current.0]
                         .statements
                         .push(StatementData::storage_dead(flag, None));
@@ -101,11 +100,11 @@ impl<'a> MirBuilder<'a> {
     }
 
     fn emit_unconditional_drop_for_place(&mut self, ty: &Type, place: Place) {
-        if self.place_was_statically_moved_for_cleanup(&place) {
+        if self.drops.statically_moved_for_cleanup(&place) {
             return;
         }
 
-        if self.has_direct_drop_impl(ty) && !self.place_has_moved_descendant(&place) {
+        if self.has_direct_drop_impl(ty) && !self.drops.has_moved_descendant(&place) {
             let next_block = self.new_block();
             self.record_drop_obligation(
                 place.clone(),
@@ -180,8 +179,8 @@ impl<'a> MirBuilder<'a> {
                     local: place.local,
                     projection,
                 };
-                if !self.place_may_be_moved(&field_place)
-                    || self.drop_flag_for_place(&field_place).is_some()
+                if !self.drops.may_be_moved(&field_place)
+                    || self.drops.drop_flag_for_place(&field_place).is_some()
                 {
                     self.emit_drop_for_place(field_ty, field_place, None);
                 }
@@ -201,8 +200,8 @@ impl<'a> MirBuilder<'a> {
                     local: place.local,
                     projection,
                 };
-                if !self.place_may_be_moved(&field_place)
-                    || self.drop_flag_for_place(&field_place).is_some()
+                if !self.drops.may_be_moved(&field_place)
+                    || self.drops.drop_flag_for_place(&field_place).is_some()
                 {
                     self.emit_drop_for_place(elem_ty, field_place, None);
                 }
@@ -238,8 +237,8 @@ impl<'a> MirBuilder<'a> {
                 local: place.local,
                 projection,
             };
-            if !self.place_may_be_moved(&elem_place)
-                || self.drop_flag_for_place(&elem_place).is_some()
+            if !self.drops.may_be_moved(&elem_place)
+                || self.drops.drop_flag_for_place(&elem_place).is_some()
             {
                 self.emit_drop_for_place(elem_ty, elem_place, None);
             }
@@ -340,8 +339,8 @@ impl<'a> MirBuilder<'a> {
                     local: place.local,
                     projection,
                 };
-                if !self.place_may_be_moved(&field_place)
-                    || self.drop_flag_for_place(&field_place).is_some()
+                if !self.drops.may_be_moved(&field_place)
+                    || self.drops.drop_flag_for_place(&field_place).is_some()
                 {
                     self.emit_drop_for_place(field_ty, field_place, None);
                 }
