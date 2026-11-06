@@ -8,7 +8,7 @@ use crate::lower::Lowerer;
 use crate::types::Type;
 
 impl Lowerer {
-    pub(super) fn fold_unary_calls(
+    pub(crate) fn fold_unary_calls(
         &mut self,
         mut expr: HirExpr,
         args: Vec<HirExpr>,
@@ -36,7 +36,19 @@ impl Lowerer {
             };
             let expected_fn_ty =
                 Type::function_with_safety(vec![arg.ty.clone()], ret_ty.clone(), safety);
-            let _ = self.engine.unify(&expr.ty, &expected_fn_ty);
+            if let Err(error) = self.engine.unify(&expr.ty, &expected_fn_ty) {
+                let callee_ty = self.resolve_projection_type(&self.engine.resolve(&expr.ty));
+                let message = if matches!(callee_ty, Type::Function { .. }) {
+                    format!("Type mismatch: {}", error.render(&self.engine))
+                } else {
+                    format!(
+                        "Too many arguments: a value of type {} cannot be called",
+                        self.display_type(&callee_ty)
+                    )
+                };
+                self.diagnostics.push_type_with_span(message, arg.span.clone());
+                return self.error_expression_at(span);
+            }
             let resolved_ret_ty = self.engine.resolve(&ret_ty);
             self.report_unsafe_function_value_call_from_type(&expr);
 

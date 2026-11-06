@@ -148,6 +148,92 @@ main = ->
 }
 
 #[test]
+fn test_returned_closures_own_their_captures() {
+    let output = compile_and_run(
+        r#"
+adder = a ->
+    x -> x + a
+
+adder_via_local = a ->
+    add = x -> x + a
+    add
+
+length_adder = values ->
+    x -> x + values.len!
+
+main = !->
+    (adder 5) 10 .println!
+    (adder_via_local 6) 10 .println!
+    mut values = Vec::new!
+    values.push 1
+    (length_adder values) 10 .println!
+"#,
+    );
+
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), ["15", "16", "11"]);
+}
+
+#[test]
+fn test_curried_function_returning_closure() {
+    let output = compile_and_run(
+        r#"
+compose: (T -> U) -> (U -> V) -> (T -> V)
+compose = f, g ~>
+    x -> g f x
+
+adder: I64 -> I64 -> (I64 -> I64)
+adder = a, b ~>
+    x -> x + a + b
+
+main = !->
+    (compose (+ 1), (* 10)) 2 .println!
+    then_double = compose (+ 1)
+    (then_double (* 2)) 3 .println!
+    (adder 1, 2) 10 .println!
+"#,
+    );
+
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), ["30", "8", "13"]);
+}
+
+#[test]
+fn test_curried_function_as_operator() {
+    let output = compile_and_run(
+        r#"
+infix 9 |+|
+|+|: I64 -> I64 -> I64
+|+| = a, b ~>
+    a * 10 + b
+
+infix 9 >->
+>->: (T -> U) -> (U -> V) -> (T -> V)
+>-> = f, g ~>
+    x -> g f x
+
+main = !->
+    (1 |+| 2).println!
+    ((+ 1) >-> (* 10)) 2 .println!
+"#,
+    );
+
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), ["12", "30"]);
+}
+
+#[test]
+fn test_too_many_arguments_names_the_called_type() {
+    compile_should_fail(
+        r#"
+inc: I64 -> I64
+inc = a -> a + 1
+
+main = !->
+    (inc 1, 2).println!
+"#,
+        "Too many arguments: a value of type I64 cannot be called",
+    );
+}
+
+#[test]
 fn test_curried_function_try_uses_terminal_return_type() {
     let output = compile_and_run(
         r#"

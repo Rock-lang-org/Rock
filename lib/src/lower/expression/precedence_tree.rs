@@ -312,6 +312,30 @@ impl Lowerer {
         if let Some((func_ty, hir_name, target)) = func_binding {
             self.infer_bounded_constructor_heads(&func_ty, &[&left, &right]);
             let resolved_func_ty = self.resolve_projection_type(&self.engine.resolve(&func_ty));
+
+            // A curried operator (`>> = f, g ~> ...`) takes its operands one at
+            // a time, like an ordinary call to a curried function.
+            if matches!(&resolved_func_ty, Type::Function { params, .. } if params.len() == 1) {
+                self.report_unsafe_operator_function_call_if_needed(
+                    target.as_ref(),
+                    &hir_name,
+                    left.span.clone(),
+                );
+                let operation_span = left.span.clone();
+                let callee = HirExpr {
+                    ty: resolved_func_ty,
+                    kind: match target {
+                        Some(target) => HirExprKind::ResolvedVar(HirVarRef {
+                            name: hir_name,
+                            target,
+                        }),
+                        None => HirExprKind::Var(hir_name),
+                    },
+                    span: operation_span.clone(),
+                };
+                return self.fold_unary_calls(callee, vec![left, right], operation_span);
+            }
+
             let (mut expected_ret_ty, safety) = match resolved_func_ty {
                 Type::Function { ret, safety, .. } => (*ret, safety),
                 _ => (

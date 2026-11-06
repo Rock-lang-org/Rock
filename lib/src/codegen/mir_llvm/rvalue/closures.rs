@@ -3,6 +3,7 @@ use inkwell::AddressSpace;
 
 use crate::codegen::{CodeGen, CodegenError};
 use crate::mir::{MirClosure, MirFunctionId};
+use crate::type_services::visit::{fold_type, fold_type_children, TypeFolder};
 use crate::types::Type;
 
 use super::super::MirFunctionContext;
@@ -183,7 +184,12 @@ impl<'ctx> CodeGen<'ctx> {
             .map(|ty| self.structural_type_for(*ty))
             .collect::<Vec<_>>();
         let metadata_ret = self.structural_type_for(metadata.ret);
-        if metadata_params != *expected_params || metadata_ret != **expected_ret {
+        let same_params = metadata_params.len() == expected_params.len()
+            && metadata_params
+                .iter()
+                .zip(expected_params)
+                .all(|(metadata, expected)| same_callable_layout(metadata, expected));
+        if !same_params || !same_callable_layout(&metadata_ret, expected_ret) {
             let expected_ret_display = self.display_type_for_diagnostic(expected_ret);
             let metadata_ret_display = self.display_type_for_diagnostic(&metadata_ret);
             return Err(CodegenError::layout(format!(
@@ -243,4 +249,30 @@ impl<'ctx> CodeGen<'ctx> {
 
         Ok(())
     }
+}
+
+/// Whether two types have the same runtime layout. A function value is a code
+/// and environment pointer pair whatever it captures, so capture metadata is
+/// ignored: a curried stage returning a closure is typed with that closure's
+/// captures, while the signature it implements names none.
+fn same_callable_layout(left: &Type, right: &Type) -> bool {
+    struct EraseCaptures;
+
+    impl TypeFolder for EraseCaptures {
+        fn fold_type(&mut self, ty: Type) -> Type {
+            match fold_type_children(ty, self) {
+                Type::Function {
+                    params,
+                    ret,
+                    safety,
+                    ..
+                } => Type::function_with_safety(params, *ret, safety),
+                other => other,
+            }
+        }
+    }
+
+    left == right
+        || fold_type(left.clone(), &mut EraseCaptures)
+            == fold_type(right.clone(), &mut EraseCaptures)
 }

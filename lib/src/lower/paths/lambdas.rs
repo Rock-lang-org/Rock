@@ -93,7 +93,12 @@ impl Lowerer {
         let span = lambda.span.clone();
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
         let ret_type = self.engine.resolve(&lambda_return_ty);
-        let captures = self.collect_lambda_captures(&body, &params);
+        let mut captures = self.collect_lambda_captures(&body, &params);
+        if self.is_escaping_lambda(lambda) {
+            for capture in &mut captures {
+                capture.kind = HirClosureCaptureKind::Move;
+            }
+        }
 
         self.pop_scope();
 
@@ -167,6 +172,7 @@ impl Lowerer {
         let loop_stack = self.body.suspend_loops();
         let body = if params.len() == 1 {
             self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
+                lowerer.mark_escaping_lambdas(body);
                 lowerer.lower_block(body)
             })
         } else {

@@ -7,6 +7,9 @@
 //! gets its own local id. Fold-loop frames follow lexical loop nesting and are
 //! suspended around lambdas.
 
+use std::collections::HashSet;
+
+use crate::ast;
 use crate::lower::body_context::BodyLoweringContext;
 use crate::lower::control_flow::fold_loop::FoldLoopContext;
 
@@ -16,6 +19,8 @@ pub(crate) struct BodyState {
     source_scopes: Vec<u32>,
     fold_loops: Vec<Option<FoldLoopContext>>,
     tuple_temp_counter: u32,
+    /// Addresses of the AST lambdas this body returns (see `escaping_lambdas`).
+    escaping_lambdas: HashSet<usize>,
 }
 
 /// State of the enclosing body, restored by [`BodyState::leave`].
@@ -25,6 +30,7 @@ pub(crate) struct BodyFrame {
     source_scopes: Vec<u32>,
     fold_loops: Vec<Option<FoldLoopContext>>,
     tuple_temp_counter: u32,
+    escaping_lambdas: HashSet<usize>,
 }
 
 impl BodyState {
@@ -35,6 +41,7 @@ impl BodyState {
             source_scopes: std::mem::replace(&mut self.source_scopes, vec![root_scope]),
             fold_loops: std::mem::take(&mut self.fold_loops),
             tuple_temp_counter: std::mem::take(&mut self.tuple_temp_counter),
+            escaping_lambdas: std::mem::take(&mut self.escaping_lambdas),
         }
     }
 
@@ -43,6 +50,15 @@ impl BodyState {
         self.source_scopes = frame.source_scopes;
         self.fold_loops = frame.fold_loops;
         self.tuple_temp_counter = frame.tuple_temp_counter;
+        self.escaping_lambdas = frame.escaping_lambdas;
+    }
+
+    pub(crate) fn mark_escaping_lambda(&mut self, lambda: &ast::LambdaDecl) {
+        self.escaping_lambdas.insert(lambda as *const _ as usize);
+    }
+
+    pub(crate) fn is_escaping_lambda(&self, lambda: &ast::LambdaDecl) -> bool {
+        self.escaping_lambdas.contains(&(lambda as *const _ as usize))
     }
 
     pub(crate) fn context(&self) -> Option<&BodyLoweringContext> {

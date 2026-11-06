@@ -40,6 +40,7 @@ impl Lowerer {
     }
 
     pub(crate) fn lower_lambda_body(&mut self, lambda: &ast::LambdaDecl) -> HirBlock {
+        self.mark_escaping_lambdas(&lambda.body);
         let mut body = self.lower_block(&lambda.body);
         if matches!(lambda.arrow_kind, ast::LambdaArrowKind::Unit) {
             let span = lambda.span.clone();
