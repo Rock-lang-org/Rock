@@ -1,6 +1,32 @@
 use crate::support::*;
 
 #[test]
+fn test_signatureless_curried_function_calls_captured_callables() {
+    let output = compile_and_run(
+        r#"
+apply_both = f, g ~>
+    g (f 1)
+
+compose = f, g, x ~>
+    g f x
+
+main = !->
+    (apply_both (+ 1), (* 10)).println!
+    staged = apply_both (+ 2)
+    (staged (* 10)).println!
+    above_two = compose (+ 1), (n -> n > 2)
+    (above_two 2).println!
+    (above_two 1).println!
+"#,
+    );
+
+    assert_eq!(
+        output.trim().lines().collect::<Vec<_>>(),
+        ["20", "30", "true", "false"]
+    );
+}
+
+#[test]
 fn test_signatureless_method_receiver_is_constrained_by_call_site() {
     let output = compile_and_run(
         r#"

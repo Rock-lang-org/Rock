@@ -682,6 +682,9 @@ impl Monomorphizer {
             &generic_ids,
             &mut substitution,
         );
+        // A parameter may occur only in a callable bound (`f 1` in
+        // `k = f, g ~> g (f 1)` gives `T: FnOnce I64 -> W`).
+        self.infer_native_callable_bound_arguments(generic_func, &generic_ids, &mut substitution);
 
         if generic_ids.iter().any(|id| !substitution.contains_key(id)) {
             return None;
