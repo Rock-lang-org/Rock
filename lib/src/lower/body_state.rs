@@ -1,8 +1,11 @@
 //! Mutable state of the function body currently being lowered.
 //!
-//! The body context and source-scope chain are replaced for each body (`enter`/`leave`).
-//! Fold-loop frames follow lexical loop nesting and are suspended around lambdas.
-//! The tuple temp counter is deliberately never reset, so temp names stay unique across bodies.
+//! Everything here is per body: `enter` starts a body with its own context,
+//! source-scope chain, no enclosing loops and a tuple temp counter at 0, and
+//! `leave` restores the enclosing body's state. Temp names only need to be
+//! unique within one body (lambdas share their body's counter); each temp also
+//! gets its own local id. Fold-loop frames follow lexical loop nesting and are
+//! suspended around lambdas.
 
 use crate::lower::body_context::BodyLoweringContext;
 use crate::lower::control_flow::fold_loop::FoldLoopContext;
@@ -20,6 +23,8 @@ pub(crate) struct BodyState {
 pub(crate) struct BodyFrame {
     context: Option<BodyLoweringContext>,
     source_scopes: Vec<u32>,
+    fold_loops: Vec<Option<FoldLoopContext>>,
+    tuple_temp_counter: u32,
 }
 
 impl BodyState {
@@ -28,12 +33,16 @@ impl BodyState {
         BodyFrame {
             context: self.context.replace(context),
             source_scopes: std::mem::replace(&mut self.source_scopes, vec![root_scope]),
+            fold_loops: std::mem::take(&mut self.fold_loops),
+            tuple_temp_counter: std::mem::take(&mut self.tuple_temp_counter),
         }
     }
 
     pub(crate) fn leave(&mut self, frame: BodyFrame) {
         self.context = frame.context;
         self.source_scopes = frame.source_scopes;
+        self.fold_loops = frame.fold_loops;
+        self.tuple_temp_counter = frame.tuple_temp_counter;
     }
 
     pub(crate) fn context(&self) -> Option<&BodyLoweringContext> {

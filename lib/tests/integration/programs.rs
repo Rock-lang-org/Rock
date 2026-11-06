@@ -815,6 +815,32 @@ main = ->
 }
 
 #[test]
+fn test_tuple_destructuring_in_several_functions() {
+    // Each body numbers its destructuring temps from zero.
+    let output = compile_and_run(
+        r#"
+first_sum = ->
+    (a, b) = (1, 2)
+    (c, d) = (a * 10, b * 10)
+    a + b + c + d
+
+second_sum = ->
+    (a, b) = (3, 4)
+    a * b
+
+main = !->
+    x = first_sum!
+    y = second_sum!
+    (p, q) = (x, y)
+    p.println!
+    q.println!
+"#,
+    );
+    let lines: Vec<&str> = output.trim().lines().collect();
+    assert_eq!(lines, ["33", "12"]);
+}
+
+#[test]
 fn test_matrix_multiply() {
     let output = compile_and_run(
         r#"
