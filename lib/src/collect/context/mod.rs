@@ -3,6 +3,7 @@ mod exports;
 mod extern_crates;
 mod generic_scope;
 mod imports;
+mod infix_operators;
 mod module_loading;
 mod module_sources;
 mod name_tables;
@@ -51,6 +52,8 @@ pub(crate) struct CollectContext {
     /// Source files, the current file and the parsed-module cache.
     pub(crate) modules: ModuleSources,
     pub(crate) infix_precedence: HashMap<String, u8>,
+    /// Where each `infix_precedence` entry was declared.
+    infix_origins: HashMap<String, infix_operators::InfixOrigin>,
     pub(crate) loaded_prelude_export_ids: HashMap<String, ArtifactExport>,
     pub(crate) dependency_root_export_ids: HashMap<String, HashMap<String, ArtifactExport>>,
     pub(crate) language_items: LanguageItems<DefId>,
@@ -99,6 +102,7 @@ impl CollectContext {
             generics: GenericScope::default(),
             modules: ModuleSources::default(),
             infix_precedence: HashMap::new(),
+            infix_origins: HashMap::new(),
             loaded_prelude_export_ids: HashMap::new(),
             dependency_root_export_ids: HashMap::new(),
             language_items: LanguageItems::default(),
@@ -165,6 +169,7 @@ impl CollectContext {
             generics: _,
             modules,
             infix_precedence,
+            infix_origins: _,
             loaded_prelude_export_ids,
             dependency_root_export_ids,
             language_items,

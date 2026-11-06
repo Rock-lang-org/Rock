@@ -652,7 +652,7 @@ fn collect_preserves_import_aliases_infix_precedence_and_function_signatures() {
                 TopLevel::Import(crate::ast::Path::Ident(crate::ast::IdentifierPath {
                     path: vec![crate::ast::IdentOrType::Ident(ident("sum"))],
                 })),
-                TopLevel::InfixOperator(7, "++".to_string()),
+                TopLevel::InfixOperator(7, crate::ast::Operator { value: "++".to_string(), span: crate::lexer::Span::new("test.rk".into(), 0, 0) }),
                 TopLevel::FunctionSig(crate::ast::FunctionSig {
                     name: ident("declared_only"),
                     sig: crate::ast::ParseType::Unit(crate::lexer::Span::test()),

@@ -3,6 +3,34 @@ use std::process::Command;
 use std::sync::atomic::Ordering;
 
 #[test]
+fn test_operator_declared_twice_is_rejected() {
+    compile_should_fail(
+        r#"
+infix 9 |+|
+|+| = a, b -> a + b
+infix 9 |+|
+
+main = !->
+    (1 |+| 2).println!
+"#,
+        "Operator '|+|' is declared more than once",
+    );
+}
+
+#[test]
+fn test_operator_declared_by_dependency_is_rejected() {
+    compile_should_fail(
+        r#"
+infix 9 >>
+
+main = !->
+    1.println!
+"#,
+        "Operator '>>' is already declared by dependency 'std' with precedence 8",
+    );
+}
+
+#[test]
 fn test_operator_resolution_does_not_depend_on_std_trait_names() {
     let output = compile_and_run(
         r#"< struct Boxed

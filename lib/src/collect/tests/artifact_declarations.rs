@@ -123,7 +123,7 @@ fn collect_artifact_declarations_preserves_indexed_inline_and_impl_ids() {
         Module {
             name: None,
             top_levels: vec![
-                TopLevel::InfixOperator(7, "++".to_string()),
+                TopLevel::InfixOperator(7, crate::ast::Operator { value: "++".to_string(), span: crate::lexer::Span::new("test.rk".into(), 0, 0) }),
                 TopLevel::StructDecl(StructDecl {
                     name: type_inner("Same"),
                     generic_params: vec![],

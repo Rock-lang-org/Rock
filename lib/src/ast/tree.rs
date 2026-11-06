@@ -53,7 +53,7 @@ pub enum TopLevel {
     Export(Path),
     GlobExport(Vec<String>), // < module::path::* — re-export all items from a module
     Extern(FunctionSig),
-    InfixOperator(u8, String),
+    InfixOperator(u8, Operator),
     MacroDecl(MacroDecl),
     MacroInvoc(MacroInvoc),
     FunctionSig(FunctionSig),

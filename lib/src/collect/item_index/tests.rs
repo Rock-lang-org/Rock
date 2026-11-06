@@ -236,7 +236,7 @@ fn finds_inline_item_by_original_source_ordinal() {
     let module = module_with(vec![inline_module(
         "math",
         vec![
-            TopLevel::InfixOperator(5, "+".to_string()),
+            TopLevel::InfixOperator(5, crate::ast::Operator { value: "+".to_string(), span: crate::lexer::Span::new("test.rk".into(), 0, 0) }),
             struct_item("Vector"),
         ],
     )]);
@@ -300,7 +300,7 @@ fn indexes_source_backed_body_when_ast_is_provided() {
 fn finds_root_item_by_original_source_ordinal() {
     let mut ids = IndexingIds::new_root();
     let module = module_with(vec![
-        TopLevel::InfixOperator(5, "+".to_string()),
+        TopLevel::InfixOperator(5, crate::ast::Operator { value: "+".to_string(), span: crate::lexer::Span::new("test.rk".into(), 0, 0) }),
         struct_item("Answer"),
     ]);
 
@@ -322,7 +322,7 @@ fn finds_source_backed_item_by_original_source_ordinal() {
     sources.insert(
         vec!["io".to_string()],
         module_with(vec![
-            TopLevel::InfixOperator(5, "+".to_string()),
+            TopLevel::InfixOperator(5, crate::ast::Operator { value: "+".to_string(), span: crate::lexer::Span::new("test.rk".into(), 0, 0) }),
             struct_item("Writer"),
         ]),
     );
@@ -372,7 +372,7 @@ fn finds_modules_by_exact_structural_path() {
 #[test]
 fn item_kind_matches_existing_top_level_classification() {
     let structure = struct_item("Point");
-    let operator = TopLevel::InfixOperator(5, "+".to_string());
+    let operator = TopLevel::InfixOperator(5, crate::ast::Operator { value: "+".to_string(), span: crate::lexer::Span::new("test.rk".into(), 0, 0) });
 
     assert!(ItemKind::Struct.matches_top_level(&structure));
     assert!(!ItemKind::Function.matches_top_level(&structure));
@@ -482,7 +482,7 @@ fn keeps_multiple_defs_with_the_same_source_name() {
 
 #[test]
 fn ignores_non_defining_top_level_items() {
-    let module = module_with(vec![TopLevel::InfixOperator(5, "+".to_string())]);
+    let module = module_with(vec![TopLevel::InfixOperator(5, crate::ast::Operator { value: "+".to_string(), span: crate::lexer::Span::new("test.rk".into(), 0, 0) })]);
 
     let index = index_module_items(CrateId(0), ModuleId(0), &module);
 

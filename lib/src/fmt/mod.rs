@@ -206,7 +206,7 @@ impl FormatNode for TopLevel {
                 writeln!(f, "{} mod {}", if *exported { "<" } else { "" }, ident.name)
             }
             TopLevel::InfixOperator(precedence, decl) => {
-                writeln!(f, "infix {} {}", precedence, decl)
+                writeln!(f, "infix {} {}", precedence, decl.value)
             }
             TopLevel::Import(path) => {
                 write!(f, "> ")?;

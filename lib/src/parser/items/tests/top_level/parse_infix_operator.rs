@@ -14,7 +14,7 @@ fn parse_infix_operator() {
         .unwrap();
 
     assert_eq!(precedence, 5);
-    assert_eq!(name, "|>".to_string());
+    assert_eq!(name.value, "|>");
     assert_eq!(rest.len(), 0);
 }
 
@@ -29,6 +29,6 @@ fn parse_caret_infix_operator() {
         .unwrap();
 
     assert_eq!(precedence, 4);
-    assert_eq!(name, "^".to_string());
+    assert_eq!(name.value, "^");
     assert_eq!(rest.len(), 0);
 }

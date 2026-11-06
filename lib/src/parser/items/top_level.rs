@@ -328,13 +328,13 @@ pub fn top_level(stream: Input) -> IResult<TopLevel> {
         .map_err(|e| e.with_context("top-level declaration"))
 }
 
-pub fn infix_operator_decl(stream: Input) -> IResult<(u8, String)> {
+pub fn infix_operator_decl(stream: Input) -> IResult<(u8, crate::ast::Operator)> {
     (
         TokenType::Keyword("infix".to_string()),
         primitives::int.assert(|precedence| *precedence <= 255),
         operator,
         TokenType::Eol,
     )
-        .map(|(_, precedence, name, _)| (precedence as u8, name.value))
+        .map(|(_, precedence, name, _)| (precedence as u8, name))
         .process(stream)
 }

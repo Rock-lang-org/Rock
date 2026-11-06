@@ -243,10 +243,8 @@ impl LocalCollector {
                         &root_exports,
                     );
                 }
-                ast::TopLevel::InfixOperator(precedence, name) => {
-                    self.context
-                        .infix_precedence
-                        .insert(name.clone(), *precedence);
+                ast::TopLevel::InfixOperator(precedence, operator) => {
+                    self.context.declare_infix_operator(*precedence, operator);
                 }
                 _ => {}
             }

@@ -48,7 +48,7 @@ fn body_lowerer_attaches_bodies_by_source_id_despite_resolver_name_changes() {
     let mut root_module = graph.root_module().clone();
     root_module
         .top_levels
-        .insert(0, ast::TopLevel::InfixOperator(5, "+".to_string()));
+        .insert(0, ast::TopLevel::InfixOperator(5, crate::ast::Operator { value: "+".to_string(), span: crate::lexer::Span::new("test.rk".into(), 0, 0) }));
     root_module.top_levels.insert(
         1,
         ast::TopLevel::Module(ast::ModuleDecl(ast::Module {

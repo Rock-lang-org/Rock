@@ -130,7 +130,7 @@ impl CollectContext {
         }
 
         for (name, precedence) in &interface.infix_precedence {
-            self.infix_precedence.insert(name.clone(), *precedence);
+            self.register_dependency_infix_operator(crate_name, name, *precedence);
         }
     }
 
