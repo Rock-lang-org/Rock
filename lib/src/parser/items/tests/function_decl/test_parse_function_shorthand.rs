@@ -39,6 +39,21 @@ fn test_parse_unit_receiver_shorthand() {
 }
 
 #[test]
+fn test_parse_nested_function_shorthand() {
+    for input in ["myfn = (>>= (.join!))\n", "myfn = ((+ 1) <&>)\n"] {
+        let tokens = lex_test(input);
+        let config = Config::default();
+        let (rest, declaration) = function_decl
+            .process(ParseCtx::from(&tokens, &config))
+            .unwrap();
+
+        assert!(rest.is_empty(), "{input}");
+        assert_eq!(declaration.lambda.parameters.len(), 1, "{input}");
+        assert_eq!(declaration.lambda.body.statements.len(), 1, "{input}");
+    }
+}
+
+#[test]
 fn test_parse_unit_receiver_shorthand_rejects_missing_member() {
     let tokens = lex_test("myfn = (!.)\n");
     let config = Config::default();

@@ -31,3 +31,31 @@ pub fn consume_tokens_until(token_type: TokenType) -> impl Fn(Input) -> IResult<
         ))
     }
 }
+
+/// Consumes tokens up to the `)` that closes the current parenthesis,
+/// skipping over nested `( ... )` pairs.
+pub fn consume_tokens_until_matching_close_paren(stream: Input) -> IResult<Vec<Token>> {
+    let mut tokens = Vec::new();
+    let mut remaining_tokens = stream.tokens;
+    let mut depth = 0usize;
+
+    while let Some(token) = remaining_tokens.first() {
+        match token.token_type {
+            TokenType::OpenParen => depth += 1,
+            TokenType::CloseParen if depth == 0 => break,
+            TokenType::CloseParen => depth -= 1,
+            _ => {}
+        }
+
+        tokens.push(token.clone());
+        remaining_tokens = &remaining_tokens[1..];
+    }
+
+    Ok((
+        Input {
+            tokens: remaining_tokens,
+            ..stream
+        },
+        tokens,
+    ))
+}

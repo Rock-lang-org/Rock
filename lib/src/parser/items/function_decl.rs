@@ -8,7 +8,7 @@ use crate::{
 };
 
 use super::{
-    block, consume_tokens_until, get_span, ident, operator_token, parenthesis, parse_type, pattern,
+    block, consume_tokens_until_matching_close_paren, get_span, ident, operator_token, parenthesis, parse_type, pattern,
     reset_inside_argument_list, seek,
 };
 
@@ -119,7 +119,7 @@ pub fn prefix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
             .followed_by(seek(TokenType::Dot))
             .opt(),
         seek(operator_token.map(|_| ()).or(TokenType::Dot.map(|_| ()))),
-        consume_tokens_until(TokenType::CloseParen),
+        consume_tokens_until_matching_close_paren,
     )
         .process(stream)?;
 
@@ -169,7 +169,7 @@ pub fn prefix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
 
 pub fn suffix_function_shorthand(stream: Input) -> IResult<LambdaDecl> {
     let (stream, (span, inner_tokens)) =
-        (get_span, consume_tokens_until(TokenType::CloseParen)).process(stream)?;
+        (get_span, consume_tokens_until_matching_close_paren).process(stream)?;
 
     if inner_tokens.is_empty() {
         return Err(ParseError::Fail);
