@@ -18,6 +18,7 @@ impl Lowerer {
             items,
             function_type_vars,
             infix_precedence,
+            infix_owners: _,
             loaded_module_paths: _,
             type_vars,
             inject_prelude,

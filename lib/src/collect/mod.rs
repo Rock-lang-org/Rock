@@ -67,6 +67,8 @@ pub struct Declarations {
     pub items: DeclarationItems,
     pub function_type_vars: HashMap<DefId, HashSet<crate::ids::TypeVarId>>,
     pub infix_precedence: HashMap<String, u8>,
+    /// Declaring crate of each operator inherited from a dependency.
+    pub infix_owners: HashMap<String, String>,
     /// Modules that need body lowering: (module_name, file_path)
     pub loaded_module_paths: Vec<(String, PathBuf)>,
     /// Collection-owned type variable allocator seed so lower can continue
@@ -248,6 +250,7 @@ fn collect_impl(
         type_aliases,
         function_type_vars,
         infix_precedence,
+        infix_owners,
         loaded_module_paths,
         type_vars,
         loaded_prelude_export_ids,
@@ -314,6 +317,7 @@ fn collect_impl(
         items,
         function_type_vars,
         infix_precedence,
+        infix_owners,
         source_modules: source_modules_for_lowering(
             source_graph,
             &loaded_module_paths,

@@ -405,7 +405,13 @@ fn product_artifact_header_rejects_oversized_strings() {
     products.crate_identity = ProductCrateIdentity::local("payload-strings".to_string());
     products
         .infix_precedence
-        .insert("x".repeat(MAX_PRODUCT_ARTIFACT_STRING_BYTES + 1), 1);
+        .insert(
+            "x".repeat(MAX_PRODUCT_ARTIFACT_STRING_BYTES + 1),
+            crate::products::ProductInfixOperator {
+                precedence: 1,
+                declaring_crate: "payload-strings".to_string(),
+            },
+        );
     let error = products.to_artifact_bytes().unwrap_err();
     assert!(error.contains("string bytes limit exceeded"), "{error}");
 
@@ -486,7 +492,7 @@ fn compiler_products_rejects_unsupported_format_before_full_deserialize() {
 
 #[test]
 fn product_artifact_format_version_matches_shared_contract() {
-    assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 51);
+    assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 52);
     assert_eq!(
         PRODUCT_ARTIFACT_FORMAT_VERSION,
         rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION

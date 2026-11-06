@@ -30,7 +30,7 @@ pub(in crate::products) struct SerializedCompilerProducts {
     pub link: ProductLinkData,
     pub dependencies: Vec<ProductDependencyIdentity>,
     pub source_fingerprint: ProductSourceFingerprint,
-    pub infix_precedence: BTreeMap<String, u8>,
+    pub infix_precedence: BTreeMap<String, crate::products::ProductInfixOperator>,
     pub proc_macros: Vec<crate::macro_expansion::proc_macro::ProcMacroArtifact>,
 }
 

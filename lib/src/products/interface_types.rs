@@ -23,8 +23,19 @@ pub struct CompilerProducts {
     pub link: ProductLinkData,
     pub dependencies: Vec<ProductDependencyIdentity>,
     pub source_fingerprint: ProductSourceFingerprint,
-    pub infix_precedence: BTreeMap<String, u8>,
+    /// Every operator visible to this crate, including inherited ones.
+    pub infix_precedence: BTreeMap<String, ProductInfixOperator>,
     pub proc_macros: Vec<crate::macro_expansion::proc_macro::ProcMacroArtifact>,
+}
+
+/// An `infix` declaration as seen by a crate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProductInfixOperator {
+    pub precedence: u8,
+    /// The crate whose source declares the operator. Crates re-list the
+    /// operators they inherit, so this tells one declaration seen through two
+    /// dependencies apart from two different declarations.
+    pub declaring_crate: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

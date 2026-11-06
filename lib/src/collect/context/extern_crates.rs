@@ -129,8 +129,8 @@ impl CollectContext {
             self.impls.push(imp.clone());
         }
 
-        for (name, precedence) in &interface.infix_precedence {
-            self.register_dependency_infix_operator(crate_name, name, *precedence);
+        for (name, operator) in &interface.infix_precedence {
+            self.register_dependency_infix_operator(name, operator);
         }
     }
 

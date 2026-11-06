@@ -32,7 +32,7 @@ pub struct ArtifactCrateInterface {
     pub impls: BTreeMap<DefId, ProductImplInterface>,
     pub externs: BTreeMap<DefId, ProductExternInterface>,
     pub effective_trait_methods: BTreeMap<(DefId, DefId), DefId>,
-    pub infix_precedence: BTreeMap<String, u8>,
+    pub infix_precedence: BTreeMap<String, crate::products::ProductInfixOperator>,
 }
 
 impl ArtifactCrateInterface {

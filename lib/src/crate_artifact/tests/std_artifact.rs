@@ -84,8 +84,15 @@ fn test_product_std_artifact_preserves_string_method_abi_and_prelude_exports() {
             .map(String::as_str),
         Some("std::ops::deref::Deref")
     );
-    assert_eq!(products.infix_precedence.get("+"), Some(&9));
-    assert_eq!(products.infix_precedence.get("*"), Some(&10));
+    for (operator, precedence) in [("+", 9), ("*", 10)] {
+        assert_eq!(
+            products.infix_precedence.get(operator),
+            Some(&crate::products::ProductInfixOperator {
+                precedence,
+                declaring_crate: "std".to_string(),
+            })
+        );
+    }
 
     let string_impls = products
         .interface

@@ -72,6 +72,8 @@ pub(crate) struct LocalCollection {
     pub(crate) type_aliases: HashMap<String, crate::hir::HirTypeAlias>,
     pub(crate) function_type_vars: HashMap<DefId, HashSet<TypeVarId>>,
     pub(crate) infix_precedence: HashMap<String, u8>,
+    /// Declaring crate of each operator inherited from a dependency.
+    pub(crate) infix_owners: HashMap<String, String>,
     pub(crate) loaded_module_paths: Vec<(String, PathBuf)>,
     pub(crate) type_vars: DeclarationTypeVars,
     pub(crate) loaded_prelude_export_ids: HashMap<String, ArtifactExport>,
@@ -151,6 +153,7 @@ impl CollectContext {
         current_crate_name: Option<&str>,
     ) -> LocalCollection {
         self.normalize_type_aliases();
+        let infix_owners = self.dependency_infix_owners();
         let Self {
             type_vars,
             scope: _,
@@ -211,6 +214,7 @@ impl CollectContext {
             type_aliases,
             function_type_vars,
             infix_precedence,
+            infix_owners,
             loaded_module_paths,
             type_vars,
             loaded_prelude_export_ids,

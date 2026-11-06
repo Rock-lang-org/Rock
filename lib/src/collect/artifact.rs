@@ -143,6 +143,7 @@ pub fn collect_artifact_declarations(
         type_aliases,
         function_type_vars,
         infix_precedence,
+        infix_owners,
         loaded_module_paths,
         type_vars,
         loaded_prelude_export_ids,
@@ -210,6 +211,7 @@ pub fn collect_artifact_declarations(
             items,
             function_type_vars,
             infix_precedence,
+            infix_owners,
             source_modules: source_modules_from_loaded_sources(
                 &loaded_module_paths,
                 &module_file_cache,

@@ -23,6 +23,7 @@ pub(super) fn compile_impl(
         diagnostic_sources,
         loaded_prelude_export_ids,
         infix_precedence,
+        infix_owners,
         fingerprint_source_files,
         source_db,
         effective_current_crate_name,
@@ -66,7 +67,20 @@ pub(super) fn compile_impl(
                     .map(|(alias, export)| (alias.clone(), export.clone())),
             );
         }
-        products.infix_precedence = infix_precedence.into_iter().collect();
+        products.infix_precedence = infix_precedence
+            .into_iter()
+            .map(|(name, precedence)| {
+                let declaring_crate = infix_owners
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| effective_current_crate_name.clone());
+                let operator = crate::products::ProductInfixOperator {
+                    precedence,
+                    declaring_crate,
+                };
+                (name, operator)
+            })
+            .collect();
         products.interface.macros = exported_macros;
         products.interface.prelude_macros = prelude_macros;
         (Some(products), Some(product_id_remap))

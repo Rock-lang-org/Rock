@@ -16,6 +16,7 @@ pub(super) struct FrontendOutput {
     pub(super) loaded_prelude_export_ids:
         std::collections::HashMap<String, crate::crate_artifact::ArtifactExport>,
     pub(super) infix_precedence: std::collections::HashMap<String, u8>,
+    pub(super) infix_owners: std::collections::HashMap<String, String>,
     pub(super) fingerprint_source_files: Vec<PathBuf>,
     pub(super) source_db: source_loader::SourceDatabase,
     pub(super) effective_current_crate_name: String,
@@ -114,6 +115,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
     .map_err(|errors| Diagnostics::from_resolve_errors(errors).with_sources(&diagnostic_sources))?;
     let loaded_prelude_export_ids = declarations.loaded_prelude_export_ids.clone();
     let infix_precedence = declarations.infix_precedence.clone();
+    let infix_owners = declarations.infix_owners.clone();
     let fingerprint_source_files = source_graph.loaded_files().to_vec();
     let partial_hir =
         lower::pipeline::LoweringPipeline::new(&ast, &ctx, config.current_crate_name.as_deref())
@@ -136,6 +138,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         diagnostic_sources,
         loaded_prelude_export_ids,
         infix_precedence,
+        infix_owners,
         fingerprint_source_files,
         source_db,
         effective_current_crate_name,

@@ -36,8 +36,8 @@ pub use artifact_metadata::{
 pub use interface_types::{
     CompilerProducts, ProductAssociatedTypeInterface, ProductEnumInterface,
     ProductEnumVariantInterface, ProductExternInterface, ProductFieldInterface,
-    ProductFunctionInterface, ProductImplInterface, ProductInterface, ProductMacroExport,
-    ProductStructInterface, ProductTraitInterface, ProductTypeAliasInterface,
+    ProductFunctionInterface, ProductImplInterface, ProductInfixOperator, ProductInterface,
+    ProductMacroExport, ProductStructInterface, ProductTraitInterface, ProductTypeAliasInterface,
 };
 
 pub(crate) mod fingerprint;

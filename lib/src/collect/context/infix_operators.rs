@@ -1,19 +1,21 @@
-//! `infix` declarations: each operator is declared once per crate graph.
+//! `infix` declarations: each operator is declared once in a crate graph.
 //!
-//! A crate may not redeclare an operator that it or one of its dependencies
-//! already declared, even with the same precedence. A dependency's artifact
-//! lists every operator it can see, including the ones it inherits from its
-//! own dependencies, so two dependencies listing the same operator with the
-//! same precedence are the same declaration seen twice.
+//! Declaring an operator that the crate or any dependency already declared is
+//! an error, whatever the precedence. Artifacts re-list the operators a crate
+//! inherits, each tagged with the crate that declares it, so the same
+//! declaration reached through two dependencies is recognized as one.
+
+use std::collections::HashMap;
 
 use crate::ast;
 use crate::diagnostic::{DiagnosticCode, DiagnosticLabel};
 use crate::lexer::Span;
 use crate::lower::ResolveError;
+use crate::products::ProductInfixOperator;
 
 use super::CollectContext;
 
-/// Where an operator's precedence was declared.
+/// Where an operator was declared.
 #[derive(Debug, Clone)]
 pub(crate) enum InfixOrigin {
     Source(Span),
@@ -39,12 +41,9 @@ impl CollectContext {
                 ));
                 return;
             }
-            Some(InfixOrigin::Dependency(crate_name)) => {
-                let message = format!(
-                    "Operator '{name}' is already declared by dependency '{crate_name}' \
-                     with precedence {}",
-                    self.infix_precedence.get(name).copied().unwrap_or_default()
-                );
+            Some(InfixOrigin::Dependency(declaring_crate)) => {
+                let message =
+                    format!("Operator '{name}' is already declared by crate '{declaring_crate}'");
                 self.push_error_with_span(message, operator.span.clone());
                 return;
             }
@@ -59,20 +58,18 @@ impl CollectContext {
     /// Records an operator listed by a dependency's artifact.
     pub(crate) fn register_dependency_infix_operator(
         &mut self,
-        crate_name: &str,
         name: &str,
-        precedence: u8,
+        operator: &ProductInfixOperator,
     ) {
-        if let Some(existing) = self.infix_precedence.get(name).copied() {
-            if existing != precedence {
-                let first = match self.infix_origins.get(name) {
-                    Some(InfixOrigin::Dependency(first)) => first.clone(),
-                    Some(InfixOrigin::Source(_)) | None => "this crate".to_string(),
-                };
+        let declaring_crate = &operator.declaring_crate;
+        if let Some(InfixOrigin::Dependency(first)) = self.infix_origins.get(name) {
+            let same_declaration = first == declaring_crate
+                && self.infix_precedence.get(name) == Some(&operator.precedence);
+            if !same_declaration {
                 self.errors.push(ResolveError::non_source_code(
                     format!(
-                        "Operator '{name}' is declared with precedence {existing} by \
-                         '{first}' and with precedence {precedence} by '{crate_name}'"
+                        "Operator '{name}' is declared more than once: by crate '{first}' \
+                         and by crate '{declaring_crate}'"
                     ),
                     DiagnosticCode::Resolve,
                 ));
@@ -80,10 +77,23 @@ impl CollectContext {
             return;
         }
 
-        self.infix_precedence.insert(name.to_string(), precedence);
+        self.infix_precedence.insert(name.to_string(), operator.precedence);
         self.infix_origins.insert(
             name.to_string(),
-            InfixOrigin::Dependency(crate_name.to_string()),
+            InfixOrigin::Dependency(declaring_crate.clone()),
         );
+    }
+
+    /// The declaring crate of each operator that came from a dependency.
+    pub(crate) fn dependency_infix_owners(&self) -> HashMap<String, String> {
+        self.infix_origins
+            .iter()
+            .filter_map(|(name, origin)| match origin {
+                InfixOrigin::Dependency(declaring_crate) => {
+                    Some((name.clone(), declaring_crate.clone()))
+                }
+                InfixOrigin::Source(_) => None,
+            })
+            .collect()
     }
 }
