@@ -49,29 +49,21 @@ pub fn collect_artifact_declarations(
     );
 
     context
-        .module_file_cache
-        .entry(root_module_path.clone())
-        .or_insert_with(|| {
+        .modules
+        .cache_module_with(root_module_path.clone(), || {
             let mut root_module = module.clone();
             root_module.filepath = Some(root_module_path.clone());
             root_module
         });
     for (qualified_name, path) in &source_crate.loaded_module_paths {
-        if !context
-            .loaded_module_paths
-            .iter()
-            .any(|(name, existing_path)| name == qualified_name && existing_path == path)
-        {
-            context
-                .loaded_module_paths
-                .push((qualified_name.clone(), path.clone()));
-        }
+        context
+            .modules
+            .add_path(qualified_name.clone(), path.clone());
     }
     for (path, cached_module) in &source_crate.file_cache {
         context
-            .module_file_cache
-            .entry(path.clone())
-            .or_insert_with(|| cached_module.clone());
+            .modules
+            .cache_module_with(path.clone(), || cached_module.clone());
     }
 
     for dep in crate_ctx.extern_crates() {
@@ -97,8 +89,8 @@ pub fn collect_artifact_declarations(
     let source_modules = source_module_map_from_loaded_modules(
         module,
         Some(current_crate_name),
-        &context.loaded_module_paths,
-        &context.module_file_cache,
+        context.modules.paths(),
+        context.modules.file_cache(),
     );
     let item_index = index_root_module_items_with_sources(
         &mut indexing_ids,

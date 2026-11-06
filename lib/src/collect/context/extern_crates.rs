@@ -135,14 +135,12 @@ impl CollectContext {
     }
 
     pub(crate) fn current_module_prefix(&self) -> Option<String> {
-        if let Some(prefix) = &self.current_qualified_module_prefix {
-            return Some(prefix.clone());
+        if let Some(prefix) = self.modules.qualified_prefix() {
+            return Some(prefix.to_string());
         }
 
-        self.loaded_module_paths
-            .iter()
-            .find(|(_, path)| path == &self.current_module_path)
-            .map(|(name, _)| name.clone())
+        self.modules
+            .name_of_current_path()
             .or_else(|| self.current_crate_name.clone())
     }
 
@@ -158,10 +156,7 @@ impl CollectContext {
         }
 
         let first_segment = source.split("::").next().unwrap_or(source);
-        let is_absolute = self
-            .loaded_module_paths
-            .iter()
-            .any(|(name, _)| name == first_segment)
+        let is_absolute = self.modules.is_loaded_name(first_segment)
             || canonical_prefix.is_some_and(|name| name == first_segment);
 
         if is_absolute {

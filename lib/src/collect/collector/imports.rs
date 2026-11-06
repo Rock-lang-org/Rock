@@ -68,9 +68,9 @@ impl LocalCollector {
                         .as_deref()
                         .map(|prefix| format!("{}::{}", prefix, ident.name))
                         .unwrap_or_else(|| ident.name.clone());
-                    let old_path = std::mem::replace(&mut self.context.current_module_path, path);
+                    let outer = self.context.modules.enter(path);
                     self.predeclare_export_aliases(&loaded, Some(&child_prefix), true);
-                    self.context.current_module_path = old_path;
+                    self.context.modules.leave(outer);
                 }
                 _ => {}
             }

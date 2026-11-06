@@ -129,8 +129,7 @@ impl LocalCollector {
             return;
         };
 
-        let old_path = self.context.current_module_path.clone();
-        self.context.current_module_path = file_path;
+        let outer = self.context.modules.enter(file_path);
 
         let exports = self
             .context
@@ -153,7 +152,7 @@ impl LocalCollector {
             &reference_exports,
         );
 
-        self.context.current_module_path = old_path;
+        self.context.modules.leave(outer);
     }
 
     pub(super) fn predeclare_source_backed_qualified_trait_identities(

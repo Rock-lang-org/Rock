@@ -1,8 +1,10 @@
 mod artifact_exports;
 mod exports;
 mod extern_crates;
+mod generic_scope;
 mod imports;
 mod module_loading;
+mod module_sources;
 mod name_tables;
 mod type_lowering;
 mod type_names;
@@ -25,6 +27,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 pub(crate) use type_names::{is_known_nominal_type_name, path_names};
 
+pub(crate) use generic_scope::{GenericFrame, GenericScope};
+use module_sources::ModuleSources;
 use name_tables::{NameTables, ResolverNameTables};
 
 pub(crate) struct CollectContext {
@@ -42,18 +46,12 @@ pub(crate) struct CollectContext {
     pub(crate) errors: Vec<ResolveError>,
     pub(crate) current_function: Option<String>,
     pub(crate) current_crate_name: Option<String>,
-    pub(crate) current_qualified_module_prefix: Option<String>,
-    pub(crate) current_module_path: PathBuf,
-    pub(crate) loaded_modules: HashSet<PathBuf>,
-    pub(crate) loaded_module_paths: Vec<(String, PathBuf)>,
-    pub(crate) current_trait: Option<String>,
-    pub(crate) current_trait_generics: Vec<String>,
-    pub(crate) current_generic_owner: Option<DefId>,
-    pub(crate) current_generic_params: Vec<String>,
-    pub(crate) current_generic_kinds: Vec<crate::type_services::kind::Kind>,
+    /// Trait and generic parameters in scope while a header is lowered.
+    pub(crate) generics: GenericScope,
+    /// Source files, the current file and the parsed-module cache.
+    pub(crate) modules: ModuleSources,
     pub(crate) infix_precedence: HashMap<String, u8>,
     pub(crate) loaded_prelude_export_ids: HashMap<String, ArtifactExport>,
-    pub(crate) module_file_cache: HashMap<PathBuf, ast::Module>,
     pub(crate) dependency_root_export_ids: HashMap<String, HashMap<String, ArtifactExport>>,
     pub(crate) language_items: LanguageItems<DefId>,
     /// Import, re-export and canonical item names.
@@ -98,18 +96,10 @@ impl CollectContext {
             function_type_vars: HashMap::new(),
             current_function: None,
             current_crate_name: None,
-            current_qualified_module_prefix: None,
-            current_module_path: PathBuf::new(),
-            loaded_modules: HashSet::new(),
-            loaded_module_paths: Vec::new(),
-            current_trait: None,
-            current_trait_generics: Vec::new(),
-            current_generic_owner: None,
-            current_generic_params: Vec::new(),
-            current_generic_kinds: Vec::new(),
+            generics: GenericScope::default(),
+            modules: ModuleSources::default(),
             infix_precedence: HashMap::new(),
             loaded_prelude_export_ids: HashMap::new(),
-            module_file_cache: HashMap::new(),
             dependency_root_export_ids: HashMap::new(),
             language_items: LanguageItems::default(),
             names: NameTables::default(),
@@ -125,7 +115,7 @@ impl CollectContext {
         context.current_crate_name = current_crate_name.map(ToString::to_string);
 
         if let Some(file_path) = file_path {
-            context.current_module_path = file_path.clone();
+            context.modules.set_current_path(file_path.clone());
         }
 
         context.register_current_crate_root();
@@ -137,33 +127,16 @@ impl CollectContext {
             return;
         };
 
-        if self.current_module_path.as_os_str().is_empty() {
-            return;
-        }
-
-        if !self
-            .loaded_module_paths
-            .iter()
-            .any(|(name, path)| name == &crate_name && path == &self.current_module_path)
-        {
-            self.loaded_module_paths
-                .insert(0, (crate_name, self.current_module_path.clone()));
-        }
+        self.modules.register_root(&crate_name);
     }
 
     pub(crate) fn seed_source_graph(&mut self, graph: &crate::source_loader::ModuleGraph) {
         for (qualified_name, path) in graph.loaded_module_paths() {
-            if !self
-                .loaded_module_paths
-                .iter()
-                .any(|(name, existing_path)| name == &qualified_name && existing_path == &path)
-            {
-                self.loaded_module_paths.push((qualified_name, path));
-            }
+            self.modules.add_path(qualified_name, path);
         }
 
         for (path, module) in graph.module_file_cache() {
-            self.module_file_cache.entry(path).or_insert(module);
+            self.modules.cache_module(path, module);
         }
     }
 
@@ -189,22 +162,15 @@ impl CollectContext {
             errors,
             current_function: _,
             current_crate_name: _,
-            current_qualified_module_prefix: _,
-            current_module_path: _,
-            loaded_modules: _,
-            loaded_module_paths,
-            current_trait: _,
-            current_trait_generics: _,
-            current_generic_owner: _,
-            current_generic_params: _,
-            current_generic_kinds: _,
+            generics: _,
+            modules,
             infix_precedence,
             loaded_prelude_export_ids,
-            module_file_cache,
             dependency_root_export_ids,
             language_items,
             names,
         } = self;
+        let (loaded_module_paths, module_file_cache) = modules.into_registry_and_cache();
         let ResolverNameTables {
             canonical_import_aliases,
             canonical_names_by_id,

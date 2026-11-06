@@ -19,8 +19,9 @@ fn trait_member_ids(
 #[test]
 fn test_build_trait_uses_temporary_trait_context_and_restores_it() {
     let mut lowerer = CollectContext::new();
-    lowerer.current_trait = Some("Outer".to_string());
-    lowerer.current_trait_generics = vec!["X".to_string()];
+    lowerer
+        .generics
+        .enter_trait("Outer".to_string(), vec!["X".to_string()]);
 
     let decl = TraitDecl {
         where_clauses: Vec::new(),
@@ -68,8 +69,8 @@ fn test_build_trait_uses_temporary_trait_context_and_restores_it() {
     assert!(lowerer
         .function_type_vars
         .contains_key(&hir_trait.methods["next"].id));
-    assert_eq!(lowerer.current_trait.as_deref(), Some("Outer"));
-    assert_eq!(lowerer.current_trait_generics, vec!["X".to_string()]);
+    assert_eq!(lowerer.generics.trait_name(), Some("Outer"));
+    assert_eq!(lowerer.generics.trait_generics(), ["X".to_string()]);
     assert_eq!(
         hir_trait.signatures["collect"].ret,
         Type::Projection {
@@ -193,7 +194,7 @@ fn typed_predicate_preserves_arbitrary_subjects() {
     }];
 
     let bounds = lower_where_clauses(&mut context, &clauses);
-    context.pop_generic_context(previous.0, previous.1);
+    context.pop_generic_context(previous);
 
     assert!(bounds.is_empty());
     assert_eq!(

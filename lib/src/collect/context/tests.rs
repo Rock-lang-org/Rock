@@ -42,12 +42,12 @@ fn load_external_crate_module_prefers_seeded_module_path() {
     };
     let mut context = CollectContext::new();
     context
-        .loaded_module_paths
-        .push(("dep".to_string(), dep_root.clone()));
+        .modules
+        .add_path("dep".to_string(), dep_root.clone());
     context
-        .loaded_module_paths
-        .push(("dep::util".to_string(), util_mod.clone()));
-    context.module_file_cache.insert(util_mod.clone(), module);
+        .modules
+        .add_path("dep::util".to_string(), util_mod.clone());
+    context.modules.cache_module(util_mod.clone(), module);
 
     let loaded = context
         .load_external_crate_module("util", "dep")
@@ -79,8 +79,8 @@ fn load_module_requires_seeded_module_path() {
         filepath: Some(util.clone()),
     };
     let mut context = CollectContext::new();
-    context.current_module_path = root;
-    context.module_file_cache.insert(util, module);
+    context.modules.set_current_path(root);
+    context.modules.cache_module(util, module);
 
     let error = context
         .load_module("util")
@@ -112,9 +112,9 @@ fn load_module_with_prefix_does_not_fallback_to_unqualified_module() {
     };
     let mut context = CollectContext::new();
     context
-        .loaded_module_paths
-        .push(("io".to_string(), top_level_io.clone()));
-    context.module_file_cache.insert(top_level_io, module);
+        .modules
+        .add_path("io".to_string(), top_level_io.clone());
+    context.modules.cache_module(top_level_io, module);
 
     let error = context
         .load_module_with_prefix("io", Some("math"))
@@ -157,15 +157,15 @@ fn load_module_with_prefix_prefers_current_crate_prefixed_graph_path() {
     let mut context = CollectContext::new();
     context.current_crate_name = Some("test".to_string());
     context
-        .loaded_module_paths
-        .push(("math::io".to_string(), alias_io.clone()));
+        .modules
+        .add_path("math::io".to_string(), alias_io.clone());
     context
-        .loaded_module_paths
-        .push(("test::math::io".to_string(), graph_io.clone()));
-    context.module_file_cache.insert(alias_io, alias_module);
+        .modules
+        .add_path("test::math::io".to_string(), graph_io.clone());
+    context.modules.cache_module(alias_io, alias_module);
     context
-        .module_file_cache
-        .insert(graph_io.clone(), graph_module);
+        .modules
+        .cache_module(graph_io.clone(), graph_module);
 
     let module = context
         .load_module_with_prefix("io", Some("math"))
@@ -197,10 +197,8 @@ fn load_external_crate_module_requires_seeded_child_path() {
         filepath: Some(util.clone()),
     };
     let mut context = CollectContext::new();
-    context
-        .loaded_module_paths
-        .push(("dep".to_string(), dep_root));
-    context.module_file_cache.insert(util, module);
+    context.modules.add_path("dep".to_string(), dep_root);
+    context.modules.cache_module(util, module);
 
     let error = context
         .load_external_crate_module("util", "dep")
@@ -228,12 +226,12 @@ fn collect_context_lower_parse_type_reports_bare_slice_error() {
 fn collect_context_lower_parse_type_creates_implicit_generic() {
     let owner = def_id(70);
     let mut context = CollectContext::new();
-    context.current_generic_owner = Some(owner);
+    context.generics.enter(owner, Vec::new(), Vec::new());
 
     let ty = context.lower_parse_type(&named_type("T"));
 
     assert_eq!(ty, Type::Generic(GenericParamId { owner, index: 0 }));
-    assert_eq!(context.current_generic_params, vec!["T".to_string()]);
+    assert_eq!(context.generics.params(), ["T".to_string()]);
     assert!(context.errors.is_empty());
 }
 
@@ -242,9 +240,11 @@ fn collect_context_unknown_generic_error_keeps_parse_span() {
     let owner = def_id(71);
     let span = Span::new("/virtual/types.rk".into(), 9, 10);
     let mut context = CollectContext::new();
-    context.current_generic_owner = Some(owner);
-    context.current_generic_params = vec!["U".to_string()];
-    context.current_generic_kinds = vec![crate::type_services::kind::Kind::Type];
+    context.generics.enter(
+        owner,
+        vec!["U".to_string()],
+        vec![crate::type_services::kind::Kind::Type],
+    );
 
     let ty = context.lower_parse_type(&ParseType::Type(ParseTypeInner {
         name: "missing".to_string(),
@@ -323,9 +323,12 @@ fn collect_context_lowers_associated_type_through_canonical_trait_import_id() {
     context
         .names
         .set_canonical_name(trait_id, "dep::Iterable".to_string());
-    context.current_trait = Some("Iterable".to_string());
-    context.current_generic_owner = Some(trait_id);
-    context.current_generic_params = vec!["Self".to_string()];
+    context
+        .generics
+        .enter_trait("Iterable".to_string(), Vec::new());
+    context
+        .generics
+        .enter(trait_id, vec!["Self".to_string()], Vec::new());
 
     let ty = context.lower_parse_type(&ParseType::Associated {
         base: ParseTypeInner {

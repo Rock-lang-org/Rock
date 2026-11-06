@@ -20,10 +20,9 @@ pub(crate) fn build_trait_with_id(
         .map(str::to_string)
         .collect::<Vec<_>>();
 
-    let prev_trait = context.current_trait.clone();
-    let prev_trait_generics = context.current_trait_generics.clone();
-    context.current_trait = Some(td.name.name.clone());
-    context.current_trait_generics = generic_param_names.clone();
+    let outer_trait_scope = context
+        .generics
+        .enter_trait(td.name.name.clone(), generic_param_names.clone());
     let mut generic_context_params = generic_param_names.clone();
     generic_context_params.push(
         td.for_
@@ -52,7 +51,7 @@ pub(crate) fn build_trait_with_id(
             .map(|target| target.name.span.clone())
             .unwrap_or_else(|| td.name.span.clone()),
     );
-    let (prev_owner, prev_params, prev_kinds) = context.push_generic_context_with_kinds_at(
+    let previous_generics = context.push_generic_context_with_kinds_at(
         id,
         generic_context_params,
         generic_context_kinds,
@@ -142,9 +141,8 @@ pub(crate) fn build_trait_with_id(
         context.traits.remove(&td.name.name);
     }
 
-    context.current_trait = prev_trait;
-    context.current_trait_generics = prev_trait_generics;
-    context.pop_generic_context_with_kinds(prev_owner, prev_params, prev_kinds);
+    context.generics.leave_trait(outer_trait_scope);
+    context.pop_generic_context_with_kinds(previous_generics);
 
     HirTrait {
         id,

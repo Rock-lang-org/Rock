@@ -160,8 +160,7 @@ impl LocalCollector {
             return;
         };
 
-        let old_path = self.context.current_module_path.clone();
-        self.context.current_module_path = file_path;
+        let outer = self.context.modules.enter(file_path);
 
         let exports = self
             .context
@@ -200,7 +199,7 @@ impl LocalCollector {
             self.context.record_loaded_prelude_exports(export_ids);
         }
 
-        self.context.current_module_path = old_path;
+        self.context.modules.leave(outer);
     }
 
     pub(super) fn collect_source_backed_qualified_declarations(

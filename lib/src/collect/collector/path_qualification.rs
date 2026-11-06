@@ -13,10 +13,7 @@ pub(super) fn qualify_export_source(
     source: &str,
 ) -> String {
     let first_segment = source.split("::").next().unwrap_or(source);
-    let is_absolute = context
-        .loaded_module_paths
-        .iter()
-        .any(|(name, _)| name == first_segment);
+    let is_absolute = context.modules.is_loaded_name(first_segment);
 
     if is_absolute {
         source.to_string()
@@ -40,10 +37,7 @@ pub(super) fn qualify_local_import_target(
     }
 
     let first_segment = qualified_name.split("::").next().unwrap_or(qualified_name);
-    let is_absolute = context
-        .loaded_module_paths
-        .iter()
-        .any(|(name, _)| name == first_segment);
+    let is_absolute = context.modules.is_loaded_name(first_segment);
 
     if is_absolute {
         qualified_name.to_string()
@@ -131,11 +125,7 @@ pub(super) fn local_path_segment_is_absolute(
         return true;
     }
 
-    if context
-        .loaded_module_paths
-        .iter()
-        .any(|(name, _)| name == first_segment)
-    {
+    if context.modules.is_loaded_name(first_segment) {
         return true;
     }
 

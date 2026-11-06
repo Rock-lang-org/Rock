@@ -315,10 +315,7 @@ impl CollectContext {
                 || format!("{}::{}", resolved_prefix, name),
                 |source| {
                     let first_segment = source.split("::").next().unwrap_or(source.as_str());
-                    let is_absolute = self
-                        .loaded_module_paths
-                        .iter()
-                        .any(|(crate_name, _)| crate_name == first_segment);
+                    let is_absolute = self.modules.is_loaded_name(first_segment);
 
                     if is_absolute {
                         source
@@ -377,11 +374,9 @@ impl CollectContext {
         prefix: &str,
         exports: HashMap<String, Option<String>>,
     ) -> HashMap<String, Option<String>> {
-        let previous_prefix = self
-            .current_qualified_module_prefix
-            .replace(prefix.to_string());
+        let previous_prefix = self.modules.enter_qualified_prefix(prefix.to_string());
         let expanded = self.expand_glob_exports(exports);
-        self.current_qualified_module_prefix = previous_prefix;
+        self.modules.leave_qualified_prefix(previous_prefix);
         expanded
     }
 }

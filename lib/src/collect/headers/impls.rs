@@ -181,7 +181,7 @@ pub(crate) fn build_impl_with_id(
         })
         .collect();
     let generic_spans = vec![imp.name.span(); impl_generic_params.len()];
-    let (prev_owner, prev_params, prev_kinds) = context.push_generic_context_with_kinds_at(
+    let previous_generics = context.push_generic_context_with_kinds_at(
         id,
         impl_generic_params,
         generic_kinds,
@@ -306,7 +306,7 @@ pub(crate) fn build_impl_with_id(
             }
         }
         for (index, _) in type_generics.iter().enumerate() {
-            if context.current_generic_kinds.get(index)
+            if context.generics.kind_at(index)
                 != Some(&crate::type_services::kind::Kind::Type)
             {
                 continue;
@@ -389,8 +389,8 @@ pub(crate) fn build_impl_with_id(
         methods.insert(method_name, func);
     }
 
-    let all_type_generic_names = context.current_generic_params.clone();
-    let all_type_generic_kinds = context.current_generic_kinds.clone();
+    let all_type_generic_names = context.generics.params().to_vec();
+    let all_type_generic_kinds = context.generics.kinds().to_vec();
 
     let mut associated_types = Vec::new();
     for (index, assoc) in imp.associated_types.iter().enumerate() {
@@ -446,7 +446,7 @@ pub(crate) fn build_impl_with_id(
             ty,
         });
     }
-    context.pop_generic_context_with_kinds(prev_owner, prev_params, prev_kinds);
+    context.pop_generic_context_with_kinds(previous_generics);
     let type_generics = all_type_generic_names
         .iter()
         .zip(all_type_generic_kinds)

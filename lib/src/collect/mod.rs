@@ -193,16 +193,16 @@ fn collect_impl(
         source_modules.extend(source_module_map_from_loaded_modules(
             &program.module,
             current_crate_name,
-            &context.loaded_module_paths,
-            &context.module_file_cache,
+            context.modules.paths(),
+            context.modules.file_cache(),
         ));
         source_modules
     } else {
         source_module_map_from_loaded_modules(
             &program.module,
             current_crate_name,
-            &context.loaded_module_paths,
-            &context.module_file_cache,
+            context.modules.paths(),
+            context.modules.file_cache(),
         )
     };
     let item_index = index_root_module_items_with_sources(

@@ -21,7 +21,7 @@ impl LocalCollector {
             id,
             PendingNominalFields {
                 declaration: NominalDeclaration::Struct(sd.clone()),
-                module_path: self.context.current_module_path.clone(),
+                module_path: self.context.modules.current_path().to_path_buf(),
             },
         );
         HirStruct {
@@ -41,7 +41,7 @@ impl LocalCollector {
             id,
             PendingNominalFields {
                 declaration: NominalDeclaration::Enum(ed.clone()),
-                module_path: self.context.current_module_path.clone(),
+                module_path: self.context.modules.current_path().to_path_buf(),
             },
         );
         HirEnum {
@@ -57,11 +57,10 @@ impl LocalCollector {
     }
 
     pub(super) fn complete_nominal_fields(&mut self) {
-        let module_path = self.context.current_module_path.clone();
         // All source modules now expose completed defaults. Keep declaration
         // scope while filling fields, including mutually recursive file modules.
         for (id, pending) in std::mem::take(&mut self.pending_nominal_fields) {
-            self.context.current_module_path = pending.module_path;
+            let outer = self.context.modules.enter(pending.module_path);
             match pending.declaration {
                 NominalDeclaration::Struct(sd) => {
                     let params = self
@@ -97,7 +96,7 @@ impl LocalCollector {
                     }
                 }
             }
+            self.context.modules.leave(outer);
         }
-        self.context.current_module_path = module_path;
     }
 }

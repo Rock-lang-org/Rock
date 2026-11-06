@@ -27,7 +27,7 @@ pub(crate) fn build_nominal_generic_params(
         &spans,
     );
     crate::type_lowering::lower_param_defaults(context, &mut generic_params, syntax, None);
-    context.pop_generic_context_with_kinds(previous.0, previous.1, previous.2);
+    context.pop_generic_context_with_kinds(previous);
     // Publish through every qualified/imported alias before any fields are lowered.
     for declaration in context.structs.values_mut().filter(|item| item.id == id) {
         declaration.generic_params.clone_from(&generic_params);
@@ -56,7 +56,7 @@ pub(crate) fn build_struct_with_id(
         .iter()
         .map(|param| param.span.clone())
         .collect::<Vec<_>>();
-    let (prev_owner, prev_params, prev_kinds) = context.push_generic_context_with_kinds_at(
+    let previous = context.push_generic_context_with_kinds_at(
         id,
         generic_param_names,
         generic_param_kinds,
@@ -73,7 +73,7 @@ pub(crate) fn build_struct_with_id(
             public: f.public,
         })
         .collect();
-    context.pop_generic_context_with_kinds(prev_owner, prev_params, prev_kinds);
+    context.pop_generic_context_with_kinds(previous);
 
     HirStruct {
         id,
@@ -102,11 +102,15 @@ pub(crate) fn build_type_alias_with_id(
         .iter()
         .map(|param| param.span.clone())
         .collect::<Vec<_>>();
-    let (previous_owner, previous_params, previous_kinds) = context
-        .push_generic_context_with_kinds_at(id, generic_names, generic_kinds, &generic_spans);
+    let previous = context.push_generic_context_with_kinds_at(
+        id,
+        generic_names,
+        generic_kinds,
+        &generic_spans,
+    );
     crate::type_lowering::lower_param_defaults(context, &mut generic_params, params, None);
     let mut ty = crate::type_lowering::TypeLowerer::lower_parse_type_term(context, target);
-    context.pop_generic_context_with_kinds(previous_owner, previous_params, previous_kinds);
+    context.pop_generic_context_with_kinds(previous);
     if !generic_params.is_empty() {
         struct AliasBinder<'a> {
             owner: DefId,
@@ -175,7 +179,7 @@ pub(crate) fn build_enum_with_id(
         .iter()
         .map(|param| param.span.clone())
         .collect::<Vec<_>>();
-    let (prev_owner, prev_params, prev_kinds) = context.push_generic_context_with_kinds_at(
+    let previous = context.push_generic_context_with_kinds_at(
         id,
         generic_param_names,
         generic_param_kinds,
@@ -220,7 +224,7 @@ pub(crate) fn build_enum_with_id(
             }
         })
         .collect();
-    context.pop_generic_context_with_kinds(prev_owner, prev_params, prev_kinds);
+    context.pop_generic_context_with_kinds(previous);
 
     HirEnum {
         id,

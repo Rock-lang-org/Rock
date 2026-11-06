@@ -5,16 +5,7 @@ use std::path::PathBuf;
 
 impl CollectContext {
     fn cached_module_for_path(&mut self, file_path: &PathBuf) -> Option<ast::Module> {
-        let canonical_path = file_path
-            .canonicalize()
-            .unwrap_or_else(|_| file_path.clone());
-        self.module_file_cache
-            .get(&canonical_path)
-            .or_else(|| self.module_file_cache.get(file_path))
-            .cloned()
-            .inspect(|_| {
-                self.loaded_modules.insert(canonical_path);
-            })
+        self.modules.load_cached(file_path)
     }
 
     fn cached_module_for_qualified_name(&mut self, qualified_name: &str) -> Option<ast::Module> {
@@ -24,10 +15,7 @@ impl CollectContext {
     }
 
     fn loaded_module_path_by_name(&self, module_name: &str) -> Option<PathBuf> {
-        self.loaded_module_paths
-            .iter()
-            .find(|(name, _)| name == module_name)
-            .map(|(_, path)| path.clone())
+        self.modules.path_for_name(module_name)
     }
 
     pub(crate) fn loaded_module_path_for_prefix(
@@ -71,25 +59,18 @@ impl CollectContext {
             return Err("Empty module path".to_string());
         }
 
-        let is_external_crate = self
-            .loaded_module_paths
-            .iter()
-            .any(|(name, _)| name == &module_path[0]);
+        let is_external_crate = self.modules.is_loaded_name(&module_path[0]);
 
         let (mut module, mut resolved_prefix, start_index) = if is_external_crate {
             let crate_name = &module_path[0];
             if module_path.len() == 1 {
                 let lib_path = self
-                    .loaded_module_paths
-                    .iter()
-                    .find(|(name, _)| name == crate_name)
-                    .map(|(_, path)| path.clone())
+                    .modules
+                    .path_for_name(crate_name)
                     .ok_or_else(|| format!("Unknown crate {}", crate_name))?;
-                let canonical_path = lib_path.canonicalize().unwrap_or_else(|_| lib_path.clone());
                 let module = self
-                    .module_file_cache
-                    .get(&canonical_path)
-                    .or_else(|| self.module_file_cache.get(&lib_path))
+                    .modules
+                    .find_cached(&lib_path)
                     .cloned()
                     .ok_or_else(|| {
                         format!(
@@ -162,12 +143,7 @@ impl CollectContext {
         crate_name: &str,
     ) -> Result<ast::Module, String> {
         let qualified_module_name = format!("{}::{}", crate_name, module_name);
-        if let Some(file_path) = self
-            .loaded_module_paths
-            .iter()
-            .find(|(name, _)| name == &qualified_module_name)
-            .map(|(_, path)| path.clone())
-        {
+        if let Some(file_path) = self.modules.path_for_name(&qualified_module_name) {
             if let Some(cached) = self.cached_module_for_path(&file_path) {
                 return Ok(cached);
             }

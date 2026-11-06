@@ -87,15 +87,14 @@ fn discover_source_module_for_indexing(
             }
         };
 
-    let old_path = context.current_module_path.clone();
-    context.current_module_path = file_path;
+    let outer = context.modules.enter(file_path);
     discover_source_modules_in_context(
         context,
         &loaded_module,
         Some(&qualified_module_name),
         errors,
     );
-    context.current_module_path = old_path;
+    context.modules.leave(outer);
 }
 
 pub(super) fn source_modules_from_loaded_sources(

@@ -1,5 +1,5 @@
 use super::type_names::{collect_generic_names_from_parse_type, is_known_nominal_type_name};
-use super::CollectContext;
+use super::{CollectContext, GenericFrame};
 use crate::ast;
 use crate::hir::{HirParam, HirTrait};
 use crate::ids::DefId;
@@ -37,7 +37,7 @@ impl TypeLoweringContext for CollectContext {
     }
 
     fn current_trait_name(&self) -> Option<String> {
-        self.current_trait.clone()
+        self.generics.trait_name().map(str::to_string)
     }
 
     fn resolve_nominal_type(&self, name: &str) -> Option<ResolvedNominalType> {
@@ -192,8 +192,8 @@ impl TypeLoweringContext for CollectContext {
             }
         }
         crate::type_lowering::register_type_aliases(env, self.type_aliases.values());
-        if let Some(owner) = self.current_generic_owner {
-            for (index, kind) in self.current_generic_kinds.iter().enumerate() {
+        if let Some(owner) = self.generics.owner() {
+            for (index, kind) in self.generics.kinds().iter().enumerate() {
                 env.register_generic_kind(
                     GenericParamId {
                         owner,
@@ -208,7 +208,7 @@ impl TypeLoweringContext for CollectContext {
 
 impl CollectContext {
     pub(crate) fn generic_type_for_name(&mut self, name: &str, span: Span) -> Type {
-        let Some(owner) = self.current_generic_owner else {
+        let Some(owner) = self.generics.owner() else {
             self.push_error_with_span(
                 format!(
                     "generic type parameter '{}' appears outside a generic declaration",
@@ -220,18 +220,17 @@ impl CollectContext {
         };
 
         let Some(index) = self
-            .current_generic_params
-            .iter()
-            .position(|param| param == name)
+            .generics
+            .position(name)
             .or_else(|| {
                 let mut chars = name.chars();
                 let is_implicit_generic = matches!(chars.next(), Some(ch) if ch.is_ascii_uppercase())
                     && chars.next().is_none();
                 if is_implicit_generic {
-                    self.current_generic_params.push(name.to_string());
-                    self.current_generic_kinds
-                        .push(crate::type_services::kind::Kind::Type);
-                    Some(self.current_generic_params.len() - 1)
+                    Some(
+                        self.generics
+                            .declare(name.to_string(), crate::type_services::kind::Kind::Type),
+                    )
                 } else {
                     None
                 }
@@ -252,11 +251,7 @@ impl CollectContext {
         params: Vec<String>,
         kinds: Vec<crate::type_services::kind::Kind>,
         spans: &[Span],
-    ) -> (
-        Option<DefId>,
-        Vec<String>,
-        Vec<crate::type_services::kind::Kind>,
-    ) {
+    ) -> GenericFrame {
         debug_assert_eq!(params.len(), kinds.len());
         let mut seen = HashSet::new();
         for (index, param) in params.iter().enumerate() {
@@ -271,22 +266,11 @@ impl CollectContext {
                 }
             }
         }
-        let prev_owner = self.current_generic_owner;
-        let prev_params = std::mem::replace(&mut self.current_generic_params, params);
-        let prev_kinds = std::mem::replace(&mut self.current_generic_kinds, kinds);
-        self.current_generic_owner = Some(owner);
-        (prev_owner, prev_params, prev_kinds)
+        self.generics.enter(owner, params, kinds)
     }
 
-    pub(crate) fn pop_generic_context_with_kinds(
-        &mut self,
-        prev_owner: Option<DefId>,
-        prev_params: Vec<String>,
-        prev_kinds: Vec<crate::type_services::kind::Kind>,
-    ) {
-        self.current_generic_params = prev_params;
-        self.current_generic_kinds = prev_kinds;
-        self.current_generic_owner = prev_owner;
+    pub(crate) fn pop_generic_context_with_kinds(&mut self, previous: GenericFrame) {
+        self.generics.leave(previous);
     }
 
     pub(crate) fn build_self_param_at(
@@ -308,12 +292,9 @@ impl CollectContext {
         self_receiver: ast::SelfReceiverMode,
         span: crate::lexer::Span,
     ) -> Type {
-        let base = if let Some(index) = self
-            .current_generic_params
-            .iter()
-            .position(|param| param == "Self")
-        {
-            self.current_generic_owner
+        let base = if let Some(index) = self.generics.position("Self") {
+            self.generics
+                .owner()
                 .map(|owner| {
                     Type::Generic(GenericParamId {
                         owner,

@@ -100,9 +100,9 @@ fn local_collector_uses_source_records_before_current_id_repairs() {
 
     let mut context = context::CollectContext::bootstrap_for_collection(false, Some("test"), None);
     context
-        .loaded_module_paths
-        .push(("test::source".to_string(), source_path.clone()));
-    context.module_file_cache.insert(
+        .modules
+        .add_path("test::source".to_string(), source_path.clone());
+    context.modules.cache_module(
         source_path,
         source_modules[&vec!["test".to_string(), "source".to_string()]].clone(),
     );

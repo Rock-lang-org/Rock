@@ -235,10 +235,7 @@ fn collect_context_rejects_source_backed_dependency_crate() {
 
     assert!(crate_ctx.source_crate("dep").is_some());
     assert!(!context.structs.contains_key("dep::DepThing"));
-    assert!(!context
-        .loaded_module_paths
-        .iter()
-        .any(|(name, _)| name == "dep"));
+    assert!(!context.modules.is_loaded_name("dep"));
     assert!(context.errors.is_empty());
 }
 
@@ -390,7 +387,7 @@ fn collect_accepts_artifact_dependency_without_registering_source_module_path() 
     context.register_extern_crate(crate_ctx.extern_crate("dep").unwrap());
 
     assert!(context.errors.is_empty());
-    assert!(context.loaded_module_paths.is_empty());
+    assert!(context.modules.paths().is_empty());
 }
 
 #[test]

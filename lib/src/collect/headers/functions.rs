@@ -35,11 +35,11 @@ pub(crate) fn build_function_sig_with_id(
     sig: &ast::FunctionSig,
     id: DefId,
 ) -> HirFunctionSig {
-    let fallback_generic_context = context.current_generic_owner.is_none();
+    let fallback_generic_context = context.generics.owner().is_none();
     let inherited_generic_param_count = if fallback_generic_context {
         0
     } else {
-        context.current_generic_params.len()
+        context.generics.params().len()
     };
     let mut signature_id = id;
     let mut constructor_kinds = HashMap::new();
@@ -69,19 +69,12 @@ pub(crate) fn build_function_sig_with_id(
     let nested_context = if fallback_generic_context {
         None
     } else {
-        let previous = (
-            context.current_generic_params.clone(),
-            context.current_generic_kinds.clone(),
-        );
+        let previous = context.generics.snapshot_params();
         let mut constructor_params = constructor_kinds.into_iter().collect::<Vec<_>>();
         constructor_params.sort_by(|left, right| left.0.cmp(&right.0));
         for (name, kind) in constructor_params {
-            if let Some(index) = context
-                .current_generic_params
-                .iter()
-                .position(|param| param == &name)
-            {
-                let declared_kind = context.current_generic_kinds[index].clone();
+            if let Some(index) = context.generics.position(&name) {
+                let declared_kind = context.generics.kinds()[index].clone();
                 if declared_kind != kind {
                     let span = sig
                         .where_clauses
@@ -96,8 +89,7 @@ pub(crate) fn build_function_sig_with_id(
                     );
                 }
             } else {
-                context.current_generic_params.push(name);
-                context.current_generic_kinds.push(kind);
+                context.generics.declare(name, kind);
             }
         }
         Some(previous)
@@ -134,7 +126,7 @@ pub(crate) fn build_function_sig_with_id(
         .iter()
         .copied()
         .filter(|param| {
-            context.current_generic_owner == Some(param.owner)
+            context.generics.owner() == Some(param.owner)
                 && param.index >= inherited_generic_param_count as u32
         })
         .collect::<Vec<_>>();
@@ -157,14 +149,14 @@ pub(crate) fn build_function_sig_with_id(
             owner: signature_id,
             index: index as u32,
         };
-        if let Some(name) = context.current_generic_params.get(param.index as usize) {
+        if let Some(name) = context.generics.params().get(param.index as usize) {
             if name != "Self" {
                 public_signature_generic_params.push(GenericParamDecl::new(
                     remapped,
                     name.clone(),
                     context
-                        .current_generic_kinds
-                        .get(param.index as usize)
+                        .generics
+                        .kind_at(param.index as usize)
                         .cloned()
                         .unwrap_or(crate::type_services::kind::Kind::Type),
                 ));
@@ -173,8 +165,8 @@ pub(crate) fn build_function_sig_with_id(
                     remapped,
                     name.clone(),
                     context
-                        .current_generic_kinds
-                        .get(param.index as usize)
+                        .generics
+                        .kind_at(param.index as usize)
                         .cloned()
                         .unwrap_or(crate::type_services::kind::Kind::Type),
                 ));
@@ -203,12 +195,11 @@ pub(crate) fn build_function_sig_with_id(
         self_receiver: sig.self_receiver.map(receiver_mode),
         is_unsafe: sig.is_unsafe,
     };
-    if let Some((prev_owner, prev_params, prev_kinds)) = fallback_context {
-        context.pop_generic_context_with_kinds(prev_owner, prev_params, prev_kinds);
+    if let Some(previous) = fallback_context {
+        context.pop_generic_context_with_kinds(previous);
     }
-    if let Some((previous_params, previous_kinds)) = nested_context {
-        context.current_generic_params = previous_params;
-        context.current_generic_kinds = previous_kinds;
+    if let Some(previous) = nested_context {
+        context.generics.restore_params(previous);
     }
 
     hir_sig
