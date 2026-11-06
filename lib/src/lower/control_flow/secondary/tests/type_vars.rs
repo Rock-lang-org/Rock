@@ -224,12 +224,12 @@ fn current_trait_self_signature_call_uses_signature_return_type() {
         id: string_id,
         args: Vec::new(),
     };
-    lowerer.current_trait = Some("Show".to_string());
-    lowerer.current_trait_id = Some(trait_id);
-    lowerer.generic_context = Some(crate::lower::body_context::GenericLoweringContext::new(
+    let _trait_frame = lowerer.item_scope.enter_trait(
+        "Show".to_string(),
+        trait_id,
         trait_id,
         vec!["Self".to_string()],
-    ));
+    );
     lowerer.items.insert_trait_def(HirTrait {
         target: None,
         predicates: Vec::new(),

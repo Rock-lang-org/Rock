@@ -99,7 +99,7 @@ impl Lowerer {
     }
 
     pub(crate) fn wrap_fold_return(&self, mut value: HirExpr) -> HirExpr {
-        for context in self.fold_loop_stack.iter().flatten() {
+        for context in self.body.fold_loops() {
             value = context.returned(value);
         }
         value
@@ -274,7 +274,7 @@ impl Lowerer {
                 owner,
                 param_id,
                 span.clone(),
-                self.source_scope_stack.last().copied(),
+                self.body.current_source_scope(),
             );
         }
         let param_ty = Type::Tuple(vec![Type::Unit, element_ty.clone()]);
@@ -294,10 +294,10 @@ impl Lowerer {
             );
             return self.error_expression_at(span);
         }
-        self.fold_loop_stack.push(Some(context.clone()));
+        self.body.enter_loop(Some(context.clone()));
         let mut body =
             self.with_body_return_type(callback_ty.clone(), |lowerer| lowerer.lower_block(body));
-        self.fold_loop_stack.pop();
+        self.body.leave_loop();
         body.stmts.push(HirStmt::Expr(context.next()));
         body.ty = callback_ty.clone();
         let destructure = HirExpr {
@@ -383,7 +383,7 @@ impl Lowerer {
                 owner,
                 return_id,
                 span.clone(),
-                self.source_scope_stack.last().copied(),
+                self.body.current_source_scope(),
             );
         }
         let return_name = "$fold_return".to_string();

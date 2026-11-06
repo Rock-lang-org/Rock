@@ -12,9 +12,9 @@ impl Lowerer {
                 let _ = self.engine.unify(&condition.ty, &Type::Bool);
 
                 self.push_scope();
-                self.fold_loop_stack.push(None);
+                self.body.enter_loop(None);
                 let body = self.lower_block(body);
-                self.fold_loop_stack.pop();
+                self.body.leave_loop();
                 self.pop_scope();
 
                 HirExpr {
@@ -76,14 +76,14 @@ impl Lowerer {
                         owner,
                         local_id,
                         span,
-                        self.source_scope_stack.last().copied(),
+                        self.body.current_source_scope(),
                     );
                 }
                 self.scope
                     .define_local(var_name.clone(), elem_ty, false, local_id);
-                self.fold_loop_stack.push(None);
+                self.body.enter_loop(None);
                 let body = self.lower_block(body);
-                self.fold_loop_stack.pop();
+                self.body.leave_loop();
                 self.pop_scope();
 
                 HirExpr {
@@ -99,9 +99,9 @@ impl Lowerer {
             }
             ast::Loop::Loop(body, span) => {
                 self.push_scope();
-                self.fold_loop_stack.push(None);
+                self.body.enter_loop(None);
                 let body = self.lower_block(body);
-                self.fold_loop_stack.pop();
+                self.body.leave_loop();
                 self.pop_scope();
                 HirExpr {
                     ty: Type::Unit,

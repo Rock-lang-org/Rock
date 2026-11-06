@@ -298,13 +298,12 @@ fn trait_default_bodies_restore_caller_trait_context() {
         "Inner",
         literal_default_decl("value", LiteralKind::Number(1)),
     );
-    lowerer.current_trait = Some("Outer".to_string());
-    lowerer.current_trait_id = Some(outer_trait_id);
-    lowerer.current_trait_generics = vec!["T".to_string()];
-    lowerer.generic_context = Some(GenericLoweringContext::new(
+    let _outer_frame = lowerer.item_scope.enter_trait(
+        "Outer".to_string(),
+        outer_trait_id,
         outer_trait_id,
         vec!["T".to_string()],
-    ));
+    );
     lowerer
         .resolver
         .item_names_by_id
@@ -317,9 +316,8 @@ fn trait_default_bodies_restore_caller_trait_context() {
 
     lowerer.lower_trait_bodies(&trait_decl, trait_id);
 
-    assert_eq!(lowerer.current_trait.as_deref(), Some("Outer"));
-    assert_eq!(lowerer.current_trait_id, Some(outer_trait_id));
-    assert_eq!(lowerer.current_trait_generics, vec!["T".to_string()]);
+    assert_eq!(lowerer.item_scope.trait_name(), Some("Outer"));
+    assert_eq!(lowerer.item_scope.trait_id(), Some(outer_trait_id));
     assert_eq!(lowerer.current_generic_owner(), Some(outer_trait_id));
     assert_eq!(lowerer.current_generic_params(), ["T".to_string()]);
 }

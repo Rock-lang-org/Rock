@@ -2,6 +2,7 @@
 
 pub mod bodies;
 pub(crate) mod body_context;
+pub(crate) mod body_state;
 pub(crate) mod body_lowerer;
 pub mod collect;
 pub mod control_flow;
@@ -15,6 +16,7 @@ mod from_declarations;
 pub mod function;
 pub(crate) mod inference_scc;
 pub mod intrinsics;
+pub(crate) mod item_scope;
 pub(crate) mod items;
 pub(crate) mod module_context;
 pub mod paths;
@@ -36,6 +38,8 @@ pub use program::lower_with_crates_and_options;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use body_state::BodyState;
+use item_scope::ItemScope;
 use items::LowerItems;
 use services::{
     LowerConstraintService, LowerDependencyResolverService, LowerDiagnosticService,
@@ -65,14 +69,9 @@ pub struct Lowerer {
     pub(crate) function_type_vars: HashMap<DefId, HashSet<TypeVarId>>,
     pub(crate) inference_sccs: HashMap<DefId, DefId>,
     pub(crate) inference_scc_order: Vec<DefId>,
-    pub(crate) current_trait: Option<String>,
-    pub(crate) current_trait_id: Option<DefId>,
-    pub(crate) current_trait_generics: Vec<String>,
-    pub(crate) generic_context: Option<GenericLoweringContext>,
-    pub(crate) current_struct_impl: Option<String>,
+    pub(crate) item_scope: ItemScope,
     pub(crate) empty_impl_bounds: HirGenericBounds,
     pub(crate) infix_precedence: HashMap<String, u8>,
-    pub(crate) current_impl_id: Option<DefId>,
     /// Canonical resolver tables from declaration collection.
     pub(crate) resolver: LowerResolverService,
     pub(crate) current_def_ids: BTreeSet<crate::ids::DefId>,
@@ -86,11 +85,8 @@ pub struct Lowerer {
     pub(crate) item_index: ItemIndex,
     pub(crate) language_items: HirLanguageItems,
     pub(crate) imported_effective_trait_methods: HashMap<(DefId, DefId), DefId>,
-    pub(crate) body_context: Option<BodyLoweringContext>,
-    pub(crate) tuple_temp_counter: u32,
+    pub(crate) body: BodyState,
     pub(crate) source_map: crate::source_map::SemanticSourceMap,
-    pub(crate) source_scope_stack: Vec<u32>,
-    pub(crate) fold_loop_stack: Vec<Option<control_flow::fold_loop::FoldLoopContext>>,
 }
 
 impl Lowerer {
@@ -110,14 +106,9 @@ impl Lowerer {
             function_type_vars: HashMap::new(),
             inference_sccs: HashMap::new(),
             inference_scc_order: Vec::new(),
-            current_trait: None,
-            current_trait_id: None,
-            current_trait_generics: Vec::new(),
-            generic_context: None,
-            current_struct_impl: None,
+            item_scope: ItemScope::default(),
             empty_impl_bounds: HirGenericBounds::new(),
             infix_precedence: HashMap::new(),
-            current_impl_id: None,
             resolver: services.resolver,
             current_def_ids: BTreeSet::new(),
             dependency_resolvers: services.dependency_resolvers,
@@ -127,16 +118,13 @@ impl Lowerer {
             item_index: ItemIndex::default(),
             language_items: HirLanguageItems::default(),
             imported_effective_trait_methods: HashMap::new(),
-            body_context: None,
-            tuple_temp_counter: 0,
+            body: BodyState::default(),
             source_map: Default::default(),
-            source_scope_stack: Vec::new(),
-            fold_loop_stack: Vec::new(),
         }
     }
 
     pub(crate) fn should_instantiate_inferred_function(&self, function_id: DefId) -> bool {
-        let Some(owner) = self.body_context.as_ref().map(|context| context.owner()) else {
+        let Some(owner) = self.body.context().map(|context| context.owner()) else {
             return true;
         };
         let current_id = match owner {
@@ -157,8 +145,7 @@ impl Lowerer {
     }
 
     pub(crate) fn fresh_local_id(&mut self) -> HirLocalId {
-        self.body_context
-            .as_mut()
+        self.body.context_mut()
             .expect("local IDs can only be allocated while lowering a body")
             .fresh_local_id()
     }
@@ -168,7 +155,6 @@ impl Lowerer {
         context: BodyLoweringContext,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let previous_context = self.body_context.take();
         let previous_scope = (*self.scope).clone();
         let mut context = context;
         context.replace_scope(previous_scope.clone());
@@ -184,23 +170,19 @@ impl Lowerer {
             | BodyOwner::ImplMethod { method_id: id, .. }
             | BodyOwner::TraitMethod { method_id: id, .. } => *id,
         };
-        let previous_source_scope_stack =
-            std::mem::replace(&mut self.source_scope_stack, Vec::new());
         let root_scope = self.source_map.insert_scope(source_owner, None);
-        self.source_scope_stack.push(root_scope);
         let previous_constraint_owner = self.constraint_store.replace_owner(owner);
-        self.body_context = Some(context);
+        let body_frame = self.body.enter(context, root_scope);
 
         let result = f(self);
 
-        if let Some(context) = self.body_context.as_mut() {
+        if let Some(context) = self.body.context_mut() {
             context.replace_scope((*self.scope).clone());
         }
         self.scope = LowerScopeService::new(previous_scope);
         self.constraint_store
             .replace_owner(previous_constraint_owner);
-        self.body_context = previous_context;
-        self.source_scope_stack = previous_source_scope_stack;
+        self.body.leave(body_frame);
 
         result
     }
@@ -210,21 +192,20 @@ impl Lowerer {
         let Some(owner) = self.current_body_def_id() else {
             return;
         };
-        let parent = self.source_scope_stack.last().copied();
+        let parent = self.body.current_source_scope();
         let scope = self.source_map.insert_scope(owner, parent);
-        self.source_scope_stack.push(scope);
+        self.body.push_source_scope(scope);
     }
 
     pub(crate) fn pop_scope(&mut self) {
         self.scope.pop();
         if self.current_body_def_id().is_some() {
-            self.source_scope_stack.pop();
+            self.body.pop_source_scope();
         }
     }
 
     pub(crate) fn current_body_owner(&self) -> Option<BodyOwner> {
-        self.body_context
-            .as_ref()
+        self.body.context()
             .map(|context| context.owner().clone())
     }
 
@@ -245,7 +226,7 @@ impl Lowerer {
             crate::source_map::SourceSymbol::Generic(generic) => Some(generic.owner),
             _ => None,
         });
-        let scope_id = self.source_scope_stack.last().copied();
+        let scope_id = self.body.current_source_scope();
         self.source_map
             .record_reference_in_scope(span, target, owner, scope_id);
     }
@@ -280,9 +261,7 @@ impl Lowerer {
     }
 
     pub(crate) fn current_body_return_type(&mut self) -> Option<Type> {
-        if let Some(return_type) = self
-            .body_context
-            .as_ref()
+        if let Some(return_type) = self.body.context()
             .and_then(BodyLoweringContext::return_type_override)
         {
             return Some(return_type.clone());
@@ -349,32 +328,29 @@ impl Lowerer {
         return_type: Type,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        let Some(context) = self.body_context.as_mut() else {
+        let Some(context) = self.body.context_mut() else {
             return f(self);
         };
         let previous = context.replace_return_type_override(Some(return_type));
         let result = f(self);
-        if let Some(context) = self.body_context.as_mut() {
+        if let Some(context) = self.body.context_mut() {
             context.replace_return_type_override(previous);
         }
         result
     }
 
     pub(crate) fn current_generic_owner(&self) -> Option<DefId> {
-        self.body_context
-            .as_ref()
+        self.body.context()
             .and_then(BodyLoweringContext::generic_owner)
             .or_else(|| {
-                self.generic_context
-                    .as_ref()
-                    .map(GenericLoweringContext::owner)
+                self.item_scope.generics().map(GenericLoweringContext::owner)
             })
     }
 
     pub(crate) fn current_generic_params(&self) -> &[String] {
-        if let Some(context) = self.body_context.as_ref() {
+        if let Some(context) = self.body.context() {
             context.generic_params()
-        } else if let Some(context) = self.generic_context.as_ref() {
+        } else if let Some(context) = self.item_scope.generics() {
             context.params()
         } else {
             &[]
@@ -382,24 +358,22 @@ impl Lowerer {
     }
 
     pub(crate) fn current_impl_bounds(&self) -> &HirGenericBounds {
-        self.body_context
-            .as_ref()
+        self.body.context()
             .map(BodyLoweringContext::impl_bounds)
             .unwrap_or(&self.empty_impl_bounds)
     }
 
     pub(crate) fn is_in_unsafe(&self) -> bool {
-        self.body_context
-            .as_ref()
+        self.body.context()
             .is_some_and(BodyLoweringContext::in_unsafe)
     }
 
     fn current_generic_params_mut(&mut self) -> Option<&mut Vec<String>> {
-        if let Some(context) = self.body_context.as_mut() {
+        if let Some(context) = self.body.context_mut() {
             Some(context.generic_params_mut())
         } else {
-            self.generic_context
-                .as_mut()
+            self.item_scope
+                .generics_mut()
                 .map(GenericLoweringContext::params_mut)
         }
     }
@@ -452,9 +426,7 @@ impl Lowerer {
         name: &str,
         _span: crate::lexer::Span,
     ) -> Option<Type> {
-        if let Some(param) = self
-            .body_context
-            .as_ref()
+        if let Some(param) = self.body.context()
             .and_then(|context| context.generic_param_id(name))
         {
             return Some(Type::Generic(param));
@@ -485,30 +457,26 @@ impl Lowerer {
         params: Vec<String>,
         f: impl FnOnce(&mut Self) -> T,
     ) -> (T, Vec<String>) {
-        if let Some(context) = self.body_context.as_mut() {
+        if let Some(context) = self.body.context_mut() {
             let previous = context.replace_generic_context(Some(owner), params);
             let result = f(self);
-            let context = self
-                .body_context
-                .as_mut()
+            let context = self.body.context_mut()
                 .expect("body context should remain active");
             let (previous_owner, previous_params) = previous;
             let (_, params) = context.replace_generic_context(previous_owner, previous_params);
             return (result, params);
         }
 
-        let previous = self
-            .generic_context
-            .replace(GenericLoweringContext::new(owner, params));
+        let frame = self.item_scope.enter_generics(owner, params);
 
         let result = f(self);
         let params = self
-            .generic_context
-            .take()
+            .item_scope
+            .generics()
             .expect("generic context should remain active")
             .params()
             .to_vec();
-        self.generic_context = previous;
+        self.item_scope.leave(frame);
 
         (result, params)
     }
@@ -528,13 +496,12 @@ impl Lowerer {
     where
         F: FnOnce(&mut Self) -> T,
     {
-        let Some(context) = self.body_context.as_mut() else {
+        let Some(context) = self.body.context_mut() else {
             return f(self);
         };
         let previous = context.replace_in_unsafe(true);
         let result = f(self);
-        self.body_context
-            .as_mut()
+        self.body.context_mut()
             .expect("body context should remain active")
             .replace_in_unsafe(previous);
         result
@@ -544,10 +511,9 @@ impl Lowerer {
     where
         F: FnOnce(&mut Self) -> T,
     {
-        let prev = self.current_struct_impl.clone();
-        self.current_struct_impl = owner;
+        let frame = self.item_scope.enter_struct_impl(owner);
         let result = f(self);
-        self.current_struct_impl = prev;
+        self.item_scope.leave(frame);
         result
     }
     pub(crate) fn lower_struct_field_type(
@@ -564,8 +530,8 @@ impl Lowerer {
             .iter()
             .find(|field| field.name == field_name)?;
 
-        let current_impl_matches = self.current_struct_impl.as_deref() == Some(struct_name)
-            || self.current_struct_impl.as_ref().is_some_and(|name| {
+        let current_impl_matches = self.item_scope.struct_impl() == Some(struct_name)
+            || self.item_scope.struct_impl().is_some_and(|name| {
                 crate::lower::resolution::LowerResolutionContext::new(self)
                     .resolve_item_id(name)
                     .is_some_and(|id| id == hir_struct.id)

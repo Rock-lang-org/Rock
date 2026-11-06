@@ -45,7 +45,7 @@ impl TypeLoweringContext for Lowerer {
     }
 
     fn current_trait_name(&self) -> Option<String> {
-        self.current_trait.clone()
+        self.item_scope.trait_name().map(str::to_string)
     }
 
     fn resolve_nominal_type(&self, name: &str) -> Option<ResolvedNominalType> {

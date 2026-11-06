@@ -7,7 +7,7 @@ use crate::hir::{substitute_typevars_in_function, HirFunction, HirGenericBounds}
 use crate::ids::{CrateId, DefId};
 use crate::types::{GenericParamDecl, GenericParamId, TraitBound, Type};
 
-use crate::lower::body_context::{BodyLoweringContext, BodyOwner, GenericLoweringContext};
+use crate::lower::body_context::{BodyLoweringContext, BodyOwner};
 use crate::lower::Lowerer;
 
 fn is_builtin_type_name(name: &str) -> bool {
@@ -314,7 +314,7 @@ impl Lowerer {
                         func.id,
                         local_id,
                         span,
-                        lowerer.source_scope_stack.last().copied(),
+                        lowerer.body.current_source_scope(),
                     );
                 }
                 lowerer.scope.define_local(
@@ -376,13 +376,13 @@ impl Lowerer {
             );
             return;
         };
-        let previous_generic_context = self.generic_context.replace(GenericLoweringContext::new(
+        let item_frame = self.item_scope.enter_generics(
             impl_id,
             impl_context_params
                 .iter()
                 .map(|param| param.name.clone())
                 .collect(),
-        ));
+        );
 
         // Lower the self type properly (handles &Str, etc.)
         let (type_name, _type_generics, _receiver_pattern) = self.impl_type_info(imp);
@@ -477,7 +477,7 @@ impl Lowerer {
                                 func.id,
                                 local_id,
                                 span,
-                                lowerer.source_scope_stack.last().copied(),
+                                lowerer.body.current_source_scope(),
                             );
                         }
                     }
@@ -600,8 +600,6 @@ impl Lowerer {
                         .resolve_module_alias_or_item_id(&type_name)
                         .filter(|id| self.items.structure(*id).is_some())
                         .and_then(|id| self.resolver.item_names_by_id.get(&id).cloned());
-                let prev_impl_id = self.current_impl_id;
-                self.current_impl_id = Some(impl_id);
                 let has_constructor_method_generic = func
                     .generic_params
                     .iter()
@@ -645,7 +643,6 @@ impl Lowerer {
                         lowerer.lower_function_body_block(fd)
                     })
                 });
-                self.current_impl_id = prev_impl_id;
 
                 if let Err(e) = self.engine.unify(&body.ty, &func.ret_type) {
                     let message = format!(
@@ -705,7 +702,7 @@ impl Lowerer {
             }
         }
 
-        self.generic_context = previous_generic_context;
+        self.item_scope.leave(item_frame);
     }
 }
 

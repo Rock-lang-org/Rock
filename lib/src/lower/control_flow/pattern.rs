@@ -60,7 +60,7 @@ impl Lowerer {
                         owner,
                         local_id,
                         ident_pat.name.span.clone(),
-                        self.source_scope_stack.last().copied(),
+                        self.body.current_source_scope(),
                     );
                 }
                 self.scope

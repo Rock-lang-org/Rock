@@ -3,7 +3,7 @@
 use crate::ast;
 
 use crate::ids::DefId;
-use crate::lower::body_context::{BodyLoweringContext, BodyOwner, GenericLoweringContext};
+use crate::lower::body_context::{BodyLoweringContext, BodyOwner};
 use crate::lower::Lowerer;
 use crate::types::{GenericParamId, TraitBound, Type};
 
@@ -60,10 +60,6 @@ impl Lowerer {
 
     pub(crate) fn lower_trait_bodies(&mut self, td: &ast::TraitDecl, trait_id: DefId) {
         let trait_name = td.name.name.clone();
-        let previous_trait = self.current_trait.clone();
-        let previous_trait_id = self.current_trait_id;
-        let prev_trait_generics = self.current_trait_generics.clone();
-        let previous_generic_context = self.generic_context.clone();
         let Some(trait_def) = self.trait_by_id(trait_id).cloned() else {
             self.diagnostics.push_toolchain(
                 "missing indexed trait declaration while lowering default bodies".to_string(),
@@ -79,17 +75,16 @@ impl Lowerer {
         };
 
         // Set current trait so method lookups on TypeVar self can find sibling methods
-        self.current_trait = Some(trait_context_name.clone());
-        self.current_trait_id = Some(trait_id);
-        self.current_trait_generics = td
+        let mut params: Vec<String> = td
             .generic_params
             .iter()
             .filter(|param| param.kind.is_none())
             .map(|param| param.name.name.clone())
             .collect();
-        let mut params = self.current_trait_generics.clone();
         params.push("Self".to_string());
-        self.generic_context = Some(GenericLoweringContext::new(trait_def.id, params));
+        let item_frame =
+            self.item_scope
+                .enter_trait(trait_context_name.clone(), trait_id, trait_def.id, params);
 
         let mut methods = Vec::with_capacity(td.methods.len());
         for (ident, fd) in &td.methods {
@@ -258,10 +253,7 @@ impl Lowerer {
             *method = func;
         }
 
-        self.current_trait = previous_trait;
-        self.current_trait_id = previous_trait_id;
-        self.current_trait_generics = prev_trait_generics;
-        self.generic_context = previous_generic_context;
+        self.item_scope.leave(item_frame);
     }
 }
 

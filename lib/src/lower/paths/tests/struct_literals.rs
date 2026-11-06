@@ -368,7 +368,9 @@ fn struct_literal_private_field_check_matches_current_impl_by_struct_id() {
         .resolver
         .item_names_by_id
         .insert(struct_id, "std::string_type::String".to_string());
-    lowerer.current_struct_impl = Some("String".to_string());
+    let _impl_frame = lowerer
+        .item_scope
+        .enter_struct_impl(Some("String".to_string()));
 
     let _literal = lowerer.lower_instance(&ast::Instance {
         name: ast::TypePath {
@@ -402,7 +404,9 @@ fn struct_literal_private_field_check_matches_current_impl_by_pre_resolved_id() 
         .resolver
         .item_names_by_id
         .insert(struct_id, "std::string_type::String".to_string());
-    lowerer.current_struct_impl = Some("std::string_type::String".to_string());
+    let _impl_frame = lowerer
+        .item_scope
+        .enter_struct_impl(Some("std::string_type::String".to_string()));
 
     let _literal = lowerer.lower_instance(&ast::Instance {
         name: ast::TypePath {
@@ -432,7 +436,9 @@ fn struct_literal_private_field_check_requires_resolved_current_impl_id() {
         .items
         .insert_structure(private_field_struct(struct_id, "std::string_type::String"));
     register_item_path(&mut lowerer, "std::string_type::String", struct_id);
-    lowerer.current_struct_impl = Some("String".to_string());
+    let _impl_frame = lowerer
+        .item_scope
+        .enter_struct_impl(Some("String".to_string()));
 
     let _literal = lowerer.lower_instance(&ast::Instance {
         name: ast::TypePath {

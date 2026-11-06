@@ -71,7 +71,7 @@ impl Lowerer {
                     owner,
                     local_id,
                     span,
-                    self.source_scope_stack.last().copied(),
+                    self.body.current_source_scope(),
                 );
             }
             param_types.push(ty.clone());
@@ -85,11 +85,11 @@ impl Lowerer {
         }
 
         let lambda_return_ty = self.engine.fresh_type_var_at(lambda.span.clone());
-        let loop_stack = std::mem::take(&mut self.fold_loop_stack);
+        let loop_stack = self.body.suspend_loops();
         let body = self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
             lowerer.lower_lambda_body(lambda)
         });
-        self.fold_loop_stack = loop_stack;
+        self.body.resume_loops(loop_stack);
         let span = lambda.span.clone();
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
         let ret_type = self.engine.resolve(&lambda_return_ty);
@@ -152,7 +152,7 @@ impl Lowerer {
                 owner,
                 local_id,
                 param_span,
-                self.source_scope_stack.last().copied(),
+                self.body.current_source_scope(),
             );
         }
         let param = HirParam {
@@ -164,7 +164,7 @@ impl Lowerer {
         };
 
         let lambda_return_ty = self.engine.fresh_type_var_at(span.clone());
-        let loop_stack = std::mem::take(&mut self.fold_loop_stack);
+        let loop_stack = self.body.suspend_loops();
         let body = if params.len() == 1 {
             self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
                 lowerer.lower_block(body)
@@ -181,7 +181,7 @@ impl Lowerer {
                 stmts: vec![HirStmt::Expr(inner)],
             }
         };
-        self.fold_loop_stack = loop_stack;
+        self.body.resume_loops(loop_stack);
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
         let body_ty = self.engine.resolve(&lambda_return_ty);
         let mut captures = self.collect_lambda_captures(&body, std::slice::from_ref(&param));

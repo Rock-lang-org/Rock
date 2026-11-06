@@ -76,7 +76,7 @@ impl Lowerer {
                 HirStmt::Return(Some(self.wrap_fold_return(hir_expr)))
             }
             ast::Statement::Return(None) => {
-                if let Some(context) = self.fold_loop_stack.iter().flatten().last() {
+                if let Some(context) = self.body.fold_loops().last() {
                     let unit = context.unit();
                     HirStmt::Return(Some(self.wrap_fold_return(unit)))
                 } else {
@@ -85,7 +85,7 @@ impl Lowerer {
             }
             ast::Statement::Break(Some(expr)) => {
                 let hir_expr = self.lower_expression(expr);
-                if let Some(Some(context)) = self.fold_loop_stack.last() {
+                if let Some(context) = self.body.innermost_fold_loop() {
                     HirStmt::Expr(HirExpr {
                         ty: Type::Never,
                         span: hir_expr.span.clone(),
@@ -101,12 +101,12 @@ impl Lowerer {
                     HirStmt::Break(Some(hir_expr))
                 }
             }
-            ast::Statement::Break(None) => match self.fold_loop_stack.last() {
-                Some(Some(context)) => HirStmt::Return(Some(context.stop())),
+            ast::Statement::Break(None) => match self.body.innermost_fold_loop() {
+                Some(context) => HirStmt::Return(Some(context.stop())),
                 _ => HirStmt::Break(None),
             },
-            ast::Statement::Continue(_) => match self.fold_loop_stack.last() {
-                Some(Some(context)) => HirStmt::Return(Some(context.next())),
+            ast::Statement::Continue(_) => match self.body.innermost_fold_loop() {
+                Some(context) => HirStmt::Return(Some(context.next())),
                 _ => HirStmt::Continue,
             },
         }
@@ -187,7 +187,7 @@ impl Lowerer {
                         owner,
                         local_id,
                         span,
-                        self.source_scope_stack.last().copied(),
+                        self.body.current_source_scope(),
                     );
                 }
                 self.scope
@@ -242,11 +242,7 @@ impl Lowerer {
         let rhs_span = rhs_expr.span.clone();
 
         // Create a temp variable for the tuple value
-        let uid = self.tuple_temp_counter;
-        self.tuple_temp_counter = self
-            .tuple_temp_counter
-            .checked_add(1)
-            .expect("tuple destructuring temp counter exhausted");
+        let uid = self.body.fresh_tuple_temp_id();
         let tmp_name = format!("__tuple_tmp_{}", uid);
         let tmp_ty = rhs_expr.ty.clone();
         let tmp_local_id = self.fresh_local_id();

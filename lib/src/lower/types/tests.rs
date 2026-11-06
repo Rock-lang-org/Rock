@@ -403,10 +403,7 @@ fn test_lower_parse_fixed_array_type_preserves_length_without_error() {
 fn lower_parse_type_creates_implicit_generic_in_current_context() {
     let owner = def_id(60);
     let mut lowerer = Lowerer::new_for_test();
-    lowerer.generic_context = Some(crate::lower::body_context::GenericLoweringContext::new(
-        owner,
-        Vec::new(),
-    ));
+    let _outer_frame = lowerer.item_scope.enter_generics(owner, Vec::new());
 
     let ty = lowerer.lower_parse_type(&named_type("T"));
 

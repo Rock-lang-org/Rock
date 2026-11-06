@@ -403,7 +403,7 @@ impl Lowerer {
     }
 
     fn current_trait_self_receiver(&self, ty: &Type) -> bool {
-        self.current_trait.is_some()
+        self.item_scope.trait_name().is_some()
             && (matches!(ty, Type::TypeVar(_))
                 || matches!(ty, Type::Generic(param) if self.generic_display_name(*param) == Some("Self")))
     }
@@ -416,7 +416,7 @@ impl Lowerer {
                 .sized
                 .as_ref()
                 .map(|items| items.trait_id),
-            self.current_trait_id,
+            self.item_scope.trait_id(),
             self.current_impl_bounds(),
         )
         .with_effective_trait_methods(&self.imported_effective_trait_methods)

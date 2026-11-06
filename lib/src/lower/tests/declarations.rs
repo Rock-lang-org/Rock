@@ -208,10 +208,7 @@ fn lowerer_construction_uses_explicit_service_wrappers() {
 fn body_lowering_context_owns_body_local_ids_and_restores_lowerer_state() {
     let mut lowerer = Lowerer::new_for_test();
     let outer_owner = DefId::new(CrateId(0), LocalDefId(99));
-    lowerer.generic_context = Some(crate::lower::body_context::GenericLoweringContext::new(
-        outer_owner,
-        vec!["Outer".to_string()],
-    ));
+    let _outer_frame = lowerer.item_scope.enter_generics(outer_owner, vec!["Outer".to_string()]);
 
     let body_owner = DefId::new(CrateId(0), LocalDefId(7));
     let context = crate::lower::body_context::BodyLoweringContext::new(

@@ -121,9 +121,8 @@ impl Lowerer {
 
         // Check if this is a known struct
         if let Some(hir_struct) = struct_resolution.structure {
-            let current_impl_matches = self.current_struct_impl.as_deref()
-                == Some(type_name.as_str())
-                || self.current_struct_impl.as_ref().is_some_and(|name| {
+            let current_impl_matches = self.item_scope.struct_impl() == Some(type_name.as_str())
+                || self.item_scope.struct_impl().is_some_and(|name| {
                     crate::lower::resolution::LowerResolutionContext::new(self)
                         .resolve_item_id(name)
                         .is_some_and(|id| id == hir_struct.id)
