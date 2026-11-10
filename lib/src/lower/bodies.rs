@@ -62,7 +62,7 @@ fn collect_generic_names_from_parse_type<F>(
         ast::ParseType::Lambda(lambda) => {
             collect_generic_names_from_parse_type(&lambda.body, generic_params, is_known_type_name);
         }
-        ast::ParseType::Hole(_) => {}
+        ast::ParseType::Hole(_) | ast::ParseType::ConstValue { .. } => {}
         ast::ParseType::Associated { base, .. } => {
             for generic in &base.generics {
                 collect_generic_names_from_parse_type(generic, generic_params, is_known_type_name);
@@ -73,8 +73,13 @@ fn collect_generic_names_from_parse_type<F>(
         | ast::ParseType::Pointer(inner) => {
             collect_generic_names_from_parse_type(inner, generic_params, is_known_type_name);
         }
-        ast::ParseType::Array { inner, .. } => {
+        ast::ParseType::Array { inner, len } => {
             collect_generic_names_from_parse_type(inner, generic_params, is_known_type_name);
+            if let ast::ParseArrayLen::Param(name) = len {
+                if !is_known_type_name(&name.name) && !generic_params.contains(&name.name) {
+                    generic_params.push(name.name.clone());
+                }
+            }
         }
         ast::ParseType::Function(args) | ast::ParseType::Tuple(args) => {
             for arg in args {
@@ -166,6 +171,12 @@ fn sync_static_impl_generic_params_to_ids(
         .collect();
 
     let generic_param_ids = function_generic_ids_in_order(func);
+    let mut const_params = HashSet::new();
+    for param in &func.params {
+        param.ty.collect_array_len_params(&mut const_params);
+    }
+    func.ret_type.collect_array_len_params(&mut const_params);
+    func.body.ty.collect_array_len_params(&mut const_params);
     let generic_params = generic_param_ids
         .iter()
         .map(|generic_id| {
@@ -183,7 +194,12 @@ fn sync_static_impl_generic_params_to_ids(
                         .flatten()
                 })
                 .unwrap_or_else(|| {
-                    GenericParamDecl::type_param(*generic_id, format!("T{}", generic_id.index))
+                    let kind = if const_params.contains(generic_id) {
+                        crate::type_services::kind::Kind::Usize
+                    } else {
+                        crate::type_services::kind::Kind::Type
+                    };
+                    GenericParamDecl::new(*generic_id, format!("T{}", generic_id.index), kind)
                 })
         })
         .collect();
@@ -268,6 +284,11 @@ impl Lowerer {
                     .filter(|param| param.owner == func.id)
                     .map(|param| param.index),
             );
+            let mut const_params = HashSet::new();
+            for param in &func.params {
+                param.ty.collect_array_len_params(&mut const_params);
+            }
+            func.ret_type.collect_array_len_params(&mut const_params);
             let default_names = ["T", "U", "V", "W", "X", "Y", "Z"];
             func.generic_params = generic_indices
                 .iter()
@@ -276,18 +297,21 @@ impl Lowerer {
                         .get(*index as usize)
                         .map(|name| (*name).to_string())
                         .unwrap_or_else(|| format!("T{}", index));
-                    GenericParamDecl::type_param(
-                        GenericParamId {
-                            owner: func.id,
-                            index: *index,
-                        },
-                        name,
-                    )
+                    let id = GenericParamId {
+                        owner: func.id,
+                        index: *index,
+                    };
+                    let kind = if const_params.contains(&id) {
+                        crate::type_services::kind::Kind::Usize
+                    } else {
+                        crate::type_services::kind::Kind::Type
+                    };
+                    GenericParamDecl::new(id, name, kind)
                 })
                 .collect();
         }
 
-        let body_context = BodyLoweringContext::new(
+        let mut body_context = BodyLoweringContext::new(
             BodyOwner::Function(func.id),
             (!func.generic_params.is_empty()).then_some(func.id),
             func.generic_params
@@ -297,6 +321,9 @@ impl Lowerer {
             func.generic_bounds.clone(),
             func.is_unsafe,
         );
+        for generic in &func.generic_params {
+            body_context.register_generic_param(generic);
+        }
         let body = self.with_body_context(body_context, |lowerer| {
             lowerer.push_scope();
 
@@ -634,7 +661,7 @@ impl Lowerer {
                     fd.is_unsafe || explicit_sig_is_unsafe,
                 );
                 for generic in type_generics.iter().chain(&func.generic_params) {
-                    body_context.register_generic_param(generic.name.clone(), generic.id);
+                    body_context.register_generic_param(generic);
                 }
                 body_context
                     .seed_after_existing_locals(func.params.iter().map(|param| param.local_id));

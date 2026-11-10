@@ -254,7 +254,7 @@ fn agreement_rejects_bounds_check_assertion_missing_index_operand() {
                 source: crate::mir::LocalSource::ReturnPlace,
             },
             LocalDecl {
-                ty: type_id(&mut type_context, Type::Array(Box::new(Type::I64), 4)),
+                ty: type_id(&mut type_context, Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(4))),
                 mutability: Mutability::Not,
                 name: Some("array".to_string()),
                 span: None,

@@ -87,7 +87,7 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 self.make_fat_slice_value(
                     data_ptr,
-                    self.context.i64_type().const_int(*len as u64, false),
+                    self.context.i64_type().const_int(len.as_concrete(), false),
                 )
                 .map(Some)
             }
@@ -124,14 +124,14 @@ impl<'ctx> CodeGen<'ctx> {
                     Ok(Some(len))
                 }
                 Type::Array(_, len) => Ok(Some(
-                    self.context.i64_type().const_int(len as u64, false).into(),
+                    self.context.i64_type().const_int(len.as_concrete(), false).into(),
                 )),
                 Type::Reference { inner, .. } if matches!(inner.as_ref(), Type::Array(_, _)) => {
                     let Type::Array(_, len) = inner.as_ref() else {
                         unreachable!();
                     };
                     Ok(Some(
-                        self.context.i64_type().const_int(*len as u64, false).into(),
+                        self.context.i64_type().const_int(len.as_concrete(), false).into(),
                     ))
                 }
                 other => Err(CodegenError::from(format!(
@@ -309,7 +309,7 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 self.make_fat_slice_value(
                     data_ptr,
-                    self.context.i64_type().const_int(*len as u64, false),
+                    self.context.i64_type().const_int(len.as_concrete(), false),
                 )
                 .map(Some)
             }
@@ -347,7 +347,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 Ty::Reference { inner, .. } => match self.type_view().ty(*inner) {
                     Ty::Array { len, .. } => Ok(Some(
-                        self.context.i64_type().const_int(*len as u64, false).into(),
+                        self.context.i64_type().const_int(len.as_concrete(), false).into(),
                     )),
                     other => Err(CodegenError::layout(format!(
                         "ArrayLen expected slice/array, got {:?}",
@@ -355,7 +355,7 @@ impl<'ctx> CodeGen<'ctx> {
                     ))),
                 },
                 Ty::Array { len, .. } => Ok(Some(
-                    self.context.i64_type().const_int(*len as u64, false).into(),
+                    self.context.i64_type().const_int(len.as_concrete(), false).into(),
                 )),
                 other => Err(CodegenError::layout(format!(
                     "ArrayLen expected slice/array, got {:?}",
@@ -512,6 +512,7 @@ impl<'ctx> CodeGen<'ctx> {
             | Ty::Char
             | Ty::Unit
             | Ty::Never
+            | Ty::ConstValue(_)
             | Ty::TypeVar(_)
             | Ty::Generic(_)
             | Ty::Constructor { .. }

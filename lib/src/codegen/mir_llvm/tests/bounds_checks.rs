@@ -14,7 +14,7 @@ fn mir_codegen_lowers_bounds_check_assertion() {
         vec![],
         vec![
             local_decl(&type_context, Type::I64, "return_place"),
-            local_decl(&type_context, Type::Array(Box::new(Type::I64), 4), "arr"),
+            local_decl(&type_context, Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(4)), "arr"),
         ],
         vec![
             StatementData::assert(

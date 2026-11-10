@@ -152,7 +152,8 @@ impl<'a> MirBuilder<'a> {
                     self.type_id_for(ty),
                     DropObligationKind::Structural,
                 );
-                self.emit_array_drop_chain(elem, *len, place);
+                // const-generics: generic-length drops need substitution before MIR drop elaboration.
+                self.emit_array_drop_chain(elem, len.as_concrete() as usize, place);
             }
             Type::Enum { id, args } => {
                 self.record_drop_obligation(

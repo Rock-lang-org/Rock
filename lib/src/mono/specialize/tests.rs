@@ -470,3 +470,61 @@ fn specialization_beta_reduces_result_section_after_error_substitution() {
         }
     );
 }
+
+#[test]
+fn extract_type_args_binds_const_param_from_array_length() {
+    let mut mono = Monomorphizer::new();
+    let function_id = def_id(40);
+    let element = GenericParamDecl::type_param(
+        GenericParamId {
+            owner: function_id,
+            index: 0,
+        },
+        "T",
+    );
+    let length = GenericParamDecl::new(
+        GenericParamId {
+            owner: function_id,
+            index: 1,
+        },
+        "N",
+        Kind::Usize,
+    );
+    let mut function = generic_function(
+        function_id,
+        Type::Array(
+            Box::new(Type::Generic(element.id)),
+            crate::types::ArrayLen::Param(length.id),
+        ),
+        Type::Generic(element.id),
+    );
+    function.generic_params = vec![element, length.clone()];
+    let arg = expr_with_type(Type::Array(
+        Box::new(Type::I64),
+        crate::types::ArrayLen::Value(3),
+    ));
+
+    let type_args = mono.extract_type_args(&function, &[arg]);
+
+    assert_eq!(type_args.len(), 2);
+    assert_eq!(mono.type_for(type_args[0]), Type::I64);
+    assert_eq!(mono.type_for(type_args[1]), Type::ConstValue(3));
+}
+
+#[test]
+fn apply_substitution_replaces_array_length_param() {
+    let mut mono = Monomorphizer::new();
+    let length = GenericParamId {
+        owner: def_id(41),
+        index: 0,
+    };
+    let three = mono.intern_type(&Type::ConstValue(3));
+    let ty = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Param(length));
+
+    let substituted = mono.apply_substitution(&ty, &HashMap::from([(length, three)]));
+
+    assert_eq!(
+        substituted,
+        Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3))
+    );
+}

@@ -358,6 +358,13 @@ impl Monomorphizer {
                     .map(|a| self.substitute_expr(a, substitution))
                     .collect(),
             },
+            HirExprKind::ConstParam(param) => {
+                match substitution.get(param).map(|id| self.type_for(*id)) {
+                    Some(Type::ConstValue(n)) => HirExprKind::IntLiteral(n as i64),
+                    // Left in place; post-mono validation reports it as an internal error.
+                    _ => expr.kind.clone(),
+                }
+            }
             _ => expr.kind.clone(),
         };
         HirExpr {

@@ -26,6 +26,9 @@ fn lower_explicit_kind_syntax(kind: &ast::ParseType) -> Option<Kind> {
         ast::ParseType::Type(inner) if inner.name == "Type" && inner.generics.is_empty() => {
             Some(Kind::Type)
         }
+        ast::ParseType::Type(inner) if inner.name == "usize" && inner.generics.is_empty() => {
+            Some(Kind::Usize)
+        }
         ast::ParseType::Function(types) if types.len() >= 2 => {
             let mut types = types.iter().rev();
             let mut output = lower_explicit_kind_syntax(types.next()?)?;

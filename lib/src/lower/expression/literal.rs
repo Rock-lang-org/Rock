@@ -3,7 +3,7 @@
 use crate::ast;
 use crate::hir::*;
 use crate::lower::Lowerer;
-use crate::types::Type;
+use crate::types::{ArrayLen, Type};
 
 impl Lowerer {
     pub(crate) fn lower_literal(&mut self, lit: &ast::Literal) -> HirExpr {
@@ -84,7 +84,7 @@ impl Lowerer {
                     })
                     .collect();
                 HirExpr {
-                    ty: Type::Array(Box::new(elem_ty), len),
+                    ty: Type::Array(Box::new(elem_ty), ArrayLen::Value(len as u64)),
                     kind: HirExprKind::ArrayLiteral(elements),
                     span,
                 }
@@ -106,7 +106,7 @@ impl Lowerer {
                     let _ = self.engine.unify(&elem_ty, &value.ty);
                 }
                 HirExpr {
-                    ty: Type::Array(Box::new(elem_ty), *len),
+                    ty: Type::Array(Box::new(elem_ty), ArrayLen::Value(*len as u64)),
                     kind: HirExprKind::ArrayRepeat(Box::new(value), *len),
                     span,
                 }

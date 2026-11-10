@@ -41,7 +41,14 @@ pub(super) fn validate_type_id(program: &MirProgram, id: TypeId, report: &mut Mi
         Ty::Slice(inner) | Ty::Reference { inner, .. } | Ty::Pointer(inner) => {
             validate_type_id(program, *inner, report);
         }
-        Ty::Array { inner, .. } => validate_type_id(program, *inner, report),
+        Ty::Array { inner, len } => {
+            // Codegen requires a concrete length; a surviving const parameter or
+            // inference variable means monomorphization missed a binding.
+            if !len.is_concrete() {
+                report.invalid_type_ids += 1;
+            }
+            validate_type_id(program, *inner, report);
+        }
         Ty::Tuple(elems) => {
             for elem in elems {
                 validate_type_id(program, *elem, report);
@@ -88,7 +95,8 @@ pub(super) fn validate_type_id(program: &MirProgram, id: TypeId, report: &mut Mi
         | Ty::Str
         | Ty::Char
         | Ty::Unit
-        | Ty::Never => {}
+        | Ty::Never
+        | Ty::ConstValue(_) => {}
         Ty::TypeVar(_)
         | Ty::Generic(_)
         | Ty::Constructor { .. }

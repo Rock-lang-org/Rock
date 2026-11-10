@@ -183,8 +183,12 @@ impl Lowerer {
                 Self::match_static_owner_pattern(receiver, signature, owner_params, relation)
             }
             (Type::Array(receiver, receiver_len), Type::Array(signature, signature_len)) => {
-                receiver_len == signature_len
-                    && Self::match_static_owner_pattern(receiver, signature, owner_params, relation)
+                Self::match_static_owner_pattern(
+                    &receiver_len.to_const_type(),
+                    &signature_len.to_const_type(),
+                    owner_params,
+                    relation,
+                ) && Self::match_static_owner_pattern(receiver, signature, owner_params, relation)
             }
             (Type::Tuple(receivers), Type::Tuple(signatures)) => {
                 receivers.len() == signatures.len()

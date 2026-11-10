@@ -32,7 +32,7 @@ fn type_display_service_preserves_existing_output() {
         (Type::Unit, "()"),
         (Type::Never, "!"),
         (Type::Slice(Box::new(Type::I64)), "[I64]"),
-        (Type::Array(Box::new(Type::Bool), 4), "[Bool; 4]"),
+        (Type::Array(Box::new(Type::Bool), crate::types::ArrayLen::Value(4)), "[Bool; 4]"),
         (Type::Tuple(vec![Type::I64, Type::Bool]), "(I64, Bool)"),
         (
             Type::function(vec![Type::I64, Type::Bool], Type::Unit),

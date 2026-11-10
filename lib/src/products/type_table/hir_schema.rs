@@ -124,6 +124,7 @@ pub(in crate::products) struct SerializedHirExpr {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(in crate::products) enum SerializedHirExprKind {
     IntLiteral(i64),
+    ConstParam(crate::types::GenericParamId),
     FloatLiteral(f64),
     BoolLiteral(bool),
     StringLiteral(String),

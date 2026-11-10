@@ -114,6 +114,7 @@ fn unresolve_stmt(stmt: HirStmtFor<AcceptedHir>) -> HirStmt {
 fn unresolve_expr(expr: AcceptedHirExpr) -> HirExpr {
     let kind = match expr.kind {
         HirExprKindFor::IntLiteral(value) => HirExprKindFor::IntLiteral(value),
+        HirExprKindFor::ConstParam(param) => HirExprKindFor::ConstParam(param),
         HirExprKindFor::FloatLiteral(value) => HirExprKindFor::FloatLiteral(value),
         HirExprKindFor::BoolLiteral(value) => HirExprKindFor::BoolLiteral(value),
         HirExprKindFor::StringLiteral(value) => HirExprKindFor::StringLiteral(value),

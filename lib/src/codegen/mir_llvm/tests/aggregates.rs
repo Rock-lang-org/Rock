@@ -51,11 +51,11 @@ fn mir_codegen_reports_bad_aggregate_operand_counts() {
             &mut codegen,
             &type_context,
             "bad_array_aggregate",
-            Type::Array(Box::new(Type::I64), 1),
+            Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(1)),
             vec![],
             vec![local_decl(
                 &type_context,
-                Type::Array(Box::new(Type::I64), 1),
+                Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(1)),
                 "return_place",
             )],
             vec![StatementData::assign(
@@ -247,7 +247,7 @@ fn mir_codegen_lowers_aggregates_and_projections() {
     let single_enum_id = DefId::new(CrateId(0), LocalDefId(22));
     let option_variant = VariantId(1);
     let tuple_ty = Type::Tuple(vec![Type::I64, Type::I64]);
-    let array_ty = Type::Array(Box::new(Type::I64), 2);
+    let array_ty = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(2));
     let struct_ty = Type::Struct {
         id: struct_id,
         args: vec![],
@@ -485,7 +485,7 @@ fn mir_codegen_lowers_repeated_array_as_fill_loop() {
     let context = Context::create();
     let mut codegen = CodeGen::new(&context, "test");
     let type_context = RefCell::new(TypeContext::new());
-    let array_ty = Type::Array(Box::new(Type::I64), 256);
+    let array_ty = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(256));
 
     compile_test_function_with_contract(
         &mut codegen,

@@ -41,6 +41,15 @@ pub(crate) trait TypeLoweringContext {
     fn scoped_generic_type(&mut self, _name: &str, _span: crate::lexer::Span) -> Option<Type> {
         None
     }
+    /// Resolves a name used as an array length to a `usize` const generic.
+    /// Returns `None` when the name is not a const generic parameter.
+    fn const_generic_for_name(
+        &mut self,
+        _name: &str,
+        _span: crate::lexer::Span,
+    ) -> Option<crate::types::GenericParamId> {
+        None
+    }
     fn populate_type_normalization_env(&self, env: &mut TypeNormalizationEnv);
     fn constructor_params(&self, _id: crate::ids::DefId) -> Option<Vec<GenericParamDecl>> {
         None

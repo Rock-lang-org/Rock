@@ -38,7 +38,7 @@ fn nested_type() -> Type {
                             id: def_id(2),
                             args: vec![Type::Generic(generic(11, 0))],
                         }),
-                        4,
+                        crate::types::ArrayLen::Value(4),
                     )),
                     safety: crate::types::FunctionSafety::Safe,
                     callable_kind: crate::types::CallableKind::FnOnce,
@@ -91,7 +91,8 @@ fn immutable_visitor_reaches_every_nested_type_once() {
     let mut recorder = Recorder::default();
     visit_type(&nested_type(), &mut recorder);
 
-    assert_eq!(recorder.nodes, 18);
+    // 18 types plus the array length, which is visited as a const-kinded node.
+    assert_eq!(recorder.nodes, 19);
     assert_eq!(
         recorder.type_vars,
         vec![TypeVarId(1), TypeVarId(2), TypeVarId(3), TypeVarId(4)]
@@ -228,4 +229,61 @@ fn type_def_id_remap_preserves_original_type_when_callback_panics() {
 
     assert!(result.is_err());
     assert_eq!(ty, original);
+}
+
+#[test]
+fn visitor_sees_param_and_var_array_lengths_as_leaves() {
+    let ty = Type::Tuple(vec![
+        Type::Array(
+            Box::new(Type::I64),
+            crate::types::ArrayLen::Param(generic(7, 1)),
+        ),
+        Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Var(TypeVarId(9))),
+    ]);
+    let mut recorder = Recorder::default();
+    visit_type(&ty, &mut recorder);
+
+    assert_eq!(recorder.generics, vec![generic(7, 1)]);
+    assert_eq!(recorder.type_vars, vec![TypeVarId(9)]);
+}
+
+#[test]
+fn generic_substitution_rewrites_array_lengths() {
+    use crate::types::ArrayLen;
+
+    let n = generic(7, 1);
+    let ty = Type::Array(Box::new(Type::Generic(generic(7, 0))), ArrayLen::Param(n));
+    let mut subst = HashMap::new();
+    subst.insert(generic(7, 0), Type::I32);
+
+    subst.insert(n, Type::ConstValue(3));
+    assert_eq!(
+        ty.substitute_generics(&subst),
+        Type::Array(Box::new(Type::I32), ArrayLen::Value(3))
+    );
+
+    subst.insert(n, Type::Generic(generic(8, 0)));
+    assert_eq!(
+        ty.substitute_generics(&subst),
+        Type::Array(Box::new(Type::I32), ArrayLen::Param(generic(8, 0)))
+    );
+
+    subst.insert(n, Type::TypeVar(TypeVarId(5)));
+    assert_eq!(
+        ty.substitute_generics(&subst),
+        Type::Array(Box::new(Type::I32), ArrayLen::Var(TypeVarId(5)))
+    );
+}
+
+#[test]
+fn type_var_generalization_rewrites_array_length_vars() {
+    use crate::types::ArrayLen;
+
+    let ty = Type::Array(Box::new(Type::I64), ArrayLen::Var(TypeVarId(2)));
+    let mut mapping = HashMap::new();
+    mapping.insert(TypeVarId(2), generic(3, 0));
+    assert_eq!(
+        ty.replace_type_vars_to_generics(&mapping, &HashMap::new()),
+        Type::Array(Box::new(Type::I64), ArrayLen::Param(generic(3, 0)))
+    );
 }

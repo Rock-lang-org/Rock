@@ -76,7 +76,7 @@ fn mir_codegen_lowers_references_and_checks() {
     let context = Context::create();
     let mut codegen = CodeGen::new(&context, "test");
     let type_context = RefCell::new(TypeContext::new());
-    let array_ty = Type::Array(Box::new(Type::I64), 3);
+    let array_ty = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3));
     let scalar_ref_ty = Type::Reference {
         mutable: false,
         inner: Box::new(Type::I64),

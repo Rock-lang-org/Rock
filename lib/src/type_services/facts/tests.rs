@@ -63,7 +63,7 @@ fn type_facts_match_copy_and_reference_behavior() {
         Type::I64,
         Type::Bool
     ])));
-    assert!(!TypeFacts::is_copy(&Type::Array(Box::new(Type::I64), 4)));
+    assert!(!TypeFacts::is_copy(&Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(4))));
     assert!(TypeFacts::contains_reference(&Type::Tuple(vec![
         Type::Reference {
             mutable: false,

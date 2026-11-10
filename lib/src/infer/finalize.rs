@@ -513,7 +513,7 @@ fn finalize_expr(ctx: &mut FinalizeCtx<'_>, expr: &mut HirExpr) {
             finalize_expr(ctx, left);
             finalize_expr(ctx, right);
         }
-        HirExprKind::IntLiteral(_)
+        HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
         | HirExprKind::FloatLiteral(_)
         | HirExprKind::BoolLiteral(_)
         | HirExprKind::StringLiteral(_)

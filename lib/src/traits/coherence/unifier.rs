@@ -89,7 +89,7 @@ impl<'a> FirstOrderUnifier<'a> {
             (Type::Slice(left), Type::Slice(right))
             | (Type::Pointer(left), Type::Pointer(right)) => self.unify(left, right),
             (Type::Array(left, left_len), Type::Array(right, right_len)) => {
-                left_len == right_len && self.unify(left, right)
+                self.unify_lengths(*left_len, *right_len) && self.unify(left, right)
             }
             (Type::Tuple(left), Type::Tuple(right)) => self.unify_lists(left, right),
             (
@@ -204,6 +204,18 @@ impl<'a> FirstOrderUnifier<'a> {
             ) => left_params == right_params && self.unify(left_body, right_body),
             _ => false,
         }
+    }
+
+    /// Array lengths unify like const-kinded generic arguments: a flexible
+    /// const parameter binds to a concrete length or to another parameter.
+    fn unify_lengths(&mut self, left: ArrayLen, right: ArrayLen) -> bool {
+        if left == right {
+            return true;
+        }
+        if matches!(left, ArrayLen::Error) || matches!(right, ArrayLen::Error) {
+            return false;
+        }
+        self.unify(&left.to_const_type(), &right.to_const_type())
     }
 
     fn unify_lists(&mut self, left: &[Type], right: &[Type]) -> bool {

@@ -63,6 +63,7 @@ impl Monomorphizer {
     fn write_kind(output: &mut String, kind: &crate::type_services::kind::Kind) {
         match kind {
             crate::type_services::kind::Kind::Type => output.push('T'),
+            crate::type_services::kind::Kind::Usize => output.push('U'),
             crate::type_services::kind::Kind::Arrow(input, output_kind) => {
                 output.push('K');
                 Self::write_kind(output, input);
@@ -89,13 +90,17 @@ impl Monomorphizer {
             Ty::Char => output.push('c'),
             Ty::Unit => output.push('u'),
             Ty::Never => output.push('n'),
+            Ty::ConstValue(n) => {
+                output.push('c');
+                output.push_str(&n.to_string());
+            }
             Ty::Slice(inner) => {
                 output.push('s');
                 self.write_type_id(output, *inner);
             }
             Ty::Array { inner, len } => {
                 output.push('a');
-                Self::push_text(output, &len.to_string());
+                Self::push_text(output, &len.as_concrete().to_string());
                 self.write_type_id(output, *inner);
             }
             Ty::Tuple(elements) => {
@@ -302,8 +307,10 @@ impl Monomorphizer {
             Type::Pointer(inner) => format!("Ptr{}", Self::type_to_mono_suffix(inner)),
             Type::Slice(inner) => format!("Slice{}", Self::type_to_mono_suffix(inner)),
             Type::Array(inner, len) => {
-                format!("Arr{}_{}", Self::type_to_mono_suffix(inner), len)
+                // const-generics: only concrete lengths reach mono symbol names.
+                format!("Arr{}_{}", Self::type_to_mono_suffix(inner), len.as_concrete())
             }
+            Type::ConstValue(n) => format!("c{n}"),
             Type::Reference { inner, .. } => Self::type_to_mono_suffix(inner),
             _ => "T".to_string(),
         }

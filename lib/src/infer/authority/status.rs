@@ -130,7 +130,7 @@ fn first_pending_field(
             }
             HirExprKind::Var(_)
             | HirExprKind::ResolvedVar(_)
-            | HirExprKind::IntLiteral(_)
+            | HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
             | HirExprKind::FloatLiteral(_)
             | HirExprKind::BoolLiteral(_)
             | HirExprKind::StringLiteral(_)
@@ -300,7 +300,7 @@ pub(super) fn authority_counts(
             }
             HirExprKind::Var(_)
             | HirExprKind::ResolvedVar(_)
-            | HirExprKind::IntLiteral(_)
+            | HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
             | HirExprKind::FloatLiteral(_)
             | HirExprKind::BoolLiteral(_)
             | HirExprKind::StringLiteral(_)

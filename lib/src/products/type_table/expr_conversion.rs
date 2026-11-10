@@ -13,6 +13,7 @@ impl SerializedHirExprKind {
     ) -> Result<Self, String> {
         Ok(match value {
             crate::hir::HirExprKindFor::IntLiteral(value) => Self::IntLiteral(*value),
+            crate::hir::HirExprKindFor::ConstParam(param) => Self::ConstParam(*param),
             crate::hir::HirExprKindFor::FloatLiteral(value) => Self::FloatLiteral(*value),
             crate::hir::HirExprKindFor::BoolLiteral(value) => Self::BoolLiteral(*value),
             crate::hir::HirExprKindFor::StringLiteral(value) => Self::StringLiteral(value.clone()),
@@ -198,6 +199,7 @@ impl SerializedHirExprKind {
     ) -> Result<crate::hir::HirExprKindFor<crate::hir::AcceptedHir>, String> {
         Ok(match self {
             Self::IntLiteral(value) => crate::hir::HirExprKindFor::IntLiteral(value),
+            Self::ConstParam(param) => crate::hir::HirExprKindFor::ConstParam(param),
             Self::FloatLiteral(value) => crate::hir::HirExprKindFor::FloatLiteral(value),
             Self::BoolLiteral(value) => crate::hir::HirExprKindFor::BoolLiteral(value),
             Self::StringLiteral(value) => crate::hir::HirExprKindFor::StringLiteral(value),

@@ -123,6 +123,33 @@ impl TypeLoweringContext for CollectContext {
         CollectContext::generic_type_for_name(self, name, span)
     }
 
+    fn const_generic_for_name(&mut self, name: &str, _span: Span) -> Option<GenericParamId> {
+        let owner = self.generics.owner()?;
+        let index = match self.generics.position(name) {
+            Some(index) => {
+                if self.generics.kinds().get(index) != Some(&crate::type_services::kind::Kind::Usize)
+                {
+                    return None;
+                }
+                index
+            }
+            None => {
+                let mut chars = name.chars();
+                let is_implicit_generic = matches!(chars.next(), Some(ch) if ch.is_ascii_uppercase())
+                    && chars.next().is_none();
+                if !is_implicit_generic {
+                    return None;
+                }
+                self.generics
+                    .declare(name.to_string(), crate::type_services::kind::Kind::Usize)
+            }
+        };
+        Some(GenericParamId {
+            owner,
+            index: index as u32,
+        })
+    }
+
     fn populate_type_normalization_env(
         &self,
         env: &mut crate::type_services::normalize::TypeNormalizationEnv,

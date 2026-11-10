@@ -423,3 +423,59 @@ fn agreement_rejects_misplaced_and_malformed_type_id_metadata() {
         1
     );
 }
+
+#[test]
+fn agreement_rejects_non_concrete_array_length() {
+    let mut type_context = TypeContext::new();
+    let param = crate::types::GenericParamId {
+        owner: DefId::new(CrateId(0), LocalDefId(60)),
+        index: 0,
+    };
+    let unit = type_id(&mut type_context, Type::Unit);
+    let symbolic = type_id(
+        &mut type_context,
+        Type::Array(
+            Box::new(Type::I64),
+            crate::types::ArrayLen::Param(param),
+        ),
+    );
+    let function_id = MirFunctionId::Function(DefId::new(CrateId(0), LocalDefId(61)));
+    let function = MirFunction {
+        id: function_id.clone(),
+        name: "main".to_string(),
+        basic_blocks: vec![BasicBlock {
+            statements: vec![],
+            terminator: Some(Terminator::Return),
+        }],
+        local_decls: vec![
+            LocalDecl {
+                ty: unit,
+                mutability: Mutability::Not,
+                name: Some("return_place".to_string()),
+                span: None,
+                source: crate::mir::LocalSource::ReturnPlace,
+            },
+            LocalDecl {
+                ty: symbolic,
+                mutability: Mutability::Not,
+                name: Some("arr".to_string()),
+                span: None,
+                source: crate::mir::LocalSource::ReturnPlace,
+            },
+        ],
+        closure_captures: vec![],
+        arg_count: 0,
+        ret_type: unit,
+        ownership: Default::default(),
+    };
+    let program = MirProgram {
+        functions: std::collections::BTreeMap::from([(function_id, function)]),
+        type_context,
+        backend_contract: Default::default(),
+    };
+
+    let report = check_mir_runtime_agreement(&program);
+
+    assert!(report.invalid_type_ids >= 1);
+    assert!(!report.is_clean());
+}

@@ -189,6 +189,6 @@ pub(super) fn collect_parse_type_name_spans(
         | ast::ParseType::Array { inner, .. }
         | ast::ParseType::Reference { pointee: inner, .. }
         | ast::ParseType::Pointer(inner) => collect_parse_type_name_spans(inner, output),
-        ast::ParseType::Hole(_) | ast::ParseType::Unit(_) => {}
+        ast::ParseType::Hole(_) | ast::ParseType::Unit(_) | ast::ParseType::ConstValue { .. } => {}
     }
 }

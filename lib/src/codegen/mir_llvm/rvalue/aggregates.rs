@@ -57,9 +57,9 @@ impl<'ctx> CodeGen<'ctx> {
                         self.display_type_for_diagnostic(expected_ty)
                     )));
                 };
-                self.validate_mir_aggregate_operand_count("array aggregate", *len, operands.len())?;
+                self.validate_mir_aggregate_operand_count("array aggregate", len.as_concrete() as usize, operands.len())?;
                 let element_llvm_ty = self.llvm_type(element_ty);
-                let array_ty = element_llvm_ty.array_type(*len as u32);
+                let array_ty = element_llvm_ty.array_type(len.as_concrete() as u32);
                 let mut value = array_ty.get_undef();
 
                 for (index, operand) in operands.iter().enumerate() {

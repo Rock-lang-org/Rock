@@ -14,6 +14,7 @@ use support::{compile_and_run, compile_and_run_without_std, compile_should_fail}
 mod arrays_slices;
 mod borrowck;
 mod closures;
+mod const_generics;
 mod default_type_arguments;
 mod do_notation;
 mod drops;

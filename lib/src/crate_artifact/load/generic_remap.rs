@@ -222,6 +222,22 @@ pub(super) fn remap_type_def_ids(
 
             crate::type_services::visit::try_fold_type_children(ty, self)
         }
+
+        fn try_fold_array_len(
+            &mut self,
+            len: crate::types::ArrayLen,
+        ) -> Result<crate::types::ArrayLen, Self::Error> {
+            match len {
+                crate::types::ArrayLen::Param(mut param) => {
+                    param.owner = self.remap.def_id(ProductDefId::from(param.owner))?;
+                    Ok(crate::types::ArrayLen::Param(param))
+                }
+                crate::types::ArrayLen::Var(_) | crate::types::ArrayLen::Error => Err(format!(
+                    "Product artifact contains unresolved array length {len:?} in executable metadata"
+                )),
+                value => Ok(value),
+            }
+        }
     }
 
     let remapped = crate::type_services::visit::try_fold_type(

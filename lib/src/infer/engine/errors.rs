@@ -192,9 +192,7 @@ fn display_normalize_error(error: &NormalizeError, display: &impl Fn(&Type) -> S
             format!("type normalization node limit exceeded ({limit})")
         }
         NormalizeError::UnknownConstructor(_) => "unknown type constructor".to_string(),
-        NormalizeError::KindMismatch { expected, actual } => {
-            format!("kind mismatch: expected {expected}, found {actual}")
-        }
+        NormalizeError::KindMismatch { .. } => error.to_string(),
         NormalizeError::NotApplicable { kind } => {
             format!("type of kind {kind} is not applicable")
         }

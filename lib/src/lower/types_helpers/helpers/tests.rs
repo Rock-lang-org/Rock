@@ -214,7 +214,7 @@ fn generic_substitution_does_not_cross_nominal_def_ids() {
 #[test]
 fn receiver_adjustment_coerces_resolved_local_array_to_slice_ref() {
     let mut lowerer = Lowerer::new_for_test();
-    let array_ty = Type::Array(Box::new(Type::I64), 3);
+    let array_ty = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3));
     let expr = HirExpr {
         ty: array_ty,
         kind: HirExprKind::ResolvedVar(HirVarRef {
@@ -241,7 +241,7 @@ fn receiver_adjustment_candidates_include_mutable_array_slice() {
     let impl_id = def_id(93);
     let method_id = def_id(94);
     let mut lowerer = Lowerer::new_for_test();
-    let array_ty = Type::Array(Box::new(Type::I64), 3);
+    let array_ty = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3));
     let return_ty = Type::Reference {
         mutable: false,
         inner: Box::new(Type::I64),
@@ -345,7 +345,7 @@ fn receiver_adjustment_candidates_include_mutable_array_slice() {
     assert!(matches!(
         (&candidates[0].expr.ty, &candidates[2].expr.ty, candidates[2].adjustment),
         (
-            Type::Array(elem, 3),
+            Type::Array(elem, crate::types::ArrayLen::Value(3)),
             Type::Reference { mutable: true, inner },
             ReceiverAdjustment::ArrayValueToMutSliceRef
         ) if elem.as_ref() == &Type::I64

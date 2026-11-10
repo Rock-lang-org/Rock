@@ -210,7 +210,7 @@ fn resolve_projection_type_uses_contract_output_for_array_projection() {
     let type_context = crate::type_context::TypeContext::new();
     let trait_id = DefId::new(CrateId(1), LocalDefId(1));
     let assoc_type_id = AssocTypeId(0);
-    let base_ty = Type::Array(Box::new(Type::I64), 3);
+    let base_ty = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3));
     let trait_args = vec![Type::I64];
 
     load_projection_contract(
@@ -246,7 +246,7 @@ fn resolve_projection_type_requires_contract_output_for_array_projection() {
     let assoc_type_id = AssocTypeId(0);
 
     let projection = Type::Projection {
-        ty: Box::new(Type::Array(Box::new(Type::I64), 3)),
+        ty: Box::new(Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3))),
         trait_id: local_trait_id,
         assoc_type: AssociatedTypeKey {
             owner: local_trait_id,

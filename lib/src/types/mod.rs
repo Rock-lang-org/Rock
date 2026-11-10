@@ -195,6 +195,74 @@ pub enum NominalTypeKind {
     Alias,
 }
 
+/// The length of a fixed-size array type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ArrayLen {
+    /// A concrete length.
+    Value(u64),
+    /// A const generic parameter (e.g. `N` in `[T; N]`).
+    Param(GenericParamId),
+    /// An inference variable standing for a not-yet-known length.
+    Var(TypeVarId),
+    /// Error placeholder for error recovery.
+    Error,
+}
+
+impl ArrayLen {
+    /// The length a const-kinded type argument stands for.
+    pub fn from_const_type(ty: &Type) -> ArrayLen {
+        match ty {
+            Type::ConstValue(n) => ArrayLen::Value(*n),
+            Type::Generic(param) => ArrayLen::Param(*param),
+            Type::TypeVar(var) => ArrayLen::Var(*var),
+            _ => ArrayLen::Error,
+        }
+    }
+
+    /// This length as a const-kinded type argument.
+    pub fn to_const_type(&self) -> Type {
+        match self {
+            ArrayLen::Value(n) => Type::ConstValue(*n),
+            ArrayLen::Param(param) => Type::Generic(*param),
+            ArrayLen::Var(var) => Type::TypeVar(*var),
+            ArrayLen::Error => Type::Error,
+        }
+    }
+
+    /// The concrete length, if this length is fully known.
+    pub fn value(&self) -> Option<u64> {
+        match self {
+            ArrayLen::Value(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// The concrete length. Codegen-facing: a non-concrete length after
+    /// monomorphization is a compiler bug.
+    pub fn as_concrete(&self) -> u64 {
+        match self {
+            ArrayLen::Value(n) => *n,
+            other => panic!("internal error: non-concrete array length {other:?} after monomorphization"),
+        }
+    }
+
+    pub fn is_concrete(&self) -> bool {
+        matches!(self, ArrayLen::Value(_))
+    }
+}
+
+impl From<u64> for ArrayLen {
+    fn from(n: u64) -> Self {
+        ArrayLen::Value(n)
+    }
+}
+
+impl From<usize> for ArrayLen {
+    fn from(n: usize) -> Self {
+        ArrayLen::Value(n as u64)
+    }
+}
+
 /// The core type representation used throughout the compiler after parsing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Type {
@@ -224,7 +292,9 @@ pub enum Type {
     /// Slice type: [T]
     Slice(Box<Type>),
     /// Fixed-size array: [T; N]
-    Array(Box<Type>, usize),
+    Array(Box<Type>, ArrayLen),
+    /// A const value of kind `usize` used as a type argument.
+    ConstValue(u64),
     /// Tuple of types
     Tuple(Vec<Type>),
     /// Function type: args -> ret
@@ -314,6 +384,16 @@ where
         }
         fold_type_children(ty, self)
     }
+
+    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
+        match len {
+            ArrayLen::Param(mut param) => {
+                param.remap_def_ids(self.remap);
+                ArrayLen::Param(param)
+            }
+            other => other,
+        }
+    }
 }
 
 struct TypeVarSubstituter<'a> {
@@ -330,6 +410,19 @@ impl TypeFolder for TypeVarSubstituter<'_> {
                 .map(|replacement| self.fold_type(replacement))
                 .unwrap_or(Type::TypeVar(id)),
             other => fold_type_children(other, self),
+        }
+    }
+
+    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
+        match len {
+            ArrayLen::Var(id) => match self.subst.get(&id) {
+                Some(replacement) => {
+                    let replacement = self.fold_type(replacement.clone());
+                    ArrayLen::from_const_type(&replacement)
+                }
+                None => len,
+            },
+            other => other,
         }
     }
 }
@@ -356,6 +449,36 @@ impl TypeFolder for GenericSubstituter<'_> {
         let substituted = self.fold_type(replacement);
         self.visiting.pop();
         substituted
+    }
+
+    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
+        let ArrayLen::Param(param) = len else {
+            return len;
+        };
+        if self.visiting.contains(&param) {
+            return len;
+        }
+        let Some(replacement) = self.subst.get(&param).cloned() else {
+            return len;
+        };
+
+        self.visiting.push(param);
+        let substituted = self.fold_type(replacement);
+        self.visiting.pop();
+        ArrayLen::from_const_type(&substituted)
+    }
+}
+
+struct ArrayLenParamCollector<'a> {
+    out: &'a mut std::collections::HashSet<GenericParamId>,
+}
+
+impl TypeFolder for ArrayLenParamCollector<'_> {
+    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
+        if let ArrayLen::Param(param) = len {
+            self.out.insert(param);
+        }
+        len
     }
 }
 
@@ -389,6 +512,20 @@ impl TypeFolder for TypeVarToGenericFolder<'_> {
             Type::Generic(*param)
         } else {
             Type::TypeVar(id)
+        }
+    }
+
+    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
+        let ArrayLen::Var(id) = len else {
+            return len;
+        };
+        if let Some(composite) = self.composite_types.get(&id).cloned() {
+            let folded = self.fold_type(composite);
+            ArrayLen::from_const_type(&folded)
+        } else if let Some(param) = self.mapping.get(&id) {
+            ArrayLen::Param(*param)
+        } else {
+            len
         }
     }
 }
@@ -492,6 +629,11 @@ impl Type {
                 visiting: Vec::new(),
             },
         )
+    }
+
+    /// Collect the generic parameters used as array lengths (const generics).
+    pub fn collect_array_len_params(&self, out: &mut std::collections::HashSet<GenericParamId>) {
+        fold_type(self.clone(), &mut ArrayLenParamCollector { out });
     }
 
     /// Collect all distinct Generic parameter identities appearing in this type.

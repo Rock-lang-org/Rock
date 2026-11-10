@@ -94,6 +94,9 @@ pub struct HirStructPatternField {
 pub enum HirExprKindFor<P: HirPhase> {
     /// Integer literal
     IntLiteral(i64),
+    /// Const generic parameter (`N: usize`) read as a value; monomorphization rewrites it to
+    /// an `IntLiteral` of the concrete length.
+    ConstParam(crate::types::GenericParamId),
     /// Float literal
     FloatLiteral(f64),
     /// Bool literal

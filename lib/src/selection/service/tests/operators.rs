@@ -8,7 +8,7 @@ fn exact_index_selection_reports_missing_implementation() {
     let service = SelectionService::new(&traits, &impls, None, None, &bounds);
     let receiver = HirExpr {
         kind: HirExprKind::Var("items".to_string()),
-        ty: Type::Array(Box::new(Type::I64), 4),
+        ty: Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(4)),
         span: Span::test(),
     };
 

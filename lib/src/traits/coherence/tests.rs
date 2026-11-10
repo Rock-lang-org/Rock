@@ -510,3 +510,93 @@ fn sized_blanket_cannot_overlap_an_unsized_slice_target() {
         .iter()
         .any(|error| error.contains("overlapping impls")));
 }
+
+fn array_impl(
+    impl_id: DefId,
+    trait_id: DefId,
+    len: crate::types::ArrayLen,
+    generics: Vec<GenericParamDecl>,
+) -> HirImpl {
+    trait_impl(
+        impl_id,
+        trait_id,
+        HirImplReceiverPattern::Exact(Type::Array(Box::new(Type::I64), len)),
+        generics,
+    )
+}
+
+fn const_param(owner: DefId) -> GenericParamDecl {
+    GenericParamDecl::new(GenericParamId { owner, index: 0 }, "N", Kind::Usize)
+}
+
+#[test]
+fn const_param_array_impl_overlaps_concrete_length_impl() {
+    let trait_id = id(0, 1);
+    let generic_impl = id(0, 2);
+    let concrete_impl = id(0, 3);
+    let impls = vec![
+        array_impl(
+            generic_impl,
+            trait_id,
+            crate::types::ArrayLen::Param(GenericParamId {
+                owner: generic_impl,
+                index: 0,
+            }),
+            vec![const_param(generic_impl)],
+        ),
+        array_impl(
+            concrete_impl,
+            trait_id,
+            crate::types::ArrayLen::Value(3),
+            Vec::new(),
+        ),
+    ];
+
+    let errors = check(&[trait_def(trait_id, Kind::Type)], &impls, &[], &[]);
+
+    assert!(errors
+        .iter()
+        .any(|error| error.contains("overlapping impls")));
+}
+
+#[test]
+fn distinct_concrete_array_lengths_do_not_overlap() {
+    let trait_id = id(0, 1);
+    let impls = vec![
+        array_impl(id(0, 2), trait_id, crate::types::ArrayLen::Value(3), Vec::new()),
+        array_impl(id(0, 3), trait_id, crate::types::ArrayLen::Value(4), Vec::new()),
+    ];
+
+    let errors = check(&[trait_def(trait_id, Kind::Type)], &impls, &[], &[]);
+
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+#[test]
+fn const_param_cannot_bind_to_type_kinded_witness() {
+    // `N: usize` unifies only with const-kinded types, never with `I64`.
+    let trait_id = id(0, 1);
+    let const_impl = id(0, 2);
+    let type_impl = id(0, 3);
+    let impls = vec![
+        array_impl(
+            const_impl,
+            trait_id,
+            crate::types::ArrayLen::Param(GenericParamId {
+                owner: const_impl,
+                index: 0,
+            }),
+            vec![const_param(const_impl)],
+        ),
+        trait_impl(
+            type_impl,
+            trait_id,
+            HirImplReceiverPattern::Exact(Type::I64),
+            Vec::new(),
+        ),
+    ];
+
+    let errors = check(&[trait_def(trait_id, Kind::Type)], &impls, &[], &[]);
+
+    assert!(errors.is_empty(), "{errors:?}");
+}

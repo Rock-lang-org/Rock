@@ -189,6 +189,23 @@ pub struct WhereClause {
     pub trait_bound: Option<ParseType>,
 }
 
+/// The length written in an array type: `[T; 4]` or `[T; N]`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ParseArrayLen {
+    Literal(u64),
+    /// A name that must resolve to a `usize` const generic parameter.
+    Param(Ident),
+}
+
+impl std::fmt::Display for ParseArrayLen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseArrayLen::Literal(n) => write!(f, "{n}"),
+            ParseArrayLen::Param(ident) => write!(f, "{}", ident.name),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ParseType {
     Function(Vec<ParseType>),
@@ -196,6 +213,8 @@ pub enum ParseType {
     Application(TypeApplication),
     Lambda(TypeLambda),
     Hole(TypeHole),
+    /// A literal `usize` type argument: the `3` in `Buf I64, 3`.
+    ConstValue { value: u64, span: Span },
     Associated {
         base: ParseTypeInner,
         member: Ident,
@@ -203,7 +222,7 @@ pub enum ParseType {
     Slice(Box<ParseType>),
     Array {
         inner: Box<ParseType>,
-        len: usize,
+        len: ParseArrayLen,
     },
     Tuple(Vec<ParseType>),
     Reference {
@@ -229,6 +248,7 @@ impl ParseType {
             ParseType::Application(application) => application.span.clone(),
             ParseType::Lambda(lambda) => lambda.span.clone(),
             ParseType::Hole(hole) => hole.span.clone(),
+            ParseType::ConstValue { span, .. } => span.clone(),
             ParseType::Associated { base, member } => Span::new(
                 base.span.file_path.clone(),
                 base.span.start,
@@ -253,6 +273,7 @@ impl ParseType {
             ParseType::Application(application) => application.constructor.type_name(),
             ParseType::Lambda(_) => "<type lambda>".to_string(),
             ParseType::Hole(_) => "_".to_string(),
+            ParseType::ConstValue { value, .. } => value.to_string(),
             ParseType::Associated { base, member } => format!("{}::{}", base.name, member.name),
             ParseType::Reference { is_mut, pointee } => {
                 if *is_mut {

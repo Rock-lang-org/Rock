@@ -375,7 +375,7 @@ fn selection_service_selects_generic_fixed_array_builtin_slice_impl() {
     };
     let mut method = method(method_id, impl_id);
     method.name = "echo".to_string();
-    method.params[0].ty = Type::Array(Box::new(Type::Generic(generic_t)), 3);
+    method.params[0].ty = Type::Array(Box::new(Type::Generic(generic_t)), crate::types::ArrayLen::Value(3));
     method.params.push(HirParam {
         name: "value".to_string(),
         local_id: crate::ids::HirLocalId(1),
@@ -415,7 +415,7 @@ fn selection_service_selects_generic_fixed_array_builtin_slice_impl() {
         .with_effective_trait_methods(&effective);
     let receiver = HirExpr {
         kind: HirExprKind::Var("arr".to_string()),
-        ty: Type::Array(Box::new(Type::I64), 3),
+        ty: Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3)),
         span: Span::test(),
     };
 

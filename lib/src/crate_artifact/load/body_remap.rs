@@ -149,7 +149,7 @@ pub(super) fn remap_expr_child_locations_with_scope<P: crate::hir::HirPhase>(
     remap_type_def_ids(&mut expr.ty, remap, type_validator)?;
 
     match &mut expr.kind {
-        HirExprKindFor::IntLiteral(_)
+        HirExprKindFor::IntLiteral(_) | HirExprKindFor::ConstParam(_)
         | HirExprKindFor::FloatLiteral(_)
         | HirExprKindFor::BoolLiteral(_)
         | HirExprKindFor::StringLiteral(_)

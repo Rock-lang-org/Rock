@@ -182,7 +182,7 @@ pub(super) fn remap_expr_location_product_ids<P: HirPhase>(
         crate::hir::HirExprKindFor::ResolvedVar(reference) => {
             remap_var_target_product_ids(&mut reference.target, id_remap);
         }
-        crate::hir::HirExprKindFor::IntLiteral(_)
+        crate::hir::HirExprKindFor::IntLiteral(_) | crate::hir::HirExprKindFor::ConstParam(_)
         | crate::hir::HirExprKindFor::FloatLiteral(_)
         | crate::hir::HirExprKindFor::BoolLiteral(_)
         | crate::hir::HirExprKindFor::StringLiteral(_)

@@ -680,7 +680,7 @@ fn substitute_trait_impl_types_in_expr(
                 generic_subst,
             );
         }
-        HirExprKind::IntLiteral(_)
+        HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
         | HirExprKind::FloatLiteral(_)
         | HirExprKind::BoolLiteral(_)
         | HirExprKind::StringLiteral(_)

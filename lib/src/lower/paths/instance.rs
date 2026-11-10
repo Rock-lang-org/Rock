@@ -20,6 +20,23 @@ impl Lowerer {
                 span,
             };
         }
+        // A bare const generic name (`N: usize`) reads as an `I64` holding the concrete length.
+        if let ([ast::IdentOrType::Type(ast::ParseType::Type(name))], true) =
+            (inst.name.path.as_slice(), inst.fields.is_empty())
+        {
+            let const_param = self.body.context().and_then(|context| {
+                let id = context.generic_param_id(&name.name)?;
+                (context.generic_param_kind(id) == Some(&crate::type_services::kind::Kind::Usize))
+                    .then_some(id)
+            });
+            if let Some(id) = const_param {
+                return HirExpr {
+                    ty: Type::I64,
+                    kind: HirExprKind::ConstParam(id),
+                    span,
+                };
+            }
+        }
         let segments = path_names(&inst.name.path);
 
         let struct_resolution = crate::lower::resolution::LowerResolutionContext::new(self)

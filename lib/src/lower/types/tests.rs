@@ -392,10 +392,10 @@ fn test_lower_parse_fixed_array_type_preserves_length_without_error() {
 
     let ty = lowerer.lower_parse_type(&ParseType::Array {
         inner: Box::new(named_type("I64")),
-        len: 4,
+        len: ast::ParseArrayLen::Literal(4),
     });
 
-    assert_eq!(ty, Type::Array(Box::new(Type::I64), 4));
+    assert_eq!(ty, Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(4)));
     assert!(lowerer.errors().is_empty());
 }
 

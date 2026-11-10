@@ -387,7 +387,7 @@ fn substitute_uses_typed_type_var_id_keys() {
 #[test]
 fn test_display_formats_slice_and_fixed_array_differently() {
     let slice = Type::Slice(Box::new(Type::I64));
-    let array = Type::Array(Box::new(Type::I64), 4);
+    let array = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(4));
 
     assert_eq!(slice.to_string(), "[I64]");
     assert_eq!(array.to_string(), "[I64; 4]");

@@ -211,6 +211,7 @@ fn validate_type_nominal_layout(
         | Type::Generic(_)
         | Type::Constructor { .. }
         | Type::BoundVar { .. }
+        | Type::ConstValue(_)
         | Type::Error => {}
     }
 }

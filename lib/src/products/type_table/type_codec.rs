@@ -59,8 +59,12 @@ impl ProductTypeEncoder {
             Type::Char => ProductTypeRow::Char,
             Type::Unit => ProductTypeRow::Unit,
             Type::Never => ProductTypeRow::Never,
+            Type::ConstValue(n) => ProductTypeRow::ConstValue(*n),
             Type::Slice(inner) => ProductTypeRow::Slice(self.encode_type(inner)?),
-            Type::Array(inner, len) => ProductTypeRow::Array(self.encode_type(inner)?, *len),
+            Type::Array(inner, len) => ProductTypeRow::Array(
+                self.encode_type(inner)?,
+                self.encode_type(&len.to_const_type())?,
+            ),
             Type::Tuple(elems) => ProductTypeRow::Tuple(self.encode_types(elems)?),
             Type::Function {
                 params,
@@ -199,9 +203,13 @@ impl<'a> ProductTypeDecoder<'a> {
             ProductTypeRow::Char => Type::Char,
             ProductTypeRow::Unit => Type::Unit,
             ProductTypeRow::Never => Type::Never,
+            ProductTypeRow::ConstValue(n) => Type::ConstValue(*n),
             ProductTypeRow::Slice(inner) => Type::Slice(Box::new(self.decode_type(*inner)?)),
             ProductTypeRow::Array(inner, len) => {
-                Type::Array(Box::new(self.decode_type(*inner)?), *len)
+                Type::Array(
+                    Box::new(self.decode_type(*inner)?),
+                    crate::types::ArrayLen::from_const_type(&self.decode_type(*len)?),
+                )
             }
             ProductTypeRow::Tuple(elems) => Type::Tuple(self.decode_types(elems)?),
             ProductTypeRow::Function {

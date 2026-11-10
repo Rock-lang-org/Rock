@@ -349,7 +349,7 @@ fn type_context_roundtrips_structural_types() {
         Type::Never,
         Type::Error,
         Type::Slice(Box::new(Type::I64)),
-        Type::Array(Box::new(Type::Bool), 4),
+        Type::Array(Box::new(Type::Bool), crate::types::ArrayLen::Value(4)),
         Type::Tuple(vec![Type::I64, Type::Bool]),
         Type::function(vec![Type::I64, Type::Bool], Type::Unit),
         Type::Struct {
@@ -435,21 +435,21 @@ fn type_context_interns_equal_composite_tys() {
     assert_eq!(
         context.intern_ty(Ty::Array {
             inner: i64_ty,
-            len: 4,
+            len: crate::types::ArrayLen::Value(4),
         }),
         context.intern_ty(Ty::Array {
             inner: i64_ty,
-            len: 4,
+            len: crate::types::ArrayLen::Value(4),
         })
     );
     assert_ne!(
         context.intern_ty(Ty::Array {
             inner: i64_ty,
-            len: 4,
+            len: crate::types::ArrayLen::Value(4),
         }),
         context.intern_ty(Ty::Array {
             inner: i64_ty,
-            len: 8,
+            len: crate::types::ArrayLen::Value(8),
         })
     );
     assert_eq!(

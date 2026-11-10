@@ -156,3 +156,46 @@ fn test_cast_on_both_binary_operands() {
     assert!(matches!(*lhs, Expression::CastExpr(_, _)));
     assert!(matches!(*rhs, Expression::CastExpr(_, _)));
 }
+
+/// A number after a cast type is never a literal type argument: `x as I64, 3` keeps its comma.
+#[test]
+fn test_cast_type_does_not_consume_following_number_argument() {
+    let tokens = lex_test("max x as I64, 3");
+    let config = Config::default();
+    let (rest, expr) = expression
+        .process(ParseCtx::from(&tokens, &config))
+        .expect("parse failed");
+
+    assert_eq!(rest.len(), 0);
+    let rendered = format!("{expr:?}");
+    assert!(
+        !rendered.contains("ConstValue"),
+        "cast type consumed the number: {rendered}"
+    );
+    assert!(rendered.contains("CastExpr"), "{rendered}");
+}
+
+#[test]
+fn test_cast_followed_by_number_in_arguments_keeps_both_arguments() {
+    let tokens = lex_test("f (x as I64), 3");
+    let config = Config::default();
+    let (rest, expr) = expression
+        .process(ParseCtx::from(&tokens, &config))
+        .expect("parse failed");
+
+    assert_eq!(rest.len(), 0);
+    assert!(!format!("{expr:?}").contains("ConstValue"));
+}
+
+/// `(Maybe::Some 7)` is a call, not a parenthesized type application with a literal argument.
+#[test]
+fn test_parenthesized_constructor_call_keeps_number_argument() {
+    let tokens = lex_test("keep (Maybe::Some 7)");
+    let config = Config::default();
+    let (rest, expr) = expression
+        .process(ParseCtx::from(&tokens, &config))
+        .expect("parse failed");
+
+    assert_eq!(rest.len(), 0);
+    assert!(!format!("{expr:?}").contains("ConstValue"));
+}

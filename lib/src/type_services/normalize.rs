@@ -44,6 +44,20 @@ impl std::fmt::Display for NormalizeError {
                 write!(f, "type normalization node limit exceeded ({limit})")
             }
             Self::UnknownConstructor(id) => write!(f, "unknown type constructor {id:?}"),
+            Self::KindMismatch {
+                expected: Kind::Usize,
+                actual,
+            } => write!(
+                f,
+                "kind mismatch: expected a `usize` constant such as `3`, found a type of kind {actual}"
+            ),
+            Self::KindMismatch {
+                expected,
+                actual: Kind::Usize,
+            } => write!(
+                f,
+                "kind mismatch: expected a type of kind {expected}, found a `usize` constant"
+            ),
             Self::KindMismatch { expected, actual } => {
                 write!(f, "kind mismatch: expected {expected}, found {actual}")
             }
@@ -465,6 +479,7 @@ impl<'a> TypeNormalizer<'a> {
                 Ok(kind)
             }
             Type::BoundVar { kind, .. } => Ok(kind.clone()),
+            Type::ConstValue(_) => Ok(Kind::Usize),
             Type::Generic(id) => Ok(self
                 .env
                 .generic_kinds

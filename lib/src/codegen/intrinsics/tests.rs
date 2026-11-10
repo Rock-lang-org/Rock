@@ -211,7 +211,7 @@ fn compile_intrinsic_values_with_type_ids_array_len_handles_array_ref() {
     let mut codegen = CodeGen::new(&context, "test");
     let mut type_context = TypeContext::new();
     let array_ref_id = type_context.intern_type(&Type::Reference {
-        inner: Box::new(Type::Array(Box::new(Type::I64), 4)),
+        inner: Box::new(Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(4))),
         mutable: false,
     });
     let i64_id = type_context.intern_type(&Type::I64);
@@ -252,7 +252,7 @@ fn compile_intrinsic_values_with_type_ids_array_len_handles_projected_array_ref(
     };
     let trait_arg_ty = Type::Bool;
     let projected_ref_ty = Type::Reference {
-        inner: Box::new(Type::Array(Box::new(Type::I64), 6)),
+        inner: Box::new(Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(6))),
         mutable: false,
     };
     let base_id = type_context.intern_type(&base_ty);

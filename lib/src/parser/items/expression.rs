@@ -142,7 +142,10 @@ fn append_secondaries(expression: Expression, mut trailing: Vec<SecondaryExpr>) 
 
 fn parse_cast_suffix(stream: Input, base: Expression) -> IResult<Expression> {
     if let Ok((stream_after_as, _)) = TokenType::Keyword("as".to_string()).process(stream) {
-        if let Ok((stream2, ty)) = parse_type(stream_after_as) {
+        let mut cast_stream = stream_after_as;
+        cast_stream.no_literal_type_args = true;
+        if let Ok((mut stream2, ty)) = parse_type(cast_stream) {
+            stream2.no_literal_type_args = false;
             return Ok((stream2, Expression::CastExpr(Box::new(base), ty)));
         }
     }

@@ -65,7 +65,7 @@ pub(super) fn collect_generic_names_from_parse_type<F>(
         ast::ParseType::Lambda(lambda) => {
             collect_generic_names_from_parse_type(&lambda.body, generic_params, is_known_type_name);
         }
-        ast::ParseType::Hole(_) => {}
+        ast::ParseType::Hole(_) | ast::ParseType::ConstValue { .. } => {}
         ast::ParseType::Associated { base, .. } => {
             for generic in &base.generics {
                 collect_generic_names_from_parse_type(generic, generic_params, is_known_type_name);
@@ -76,8 +76,14 @@ pub(super) fn collect_generic_names_from_parse_type<F>(
         | ast::ParseType::Pointer(inner) => {
             collect_generic_names_from_parse_type(inner, generic_params, is_known_type_name);
         }
-        ast::ParseType::Array { inner, .. } => {
+        ast::ParseType::Array { inner, len } => {
             collect_generic_names_from_parse_type(inner, generic_params, is_known_type_name);
+            // A length name is an implicit const generic, introduced like `T`.
+            if let ast::ParseArrayLen::Param(name) = len {
+                if !is_known_type_name(&name.name) && !generic_params.contains(&name.name) {
+                    generic_params.push(name.name.clone());
+                }
+            }
         }
         ast::ParseType::Function(args) | ast::ParseType::Tuple(args) => {
             for arg in args {

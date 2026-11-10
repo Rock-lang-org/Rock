@@ -150,6 +150,7 @@ impl<'a> SelectionService<'a> {
             | Type::Apply { .. }
             | Type::Lambda { .. }
             | Type::BoundVar { .. }
+            | Type::ConstValue(_)
             | Type::Error => false,
         }
     }

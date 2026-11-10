@@ -4,9 +4,9 @@ pub(super) fn validate_type_table_graph(table: &ProductTypeTable) -> Result<(), 
     fn children(row: &ProductTypeRow) -> Vec<ProductTypeId> {
         match row {
             ProductTypeRow::Slice(inner)
-            | ProductTypeRow::Array(inner, _)
             | ProductTypeRow::Pointer(inner)
             | ProductTypeRow::Reference { inner, .. } => vec![*inner],
+            ProductTypeRow::Array(inner, len) => vec![*inner, *len],
             ProductTypeRow::Tuple(elements) => elements.clone(),
             ProductTypeRow::Function {
                 params,
@@ -42,6 +42,7 @@ pub(super) fn validate_type_table_graph(table: &ProductTypeTable) -> Result<(), 
             | ProductTypeRow::Char
             | ProductTypeRow::Unit
             | ProductTypeRow::Never
+            | ProductTypeRow::ConstValue(_)
             | ProductTypeRow::Generic(_)
             | ProductTypeRow::Constructor { .. }
             | ProductTypeRow::BoundVar { .. } => Vec::new(),

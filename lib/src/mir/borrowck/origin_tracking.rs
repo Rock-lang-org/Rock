@@ -254,6 +254,7 @@ fn type_id_tracks_origin_inner(
         | Ty::Unit
         | Ty::Never
         | Ty::Pointer(_)
+        | Ty::ConstValue(_)
         | Ty::Error => false,
         Ty::Generic(_)
         | Ty::TypeVar(_)
@@ -479,6 +480,7 @@ fn type_id_tracks_origin_for_structural_type(
         | Type::Unit
         | Type::Never
         | Type::Pointer(_)
+        | Type::ConstValue(_)
         | Type::Error => false,
     }
 }
