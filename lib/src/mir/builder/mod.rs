@@ -17,6 +17,7 @@ mod move_tracking;
 mod places;
 mod projection_provider;
 mod reference_origins;
+mod array_tail;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -69,6 +70,8 @@ struct LoopTargets {
     break_target: BasicBlockId,
     continue_target: BasicBlockId,
     cleanup_depth: usize,
+    /// Hidden by-value array temporary whose unvisited tail `break` must drop.
+    owned_array: Option<Local>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

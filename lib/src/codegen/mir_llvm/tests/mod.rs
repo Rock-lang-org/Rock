@@ -50,6 +50,7 @@ fn local_body_callable_key(function_id: &MirFunctionId) -> MirCallableKey {
         MirFunctionId::Extern(id) => MirCallableKey::Extern(*id),
         MirFunctionId::Instance(id) => MirCallableKey::Instance(*id),
         MirFunctionId::Closure(id) => MirCallableKey::Closure(MirFunctionId::Closure(id.clone())),
+        MirFunctionId::ArrayTailDrop(ty) => MirCallableKey::RuntimeHelper(crate::mir::MirRuntimeHelper::ArrayTailDrop(*ty)),
     }
 }
 
@@ -489,6 +490,7 @@ impl<'ctx> CodeGen<'ctx> {
             MirFunctionId::Function(id) => format!("fn_{}_{}", id.crate_id.0, id.local.0),
             MirFunctionId::Extern(id) => format!("extern_{}_{}", id.crate_id.0, id.local.0),
             MirFunctionId::Instance(id) => format!("instance_{}", id.0),
+            MirFunctionId::ArrayTailDrop(ty) => format!("array_tail_drop_{}", ty.0),
             MirFunctionId::Closure(id) => format!(
                 "closure_{}_{}",
                 Self::mir_function_id_symbol_key(&id.owner),

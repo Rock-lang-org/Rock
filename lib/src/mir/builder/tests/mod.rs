@@ -280,6 +280,7 @@ fn assert_mir_agreement_clean(mir: &MirProgram) {
 }
 
 mod aggregates;
+mod array_for_tail_drops;
 mod backend_contract;
 mod callables;
 mod closures;

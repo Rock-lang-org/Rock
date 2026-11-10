@@ -2,7 +2,7 @@ mod aggregate;
 mod intrinsic;
 mod intrinsic_names;
 
-use crate::ids::{DefId, InstanceId};
+use crate::ids::{DefId, InstanceId, TypeId};
 
 use super::backend_contract::MirCallableKey;
 
@@ -15,6 +15,7 @@ pub enum MirFunctionId {
     Extern(DefId),
     Instance(InstanceId),
     Closure(Box<MirClosureId>),
+    ArrayTailDrop(TypeId),
 }
 
 impl MirFunctionId {
@@ -24,6 +25,7 @@ impl MirFunctionId {
             MirFunctionId::Extern(id) => format!("extern#{}:{}", id.crate_id.0, id.local.0),
             MirFunctionId::Instance(id) => format!("instance#{}", id.0),
             MirFunctionId::Closure(id) => format!("closure#{:?}:{}", id.owner, id.local_index),
+            MirFunctionId::ArrayTailDrop(ty) => format!("array_tail_drop#{:?}", ty),
         }
     }
 }
@@ -39,6 +41,7 @@ pub enum MirRuntimeHelper {
     BoundsCheck,
     HeapAlloc,
     DropGlue,
+    ArrayTailDrop(TypeId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -54,6 +57,9 @@ impl MirCallable {
                 MirCallableKey::Extern(id) => Some(MirFunctionId::Extern(*id)),
                 MirCallableKey::Instance(id) => Some(MirFunctionId::Instance(*id)),
                 MirCallableKey::Closure(id) => Some(id.clone()),
+                MirCallableKey::RuntimeHelper(MirRuntimeHelper::ArrayTailDrop(ty)) => {
+                    Some(MirFunctionId::ArrayTailDrop(*ty))
+                }
                 MirCallableKey::Intrinsic(_) | MirCallableKey::RuntimeHelper(_) => None,
             },
         }

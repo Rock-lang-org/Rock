@@ -23,6 +23,9 @@ impl<'a> MirBuilder<'a> {
                 MirFunctionId::Closure(_) => {
                     crate::mir::MirCallableKey::Closure(function_id.clone())
                 }
+                MirFunctionId::ArrayTailDrop(ty) => crate::mir::MirCallableKey::RuntimeHelper(
+                    crate::mir::MirRuntimeHelper::ArrayTailDrop(*ty),
+                ),
             };
             if contract.callables.contains_key(&key) {
                 continue;
@@ -47,7 +50,8 @@ impl<'a> MirBuilder<'a> {
                     key: key.clone(),
                     source_def_id: match function_id {
                         MirFunctionId::Function(id) | MirFunctionId::Extern(id) => Some(*id),
-                        MirFunctionId::Instance(_) | MirFunctionId::Closure(_) => None,
+                        MirFunctionId::Instance(_) | MirFunctionId::Closure(_)
+                        | MirFunctionId::ArrayTailDrop(_) => None,
                     },
                     kind: crate::mir::MirCallableKind::LocalBody {
                         function_id: function_id.clone(),
@@ -97,6 +101,7 @@ impl<'a> MirBuilder<'a> {
             MirFunctionId::Function(id) => format!("fn_{}_{}", id.crate_id.0, id.local.0),
             MirFunctionId::Extern(id) => format!("extern_{}_{}", id.crate_id.0, id.local.0),
             MirFunctionId::Instance(id) => format!("instance_{}", id.0),
+            MirFunctionId::ArrayTailDrop(ty) => format!("array_tail_drop_{}", ty.0),
             MirFunctionId::Closure(id) => format!(
                 "closure_{}_{}",
                 Self::mir_function_id_symbol_key(&id.owner),

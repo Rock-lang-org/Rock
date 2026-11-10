@@ -43,6 +43,7 @@ impl<'a> MirBuilder<'a> {
             _ => None,
         };
         let mut loop_owned_elem_ty: Option<Type> = None;
+        let mut loop_owned_temp = None;
         let (loop_local, end_operand, iter_place, iter_base_ty, inclusive_range) =
             if let Some((start, end, inclusive)) = nominal_range {
                 let loop_local = self.new_local_with_source(
@@ -122,16 +123,6 @@ impl<'a> MirBuilder<'a> {
                 loop_owned_elem_ty = (matches!(&iter.ty, Type::Array(_, _))
                     && self.type_needs_cleanup(&elem_ty))
                 .then(|| elem_ty.clone());
-                if let Some(owned_elem_ty) = &loop_owned_elem_ty {
-                    self.drops.register_loop_owned_array(
-                        iter_temp,
-                        LoopOwnedArray {
-                            counter,
-                            elem_ty: owned_elem_ty.clone(),
-                            len: len as usize,
-                        },
-                    );
-                }
                 let loop_local = self.new_local_with_source(
                     self.type_id_for(&elem_ty),
                     Mutability::Not,
@@ -139,6 +130,18 @@ impl<'a> MirBuilder<'a> {
                     LocalSource::UserBinding,
                     binding_span.clone(),
                 );
+                if let Some(owned_elem_ty) = &loop_owned_elem_ty {
+                    loop_owned_temp = Some(iter_temp);
+                    self.drops.register_loop_owned_array(
+                        iter_temp,
+                        LoopOwnedArray {
+                            counter,
+                            item_local: loop_local,
+                            elem_ty: owned_elem_ty.clone(),
+                            len: len as usize,
+                        },
+                    );
+                }
                 self.register_scoped_temp(loop_local);
                 self.emit_storage_live(loop_local, binding_span.clone());
 
@@ -234,6 +237,7 @@ impl<'a> MirBuilder<'a> {
             break_target: merge_block,
             continue_target: inc_block,
             cleanup_depth: self.scope_locals.len(),
+            owned_array: loop_owned_temp,
         });
         let body_dest = Place {
             local: self.new_local(self.type_id_for(&Type::Unit), Mutability::Not, None),
@@ -312,6 +316,11 @@ impl<'a> MirBuilder<'a> {
         }
 
         self.current_block = Some(merge_block);
+        // Normal completion and `break` (which dropped the tail itself) both leave
+        // the array fully consumed, so exits after the loop need no tail cleanup.
+        if let Some(temp) = loop_owned_temp {
+            self.finish_loop_owned_array(temp);
+        }
         self.emit_assign(dest, Rvalue::Use(Operand::Constant(Constant::Unit)), span);
     }
 }

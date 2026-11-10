@@ -89,7 +89,8 @@ fn nested_function_owner_instance(function: &MirFunction) -> Option<InstanceId> 
     match &function.id {
         MirFunctionId::Closure(closure) => mir_function_root_owner_instance(&closure.owner),
         MirFunctionId::Instance(id) => Some(*id),
-        MirFunctionId::Function(_) | MirFunctionId::Extern(_) => None,
+        MirFunctionId::Function(_) | MirFunctionId::Extern(_)
+        | MirFunctionId::ArrayTailDrop(_) => None,
     }
 }
 
@@ -97,7 +98,8 @@ fn mir_function_root_owner_instance(id: &MirFunctionId) -> Option<InstanceId> {
     match id {
         MirFunctionId::Instance(id) => Some(*id),
         MirFunctionId::Closure(closure) => mir_function_root_owner_instance(&closure.owner),
-        MirFunctionId::Function(_) | MirFunctionId::Extern(_) => None,
+        MirFunctionId::Function(_) | MirFunctionId::Extern(_)
+        | MirFunctionId::ArrayTailDrop(_) => None,
     }
 }
 

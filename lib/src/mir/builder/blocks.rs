@@ -1,6 +1,5 @@
 use crate::types::Type;
 
-use super::drop_state::LoopOwnedArray;
 use super::{HirBlock, HirStmt, MirBuilder};
 use crate::mir::{
     Constant, DropObligationKind, LocalSource, Mutability, Operand, Place, Projection, Rvalue,
@@ -15,8 +14,10 @@ impl<'a> MirBuilder<'a> {
             if let Some(current) = current_opt {
                 let ty = self.get_local_type(local).unwrap_or(Type::Unit);
                 if let Some(owned) = self.drops.loop_owned_array(local) {
-                    self.emit_loop_owned_array_tail_drops(local, owned);
+                    self.emit_loop_owned_array_early_exit(local, owned, true);
                     current_opt = self.current_block;
+                } else if self.drops.is_consumed_loop_array(local) {
+                    self.end_loop_owned_array_storage(local);
                 } else if self.type_needs_cleanup(&ty) {
                     let root_place = Place {
                         local,
@@ -34,94 +35,42 @@ impl<'a> MirBuilder<'a> {
         self.drops.leave_cleanup(previous_cleanup_mode);
     }
 
-    /// Drops the unvisited tail (`counter + 1..len`) of a by-value array `for`
-    /// loop's hidden temporary with a runtime loop over a dynamic index, then
-    /// ends the temporary's storage. The element at `counter` already moved
-    /// into the loop binding, and after normal completion `counter == len`
-    /// makes the loop a no-op.
-    fn emit_loop_owned_array_tail_drops(&mut self, temp: crate::mir::Local, owned: LoopOwnedArray) {
-        let int_ty = self.type_id_for(&Type::I64);
-        let bool_ty = self.type_id_for(&Type::Bool);
-        let index_local = self.new_local(int_ty, Mutability::Not, None);
-        let cond_local = self.new_local(bool_ty, Mutability::Not, None);
-        let temp_place = Place {
-            local: temp,
-            projection: vec![],
+    /// `break` out of a by-value array `for` loop: the binding drops first
+    /// (matching scope-exit order), then the unvisited tail.
+    pub(super) fn emit_loop_owned_array_break_drops(&mut self, temp: crate::mir::Local) {
+        let Some(owned) = self.drops.loop_owned_array(temp) else {
+            return;
         };
-        let local_place = |local| Place {
-            local,
-            projection: vec![],
-        };
+        if self.current_block.is_none() {
+            return;
+        }
+        let previous_cleanup_mode = self.drops.enter_cleanup();
+        self.emit_drop_for_place(
+            &owned.elem_ty,
+            Place {
+                local: owned.item_local,
+                projection: vec![],
+            },
+            None,
+        );
+        self.emit_loop_owned_array_early_exit(temp, owned, false);
+        self.drops.leave_cleanup(previous_cleanup_mode);
+    }
 
-        let head_block = self.new_block();
-        let body_block = self.new_block();
-        let done_block = self.new_block();
+    /// The `for` loop over `temp` finished: every element was moved out or
+    /// dropped (`break` drops the tail itself), so later exits emit no tail
+    /// cleanup, only the end of the temporary's storage.
+    pub(super) fn finish_loop_owned_array(&mut self, temp: crate::mir::Local) {
+        self.drops.consume_loop_owned_array(temp);
+    }
 
+    pub(super) fn end_loop_owned_array_storage(&mut self, temp: crate::mir::Local) {
         let Some(current) = self.current_block else {
             return;
         };
-        let origin = self.cleanup_origin(&temp_place);
-        let statements = &mut self.blocks[current.0].statements;
-        statements.push(StatementData::storage_live(index_local, None));
-        statements.push(StatementData::storage_live(cond_local, None));
-        statements.push(StatementData::cleanup_assign(
-            local_place(index_local),
-            Rvalue::BinaryOp(
-                crate::mir::MirBinOp::Add,
-                Operand::Copy(local_place(owned.counter)),
-                Operand::Constant(Constant::Int(1)),
-            ),
-            None,
-        ));
-        self.blocks[current.0].terminator = Some(Terminator::goto(head_block, origin.clone()));
-
-        self.blocks[head_block.0]
-            .statements
-            .push(StatementData::cleanup_assign(
-                local_place(cond_local),
-                Rvalue::BinaryOp(
-                    crate::mir::MirBinOp::Lt,
-                    Operand::Copy(local_place(index_local)),
-                    Operand::Constant(Constant::Int(owned.len as i64)),
-                ),
-                None,
-            ));
-        self.blocks[head_block.0].terminator = Some(Terminator::switch_int(
-            Operand::Copy(local_place(cond_local)),
-            vec![(1, body_block)],
-            done_block,
-            origin.clone(),
-        ));
-
-        self.current_block = Some(body_block);
-        let mut projection = temp_place.projection.clone();
-        projection.push(Projection::Index(index_local));
-        let elem_place = Place {
-            local: temp,
-            projection,
-        };
-        self.emit_drop_for_place(&owned.elem_ty, elem_place, None);
-        if let Some(current) = self.current_block {
-            self.blocks[current.0]
-                .statements
-                .push(StatementData::cleanup_assign(
-                    local_place(index_local),
-                    Rvalue::BinaryOp(
-                        crate::mir::MirBinOp::Add,
-                        Operand::Copy(local_place(index_local)),
-                        Operand::Constant(Constant::Int(1)),
-                    ),
-                    None,
-                ));
-            self.blocks[current.0].terminator = Some(Terminator::goto(head_block, origin));
-        }
-
-        self.current_block = Some(done_block);
         let flag = self.drops.drop_flag_for(temp);
         let projection_flags = self.drops.projection_drop_flags_for_local(temp);
-        let statements = &mut self.blocks[done_block.0].statements;
-        statements.push(StatementData::storage_dead(cond_local, None));
-        statements.push(StatementData::storage_dead(index_local, None));
+        let statements = &mut self.blocks[current.0].statements;
         statements.push(StatementData::storage_dead(temp, None));
         statements.extend(flag.map(|flag| StatementData::storage_dead(flag, None)));
         statements.extend(
@@ -536,8 +485,22 @@ impl<'a> MirBuilder<'a> {
     }
 
     pub(super) fn terminate_with_cleanup(&mut self, cleanup_depth: usize, terminator: Terminator) {
+        self.terminate_with_loop_exit_cleanup(cleanup_depth, None, terminator);
+    }
+
+    /// Like `terminate_with_cleanup`, additionally dropping the unvisited tail of
+    /// the exited loop's by-value array, which lives outside the cleaned scopes.
+    pub(super) fn terminate_with_loop_exit_cleanup(
+        &mut self,
+        cleanup_depth: usize,
+        owned_array: Option<crate::mir::Local>,
+        terminator: Terminator,
+    ) {
         let cleanup_locals = self.active_cleanup_locals_from(cleanup_depth);
         self.finish_scope_locals(cleanup_locals);
+        if let Some(temp) = owned_array {
+            self.emit_loop_owned_array_break_drops(temp);
+        }
         if let Some(current) = self.current_block {
             self.blocks[current.0].terminator = Some(terminator);
             self.current_block = None;
@@ -640,8 +603,9 @@ impl<'a> MirBuilder<'a> {
                             self.current_source_owner,
                             expr.as_ref().map(|expr| expr.span.clone()),
                         );
-                        self.terminate_with_cleanup(
+                        self.terminate_with_loop_exit_cleanup(
                             loop_targets.cleanup_depth,
+                            loop_targets.owned_array,
                             Terminator::goto(
                                 loop_targets.break_target,
                                 self.source_origin(branch_span),

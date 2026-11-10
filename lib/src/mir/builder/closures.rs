@@ -101,7 +101,8 @@ impl<'a> MirBuilder<'a> {
     ) {
         let hir_id = match &closure_id.owner {
             MirFunctionId::Function(id) | MirFunctionId::Extern(id) => *id,
-            MirFunctionId::Instance(_) | MirFunctionId::Closure(_) => {
+            MirFunctionId::Instance(_) | MirFunctionId::Closure(_)
+            | MirFunctionId::ArrayTailDrop(_) => {
                 crate::ids::DefId::new(crate::ids::CrateId(0), crate::ids::LocalDefId(0))
             }
         };

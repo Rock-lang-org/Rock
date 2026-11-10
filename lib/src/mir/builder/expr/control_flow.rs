@@ -139,6 +139,7 @@ impl<'a> MirBuilder<'a> {
             break_target: merge_block,
             continue_target: cond_block,
             cleanup_depth: self.scope_locals.len(),
+            owned_array: None,
         });
         let body_dest = Place {
             local: self.new_local(self.type_id_for(&Type::Unit), Mutability::Not, None),
