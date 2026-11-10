@@ -244,7 +244,7 @@ fn substitute_typevars_in_expr_with_targets(
     substitute_typevar_in_type(&mut expr.ty, target_ids, target_generic_ids, concrete_ty);
     substitute_generic_param_in_type(&mut expr.ty, target_generic_ids, concrete_ty);
     match &mut expr.kind {
-        HirExprKindFor::IntLiteral(_)
+        HirExprKindFor::IntLiteral(_) | HirExprKindFor::ConstParam(_)
         | HirExprKindFor::FloatLiteral(_)
         | HirExprKindFor::BoolLiteral(_)
         | HirExprKindFor::StringLiteral(_)

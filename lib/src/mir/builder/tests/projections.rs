@@ -8,7 +8,7 @@ fn build_monomorphized_lowers_trait_impl_projection_contract() {
     let function_id = DefId::new(CrateId(0), LocalDefId(23));
     let instance_id = InstanceId(0);
     let assoc_type_id = AssocTypeId(0);
-    let base_ty = Type::Array(Box::new(Type::I64), 3);
+    let base_ty = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3));
     let projection_ty = Type::Projection {
         ty: Box::new(base_ty.clone()),
         trait_id,
@@ -192,7 +192,7 @@ fn build_monomorphized_lowers_projection_output_for_concrete_projection_type() {
     let trait_id = DefId::new(CrateId(0), LocalDefId(31));
     let function_id = DefId::new(CrateId(0), LocalDefId(32));
     let assoc_type_id = AssocTypeId(0);
-    let base_ty = Type::Array(Box::new(Type::I64), 3);
+    let base_ty = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3));
     let projection_ty = Type::Projection {
         ty: Box::new(base_ty.clone()),
         trait_id,
@@ -621,7 +621,7 @@ fn projection_outputs_use_selected_index_impl() {
     let impl_id = DefId::new(CrateId(0), LocalDefId(39));
     let trait_id = DefId::new(CrateId(0), LocalDefId(40));
     let assoc_type_id = AssocTypeId(0);
-    let base_ty = Type::Array(Box::new(Type::U8), 4);
+    let base_ty = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(4));
     let projection = Type::Projection {
         ty: Box::new(base_ty.clone()),
         trait_id,
@@ -714,7 +714,7 @@ fn projection_outputs_include_callable_abi_return_type() {
     let impl_id = DefId::new(CrateId(0), LocalDefId(43));
     let trait_id = DefId::new(CrateId(0), LocalDefId(41));
     let assoc_type_id = AssocTypeId(0);
-    let base_ty = Type::Array(Box::new(Type::U8), 4);
+    let base_ty = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(4));
     let abi_projection = Type::Projection {
         ty: Box::new(base_ty.clone()),
         trait_id,

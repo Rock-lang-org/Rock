@@ -28,10 +28,11 @@ pub enum Ty {
     Char,
     Unit,
     Never,
+    ConstValue(u64),
     Slice(TypeId),
     Array {
         inner: TypeId,
-        len: usize,
+        len: crate::types::ArrayLen,
     },
     Tuple(Vec<TypeId>),
     Function {
@@ -209,6 +210,7 @@ impl TypeContext {
                     trait_args: trait_args.iter().map(|arg| self.type_for(*arg)).collect(),
                 })
                 .unwrap_or(Kind::Type),
+            Ty::ConstValue(_) => Kind::Usize,
             _ => Kind::Type,
         }
     }
@@ -308,6 +310,7 @@ impl TypeContext {
                 | Ty::Char
                 | Ty::Unit
                 | Ty::Never
+                | Ty::ConstValue(_)
                 | Ty::TypeVar(_)
                 | Ty::Generic(_)
                 | Ty::Constructor { .. }
@@ -356,6 +359,7 @@ impl TypeContext {
             Type::Char => self.intern_ty(Ty::Char),
             Type::Unit => self.intern_ty(Ty::Unit),
             Type::Never => self.intern_ty(Ty::Never),
+            Type::ConstValue(n) => self.intern_ty(Ty::ConstValue(*n)),
             Type::Slice(inner) => {
                 let inner = self.intern_type(inner);
                 self.intern_ty(Ty::Slice(inner))
@@ -470,6 +474,7 @@ impl TypeContext {
             Ty::Char => Type::Char,
             Ty::Unit => Type::Unit,
             Ty::Never => Type::Never,
+            Ty::ConstValue(n) => Type::ConstValue(*n),
             Ty::Slice(inner) => Type::Slice(Box::new(self.type_for(*inner))),
             Ty::Array { inner, len } => Type::Array(Box::new(self.type_for(*inner)), *len),
             Ty::Tuple(elems) => {
@@ -563,6 +568,7 @@ impl TypeContext {
             Type::Char => Ty::Char,
             Type::Unit => Ty::Unit,
             Type::Never => Ty::Never,
+            Type::ConstValue(n) => Ty::ConstValue(*n),
             Type::Slice(inner) => Ty::Slice(self.id_for_type(inner)?),
             Type::Array(inner, len) => Ty::Array {
                 inner: self.id_for_type(inner)?,

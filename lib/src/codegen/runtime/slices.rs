@@ -121,7 +121,7 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 Ok((
                     data_ptr,
-                    self.context.i64_type().const_int(len as u64, false),
+                    self.context.i64_type().const_int(len.as_concrete(), false),
                 ))
             }
             Type::Reference { inner, .. }
@@ -146,7 +146,7 @@ impl<'ctx> CodeGen<'ctx> {
                     };
                     Ok((
                         data_ptr,
-                        self.context.i64_type().const_int(*len as u64, false),
+                        self.context.i64_type().const_int(len.as_concrete(), false),
                     ))
                 }
                 _ => Err(CodegenError::from("Expected slice-compatible reference")),

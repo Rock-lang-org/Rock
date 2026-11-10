@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::hir::{HirImpl, HirImplReceiverPattern, HirMethodCallTarget};
 use crate::type_services::normalize::apply_type_lambda;
-use crate::types::{FunctionSafety, GenericParamDecl, GenericParamId, Type};
+use crate::types::{ArrayLen, FunctionSafety, GenericParamDecl, GenericParamId, Type};
 
 mod receiver_patterns;
 mod type_patterns;

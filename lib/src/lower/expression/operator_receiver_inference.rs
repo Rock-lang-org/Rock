@@ -77,7 +77,10 @@ impl Lowerer {
                 Self::type_accepts_inference_vars(expected, actual)
             }
             (Type::Array(expected, expected_len), Type::Array(actual, actual_len)) => {
-                expected_len == actual_len && Self::type_accepts_inference_vars(expected, actual)
+                (expected_len == actual_len
+                    || matches!(expected_len, crate::types::ArrayLen::Var(_))
+                    || matches!(actual_len, crate::types::ArrayLen::Var(_)))
+                    && Self::type_accepts_inference_vars(expected, actual)
             }
             _ => expected == actual,
         }

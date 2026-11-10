@@ -210,7 +210,7 @@ fn remap_expr_generic_owner(expr: &mut HirExpr, old_owner: DefId, new_owner: Def
             }
             remap_block_generic_owner(body, old_owner, new_owner);
         }
-        HirExprKind::IntLiteral(_)
+        HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
         | HirExprKind::FloatLiteral(_)
         | HirExprKind::BoolLiteral(_)
         | HirExprKind::StringLiteral(_)

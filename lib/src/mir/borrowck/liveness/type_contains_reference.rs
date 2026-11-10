@@ -153,6 +153,7 @@ fn type_id_contains_reference_inner(
         | Ty::Lambda { .. }
         | Ty::BoundVar { .. }
         | Ty::Error
+        | Ty::ConstValue(_)
         | Ty::Never => false,
     }
 }
@@ -327,6 +328,7 @@ fn type_contains_reference_for_structural_type(
         | Type::Generic(_)
         | Type::Constructor { .. }
         | Type::BoundVar { .. }
+        | Type::ConstValue(_)
         | Type::Error => false,
     }
 }

@@ -496,6 +496,7 @@ fn collect_type_vars(ty: &Type, output: &mut HashSet<TypeVarId>) {
         | Type::Generic(_)
         | Type::Constructor { .. }
         | Type::BoundVar { .. }
+        | Type::ConstValue(_)
         | Type::Error => {}
     }
 }

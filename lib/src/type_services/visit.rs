@@ -1,5 +1,5 @@
 use crate::type_services::kind::Kind;
-use crate::types::{FunctionCapture, GenericParamId, Type};
+use crate::types::{ArrayLen, FunctionCapture, GenericParamId, Type};
 
 /// Recursively observes every node in a [`Type`] tree.
 ///
@@ -45,10 +45,12 @@ where
         }
 
         match ty {
-            Type::Slice(inner)
-            | Type::Array(inner, _)
-            | Type::Reference { inner, .. }
-            | Type::Pointer(inner) => recurse(inner, predicate),
+            Type::Array(inner, len) => {
+                recurse(inner, predicate) || recurse(&len.to_const_type(), predicate)
+            }
+            Type::Slice(inner) | Type::Reference { inner, .. } | Type::Pointer(inner) => {
+                recurse(inner, predicate)
+            }
             Type::Tuple(elements) => elements.iter().any(|ty| recurse(ty, predicate)),
             Type::Function {
                 params,
@@ -91,6 +93,7 @@ where
             | Type::Generic(_)
             | Type::Constructor { .. }
             | Type::BoundVar { .. }
+            | Type::ConstValue(_)
             | Type::Error => false,
         }
     }
@@ -104,10 +107,15 @@ where
     V: TypeVisitor + ?Sized,
 {
     match ty {
-        Type::Slice(inner)
-        | Type::Array(inner, _)
-        | Type::Reference { inner, .. }
-        | Type::Pointer(inner) => visitor.visit_type(inner),
+        Type::Array(inner, len) => {
+            visitor.visit_type(inner);
+            // The length is visited as a const-kinded type so every visitor
+            // sees `Param` / `Var` lengths as `Generic` / `TypeVar` leaves.
+            visitor.visit_type(&len.to_const_type());
+        }
+        Type::Slice(inner) | Type::Reference { inner, .. } | Type::Pointer(inner) => {
+            visitor.visit_type(inner)
+        }
         Type::Tuple(elements) => {
             for element in elements {
                 visitor.visit_type(element);
@@ -168,6 +176,7 @@ where
         | Type::Generic(_)
         | Type::Constructor { .. }
         | Type::BoundVar { .. }
+        | Type::ConstValue(_)
         | Type::Error => {}
     }
 }
@@ -183,6 +192,11 @@ pub trait TypeFolder {
 
     fn fold_type(&mut self, ty: Type) -> Type {
         fold_type_children(ty, self)
+    }
+
+    /// Rewrites the length of an array type.
+    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
+        len
     }
 }
 
@@ -218,6 +232,13 @@ where
                 other => fold_type_children(other, self),
             }
         }
+
+        fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
+            match len {
+                ArrayLen::Param(param) => ArrayLen::Param((self.remap)(param)),
+                other => other,
+            }
+        }
     }
 
     fold_type_in_place(ty, &mut GenericParamRemapper { remap });
@@ -230,7 +251,10 @@ where
 {
     match ty {
         Type::Slice(inner) => Type::Slice(Box::new(folder.fold_type(*inner))),
-        Type::Array(inner, len) => Type::Array(Box::new(folder.fold_type(*inner)), len),
+        Type::Array(inner, len) => {
+            let inner = folder.fold_type(*inner);
+            Type::Array(Box::new(inner), folder.fold_array_len(len))
+        }
         Type::Tuple(elements) => Type::Tuple(
             elements
                 .into_iter()
@@ -318,6 +342,10 @@ pub trait TryTypeFolder {
     fn try_fold_type(&mut self, ty: Type) -> Result<Type, Self::Error> {
         try_fold_type_children(ty, self)
     }
+
+    fn try_fold_array_len(&mut self, len: ArrayLen) -> Result<ArrayLen, Self::Error> {
+        Ok(len)
+    }
 }
 
 pub fn try_fold_type<F>(ty: Type, folder: &mut F) -> Result<Type, F::Error>
@@ -334,7 +362,10 @@ where
 {
     Ok(match ty {
         Type::Slice(inner) => Type::Slice(Box::new(folder.try_fold_type(*inner)?)),
-        Type::Array(inner, len) => Type::Array(Box::new(folder.try_fold_type(*inner)?), len),
+        Type::Array(inner, len) => {
+            let inner = folder.try_fold_type(*inner)?;
+            Type::Array(Box::new(inner), folder.try_fold_array_len(len)?)
+        }
         Type::Tuple(elements) => Type::Tuple(
             elements
                 .into_iter()

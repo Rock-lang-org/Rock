@@ -173,6 +173,7 @@ fn convert_expr(expr: HirExpr) -> Result<AcceptedHirExpr, Vec<String>> {
     let span = expr.span;
     let kind = match expr.kind {
         HirExprKind::IntLiteral(value) => HirExprKindFor::IntLiteral(value),
+        HirExprKind::ConstParam(param) => HirExprKindFor::ConstParam(param),
         HirExprKind::FloatLiteral(value) => HirExprKindFor::FloatLiteral(value),
         HirExprKind::BoolLiteral(value) => HirExprKindFor::BoolLiteral(value),
         HirExprKind::StringLiteral(value) => HirExprKindFor::StringLiteral(value),

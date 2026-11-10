@@ -620,7 +620,7 @@ impl<'ctx> CodeGen<'ctx> {
         let crate::types::Type::Array(element_ty, len) = &array_ty else {
             return Ok(false);
         };
-        if *len != operands.len() {
+        if len.as_concrete() as usize != operands.len() {
             return Ok(false);
         }
 
@@ -699,7 +699,7 @@ impl<'ctx> CodeGen<'ctx> {
             .build_int_compare(
                 IntPredicate::ULT,
                 next_index,
-                index_ty.const_int(*len as u64, false),
+                index_ty.const_int(len.as_concrete(), false),
                 "array_repeat_should_continue",
             )
             .map_err(|error| {

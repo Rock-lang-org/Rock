@@ -305,7 +305,7 @@ fn product_artifact_rejects_malformed_trait_method_authority_with_substitutions(
         kind: HirExprKindFor::MethodCall(
             Box::new(HirExpr {
                 kind: HirExprKindFor::ArrayLiteral(Vec::new()),
-                ty: Type::Array(Box::new(Type::I64), 0),
+                ty: Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(0)),
                 span: Span::test(),
             }),
             "index".to_string(),

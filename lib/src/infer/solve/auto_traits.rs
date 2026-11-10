@@ -163,6 +163,7 @@ pub(super) fn auto_trait_satisfied(
         | Type::Apply { .. }
         | Type::Lambda { .. }
         | Type::BoundVar { .. }
+        | Type::ConstValue(_)
         | Type::Error => false,
     };
     visiting.remove(ty);
@@ -200,6 +201,7 @@ pub(super) fn type_is_sized(ty: &Type) -> bool {
         | Type::Apply { .. }
         | Type::Lambda { .. }
         | Type::BoundVar { .. }
+        | Type::ConstValue(_)
         | Type::Error => false,
     }
 }

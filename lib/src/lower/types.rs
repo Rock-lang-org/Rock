@@ -3,6 +3,7 @@
 use crate::ast;
 use crate::hir::HirTrait;
 use crate::type_lowering::{ResolvedNominalType, TypeLowerer, TypeLoweringContext};
+use crate::type_services::kind::Kind;
 use crate::types::Type;
 
 use crate::lower::Lowerer;
@@ -72,6 +73,22 @@ impl TypeLoweringContext for Lowerer {
         }
     }
 
+    fn const_generic_for_name(
+        &mut self,
+        name: &str,
+        span: crate::lexer::Span,
+    ) -> Option<crate::types::GenericParamId> {
+        if let Some(context) = self.body.context() {
+            if let Some(id) = context.generic_param_id(name) {
+                return (context.generic_param_kind(id) == Some(&Kind::Usize)).then_some(id);
+            }
+        }
+        match self.current_generic_type_for_name(name, span)? {
+            Type::Generic(id) => Some(id),
+            _ => None,
+        }
+    }
+
     fn populate_type_normalization_env(
         &self,
         env: &mut crate::type_services::normalize::TypeNormalizationEnv,
@@ -121,6 +138,11 @@ impl TypeLoweringContext for Lowerer {
                 for param in &signature.generic_params {
                     env.register_generic_kind(param.id, param.kind.clone());
                 }
+            }
+        }
+        if let Some(context) = self.body.context() {
+            for (id, kind) in context.generic_param_kinds() {
+                env.register_generic_kind(*id, kind.clone());
             }
         }
         for (_, function) in self.items.functions() {

@@ -420,7 +420,7 @@ impl Lowerer {
                 self.collect_lambda_captures_expr(rhs, defined, used, capture_kinds, current_kind);
             }
             HirExprKind::Unit
-            | HirExprKind::IntLiteral(_)
+            | HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
             | HirExprKind::FloatLiteral(_)
             | HirExprKind::BoolLiteral(_)
             | HirExprKind::StringLiteral(_)

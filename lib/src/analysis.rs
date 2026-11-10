@@ -755,7 +755,7 @@ fn visit_expr_children(expr: &AcceptedHirExpr, visit: &mut impl FnMut(HirChild<'
         | HirExprKindFor::Block(body)
         | HirExprKindFor::UnsafeBlock(body) => visit(HirChild::Block(body)),
         HirExprKindFor::Lambda { body, .. } => visit(HirChild::Block(body)),
-        HirExprKindFor::IntLiteral(_)
+        HirExprKindFor::IntLiteral(_) | HirExprKindFor::ConstParam(_)
         | HirExprKindFor::FloatLiteral(_)
         | HirExprKindFor::BoolLiteral(_)
         | HirExprKindFor::StringLiteral(_)

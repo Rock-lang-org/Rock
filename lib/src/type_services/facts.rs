@@ -75,15 +75,16 @@ impl TypeFacts {
 
     /// Specialization arguments may be closed constructors rather than runtime values.
     pub fn is_concrete_type_argument(ty: &Type) -> bool {
-        Self::is_codegen_concrete(ty) || Self::closed_constructor_value(ty)
+        matches!(ty, Type::ConstValue(_))
+            || Self::is_codegen_concrete(ty)
+            || Self::closed_constructor_value(ty)
     }
 
     pub fn is_codegen_concrete(ty: &Type) -> bool {
         fn runtime_type(ty: &Type) -> bool {
             match ty {
-                Type::Slice(inner) | Type::Array(inner, _) | Type::Pointer(inner) => {
-                    runtime_type(inner)
-                }
+                Type::Array(inner, len) => len.is_concrete() && runtime_type(inner),
+                Type::Slice(inner) | Type::Pointer(inner) => runtime_type(inner),
                 Type::Reference { inner, .. } => runtime_type(inner),
                 Type::Tuple(elements) => elements.iter().all(runtime_type),
                 Type::Function {
@@ -106,6 +107,7 @@ impl TypeFacts {
                 | Type::Apply { .. }
                 | Type::Lambda { .. }
                 | Type::BoundVar { .. }
+                | Type::ConstValue(_)
                 | Type::Error => false,
                 Type::I8
                 | Type::I16
@@ -156,6 +158,7 @@ impl TypeFacts {
             | Type::Lambda { .. }
             | Type::BoundVar { .. }
             | Type::Error
+            | Type::ConstValue(_)
             | Type::Never => false,
         }
     }
@@ -200,6 +203,7 @@ impl TypeFacts {
             | Ty::Lambda { .. }
             | Ty::BoundVar { .. }
             | Ty::Error
+            | Ty::ConstValue(_)
             | Ty::Never => false,
         }
     }

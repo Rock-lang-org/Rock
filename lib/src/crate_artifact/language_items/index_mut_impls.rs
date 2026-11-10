@@ -202,7 +202,12 @@ fn alpha_equivalent_type(left: &Type, left_impl: DefId, right: &Type, right_impl
             alpha_equivalent_type(left, left_impl, right, right_impl)
         }
         (Type::Array(left, left_len), Type::Array(right, right_len)) => {
-            left_len == right_len && alpha_equivalent_type(left, left_impl, right, right_impl)
+            alpha_equivalent_type(
+                &left_len.to_const_type(),
+                left_impl,
+                &right_len.to_const_type(),
+                right_impl,
+            ) && alpha_equivalent_type(left, left_impl, right, right_impl)
         }
         (Type::Tuple(left), Type::Tuple(right)) => {
             alpha_equivalent_type_lists(left, left_impl, right, right_impl)

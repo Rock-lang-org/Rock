@@ -325,6 +325,7 @@ impl FormatNode for ParseType {
             ParseType::Application(application) => application.fmt_with(context, f),
             ParseType::Lambda(lambda) => lambda.fmt_with(context, f),
             ParseType::Hole(hole) => hole.fmt_with(context, f),
+            ParseType::ConstValue { value, .. } => write!(f, "{value}"),
             ParseType::Associated { base, member } => {
                 base.fmt_with(context, f)?;
                 write!(f, "::")?;

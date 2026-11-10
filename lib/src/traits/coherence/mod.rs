@@ -5,7 +5,7 @@ use crate::ids::DefId;
 use crate::lower::Lowerer;
 use crate::type_services::kind::Kind;
 use crate::type_services::normalize::{NormalizeError, TypeNormalizationEnv, TypeNormalizer};
-use crate::types::{AssociatedTypeKey, GenericParamId, NominalTypeKind, Type};
+use crate::types::{ArrayLen, AssociatedTypeKey, GenericParamId, NominalTypeKind, Type};
 
 mod canonical_targets;
 mod errors;

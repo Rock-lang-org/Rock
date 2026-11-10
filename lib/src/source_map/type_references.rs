@@ -327,7 +327,7 @@ fn record_type_references(
         | ast::ParseType::Pointer(inner) => {
             record_type_references(inner, generic_ids, resolver, map);
         }
-        ast::ParseType::Hole(_) | ast::ParseType::Unit(_) => {}
+        ast::ParseType::Hole(_) | ast::ParseType::Unit(_) | ast::ParseType::ConstValue { .. } => {}
     }
 }
 
@@ -428,6 +428,6 @@ fn record_associated_type_references(
         | ast::ParseType::Pointer(inner) => {
             record_associated_type_references(inner, owner, associated_types, map);
         }
-        ast::ParseType::Hole(_) | ast::ParseType::Unit(_) => {}
+        ast::ParseType::Hole(_) | ast::ParseType::Unit(_) | ast::ParseType::ConstValue { .. } => {}
     }
 }

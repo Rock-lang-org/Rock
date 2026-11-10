@@ -155,8 +155,11 @@ pub(in crate::products) enum ProductTypeRow {
     Char,
     Unit,
     Never,
+    ConstValue(u64),
     Slice(ProductTypeId),
-    Array(ProductTypeId, usize),
+    /// Element type and length; the length is a const-kinded type row
+    /// (`ConstValue` or `Generic`) so id remapping treats it like any argument.
+    Array(ProductTypeId, ProductTypeId),
     Tuple(Vec<ProductTypeId>),
     Function {
         params: Vec<ProductTypeId>,

@@ -177,7 +177,7 @@ impl Lowerer {
                 .chain(trait_def.target.iter())
                 .chain(&func.generic_params)
             {
-                context.register_generic_param(generic.name.clone(), generic.id);
+                context.register_generic_param(generic);
             }
             context.seed_after_existing_locals(func.params.iter().map(|param| param.local_id));
             let body = self.with_body_context(context, |lowerer| {

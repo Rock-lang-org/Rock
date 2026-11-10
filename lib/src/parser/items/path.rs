@@ -4,6 +4,18 @@ use crate::parser::{
 
 use super::{get_span, ident, parse_type, parse_type_path_head};
 
+/// `(Vec I64)::new`-style heads. Numbers stay expression arguments here: `(Maybe::Some 7)` is a
+/// call, not a type application with a literal argument.
+fn parenthesized_path_type(stream: Input) -> IResult<crate::ast::ParseType> {
+    let (stream, _) = TokenType::OpenParen.process(stream)?;
+    let mut inner_stream = stream;
+    inner_stream.no_literal_type_args = true;
+    let (mut stream, ty) = parse_type(inner_stream)?;
+    stream.no_literal_type_args = false;
+    let (stream, _) = TokenType::CloseParen.process(stream)?;
+    Ok((stream, ty))
+}
+
 fn path_type(stream: Input) -> IResult<crate::ast::ParseType> {
     (
         get_span,
@@ -18,7 +30,7 @@ fn path_type(stream: Input) -> IResult<crate::ast::ParseType> {
                 close_span.end,
             ))
         })
-        .or((TokenType::OpenParen, parse_type, TokenType::CloseParen).map(|(_, ty, _)| ty))
+        .or(parenthesized_path_type)
         .or(parse_type_path_head)
         .process(stream)
 }

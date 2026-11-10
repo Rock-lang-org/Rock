@@ -3,7 +3,7 @@ use std::fmt;
 
 use crate::collect::resolver::ResolverTables;
 use crate::ids::{DefId, Idx};
-use crate::types::{AssociatedTypeKey, FunctionSafety, GenericParamId, Type};
+use crate::types::{ArrayLen, AssociatedTypeKey, FunctionSafety, GenericParamId, Type};
 
 pub struct TypeDisplay<'a> {
     ty: &'a Type,
@@ -164,8 +164,22 @@ pub fn write_type(ty: &Type, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Type::Char => write!(f, "Char"),
         Type::Unit => write!(f, "()"),
         Type::Never => write!(f, "!"),
+        Type::ConstValue(n) => write!(f, "{n}"),
         Type::Slice(inner) => write!(f, "[{}]", display_type(inner)),
-        Type::Array(inner, len) => write!(f, "[{}; {}]", display_type(inner), len),
+        Type::Array(inner, len) => {
+            write!(f, "[{}; ", display_type(inner))?;
+            match len {
+                ArrayLen::Value(n) => write!(f, "{n}")?,
+                ArrayLen::Param(param) => write!(
+                    f,
+                    "generic#{}::{}.{}",
+                    param.owner.crate_id.0, param.owner.local.0, param.index
+                )?,
+                ArrayLen::Var(id) => write!(f, "?T{}", id.raw())?,
+                ArrayLen::Error => write!(f, "_")?,
+            }
+            write!(f, "]")
+        }
         Type::Tuple(elems) => {
             write!(f, "(")?;
             for (index, elem) in elems.iter().enumerate() {
@@ -310,6 +324,7 @@ fn write_user_type(
         Type::Char => write!(f, "Char"),
         Type::Unit => write!(f, "()"),
         Type::Never => write!(f, "!"),
+        Type::ConstValue(n) => write!(f, "{n}"),
         Type::Slice(inner) => {
             write!(f, "[")?;
             write_user_type(inner, context, f)?;
@@ -318,7 +333,19 @@ fn write_user_type(
         Type::Array(inner, len) => {
             write!(f, "[")?;
             write_user_type(inner, context, f)?;
-            write!(f, "; {len}]")
+            match len {
+                ArrayLen::Value(n) => write!(f, "; {n}]"),
+                ArrayLen::Param(param) => write!(
+                    f,
+                    "; {}]",
+                    context
+                        .generics
+                        .get(param)
+                        .map(String::as_str)
+                        .unwrap_or("_")
+                ),
+                ArrayLen::Var(_) | ArrayLen::Error => write!(f, "; _]"),
+            }
         }
         Type::Tuple(elements) => {
             write!(f, "(")?;

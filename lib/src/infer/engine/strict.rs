@@ -16,7 +16,10 @@ impl InferenceEngine {
         match &ty {
             Type::TypeVar(id) => *id == var,
             Type::Slice(inner) | Type::Pointer(inner) => self.occurs_in(var, inner),
-            Type::Array(inner, _) => self.occurs_in(var, inner),
+            Type::Array(inner, len) => {
+                matches!(len, crate::types::ArrayLen::Var(id) if *id == var)
+                    || self.occurs_in(var, inner)
+            }
             Type::Reference { inner, .. } => self.occurs_in(var, inner),
             Type::Tuple(elems) => elems.iter().any(|t| self.occurs_in(var, t)),
             Type::Function {

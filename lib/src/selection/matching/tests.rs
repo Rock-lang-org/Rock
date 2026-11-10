@@ -225,7 +225,7 @@ fn higher_kinded_blanket_matches_constructor_sections_without_guessing() {
 #[test]
 fn selection_receiver_pattern_cover_nominal_array_slice_and_ref() {
     assert_eq!(
-        receiver_pattern(&Type::Array(Box::new(Type::U8), 4)),
+        receiver_pattern(&Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(4))),
         vec![Type::U8]
     );
     assert_eq!(
@@ -389,4 +389,93 @@ fn selection_target_matching_rejects_wrong_trait_identity_when_impl_matches() {
     );
 
     assert!(!target_matches_impl(&imp, Some(&target)));
+}
+
+fn array_pattern_with_const_param() -> (Type, GenericParamId, GenericParamId) {
+    let impl_id = def_id(80);
+    let element = GenericParamId {
+        owner: impl_id,
+        index: 0,
+    };
+    let length = GenericParamId {
+        owner: impl_id,
+        index: 1,
+    };
+    (
+        Type::Array(
+            Box::new(Type::Generic(element)),
+            crate::types::ArrayLen::Param(length),
+        ),
+        element,
+        length,
+    )
+}
+
+#[test]
+fn array_pattern_binds_const_param_to_concrete_length() {
+    let (pattern, element, length) = array_pattern_with_const_param();
+    let actual = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(3));
+    let mut subst = HashMap::new();
+
+    assert!(type_pattern_matches(&pattern, &actual, &mut subst));
+    assert_eq!(subst.get(&element), Some(&Type::U8));
+    assert_eq!(subst.get(&length), Some(&Type::ConstValue(3)));
+}
+
+#[test]
+fn array_pattern_binds_const_param_to_other_const_param() {
+    let (pattern, _, length) = array_pattern_with_const_param();
+    let other = GenericParamId {
+        owner: def_id(81),
+        index: 0,
+    };
+    let actual = Type::Array(
+        Box::new(Type::U8),
+        crate::types::ArrayLen::Param(other),
+    );
+    let mut subst = HashMap::new();
+
+    assert!(type_pattern_matches(&pattern, &actual, &mut subst));
+    assert_eq!(subst.get(&length), Some(&Type::Generic(other)));
+}
+
+#[test]
+fn array_pattern_rejects_conflicting_lengths_for_repeated_param() {
+    let (_, _, length) = array_pattern_with_const_param();
+    let pattern = Type::Tuple(vec![
+        Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Param(length)),
+        Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Param(length)),
+    ]);
+    let array = |n| Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(n));
+    let mut subst = HashMap::new();
+
+    assert!(type_pattern_matches(
+        &pattern,
+        &Type::Tuple(vec![array(2), array(2)]),
+        &mut subst
+    ));
+    let mut subst = HashMap::new();
+    assert!(!type_pattern_matches(
+        &pattern,
+        &Type::Tuple(vec![array(2), array(3)]),
+        &mut subst
+    ));
+}
+
+#[test]
+fn array_pattern_keeps_concrete_length_mismatch_rejected() {
+    let pattern = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(3));
+    let actual = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(4));
+
+    assert!(!type_pattern_matches(&pattern, &actual, &mut HashMap::new()));
+}
+
+#[test]
+fn exact_array_receiver_pattern_binds_const_param() {
+    let (array, _, length) = array_pattern_with_const_param();
+    let pattern = HirImplReceiverPattern::Exact(array);
+    let receiver = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(5));
+
+    let subst = receiver_pattern_substitution(&pattern, &receiver).expect("array matches");
+    assert_eq!(subst.get(&length), Some(&Type::ConstValue(5)));
 }

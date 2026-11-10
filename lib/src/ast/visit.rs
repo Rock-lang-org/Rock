@@ -519,6 +519,7 @@ pub fn walk_parse_type<'a, V: Visitor<'a>>(visitor: &mut V, ty: &'a ParseType) {
         ParseType::Application(application) => visitor.visit_type_application(application),
         ParseType::Lambda(lambda) => visitor.visit_type_lambda(lambda),
         ParseType::Hole(hole) => visitor.visit_type_hole(hole),
+        ParseType::ConstValue { .. } => {}
         ParseType::Associated { base, member } => {
             visitor.visit_parse_type_inner(base);
             visitor.visit_ident(member);

@@ -1,5 +1,5 @@
 use crate::{
-    ast::{GenericParamDecl, ParseType, ParseTypeInner, TypeApplication, TypeHole, TypeLambda},
+    ast::{GenericParamDecl, ParseArrayLen, ParseType, ParseTypeInner, TypeApplication, TypeHole, TypeLambda},
     lexer::{Span, TokenType},
     parser::engine::*,
 };
@@ -96,6 +96,12 @@ fn parse_type_atom(stream: Input) -> IResult<ParseType> {
     let token = stream.seek()?;
     match &token.token_type {
         TokenType::Type(_) => parse_named_type(stream),
+        TokenType::Number(_) if !stream.no_literal_type_args => {
+            let (stream, token) = stream.consume()?;
+            let TokenType::Number(text) = &token.token_type else { unreachable!() };
+            let value = text.parse().map_err(|_| ParseError::UnexpectedToken("valid integer literal".to_string(), token.clone()))?;
+            Ok((stream, ParseType::ConstValue { value, span: token.span }))
+        }
         TokenType::Underscore => {
             let (stream, token) = stream.consume()?;
             Ok((stream, ParseType::Hole(TypeHole { span: token.span })))
@@ -256,12 +262,12 @@ pub fn parse_array_type(stream: Input) -> IResult<ParseType> {
     let (stream, inner) = parse_type(stream)?;
     let (stream, result) = if is_semicolon(&stream) {
         let (stream, _) = stream.consume()?;
-        let (stream, len) = primitives::int(stream)?;
+        let (stream, len) = parse_array_len(stream)?;
         (
             stream,
             ParseType::Array {
                 inner: Box::new(inner),
-                len: len as usize,
+                len,
             },
         )
     } else {
@@ -269,6 +275,15 @@ pub fn parse_array_type(stream: Input) -> IResult<ParseType> {
     };
     let (stream, _) = TokenType::CloseBracket.process(stream)?;
     Ok((stream, result))
+}
+
+fn parse_array_len(stream: Input) -> IResult<ParseArrayLen> {
+    if matches!(peek_token(&stream), Some(TokenType::Type(_))) {
+        let (stream, ident) = type_token_with_span(stream)?;
+        return Ok((stream, ParseArrayLen::Param(ident)));
+    }
+    let (stream, len) = primitives::int(stream)?;
+    Ok((stream, ParseArrayLen::Literal(len)))
 }
 
 fn is_semicolon(stream: &Input) -> bool {
@@ -406,6 +421,18 @@ fn parse_constructor_param_inner(
                 stream.seek()?,
             ));
         }
+        if let Some((stream, kind)) = parse_usize_kind(&stream) {
+            let span = join_spans(&name.span, &kind.span);
+            return Ok((
+                stream,
+                GenericParamDecl {
+                    default: None,
+                    name,
+                    kind: Some(kind),
+                    span,
+                },
+            ));
+        }
         let (next_stream, _) = TokenType::Colon.process(stream)?;
         let kind_start = next_stream.seek()?;
         let (stream, kind) = parse_type(next_stream)?;
@@ -509,12 +536,52 @@ pub fn parse_plain_generic_param(stream: Input) -> IResult<GenericParamDecl> {
         name: name.clone(),
         span: span.clone(),
     };
+    if let Some((stream, kind)) = parse_usize_kind(&stream) {
+        let span = join_spans(&span, &kind.span);
+        return Ok((
+            stream,
+            GenericParamDecl {
+                default: None,
+                name,
+                kind: Some(kind),
+                span,
+            },
+        ));
+    }
     Ok((
         stream,
         GenericParamDecl {
             default: None,
             name,
             kind: None,
+            span,
+        },
+    ))
+}
+
+/// Parses `: usize` after a generic binder name, yielding the const kind syntax.
+fn parse_usize_kind<'a>(stream: &Input<'a>) -> Option<(Input<'a>, TypeApplication)> {
+    if !matches!(peek_token(stream), Some(TokenType::Colon)) {
+        return None;
+    }
+    let Some(TokenType::Ident(word)) = peek_nth(stream, 1) else {
+        return None;
+    };
+    if word != "usize" {
+        return None;
+    }
+    let (stream, _) = TokenType::Colon.process(stream.clone()).ok()?;
+    let (stream, token) = stream.consume().ok()?;
+    let span = token.span;
+    Some((
+        stream,
+        TypeApplication {
+            constructor: Box::new(ParseType::Type(ParseTypeInner {
+                name: word,
+                generics: Vec::new(),
+                span: span.clone(),
+            })),
+            args: Vec::new(),
             span,
         },
     ))
@@ -535,6 +602,7 @@ fn starts_type_atom(stream: &Input) -> bool {
         | Ok(TokenType::OpenParen)
         | Ok(TokenType::OpenBracket)
         | Ok(TokenType::Ampersand) => true,
+        Ok(TokenType::Number(_)) => !stream.no_literal_type_args,
         Ok(TokenType::StuckOperator(op)) => op == "*",
         _ => false,
     }

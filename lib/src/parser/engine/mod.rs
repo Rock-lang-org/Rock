@@ -94,6 +94,7 @@ pub struct ParseCtx<'a> {
     pub after_multiline_dot: bool,
     pub is_inside_fn_type_decl: bool,
     pub disallow_multiline_operators: bool, // Disallow multiline operator continuations (e.g., in single-line function bodies)
+    pub no_literal_type_args: bool, // Types parsed where an expression could also appear (cast targets, parenthesized path heads): numbers are never literal type arguments
 }
 
 impl ParseCtx<'_> {
@@ -213,6 +214,7 @@ impl ParseCtx<'_> {
             after_multiline_dot: false,
             is_inside_fn_type_decl: false,
             disallow_multiline_operators: false,
+            no_literal_type_args: false,
         }
     }
 

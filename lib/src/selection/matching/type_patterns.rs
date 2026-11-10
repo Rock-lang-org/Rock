@@ -192,7 +192,14 @@ pub fn infer_generic_subst_from_types(
         }
         Type::Array(inner_expected, expected_len) => {
             if let Type::Array(inner_actual, actual_len) = actual {
-                if expected_len == actual_len {
+                if let ArrayLen::Param(param) = expected_len {
+                    // A const parameter binds to whatever length the actual
+                    // array carries (a concrete value or another parameter).
+                    subst
+                        .entry(*param)
+                        .or_insert_with(|| actual_len.to_const_type());
+                    infer_generic_subst_from_types(inner_expected, inner_actual, subst);
+                } else if expected_len == actual_len {
                     infer_generic_subst_from_types(inner_expected, inner_actual, subst);
                 }
             }

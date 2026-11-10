@@ -211,6 +211,14 @@ impl Monomorphizer {
                     );
                 }
             }
+            HirExprKind::ConstParam(param) => {
+                self.diagnostics.push(
+                    crate::diagnostic::Diagnostic::for_internal(format!(
+                        "post-monomorphization body '{owner}' retains const generic parameter {param:?}"
+                    ))
+                    .with_code(DiagnosticCode::Mono),
+                );
+            }
             HirExprKind::IntLiteral(_)
             | HirExprKind::FloatLiteral(_)
             | HirExprKind::BoolLiteral(_)

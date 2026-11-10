@@ -208,7 +208,7 @@ fn test_lower_place_computed_pointer_deref_projection() {
 fn mir_index_mut_lowers_through_instance_reference() {
     let program = empty_program();
     let type_context = test_type_context(&program);
-    let array_ty = Type::Array(Box::new(Type::I64), 1);
+    let array_ty = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(1));
     let index_mut_ref_ty = Type::Reference {
         mutable: true,
         inner: Box::new(Type::I64),

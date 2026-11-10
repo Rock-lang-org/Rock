@@ -49,6 +49,7 @@ pub(crate) struct BodyLoweringContext {
     generic_owner: Option<DefId>,
     generic_params: Vec<String>,
     generic_param_ids: HashMap<String, GenericParamId>,
+    generic_param_kinds: HashMap<GenericParamId, crate::type_services::kind::Kind>,
     impl_bounds: HirGenericBounds,
     return_type_override: Option<Type>,
     in_unsafe: bool,
@@ -69,6 +70,7 @@ impl BodyLoweringContext {
             generic_owner,
             generic_params,
             generic_param_ids: HashMap::new(),
+            generic_param_kinds: HashMap::new(),
             impl_bounds,
             return_type_override: None,
             in_unsafe,
@@ -97,8 +99,24 @@ impl BodyLoweringContext {
         self.generic_param_ids.get(name).copied()
     }
 
-    pub(crate) fn register_generic_param(&mut self, name: impl Into<String>, id: GenericParamId) {
-        self.generic_param_ids.insert(name.into(), id);
+    pub(crate) fn generic_param_kinds(
+        &self,
+    ) -> impl Iterator<Item = (&GenericParamId, &crate::type_services::kind::Kind)> {
+        self.generic_param_kinds.iter()
+    }
+
+    pub(crate) fn generic_param_kind(
+        &self,
+        id: GenericParamId,
+    ) -> Option<&crate::type_services::kind::Kind> {
+        self.generic_param_kinds.get(&id)
+    }
+
+    pub(crate) fn register_generic_param(&mut self, generic: &crate::types::GenericParamDecl) {
+        self.generic_param_ids
+            .insert(generic.name.clone(), generic.id);
+        self.generic_param_kinds
+            .insert(generic.id, generic.kind.clone());
     }
 
     pub(crate) fn replace_generic_context(

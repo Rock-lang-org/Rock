@@ -133,7 +133,8 @@ impl InferenceEngine {
                 Self::same_unification_shape(a, b)
             }
             (Type::Array(a, a_len), Type::Array(b, b_len)) => {
-                a_len == b_len && Self::same_unification_shape(a, b)
+                (a_len == b_len || matches!(a_len, crate::types::ArrayLen::Var(_)) || matches!(b_len, crate::types::ArrayLen::Var(_)))
+                    && Self::same_unification_shape(a, b)
             }
             (Type::Tuple(a), Type::Tuple(b)) => {
                 a.len() == b.len()

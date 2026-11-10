@@ -167,7 +167,7 @@ impl Lowerer {
             }
             HirExprKind::Var(_)
             | HirExprKind::ResolvedVar(_)
-            | HirExprKind::IntLiteral(_)
+            | HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
             | HirExprKind::FloatLiteral(_)
             | HirExprKind::BoolLiteral(_)
             | HirExprKind::StringLiteral(_)

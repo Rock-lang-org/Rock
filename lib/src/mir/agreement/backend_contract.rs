@@ -141,6 +141,7 @@ fn validate_layout_template_type_id(
                 validate_layout_template_type_id(program, *arg, generic_params, report);
             }
         }
+        Ty::ConstValue(_) => {}
         Ty::Generic(param) if generic_params.contains(param) => {}
         Ty::TypeVar(_)
         | Ty::Generic(_)

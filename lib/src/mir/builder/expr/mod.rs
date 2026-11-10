@@ -37,6 +37,13 @@ impl<'a> MirBuilder<'a> {
                     span,
                 );
             }
+            HirExprKind::ConstParam(param) => {
+                // Monomorphization diagnoses unresolved const params before MIR is built.
+                panic!(
+                    "const generic parameter {param:?} reached MIR lowering in {:?} ({:?})",
+                    self.current_function_id, self.current_function_name
+                );
+            }
             HirExprKind::FloatLiteral(val) => {
                 self.emit_assign(
                     dest,

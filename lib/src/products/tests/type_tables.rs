@@ -84,7 +84,7 @@ fn serialized_product_artifact_roundtrips_type_alias_identity_and_body() {
 fn serialized_product_artifact_roundtrips_struct_enum_trait_impl_and_extern_types() {
     let mut resolved = resolved_hir_for_products();
     let field_ty = Type::Pointer(Box::new(Type::U32));
-    let variant_ty = Type::Array(Box::new(Type::Bool), 3);
+    let variant_ty = Type::Array(Box::new(Type::Bool), crate::types::ArrayLen::Value(3));
     mutate_program(&mut resolved.program, |program| {
         program
             .structs
@@ -222,10 +222,10 @@ fn serialized_product_artifact_roundtrips_constructor_impl_target() {
 #[test]
 fn compiler_products_type_table_roundtrips_nested_body_type_locations() {
     let mut resolved = resolved_hir_for_products();
-    let block_ty = Type::Array(Box::new(Type::U8), 4);
+    let block_ty = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(4));
     let let_ty = Type::Tuple(vec![Type::U16, Type::Bool]);
     let nested_expr_ty = Type::Pointer(Box::new(Type::Bool));
-    let cast_ty = Type::Array(Box::new(Type::U32), 2);
+    let cast_ty = Type::Array(Box::new(Type::U32), crate::types::ArrayLen::Value(2));
     let lambda_param_ty = Type::Pointer(Box::new(Type::F32));
     let lambda_capture_ty = Type::Reference {
         mutable: true,

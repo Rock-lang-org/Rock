@@ -230,6 +230,15 @@ impl Lowerer {
         if let Some(receiver_ty) = &receiver_ty {
             Self::collect_generic_ids_from_type(receiver_ty, &mut generic_param_ids);
         }
+        let mut const_params = std::collections::HashSet::new();
+        lowered_type.collect_array_len_params(&mut const_params);
+        let param_kind = |param: &GenericParamId| {
+            if const_params.contains(param) {
+                crate::type_services::kind::Kind::Usize
+            } else {
+                crate::type_services::kind::Kind::Type
+            }
+        };
         let mut public_signature_generic_params = Vec::new();
         let mut hidden_signature_generic_params = Vec::new();
         for param in &generic_param_ids {
@@ -237,10 +246,10 @@ impl Lowerer {
                 if let Some(name) = generic_context_params.get(param.index as usize) {
                     if name != "Self" {
                         public_signature_generic_params
-                            .push(GenericParamDecl::type_param(*param, name.clone()));
+                            .push(GenericParamDecl::new(*param, name.clone(), param_kind(param)));
                     } else {
                         hidden_signature_generic_params
-                            .push(GenericParamDecl::type_param(*param, name.clone()));
+                            .push(GenericParamDecl::new(*param, name.clone(), param_kind(param)));
                     }
                 }
             }

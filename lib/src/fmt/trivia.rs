@@ -286,6 +286,7 @@ impl<'a> FormatTrivia<'a> {
             ParseType::Application(application) => Some(&application.span),
             ParseType::Lambda(lambda) => Some(&lambda.span),
             ParseType::Hole(hole) => Some(&hole.span),
+            ParseType::ConstValue { span, .. } => Some(span),
             ParseType::Associated { base, .. } => Some(&base.span),
             ParseType::Function(types) | ParseType::Tuple(types) => {
                 types.first().and_then(Self::parse_type_span)

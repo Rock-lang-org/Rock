@@ -94,7 +94,12 @@ impl InferenceEngine {
             }
             (Type::Slice(a_inner), Type::Slice(b_inner)) => self.unify(a_inner, b_inner),
             (Type::Array(a_inner, a_len), Type::Array(b_inner, b_len)) => {
-                if a_len != b_len {
+                // Lengths unify as const-kinded types: `Var` binds to a
+                // `ConstValue`, `Param` stays rigid.
+                if self
+                    .unify(&a_len.to_const_type(), &b_len.to_const_type())
+                    .is_err()
+                {
                     return Err(UnifyError::Mismatch {
                         expected: a.clone(),
                         found: b.clone(),

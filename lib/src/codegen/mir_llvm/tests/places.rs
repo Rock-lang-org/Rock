@@ -50,7 +50,7 @@ fn mir_codegen_reports_non_integer_index_projection() {
                 local_decl(&type_context, Type::I64, "return_place"),
                 local_decl(
                     &type_context,
-                    Type::Array(Box::new(Type::I64), 2),
+                    Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(2)),
                     "array_value",
                 ),
                 local_decl(&type_context, Type::F64, "index"),
@@ -169,7 +169,7 @@ fn mir_codegen_normalizes_projected_array_place_before_index() {
         trait_id,
         assoc_type_id,
         vec![Type::Bool],
-        Type::Array(Box::new(Type::I64), 2),
+        Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(2)),
     );
     let function_id = MirFunctionId::Instance(InstanceId(0));
     let ret_type = type_id(&type_context, Type::I64);
@@ -240,7 +240,7 @@ fn mir_contract_validation_normalizes_projected_field_type_before_index() {
         trait_id,
         assoc_type_id,
         Vec::new(),
-        Type::Array(Box::new(Type::I64), 2),
+        Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(2)),
     );
     let projected_array_id = type_id(&type_context, projected_array_ty);
     let owner_ty = Type::Struct {

@@ -80,6 +80,7 @@ impl TypeLowerer {
                     body: Box::new(body),
                 }
             }
+            ast::ParseType::ConstValue { value, .. } => Type::ConstValue(*value),
             ast::ParseType::Hole(_) => {
                 context.push_type_error(
                     "type holes are not yet supported".to_string(),
@@ -187,7 +188,25 @@ impl TypeLowerer {
             }
             ast::ParseType::Array { inner, len } => {
                 let inner_ty = Self::lower_raw(context, inner, false, env, binders);
-                Type::Array(Box::new(inner_ty), *len)
+                let len = match len {
+                    ast::ParseArrayLen::Literal(n) => crate::types::ArrayLen::Value(*n),
+                    ast::ParseArrayLen::Param(ident) => {
+                        match context.const_generic_for_name(&ident.name, ident.span.clone()) {
+                            Some(param) => crate::types::ArrayLen::Param(param),
+                            None => {
+                                context.push_type_error(
+                                    format!(
+                                        "array length '{}' must name a `usize` const generic parameter",
+                                        ident.name
+                                    ),
+                                    ident.span.clone(),
+                                );
+                                crate::types::ArrayLen::Error
+                            }
+                        }
+                    }
+                };
+                Type::Array(Box::new(inner_ty), len)
             }
             ast::ParseType::Tuple(elems) => Type::Tuple(
                 elems

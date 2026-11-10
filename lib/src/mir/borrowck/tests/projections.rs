@@ -377,7 +377,7 @@ fn borrowck_rejects_array_element_move_from_projected_drop_array_output() {
         args: Vec::new(),
     };
     let drop_id = type_context.intern_type(&drop_ty);
-    let array_id = type_context.intern_type(&Type::Array(Box::new(drop_ty), 2));
+    let array_id = type_context.intern_type(&Type::Array(Box::new(drop_ty), crate::types::ArrayLen::Value(2)));
     let projection_id = type_context.intern_type(&Type::Projection {
         ty: Box::new(Type::I64),
         trait_id,

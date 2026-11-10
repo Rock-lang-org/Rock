@@ -2,7 +2,7 @@ use super::functions::{
     build_function_header_with_id, build_function_header_with_sig, build_function_sig_with_id,
 };
 use super::generic_names::{
-    collect_declared_generic_kinds, collect_generic_names_from_parse_type,
+    collect_declared_generic_kinds, collect_generic_names_from_parse_type, collect_usize_argument_names,
     is_known_nominal_type_name,
 };
 use super::where_clauses::lower_where_clauses;
@@ -166,6 +166,16 @@ pub(crate) fn build_impl_with_id(
             &|name| is_known_nominal_type_name(context, name),
         );
     }
+    let mut usize_arguments = HashSet::new();
+    if let Some(receiver) = imp.for_.as_ref() {
+        collect_usize_argument_names(context, receiver, &mut usize_arguments);
+    }
+    collect_usize_argument_names(context, &imp.name, &mut usize_arguments);
+    for name in &usize_arguments {
+        impl_generic_kinds.insert(name.clone(), crate::type_services::kind::Kind::Usize);
+    }
+    // A name used both as a nominal's `usize` argument and as an array length is consistent.
+    impl_generic_kind_conflicts.retain(|(name, _, _)| !usize_arguments.contains(name));
     for (name, declared, required) in impl_generic_kind_conflicts {
         context.push_error_with_span(format!(
             "generic parameter '{name}' was declared with kind {declared}, but a later binder requires {required}",

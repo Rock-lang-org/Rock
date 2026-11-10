@@ -4,7 +4,7 @@ use super::hir_types::{HirBlock, HirExpr, HirFunction, HirParam};
 use crate::ids::{CrateId, DefId, LocalDefId, TypeId};
 use crate::selection::{constructor_target_from_applied_type, type_pattern_matches};
 use crate::type_services::normalize::apply_type_lambda;
-use crate::types::{GenericParamId, Type};
+use crate::types::{ArrayLen, GenericParamId, Type};
 
 use super::Monomorphizer;
 
@@ -283,7 +283,12 @@ impl Monomorphizer {
                     })
             }
             Type::Slice(inner) => self.extract_generic_from_type(inner, target_gen, substitution),
-            Type::Array(inner, _) => {
+            Type::Array(inner, len) => {
+                if *len == ArrayLen::Param(target_gen) {
+                    if let Some(bound) = substitution.get(&target_gen) {
+                        return Some(*bound);
+                    }
+                }
                 self.extract_generic_from_type(inner, target_gen, substitution)
             }
             Type::Tuple(elems) => {
@@ -368,9 +373,15 @@ impl Monomorphizer {
             (Type::Slice(inner_param), Type::Slice(inner_arg)) => {
                 self.extract_generics_from_type(inner_param, inner_arg, generic_ids, substitution);
             }
-            (Type::Array(inner_param, param_len), Type::Array(inner_arg, arg_len))
-                if param_len == arg_len =>
-            {
+            (Type::Array(inner_param, param_len), Type::Array(inner_arg, arg_len)) => {
+                if let ArrayLen::Param(param) = param_len {
+                    if generic_ids.contains(param) && !substitution.contains_key(param) {
+                        if let ArrayLen::Value(n) = arg_len {
+                            let value = self.intern_type(&Type::ConstValue(*n));
+                            substitution.insert(*param, value);
+                        }
+                    }
+                }
                 self.extract_generics_from_type(inner_param, inner_arg, generic_ids, substitution);
             }
             (Type::Tuple(elems_param), Type::Tuple(elems_arg)) => {
@@ -542,6 +553,18 @@ impl Monomorphizer {
                         .map(|replacement| self.monomorphizer.type_for(*replacement))
                         .unwrap_or(Type::Generic(param)),
                     other => crate::type_services::visit::fold_type_children(other, self),
+                }
+            }
+
+            fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
+                let ArrayLen::Param(param) = len else {
+                    return len;
+                };
+                match self.substitution.get(&param) {
+                    Some(replacement) => {
+                        ArrayLen::from_const_type(&self.monomorphizer.type_for(*replacement))
+                    }
+                    None => len,
                 }
             }
         }

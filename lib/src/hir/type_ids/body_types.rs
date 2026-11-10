@@ -412,7 +412,7 @@ fn collect_expr<P: HirPhase>(
             collect_expr(owner, lhs, child_path(&path, 0), context, ids);
             collect_expr(owner, rhs, child_path(&path, 1), context, ids);
         }
-        HirExprKind::IntLiteral(_)
+        HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
         | HirExprKind::FloatLiteral(_)
         | HirExprKind::BoolLiteral(_)
         | HirExprKind::StringLiteral(_)
