@@ -308,7 +308,7 @@ fn assert_operand_read_conflicts_with_active_mut_borrow() {
         backend_contract: Default::default(),
     };
 
-    let diagnostics = BorrowChecker::run(&program).expect_err("assert read should conflict");
+    let diagnostics = BorrowChecker::run(&program, &Default::default()).expect_err("assert read should conflict");
 
     assert!(diagnostics
         .0
@@ -420,5 +420,5 @@ fn assert_move_operand_read_does_not_conflict_with_active_shared_borrow() {
         backend_contract: Default::default(),
     };
 
-    BorrowChecker::run(&program).expect("assert move operand should be read-only");
+    BorrowChecker::run(&program, &Default::default()).expect("assert move operand should be read-only");
 }

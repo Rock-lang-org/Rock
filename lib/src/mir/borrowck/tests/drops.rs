@@ -59,7 +59,7 @@ fn direct_drop_obligation_uses_backend_contract_drop_glue() {
         backend_contract,
     };
 
-    BorrowChecker::run(&program).expect("contract drop glue should satisfy direct drop obligation");
+    BorrowChecker::run(&program, &Default::default()).expect("contract drop glue should satisfy direct drop obligation");
 }
 
 #[test]

@@ -241,6 +241,7 @@ impl BorrowChecker {
                         stmt.span.clone(),
                     );
                 }
+                AccessKind::Move if Self::moves_out_of_reference(&event.place, func, type_context) => {}
                 AccessKind::Move => {
                     Self::check_place_loan_access(
                         &event.place,
@@ -306,6 +307,7 @@ impl BorrowChecker {
 
     pub(super) fn check_terminator(
         term: &Terminator,
+        type_context: &crate::type_context::TypeContext,
         init_analysis: &InitializationAnalysis,
         state: &InitMap,
         table: &LoanTable,
@@ -327,6 +329,7 @@ impl BorrowChecker {
                         term_span.clone(),
                     );
                 }
+                AccessKind::Move if Self::moves_out_of_reference(&event.place, func, type_context) => {}
                 AccessKind::Move | AccessKind::Drop => {
                     Self::check_place_loan_access(
                         &event.place,
@@ -380,6 +383,25 @@ impl BorrowChecker {
             }
             _ => {}
         }
+    }
+
+    /// A move that dereferences a reference local. Move validation rejects it
+    /// with a precise error, so it is not also reported as a loan conflict
+    /// with the borrow that reference holds.
+    fn moves_out_of_reference(
+        place: &crate::mir::Place,
+        func: &MirFunction,
+        type_context: &crate::type_context::TypeContext,
+    ) -> bool {
+        if place.projection.first() != Some(&crate::mir::Projection::Deref) {
+            return false;
+        }
+        func.local_decls.get(place.local.0).is_some_and(|local| {
+            matches!(
+                type_context.type_for(local.ty),
+                crate::types::Type::Reference { .. }
+            )
+        })
     }
 
     fn check_place_loan_access(

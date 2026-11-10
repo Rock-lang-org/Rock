@@ -357,6 +357,7 @@ fn borrowck_rejects_non_copy_move_out_of_shared_reference() {
         &type_context,
         &backend_contract,
         &HashMap::new(),
+        &Default::default(),
     )
     .expect_err("moving a non-copy value out of a shared reference should be rejected");
 
@@ -424,6 +425,7 @@ fn borrowck_rejects_non_copy_copy_out_of_shared_reference() {
         &type_context,
         &backend_contract,
         &HashMap::new(),
+        &Default::default(),
     )
     .expect_err("copy operand of non-copy value out of shared reference should be rejected");
 

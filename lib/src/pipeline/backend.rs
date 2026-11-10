@@ -102,7 +102,9 @@ pub(super) fn compile_impl(
     if config.has_debug_print(DebugPrint::Mir) {
         println!("{:#?}", mir_program);
     }
-    if let Err(diagnostics) = mir::borrowck::BorrowChecker::run(&mir_program) {
+    let mut type_names = crate::type_services::display::TypeDisplayContext::default();
+    type_names.extend_nominal_names(&monomorphized.program);
+    if let Err(diagnostics) = mir::borrowck::BorrowChecker::run(&mir_program, &type_names) {
         return Err(diagnostics.with_sources(&diagnostic_sources));
     }
     let agreement = mir::agreement::check_mir_runtime_agreement(&mir_program);

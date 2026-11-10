@@ -25,7 +25,12 @@ impl<'a> MirBuilder<'a> {
         restored_bindings: &mut Vec<(String, Option<Local>)>,
     ) {
         match pattern {
-            HirPattern::Binding { name, mutable, .. } => {
+            HirPattern::Binding {
+                name,
+                local_id,
+                mutable,
+            } => {
+                let binding_span = self.source_local_span(self.current_source_owner, *local_id);
                 let borrowed_payload =
                     enum_payload && scrutinee_mode == MatchScrutineeMode::Borrowed;
                 if enum_payload && !borrowed_payload && !TypeFacts::is_copy(source_ty) {
@@ -52,9 +57,9 @@ impl<'a> MirBuilder<'a> {
                     mutability,
                     Some(name.clone()),
                     LocalSource::UserBinding,
-                    None,
+                    binding_span.clone(),
                 );
-                self.emit_storage_live(local, None);
+                self.emit_storage_live(local, binding_span.clone());
                 if let Some(scope_locals) = self.scope_locals.last_mut() {
                     scope_locals.push(local);
                 }
@@ -68,7 +73,7 @@ impl<'a> MirBuilder<'a> {
                 } else {
                     Rvalue::Use(self.operand_for_place(source_ty, source_place, guarded))
                 };
-                self.emit_assign(dest, rvalue, None);
+                self.emit_assign(dest, rvalue, binding_span);
             }
             HirPattern::Enum(_, _, Some(location), subpatterns) => {
                 let field_types =

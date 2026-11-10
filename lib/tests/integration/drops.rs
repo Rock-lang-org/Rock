@@ -686,7 +686,7 @@ main = ->
     boxed = take_first values
     0
 "#,
-        "borrow conflict",
+        "Cannot move non-copy value of type 'Tracked' out of a reference",
     );
 }
 

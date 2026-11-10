@@ -1,6 +1,69 @@
 use crate::support::*;
 use std::path::PathBuf;
 
+fn borrow_diagnostic_messages(source: &str) -> Vec<String> {
+    let dir = test_temp_dir(TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+    std::fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let source_path = dir.join("test.rk");
+    std::fs::write(&source_path, source).unwrap();
+    let mut config = test_config(source_path, dir.clone());
+    config.no_link = true;
+    rock_lib::compile(&config)
+        .expect_err("expected compilation to fail")
+        .0
+        .iter()
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect()
+}
+
+#[test]
+fn test_move_out_of_borrowed_match_payload_names_type_once() {
+    let messages = borrow_diagnostic_messages(
+        r#"
+enum Label
+    Text String
+
+impl Show for Label
+    @show = ->
+        match *self
+            Label::Text text => text
+
+main = !->
+    (Label::Text (String::from "hi")).println!
+"#,
+    );
+
+    assert_eq!(
+        messages,
+        ["Cannot move non-copy value of type 'String' out of a reference"]
+    );
+}
+
+#[test]
+fn test_move_whole_value_out_of_self_names_its_type() {
+    let messages = borrow_diagnostic_messages(
+        r#"
+enum Label
+    Text String
+
+impl Show for Label
+    @show = ->
+        whole = *self
+        match whole
+            Label::Text text => text
+
+main = !->
+    (Label::Text (String::from "hi")).println!
+"#,
+    );
+
+    assert_eq!(
+        messages,
+        ["Cannot move non-copy value of type 'Label' out of a reference"]
+    );
+}
+
 #[test]
 fn test_move_non_copy_value_out_of_shared_reference_is_rejected() {
     compile_should_fail(

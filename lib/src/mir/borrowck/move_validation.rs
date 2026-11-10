@@ -11,6 +11,7 @@ use super::*;
 pub(super) struct MoveValidationContext<'a> {
     type_context: &'a crate::type_context::TypeContext,
     backend_contract: &'a MirBackendContract,
+    type_names: &'a crate::type_services::display::TypeDisplayContext,
     direct_drop_types: HashSet<TypeId>,
     cleanup_cache: HashMap<Type, bool>,
 }
@@ -19,10 +20,12 @@ impl<'a> MoveValidationContext<'a> {
     pub(super) fn new(
         type_context: &'a crate::type_context::TypeContext,
         backend_contract: &'a MirBackendContract,
+        type_names: &'a crate::type_services::display::TypeDisplayContext,
     ) -> Self {
         Self {
             type_context,
             backend_contract,
+            type_names,
             direct_drop_types: backend_contract.drop_glue.keys().copied().collect(),
             cleanup_cache: HashMap::new(),
         }
@@ -242,7 +245,6 @@ impl<'a> MoveValidationContext<'a> {
 
     fn type_display_name(&self, ty: &Type) -> String {
         let ty = self.backend_contract.normalize_type(self.type_context, ty);
-        let context = crate::type_services::display::TypeDisplayContext::default();
-        crate::type_services::display::display_type_with_context(&ty, &context).to_string()
+        crate::type_services::display::display_type_with_context(&ty, self.type_names).to_string()
     }
 }

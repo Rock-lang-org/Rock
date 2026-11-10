@@ -182,6 +182,7 @@ fn borrowck_rejects_local_escape_through_contract_projection_output() {
         &type_context,
         &backend_contract,
         &HashMap::new(),
+        &Default::default(),
     )
     .expect_err("projection output reference should not allow a local to escape");
 
@@ -245,6 +246,7 @@ fn borrowck_field_projection_uses_contract_not_legacy_metadata() {
         &type_context,
         &backend_contract,
         &HashMap::new(),
+        &Default::default(),
     )
     .expect_err("contract field type should make the projected move non-copy");
 
@@ -352,6 +354,7 @@ fn borrowck_rejects_field_move_from_projected_drop_struct_output() {
         &type_context,
         &backend_contract,
         &HashMap::new(),
+        &Default::default(),
     )
     .expect_err("moving a field out of projected Drop output should be rejected");
 
@@ -464,6 +467,7 @@ fn borrowck_rejects_array_element_move_from_projected_drop_array_output() {
         &type_context,
         &backend_contract,
         &HashMap::new(),
+        &Default::default(),
     )
     .expect_err("moving projected Drop array element should be rejected");
 
@@ -529,6 +533,7 @@ fn borrowck_rejects_move_out_of_projected_reference_output() {
         &type_context,
         &backend_contract,
         &HashMap::new(),
+        &Default::default(),
     )
     .expect_err("moving non-copy projected reference output should be rejected");
 

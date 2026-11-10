@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use crate::diagnostic::{Diagnostic, DiagnosticCode, Diagnostics};
 use crate::lexer::Span;
 use crate::mir::{MirBackendContract, MirFunction, MirFunctionId, MirProgram};
+use crate::type_services::display::TypeDisplayContext;
 
 use move_validation::*;
 use origin_tracking::*;
@@ -36,7 +37,9 @@ fn mir_diagnostic(message: String, span: Option<Span>) -> Diagnostic {
 pub struct BorrowChecker;
 
 impl BorrowChecker {
-    pub fn run(program: &MirProgram) -> Result<(), Diagnostics> {
+    /// Checks every function of `program`; `type_names` names nominal types
+    /// in diagnostics.
+    pub fn run(program: &MirProgram, type_names: &TypeDisplayContext) -> Result<(), Diagnostics> {
         let mut diagnostics = Diagnostics::default();
         let return_summaries = Self::reference_return_summaries(program);
 
@@ -46,6 +49,7 @@ impl BorrowChecker {
                 &program.type_context,
                 &program.backend_contract,
                 &return_summaries,
+                type_names,
             ) {
                 for diag in func_diagnostics.0 {
                     diagnostics.push(diag);
@@ -65,9 +69,16 @@ impl BorrowChecker {
         type_context: &crate::type_context::TypeContext,
         backend_contract: &MirBackendContract,
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        type_names: &TypeDisplayContext,
     ) -> Result<(), Diagnostics> {
         let mut checker = BorrowChecker;
-        checker.validate_ownership_core(func, type_context, backend_contract, return_summaries)
+        checker.validate_ownership_core(
+            func,
+            type_context,
+            backend_contract,
+            return_summaries,
+            type_names,
+        )
     }
 
     pub fn validate_ownership_core(
@@ -76,12 +87,14 @@ impl BorrowChecker {
         type_context: &crate::type_context::TypeContext,
         backend_contract: &MirBackendContract,
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        type_names: &TypeDisplayContext,
     ) -> Result<(), Diagnostics> {
         let mut diagnostics = Self::validate_moves_and_initialization(
             func,
             type_context,
             backend_contract,
             return_summaries,
+            type_names,
         );
         Self::validate_reference_escapes(
             func,

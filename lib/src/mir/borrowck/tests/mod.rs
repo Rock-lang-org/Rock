@@ -86,6 +86,7 @@ impl BorrowChecker {
             type_context,
             &MirBackendContract::default(),
             &HashMap::new(),
+            &Default::default(),
         )
     }
 }

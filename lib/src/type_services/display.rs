@@ -93,6 +93,19 @@ impl TypeDisplayContext {
         }
     }
 
+    /// Names every struct and enum of `program`, including dependency types.
+    pub fn extend_nominal_names<P: crate::hir::HirPhase>(
+        &mut self,
+        program: &crate::hir::HirProgramFor<P>,
+    ) {
+        for structure in program.structs.values() {
+            self.insert_definition_name(structure.id, structure.name.clone());
+        }
+        for enumeration in program.enums.values() {
+            self.insert_definition_name(enumeration.id, enumeration.name.clone());
+        }
+    }
+
     fn extend_generic_params(&mut self, params: &[crate::types::GenericParamDecl]) {
         for generic in params {
             self.insert_generic_name(generic.id, generic.name.clone());

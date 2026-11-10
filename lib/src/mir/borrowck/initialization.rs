@@ -20,9 +20,11 @@ impl BorrowChecker {
         type_context: &crate::type_context::TypeContext,
         backend_contract: &MirBackendContract,
         return_summaries: &HashMap<MirFunctionId, OriginSet>,
+        type_names: &crate::type_services::display::TypeDisplayContext,
     ) -> Diagnostics {
         let mut diagnostics = Diagnostics::default();
-        let mut move_validation = MoveValidationContext::new(type_context, backend_contract);
+        let mut move_validation =
+            MoveValidationContext::new(type_context, backend_contract, type_names);
 
         let init_analysis = InitializationAnalysis::new(func, type_context);
         let init_results = run_fixpoint(&init_analysis, func);
@@ -140,6 +142,7 @@ impl BorrowChecker {
                 );
                 Self::check_terminator(
                     term,
+                    type_context,
                     &init_analysis,
                     &state,
                     &loan_table,
