@@ -59,6 +59,9 @@ impl BorrowChecker {
             StatementKind::Assign(_dest, rvalue) => match rvalue {
                 Rvalue::Use(operand) => {
                     match operand {
+                        // Loop-owned array element moves skip the move-only rules.
+                        Operand::Move(place) if stmt.loop_owned_array_move => move_validation
+                            .validate_copy(place, func, stmt_span.clone(), diagnostics),
                         Operand::Move(place) => move_validation.validate_move(
                             place,
                             func,

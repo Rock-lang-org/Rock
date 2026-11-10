@@ -1,6 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::mir::{Local, Place, Projection};
+use crate::types::Type;
+
+/// A hidden array temporary that a by-value `for` loop consumes element by
+/// element. Elements `counter + 1..len` are the unvisited tail that scope-exit
+/// cleanup must still drop; the element at `counter` already moved into the
+/// loop binding.
+#[derive(Clone)]
+pub(super) struct LoopOwnedArray {
+    pub(super) counter: Local,
+    pub(super) elem_ty: Type,
+    pub(super) len: usize,
+}
 
 /// Per-function move and drop-flag bookkeeping used to decide which scope-exit
 /// drops are unconditional, flag-guarded, or skipped.
@@ -13,6 +25,7 @@ pub(super) struct DropState {
     statically_moved_cleanup_places: HashSet<Place>,
     drop_flags: HashMap<Local, Local>,
     projection_drop_flags: HashMap<Place, Local>,
+    loop_owned_arrays: HashMap<Local, LoopOwnedArray>,
     cleanup_mode: bool,
 }
 
@@ -24,6 +37,15 @@ impl DropState {
         self.projection_drop_flags.clear();
         self.moved_places.clear();
         self.statically_moved_cleanup_places.clear();
+        self.loop_owned_arrays.clear();
+    }
+
+    pub(super) fn register_loop_owned_array(&mut self, temp: Local, owned: LoopOwnedArray) {
+        self.loop_owned_arrays.insert(temp, owned);
+    }
+
+    pub(super) fn loop_owned_array(&self, temp: Local) -> Option<LoopOwnedArray> {
+        self.loop_owned_arrays.get(&temp).cloned()
     }
 
     /// Switches to cleanup mode and returns the previous mode to hand back to

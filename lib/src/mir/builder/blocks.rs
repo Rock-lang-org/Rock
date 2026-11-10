@@ -1,5 +1,6 @@
 use crate::types::Type;
 
+use super::drop_state::LoopOwnedArray;
 use super::{HirBlock, HirStmt, MirBuilder};
 use crate::mir::{
     Constant, DropObligationKind, LocalSource, Mutability, Operand, Place, Projection, Rvalue,
@@ -13,7 +14,10 @@ impl<'a> MirBuilder<'a> {
         for local in block_locals.into_iter().rev() {
             if let Some(current) = current_opt {
                 let ty = self.get_local_type(local).unwrap_or(Type::Unit);
-                if self.type_needs_cleanup(&ty) {
+                if let Some(owned) = self.drops.loop_owned_array(local) {
+                    self.emit_loop_owned_array_tail_drops(local, owned);
+                    current_opt = self.current_block;
+                } else if self.type_needs_cleanup(&ty) {
                     let root_place = Place {
                         local,
                         projection: vec![],
@@ -28,6 +32,103 @@ impl<'a> MirBuilder<'a> {
             }
         }
         self.drops.leave_cleanup(previous_cleanup_mode);
+    }
+
+    /// Drops the unvisited tail (`counter + 1..len`) of a by-value array `for`
+    /// loop's hidden temporary with a runtime loop over a dynamic index, then
+    /// ends the temporary's storage. The element at `counter` already moved
+    /// into the loop binding, and after normal completion `counter == len`
+    /// makes the loop a no-op.
+    fn emit_loop_owned_array_tail_drops(&mut self, temp: crate::mir::Local, owned: LoopOwnedArray) {
+        let int_ty = self.type_id_for(&Type::I64);
+        let bool_ty = self.type_id_for(&Type::Bool);
+        let index_local = self.new_local(int_ty, Mutability::Not, None);
+        let cond_local = self.new_local(bool_ty, Mutability::Not, None);
+        let temp_place = Place {
+            local: temp,
+            projection: vec![],
+        };
+        let local_place = |local| Place {
+            local,
+            projection: vec![],
+        };
+
+        let head_block = self.new_block();
+        let body_block = self.new_block();
+        let done_block = self.new_block();
+
+        let Some(current) = self.current_block else {
+            return;
+        };
+        let origin = self.cleanup_origin(&temp_place);
+        let statements = &mut self.blocks[current.0].statements;
+        statements.push(StatementData::storage_live(index_local, None));
+        statements.push(StatementData::storage_live(cond_local, None));
+        statements.push(StatementData::cleanup_assign(
+            local_place(index_local),
+            Rvalue::BinaryOp(
+                crate::mir::MirBinOp::Add,
+                Operand::Copy(local_place(owned.counter)),
+                Operand::Constant(Constant::Int(1)),
+            ),
+            None,
+        ));
+        self.blocks[current.0].terminator = Some(Terminator::goto(head_block, origin.clone()));
+
+        self.blocks[head_block.0]
+            .statements
+            .push(StatementData::cleanup_assign(
+                local_place(cond_local),
+                Rvalue::BinaryOp(
+                    crate::mir::MirBinOp::Lt,
+                    Operand::Copy(local_place(index_local)),
+                    Operand::Constant(Constant::Int(owned.len as i64)),
+                ),
+                None,
+            ));
+        self.blocks[head_block.0].terminator = Some(Terminator::switch_int(
+            Operand::Copy(local_place(cond_local)),
+            vec![(1, body_block)],
+            done_block,
+            origin.clone(),
+        ));
+
+        self.current_block = Some(body_block);
+        let mut projection = temp_place.projection.clone();
+        projection.push(Projection::Index(index_local));
+        let elem_place = Place {
+            local: temp,
+            projection,
+        };
+        self.emit_drop_for_place(&owned.elem_ty, elem_place, None);
+        if let Some(current) = self.current_block {
+            self.blocks[current.0]
+                .statements
+                .push(StatementData::cleanup_assign(
+                    local_place(index_local),
+                    Rvalue::BinaryOp(
+                        crate::mir::MirBinOp::Add,
+                        Operand::Copy(local_place(index_local)),
+                        Operand::Constant(Constant::Int(1)),
+                    ),
+                    None,
+                ));
+            self.blocks[current.0].terminator = Some(Terminator::goto(head_block, origin));
+        }
+
+        self.current_block = Some(done_block);
+        let flag = self.drops.drop_flag_for(temp);
+        let projection_flags = self.drops.projection_drop_flags_for_local(temp);
+        let statements = &mut self.blocks[done_block.0].statements;
+        statements.push(StatementData::storage_dead(cond_local, None));
+        statements.push(StatementData::storage_dead(index_local, None));
+        statements.push(StatementData::storage_dead(temp, None));
+        statements.extend(flag.map(|flag| StatementData::storage_dead(flag, None)));
+        statements.extend(
+            projection_flags
+                .into_iter()
+                .map(|flag| StatementData::storage_dead(flag, None)),
+        );
     }
 
     pub(super) fn emit_drop_for_place(

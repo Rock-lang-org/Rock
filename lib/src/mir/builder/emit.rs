@@ -18,6 +18,28 @@ impl<'a> MirBuilder<'a> {
         self.mark_place_initialized(&dest, span);
     }
 
+    /// Moves one element out of a by-value array `for` loop's hidden temporary.
+    /// Unlike `emit_assign`, the move is not recorded against the temporary: the
+    /// loop drops the unvisited tail itself instead of dropping the whole array.
+    pub(super) fn emit_loop_owned_array_move(
+        &mut self,
+        dest: Place,
+        operand: Operand,
+        span: Option<Span>,
+    ) {
+        self.drops.reinitialize(&dest);
+        if let Some(current) = self.current_block {
+            self.blocks[current.0]
+                .statements
+                .push(StatementData::loop_owned_array_move(
+                    dest.clone(),
+                    operand,
+                    span.clone(),
+                ));
+        }
+        self.mark_place_initialized(&dest, span);
+    }
+
     fn emit_assert(&mut self, assertion: crate::mir::MirAssert, span: Option<Span>) {
         if let Some(current) = self.current_block {
             self.blocks[current.0]

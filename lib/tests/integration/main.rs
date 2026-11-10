@@ -11,6 +11,7 @@ mod callable;
 mod support;
 use support::{compile_and_run, compile_and_run_without_std, compile_should_fail};
 
+mod array_for_moves;
 mod arrays_slices;
 mod borrowck;
 mod closures;
