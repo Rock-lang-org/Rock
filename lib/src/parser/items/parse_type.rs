@@ -51,6 +51,7 @@ fn parse_type_after_arrow(stream: Input) -> IResult<ParseType> {
 }
 
 fn parse_type_application(stream: Input) -> IResult<ParseType> {
+    let restrict_literals = stream.no_literal_type_args;
     let (mut stream, constructor) = parse_type_atom(stream)?;
     let mut args = Vec::new();
     let constructor_span = type_span(&constructor);
@@ -61,7 +62,9 @@ fn parse_type_application(stream: Input) -> IResult<ParseType> {
             break;
         }
 
-        let (next_stream, arg) = parse_type_atom(stream)?;
+        let (mut next_stream, arg) = parse_type_atom(stream)?;
+        // A literal allowed after a comma does not lift the restriction for what follows.
+        next_stream.no_literal_type_args = restrict_literals;
         end_span = type_span(&arg);
         args.push(arg);
         stream = next_stream;
@@ -69,7 +72,15 @@ fn parse_type_application(stream: Input) -> IResult<ParseType> {
         // Commas separate sibling arguments only after the constructor has
         // received an argument. This leaves `(A, B)` available to tuple parsing.
         if matches!(peek_token(&stream), Some(TokenType::Coma)) {
-            let (after_comma, _) = TokenType::Coma.process(stream)?;
+            let (mut after_comma, _) = TokenType::Coma.process(stream)?;
+            // Where numbers are normally expression arguments, one after a comma can only be a
+            // literal type argument: `(Buf I64, 3)::new`.
+            let literal_after_comma = after_comma.no_literal_type_args
+                && after_comma.literal_type_arg_after_comma
+                && matches!(peek_token(&after_comma), Some(TokenType::Number(_)));
+            if literal_after_comma {
+                after_comma.no_literal_type_args = false;
+            }
             if starts_type_atom(&after_comma) && !starts_where_subject(&after_comma) {
                 stream = after_comma;
             } else {

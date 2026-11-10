@@ -137,7 +137,7 @@ impl TypeLoweringContext for CollectContext {
                 let mut chars = name.chars();
                 let is_implicit_generic = matches!(chars.next(), Some(ch) if ch.is_ascii_uppercase())
                     && chars.next().is_none();
-                if !is_implicit_generic {
+                if !is_implicit_generic || self.generics.is_closed() {
                     return None;
                 }
                 self.generics
@@ -253,7 +253,7 @@ impl CollectContext {
                 let mut chars = name.chars();
                 let is_implicit_generic = matches!(chars.next(), Some(ch) if ch.is_ascii_uppercase())
                     && chars.next().is_none();
-                if is_implicit_generic {
+                if is_implicit_generic && !self.generics.is_closed() {
                     Some(
                         self.generics
                             .declare(name.to_string(), crate::type_services::kind::Kind::Type),

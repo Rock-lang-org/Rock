@@ -12,6 +12,8 @@ pub(crate) struct GenericScope {
     owner: Option<DefId>,
     params: Vec<String>,
     kinds: Vec<Kind>,
+    /// Set while lowering a nominal's fields: only the declared parameter list is in scope.
+    closed: bool,
 }
 
 /// The generic owner and parameters replaced by `GenericScope::enter`.
@@ -86,6 +88,15 @@ impl GenericScope {
 
     pub(crate) fn kind_at(&self, index: usize) -> Option<&Kind> {
         self.kinds.get(index)
+    }
+
+    /// Closes or reopens the scope to implicit declarations, returning the previous state.
+    pub(crate) fn set_closed(&mut self, closed: bool) -> bool {
+        std::mem::replace(&mut self.closed, closed)
+    }
+
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed
     }
 
     /// Appends a parameter to the current owner and returns its index.

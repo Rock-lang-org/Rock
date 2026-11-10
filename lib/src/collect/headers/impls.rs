@@ -233,15 +233,30 @@ pub(crate) fn build_impl_with_id(
         .iter()
         .enumerate()
         .map(|(index, generic)| {
-            crate::type_lowering::TypeLowerer::lower_type_argument(
-                context,
-                generic,
-                trait_def
-                    .as_ref()
-                    .and_then(|item| item.generic_params.get(index))
-                    .map(|param| &param.kind)
-                    .unwrap_or(&crate::type_services::kind::Kind::Type),
-            )
+            let expected = trait_def
+                .as_ref()
+                .and_then(|item| item.generic_params.get(index))
+                .map(|param| param.kind.clone())
+                .unwrap_or(crate::type_services::kind::Kind::Type);
+            let ty = crate::type_lowering::TypeLowerer::lower_type_argument(
+                context, generic, &expected,
+            );
+            // A trait argument must have the kind its parameter declares.
+            if trait_def.is_some() && !matches!(ty, Type::Error) {
+                if let Ok(actual) = crate::type_lowering::TypeLowerer::kind_of(context, &ty) {
+                    if actual != expected {
+                        context.push_error_with_span(
+                            crate::type_services::normalize::NormalizeError::KindMismatch {
+                                expected,
+                                actual,
+                            }
+                            .to_string(),
+                            generic.span(),
+                        );
+                    }
+                }
+            }
+            ty
         })
         .collect();
     let trait_id = trait_def.as_ref().map(|trait_def| trait_def.id);
