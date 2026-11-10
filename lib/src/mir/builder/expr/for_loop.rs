@@ -2,6 +2,7 @@ use crate::ids::HirLocalId;
 use crate::lexer::Span;
 use crate::types::Type;
 
+use crate::mir::builder::drop_state::LoopOwnedArray;
 use crate::mir::builder::{HirBlock, HirExpr, HirExprKind, LoopTargets, MirBuilder};
 use crate::mir::{
     Constant, LocalSource, MirBinOp, Mutability, Operand, Place, Projection, Rvalue, Terminator,
@@ -41,6 +42,7 @@ impl<'a> MirBuilder<'a> {
                 }),
             _ => None,
         };
+        let mut loop_owned_elem_ty: Option<Type> = None;
         let (loop_local, end_operand, iter_place, iter_base_ty, inclusive_range) =
             if let Some((start, end, inclusive)) = nominal_range {
                 let loop_local = self.new_local_with_source(
@@ -82,15 +84,9 @@ impl<'a> MirBuilder<'a> {
                     inclusive,
                 )
             } else {
-                let iter_temp = self.new_local_from_expr(iter.ty.clone(), iter);
-                self.register_scoped_temp(iter_temp);
-                self.emit_storage_live(iter_temp, Some(iter.span.clone()));
-                let iter_place = Place {
-                    local: iter_temp,
-                    projection: vec![],
-                };
-                self.lower_expr(iter, iter_place.clone());
-
+                // The counter is registered before the iterated temporary so scope-exit
+                // cleanup (reverse order) can still read it while dropping the
+                // temporary's unvisited tail.
                 let counter = self.new_local(
                     self.type_id_for(&Type::I64),
                     Mutability::Mut,
@@ -107,11 +103,35 @@ impl<'a> MirBuilder<'a> {
                     binding_span.clone(),
                 );
 
+                let iter_temp = self.new_local_from_expr(iter.ty.clone(), iter);
+                self.register_scoped_temp(iter_temp);
+                self.emit_storage_live(iter_temp, Some(iter.span.clone()));
+                let iter_place = Place {
+                    local: iter_temp,
+                    projection: vec![],
+                };
+                self.lower_expr(iter, iter_place.clone());
+
                 let (elem_ty, len) = match &iter.ty {
                     Type::Array(elem, len) => ((**elem).clone(), len.as_concrete() as i64),
                     Type::Slice(elem) => ((**elem).clone(), 0),
                     _ => (Type::I64, 0),
                 };
+                // A by-value array of cleanup elements is consumed by the loop: it moves
+                // each element out and drops the unvisited tail itself on every exit.
+                loop_owned_elem_ty = (matches!(&iter.ty, Type::Array(_, _))
+                    && self.type_needs_cleanup(&elem_ty))
+                .then(|| elem_ty.clone());
+                if let Some(owned_elem_ty) = &loop_owned_elem_ty {
+                    self.drops.register_loop_owned_array(
+                        iter_temp,
+                        LoopOwnedArray {
+                            counter,
+                            elem_ty: owned_elem_ty.clone(),
+                            len: len as usize,
+                        },
+                    );
+                }
                 let loop_local = self.new_local_with_source(
                     self.type_id_for(&elem_ty),
                     Mutability::Not,
@@ -185,6 +205,7 @@ impl<'a> MirBuilder<'a> {
         }
 
         self.current_block = Some(body_block);
+        let item_local_for_drop = iter_place.as_ref().map(|(_, item_local)| *item_local);
         if let Some((iter_place, item_local)) = iter_place {
             let mut item_place = iter_place;
             item_place.projection.push(Projection::Index(loop_local));
@@ -198,14 +219,15 @@ impl<'a> MirBuilder<'a> {
                 .borrow()
                 .type_for(self.locals[item_local.0].ty);
             let operand = self.operand_for_place(&item_ty, item_place, false);
-            self.emit_assign(
-                Place {
-                    local: item_local,
-                    projection: vec![],
-                },
-                Rvalue::Use(operand),
-                Some(iter.span.clone()),
-            );
+            let item_dest = Place {
+                local: item_local,
+                projection: vec![],
+            };
+            if loop_owned_elem_ty.is_some() {
+                self.emit_loop_owned_array_move(item_dest, operand, Some(iter.span.clone()));
+            } else {
+                self.emit_assign(item_dest, Rvalue::Use(operand), Some(iter.span.clone()));
+            }
         }
 
         self.loop_stack.push(LoopTargets {
@@ -230,6 +252,20 @@ impl<'a> MirBuilder<'a> {
         }
 
         self.current_block = Some(inc_block);
+        // The binding owns the moved-out element for one pass; drop it before the
+        // next element replaces it unless the body moved it away.
+        if let (Some(elem_ty), Some(item_local)) = (&loop_owned_elem_ty, item_local_for_drop) {
+            let previous_cleanup_mode = self.drops.enter_cleanup();
+            self.emit_drop_for_place(
+                elem_ty,
+                Place {
+                    local: item_local,
+                    projection: vec![],
+                },
+                None,
+            );
+            self.drops.leave_cleanup(previous_cleanup_mode);
+        }
         let next_temp = self.new_local(self.type_id_for(&Type::I64), Mutability::Not, None);
         self.register_scoped_temp(next_temp);
         self.emit_storage_live(next_temp, Some(iter.span.clone()));

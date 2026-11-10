@@ -472,7 +472,11 @@ impl Analysis for InitializationAnalysis {
                 let move_info = MoveInfo {
                     span: stmt.origin().source_span().cloned(),
                 };
-                self.apply_rvalue_moves(state, rvalue, &move_info);
+                // The loop owns the hidden array temporary and drops its unvisited
+                // tail itself, so a loop-owned element move is not a partial move.
+                if !stmt.loop_owned_array_move {
+                    self.apply_rvalue_moves(state, rvalue, &move_info);
+                }
 
                 // Assignment writes happen after evaluating RHS operands.
                 self.set_place_state(state, dest, InitState::Init);

@@ -477,6 +477,84 @@ fn borrowck_rejects_array_element_move_from_projected_drop_array_output() {
 }
 
 #[test]
+fn borrowck_accepts_loop_owned_array_element_moves_from_drop_array() {
+    let mut type_context = TypeContext::new();
+    let drop_def = DefId::new(CrateId(0), LocalDefId(930));
+    let i64_id = type_context.intern_type(&Type::I64);
+    let drop_ty = Type::Struct {
+        id: drop_def,
+        args: Vec::new(),
+    };
+    let drop_id = type_context.intern_type(&drop_ty);
+    let array_id = type_context.intern_type(&Type::Array(
+        Box::new(drop_ty),
+        crate::types::ArrayLen::Value(2),
+    ));
+    let element_place = Place {
+        local: Local(1),
+        projection: vec![Projection::Index(Local(3))],
+    };
+    let loop_move = || {
+        StatementData::loop_owned_array_move(
+            Place {
+                local: Local(2),
+                projection: Vec::new(),
+            },
+            Operand::Move(element_place.clone()),
+            None,
+        )
+    };
+    let local_decl = |ty, name: &str, source| LocalDecl {
+        ty,
+        mutability: Mutability::Mut,
+        name: Some(name.to_string()),
+        span: None,
+        source,
+    };
+    let function = MirFunction {
+        id: MirFunctionId::Function(DefId::new(CrateId(0), LocalDefId(931))),
+        name: "loop_owned_array_element_moves".to_string(),
+        // The same indexed element moves on every pass; the loop owns the tail.
+        basic_blocks: vec![BasicBlock {
+            statements: vec![loop_move(), loop_move()],
+            terminator: Some(Terminator::Return),
+        }],
+        local_decls: vec![
+            local_decl(drop_id, "return_place", crate::mir::LocalSource::ReturnPlace),
+            local_decl(array_id, "array", crate::mir::LocalSource::Argument),
+            local_decl(drop_id, "element", crate::mir::LocalSource::Temporary),
+            local_decl(i64_id, "index", crate::mir::LocalSource::Temporary),
+        ],
+        closure_captures: Vec::new(),
+        arg_count: 1,
+        ret_type: drop_id,
+        ownership: MirOwnershipMetadata::default(),
+    };
+    let mut backend_contract = MirBackendContract::default();
+    backend_contract.drop_glue.insert(
+        drop_id,
+        crate::mir::MirCallableKey::Function(DefId::new(CrateId(0), LocalDefId(932))),
+    );
+    backend_contract.nominal_layouts.insert(
+        drop_def,
+        MirNominalLayout::Struct {
+            id: drop_def,
+            fields: Vec::new(),
+            generic_params: Vec::new(),
+        },
+    );
+
+    BorrowChecker::check_function_with_contract(
+        &function,
+        &type_context,
+        &backend_contract,
+        &HashMap::new(),
+        &Default::default(),
+    )
+    .expect("loop-owned array element moves should be accepted");
+}
+
+#[test]
 fn borrowck_rejects_move_out_of_projected_reference_output() {
     let mut type_context = TypeContext::new();
     let trait_id = DefId::new(CrateId(0), LocalDefId(928));

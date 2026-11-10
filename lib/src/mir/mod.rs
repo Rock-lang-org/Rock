@@ -473,6 +473,11 @@ pub struct StatementData {
     pub kind: StatementKind,
     pub span: Option<Span>,
     pub cleanup: bool,
+    /// Marks the per-pass element move of a by-value array `for` loop. The loop owns
+    /// the hidden array temporary and drops only the unvisited tail itself, so this
+    /// move neither partially moves the temporary nor trips the cleanup-element
+    /// move rule that guards user-written `array[i]` moves.
+    pub loop_owned_array_move: bool,
 }
 
 impl StatementData {
@@ -491,6 +496,14 @@ impl StatementData {
             kind,
             span,
             cleanup: false,
+            loop_owned_array_move: false,
+        }
+    }
+
+    pub fn loop_owned_array_move(place: Place, operand: Operand, span: Option<Span>) -> Self {
+        Self {
+            loop_owned_array_move: true,
+            ..Self::new(StatementKind::Assign(place, Rvalue::Use(operand)), span)
         }
     }
 
@@ -499,6 +512,7 @@ impl StatementData {
             kind,
             span,
             cleanup: true,
+            loop_owned_array_move: false,
         }
     }
 
