@@ -382,3 +382,11 @@ impl Traversable for Vec
         take_values: VecTraverseState V, B -> Vec B = vec_traverse_state_values
         wrapped_take_values: G (VecTraverseState V, B -> Vec B) = G::pure take_values
         G::ap wrapped_take_values, output
+
+// Needs const-generics
+/* impl From [T; 3] for Vec T
+    from = slice ->
+        mut res = Vec::new!
+        for elem in slice
+            res.push elem
+        res */
