@@ -203,6 +203,52 @@ main = !->
 }
 
 #[test]
+fn test_unknown_type_in_body_annotation_is_rejected() {
+    compile_should_fail(
+        r#"
+main = !->
+    values: Vec Missing = Vec::new!
+    values.len!.println!
+"#,
+        "unknown type 'Missing'",
+    );
+}
+
+#[test]
+fn test_unknown_applied_type_in_body_annotation_reports_only_the_name() {
+    let dir = test_temp_dir(TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    std::fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let source = dir.join("test.rk");
+    std::fs::write(
+        &source,
+        r#"
+struct Holder T
+    < value: T
+
+main = ->
+    held: Holder (Missing I64) = Holder value: 1
+    0
+"#,
+    )
+    .unwrap();
+    let mut config = test_config(source, dir.clone());
+    config.extern_artifacts.clear();
+    config.no_std = true;
+    config.no_prelude = true;
+    config.no_link = true;
+
+    let diagnostics = rock_lib::compile(&config).expect_err("unknown type must be rejected");
+    let messages = diagnostics
+        .0
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(messages, ["unknown type 'Missing'"]);
+}
+
+#[test]
 fn test_inline_program() {
     let output = compile_and_run(
         r#"

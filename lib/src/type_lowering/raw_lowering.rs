@@ -27,6 +27,9 @@ impl TypeLowerer {
                     env,
                     binders,
                 );
+                if matches!(constructor, Type::Error) {
+                    return Type::Error;
+                }
                 let mut hole_kinds = Vec::new();
                 let args = application
                     .args
@@ -324,7 +327,9 @@ impl TypeLowerer {
                 }
             }
         };
-        if generics.is_empty() {
+        // An unresolved head was already reported; applying it would only add
+        // a misleading kind error.
+        if generics.is_empty() || matches!(base, Type::Error) {
             base
         } else {
             Type::Apply {

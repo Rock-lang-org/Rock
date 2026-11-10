@@ -63,8 +63,13 @@ impl TypeLoweringContext for Lowerer {
     }
 
     fn generic_type_for_name(&mut self, name: &str, span: crate::lexer::Span) -> Type {
-        self.current_generic_type_for_name(name, span)
-            .unwrap_or(Type::Error)
+        match self.current_generic_type_for_name(name, span.clone()) {
+            Some(ty) => ty,
+            None => {
+                self.push_type_error(format!("unknown type '{name}'"), span);
+                Type::Error
+            }
+        }
     }
 
     fn populate_type_normalization_env(
