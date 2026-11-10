@@ -27,6 +27,12 @@ thread_unit = -> return
     CreateFailed I32
     JoinFailed I32
 
+impl Show for ThreadError
+    @show = ->
+        match *self
+            ThreadError::CreateFailed val => val.show!
+            ThreadError::JoinFailed val => val.show!
+
 struct ThreadState T
     < refs: AtomicU64
     < result: *T
