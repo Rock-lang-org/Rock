@@ -10,8 +10,10 @@ fn parenthesized_path_type(stream: Input) -> IResult<crate::ast::ParseType> {
     let (stream, _) = TokenType::OpenParen.process(stream)?;
     let mut inner_stream = stream;
     inner_stream.no_literal_type_args = true;
+    inner_stream.literal_type_arg_after_comma = true;
     let (mut stream, ty) = parse_type(inner_stream)?;
     stream.no_literal_type_args = false;
+    stream.literal_type_arg_after_comma = false;
     let (stream, _) = TokenType::CloseParen.process(stream)?;
     Ok((stream, ty))
 }

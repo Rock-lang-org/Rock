@@ -270,11 +270,11 @@ main = !->
     );
 }
 
-// A single-letter length name missing from an explicit parameter list is implicitly declared,
-// exactly like an undeclared single-letter type parameter (existing convention, not new policy).
+// Struct and enum fields only see the declared parameter list; an implicit parameter would be
+// orphaned from it.
 #[test]
-fn test_const_generics_undeclared_length_in_explicit_param_list_is_implicitly_declared() {
-    let output = compile_and_run(
+fn test_const_generics_undeclared_length_in_struct_field_is_rejected() {
+    compile_should_fail(
         r#"
 struct Buf T
     data: [T; M]
@@ -282,6 +282,144 @@ struct Buf T
 main = !->
     1.println!
 "#,
+        "array length 'M' must name a `usize` const generic parameter",
     );
-    assert_eq!(output.trim(), "1");
+}
+
+#[test]
+fn test_const_generics_undeclared_length_with_literal_len_in_struct_field_is_rejected() {
+    compile_should_fail(
+        r#"
+struct Buf T
+    < data: [M; 3]
+
+main = !->
+    ()
+"#,
+        "unknown type 'M'",
+    );
+}
+
+#[test]
+fn test_undeclared_type_in_struct_field_is_rejected() {
+    compile_should_fail(
+        r#"
+struct Buf T
+    < data: M
+
+main = !->
+    ()
+"#,
+        "unknown type 'M'",
+    );
+}
+
+#[test]
+fn test_undeclared_type_in_struct_without_param_list_is_rejected() {
+    compile_should_fail(
+        r#"
+struct Buf
+    < data: M
+
+main = !->
+    ()
+"#,
+        "unknown type 'M'",
+    );
+}
+
+#[test]
+fn test_undeclared_type_in_enum_variant_is_rejected() {
+    compile_should_fail(
+        r#"
+enum Choice T
+    One M
+    Two
+
+main = !->
+    ()
+"#,
+        "unknown type 'M'",
+    );
+}
+
+#[test]
+fn test_const_generics_impl_trait_argument_usize_for_type_parameter_is_rejected() {
+    compile_should_fail(
+        r#"
+struct Buf T, N: usize
+    < data: [T; N]
+
+trait Tk A
+    @tk = -> 0
+
+impl Tk N for Buf T, N
+    @tk = -> 1
+
+main = !->
+    ()
+"#,
+        "kind mismatch: expected a type of kind Type, found a `usize` constant",
+    );
+}
+
+#[test]
+fn test_const_generics_impl_trait_argument_type_for_usize_parameter_is_rejected() {
+    compile_should_fail(
+        r#"
+struct Buf T
+    < data: T
+
+trait Sized2 N: usize
+    @size = -> 0
+
+impl Sized2 I64 for Buf T
+    @size = -> 1
+
+main = !->
+    ()
+"#,
+        "kind mismatch: expected a `usize` constant such as `3`, found a type of kind Type",
+    );
+}
+
+#[test]
+fn test_const_generics_impl_trait_argument_literal_for_usize_parameter_is_accepted() {
+    let output = compile_and_run(
+        r#"
+struct Buf T
+    < data: T
+
+trait Sized2 N: usize
+    @size = -> 0
+
+impl Sized2 3 for Buf T
+    @size = -> 3
+
+main = !->
+    b = Buf
+        data: 1
+    b.size!.println!
+"#,
+    );
+    assert_eq!(output.trim(), "3");
+}
+
+#[test]
+fn test_const_generics_parenthesized_path_head_with_literal_argument() {
+    let output = compile_and_run(
+        r#"
+struct Buf T, N: usize
+    < data: [T; N]
+
+impl Buf T, N
+    new = d -> Buf
+        data: d
+
+main = !->
+    b = (Buf I64, 3)::new [1, 2, 3]
+    b.data[2].println!
+"#,
+    );
+    assert_eq!(output.trim(), "3");
 }

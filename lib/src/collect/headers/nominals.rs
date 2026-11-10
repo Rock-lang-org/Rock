@@ -62,6 +62,9 @@ pub(crate) fn build_struct_with_id(
         generic_param_kinds,
         &generic_spans,
     );
+    // Fields may only use declared parameters: an implicit one would be orphaned from the
+    // already published parameter list.
+    let was_closed = context.generics.set_closed(true);
     let fields = sd
         .fields
         .iter()
@@ -73,6 +76,7 @@ pub(crate) fn build_struct_with_id(
             public: f.public,
         })
         .collect();
+    context.generics.set_closed(was_closed);
     context.pop_generic_context_with_kinds(previous);
 
     HirStruct {
@@ -185,6 +189,7 @@ pub(crate) fn build_enum_with_id(
         generic_param_kinds,
         &generic_spans,
     );
+    let was_closed = context.generics.set_closed(true);
     let mut next_field_id = 0;
     let variants = ed
         .variants
@@ -224,6 +229,7 @@ pub(crate) fn build_enum_with_id(
             }
         })
         .collect();
+    context.generics.set_closed(was_closed);
     context.pop_generic_context_with_kinds(previous);
 
     HirEnum {
