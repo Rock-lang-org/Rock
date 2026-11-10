@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use inkwell::module::Linkage;
+use inkwell::attributes::{Attribute, AttributeLoc};
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::FunctionValue;
 use inkwell::AddressSpace;
@@ -180,6 +181,13 @@ impl<'ctx> CodeGen<'ctx> {
             &llvm_symbol,
             &declaration.signature,
         )?;
+
+        if matches!(declaration.key, MirCallableKey::RuntimeHelper(MirRuntimeHelper::ArrayTailDrop(_))) {
+            // Preserve sharing even when the caller is optimized for speed.
+            function.add_attribute(AttributeLoc::Function, self.context.create_enum_attribute(
+                Attribute::get_named_enum_kind_id("noinline"), 0,
+            ));
+        }
 
         if llvm_symbol != declaration.llvm_symbol {
             self.register_mir_contract_actual_symbol(declaration, &llvm_symbol);

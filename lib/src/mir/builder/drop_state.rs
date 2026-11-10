@@ -10,6 +10,8 @@ use crate::types::Type;
 #[derive(Clone)]
 pub(super) struct LoopOwnedArray {
     pub(super) counter: Local,
+    /// The loop binding that owns the element moved out on the current pass.
+    pub(super) item_local: Local,
     pub(super) elem_ty: Type,
     pub(super) len: usize,
 }
@@ -26,6 +28,7 @@ pub(super) struct DropState {
     drop_flags: HashMap<Local, Local>,
     projection_drop_flags: HashMap<Place, Local>,
     loop_owned_arrays: HashMap<Local, LoopOwnedArray>,
+    consumed_loop_arrays: HashSet<Local>,
     cleanup_mode: bool,
 }
 
@@ -38,6 +41,7 @@ impl DropState {
         self.moved_places.clear();
         self.statically_moved_cleanup_places.clear();
         self.loop_owned_arrays.clear();
+        self.consumed_loop_arrays.clear();
     }
 
     pub(super) fn register_loop_owned_array(&mut self, temp: Local, owned: LoopOwnedArray) {
@@ -46,6 +50,18 @@ impl DropState {
 
     pub(super) fn loop_owned_array(&self, temp: Local) -> Option<LoopOwnedArray> {
         self.loop_owned_arrays.get(&temp).cloned()
+    }
+
+    /// The loop finished: every element was moved out or dropped, so later
+    /// scope exits only end the temporary's storage.
+    pub(super) fn consume_loop_owned_array(&mut self, temp: Local) {
+        if self.loop_owned_arrays.remove(&temp).is_some() {
+            self.consumed_loop_arrays.insert(temp);
+        }
+    }
+
+    pub(super) fn is_consumed_loop_array(&self, temp: Local) -> bool {
+        self.consumed_loop_arrays.contains(&temp)
     }
 
     /// Switches to cleanup mode and returns the previous mode to hand back to

@@ -265,3 +265,109 @@ main = !->
     );
     assert_eq!(output, "2\n2\n");
 }
+
+// Several early exits from one loop (`return` in the body, `break`) plus a
+// `return` after the loop: each path drops every element exactly once.
+#[test]
+fn test_array_for_multiple_early_exits_and_post_loop_return() {
+    let output = compile_and_run(&with_noisy(
+        r#"
+scan: (I64, I64) -> I64
+scan = pair ->
+    n = pair.0
+    brk = pair.1
+    arr = [(mk 1), (mk 2), (mk 3), (mk 4)]
+    for x in arr
+        x.value.println!
+        if x.value == n
+            return 10
+        if x.value == brk
+            break
+    "after".println!
+    if n == 100
+        return 20
+    30
+
+main = !->
+    (scan (1, 99)).println!
+    (scan (0, 3)).println!
+    (scan (100, 99)).println!
+    (scan (2, 99)).println!
+"#,
+    ));
+    assert_eq!(
+        output,
+        concat!(
+            // return on the first element: binding then the whole tail
+            "1\n101\n102\n103\n104\n10\n",
+            // break on the third: binding then the last element, then the code after
+            "1\n101\n2\n102\n3\n103\n104\nafter\n30\n",
+            // full loop, then the post-loop return
+            "1\n101\n2\n102\n3\n103\n4\n104\nafter\n20\n",
+            // return on the second element
+            "1\n101\n2\n102\n103\n104\n10\n",
+        )
+    );
+}
+
+// `?` inside the iterated expression exits before the array exists: nothing
+// drops on the Err path; the Ok path drops each element once.
+#[test]
+fn test_array_for_try_in_iterated_expression() {
+    let output = compile_and_run(&with_noisy(
+        r#"
+build: I64 -> Result [Noisy; 2], I64
+build = v ->
+    if v == 0
+        Result::Err 99
+    else
+        Result::Ok [(mk 1), (mk 2)]
+
+run: I64 -> Result I64, I64
+run = v ->
+    for x in (build v)?
+        x.value.println!
+    Result::Ok 0
+
+main = !->
+    match run 0
+        Result::Ok _ => "ok".println!
+        Result::Err e => e.println!
+    match run 1
+        Result::Ok _ => "ok".println!
+        Result::Err e => e.println!
+"#,
+    ));
+    assert_eq!(output, "99\n1\n101\n2\n102\nok\n");
+}
+
+#[test]
+fn test_array_for_shared_tail_drops_enum_payload_with_parent_and_child_drop() {
+    let output = compile_and_run(&with_noisy(
+        r#"
+struct Parent
+    < value: I64
+    < child: Noisy
+
+impl Drop for Parent
+    ~@drop = !->
+        (self.value + 200).println!
+
+enum Item
+    Some Parent
+    None
+
+wrap: I64 -> Item
+wrap = v -> Item::Some (Parent
+    value: v
+    child: mk v)
+
+main = !->
+    items = [(wrap 1), Item::None, (wrap 2), (wrap 3)]
+    for item in items
+        break
+    "done".println!
+"#,
+    ));
+    assert_eq!(output, "201\n101\n202\n102\n203\n103\ndone\n");
+}

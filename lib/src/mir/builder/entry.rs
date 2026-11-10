@@ -72,6 +72,7 @@ impl<'a> MirBuilder<'a> {
             }
         }
 
+        Self::populate_array_tail_helpers(program, &type_context, &HashSet::new(), &mut functions);
         let type_context = type_context.into_inner();
         let mut backend_contract = crate::mir::MirBackendContract::default();
         Self::populate_backend_contract_function_bodies(
@@ -211,6 +212,12 @@ impl<'a> MirBuilder<'a> {
             functions.insert(nested.id.clone(), nested.clone());
         }
 
+        Self::populate_array_tail_helpers(
+            &program.program,
+            &type_context,
+            &Self::direct_drop_types_for_program(program),
+            &mut functions,
+        );
         let mut backend_contract = Self::backend_contract_for_program(
             program,
             &functions,
