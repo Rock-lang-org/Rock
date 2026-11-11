@@ -371,3 +371,65 @@ main = !->
     ));
     assert_eq!(output, "201\n101\n202\n102\n203\n103\ndone\n");
 }
+
+// Zero-length owned array: the loop body never runs and nothing drops.
+#[test]
+fn test_array_for_zero_length_array_runs_no_pass_and_drops_nothing() {
+    let output = compile_and_run(&with_noisy(
+        r#"
+scan: () -> I64
+scan = ->
+    arr: [Noisy; 0] = []
+    for x in arr
+        x.value.println!
+    "after".println!
+    7
+
+main = !->
+    scan!.println!
+    "done".println!
+"#,
+    ));
+    assert_eq!(output, "after\n7\ndone\n");
+}
+
+// A loop that runs to completion followed by a return: the binding and the
+// elements each drop exactly once.
+#[test]
+fn test_array_for_completed_loop_then_return_drops_once() {
+    let output = compile_and_run(&with_noisy(
+        r#"
+scan: () -> I64
+scan = ->
+    arr = [(mk 1), (mk 2)]
+    for x in arr
+        x.value.println!
+    return 5
+
+main = !->
+    scan!.println!
+"#,
+    ));
+    assert_eq!(output, "1\n101\n2\n102\n5\n");
+}
+
+// A const-generic length reaching the for loop is concrete after
+// monomorphization, including zero.
+#[test]
+fn test_array_for_generic_length_function_drops_each_once() {
+    let output = compile_and_run(&with_noisy(
+        r#"
+walk: [Noisy; N] -> I64
+walk = arr ->
+    for x in arr
+        x.value.println!
+    9
+
+main = !->
+    (walk [(mk 1), (mk 2)]).println!
+    e: [Noisy; 0] = []
+    (walk e).println!
+"#,
+    ));
+    assert_eq!(output, "1\n101\n2\n102\n9\n9\n");
+}
