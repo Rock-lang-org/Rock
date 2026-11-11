@@ -19,6 +19,11 @@ pub(super) struct LoopOwnedArray {
 /// Per-function move and drop-flag bookkeeping used to decide which scope-exit
 /// drops are unconditional, flag-guarded, or skipped.
 ///
+/// One `DropState` belongs to one `MirBuilder`, and closure bodies are built by
+/// a fresh builder (see `closures.rs`), so nested functions never share loop
+/// state with the enclosing function. Within a function the state is only
+/// consumed after the loop body, break and continue edges were all emitted.
+///
 /// The builder owns MIR local creation, so flag locals are allocated by the
 /// caller and registered here once they exist.
 #[derive(Default)]
@@ -55,7 +60,12 @@ impl DropState {
     /// The loop finished: every element was moved out or dropped, so later
     /// scope exits only end the temporary's storage.
     pub(super) fn consume_loop_owned_array(&mut self, temp: Local) {
-        if self.loop_owned_arrays.remove(&temp).is_some() {
+        let was_registered = self.loop_owned_arrays.remove(&temp).is_some();
+        debug_assert!(
+            was_registered && !self.consumed_loop_arrays.contains(&temp),
+            "loop-owned array {temp:?} must be consumed exactly once, after its loop is lowered"
+        );
+        if was_registered {
             self.consumed_loop_arrays.insert(temp);
         }
     }

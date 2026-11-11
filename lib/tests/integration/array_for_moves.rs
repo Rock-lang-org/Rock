@@ -433,3 +433,29 @@ main = !->
     ));
     assert_eq!(output, "1\n101\n2\n102\n9\n9\n");
 }
+
+// Closures are built by their own MIR builder, so a closure inside an owned
+// array loop never observes the enclosing loop's drop state.
+#[test]
+fn test_array_for_closure_with_early_return_in_body_drops_each_once() {
+    let output = compile_and_run(&with_noisy(
+        r#"
+scan: () -> I64
+scan = ->
+    arr = [(mk 1), (mk 2), (mk 3)]
+    for x in arr
+        pick = ->
+            if x.value == 1
+                return 10
+            20
+        pick!.println!
+        if x.value == 2
+            return 42
+    0
+
+main = !->
+    scan!.println!
+"#,
+    ));
+    assert_eq!(output, "10\n101\n20\n102\n103\n42\n");
+}
