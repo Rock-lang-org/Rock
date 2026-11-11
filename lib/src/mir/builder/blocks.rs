@@ -234,8 +234,8 @@ impl<'a> MirBuilder<'a> {
                     self.type_id_for(ty),
                     DropObligationKind::Structural,
                 );
-                // const-generics: generic-length drops need substitution before MIR drop elaboration.
-                self.emit_array_drop_chain(elem, len.as_concrete() as usize, place);
+                // Lengths are concrete here: the mono length check rejects unresolved ones earlier.
+                self.emit_array_drop_chain(elem, len.concrete().unwrap_or(0) as usize, place);
             }
             Type::Enum { id, args } => {
                 self.record_drop_obligation(

@@ -35,12 +35,12 @@ impl<'ctx> CodeGen<'ctx> {
 
         let base_ty = self.mir_operand_ty(context, base)?;
         let len = match &base_ty {
-            Type::Array(_, len) => self.context.i64_type().const_int(len.as_concrete(), false),
+            Type::Array(_, len) => self.context.i64_type().const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false),
             Type::Reference { inner, .. } if matches!(inner.as_ref(), Type::Array(_, _)) => {
                 let Type::Array(_, len) = inner.as_ref() else {
                     unreachable!();
                 };
-                self.context.i64_type().const_int(len.as_concrete(), false)
+                self.context.i64_type().const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false)
             }
             Type::Slice(_) | Type::Str | Type::Pointer(_) | Type::Reference { .. } => {
                 let value = self.compile_mir_operand(function, context, base)?;

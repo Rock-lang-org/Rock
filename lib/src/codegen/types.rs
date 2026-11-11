@@ -229,7 +229,7 @@ impl<'ctx> CodeGen<'ctx> {
             Type::Str => self.slice_layout_type().into(),
             Type::Never => self.context.i64_type().into(),
             Type::Slice(_) => self.slice_layout_type().into(),
-            Type::Array(inner, len) => self.llvm_type(inner).array_type(len.as_concrete() as u32).into(),
+            Type::Array(inner, len) => self.llvm_type(inner).array_type(len.concrete().unwrap_or(0) as u32).into(),
             Type::Tuple(elems) => {
                 let field_types: Vec<BasicTypeEnum<'ctx>> =
                     elems.iter().map(|t| self.llvm_type(t)).collect();

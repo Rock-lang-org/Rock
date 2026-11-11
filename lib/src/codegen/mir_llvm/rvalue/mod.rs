@@ -114,7 +114,7 @@ impl<'ctx> CodeGen<'ctx> {
                     };
                     self.make_fat_slice_value(
                         data_ptr,
-                        self.context.i64_type().const_int(len.as_concrete(), false),
+                        self.context.i64_type().const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false),
                     )
                 }
                 Type::Slice(_) | Type::Str | Type::Reference { .. } | Type::Pointer(_) => {
