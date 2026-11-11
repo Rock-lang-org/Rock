@@ -555,18 +555,6 @@ impl Monomorphizer {
                     other => crate::type_services::visit::fold_type_children(other, self),
                 }
             }
-
-            fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
-                let ArrayLen::Param(param) = len else {
-                    return len;
-                };
-                match self.substitution.get(&param) {
-                    Some(replacement) => {
-                        ArrayLen::from_const_type(&self.monomorphizer.type_for(*replacement))
-                    }
-                    None => len,
-                }
-            }
         }
 
         crate::type_services::visit::fold_type(

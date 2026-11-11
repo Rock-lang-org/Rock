@@ -29,16 +29,6 @@ fn remap_type_owned_generic_owner(ty: &mut crate::types::Type, old_id: DefId, ne
             }
             crate::type_services::visit::fold_type_children(ty, self)
         }
-
-        fn fold_array_len(&mut self, len: crate::types::ArrayLen) -> crate::types::ArrayLen {
-            match len {
-                crate::types::ArrayLen::Param(mut param) if param.owner == self.old_id => {
-                    param.owner = self.new_id;
-                    crate::types::ArrayLen::Param(param)
-                }
-                other => other,
-            }
-        }
     }
 
     crate::type_services::visit::fold_type_in_place(

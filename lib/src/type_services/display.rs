@@ -176,6 +176,7 @@ pub fn write_type(ty: &Type, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                     param.owner.crate_id.0, param.owner.local.0, param.index
                 )?,
                 ArrayLen::Var(id) => write!(f, "?T{}", id.raw())?,
+                ArrayLen::Bound { depth, index } => write!(f, "^{depth}.{index}")?,
                 ArrayLen::Error => write!(f, "_")?,
             }
             write!(f, "]")
@@ -344,7 +345,7 @@ fn write_user_type(
                         .map(String::as_str)
                         .unwrap_or("_")
                 ),
-                ArrayLen::Var(_) | ArrayLen::Error => write!(f, "; _]"),
+                ArrayLen::Var(_) | ArrayLen::Bound { .. } | ArrayLen::Error => write!(f, "; _]"),
             }
         }
         Type::Tuple(elements) => {

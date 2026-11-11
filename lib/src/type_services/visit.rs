@@ -193,11 +193,6 @@ pub trait TypeFolder {
     fn fold_type(&mut self, ty: Type) -> Type {
         fold_type_children(ty, self)
     }
-
-    /// Rewrites the length of an array type.
-    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
-        len
-    }
 }
 
 pub fn fold_type<F>(ty: Type, folder: &mut F) -> Type
@@ -232,13 +227,6 @@ where
                 other => fold_type_children(other, self),
             }
         }
-
-        fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
-            match len {
-                ArrayLen::Param(param) => ArrayLen::Param((self.remap)(param)),
-                other => other,
-            }
-        }
     }
 
     fold_type_in_place(ty, &mut GenericParamRemapper { remap });
@@ -253,7 +241,10 @@ where
         Type::Slice(inner) => Type::Slice(Box::new(folder.fold_type(*inner))),
         Type::Array(inner, len) => {
             let inner = folder.fold_type(*inner);
-            Type::Array(Box::new(inner), folder.fold_array_len(len))
+            // A length is a const-kinded type argument: folding it through `fold_type`
+            // keeps every folder's generic/type-variable handling authoritative for lengths.
+            let len = folder.fold_type(len.to_const_type());
+            Type::Array(Box::new(inner), ArrayLen::from_const_type(&len))
         }
         Type::Tuple(elements) => Type::Tuple(
             elements
@@ -342,10 +333,6 @@ pub trait TryTypeFolder {
     fn try_fold_type(&mut self, ty: Type) -> Result<Type, Self::Error> {
         try_fold_type_children(ty, self)
     }
-
-    fn try_fold_array_len(&mut self, len: ArrayLen) -> Result<ArrayLen, Self::Error> {
-        Ok(len)
-    }
 }
 
 pub fn try_fold_type<F>(ty: Type, folder: &mut F) -> Result<Type, F::Error>
@@ -364,7 +351,8 @@ where
         Type::Slice(inner) => Type::Slice(Box::new(folder.try_fold_type(*inner)?)),
         Type::Array(inner, len) => {
             let inner = folder.try_fold_type(*inner)?;
-            Type::Array(Box::new(inner), folder.try_fold_array_len(len)?)
+            let len = folder.try_fold_type(len.to_const_type())?;
+            Type::Array(Box::new(inner), ArrayLen::from_const_type(&len))
         }
         Type::Tuple(elements) => Type::Tuple(
             elements

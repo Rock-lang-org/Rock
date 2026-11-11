@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::ids::DefId;
 use crate::type_services::kind::Kind;
-use crate::types::{AssociatedTypeKey, NominalTypeKind, Type};
+use crate::types::{ArrayLen, AssociatedTypeKey, NominalTypeKind, Type};
 
 pub const DEFAULT_MAX_NORMALIZATION_DEPTH: usize = 256;
 pub const DEFAULT_MAX_NORMALIZATION_NODES: usize = 4_000_000;
@@ -661,6 +661,8 @@ fn contains_bound_group(ty: &Type, nested_depth: u32) -> bool {
     match ty {
         Type::BoundVar { depth, .. } => *depth == nested_depth,
         Type::Lambda { body, .. } => contains_bound_group(body, nested_depth + 1),
+        Type::Array(inner, len) => contains_bound_group(&len.to_const_type(), nested_depth)
+            || contains_bound_group(inner, nested_depth),
         other => type_children(other)
             .into_iter()
             .any(|child| contains_bound_group(child, nested_depth)),
@@ -714,7 +716,10 @@ fn type_children(ty: &Type) -> Vec<&Type> {
 fn map_type_children(ty: &Type, map: &mut impl FnMut(&Type) -> Type) -> Type {
     match ty {
         Type::Slice(inner) => Type::Slice(Box::new(map(inner))),
-        Type::Array(inner, len) => Type::Array(Box::new(map(inner)), *len),
+        Type::Array(inner, len) => Type::Array(
+            Box::new(map(inner)),
+            ArrayLen::from_const_type(&map(&len.to_const_type())),
+        ),
         Type::Tuple(elements) => Type::Tuple(elements.iter().map(&mut *map).collect()),
         Type::Function {
             params,
