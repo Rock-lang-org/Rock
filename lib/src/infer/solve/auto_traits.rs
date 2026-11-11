@@ -194,8 +194,10 @@ pub(super) fn type_is_sized(ty: &Type) -> bool {
         | Type::Reference { .. }
         | Type::Pointer(_)
         | Type::Function { .. } => true,
-        Type::Generic(_)
-        | Type::Projection { .. }
+        // A bare generic parameter is deferred to monomorphization by the
+        // worklist, so a generic nested in an array or tuple must agree.
+        Type::Generic(_) => true,
+        Type::Projection { .. }
         | Type::TypeVar(_)
         | Type::Constructor { .. }
         | Type::Apply { .. }

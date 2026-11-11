@@ -17,6 +17,9 @@ impl Lowerer {
             kind,
             HirExprKind::Var(_)
                 | HirExprKind::FieldAccess(_, _, _)
+                // Place produced by dereferencing a reference, such as the
+                // result of an index operation on a nested array.
+                | HirExprKind::Deref(_)
                 | HirExprKind::ResolvedVar(HirVarRef {
                     target: HirVarTarget::Local(_),
                     ..
