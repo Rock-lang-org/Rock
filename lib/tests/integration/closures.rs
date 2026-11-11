@@ -362,3 +362,51 @@ main = ->
     assert_eq!(lines[1], "3628800");
     assert_eq!(lines[2], "55");
 }
+
+const TRACKED_CAPTURE_PRELUDE: &str = r#"
+> std::mem::drop::Drop
+
+struct Tracked
+    < value: I64
+
+impl Drop for Tracked
+    ~@drop = ->
+        "drop".println!
+        return
+
+make = t -> x -> t.value + x
+"#;
+
+#[test]
+fn test_returned_closure_drops_move_capture_once_when_called() {
+    let output = compile_and_run(&format!(
+        r#"{TRACKED_CAPTURE_PRELUDE}
+main = !->
+    f = make (Tracked
+        value: 7)
+    f 1 .println!
+    "end".println!
+"#
+    ));
+
+    assert_eq!(
+        output.trim().lines().collect::<Vec<_>>(),
+        ["drop", "8", "end"]
+    );
+}
+
+#[test]
+fn test_returned_closure_with_move_capture_rejects_second_call() {
+    compile_should_fail(
+        &format!(
+        r#"{TRACKED_CAPTURE_PRELUDE}
+main = !->
+    f = make (Tracked
+        value: 7)
+    f 1 .println!
+    f 2 .println!
+"#
+        ),
+        "use of moved value `f`",
+    );
+}
