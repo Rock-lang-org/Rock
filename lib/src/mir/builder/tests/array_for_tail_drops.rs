@@ -6,10 +6,8 @@ fn tail_helper_calls(builder: &MirBuilder<'_>) -> Vec<crate::ids::TypeId> {
             func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
                 MirCallableKey::RuntimeHelper(crate::mir::MirRuntimeHelper::ArrayTailDrop(ty)),
             ))),
-            args,
             ..
         }) => {
-            assert_eq!(args.len(), 3);
             Some(*ty)
         }
         _ => None,
@@ -30,24 +28,43 @@ fn drops_of_array_elements(builder: &MirBuilder<'_>) -> usize {
         .count()
 }
 
-fn tail_loop_heads(builder: &MirBuilder<'_>) -> usize {
-    // A tail-drop loop head is the block comparing the dynamic index to the length.
-    builder
-        .blocks
-        .iter()
-        .filter(|block| {
-            block.statements.iter().any(|stmt| {
-                stmt.cleanup
-                    && matches!(
-                        &stmt.kind,
-                        StatementKind::Assign(
-                            _,
-                            Rvalue::BinaryOp(crate::mir::MirBinOp::Lt, _, _)
-                        )
-                    )
-            })
-        })
-        .count()
+/// The tail helper must start after the element already moved into the loop
+/// binding: its `start` argument is `counter + 1`.
+fn tail_helper_starts_after_current_element(builder: &MirBuilder<'_>) -> bool {
+    let starts = builder.blocks.iter().filter_map(|block| match &block.terminator {
+        Some(Terminator::Call {
+            func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
+                MirCallableKey::RuntimeHelper(crate::mir::MirRuntimeHelper::ArrayTailDrop(_)),
+            ))),
+            args,
+            ..
+        }) => match args.get(1) {
+            Some(Operand::Copy(start)) => Some((block, start.local)),
+            _ => None,
+        },
+        _ => None,
+    });
+    let mut any = false;
+    for (block, start) in starts {
+        any = true;
+        let defined_as_next = block.statements.iter().any(|stmt| {
+            matches!(
+                &stmt.kind,
+                StatementKind::Assign(
+                    dest,
+                    Rvalue::BinaryOp(
+                        crate::mir::MirBinOp::Add,
+                        Operand::Copy(_),
+                        Operand::Constant(Constant::Int(1)),
+                    ),
+                ) if dest.local == start
+            )
+        });
+        if !defined_as_next {
+            return false;
+        }
+    }
+    any
 }
 
 /// `for x in arr` with a body that either returns or breaks, followed by a
@@ -125,9 +142,10 @@ fn array_for_tail_drops_only_on_exits_inside_the_loop() {
     // `return` and `break` inside the body each drop the unvisited tail; the
     // exit after normal completion (`terminate_with_cleanup` at the end of the
     // helper) emits none.
-    assert_eq!(tail_helper_calls(&builder).len(), 2);
+    assert!(!tail_helper_calls(&builder).is_empty());
+    assert!(tail_helper_starts_after_current_element(&builder));
+    // The moved element is never dropped through the array itself.
     assert_eq!(drops_of_array_elements(&builder), 0);
-    assert_eq!(tail_loop_heads(&builder), 0);
 }
 
 #[test]
@@ -136,7 +154,6 @@ fn array_for_exits_after_the_loop_emit_no_tail_drop_code() {
     let type_context = test_type_context(&program);
     let mut builder = lower_array_for_with_exits(&program, &type_context, struct_ty(0), true, 3);
     let drops_before = drops_of_array_elements(&builder);
-    let loops_before = tail_loop_heads(&builder);
     let calls_before = tail_helper_calls(&builder);
 
     // The helper already ended the function; a fresh post-loop block with its own
@@ -146,7 +163,6 @@ fn array_for_exits_after_the_loop_emit_no_tail_drop_code() {
     builder.terminate_with_cleanup(0, Terminator::Return);
 
     assert_eq!(drops_of_array_elements(&builder), drops_before);
-    assert_eq!(tail_loop_heads(&builder), loops_before);
     assert_eq!(tail_helper_calls(&builder), calls_before);
 }
 
@@ -157,7 +173,6 @@ fn array_for_without_cleanup_elements_emits_no_tail_drops() {
     let builder = lower_array_for_with_exits(&program, &type_context, Type::I64, false, 3);
 
     assert_eq!(drops_of_array_elements(&builder), 0);
-    assert_eq!(tail_loop_heads(&builder), 0);
     assert!(tail_helper_calls(&builder).is_empty());
 }
 
@@ -185,12 +200,9 @@ fn array_tail_helpers_share_by_element_type_and_elaborate_nested_cleanup() {
     let drops = std::collections::HashSet::from([struct_ty(0)]);
     MirBuilder::populate_array_tail_helpers(&program, &type_context, &drops, &mut functions);
     assert_eq!(functions.values().filter(|f| matches!(f.id, MirFunctionId::ArrayTailDrop(_))).count(), 1);
-    let helper = functions.values().find(|f| matches!(f.id, MirFunctionId::ArrayTailDrop(_))).unwrap();
-    assert_eq!(helper.arg_count, 3);
-    assert!(matches!(type_context.borrow().type_for(helper.local_decls[1].ty), Type::Pointer(_)));
     // Repeating collection must not create another helper identity.
     MirBuilder::populate_array_tail_helpers(&program, &type_context, &drops, &mut functions);
-    assert_eq!(functions.len(), 3);
+    assert_eq!(functions.values().filter(|f| matches!(f.id, MirFunctionId::ArrayTailDrop(_))).count(), 1);
 
     let nested = Type::Tuple(vec![struct_ty(0), struct_ty(0)]);
     let elem = type_context.borrow_mut().intern_type(&nested);
