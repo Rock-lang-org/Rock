@@ -711,3 +711,174 @@ main = !->
 "#);
     assert_eq!(output.trim(), "12\n5\n5");
 }
+
+const ERASED_CAPTURE: &str = r#"
+struct Tracked
+    < number: I64
+impl Drop for Tracked
+    ~@drop = !-> self.number.println!
+make = number ->
+    tracked = Tracked
+        number: number
+    value -> tracked.number + value
+"#;
+
+#[test]
+fn test_arrow_typed_struct_field_owns_environment_and_allows_repeated_calls() {
+    let output = compile_and_run(&format!(r#"{ERASED_CAPTURE}
+struct Holder
+    < run: I64 -> I64
+main = !->
+    holder = Holder
+        run: make 10
+    (holder.run 1).println!
+    (holder.run 2).println!
+    "end".println!
+"#));
+    assert_eq!(output.trim(), "11\n12\nend\n10");
+}
+
+#[test]
+fn test_vec_of_arrow_typed_values_drops_each_environment_once() {
+    let output = compile_and_run(&format!(r#"{ERASED_CAPTURE}
+main = !->
+    mut callbacks: Vec (I64 -> I64) = Vec::new!
+    callbacks.push (make 10)
+    callbacks.push (make 20)
+    (callbacks[0] 1).println!
+    (callbacks[0] 2).println!
+    "end".println!
+"#));
+    assert_eq!(output.trim(), "11\n12\nend\n20\n10");
+}
+
+#[test]
+fn test_arrow_typed_parameter_and_option_own_environment() {
+    let output = compile_and_run(&format!(r#"{ERASED_CAPTURE}
+apply: (I64 -> I64) -> ()
+apply = callback !->
+    (callback 1).println!
+    (callback 2).println!
+main = !->
+    apply (make 10)
+    stored: Option (I64 -> I64) = Option::Some (make 20)
+    "end".println!
+"#));
+    assert_eq!(output.trim(), "11\n12\n10\nend\n20");
+}
+
+#[test]
+fn test_arrow_typed_environment_value_moves_instead_of_copying() {
+    compile_should_fail(&format!(r#"{ERASED_CAPTURE}
+main = !->
+    original: I64 -> I64 = make 10
+    moved = original
+    (moved 1).println!
+    (original 2).println!
+"#), "moved");
+}
+
+#[test]
+fn test_plain_function_items_can_be_reused_and_passed_as_arrow_values() {
+    let output = compile_and_run(r#"
+inc = value -> value + 1
+apply: (I64 -> I64) -> I64
+apply = callback -> callback 10
+main = !->
+    (apply inc).println!
+    (apply inc).println!
+    (inc 20).println!
+"#);
+    assert_eq!(output.trim(), "11\n11\n21");
+}
+
+#[test]
+fn test_arrow_typed_parameter_does_not_drop_consumed_capture_again() {
+    let output = compile_and_run(r#"
+struct Tracked
+    < number: I64
+impl Drop for Tracked
+    ~@drop = !-> "drop".println!
+take = value -> value.number
+run: (() -> I64) -> ()
+run = callback !-> callback!.println!
+main = !->
+    tracked = Tracked
+        number: 10
+    run (-> take tracked)
+"#);
+    assert_eq!(output.trim(), "drop\n10");
+}
+
+#[test]
+fn test_erased_consuming_callable_cannot_reenter_consumed_environment() {
+    let (_, success) = compile_and_run_with_status(r#"
+struct Tracked
+    < number: I64
+impl Drop for Tracked
+    ~@drop = !-> self.number.println!
+take = value -> value.number
+repeat: (() -> I64) -> ()
+repeat = callback !->
+    callback!.println!
+    callback!.println!
+main = !->
+    tracked = Tracked
+        number: 10
+    repeat (-> take tracked)
+"#);
+    assert!(!success, "an erased FnOnce must not enter its consumed body again");
+}
+
+#[test]
+fn test_owned_function_capture_can_be_called_repeatedly_without_copying() {
+    let output = compile_and_run(&format!(r#"{ERASED_CAPTURE}
+wrap = callback -> value -> callback value
+main = !->
+    callback = wrap (make 10)
+    (callback 1).println!
+    (callback 2).println!
+    "end".println!
+"#));
+    assert_eq!(output.trim(), "11\n12\nend\n10");
+}
+
+#[test]
+fn test_explicit_consuming_callable_bound_remains_usable_in_nested_closure() {
+    let output = compile_and_run(r#"
+struct Tracked
+    < number: I64
+impl Drop for Tracked
+    ~@drop = !-> "drop".println!
+take = value -> value.number
+wrap_once: F -> (() -> I64) where F: FnOnce (), I64
+wrap_once = task -> -> task!
+main = !->
+    tracked = Tracked
+        number: 10
+    once = wrap_once (-> take tracked)
+    once!.println!
+"#);
+    assert_eq!(output.trim(), "drop\n10");
+}
+
+#[test]
+fn test_branch_local_call_can_still_consume_inferred_callback() {
+    let output = compile_and_run(r#"
+struct Tracked
+    < number: I64
+impl Drop for Tracked
+    ~@drop = !-> "drop".println!
+take = value -> value.number
+apply = task ->
+    if true
+        task!
+    else
+        0
+main = !->
+    tracked = Tracked
+        number: 10
+    (apply (-> take tracked)).println!
+"#);
+    assert_eq!(output.trim(), "drop\n10");
+}

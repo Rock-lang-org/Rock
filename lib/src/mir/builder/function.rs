@@ -111,6 +111,7 @@ impl<'a> MirBuilder<'a> {
             if capture.kind == crate::hir::HirClosureCaptureKind::Move
                 && !self.closures.borrows_owned_environment
             {
+                self.ownership.consumes_closure_environment = true;
                 // Consuming closures own these environment inputs even when
                 // their bodies only borrow them. Moves in the body clear the
                 // normal drop flags; otherwise scope exit drops each once.

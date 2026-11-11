@@ -284,6 +284,9 @@ impl MirOrigin {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MirOwnershipMetadata {
+    /// The body takes its environment's captures, so dynamic owner drops must
+    /// not run their destructor again after an erased consuming call.
+    pub consumes_closure_environment: bool,
     pub reference_origins: Vec<(Local, ReferenceOrigin)>,
     pub temporary_locals: Vec<Local>,
     pub drop_obligations: Vec<MirDropObligation>,

@@ -7,6 +7,7 @@ fn direct_drop_obligation_without_glue_is_rejected() {
     let function = drop_obligation_function(
         tracked_id,
         MirOwnershipMetadata {
+            consumes_closure_environment: false,
             reference_origins: Vec::new(),
             temporary_locals: Vec::new(),
             drop_obligations: vec![MirDropObligation {
@@ -36,6 +37,7 @@ fn direct_drop_obligation_uses_backend_contract_drop_glue() {
     let function = drop_obligation_function(
         tracked_id,
         MirOwnershipMetadata {
+            consumes_closure_environment: false,
             reference_origins: Vec::new(),
             temporary_locals: Vec::new(),
             drop_obligations: vec![MirDropObligation {
@@ -69,6 +71,7 @@ fn projected_return_place_direct_drop_obligation_without_glue_is_rejected() {
     let function = drop_obligation_function(
         tracked_id,
         MirOwnershipMetadata {
+            consumes_closure_environment: false,
             reference_origins: Vec::new(),
             temporary_locals: Vec::new(),
             drop_obligations: vec![MirDropObligation {
@@ -101,6 +104,7 @@ fn structural_drop_obligation_without_direct_glue_is_allowed() {
     let function = drop_obligation_function(
         tracked_id,
         MirOwnershipMetadata {
+            consumes_closure_environment: false,
             reference_origins: Vec::new(),
             temporary_locals: Vec::new(),
             drop_obligations: vec![MirDropObligation {

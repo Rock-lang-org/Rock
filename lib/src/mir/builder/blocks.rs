@@ -171,7 +171,7 @@ impl<'a> MirBuilder<'a> {
             self.current_block = Some(next_block);
         }
 
-        if self.function_owns_cleanup_captures(ty)
+        if matches!(ty, Type::Function { .. })
             && !self.drops.has_moved_descendant(&place)
         {
             // The closure environment carries its own drop function; the
@@ -188,22 +188,6 @@ impl<'a> MirBuilder<'a> {
         }
 
         self.emit_child_drop_chain(ty, place);
-    }
-
-    fn function_owns_cleanup_captures(&self, ty: &Type) -> bool {
-        matches!(ty, Type::Function { captures, .. } if captures.iter().any(|capture| {
-            capture.kind == crate::types::CaptureKind::Move
-                && self.owns_runtime_cleanup(&capture.ty)
-        }))
-    }
-
-    /// Like `type_needs_cleanup`, but a function value only counts when its
-    /// own environment owns something to drop.
-    pub(super) fn owns_runtime_cleanup(&self, ty: &Type) -> bool {
-        match ty {
-            Type::Function { .. } => self.function_owns_cleanup_captures(ty),
-            _ => self.type_needs_cleanup(ty),
-        }
     }
 
     fn has_direct_drop_impl(&self, ty: &Type) -> bool {

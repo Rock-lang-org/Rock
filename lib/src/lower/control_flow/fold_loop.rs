@@ -294,7 +294,7 @@ impl Lowerer {
             );
             return self.error_expression_at(span);
         }
-        self.body.enter_loop(Some(context.clone()));
+        self.body.enter_loop(Some(context.clone()), self.scope.depth() - 1);
         let mut body =
             self.with_body_return_type(callback_ty.clone(), |lowerer| lowerer.lower_block(body));
         self.body.leave_loop();

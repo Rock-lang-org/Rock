@@ -247,6 +247,18 @@ impl<'a> Visitor<'a> for Liveness<'_> {
     }
 
     fn visit_primary_expr(&mut self, primary: &'a ast::PrimaryExpr) {
+        if primary.secondaries.as_ref().is_some_and(|items| {
+            items.iter().any(|item| matches!(item, ast::SecondaryExpr::Arguments(_)))
+        }) {
+            // The callee borrow lives through argument evaluation and the call.
+            // A callback argument capturing that callee must not move it out
+            // from under its own invocation (e.g. nested local `bind` calls).
+            if let ast::Operand::Ident(path) = &primary.operand {
+                if let Some(id) = self.bindings.uses.get(&key(path)) {
+                    self.live.insert(*id);
+                }
+            }
+        }
         if let Some(secondaries) = &primary.secondaries {
             for secondary in secondaries.iter().rev() { secondary.visit(self); }
         }

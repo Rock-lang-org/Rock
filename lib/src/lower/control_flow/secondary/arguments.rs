@@ -634,7 +634,18 @@ impl Lowerer {
                         .as_ref()
                         .map(|items| items.trait_id)
                 } else {
-                    None
+                    let binding_scope = match &expr.kind {
+                        HirExprKind::Var(name) => self.scope.binding_scope_index(name),
+                        HirExprKind::ResolvedVar(reference) => self.scope.binding_scope_index(&reference.name),
+                        _ => None,
+                    };
+                    if binding_scope.is_some_and(|scope| self.body.requires_reusable_callable(scope)) {
+                        // Reading a captured callable, or calling across a
+                        // loop backedge, requires reusable shared invocation.
+                        self.language_items.fn_trait.as_ref().map(|items| items.trait_id)
+                    } else {
+                        None
+                    }
                 }
                 .or_else(|| {
                     self.language_items

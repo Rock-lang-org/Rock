@@ -7,7 +7,7 @@ mod rvalue;
 mod terminator;
 
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{FunctionValue, PointerValue};
+use inkwell::values::{BasicValue, FunctionValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
 use crate::codegen::{CodeGen, CodegenError, MirClosureCodegenMetadata};
@@ -401,6 +401,43 @@ impl<'ctx> CodeGen<'ctx> {
                 ))
             })?
             .into_pointer_value();
+        if mir_function.ownership.consumes_closure_environment {
+            let ptr_ty = self.context.ptr_type(AddressSpace::default());
+            let header = self.builder.build_load(ptr_ty, env_param, "closure_live_header")
+                .map_err(|error| CodegenError::from(format!("Failed to load closure header: {error}")))?;
+            let Some(load) = header.as_instruction_value() else {
+                return Err(CodegenError::internal("closure header load must be an instruction"));
+            };
+            load.set_atomic_ordering(inkwell::AtomicOrdering::Acquire)
+                .map_err(CodegenError::internal)?;
+            let header = header.into_pointer_value();
+            let claimed = self.builder.build_cmpxchg(
+                env_param, header, ptr_ty.const_null(),
+                inkwell::AtomicOrdering::AcquireRelease, inkwell::AtomicOrdering::Acquire,
+            ).map_err(|error| CodegenError::from(format!("Failed to claim closure environment: {error}")))?;
+            let claimed = self.builder.build_extract_value(claimed, 1, "closure_environment_claimed")
+                .map_err(|error| CodegenError::from(format!("Failed to check closure claim: {error}")))?
+                .into_int_value();
+            let nonnull = self.builder.build_is_not_null(header, "closure_environment_live")
+                .map_err(|error| CodegenError::from(format!("Failed to check closure header: {error}")))?;
+            let live = self.builder.build_and(nonnull, claimed, "closure_environment_taken")
+                .map_err(|error| CodegenError::from(format!("Failed to guard closure claim: {error}")))?;
+            let take = self.context.append_basic_block(context.function, "closure_take_environment");
+            let consumed = self.context.append_basic_block(context.function, "closure_already_consumed");
+            self.builder.build_conditional_branch(live, take, consumed)
+                .map_err(|error| CodegenError::from(format!("Failed to guard consuming closure: {error}")))?;
+            self.builder.position_at_end(consumed);
+            let trap = match self.module.get_function("llvm.trap") {
+                Some(function) => function,
+                None => self.module.add_function("llvm.trap", self.context.void_type().fn_type(&[], false), None),
+            };
+            self.builder.build_call(trap, &[], "")
+                .map_err(|error| CodegenError::from(format!("Failed to trap consumed closure: {error}")))?;
+            self.builder.build_unreachable()
+                .map_err(|error| CodegenError::from(format!("Failed to terminate consumed closure: {error}")))?;
+            self.builder.position_at_end(take);
+            context.blocks[0] = take;
+        }
         // Field 0 is the environment drop-function header.
         let mut env_fields = vec![BasicTypeEnum::from(
             self.context.ptr_type(AddressSpace::default()),

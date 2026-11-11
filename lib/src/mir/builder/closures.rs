@@ -101,11 +101,13 @@ impl<'a> MirBuilder<'a> {
         captures: &[HirClosureCapture],
         span: &Span,
     ) {
-        let owns_cleanup = captures.iter().any(|capture| {
+        // Owned non-Copy captures need a header even if their payload has no
+        // destructor: consuming bodies clear it to guard re-entry after erasure.
+        let owns_values = captures.iter().any(|capture| {
             capture.kind == crate::hir::HirClosureCaptureKind::Move
-                && self.owns_runtime_cleanup(&capture.ty)
+                && !crate::type_services::facts::TypeFacts::is_copy(&capture.ty)
         });
-        if !owns_cleanup {
+        if !owns_values {
             return;
         }
         self.push_closure_body_function(

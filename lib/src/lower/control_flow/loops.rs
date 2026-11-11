@@ -12,7 +12,7 @@ impl Lowerer {
                 let _ = self.engine.unify(&condition.ty, &Type::Bool);
 
                 self.push_scope();
-                self.body.enter_loop(None);
+                self.body.enter_loop(None, self.scope.depth() - 1);
                 let body = self.lower_block(body);
                 self.body.leave_loop();
                 self.pop_scope();
@@ -81,7 +81,7 @@ impl Lowerer {
                 }
                 self.scope
                     .define_local(var_name.clone(), elem_ty, false, local_id);
-                self.body.enter_loop(None);
+                self.body.enter_loop(None, self.scope.depth() - 1);
                 let body = self.lower_block(body);
                 self.body.leave_loop();
                 self.pop_scope();
@@ -99,7 +99,7 @@ impl Lowerer {
             }
             ast::Loop::Loop(body, span) => {
                 self.push_scope();
-                self.body.enter_loop(None);
+                self.body.enter_loop(None, self.scope.depth() - 1);
                 let body = self.lower_block(body);
                 self.body.leave_loop();
                 self.pop_scope();

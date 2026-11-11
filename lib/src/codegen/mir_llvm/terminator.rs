@@ -1,5 +1,5 @@
 use inkwell::basic_block::BasicBlock as LlvmBasicBlock;
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, PointerValue};
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
 
@@ -233,6 +233,7 @@ impl<'ctx> CodeGen<'ctx> {
         let current_fn = ctx.function;
         let has_env = self.context.append_basic_block(current_fn, "mir_drop_env_present");
         let call_block = self.context.append_basic_block(current_fn, "mir_drop_env_call");
+        let free_block = self.context.append_basic_block(current_fn, "mir_drop_env_free");
         let done = self.mir_target_block(ctx, target, "drop")?;
         let is_null = self
             .builder
@@ -253,7 +254,7 @@ impl<'ctx> CodeGen<'ctx> {
             .build_is_not_null(drop_fn, "mir_drop_env_has_fn")
             .map_err(|e| CodegenError::from(format!("Failed to test closure env drop: {}", e)))?;
         self.builder
-            .build_conditional_branch(has_drop, call_block, done)
+            .build_conditional_branch(has_drop, call_block, free_block)
             .map_err(|e| CodegenError::from(format!("Failed to branch on env drop: {}", e)))?;
 
         self.builder.position_at_end(call_block);
@@ -264,10 +265,30 @@ impl<'ctx> CodeGen<'ctx> {
         self.builder
             .build_indirect_call(fn_ty, drop_fn, &[env_ptr.into()], "mir_drop_env_call")
             .map_err(|e| CodegenError::from(format!("Failed to call closure env drop: {}", e)))?;
-        self.builder
-            .build_unconditional_branch(done)
+        self.builder.build_unconditional_branch(free_block)
+            .map_err(|e| CodegenError::from(format!("Failed to build closure drop: {}", e)))?;
+        self.builder.position_at_end(free_block);
+        self.free_closure_environment(env_ptr)?;
+        self.builder.build_unconditional_branch(done)
             .map(|_| ())
-            .map_err(|e| CodegenError::from(format!("Failed to build closure drop: {}", e)))
+            .map_err(|e| CodegenError::from(format!("Failed to finish closure drop: {}", e)))
+    }
+
+    fn free_closure_environment(
+        &mut self,
+        environment: PointerValue<'ctx>,
+    ) -> Result<(), CodegenError> {
+        let free = match self.module.get_function("free") {
+            Some(function) => function,
+            None => self.module.add_function(
+                "free",
+                self.context.void_type().fn_type(&[environment.get_type().into()], false),
+                None,
+            ),
+        };
+        self.builder.build_call(free, &[environment.into()], "")
+            .map(|_| ())
+            .map_err(|error| CodegenError::from(format!("Failed to free closure environment: {error}")))
     }
 
     fn compile_mir_call_terminator(
@@ -351,6 +372,7 @@ impl<'ctx> CodeGen<'ctx> {
             let Type::Function {
                 params: param_types,
                 ret: ret_ty,
+                callable_kind,
                 ..
             } = callable_ty
             else {
@@ -400,7 +422,7 @@ impl<'ctx> CodeGen<'ctx> {
             let mut all_args = Vec::with_capacity(compiled_args.len() + 1);
             all_args.push(env_ptr.into());
             all_args.extend(compiled_args);
-            self.builder
+            let call = self.builder
                 .build_indirect_call(
                     self.callable_code_type(&param_types, &ret_ty)?,
                     code_ptr,
@@ -409,7 +431,13 @@ impl<'ctx> CodeGen<'ctx> {
                 )
                 .map_err(|e| {
                     CodegenError::from(format!("Failed to build indirect MIR call: {}", e))
-                })?
+                })?;
+            if callable_kind == crate::types::CallableKind::FnOnce {
+                // The body consumed or dropped its captures; only the storage
+                // remains. Calling the env destructor here would drop twice.
+                self.free_closure_environment(env_ptr)?;
+            }
+            call
         };
 
         let destination_is_unit = matches!(&destination_ty, Type::Unit)

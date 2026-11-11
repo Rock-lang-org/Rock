@@ -159,3 +159,13 @@ fn owning_mutable_closure_environment_is_not_aliased_by_copy() {
     assert!(!TypeFacts::is_copy(&closure));
     assert!(!TypeFacts::is_copy_id(id, |id| context.ty(id)));
 }
+
+#[test]
+fn arrow_values_are_owned_even_without_capture_metadata() {
+    let arrow = Type::function(vec![Type::I64], Type::I64);
+    let mut context = crate::type_context::TypeContext::new();
+    let id = context.intern_type(&arrow);
+    assert!(!TypeFacts::is_copy(&arrow));
+    assert!(!TypeFacts::is_copy_id(id, |id| context.ty(id)));
+    assert!(!TypeFacts::is_copy(&Type::Tuple(vec![arrow])));
+}

@@ -17,6 +17,7 @@ pub(crate) struct BodyState {
     context: Option<BodyLoweringContext>,
     source_scopes: Vec<u32>,
     fold_loops: Vec<Option<FoldLoopContext>>,
+    reusable_call_scopes: Vec<usize>,
     tuple_temp_counter: u32,
     pub(crate) capture_live_after: HashMap<usize, HashSet<String>>,
     pub(crate) borrowed_capture_sources: HashSet<crate::ids::HirLocalId>,
@@ -28,6 +29,7 @@ pub(crate) struct BodyFrame {
     context: Option<BodyLoweringContext>,
     source_scopes: Vec<u32>,
     fold_loops: Vec<Option<FoldLoopContext>>,
+    reusable_call_scopes: Vec<usize>,
     tuple_temp_counter: u32,
     capture_live_after: HashMap<usize, HashSet<String>>,
     borrowed_capture_sources: HashSet<crate::ids::HirLocalId>,
@@ -40,6 +42,7 @@ impl BodyState {
             context: self.context.replace(context),
             source_scopes: std::mem::replace(&mut self.source_scopes, vec![root_scope]),
             fold_loops: std::mem::take(&mut self.fold_loops),
+            reusable_call_scopes: std::mem::take(&mut self.reusable_call_scopes),
             tuple_temp_counter: std::mem::take(&mut self.tuple_temp_counter),
             capture_live_after: std::mem::take(&mut self.capture_live_after),
             borrowed_capture_sources: std::mem::take(&mut self.borrowed_capture_sources),
@@ -50,6 +53,7 @@ impl BodyState {
         self.context = frame.context;
         self.source_scopes = frame.source_scopes;
         self.fold_loops = frame.fold_loops;
+        self.reusable_call_scopes = frame.reusable_call_scopes;
         self.tuple_temp_counter = frame.tuple_temp_counter;
         self.capture_live_after = frame.capture_live_after;
         self.borrowed_capture_sources = frame.borrowed_capture_sources;
@@ -76,12 +80,26 @@ impl BodyState {
     }
 
     /// Enters a loop; `None` marks a loop that is not lowered to a fold.
-    pub(crate) fn enter_loop(&mut self, fold: Option<FoldLoopContext>) {
+    pub(crate) fn enter_loop(&mut self, fold: Option<FoldLoopContext>, scope: usize) {
         self.fold_loops.push(fold);
+        self.enter_callable_scope(scope);
     }
 
     pub(crate) fn leave_loop(&mut self) {
         self.fold_loops.pop();
+        self.leave_callable_scope();
+    }
+
+    pub(crate) fn enter_callable_scope(&mut self, scope: usize) {
+        self.reusable_call_scopes.push(scope);
+    }
+
+    pub(crate) fn leave_callable_scope(&mut self) {
+        self.reusable_call_scopes.pop();
+    }
+
+    pub(crate) fn requires_reusable_callable(&self, binding_scope: usize) -> bool {
+        self.reusable_call_scopes.iter().any(|scope| binding_scope < *scope)
     }
 
     /// Hides the enclosing loops (a lambda body cannot break out of them).

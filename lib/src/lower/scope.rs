@@ -125,6 +125,10 @@ impl Scope {
         None
     }
 
+    pub(crate) fn depth(&self) -> usize {
+        self.vars.len()
+    }
+
     pub fn binding_scope_index(&self, name: &str) -> Option<usize> {
         for (index, scope) in self.vars.iter().enumerate().rev() {
             if scope.contains_key(name) {

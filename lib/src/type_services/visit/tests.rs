@@ -287,3 +287,20 @@ fn type_var_generalization_rewrites_array_length_vars() {
         Type::Array(Box::new(Type::I64), ArrayLen::Param(generic(3, 0)))
     );
 }
+
+#[test]
+fn substitution_rechecks_consumed_capture_capability() {
+    use crate::types::{CallableKind, CaptureEffect, FunctionSafety};
+
+    let param = generic(91, 0);
+    let closure = Type::function_with_metadata(
+        Vec::new(), Type::I64, FunctionSafety::Safe, CallableKind::FnOnce,
+        vec![FunctionCapture {
+            kind: CaptureKind::Move,
+            effect: CaptureEffect::Consume,
+            ty: Type::Generic(param),
+        }],
+    );
+    let substituted = closure.substitute_generics(&HashMap::from([(param, Type::I64)]));
+    assert!(matches!(substituted, Type::Function { callable_kind: CallableKind::Fn, .. }));
+}
