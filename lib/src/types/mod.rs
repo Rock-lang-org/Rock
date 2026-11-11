@@ -211,18 +211,32 @@ pub enum ArrayLen {
 }
 
 impl ArrayLen {
-    /// The length a const-kinded type argument stands for.
-    pub fn from_const_type(ty: &Type) -> ArrayLen {
+    /// The length a const-kinded type argument stands for, or `None` when the
+    /// type is not a valid length form. `Type::Error` is the recovery
+    /// placeholder and stays `ArrayLen::Error`.
+    pub fn try_from_const_type(ty: &Type) -> Option<ArrayLen> {
         match ty {
-            Type::ConstValue(n) => ArrayLen::Value(*n),
-            Type::Generic(param) => ArrayLen::Param(*param),
-            Type::TypeVar(var) => ArrayLen::Var(*var),
-            Type::BoundVar { depth, index, .. } => ArrayLen::Bound {
+            Type::ConstValue(n) => Some(ArrayLen::Value(*n)),
+            Type::Generic(param) => Some(ArrayLen::Param(*param)),
+            Type::TypeVar(var) => Some(ArrayLen::Var(*var)),
+            Type::BoundVar { depth, index, .. } => Some(ArrayLen::Bound {
                 depth: *depth,
                 index: *index,
-            },
-            _ => ArrayLen::Error,
+            }),
+            Type::Error => Some(ArrayLen::Error),
+            _ => None,
         }
+    }
+
+    /// The length a const-kinded type argument stands for.
+    ///
+    /// A non-length type here is a kind mismatch that earlier phases must have
+    /// rejected; it is kept as `ArrayLen::Error` so recovery continues.
+    pub fn from_const_type(ty: &Type) -> ArrayLen {
+        Self::try_from_const_type(ty).unwrap_or_else(|| {
+            debug_assert!(false, "non-length type used as an array length: {ty:?}");
+            ArrayLen::Error
+        })
     }
 
     /// This length as a const-kinded type argument.

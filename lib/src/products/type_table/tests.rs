@@ -232,6 +232,39 @@ fn product_type_table_rejects_invalid_nested_type_ids() {
 }
 
 #[test]
+fn product_type_table_rejects_array_length_that_is_not_a_length() {
+    let table = ProductTypeTable {
+        rows: vec![
+            ProductTypeRow::Array(ProductTypeId(1), ProductTypeId(2)),
+            ProductTypeRow::I64,
+            ProductTypeRow::Str,
+        ],
+    };
+    let err = decode_type_for_test(&table, ProductTypeId(0)).unwrap_err();
+
+    assert!(
+        err.contains("not a valid length"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn product_type_table_decodes_array_with_const_value_length() {
+    let table = ProductTypeTable {
+        rows: vec![
+            ProductTypeRow::Array(ProductTypeId(1), ProductTypeId(2)),
+            ProductTypeRow::I64,
+            ProductTypeRow::ConstValue(3),
+        ],
+    };
+
+    assert_eq!(
+        decode_type_for_test(&table, ProductTypeId(0)).unwrap(),
+        Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3))
+    );
+}
+
+#[test]
 fn portable_type_table_validates_lambda_binder_scope() {
     let valid = ProductTypeTable {
         rows: vec![
