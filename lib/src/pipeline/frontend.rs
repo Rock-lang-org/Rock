@@ -68,8 +68,8 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
     for artifact in ctx.proc_macro_artifacts() {
         macro_context = macro_context.with_proc_macro_artifact(artifact.clone());
     }
-    for (path, decl) in ctx.dependency_macros() {
-        macro_context = macro_context.with_dependency_macro(path, decl);
+    for (key, decl) in ctx.dependency_macros() {
+        macro_context = macro_context.with_importable_macro(key, decl);
     }
     // Same-crate macros are importable with `>` from any module. The source
     // graph already holds every module unexpanded, so they are known before
@@ -80,11 +80,11 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         config.current_crate_name.as_deref(),
     );
     for export in own_macros {
-        let path = match config.current_crate_name.as_deref() {
-            Some(name) => format!("{name}::{}", export.path),
-            None => export.path,
+        let key = macro_expansion::MacroKey {
+            origin: macro_expansion::MacroOrigin::CurrentCrate,
+            path: macro_expansion::exports::macro_path_segments(&export.path),
         };
-        macro_context = macro_context.with_dependency_macro(path, export.decl);
+        macro_context = macro_context.with_importable_macro(key, export.decl);
     }
     // Only the std prelude is injected, and only when std was passed explicitly.
     if !config.no_prelude {
@@ -93,6 +93,9 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         }
     }
     let ast = macro_expansion::expand_macros_with_context(ast, &macro_context)
+        .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
+
+    reject_modules_named_like_dependencies(&ast.module, &ctx)
         .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
 
     if config.has_debug_print(DebugPrint::Expanded) {
@@ -160,6 +163,43 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         exported_macros,
         prelude_macros,
     })
+}
+
+/// A top-level module sharing a dependency's name would make every path that
+/// starts with that name ambiguous between the two, for items and macros alike.
+fn reject_modules_named_like_dependencies(
+    root: &ast::Module,
+    ctx: &CrateContext,
+) -> Result<(), Diagnostics> {
+    let mut diagnostics = Diagnostics::default();
+    for top_level in &root.top_levels {
+        let name = match top_level {
+            ast::TopLevel::Mod(ident, _) => ident,
+            ast::TopLevel::Module(ast::ModuleDecl(inline)) => match &inline.name {
+                Some(name) => name,
+                None => continue,
+            },
+            _ => continue,
+        };
+        if ctx.has_extern_crate(&name.name) {
+            diagnostics.push(
+                diagnostic::Diagnostic::new(
+                    format!(
+                        "module `{0}` conflicts with dependency `{0}`",
+                        name.name
+                    ),
+                    name.span.clone(),
+                )
+                .with_code(diagnostic::DiagnosticCode::Resolve),
+            );
+        }
+    }
+
+    if diagnostics.0.is_empty() {
+        Ok(())
+    } else {
+        Err(diagnostics)
+    }
 }
 
 /// Collects this crate's `< macro` declarations with their crate-relative

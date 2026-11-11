@@ -85,6 +85,11 @@ pub(crate) fn path_segments(path: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Splits an exported macro's crate-relative path into module segments.
+pub(crate) fn macro_path_segments(path: &str) -> Vec<String> {
+    path.split("::").map(str::to_string).collect()
+}
+
 fn join_path(prefix: &str, name: &str) -> String {
     if prefix.is_empty() {
         name.to_string()
