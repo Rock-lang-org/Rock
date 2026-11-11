@@ -482,6 +482,7 @@ impl Analysis for InitializationAnalysis {
                 };
                 // The loop owns the hidden array temporary and drops its unvisited
                 // tail itself, so a loop-owned element move is not a partial move.
+                debug_assert!(stmt.has_loop_owned_array_move_shape());
                 if !stmt.loop_owned_array_move {
                     self.apply_rvalue_moves(state, rvalue, &move_info);
                 }

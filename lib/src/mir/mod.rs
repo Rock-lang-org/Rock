@@ -501,10 +501,27 @@ impl StatementData {
     }
 
     pub fn loop_owned_array_move(place: Place, operand: Operand, span: Option<Span>) -> Self {
-        Self {
+        let statement = Self {
             loop_owned_array_move: true,
             ..Self::new(StatementKind::Assign(place, Rvalue::Use(operand)), span)
+        };
+        debug_assert!(statement.has_loop_owned_array_move_shape());
+        statement
+    }
+
+    /// A loop-owned element move relaxes move and init checks, so it must be
+    /// exactly `local = move array_temp[index]`; any other shape is a builder bug.
+    /// Statements without the flag trivially satisfy this.
+    pub fn has_loop_owned_array_move_shape(&self) -> bool {
+        if !self.loop_owned_array_move {
+            return true;
         }
+        matches!(
+            &self.kind,
+            StatementKind::Assign(dest, Rvalue::Use(Operand::Move(source)))
+                if dest.projection.is_empty()
+                    && matches!(source.projection.as_slice(), [Projection::Index(_)])
+        )
     }
 
     pub fn cleanup(kind: StatementKind, span: Option<Span>) -> Self {
