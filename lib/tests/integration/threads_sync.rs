@@ -1,6 +1,67 @@
 use crate::support::*;
 
 #[test]
+fn test_result_send_sync_owned_payloads() {
+    let output = compile_and_run(
+        r#"
+> std::concurrency::thread::spawn
+> std::io::traits::IoError
+
+require_sync: &T -> () where T: Sync
+require_sync = value -> ()
+
+produce: Bool -> Result String, IoError
+produce = success ->
+    if success
+        Result::Ok (String::from "hello")
+    else
+        Result::Err IoError::InvalidInput
+
+run = value ->
+    require_sync (&value)
+    match spawn (-> value)
+        Result::Ok handle =>
+            match handle.join!
+                Result::Ok result =>
+                    match result
+                        Result::Ok text => text.println!
+                        Result::Err _ => "error".println!
+                Result::Err _ => "join failed".println!
+        Result::Err _ => "spawn failed".println!
+
+main = !->
+    run (produce true)
+    run (produce false)
+"#,
+    );
+    assert_eq!(output.trim(), "hello\nerror");
+}
+
+#[test]
+fn test_result_send_sync_rejects_pointer_in_either_payload() {
+    for marker in ["Send", "Sync"] {
+        for (ty, value) in [
+            ("Result I64, *I64", "Result::Ok 1"),
+            ("Result *I64, I64", "Result::Err 1"),
+        ] {
+            compile_should_fail(
+                &format!(
+                    r#"
+require_marker: &T -> () where T: {marker}
+require_marker = value -> ()
+
+main = !->
+    value: {ty} = {value}
+    require_marker (&value)
+"#,
+                ),
+                "does not implement trait",
+            );
+        }
+    }
+}
+
+#[test]
 fn test_std_thread_spawn_join_returns_value() {
     let output = compile_and_run(
         r#"
@@ -116,18 +177,24 @@ main = ->
 }
 
 #[test]
-fn test_std_thread_spawn_rejects_borrowed_capture() {
-    compile_should_fail(
+fn test_std_thread_spawn_owns_inline_copy_capture() {
+    let output = compile_and_run(
         r#"
 > std::concurrency::thread::spawn
 
 main = ->
     value = 41
-    handle = spawn (-> value + 1)
+    match spawn (-> value + 1)
+        Result::Ok handle =>
+            match handle.join!
+                Result::Ok result => result.println!
+                Result::Err _ => "join failed".println!
+        Result::Err _ => "spawn failed".println!
+    value.println!
     0
 "#,
-        "does not implement trait",
     );
+    assert_eq!(output.lines().collect::<Vec<_>>(), ["42", "41"]);
 }
 
 #[test]

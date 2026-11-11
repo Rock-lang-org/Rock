@@ -3,7 +3,9 @@
 //! A returned lambda outlives the frame that created it, so it must own what
 //! it captures: borrowing a parameter or local of that frame would dangle.
 //! Bodies mark their returned lambdas before lowering; lambda lowering then
-//! captures by move for marked lambdas.
+//! captures by move for marked lambdas. Call argument lowering also marks inline
+//! lambdas passed to consuming callable parameters, which transfer ownership of
+//! their environment to the callee rather than borrowing the caller's frame.
 
 use crate::ast;
 use crate::lower::Lowerer;

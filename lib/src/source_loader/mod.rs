@@ -636,6 +636,22 @@ impl SourceDatabase {
         canonical_path: PathBuf,
         module: ast::Module,
     ) {
+        // A module recorded again after macro expansion replaces its parsed
+        // entry; keeping both would make later phases visit the stale copy.
+        if let Some(&existing) = graph.modules_by_qualified_name.get(&qualified_name) {
+            graph.modules[existing.0] = LoadedModule {
+                id: existing,
+                qualified_name,
+                path: path.clone(),
+                canonical_path: canonical_path.clone(),
+                module,
+            };
+            graph.modules_by_path.insert(path, existing);
+            if canonical_path != graph.modules[existing.0].path {
+                graph.modules_by_path.insert(canonical_path, existing);
+            }
+            return;
+        }
         let id = ModuleId(graph.modules.len());
         graph.modules_by_path.insert(path.clone(), id);
         if canonical_path != path {

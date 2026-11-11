@@ -75,12 +75,26 @@ impl SolveError {
                 ty,
                 trait_name,
                 context,
-            } => format!(
-                "type `{}` does not implement trait `{}` (required by {})",
-                display(ty),
-                trait_name,
-                context
-            ),
+            } => {
+                let description = if let Type::Function { params, ret, captures, .. } = ty {
+                    let params = params.iter().map(&display).collect::<Vec<_>>().join(", ");
+                    let captures = captures.iter().map(|capture| {
+                        let kind = match capture.kind {
+                            crate::types::CaptureKind::SharedBorrow => "shared borrow",
+                            crate::types::CaptureKind::MutableBorrow => "mutable borrow",
+                            crate::types::CaptureKind::Move => "move",
+                        };
+                        format!("{kind} of `{}`", display(&capture.ty))
+                    }).collect::<Vec<_>>().join(", ");
+                    format!("closure `({params}) -> {}` with captures [{captures}]", display(ret))
+                } else {
+                    format!("type `{}`", display(ty))
+                };
+                format!(
+                    "{} does not implement trait `{}` (required by {})",
+                    description, trait_name, context
+                )
+            },
             SolveErrorKind::TryNonCarrier { ty } => {
                 format!("Cannot use '?' on non-carrier type {}", display(ty))
             }

@@ -71,6 +71,21 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
     for (path, decl) in ctx.dependency_macros() {
         macro_context = macro_context.with_dependency_macro(path, decl);
     }
+    // Same-crate macros are importable with `>` from any module. The source
+    // graph already holds every module unexpanded, so they are known before
+    // expansion starts and import resolution does not depend on load order.
+    let (own_macros, _) = crate_macro_exports(
+        &source_graph.root_module().clone(),
+        &source_graph,
+        config.current_crate_name.as_deref(),
+    );
+    for export in own_macros {
+        let path = match config.current_crate_name.as_deref() {
+            Some(name) => format!("{name}::{}", export.path),
+            None => export.path,
+        };
+        macro_context = macro_context.with_dependency_macro(path, export.decl);
+    }
     // Only the std prelude is injected, and only when std was passed explicitly.
     if !config.no_prelude {
         for (alias, decl) in ctx.prelude_macros("std") {

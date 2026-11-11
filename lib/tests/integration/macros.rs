@@ -340,3 +340,53 @@ fn test_function_like_proc_macro_expands_through_public_macro_api() {
 
     assert!(expanded.module.top_level_from_ident("main").is_some());
 }
+
+#[test]
+fn test_same_crate_macro_import_ignores_module_load_order() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+
+    // `user` loads before `defs`, and the macro is imported from inside it.
+    fs::write(
+        dir.join("user.rk"),
+        "> defs::twice\n\n< doubled = x -> %twice x\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("defs.rk"),
+        "< macro twice\n    $x:expr =>\n        ($x) + ($x)\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("test.rk"),
+        "mod user\nmod defs\n> user::doubled\n\nmain = ->\n    (doubled 21).println!\n    0\n",
+    )
+    .unwrap();
+
+    let mut config = test_config(dir.join("test.rk"), dir.clone());
+    config.no_prelude = true;
+    rock_lib::compile(&config).expect("same-crate macro import must resolve");
+    let output = Command::new(dir.join("test")).output().unwrap();
+    let _ = fs::remove_dir_all(&dir);
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n");
+}
+
+#[test]
+fn test_std_io_error_show_formats_each_variant() {
+    let output = compile_and_run(
+        r#"> std::io::IoError
+
+main = !->
+    (IoError::Os 2).show!.println!
+    IoError::InvalidPath .show!.println!
+    IoError::WriteZero .show!.println!
+"#,
+    );
+
+    assert_eq!(output.lines().next(), Some("IoError(Os: 2)"), "{output}");
+    assert!(output.contains("IoError(WriteZero)"), "{output}");
+    assert_eq!(output.lines().count(), 3, "{output}");
+}

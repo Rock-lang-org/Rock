@@ -9,12 +9,14 @@
 > std::control::result::Result
 > std::show::Show
 > std::string::owned::String
+> std::fmt::format
 
 < enum IoError
     Os I32
     InvalidPath
     InvalidAddress
     InvalidInput
+    InvalidData
     WriteZero
 
 < struct Stdin
@@ -107,4 +109,12 @@ impl Write for Stdout
     @write_all = buf -> write_all self, buf
 
 impl Show for IoError
-    @show = -> String::from "IoError"
+    @show = ->
+        err = match *self
+            IoError::Os errno => %format "Os: ", errno
+            IoError::InvalidPath => "InvalidPath:".into!
+            IoError::InvalidAddress => "InvalidAddress".into!
+            IoError::InvalidInput => "InvalidInput".into!
+            IoError::InvalidData => "InvalidData".into!
+            IoError::WriteZero => "WriteZero".into!
+        %format "IoError(", err, ")"

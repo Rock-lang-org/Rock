@@ -44,6 +44,7 @@ mod std_conversions;
 mod std_iteration;
 mod structs;
 mod threads_sync;
+mod thread_capture_diagnostics;
 mod trait_bounds;
 mod trait_dispatch;
 mod try_protocol;
