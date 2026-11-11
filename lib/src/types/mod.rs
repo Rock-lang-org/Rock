@@ -248,13 +248,10 @@ impl ArrayLen {
         }
     }
 
-    /// The concrete length. Codegen-facing: a non-concrete length after
-    /// monomorphization is a compiler bug.
-    pub fn as_concrete(&self) -> u64 {
-        match self {
-            ArrayLen::Value(n) => *n,
-            other => panic!("internal error: non-concrete array length {other:?} after monomorphization"),
-        }
+    /// The concrete length, or `None` while it is still a parameter,
+    /// inference variable, bound variable or error.
+    pub fn concrete(&self) -> Option<u64> {
+        self.value()
     }
 
     pub fn is_concrete(&self) -> bool {

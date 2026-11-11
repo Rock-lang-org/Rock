@@ -114,7 +114,7 @@ impl<'a> MirBuilder<'a> {
                 self.lower_expr(iter, iter_place.clone());
 
                 let (elem_ty, len) = match &iter.ty {
-                    Type::Array(elem, len) => ((**elem).clone(), len.as_concrete() as i64),
+                    Type::Array(elem, len) => ((**elem).clone(), len.concrete().unwrap_or(0) as i64),
                     Type::Slice(elem) => ((**elem).clone(), 0),
                     _ => (Type::I64, 0),
                 };

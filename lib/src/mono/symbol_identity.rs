@@ -100,7 +100,11 @@ impl Monomorphizer {
             }
             Ty::Array { inner, len } => {
                 output.push('a');
-                Self::push_text(output, &len.as_concrete().to_string());
+                match len.concrete() {
+                    Some(len) => Self::push_text(output, &len.to_string()),
+                    // Unresolved lengths are rejected by the mono length check.
+                    None => output.push('?'),
+                }
                 self.write_type_id(output, *inner);
             }
             Ty::Tuple(elements) => {
@@ -308,7 +312,10 @@ impl Monomorphizer {
             Type::Slice(inner) => format!("Slice{}", Self::type_to_mono_suffix(inner)),
             Type::Array(inner, len) => {
                 // const-generics: only concrete lengths reach mono symbol names.
-                format!("Arr{}_{}", Self::type_to_mono_suffix(inner), len.as_concrete())
+                match len.concrete() {
+                    Some(len) => format!("Arr{}_{}", Self::type_to_mono_suffix(inner), len),
+                    None => format!("Arr{}_?", Self::type_to_mono_suffix(inner)),
+                }
             }
             Type::ConstValue(n) => format!("c{n}"),
             Type::Reference { inner, .. } => Self::type_to_mono_suffix(inner),

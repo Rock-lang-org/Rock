@@ -502,6 +502,20 @@ main = !->
 }
 
 #[test]
+fn test_const_generics_uninferable_length_is_a_diagnostic() {
+    compile_should_fail(
+        r#"
+pick: [T; N] -> I64
+pick = arr -> 1
+
+main = !->
+    pick [] .println!
+"#,
+        "ambiguous type",
+    );
+}
+
+#[test]
 fn test_const_generics_repeated_length_param_agreeing_lengths_run() {
     let output = compile_and_run(
         r#"
@@ -577,4 +591,16 @@ main = !->
 "#,
     );
     assert_eq!(output.trim(), "3");
+}
+
+#[test]
+fn test_const_generics_undeclared_length_name_is_a_diagnostic() {
+    compile_should_fail(
+        r#"
+main = !->
+    a: [I64; M] = [1, 2]
+    a[0].println!
+"#,
+        "array length 'M' must name a `usize` const generic parameter",
+    );
 }
