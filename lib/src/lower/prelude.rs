@@ -63,6 +63,19 @@ impl PreludeImports {
                 continue;
             }
 
+            if let Some(variant) = items.enumeration(export.id).and_then(|enumeration| {
+                crate::collect::resolver::exported_variant_name(&export.source, enumeration)
+            }) {
+                resolver
+                    .variant_aliases
+                    .entry(short_name)
+                    .or_insert(crate::collect::resolver::VariantAlias {
+                        enum_id: export.id,
+                        variant,
+                    });
+                continue;
+            }
+
             resolver.insert_import_alias_with_name(
                 short_name.clone(),
                 export.source.clone(),
@@ -99,6 +112,7 @@ impl PreludeImports {
     fn short_name_is_user_owned(resolver: &ResolverTables, short_name: &str) -> bool {
         resolver.item_paths.contains_key(short_name)
             || resolver.import_aliases.contains_key(short_name)
+            || resolver.variant_aliases.contains_key(short_name)
     }
 
     fn export_entries(&self) -> Vec<(String, ArtifactExport)> {

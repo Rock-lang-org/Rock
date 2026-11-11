@@ -129,7 +129,72 @@ impl Lowerer {
                 HirPattern::Tuple(patterns)
             }
             ast::PatternKind::Instance(inst_pat) => {
-                let type_name: String = path_names(&inst_pat.name.path).join("::");
+                // As in expressions, `Some Off` may have parsed as a type
+                // application. For an imported variant, retain those words
+                // as payload patterns instead of silently discarding them.
+                if let [ast::IdentOrType::Type(ast::ParseType::Application(application))] =
+                    inst_pat.name.path.as_slice()
+                {
+                    if let ast::ParseType::Type(head) = application.constructor.as_ref() {
+                        if crate::lower::resolution::LowerResolutionContext::new(self)
+                            .resolve_imported_variant(&head.name)
+                            .is_some()
+                        {
+                            let mut args = Vec::new();
+                            for arg in &application.args {
+                                let path = match arg {
+                                    ast::ParseType::Associated { base, member } => vec![
+                                        ast::IdentOrType::Type(ast::ParseType::Type(base.clone())),
+                                        ast::IdentOrType::Type(ast::ParseType::Type(ast::ParseTypeInner {
+                                            name: member.name.clone(),
+                                            generics: Vec::new(),
+                                            span: member.span.clone(),
+                                        })),
+                                    ],
+                                    _ => vec![ast::IdentOrType::Type(arg.clone())],
+                                };
+                                args.push(ast::Pattern {
+                                    binding: None,
+                                    kind: ast::PatternKind::Instance(ast::InstancePattern {
+                                        name: ast::TypePath { path },
+                                        args: ast::FieldsPatternOrArgumentsPattern::Arguments(Vec::new()),
+                                    }),
+                                });
+                            }
+                            if let ast::FieldsPatternOrArgumentsPattern::Arguments(existing) = &inst_pat.args {
+                                args.extend(existing.iter().cloned());
+                                return self.lower_pattern(
+                                    &ast::Pattern {
+                                        binding: pattern.binding.clone(),
+                                        kind: ast::PatternKind::Instance(ast::InstancePattern {
+                                            name: ast::TypePath {
+                                                path: vec![ast::IdentOrType::Type(ast::ParseType::Type(head.clone()))],
+                                            },
+                                            args: ast::FieldsPatternOrArgumentsPattern::Arguments(args),
+                                        }),
+                                    },
+                                    expected_ty,
+                                );
+                            }
+                        }
+                    }
+                }
+                let written_name: String = path_names(&inst_pat.name.path).join("::");
+                // An imported variant (`> Light::Off`, the prelude's `Some`)
+                // is matched exactly like its qualified spelling.
+                let imported = (!written_name.contains("::"))
+                    .then(|| {
+                        crate::lower::resolution::LowerResolutionContext::new(self)
+                            .resolve_imported_variant(&written_name)
+                    })
+                    .flatten();
+                let (type_name, imported_enum) = match imported {
+                    Some(resolved) => (
+                        format!("{}::{}", resolved.owner.name, resolved.variant.name),
+                        Some(resolved.owner),
+                    ),
+                    None => (written_name, None),
+                };
 
                 match &inst_pat.args {
                     ast::FieldsPatternOrArgumentsPattern::Arguments(args) => {
@@ -141,10 +206,10 @@ impl Lowerer {
                                     let variant_name = parts[1].to_string();
                                     let span = identifier_path_span(&inst_pat.name);
 
-                                    let Some(enum_info) =
+                                    let Some(enum_info) = imported_enum.clone().or_else(|| {
                                         crate::lower::resolution::LowerResolutionContext::new(self)
                                             .resolve_enum_type(&enum_name)
-                                    else {
+                                    }) else {
                                         break 'qualified_enum;
                                     };
 
@@ -436,10 +501,10 @@ impl Lowerer {
                                 let variant_name = parts[1].to_string();
                                 let span = identifier_path_span(&inst_pat.name);
 
-                                let Some(enum_info) =
+                                let Some(enum_info) = imported_enum.clone().or_else(|| {
                                     crate::lower::resolution::LowerResolutionContext::new(self)
                                         .resolve_enum_type(&enum_name)
-                                else {
+                                }) else {
                                     self.diagnostics.push_type_with_span(
                                         format!(
                                             "pattern type mismatch: unknown enum {}",

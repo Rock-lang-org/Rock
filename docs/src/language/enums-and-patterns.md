@@ -31,7 +31,7 @@ main = !->
     text_text.println!
 ```
 
-`Message::Quit` has no payload, `Message::Move` has two `I64` payloads, and `Message::Write` has one `&Str` payload. Construction qualifies the variant with the enum path so the compiler knows which type owns it.
+`Message::Quit` has no payload, `Message::Move` has two `I64` payloads, and `Message::Write` has one `&Str` payload. These constructions qualify the variant with the enum path so the compiler knows which type owns it; importing a variant also lets you use its short name.
 
 Generic enums use the same declaration form:
 
@@ -49,6 +49,30 @@ main = !->
 ```
 
 The prelude's `Option T` and `Result T, E` are ordinary generic enums of this kind. `Option` has `Some T` and `None`; `Result` has `Ok T` and `Err E`.
+
+### Importing variants
+
+A variant can be imported like any other name, with its enum's path followed by the variant. Once imported, it is written without the enum, both to construct values and in patterns. The prelude imports `Some`, `None`, `Ok`, and `Err` this way, so those four work everywhere without a path:
+
+```rock
+enum Light
+    On
+    Off
+
+> Light::Off
+
+describe: Option Light -> &Str
+describe = slot -> match slot
+    Some Off => "off"
+    Some Light::On => "on"
+    None => "empty"
+
+main = !->
+    (describe (Some Off)).println!
+    (describe None).println!
+```
+
+This prints `off` and then `empty`. `On` was not imported, so it keeps its `Light::` path. A variant that is not imported has no short name: writing `On` alone is an error that suggests `Light::On`. An import inside a module only affects that module, and a struct with the same name as an imported variant takes precedence over the variant.
 
 ## Matching variants
 

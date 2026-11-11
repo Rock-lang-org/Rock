@@ -14,6 +14,9 @@ impl CollectContext {
             for (short_name, export) in exports {
                 let qualified_name = export.source.clone();
 
+                if self.inject_prelude_variant(&short_name, &export) {
+                    continue;
+                }
                 if self.inject_prelude_alias(short_name.clone(), &qualified_name) {
                     self.record_canonical_alias(short_name.clone(), &export);
                 } else {
@@ -26,6 +29,36 @@ impl CollectContext {
 
             return;
         }
+    }
+
+    /// A prelude export of an enum variant (`< ...::Option::Some`) brings the
+    /// variant, not its enum, into scope under the short name.
+    fn inject_prelude_variant(&mut self, short_name: &str, export: &ArtifactExport) -> bool {
+        let Some(variant) = self
+            .enums
+            .values()
+            .find(|enumeration| enumeration.id == export.id)
+            .and_then(|enumeration| {
+                crate::collect::resolver::exported_variant_name(&export.source, enumeration)
+            })
+        else {
+            return false;
+        };
+        // A crate's own item of the same name wins over the prelude.
+        if self.structs.contains_key(short_name)
+            || self.enums.contains_key(short_name)
+            || self.type_aliases.contains_key(short_name)
+        {
+            return true;
+        }
+        self.variant_aliases.insert(
+            short_name.to_string(),
+            crate::collect::resolver::VariantAlias {
+                enum_id: export.id,
+                variant,
+            },
+        );
+        true
     }
 
     fn inject_prelude_alias(&mut self, short_name: String, qualified_name: &str) -> bool {

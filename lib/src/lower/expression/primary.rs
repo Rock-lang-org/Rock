@@ -19,6 +19,9 @@ impl Lowerer {
         if let Some(lambda) = Self::desugar_call_holes(primary) {
             return self.lower_lambda(&lambda);
         }
+        if let Some(rewritten) = self.imported_variant_call(primary) {
+            return self.lower_primary_expr_with_use(&rewritten, use_kind);
+        }
 
         let mut result = if use_kind == ExprUse::Value {
             self.lower_operand(&primary.operand)
@@ -121,6 +124,76 @@ impl Lowerer {
             arrow_kind: ast::LambdaArrowKind::Normal,
             span,
         })
+    }
+
+    /// A one-word head takes the capitalized words after it as type
+    /// arguments (`Vec I64`), so `Some Off` parses as the type `Some Off`.
+    /// When the head is an imported variant those words are its payload:
+    /// rewrite to the call `Some (Off)`; each word is lowered as a value.
+    fn imported_variant_call(&self, primary: &ast::PrimaryExpr) -> Option<ast::PrimaryExpr> {
+        let ast::Operand::Instance(instance) = &primary.operand else {
+            return None;
+        };
+        let [ast::IdentOrType::Type(ast::ParseType::Application(application))] =
+            instance.name.path.as_slice()
+        else {
+            return None;
+        };
+        let ast::ParseType::Type(head) = application.constructor.as_ref() else {
+            return None;
+        };
+        if !instance.fields.is_empty() || !head.generics.is_empty() {
+            return None;
+        }
+        crate::lower::resolution::LowerResolutionContext::new(self)
+            .resolve_imported_variant(&head.name)?;
+        let arguments = application
+            .args
+            .iter()
+            .map(|arg| {
+                let path = match arg {
+                    ast::ParseType::Type(_) | ast::ParseType::Application(_) => {
+                        vec![ast::IdentOrType::Type(arg.clone())]
+                    }
+                    ast::ParseType::Associated { base, member } => vec![
+                        ast::IdentOrType::Type(ast::ParseType::Type(base.clone())),
+                        ast::IdentOrType::Type(ast::ParseType::Type(ast::ParseTypeInner {
+                            name: member.name.clone(),
+                            generics: Vec::new(),
+                            span: member.span.clone(),
+                        })),
+                    ],
+                    _ => return None,
+                };
+                Some({
+                    ast::Argument {
+                        arg: ast::Expression::UnaryExpr(ast::UnaryExpr::PrimaryExpr(
+                            ast::PrimaryExpr {
+                                operand: ast::Operand::Instance(ast::Instance {
+                                    name: ast::TypePath {
+                                        path,
+                                    },
+                                    fields: Default::default(),
+                                }),
+                                secondaries: None,
+                                type_annotation: None,
+                            },
+                        )),
+                    }
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let mut rewritten = primary.clone();
+        rewritten.operand = ast::Operand::Instance(ast::Instance {
+            name: ast::TypePath {
+                path: vec![ast::IdentOrType::Type(ast::ParseType::Type(head.clone()))],
+            },
+            fields: Default::default(),
+        });
+        let mut secondaries = vec![ast::SecondaryExpr::Arguments(arguments)];
+        secondaries.extend(primary.secondaries.iter().flatten().cloned());
+        rewritten.secondaries = Some(secondaries);
+        Some(rewritten)
     }
 
     fn call_hole_span(expression: &ast::Expression) -> Option<&crate::lexer::Span> {

@@ -44,6 +44,9 @@ pub struct ProductIdentityTable {
     pub module_alias_names: BTreeMap<String, ProductDefId>,
     #[serde(default)]
     pub prelude_export_names: BTreeMap<String, ProductDefId>,
+    /// Prelude names that are enum variants: the enum and the variant name.
+    #[serde(default)]
+    pub prelude_variant_export_names: BTreeMap<String, (ProductDefId, String)>,
     #[serde(default)]
     pub ambiguous_export_names: BTreeSet<String>,
 }

@@ -304,14 +304,124 @@ main = ->
 fn test_bare_variant_constructor_names_the_qualified_path() {
     compile_should_fail(
         r#"
+enum Shape
+    Dot
+    Line I64
+
+wrap: I64 -> Shape
+wrap = x -> Line x
+
+main = !->
+    wrap 1
+    ()
+"#,
+        "unknown type 'Line'; enum variants are constructed with their enum path, such as `Shape::Line`",
+    );
+}
+
+#[test]
+fn test_prelude_variants_construct_and_match_without_enum_path() {
+    let output = compile_and_run(
+        r#"
 wrap: I64 -> Option I64
 wrap = x -> Some x
 
+describe: Option I64 -> I64
+describe = o -> match o
+    Some v => v
+    None => 0
+
 main = !->
     (wrap 1).println!
+    (describe (Some 4)).println!
+    (describe None).println!
+    r: Result I64, I64 = Err 3
+    r.println!
 "#,
-        "unknown type 'Some'; enum variants are constructed with their enum path, such as `Option::Some`",
     );
+    assert_eq!(output.trim(), "Some(1)\n4\n0\nErr(3)");
+}
+
+#[test]
+fn test_imported_variants_of_a_generic_enum() {
+    let output = compile_and_run(
+        r#"
+enum Pair T
+    Both T, T
+    Neither
+
+> Pair::Both
+> Pair::Neither
+
+sum: Pair I64 -> I64
+sum = p -> match p
+    Both a, b => a + b
+    Neither => 0
+
+main = !->
+    (sum (Both 2, 3)).println!
+    (sum Neither).println!
+"#,
+    );
+    assert_eq!(output.trim(), "5\n0");
+}
+
+#[test]
+fn test_imported_variant_as_payload_of_imported_variant() {
+    let output = compile_and_run(
+        r#"
+enum Light
+    On
+    Off
+
+> Light::Off
+
+describe: Option Light -> &Str
+describe = slot -> match slot
+    Some Off => "off"
+    Some Light::On => "on"
+    None => "empty"
+
+main = !->
+    (describe (Some Off)).println!
+    (describe (Some Light::On)).println!
+    (describe None).println!
+"#,
+    );
+    assert_eq!(output.trim(), "off\non\nempty");
+}
+
+#[test]
+fn test_import_of_unknown_variant_is_reported() {
+    compile_should_fail(
+        r#"
+enum Light
+    On
+    Off
+
+> Light::Dim
+
+main = !->
+    ()
+"#,
+        "unresolved import 'Light::Dim'",
+    );
+}
+
+#[test]
+fn test_struct_shadows_prelude_variant_of_same_name() {
+    let output = compile_and_run(
+        r#"
+struct Ok
+    < v: I64
+
+main = !->
+    o = Ok
+        v: 5
+    o.v.println!
+"#,
+    );
+    assert_eq!(output.trim(), "5");
 }
 
 #[test]

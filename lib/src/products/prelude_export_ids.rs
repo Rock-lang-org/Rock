@@ -9,8 +9,30 @@ impl CompilerProducts {
         for (alias, export) in exports {
             if let Some(id) = self.product_def_id_for_export(&export) {
                 self.identity_table.prelude_export_names.insert(alias, id);
+            } else if let Some(variant) = self.prelude_variant_export(&export) {
+                self.identity_table
+                    .prelude_variant_export_names
+                    .insert(alias, variant);
             }
         }
+    }
+
+    /// An export whose id is an enum and whose source continues to one of
+    /// its variants (`...::Option::Some`).
+    fn prelude_variant_export(
+        &self,
+        export: &crate::crate_artifact::ArtifactExport,
+    ) -> Option<(ProductDefId, String)> {
+        let id = ProductDefId::from(export.id);
+        let enumeration = self.interface.enums.get(&id)?;
+        let display_name = self.identity_table.display_names.get(&id)?;
+        let (owner, variant) = export.source.rsplit_once("::")?;
+        (self.prelude_export_source_is_compatible(owner, display_name)
+            && enumeration
+                .variants
+                .iter()
+                .any(|candidate| candidate.name == variant))
+        .then(|| (id, variant.to_string()))
     }
 
     fn product_def_id_for_export(

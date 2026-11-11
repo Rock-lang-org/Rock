@@ -15,9 +15,43 @@ pub struct ResolverTables {
     pub export_aliases: HashMap<String, DefId>,
     pub scoped_module_aliases: HashMap<String, HashMap<String, DefId>>,
     pub module_aliases: HashMap<String, DefId>,
+    /// Enum variants imported under a short name (`> Light::Off`, or the std
+    /// prelude's `Some`), keyed like import aliases: the bare name at the
+    /// crate root, `module::name` inside a module.
+    #[serde(default)]
+    pub variant_aliases: HashMap<String, VariantAlias>,
+}
+
+/// An imported enum variant; variants are not items, so they are named by
+/// their enum and their variant name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VariantAlias {
+    pub enum_id: DefId,
+    pub variant: String,
+}
+
+/// The variant an export names when its id is an enum but its source path
+/// continues past the enum to one of its variants (`...::Option::Some`).
+pub(crate) fn exported_variant_name(source: &str, enumeration: &crate::hir::HirEnum) -> Option<String> {
+    let (owner, variant) = source.rsplit_once("::")?;
+    let owner_name = owner.rsplit("::").next().unwrap_or(owner);
+    (owner_name == enumeration.name
+        && enumeration
+            .variants
+            .iter()
+            .any(|candidate| candidate.name == variant))
+    .then(|| variant.to_string())
 }
 
 impl ResolverTables {
+    /// A variant imported under `name`, preferring an import made inside
+    /// `module_path` over one made at the crate root.
+    pub fn resolve_variant_alias(&self, module_path: Option<&str>, name: &str) -> Option<&VariantAlias> {
+        module_path
+            .and_then(|module_path| self.variant_aliases.get(&format!("{module_path}::{name}")))
+            .or_else(|| self.variant_aliases.get(name))
+    }
+
     pub fn resolve_item_or_alias(&self, name: &str) -> Option<DefId> {
         self.item_paths
             .get(name)
@@ -184,6 +218,7 @@ pub fn build_resolver_tables(
         export_aliases: resolved_export_aliases,
         scoped_module_aliases,
         module_aliases: HashMap::new(),
+        variant_aliases: HashMap::new(),
     }
 }
 

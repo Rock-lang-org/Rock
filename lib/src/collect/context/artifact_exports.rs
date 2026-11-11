@@ -166,6 +166,24 @@ impl CollectContext {
             })
     }
 
+    /// A prelude export of an enum variant (`< ...::Option::Some`): exported
+    /// under its enum's identity, the source path still naming the variant.
+    /// The enum's variants may not be collected yet (the prelude can precede
+    /// its module); artifact products check the variant against the finished
+    /// enum and drop anything else.
+    pub(crate) fn prelude_variant_export(&self, qualified_name: &str) -> Option<ArtifactExport> {
+        let (owner, _) = qualified_name.rsplit_once("::")?;
+        let id = self
+            .enums
+            .get(owner)
+            .map(|enumeration| enumeration.id)
+            .or_else(|| self.names.declared_item(owner))?;
+        Some(ArtifactExport {
+            source: qualified_name.to_string(),
+            id,
+        })
+    }
+
     pub(super) fn export_for_import_source(&self, qualified_name: &str) -> Option<ArtifactExport> {
         let mut parts = qualified_name.split("::");
         if let (Some(crate_name), Some(export_name), None) =

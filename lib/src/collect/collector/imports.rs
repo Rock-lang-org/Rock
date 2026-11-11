@@ -138,6 +138,13 @@ impl LocalCollector {
         }
 
         if !resolved {
+            resolved = self.context.import_enum_variant(
+                &path_names(path.segments()),
+                canonical_prefix.as_deref(),
+                path_span(path.segments()),
+            );
+        }
+        if !resolved {
             self.report_unresolved_import(path);
         }
     }
@@ -174,6 +181,13 @@ impl LocalCollector {
             resolved |= self.import_type_alias_local(prefix, short_name, qualified_name);
         }
 
+        if !resolved {
+            resolved = self.context.import_enum_variant(
+                &original_names,
+                Some(prefix),
+                path_span(path.segments()),
+            );
+        }
         if !resolved {
             self.report_unresolved_import(path);
         }

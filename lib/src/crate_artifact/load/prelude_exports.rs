@@ -34,6 +34,20 @@ pub(super) fn normalize_product_prelude_exports(
         normalized_ids.insert(alias.clone(), ArtifactExport { source, id: def_id });
     }
 
+    // A variant export keeps its enum's identity; the source path continues
+    // to the variant so consumers can tell it from an export of the enum.
+    for (alias, (id, variant)) in &products.identity_table.prelude_variant_export_names {
+        let display_name = product_display_name(products, *id).ok_or_else(|| {
+            format!("Product artifact prelude variant export '{alias}' has no enum display name")
+        })?;
+        let def_id =
+            product_def_id_to_prelude_export_def_id(products, remap, *id)?.ok_or_else(|| {
+                format!("Product artifact prelude variant export '{alias}' has no canonical enum ID")
+            })?;
+        let source = format!("{}::{variant}", qualify_product_name(crate_name, &display_name));
+        normalized_ids.insert(alias.clone(), ArtifactExport { source, id: def_id });
+    }
+
     for name in product_interface_prelude_names(interface, prelude_prefix) {
         if let Some(alias) = name.strip_prefix(&format!("{}::", prelude_prefix)) {
             if !normalized_ids.contains_key(alias) {

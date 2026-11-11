@@ -12,7 +12,7 @@ mod type_names;
 
 use crate::ast;
 use crate::collect::item_index::ItemIndex;
-use crate::collect::resolver::{build_resolver_tables, ResolverTables};
+use crate::collect::resolver::{build_resolver_tables, ResolverTables, VariantAlias};
 use crate::collect::{DeclarationScope, DeclarationTypeVars};
 use crate::crate_artifact::ArtifactExport;
 use crate::hir::{HirEnum, HirExtern, HirFunction, HirFunctionSig, HirImpl, HirStruct, HirTrait};
@@ -59,6 +59,16 @@ pub(crate) struct CollectContext {
     pub(crate) language_items: LanguageItems<DefId>,
     /// Import, re-export and canonical item names.
     pub(crate) names: NameTables,
+    /// Enum variants imported under a short name; see `ResolverTables`.
+    pub(crate) variant_aliases: HashMap<String, VariantAlias>,
+    pending_variant_imports: Vec<PendingVariantImport>,
+}
+
+/// A variant import whose variant name is checked after collection.
+struct PendingVariantImport {
+    key: String,
+    written: String,
+    span: Option<Span>,
 }
 
 pub(crate) struct LocalCollection {
@@ -109,6 +119,8 @@ impl CollectContext {
             dependency_root_export_ids: HashMap::new(),
             language_items: LanguageItems::default(),
             names: NameTables::default(),
+            variant_aliases: HashMap::new(),
+            pending_variant_imports: Vec::new(),
         }
     }
 
@@ -153,6 +165,7 @@ impl CollectContext {
         current_crate_name: Option<&str>,
     ) -> LocalCollection {
         self.normalize_type_aliases();
+        self.check_variant_imports();
         let infix_owners = self.dependency_infix_owners();
         let Self {
             type_vars,
@@ -177,6 +190,8 @@ impl CollectContext {
             dependency_root_export_ids,
             language_items,
             names,
+            variant_aliases,
+            pending_variant_imports: _,
         } = self;
         let (loaded_module_paths, module_file_cache) = modules.into_registry_and_cache();
         let ResolverNameTables {
@@ -203,6 +218,7 @@ impl CollectContext {
                 .or_default()
                 .extend(aliases);
         }
+        resolver.variant_aliases = variant_aliases;
         LocalCollection {
             structs,
             enums,
@@ -246,6 +262,80 @@ impl CollectContext {
         for alias in self.type_aliases.values_mut() {
             if let Some(ty) = normalized.get(&alias.id) {
                 alias.ty = ty.clone();
+            }
+        }
+    }
+
+    /// Imports the variant named by `path` (`Enum::Variant`, any enum prefix
+    /// the context knows) under its short name, keyed for `module_prefix`.
+    ///
+    /// Imports are handled before enum bodies are collected, so only the
+    /// enum is resolved here; the variant name is checked by
+    /// [`Self::check_variant_imports`] once every declaration is known.
+    pub(crate) fn import_enum_variant(
+        &mut self,
+        path: &[String],
+        module_prefix: Option<&str>,
+        span: Option<Span>,
+    ) -> bool {
+        let Some((variant, owner)) = path.split_last() else {
+            return false;
+        };
+        if owner.is_empty() {
+            return false;
+        }
+        let owner = owner.join("::");
+        let Some(enum_id) = module_prefix
+            .map(|prefix| format!("{prefix}::{owner}"))
+            .into_iter()
+            .chain(std::iter::once(owner))
+            .find_map(|candidate| self.enums.get(&candidate).map(|enumeration| enumeration.id))
+        else {
+            return false;
+        };
+        let key = match module_prefix {
+            Some(prefix) if !prefix.is_empty() => format!("{prefix}::{variant}"),
+            _ => variant.clone(),
+        };
+        self.variant_aliases.insert(
+            key.clone(),
+            VariantAlias {
+                enum_id,
+                variant: variant.clone(),
+            },
+        );
+        self.pending_variant_imports.push(PendingVariantImport {
+            key,
+            written: path.join("::"),
+            span,
+        });
+        true
+    }
+
+    /// Drops and reports variant imports whose enum has no such variant.
+    fn check_variant_imports(&mut self) {
+        for pending in std::mem::take(&mut self.pending_variant_imports) {
+            let Some(alias) = self.variant_aliases.get(&pending.key) else {
+                continue;
+            };
+            let exists = self
+                .enums
+                .values()
+                .find(|enumeration| enumeration.id == alias.enum_id)
+                .is_some_and(|enumeration| {
+                    enumeration
+                        .variants
+                        .iter()
+                        .any(|variant| variant.name == alias.variant)
+                });
+            if exists {
+                continue;
+            }
+            self.variant_aliases.remove(&pending.key);
+            let message = format!("unresolved import '{}'", pending.written);
+            match pending.span {
+                Some(span) => self.push_error_with_span(message, span),
+                None => self.push_error(message),
             }
         }
     }

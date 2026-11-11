@@ -193,6 +193,7 @@ impl LocalCollector {
                         .unwrap_or_else(|| format!("{}::{}", qualified_module_name, name));
                     self.context
                         .export_for_registered_item(&qualified_name)
+                        .or_else(|| self.context.prelude_variant_export(&qualified_name))
                         .map(|export| (name.clone(), export))
                 })
                 .collect::<Vec<_>>();

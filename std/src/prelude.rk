@@ -38,6 +38,12 @@
 < std::functional::pipe::|>
 < std::io::traits::|>>
 
+// Option and Result variants, constructed and matched without their enum path
+< std::control::option::Option::Some
+< std::control::option::Option::None
+< std::control::result::Result::Ok
+< std::control::result::Result::Err
+
 // Types
 < std::string::owned::*
 < std::control::option::*
