@@ -544,3 +544,64 @@ main = ->
 
     assert_eq!(output.trim(), "true");
 }
+
+#[test]
+fn test_generic_by_value_self_on_reference_of_dropping_value_drops_once() {
+    let output = compile_and_run(
+        r#"
+trait Describe
+    @describe = -> 1
+
+impl Describe for T
+    @describe = -> 7
+
+struct Tracked
+    < value: I64
+
+impl Drop for Tracked
+    ~@drop = ->
+        self.value.println!
+        return
+
+main = !->
+    x = Tracked
+        value: 5
+    r = &x
+    r.describe!.println!
+    r.describe!.println!
+    x.value.println!
+"#,
+    );
+    assert_eq!(output.trim(), "7\n7\n5\n5");
+}
+
+#[test]
+fn test_by_value_self_moved_through_reference_receiver_drops_once() {
+    let output = compile_and_run(
+        r#"
+trait Consume
+    @consume = -> 1
+
+struct Tracked
+    < value: I64
+
+impl Drop for Tracked
+    ~@drop = ->
+        self.value.println!
+        return
+
+impl Consume for Tracked
+    @consume = ->
+        moved = self
+        moved.value
+
+main = !->
+    x = Tracked
+        value: 5
+    r = &x
+    r.consume!.println!
+    "end".println!
+"#,
+    );
+    assert_eq!(output.trim(), "5\nend\n5");
+}
