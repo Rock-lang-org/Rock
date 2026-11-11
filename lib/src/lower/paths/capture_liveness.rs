@@ -313,10 +313,15 @@ impl<'a> Visitor<'a> for Liveness<'_> {
     fn visit_match(&mut self, value: &'a ast::Match) {
         let after = self.live.clone();
         let mut before = Live::new();
-        for arm in &value.arms {
+        for arm in value.arms.iter().rev() {
             self.live = after.clone();
             arm.body.visit(self);
-            if let Some(condition) = &arm.condition { condition.visit(self); }
+            if let Some(condition) = &arm.condition {
+                // A false guard continues with the remaining arms, but a
+                // selected arm's body only continues after the match.
+                self.live.extend(before.iter().copied());
+                condition.visit(self);
+            }
             self.kill_pattern(&arm.pattern);
             before.extend(self.live.drain());
         }

@@ -497,6 +497,23 @@ main = !->
 }
 
 #[test]
+fn test_match_guard_capture_borrows_value_needed_by_later_arms() {
+    let output = compile_and_run(r#"
+check = f -> f! == 0
+run = input ->
+    text = String::from input
+    match 1
+        1 if check (-> text.len!) => "matched".println!
+        1 if check (-> text.len!) => "empty".println!
+        _ => text.len!.println!
+main = !->
+    run "hello"
+    run ""
+"#);
+    assert_eq!(output.trim(), "5\nmatched");
+}
+
+#[test]
 fn test_later_use_keeps_capture_borrowed() {
     let output = compile_and_run(r#"
 main = !->
