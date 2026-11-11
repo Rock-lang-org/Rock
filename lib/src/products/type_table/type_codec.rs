@@ -206,10 +206,15 @@ impl<'a> ProductTypeDecoder<'a> {
             ProductTypeRow::ConstValue(n) => Type::ConstValue(*n),
             ProductTypeRow::Slice(inner) => Type::Slice(Box::new(self.decode_type(*inner)?)),
             ProductTypeRow::Array(inner, len) => {
-                Type::Array(
-                    Box::new(self.decode_type(*inner)?),
-                    crate::types::ArrayLen::from_const_type(&self.decode_type(*len)?),
-                )
+                let inner = Box::new(self.decode_type(*inner)?);
+                let len_ty = self.decode_type(*len)?;
+                let len = crate::types::ArrayLen::try_from_const_type(&len_ty).ok_or_else(|| {
+                    format!(
+                        "array length {:?} is not a valid length",
+                        len_ty
+                    )
+                })?;
+                Type::Array(inner, len)
             }
             ProductTypeRow::Tuple(elems) => Type::Tuple(self.decode_types(elems)?),
             ProductTypeRow::Function {
