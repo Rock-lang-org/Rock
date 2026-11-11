@@ -718,3 +718,42 @@ fn same_named_traits_do_not_satisfy_each_other_by_name() {
         BuiltinTraitIds::default(),
     ));
 }
+
+#[test]
+fn owned_auto_trait_checks_storage_modes_and_nested_payloads_by_id() {
+    use crate::types::{CallableKind, CaptureKind, FunctionCapture, FunctionSafety};
+
+    let owned = def_id(701);
+    let send = def_id(702);
+    let sync = def_id(703);
+    let builtin = BuiltinTraitIds { owned: Some(owned), send: Some(send), sync: Some(sync), ..Default::default() };
+    let reference = Type::Reference { mutable: false, inner: Box::new(Type::I64) };
+    let closure = |kind, ty| Type::function_with_metadata(
+        Vec::new(), Type::I64, FunctionSafety::Safe, CallableKind::Fn,
+        vec![FunctionCapture::new(kind, ty)],
+    );
+    let satisfies = |ty: &Type, marker| impl_exists_for(
+        ty, marker, &[], &HashMap::new(), &HashMap::new(), &HashMap::new(), builtin,
+    );
+    for ty in [Type::I64, Type::Tuple(vec![Type::I64]), closure(CaptureKind::Move, Type::I64)] {
+        assert!(satisfies(&ty, owned), "{ty:?}");
+    }
+    for ty in [
+        reference.clone(), Type::Tuple(vec![reference.clone()]),
+        Type::Array(Box::new(reference.clone()), 2u64.into()),
+        closure(CaptureKind::SharedBorrow, Type::I64),
+        closure(CaptureKind::MutableBorrow, Type::I64),
+        closure(CaptureKind::Move, reference.clone()),
+        closure(CaptureKind::Move, closure(CaptureKind::SharedBorrow, Type::I64)),
+        Type::function(Vec::new(), Type::I64),
+    ] {
+        assert!(!satisfies(&ty, owned), "{ty:?}");
+    }
+    assert!(satisfies(&reference, send));
+    assert!(satisfies(&closure(CaptureKind::SharedBorrow, Type::I64), send));
+    let item = Type::function_item(Vec::new(), Type::I64, FunctionSafety::Safe);
+    assert!(satisfies(&item, owned));
+    let erased = Type::function(Vec::new(), Type::I64);
+    assert!(!satisfies(&erased, send));
+    assert!(!satisfies(&erased, sync));
+}

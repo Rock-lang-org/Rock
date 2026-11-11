@@ -140,6 +140,7 @@ impl Lowerer {
                     safety: left_safety,
                     callable_kind: left_kind,
                     captures: left_captures,
+                    captures_known: left_known,
                 },
                 Type::Function {
                     params: right_params,
@@ -147,6 +148,7 @@ impl Lowerer {
                     safety: right_safety,
                     callable_kind: right_kind,
                     captures: right_captures,
+                    captures_known: right_known,
                 },
             ) if left_params.len() == right_params.len() => {
                 let params = left_params
@@ -175,6 +177,7 @@ impl Lowerer {
                     safety: Self::merge_function_safety(*left_safety, *right_safety, covariant),
                     callable_kind: std::cmp::max(*left_kind, *right_kind),
                     captures,
+                    captures_known: *left_known && *right_known,
                 }
             }
             (Type::Tuple(left_elems), Type::Tuple(right_elems))
@@ -351,6 +354,7 @@ impl Lowerer {
                 ret,
                 callable_kind,
                 captures,
+                captures_known,
                 ..
             } => Type::Function {
                 params: params
@@ -365,6 +369,7 @@ impl Lowerer {
                 },
                 callable_kind: *callable_kind,
                 captures: captures.clone(),
+                captures_known: *captures_known,
             },
             Type::Tuple(elems) => Type::Tuple(
                 elems

@@ -18,7 +18,7 @@ pub struct HirFunctionFor<P: HirPhase> {
 impl<P: HirPhase> HirFunctionFor<P> {
     /// The function's callable type: its parameter types, return type and safety.
     pub fn fn_type(&self) -> Type {
-        Type::function_with_safety(
+        Type::function_item(
             self.params.iter().map(|param| param.ty.clone()).collect(),
             self.ret_type.clone(),
             crate::types::FunctionSafety::from_is_unsafe(self.is_unsafe),
@@ -111,7 +111,7 @@ pub struct HirFunctionSig {
 impl HirFunctionSig {
     /// The signature's callable type: its parameter types, return type and safety.
     pub fn fn_type(&self) -> Type {
-        Type::function_with_safety(
+        Type::function_item(
             self.params.clone(),
             self.ret.clone(),
             crate::types::FunctionSafety::from_is_unsafe(self.is_unsafe),

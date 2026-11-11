@@ -153,6 +153,9 @@ fn product_language_item_ids(products: &CompilerProducts) -> BTreeSet<ProductDef
     if let Some(items) = &language_items.send {
         ids.insert(items.trait_id);
     }
+    if let Some(items) = &language_items.owned {
+        ids.insert(items.trait_id);
+    }
     if let Some(items) = &language_items.sync {
         ids.insert(items.trait_id);
     }

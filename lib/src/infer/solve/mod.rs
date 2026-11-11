@@ -122,6 +122,7 @@ struct BuiltinTraitIds {
     fn_mut: Option<DefId>,
     fn_trait: Option<DefId>,
     send: Option<DefId>,
+    owned: Option<DefId>,
     sync: Option<DefId>,
 }
 
@@ -133,6 +134,7 @@ impl BuiltinTraitIds {
             fn_mut: items.fn_mut.as_ref().map(|items| items.trait_id),
             fn_trait: items.fn_trait.as_ref().map(|items| items.trait_id),
             send: items.send.as_ref().map(|items| items.trait_id),
+            owned: items.owned.as_ref().map(|items| items.trait_id),
             sync: items.sync.as_ref().map(|items| items.trait_id),
         }
     }

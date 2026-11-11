@@ -152,6 +152,7 @@ impl ProjectionNormalizer {
                 safety,
                 callable_kind,
                 captures,
+                captures_known,
             } => Type::Function {
                 params: params
                     .iter()
@@ -160,6 +161,7 @@ impl ProjectionNormalizer {
                 ret: Box::new(Self::normalize(provider, ret)),
                 safety: *safety,
                 callable_kind: *callable_kind,
+                captures_known: *captures_known,
                 captures: captures
                     .iter()
                     .map(|capture| crate::types::FunctionCapture {

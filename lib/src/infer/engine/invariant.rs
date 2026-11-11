@@ -41,6 +41,7 @@ impl InferenceEngine {
         let Type::Function {
             callable_kind: a_kind,
             captures: a_captures,
+            captures_known: a_known,
             ..
         } = a
         else {
@@ -49,6 +50,7 @@ impl InferenceEngine {
         let Type::Function {
             callable_kind: b_kind,
             captures: b_captures,
+            captures_known: b_known,
             ..
         } = b
         else {
@@ -57,14 +59,17 @@ impl InferenceEngine {
 
         let a_is_default = a_kind.is_default(a_captures);
         let b_is_default = b_kind.is_default(b_captures);
-        if !a_is_default && !b_is_default {
-            return;
-        }
-
-        let metadata = if a_is_default {
-            (*b_kind, b_captures.clone())
+        let metadata = if !a_is_default && !b_is_default {
+            // A join must retain every possible capture's ownership obligation.
+            let mut captures = a_captures.clone();
+            for capture in b_captures {
+                if !captures.contains(capture) { captures.push(capture.clone()); }
+            }
+            (std::cmp::max(*a_kind, *b_kind), captures, *a_known && *b_known)
+        } else if a_is_default && (!b_is_default || *b_known) {
+            (*b_kind, b_captures.clone(), *a_known && *b_known)
         } else {
-            (*a_kind, a_captures.clone())
+            (*a_kind, a_captures.clone(), *a_known && *b_known)
         };
         let replacement = |ty: &Type| match ty {
             Type::Function {
@@ -78,6 +83,7 @@ impl InferenceEngine {
                 safety: *safety,
                 callable_kind: metadata.0,
                 captures: metadata.1.clone(),
+                captures_known: metadata.2,
             },
             _ => ty.clone(),
         };

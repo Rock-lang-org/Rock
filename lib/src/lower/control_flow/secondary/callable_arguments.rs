@@ -44,10 +44,11 @@ impl Lowerer {
                 .any(|trait_id| *trait_id == bound.trait_id)
                 && bound.type_args.len() == 2
         };
+        let parameter_ty = self.engine.resolve(&parameter.ty);
         let pending_bound = selected
             .pending_impl_bounds
             .iter()
-            .find(|(subject, bound)| subject == &parameter.ty && is_callable_bound(bound))
+            .find(|(subject, bound)| self.engine.resolve(subject) == parameter_ty && is_callable_bound(bound))
             .map(|(_, bound)| bound.clone());
         let function_bound = match &parameter.ty {
             Type::Generic(parameter_id) => selected

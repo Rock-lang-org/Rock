@@ -3,7 +3,7 @@ use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId};
 use super::{
     merge_language_item_providers, merge_language_item_providers_all, DropLanguageItems,
     FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, IndexLanguageItems,
-    IndexMutLanguageItems, LanguageItemProviderConflict, LanguageItems, SendLanguageItems,
+    IndexMutLanguageItems, LanguageItemProviderConflict, LanguageItems, OwnedLanguageItems, SendLanguageItems,
     SizedLanguageItems, SyncLanguageItems,
 };
 
@@ -223,6 +223,7 @@ fn merge_language_items_preserves_callable_and_marker_bundles() {
         send: Some(SendLanguageItems {
             trait_id: def_id(1, 7),
         }),
+        owned: Some(OwnedLanguageItems { trait_id: def_id(1, 9) }),
         sync: Some(SyncLanguageItems {
             trait_id: def_id(1, 8),
         }),
@@ -236,6 +237,7 @@ fn merge_language_items_preserves_callable_and_marker_bundles() {
     assert_eq!(merged.fn_mut, provider.fn_mut);
     assert_eq!(merged.fn_trait, provider.fn_trait);
     assert_eq!(merged.send, provider.send);
+    assert_eq!(merged.owned, provider.owned);
     assert_eq!(merged.sync, provider.sync);
 }
 

@@ -89,6 +89,9 @@ pub(crate) fn validate_language_items<P: HirPhase>(program: &HirProgramFor<P>) -
     if let Some(items) = &program.language_items.send {
         validate_marker_trait(program, items.trait_id, "send.trait", &mut errors);
     }
+    if let Some(items) = &program.language_items.owned {
+        validate_marker_trait(program, items.trait_id, "owned.trait", &mut errors);
+    }
     if let Some(items) = &program.language_items.sync {
         validate_marker_trait(program, items.trait_id, "sync.trait", &mut errors);
     }

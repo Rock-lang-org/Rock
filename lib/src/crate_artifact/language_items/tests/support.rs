@@ -265,6 +265,7 @@ pub(super) fn valid_products() -> CompilerProducts {
         fn_mut: None,
         fn_trait: None,
         send: None,
+        owned: None,
         sync: None,
         try_protocol: Some(TryLanguageItems {
             try_trait_id: try_trait,

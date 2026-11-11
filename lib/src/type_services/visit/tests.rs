@@ -26,6 +26,7 @@ fn nested_type() -> Type {
             inner: Box::new(Type::Struct {
                 id: def_id(1),
                 args: vec![Type::Function {
+                    captures_known: true,
                     params: vec![
                         Type::Slice(Box::new(Type::TypeVar(TypeVarId(1)))),
                         Type::Tuple(vec![

@@ -41,6 +41,7 @@ pub enum Ty {
         safety: FunctionSafety,
         callable_kind: CallableKind,
         captures: Vec<TyFunctionCapture>,
+        captures_known: bool,
     },
     Struct {
         id: DefId,
@@ -379,6 +380,7 @@ impl TypeContext {
                 safety,
                 callable_kind,
                 captures,
+                captures_known,
             } => {
                 let params = params.iter().map(|arg| self.intern_type(arg)).collect();
                 let ret = self.intern_type(ret);
@@ -395,6 +397,7 @@ impl TypeContext {
                     ret,
                     safety: *safety,
                     callable_kind: *callable_kind,
+                    captures_known: *captures_known,
                     captures,
                 })
             }
@@ -488,11 +491,13 @@ impl TypeContext {
                 safety,
                 callable_kind,
                 captures,
+                captures_known,
             } => Type::Function {
                 params: params.iter().map(|param| self.type_for(*param)).collect(),
                 ret: Box::new(self.type_for(*ret)),
                 safety: *safety,
                 callable_kind: *callable_kind,
+                captures_known: *captures_known,
                 captures: captures
                     .iter()
                     .map(|capture| FunctionCapture {
@@ -589,6 +594,7 @@ impl TypeContext {
                 safety,
                 callable_kind,
                 captures,
+                captures_known,
             } => Ty::Function {
                 params: params
                     .iter()
@@ -597,6 +603,7 @@ impl TypeContext {
                 ret: self.id_for_type(ret)?,
                 safety: *safety,
                 callable_kind: *callable_kind,
+                captures_known: *captures_known,
                 captures: captures
                     .iter()
                     .map(|capture| {

@@ -18,7 +18,8 @@ pub(super) fn auto_trait_satisfied(
 ) -> bool {
     let is_send = builtin_traits.send == Some(trait_id);
     let is_sync = builtin_traits.sync == Some(trait_id);
-    if !is_send && !is_sync {
+    let is_owned = builtin_traits.owned == Some(trait_id);
+    if !is_send && !is_sync && !is_owned {
         return false;
     }
     if !visiting.insert(ty.clone()) {
@@ -52,13 +53,14 @@ pub(super) fn auto_trait_satisfied(
         | Type::Bool
         | Type::Char
         | Type::Unit
-        | Type::Never
-        | Type::Str => true,
-        Type::Array(inner, _) | Type::Slice(inner) => nested(inner, visiting),
+        | Type::Never => true,
+        Type::Str => !is_owned,
+        Type::Slice(inner) => !is_owned && nested(inner, visiting),
+        Type::Array(inner, _) => nested(inner, visiting),
         Type::Tuple(elements) => elements.iter().all(|element| nested(element, visiting)),
-        Type::Reference { .. } if is_send => false,
-        Type::Reference { inner, .. } => {
-            let required = builtin_traits.sync;
+        Type::Reference { .. } if is_owned => false,
+        Type::Reference { inner, mutable } => {
+            let required = if is_send && *mutable { builtin_traits.send } else { builtin_traits.sync };
             required.is_some_and(|required| {
                 explicit_impl_exists_for(
                     inner,
@@ -80,12 +82,16 @@ pub(super) fn auto_trait_satisfied(
             })
         }
         Type::Pointer(_) => false,
-        Type::Function { captures, .. } if is_send => captures
+        // An erased signature is not a known-empty environment. None of the
+        // structural environment markers can be proved without its captures.
+        Type::Function { captures_known: false, .. } => false,
+        Type::Function { captures, .. } if is_owned => captures
             .iter()
             .all(|capture| capture.kind == CaptureKind::Move && nested(&capture.ty, visiting)),
         Type::Function { captures, .. } => captures.iter().all(|capture| {
             let required = match capture.kind {
                 CaptureKind::SharedBorrow => builtin_traits.sync,
+                CaptureKind::MutableBorrow | CaptureKind::Move if is_send => builtin_traits.send,
                 CaptureKind::MutableBorrow | CaptureKind::Move => builtin_traits.sync,
             };
             required.is_some_and(|required| {

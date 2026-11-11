@@ -4,7 +4,7 @@ use crate::ids::DefId;
 use crate::language_items::{
     DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, FoldLanguageItems,
     IndexLanguageItems, IndexMutLanguageItems, LanguageItemRole, LanguageItems, RangeLanguageItems,
-    SendLanguageItems, SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
+    OwnedLanguageItems, SendLanguageItems, SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
 };
 use crate::lower::ResolveError;
 
@@ -168,6 +168,9 @@ impl BindingState {
         let send = self
             .send
             .map(|root| SendLanguageItems { trait_id: root.id });
+        let owned = self
+            .owned
+            .map(|root| OwnedLanguageItems { trait_id: root.id });
         let sync = self
             .sync
             .map(|root| SyncLanguageItems { trait_id: root.id });
@@ -223,6 +226,7 @@ impl BindingState {
             fn_mut,
             fn_trait,
             send,
+            owned,
             sync,
             try_protocol,
             range,

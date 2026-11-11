@@ -141,8 +141,10 @@ impl Monomorphizer {
                 safety,
                 callable_kind,
                 captures,
+                captures_known,
             } => {
                 output.push('f');
+                output.push(if *captures_known { 'k' } else { 'e' });
                 Self::push_text(output, &format!("{safety:?}"));
                 Self::push_text(output, &format!("{callable_kind:?}"));
                 Self::push_text(output, &params.len().to_string());

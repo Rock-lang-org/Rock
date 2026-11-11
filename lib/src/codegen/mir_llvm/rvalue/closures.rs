@@ -254,7 +254,9 @@ impl<'ctx> CodeGen<'ctx> {
                 },
             };
             let target_ty = self.structural_type_for(*target_ty);
-            if value_ty != target_ty {
+            // Capture-list provenance is a compile-time ownership fact, not
+            // part of the runtime layout (including behind references).
+            if !same_callable_layout(&value_ty, &target_ty) {
                 return Err(CodegenError::layout(format!(
                     "MIR closure capture layout mismatch for '{}': capture {} has type {}, target expects {}",
                     closure.display_name,
