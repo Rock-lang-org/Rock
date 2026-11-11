@@ -221,28 +221,6 @@ impl Monomorphizer {
             }
         }
 
-        for generic_id in &generic_ids {
-            if !substitution.contains_key(generic_id) {
-                for param in &generic_func.params {
-                    if let Some(inferred_ty) =
-                        self.extract_generic_from_type(&param.ty, *generic_id, &substitution)
-                    {
-                        substitution.insert(*generic_id, inferred_ty);
-                        break;
-                    }
-                }
-                if !substitution.contains_key(generic_id) {
-                    if let Some(inferred_ty) = self.extract_generic_from_type(
-                        &generic_func.ret_type,
-                        *generic_id,
-                        &substitution,
-                    ) {
-                        substitution.insert(*generic_id, inferred_ty);
-                    }
-                }
-            }
-        }
-
         let default_ty = self.intern_type(&Type::I64);
         let mut type_args = vec![default_ty; generic_func.generic_params.len()];
         for (idx, generic_id) in generic_ids.iter().enumerate() {
@@ -250,92 +228,6 @@ impl Monomorphizer {
         }
 
         type_args
-    }
-
-    fn extract_generic_from_type(
-        &mut self,
-        ty: &Type,
-        target_gen: GenericParamId,
-        substitution: &HashMap<GenericParamId, TypeId>,
-    ) -> Option<TypeId> {
-        match ty {
-            Type::Generic(gen_param) if *gen_param == target_gen => {
-                substitution.get(&target_gen).copied()
-            }
-            Type::Function {
-                params: param_types,
-                ret: ret_type,
-                captures,
-                ..
-            } => {
-                for param_ty in param_types {
-                    if let Some(ty) =
-                        self.extract_generic_from_type(param_ty, target_gen, substitution)
-                    {
-                        return Some(ty);
-                    }
-                }
-                self.extract_generic_from_type(ret_type, target_gen, substitution)
-                    .or_else(|| {
-                        captures.iter().find_map(|capture| {
-                            self.extract_generic_from_type(&capture.ty, target_gen, substitution)
-                        })
-                    })
-            }
-            Type::Slice(inner) => self.extract_generic_from_type(inner, target_gen, substitution),
-            Type::Array(inner, len) => {
-                if *len == ArrayLen::Param(target_gen) {
-                    if let Some(bound) = substitution.get(&target_gen) {
-                        return Some(*bound);
-                    }
-                }
-                self.extract_generic_from_type(inner, target_gen, substitution)
-            }
-            Type::Tuple(elems) => {
-                for elem in elems {
-                    if let Some(ty) = self.extract_generic_from_type(elem, target_gen, substitution)
-                    {
-                        return Some(ty);
-                    }
-                }
-                None
-            }
-            Type::Struct { args, .. } | Type::Enum { args, .. } => {
-                for arg in args {
-                    if let Some(ty) = self.extract_generic_from_type(arg, target_gen, substitution)
-                    {
-                        return Some(ty);
-                    }
-                }
-                None
-            }
-            Type::Reference { inner, .. } | Type::Pointer(inner) => {
-                self.extract_generic_from_type(inner, target_gen, substitution)
-            }
-            Type::Projection { ty, trait_args, .. } => {
-                if let Some(ty) = self.extract_generic_from_type(ty, target_gen, substitution) {
-                    return Some(ty);
-                }
-                for arg in trait_args {
-                    if let Some(ty) = self.extract_generic_from_type(arg, target_gen, substitution)
-                    {
-                        return Some(ty);
-                    }
-                }
-                None
-            }
-            Type::Apply { constructor, args } => self
-                .extract_generic_from_type(constructor, target_gen, substitution)
-                .or_else(|| {
-                    args.iter().find_map(|arg| {
-                        self.extract_generic_from_type(arg, target_gen, substitution)
-                    })
-                }),
-            Type::Lambda { body, .. } => {
-                self.extract_generic_from_type(body, target_gen, substitution)
-            }
-            _ => None,
-        }
     }
 
     pub(super) fn extract_generics_from_type(
