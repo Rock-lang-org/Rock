@@ -484,3 +484,59 @@ main = !->
     );
     assert_eq!(output.trim(), "4");
 }
+
+#[test]
+fn test_const_generics_repeated_length_param_conflict_is_rejected() {
+    compile_should_fail(
+        r#"
+same_len: [I64; N] -> [I64; N] -> I64
+same_len = a, b -> a[0] + b[0]
+
+main = !->
+    a: [I64; 2] = [1, 2]
+    b: [I64; 3] = [1, 2, 3]
+    same_len a, b .println!
+"#,
+        "Type mismatch",
+    );
+}
+
+#[test]
+fn test_const_generics_repeated_length_param_agreeing_lengths_run() {
+    let output = compile_and_run(
+        r#"
+same_len: [I64; N] -> [I64; N] -> I64
+same_len = a, b -> a[0] + b[1]
+
+main = !->
+    a: [I64; 2] = [1, 2]
+    b: [I64; 2] = [10, 20]
+    same_len a, b .println!
+    c: [I64; 3] = [1, 2, 3]
+    d: [I64; 3] = [4, 5, 6]
+    same_len c, d .println!
+"#,
+    );
+    assert_eq!(output.trim(), "21\n6");
+}
+
+#[test]
+fn test_const_generics_impl_header_repeated_length_conflict_is_rejected() {
+    compile_should_fail(
+        r#"
+struct Pair T, N: usize
+    < left: [T; N]
+    < right: [T; N]
+
+impl Pair T, N
+    @sum_first = -> self.left[0] + self.right[0]
+
+main = !->
+    p = Pair
+        left: [1, 2]
+        right: [3, 4, 5]
+    p.sum_first!.println!
+"#,
+        "Type mismatch",
+    );
+}
