@@ -133,7 +133,13 @@ impl InferenceEngine {
                 Self::same_unification_shape(a, b)
             }
             (Type::Array(a, a_len), Type::Array(b, b_len)) => {
-                (a_len == b_len || matches!(a_len, crate::types::ArrayLen::Var(_)) || matches!(b_len, crate::types::ArrayLen::Var(_)))
+                // `unify_invariant` unifies both directions before this check, so a
+                // length variable is either bound (and resolved to a value) or shared
+                // by both sides. Tolerating `Var` here therefore never accepts two
+                // different concrete lengths: `Value(2)` vs `Value(3)` still fails.
+                (a_len == b_len
+                    || matches!(a_len, crate::types::ArrayLen::Var(_))
+                    || matches!(b_len, crate::types::ArrayLen::Var(_)))
                     && Self::same_unification_shape(a, b)
             }
             (Type::Tuple(a), Type::Tuple(b)) => {
