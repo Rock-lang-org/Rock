@@ -550,10 +550,10 @@ fn test_generic_by_value_self_on_reference_of_dropping_value_drops_once() {
     let output = compile_and_run(
         r#"
 trait Describe
-    @describe = -> 1
+    ~@describe = -> 1
 
 impl Describe for T
-    @describe = -> 7
+    ~@describe = -> 7
 
 struct Tracked
     < value: I64
@@ -576,7 +576,7 @@ main = !->
 }
 
 #[test]
-fn test_by_value_self_moved_through_reference_receiver_drops_once() {
+fn test_shared_self_alias_on_reference_receiver_drops_owner_once() {
     let output = compile_and_run(
         r#"
 trait Consume
@@ -592,8 +592,8 @@ impl Drop for Tracked
 
 impl Consume for Tracked
     @consume = ->
-        moved = self
-        moved.value
+        borrowed = self
+        borrowed.value
 
 main = !->
     x = Tracked
