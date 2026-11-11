@@ -69,6 +69,14 @@ impl<'a> SelectionService<'a> {
         }
         let self_param = method.params.first()?;
         let mut subst = impl_receiver_pattern_substitution(imp, receiver_ty, self.impls.values())?;
+        if Self::generic_self_binds_receiver_by_value(
+            &self_param.ty,
+            method.self_receiver,
+            receiver_ty,
+            &mut subst,
+        ) {
+            return Some(ReceiverAdjustment::None);
+        }
         let expected_self = Self::receiver_mode_expected_self_type(
             self_param.ty.substitute_generics(&subst),
             method.self_receiver,
@@ -81,6 +89,24 @@ impl<'a> SelectionService<'a> {
             imp.trait_id.is_some(),
             &mut subst,
         )
+    }
+
+    /// A by-value `self` declared as a bare generic parameter (`impl Tr for T`)
+    /// matches the receiver type exactly as written, including `&U`. Without
+    /// this check the parameter is substituted first and the resulting
+    /// reference type is misread as a `&self` pattern.
+    pub(super) fn generic_self_binds_receiver_by_value(
+        declared_self: &Type,
+        self_receiver: Option<crate::types::ReceiverMode>,
+        receiver_ty: &Type,
+        subst: &mut HashMap<GenericParamId, Type>,
+    ) -> bool {
+        matches!(declared_self, Type::Generic(_))
+            && matches!(
+                self_receiver,
+                Some(crate::types::ReceiverMode::Move) | None
+            )
+            && Self::type_pattern_matches_committing(declared_self, receiver_ty, subst)
     }
 
     pub(super) fn receiver_mode_expected_self_type(

@@ -317,8 +317,8 @@ main = ->
             "Ok(41)",
             "Err(4)",
             "Ok(5)",
-            "Err(IoError)",
-            "Err(IoError)"
+            "Err(IoError(Os: 0))",
+            "Err(IoError(Os: 0))"
         ]
     );
 }
