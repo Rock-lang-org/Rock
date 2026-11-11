@@ -270,6 +270,7 @@ where
                 .into_iter()
                 .map(|capture| FunctionCapture {
                     kind: capture.kind,
+                    effect: capture.effect,
                     ty: folder.fold_type(capture.ty),
                 })
                 .collect(),
@@ -379,6 +380,7 @@ where
                 .map(|capture| {
                     Ok(FunctionCapture {
                         kind: capture.kind,
+                        effect: capture.effect,
                         ty: folder.try_fold_type(capture.ty)?,
                     })
                 })

@@ -164,6 +164,7 @@ impl ProjectionNormalizer {
                     .iter()
                     .map(|capture| crate::types::FunctionCapture {
                         kind: capture.kind,
+                        effect: capture.effect,
                         ty: Self::normalize(provider, &capture.ty),
                     })
                     .collect(),

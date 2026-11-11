@@ -502,6 +502,11 @@ fn finalize_expr(ctx: &mut FinalizeCtx<'_>, expr: &mut HirExpr) {
             }
             for capture in captures {
                 capture.ty = ctx.finalize(&capture.ty);
+                if capture.kind == HirClosureCaptureKind::SharedBorrow
+                    && TypeFacts::is_copy(&capture.ty)
+                {
+                    capture.kind = HirClosureCaptureKind::Move;
+                }
             }
             finalize_block(ctx, body);
         }

@@ -82,6 +82,7 @@ impl ProductTypeEncoder {
                     .map(|capture| {
                         Ok(ProductFunctionCapture {
                             kind: capture.kind.into(),
+                            effect: capture.effect,
                             ty: self.encode_type(&capture.ty)?,
                         })
                     })
@@ -233,6 +234,7 @@ impl<'a> ProductTypeDecoder<'a> {
                     .map(|capture| {
                         Ok(FunctionCapture {
                             kind: capture.kind.into(),
+                            effect: capture.effect,
                             ty: self.decode_type(capture.ty)?,
                         })
                     })

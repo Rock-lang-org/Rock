@@ -57,7 +57,7 @@ main = !->
 }
 
 #[test]
-fn test_inline_owned_capture_rejects_later_source_use_and_duplicate_move() {
+fn test_spawn_rejects_capture_borrowed_for_later_source_use() {
     for later in ["filename.len!.println!", "spawn (-> filename.len!)"] {
         compile_should_fail(
             &format!(r#"
@@ -68,13 +68,13 @@ main = !->
     spawn (-> filename.len!)
     {later}
 "#),
-            "moved",
+            "shared borrow",
         );
     }
 }
 
 #[test]
-fn test_inline_owned_capture_does_not_promote_named_local_closures() {
+fn test_named_closures_follow_same_last_use_policy() {
     let output = compile_and_run(
         r#"
 main = !->
@@ -87,16 +87,21 @@ main = !->
 "#,
     );
     assert_eq!(output.lines().collect::<Vec<_>>(), ["5", "5", "5"]);
-    compile_should_fail(
+    let output = compile_and_run(
         r#"
 > std::concurrency::thread::spawn
 main = !->
     filename = String::from "local"
     task = -> filename.len!
-    spawn task
+    match spawn task
+        Result::Ok handle =>
+            match handle.join!
+                Result::Ok length => length.println!
+                Result::Err _ => "join failed".println!
+        Result::Err _ => "spawn failed".println!
 "#,
-        "shared borrow",
     );
+    assert_eq!(output.trim(), "5");
     compile_should_fail(
         r#"
 > std::concurrency::thread::spawn
@@ -138,7 +143,7 @@ main = !->
     );
     assert_eq!(output.lines().collect::<Vec<_>>(), ["5", "6", "6", "6"]);
     for call in ["apply (-> owned.len!)", "runner.apply (-> owned.len!)"] {
-        compile_should_fail(
+        compile_should_pass(
             &format!(r#"
 apply: F -> I64 where F: FnOnce (), I64
 apply = task -> task!
@@ -152,13 +157,12 @@ main = !->
     {call}
     owned.len!.println!
 "#),
-            "moved",
         );
     }
 }
 
 #[test]
-fn test_inline_owned_capture_keeps_stronger_shared_callable_bound_borrowed() {
+fn test_later_use_keeps_capture_borrowed_with_shared_and_consuming_bounds() {
     let output = compile_and_run(
         r#"
 apply: F -> I64 where F: Fn (), I64, F: FnOnce (), I64

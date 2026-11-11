@@ -198,19 +198,23 @@ main = ->
 }
 
 #[test]
-fn test_std_thread_spawn_rejects_borrowed_capture_after_branch_merge() {
-    compile_should_fail(
+fn test_std_thread_spawn_accepts_copy_capture_after_branch_merge() {
+    let output = compile_and_run(
         r#"
 > std::concurrency::thread::spawn
 
-main = ->
+main = !->
     value = 41
     task = if true then (-> value + 1) else (-> 0)
-    handle = spawn task
-    0
+    match spawn task
+        Result::Ok handle =>
+            match handle.join!
+                Result::Ok result => result.println!
+                Result::Err _ => "join failed".println!
+        Result::Err _ => "spawn failed".println!
 "#,
-        "does not implement trait",
     );
+    assert_eq!(output.trim(), "42");
 }
 
 #[test]

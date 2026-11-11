@@ -391,28 +391,26 @@ main = !->
 
     assert_eq!(
         output.trim().lines().collect::<Vec<_>>(),
-        ["drop", "8", "end"]
+        ["8", "end", "drop"]
     );
 }
 
 #[test]
-fn test_returned_closure_with_move_capture_rejects_second_call() {
-    compile_should_fail(
-        &format!(
+fn test_returned_closure_with_read_only_owned_capture_accepts_second_call() {
+    let output = compile_and_run(&format!(
         r#"{TRACKED_CAPTURE_PRELUDE}
 main = !->
     f = make (Tracked
         value: 7)
     f 1 .println!
     f 2 .println!
-"#
-        ),
-        "use of moved value `f`",
-    );
+"#,
+    ));
+    assert_eq!(output.trim(), "8\n9\ndrop");
 }
 
 #[test]
-fn test_local_borrowing_closure_leaves_owner_to_drop_at_scope_exit() {
+fn test_local_last_use_closure_drops_owned_capture_when_never_called() {
     let output = compile_and_run(&format!(
         r#"{TRACKED_CAPTURE_PRELUDE}
 main = !->
@@ -476,4 +474,240 @@ main = !->
     ));
 
     assert_eq!(output.trim().lines().collect::<Vec<_>>(), ["end", "drop"]);
+}
+
+#[test]
+fn test_last_use_owned_capture_is_reusable_and_dropped_with_environment() {
+    let output = compile_and_run(r#"
+struct Tracked
+    < text: String
+impl Drop for Tracked
+    ~@drop = !-> "drop".println!
+make = ->
+    value = Tracked
+        text: String::from "hello"
+    -> value.text.len!
+main = !->
+    f = make!
+    f!.println!
+    f!.println!
+    "end".println!
+"#);
+    assert_eq!(output.trim(), "5\n5\nend\ndrop");
+}
+
+#[test]
+fn test_later_use_keeps_capture_borrowed() {
+    let output = compile_and_run(r#"
+main = !->
+    text = String::from "hello"
+    f = -> text.len!
+    f!.println!
+    text.len!.println!
+    f!.println!
+"#);
+    assert_eq!(output.trim(), "5\n5\n5");
+}
+
+#[test]
+fn test_owned_closures_returned_from_branches_and_nested_lambdas() {
+    let output = compile_and_run(r#"
+choose = flag ->
+    text = String::from "hello"
+    if flag
+        -> text.len!
+    else
+        -> text.len!
+choose_match = flag ->
+    text = String::from "hello"
+    match flag
+        true => -> text.len!
+        false => -> text.len!
+nested = ->
+    text = String::from "hello"
+    -> -> text.len!
+main = !->
+    a = choose true
+    a!.println!
+    a!.println!
+    b = choose_match false
+    b!.println!
+    outer = nested!
+    inner = outer!
+    inner!.println!
+    inner!.println!
+"#);
+    assert_eq!(output.trim(), "5\n5\n5\n5\n5");
+}
+
+#[test]
+fn test_capture_liveness_respects_shadowing_and_loop_backedges() {
+    let output = compile_and_run(r#"
+main = !->
+    text = String::from "old"
+    f = -> text.len!
+    text = String::from "newer"
+    text.len!.println!
+    f!.println!
+    for i in [1, 2]
+        g = -> text.len!
+        g!.println!
+"#);
+    assert_eq!(output.trim(), "5\n3\n5\n5");
+}
+
+#[test]
+fn test_returned_borrowing_closure_is_rejected() {
+    compile_should_fail(r#"
+make = ->
+    text = String::from "hello"
+    f = -> text.len!
+    text.len!.println!
+    f
+main = !->
+    f = make!
+    f!.println!
+"#, "does not live long enough");
+}
+
+#[test]
+fn test_capture_liveness_distinguishes_inner_shadow_and_reassignment() {
+    let output = compile_and_run(r#"
+main = !->
+    text = String::from "old"
+    first = -> text.len!
+    text = String::from "replacement"
+    first!.println!
+    text.len!.println!
+    second = -> text.len!
+    text: String = String::from "shadow"
+    second!.println!
+    text.len!.println!
+    outer = String::from "outer"
+    if true
+        outer: String = String::from "inner"
+        inner = -> outer.len!
+        inner!.println!
+    outer.len!.println!
+"#);
+    assert_eq!(output.trim(), "3\n11\n11\n6\n5\n5");
+}
+
+#[test]
+fn test_curried_and_nested_closures_borrow_sources_still_used_by_parent() {
+    let output = compile_and_run(r#"
+main = !->
+    text = String::from "hello"
+    curried = a, b ~> text.len! + a + b
+    nested = -> -> text.len!
+    text.len!.println!
+    partial = curried 1
+    (partial 2).println!
+    inner = nested!
+    inner!.println!
+    inner!.println!
+"#);
+    assert_eq!(output.trim(), "5\n8\n5\n5");
+}
+
+#[test]
+fn test_loop_local_last_use_capture_owns_each_iteration_value() {
+    let output = compile_and_run(r#"
+main = !->
+    for i in [1, 2]
+        text = String::from "hello"
+        read = -> text.len!
+        read!.println!
+        read!.println!
+"#);
+    assert_eq!(output.trim(), "5\n5\n5\n5");
+}
+
+#[test]
+fn test_owned_mutable_capture_persists_between_calls() {
+    let output = compile_and_run(r#"
+make = ->
+    mut count = 0
+    ->
+        count = count + 1
+        count
+main = !->
+    mut next = make!
+    next!.println!
+    next!.println!
+"#);
+    assert_eq!(output.trim(), "1\n2");
+}
+
+#[test]
+fn test_body_consuming_owned_capture_remains_once_callable() {
+    compile_should_fail(r#"
+make = ->
+    text = String::from "hello"
+    -> text
+main = !->
+    once = make!
+    once!.println!
+    once!.println!
+"#, "moved");
+}
+
+#[test]
+fn test_borrowing_closure_in_returned_struct_is_rejected() {
+    compile_should_fail(r#"
+struct Holder F
+    < run: F
+make = ->
+    text = String::from "hello"
+    f = -> text.len!
+    text.len!.println!
+    Holder
+        run: f
+main = !->
+    holder = make!
+    holder.run!.println!
+"#, "does not live long enough");
+}
+
+#[test]
+fn test_borrowing_closure_cannot_outlive_inner_scope() {
+    compile_should_fail(r#"
+main = !->
+    f = if true
+        text = String::from "hello"
+        read = -> text.len!
+        text.len!.println!
+        read
+    else
+        -> 0
+    f!.println!
+"#, "borrow");
+}
+
+#[test]
+fn test_range_end_is_a_later_use_than_closure_in_start() {
+    let output = compile_and_run(r#"
+main = !->
+    text = String::from "hello"
+    range = (-> text.len!)! .. text.len!
+    for i in range
+        i.println!
+    "done".println!
+"#);
+    assert_eq!(output.trim(), "done");
+}
+
+#[test]
+fn test_inner_shadow_does_not_hide_later_outer_capture_use() {
+    let output = compile_and_run(r#"
+main = !->
+    text = String::from "outer"
+    read = -> text.len!
+    if true
+        text: String = String::from "inner-shadow"
+        text.len!.println!
+    text.len!.println!
+    read!.println!
+"#);
+    assert_eq!(output.trim(), "12\n5\n5");
 }

@@ -422,7 +422,7 @@ fn callable_kinds_are_ordered_by_capability() {
                 args: Vec::new(),
             }
         )]),
-        CallableKind::FnOnce
+        CallableKind::Fn
     );
 }
 

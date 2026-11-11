@@ -14,6 +14,7 @@ pub(super) struct ClosureState {
     lambda_counter: usize,
     nested_functions: Vec<MirFunction>,
     pending_body_captures: Vec<HirClosureCapture>,
+    pub(super) borrows_owned_environment: bool,
 }
 
 impl ClosureState {

@@ -349,14 +349,14 @@ impl<'ctx> CodeGen<'ctx> {
                 })?;
             }
 
-            let context = MirFunctionContext {
+            let mut context = MirFunctionContext {
                 function,
                 locals,
                 blocks,
             };
 
             if is_closure {
-                self.bind_mir_closure_captures(mir_function, &context)?;
+                self.bind_mir_closure_captures(mir_function, &mut context)?;
             }
 
             self.compile_mir_function_body(mir_function, &context)
@@ -385,7 +385,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn bind_mir_closure_captures(
         &mut self,
         mir_function: &MirFunction,
-        context: &MirFunctionContext<'ctx>,
+        context: &mut MirFunctionContext<'ctx>,
     ) -> Result<(), CodegenError> {
         if mir_function.closure_captures.is_empty() {
             return Ok(());
@@ -442,6 +442,12 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| {
                     CodegenError::from(format!("Failed to access MIR closure capture: {}", e))
                 })?;
+            if capture.kind == crate::mir::MirClosureCaptureKind::ByValue {
+                // Owned captures live in the environment, not in a per-call
+                // copy: mutations persist and only env-drop releases them.
+                context.locals[capture.local.0] = Some((field_ptr, *local_ty));
+                continue;
+            }
             let value = self
                 .builder
                 .build_load(

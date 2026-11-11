@@ -41,7 +41,8 @@ impl MirClosureId {
     pub fn env_drop_id(&self) -> MirClosureId {
         MirClosureId {
             owner: MirFunctionId::Closure(Box::new(self.clone())),
-            local_index: 0,
+            // Ordinary nested closures start at zero; reserve a disjoint id.
+            local_index: u32::MAX,
         }
     }
 }

@@ -15,6 +15,11 @@ impl Lowerer {
         let captures = captures
             .iter()
             .map(|capture| FunctionCapture {
+                effect: match capture.kind {
+                    HirClosureCaptureKind::SharedBorrow => crate::types::CaptureEffect::Read,
+                    HirClosureCaptureKind::MutableBorrow => crate::types::CaptureEffect::Mutate,
+                    HirClosureCaptureKind::Move => crate::types::CaptureEffect::Consume,
+                },
                 kind: match capture.kind {
                     HirClosureCaptureKind::SharedBorrow => CaptureKind::SharedBorrow,
                     HirClosureCaptureKind::MutableBorrow => CaptureKind::MutableBorrow,
@@ -27,6 +32,41 @@ impl Lowerer {
         Type::function_with_metadata(params, ret, safety, callable_kind, captures)
     }
 
+    fn apply_lambda_body_effects(ty: &mut Type, effects: &[HirClosureCapture]) {
+        if let Type::Function { captures, callable_kind, .. } = ty {
+            for (capture, effect) in captures.iter_mut().zip(effects) {
+                capture.effect = match effect.kind {
+                    HirClosureCaptureKind::SharedBorrow => crate::types::CaptureEffect::Read,
+                    HirClosureCaptureKind::MutableBorrow => crate::types::CaptureEffect::Mutate,
+                    HirClosureCaptureKind::Move => crate::types::CaptureEffect::Consume,
+                };
+            }
+            *callable_kind = CallableKind::from_captures(captures);
+        }
+    }
+
+    fn choose_capture_storage(&self, captures: &mut [HirClosureCapture], lambda: Option<&ast::LambdaDecl>) {
+        let live = lambda.and_then(|lambda| self.body.capture_live_after.get(&(lambda as *const _ as usize)));
+        for capture in captures {
+            let ty = self.engine.resolve(&capture.ty);
+            if crate::type_services::facts::TypeFacts::is_copy(&ty)
+                && capture.kind != HirClosureCaptureKind::MutableBorrow
+            {
+                capture.kind = HirClosureCaptureKind::Move;
+            } else if live.is_some_and(|live| live.contains(&capture.name))
+                || self.body.borrowed_capture_sources.contains(&capture.local_id)
+            {
+                capture.kind = if capture.kind == HirClosureCaptureKind::MutableBorrow {
+                    HirClosureCaptureKind::MutableBorrow
+                } else {
+                    HirClosureCaptureKind::SharedBorrow
+                };
+            } else {
+                capture.kind = HirClosureCaptureKind::Move;
+            }
+        }
+    }
+
     pub(crate) fn lower_lambda(&mut self, lambda: &ast::LambdaDecl) -> HirExpr {
         self.lower_lambda_with_expected_params(lambda, None)
     }
@@ -36,9 +76,34 @@ impl Lowerer {
         lambda: &ast::LambdaDecl,
         expected_params: Option<&[Type]>,
     ) -> HirExpr {
-        if matches!(lambda.arrow_kind, ast::LambdaArrowKind::Curried) && lambda.parameters.len() > 1
-        {
-            return self.lower_curried_lambda(lambda, &lambda.span);
+        let enclosing_borrows = self.body.borrowed_capture_sources.clone();
+        if let Some(live) = self.body.capture_live_after.get(&(lambda as *const _ as usize)) {
+            for name in live {
+                if let Some(binding) = self.scope.lookup(name) {
+                    if !crate::type_services::facts::TypeFacts::is_copy(&self.engine.resolve(&binding.ty)) {
+                        if let Some(id) = binding.local_id {
+                            self.body.borrowed_capture_sources.insert(id);
+                        }
+                    }
+                }
+            }
+        }
+        if matches!(lambda.arrow_kind, ast::LambdaArrowKind::Curried) && lambda.parameters.len() > 1 {
+            let mut value = self.lower_curried_lambda(lambda, &lambda.span);
+            self.body.borrowed_capture_sources = enclosing_borrows;
+            if let HirExprKind::Lambda { captures, .. } = &mut value.kind {
+                self.choose_capture_storage(captures, Some(lambda));
+                if let Type::Function { captures: metadata, .. } = &mut value.ty {
+                    for (metadata, capture) in metadata.iter_mut().zip(captures) {
+                        metadata.kind = match capture.kind {
+                            HirClosureCaptureKind::Move => CaptureKind::Move,
+                            HirClosureCaptureKind::SharedBorrow => CaptureKind::SharedBorrow,
+                            HirClosureCaptureKind::MutableBorrow => CaptureKind::MutableBorrow,
+                        };
+                    }
+                }
+            }
+            return value;
         }
 
         let mut params = Vec::new();
@@ -93,17 +158,16 @@ impl Lowerer {
         let span = lambda.span.clone();
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
         let ret_type = self.engine.resolve(&lambda_return_ty);
+        self.body.borrowed_capture_sources = enclosing_borrows;
         let mut captures = self.collect_lambda_captures(&body, &params);
-        if self.is_escaping_lambda(lambda) {
-            for capture in &mut captures {
-                capture.kind = HirClosureCaptureKind::Move;
-            }
-        }
+        let body_effects = captures.clone();
+        self.choose_capture_storage(&mut captures, Some(lambda));
 
         self.pop_scope();
 
-        let func_type =
+        let mut func_type =
             Self::lambda_function_type(param_types, ret_type, FunctionSafety::Safe, &captures);
+        Self::apply_lambda_body_effects(&mut func_type, &body_effects);
 
         HirExpr {
             ty: func_type,
@@ -172,7 +236,7 @@ impl Lowerer {
         let loop_stack = self.body.suspend_loops();
         let body = if params.len() == 1 {
             self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
-                lowerer.mark_escaping_lambdas(body);
+                lowerer.prepare_capture_liveness(body);
                 lowerer.lower_block(body)
             })
         } else {
@@ -191,14 +255,18 @@ impl Lowerer {
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
         let body_ty = self.engine.resolve(&lambda_return_ty);
         let mut captures = self.collect_lambda_captures(&body, std::slice::from_ref(&param));
-        for capture in &mut captures {
-            capture.kind = HirClosureCaptureKind::Move;
-        }
+        let body_effects = captures.clone();
+        // A synthetic curried stage only returns the next stage. It has no
+        // later uses of its own, but cannot transfer ownership of a source
+        // that its enclosing closure only borrowed.
+        self.choose_capture_storage(&mut captures, None);
 
         self.pop_scope();
 
+        let mut func_type = Self::lambda_function_type(vec![ty], body_ty, FunctionSafety::Safe, &captures);
+        Self::apply_lambda_body_effects(&mut func_type, &body_effects);
         HirExpr {
-            ty: Self::lambda_function_type(vec![ty], body_ty, FunctionSafety::Safe, &captures),
+            ty: func_type,
             kind: HirExprKind::Lambda {
                 params: vec![param],
                 body,

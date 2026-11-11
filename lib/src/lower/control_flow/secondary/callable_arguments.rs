@@ -7,32 +7,6 @@ use crate::lower::Lowerer;
 use crate::types::{TraitBound, Type};
 
 impl Lowerer {
-    fn consuming_callable_bounds<'a>(&self, bounds: impl IntoIterator<Item = &'a TraitBound>) -> bool {
-        let mut consuming = false;
-        for bound in bounds {
-            if self.language_items.fn_trait.as_ref().is_some_and(|items| items.trait_id == bound.trait_id)
-                || self.language_items.fn_mut.as_ref().is_some_and(|items| items.trait_id == bound.trait_id)
-            {
-                return false;
-            }
-            consuming |= self.language_items.fn_once.as_ref()
-                .is_some_and(|items| items.trait_id == bound.trait_id);
-        }
-        consuming
-    }
-
-    /// Inline consuming callable arguments own their environment. This does not
-    /// change reference values into owned pointees or promote named closures.
-    pub(super) fn callable_argument_owns_environment(&self, expected: &Type) -> bool {
-        match self.engine.resolve(expected) {
-            Type::Function { callable_kind, .. } => {
-                callable_kind == crate::types::CallableKind::FnOnce
-            }
-            Type::TypeVar(id) => self.consuming_callable_bounds(&self.engine.get_bounds(id)),
-            _ => false,
-        }
-    }
-
     pub(super) fn lambda_from_expression(expr: &ast::Expression) -> Option<&ast::LambdaDecl> {
         let ast::Expression::UnaryExpr(ast::UnaryExpr::PrimaryExpr(primary)) = expr else {
             return None;
@@ -134,26 +108,6 @@ impl Lowerer {
                 if params.len() > 1 {
                     *params = vec![Type::Tuple(std::mem::take(params))];
                 }
-            }
-        }
-        if let Some(parameter) = selected.substituted_params.get(index) {
-            let mut bounds = match self.engine.resolve(&parameter.ty) {
-                Type::TypeVar(id) => self.engine.get_bounds(id),
-                Type::Generic(id) => selected.function.as_ref()
-                    .and_then(|function| function.generic_bounds.get(&id))
-                    .cloned().unwrap_or_default(),
-                _ => Vec::new(),
-            };
-            bounds.extend(selected.pending_impl_bounds.iter()
-                .filter(|(subject, _)| subject == &parameter.ty)
-                .map(|(_, bound)| bound.clone()));
-            let owns_environment = if bounds.is_empty() {
-                self.callable_argument_owns_environment(&parameter.ty)
-            } else {
-                self.consuming_callable_bounds(&bounds)
-            };
-            if owns_environment {
-                self.body.mark_escaping_lambda(lambda);
             }
         }
         self.lower_lambda_with_expected_params(lambda, expected.as_deref())
@@ -315,9 +269,9 @@ impl Lowerer {
             captures,
         } = &arg.kind
         {
-            let safety = match self.resolve_projection_type(&self.engine.resolve(&arg.ty)) {
-                Type::Function { safety, .. } => safety,
-                _ => crate::types::FunctionSafety::Safe,
+            let (safety, previous_captures) = match self.resolve_projection_type(&self.engine.resolve(&arg.ty)) {
+                Type::Function { safety, captures, .. } => (safety, captures),
+                _ => (crate::types::FunctionSafety::Safe, Vec::new()),
             };
             arg.ty = Self::lambda_function_type(
                 params.iter().map(|param| param.ty.clone()).collect(),
@@ -325,6 +279,12 @@ impl Lowerer {
                 safety,
                 captures,
             );
+            if let Type::Function { callable_kind, captures, .. } = &mut arg.ty {
+                for (capture, previous) in captures.iter_mut().zip(previous_captures) {
+                    capture.effect = previous.effect;
+                }
+                *callable_kind = crate::types::CallableKind::from_captures(captures);
+            }
         }
 
         arg

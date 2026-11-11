@@ -108,6 +108,7 @@ impl From<ProductCaptureKind> for CaptureKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(in crate::products) struct ProductFunctionCapture {
     pub kind: ProductCaptureKind,
+    pub effect: crate::types::CaptureEffect,
     pub ty: ProductTypeId,
 }
 

@@ -7,9 +7,8 @@
 //! gets its own local id. Fold-loop frames follow lexical loop nesting and are
 //! suspended around lambdas.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::ast;
 use crate::lower::body_context::BodyLoweringContext;
 use crate::lower::control_flow::fold_loop::FoldLoopContext;
 
@@ -19,8 +18,8 @@ pub(crate) struct BodyState {
     source_scopes: Vec<u32>,
     fold_loops: Vec<Option<FoldLoopContext>>,
     tuple_temp_counter: u32,
-    /// Addresses of AST lambdas returned or passed to consuming callable parameters.
-    escaping_lambdas: HashSet<usize>,
+    pub(crate) capture_live_after: HashMap<usize, HashSet<String>>,
+    pub(crate) borrowed_capture_sources: HashSet<crate::ids::HirLocalId>,
 }
 
 /// State of the enclosing body, restored by [`BodyState::leave`].
@@ -30,7 +29,8 @@ pub(crate) struct BodyFrame {
     source_scopes: Vec<u32>,
     fold_loops: Vec<Option<FoldLoopContext>>,
     tuple_temp_counter: u32,
-    escaping_lambdas: HashSet<usize>,
+    capture_live_after: HashMap<usize, HashSet<String>>,
+    borrowed_capture_sources: HashSet<crate::ids::HirLocalId>,
 }
 
 impl BodyState {
@@ -41,7 +41,8 @@ impl BodyState {
             source_scopes: std::mem::replace(&mut self.source_scopes, vec![root_scope]),
             fold_loops: std::mem::take(&mut self.fold_loops),
             tuple_temp_counter: std::mem::take(&mut self.tuple_temp_counter),
-            escaping_lambdas: std::mem::take(&mut self.escaping_lambdas),
+            capture_live_after: std::mem::take(&mut self.capture_live_after),
+            borrowed_capture_sources: std::mem::take(&mut self.borrowed_capture_sources),
         }
     }
 
@@ -50,15 +51,8 @@ impl BodyState {
         self.source_scopes = frame.source_scopes;
         self.fold_loops = frame.fold_loops;
         self.tuple_temp_counter = frame.tuple_temp_counter;
-        self.escaping_lambdas = frame.escaping_lambdas;
-    }
-
-    pub(crate) fn mark_escaping_lambda(&mut self, lambda: &ast::LambdaDecl) {
-        self.escaping_lambdas.insert(lambda as *const _ as usize);
-    }
-
-    pub(crate) fn is_escaping_lambda(&self, lambda: &ast::LambdaDecl) -> bool {
-        self.escaping_lambdas.contains(&(lambda as *const _ as usize))
+        self.capture_live_after = frame.capture_live_after;
+        self.borrowed_capture_sources = frame.borrowed_capture_sources;
     }
 
     pub(crate) fn context(&self) -> Option<&BodyLoweringContext> {

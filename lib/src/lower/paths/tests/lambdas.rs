@@ -85,7 +85,7 @@ fn test_lower_lambda_carries_capture_metadata() {
         panic!("expected lambda function type");
     };
     assert_eq!(*callable_kind, CallableKind::Fn);
-    assert_eq!(type_captures[0].kind, CaptureKind::SharedBorrow);
+    assert_eq!(type_captures[0].kind, CaptureKind::Move);
     assert_eq!(type_captures[0].ty, Type::I64);
     match hir.kind {
         HirExprKind::Lambda { captures, .. } => {
