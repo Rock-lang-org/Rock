@@ -5,7 +5,7 @@ use crate::hir::{HirLanguageItems, HirProgram};
 use crate::ids::DefId;
 use crate::language_items::{
     DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, FoldLanguageItems,
-    IndexLanguageItems, IndexMutLanguageItems, SendLanguageItems, SizedLanguageItems,
+    IndexLanguageItems, IndexMutLanguageItems, OwnedLanguageItems, SendLanguageItems, SizedLanguageItems,
     SyncLanguageItems, TryLanguageItems,
 };
 use crate::products::{CompilerProducts, ProductCrateId, ProductDefId, ProductLanguageItems};
@@ -24,6 +24,7 @@ pub(in crate::crate_artifact) fn validate_product_language_items(
         && language_items.fn_mut.is_none()
         && language_items.fn_trait.is_none()
         && language_items.send.is_none()
+        && language_items.owned.is_none()
         && language_items.sync.is_none()
         && language_items.try_protocol.is_none()
         && language_items.range.is_none()
@@ -198,6 +199,21 @@ pub(in crate::crate_artifact) fn validate_product_language_items(
     )?;
     validate_bundle(
         &program,
+        language_items.owned.as_ref().map(|items| {
+            (
+                "owned.trait",
+                items.trait_id,
+                HirLanguageItems {
+                    owned: Some(OwnedLanguageItems {
+                        trait_id: product_def_id(items.trait_id),
+                    }),
+                    ..HirLanguageItems::default()
+                },
+            )
+        }),
+    )?;
+    validate_bundle(
+        &program,
         language_items.sync.as_ref().map(|items| {
             (
                 "sync.trait",
@@ -323,6 +339,9 @@ fn validate_product_local_ids(
     }
     if let Some(items) = &language_items.send {
         ids.push(("send.trait", items.trait_id));
+    }
+    if let Some(items) = &language_items.owned {
+        ids.push(("owned.trait", items.trait_id));
     }
     if let Some(items) = &language_items.sync {
         ids.push(("sync.trait", items.trait_id));

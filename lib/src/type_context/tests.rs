@@ -189,6 +189,7 @@ fn type_view_exposes_callable_metadata() {
     let mut context = TypeContext::new();
     let capture_ty = context.intern_type(&Type::I64);
     let function = context.intern_ty(Ty::Function {
+        captures_known: true,
         params: Vec::new(),
         ret: capture_ty,
         safety: FunctionSafety::Safe,
@@ -459,6 +460,7 @@ fn type_context_interns_equal_composite_tys() {
     );
     assert_eq!(
         context.intern_ty(Ty::Function {
+            captures_known: true,
             params: vec![i64_ty],
             ret: bool_ty,
             safety: FunctionSafety::Safe,
@@ -466,6 +468,7 @@ fn type_context_interns_equal_composite_tys() {
             captures: Vec::new(),
         }),
         context.intern_ty(Ty::Function {
+            captures_known: true,
             params: vec![i64_ty],
             ret: bool_ty,
             safety: FunctionSafety::Safe,

@@ -338,6 +338,9 @@ pub enum Type {
         safety: FunctionSafety,
         callable_kind: CallableKind,
         captures: Vec<FunctionCapture>,
+        /// False for erased arrow annotations: an empty list is not proof
+        /// that an unknown environment contains no borrows.
+        captures_known: bool,
     },
     /// Named struct type
     Struct {
@@ -523,7 +526,23 @@ impl Type {
     }
 
     pub fn function_with_safety(params: Vec<Type>, ret: Type, safety: FunctionSafety) -> Type {
-        Self::function_with_metadata(params, ret, safety, CallableKind::Fn, Vec::new())
+        Type::Function {
+            params,
+            ret: Box::new(ret),
+            safety,
+            callable_kind: CallableKind::Fn,
+            captures: Vec::new(),
+            captures_known: false,
+        }
+    }
+
+    /// A function item has no hidden environment, unlike an arrow annotation.
+    pub fn function_item(params: Vec<Type>, ret: Type, safety: FunctionSafety) -> Type {
+        let mut ty = Self::function_with_safety(params, ret, safety);
+        if let Type::Function { captures_known, .. } = &mut ty {
+            *captures_known = true;
+        }
+        ty
     }
 
     pub fn function_with_metadata(
@@ -539,6 +558,7 @@ impl Type {
             safety,
             callable_kind,
             captures,
+            captures_known: true,
         }
     }
 

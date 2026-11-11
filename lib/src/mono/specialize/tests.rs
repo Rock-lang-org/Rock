@@ -222,7 +222,7 @@ fn monomorphize_call_returns_instance_id_for_new_specialization() {
         .expect("generic call should specialize");
 
     assert_eq!(ret_ty, Type::I64);
-    assert_eq!(func_ty, Type::function(vec![Type::I64], Type::I64));
+    assert_eq!(func_ty, Type::function_item(vec![Type::I64], Type::I64, crate::types::FunctionSafety::Safe));
     let record = mono
         .instances
         .record(instance_id)

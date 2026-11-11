@@ -335,6 +335,7 @@ impl Lowerer {
                 safety,
                 callable_kind,
                 captures,
+                captures_known,
             } => Type::Function {
                 params: params
                     .iter()
@@ -343,6 +344,7 @@ impl Lowerer {
                 ret: Box::new(self.resolve_selected_projection_type(selected, ret)),
                 safety: *safety,
                 callable_kind: *callable_kind,
+                captures_known: *captures_known,
                 captures: captures
                     .iter()
                     .map(|capture| crate::types::FunctionCapture {

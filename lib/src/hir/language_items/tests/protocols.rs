@@ -26,6 +26,9 @@ lang send
 
 lang sync
 < trait Shareable
+
+lang owned
+< trait NoBorrows
 "#;
 
 #[test]

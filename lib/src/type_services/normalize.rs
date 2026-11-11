@@ -261,6 +261,7 @@ impl<'a> TypeNormalizer<'a> {
                 safety,
                 callable_kind,
                 captures,
+                captures_known,
             } => Ok(Type::Function {
                 params: params
                     .into_iter()
@@ -269,6 +270,7 @@ impl<'a> TypeNormalizer<'a> {
                 ret: Box::new(self.normalize_inner(*ret, depth + 1)?),
                 safety,
                 callable_kind,
+                captures_known,
                 captures: captures
                     .into_iter()
                     .map(|mut capture| {
@@ -727,11 +729,13 @@ fn map_type_children(ty: &Type, map: &mut impl FnMut(&Type) -> Type) -> Type {
             safety,
             callable_kind,
             captures,
+            captures_known,
         } => Type::Function {
             params: params.iter().map(&mut *map).collect(),
             ret: Box::new(map(ret)),
             safety: *safety,
             callable_kind: *callable_kind,
+            captures_known: *captures_known,
             captures: captures
                 .iter()
                 .cloned()

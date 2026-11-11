@@ -393,6 +393,7 @@ fn agreement_rejects_missing_callable_metadata_in_indirect_call_argument() {
     let unit = type_id(&mut type_context, Type::Unit);
     let callable_ty = type_id(&mut type_context, Type::function(vec![], Type::Unit));
     let callee_ty = type_context.intern_ty(Ty::Function {
+        captures_known: true,
         params: vec![callable_ty],
         ret: unit,
         safety: FunctionSafety::Safe,

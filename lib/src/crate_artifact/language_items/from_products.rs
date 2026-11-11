@@ -3,7 +3,7 @@ use crate::crate_artifact::load::ProductIdentityRemap;
 use crate::hir::HirLanguageItems;
 use crate::language_items::{
     DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, FoldLanguageItems,
-    IndexLanguageItems, IndexMutLanguageItems, RangeLanguageItems, SendLanguageItems,
+    IndexLanguageItems, IndexMutLanguageItems, OwnedLanguageItems, RangeLanguageItems, SendLanguageItems,
     SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
 };
 use crate::products::CompilerProducts;
@@ -108,6 +108,15 @@ pub(in crate::crate_artifact) fn language_items_from_products(
             .as_ref()
             .map(|items| {
                 Ok::<_, String>(SendLanguageItems {
+                    trait_id: remap.def_id(items.trait_id)?,
+                })
+            })
+            .transpose()?,
+        owned: language_items
+            .owned
+            .as_ref()
+            .map(|items| {
+                Ok::<_, String>(OwnedLanguageItems {
                     trait_id: remap.def_id(items.trait_id)?,
                 })
             })

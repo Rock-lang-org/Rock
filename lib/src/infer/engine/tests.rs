@@ -605,11 +605,11 @@ fn function_unification_uses_contravariant_params_for_safety() {
 }
 
 #[test]
-fn function_unification_preserves_closure_metadata_through_type_variables() {
+fn function_unification_preserves_effects_without_restoring_erased_capture_proof() {
     let mut engine = InferenceEngine::new();
     let variable = engine.fresh_type_var();
     let default_signature = Type::function(vec![Type::I64], Type::Bool);
-    let closure = Type::function_with_metadata(
+    let mut closure = Type::function_with_metadata(
         vec![Type::I64],
         Type::Bool,
         crate::types::FunctionSafety::Safe,
@@ -623,6 +623,11 @@ fn function_unification_preserves_closure_metadata_through_type_variables() {
     engine.unify(&variable, &default_signature).unwrap();
     engine.unify(&variable, &closure).unwrap();
 
+    // Effects and capture types survive the join, but an erased arrow shape
+    // cannot be promoted to proof that every possible environment is known.
+    if let Type::Function { captures_known, .. } = &mut closure {
+        *captures_known = false;
+    }
     assert_eq!(engine.resolve(&variable), closure);
 }
 

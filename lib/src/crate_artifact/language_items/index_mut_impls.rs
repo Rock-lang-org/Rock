@@ -219,6 +219,7 @@ fn alpha_equivalent_type(left: &Type, left_impl: DefId, right: &Type, right_impl
                 safety: left_safety,
                 callable_kind: left_kind,
                 captures: left_captures,
+                ..
             },
             Type::Function {
                 params: right_params,
@@ -226,6 +227,7 @@ fn alpha_equivalent_type(left: &Type, left_impl: DefId, right: &Type, right_impl
                 safety: right_safety,
                 callable_kind: right_kind,
                 captures: right_captures,
+                ..
             },
         ) => {
             left_safety == right_safety

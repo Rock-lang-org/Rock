@@ -110,6 +110,7 @@ struct BindingState {
     fn_mut: FnPartial,
     fn_trait: FnPartial,
     send: Option<RootRecord>,
+    owned: Option<RootRecord>,
     sync: Option<RootRecord>,
     try_protocol: TryPartial,
     from_residual: FromResidualPartial,

@@ -15,6 +15,7 @@ pub enum LanguageItemRole {
     FnMut,
     Fn,
     Send,
+    Owned,
     Sync,
     Try,
     FromResidual,
@@ -35,7 +36,7 @@ pub enum LanguageItemRole {
 }
 
 impl LanguageItemRole {
-    pub const ALL_NAMES: [&str; 26] = [
+    pub const ALL_NAMES: [&str; 27] = [
         "sized",
         "drop",
         "fold",
@@ -45,6 +46,7 @@ impl LanguageItemRole {
         "fn_mut",
         "fn",
         "send",
+        "owned",
         "sync",
         "try",
         "from_residual",
@@ -75,6 +77,7 @@ impl LanguageItemRole {
             Self::FnMut => "fn_mut",
             Self::Fn => "fn",
             Self::Send => "send",
+            Self::Owned => "owned",
             Self::Sync => "sync",
             Self::Try => "try",
             Self::FromResidual => "from_residual",
@@ -110,6 +113,7 @@ impl FromStr for LanguageItemRole {
             "fn_mut" => Ok(Self::FnMut),
             "fn" => Ok(Self::Fn),
             "send" => Ok(Self::Send),
+            "owned" => Ok(Self::Owned),
             "sync" => Ok(Self::Sync),
             "try" => Ok(Self::Try),
             "from_residual" => Ok(Self::FromResidual),
@@ -197,6 +201,10 @@ pub struct FnLanguageItems<D> {
 pub struct SendLanguageItems<D> {
     pub trait_id: D,
 }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnedLanguageItems<D> {
+    pub trait_id: D,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncLanguageItems<D> {
@@ -238,6 +246,7 @@ pub struct LanguageItems<D> {
     pub fn_mut: Option<FnMutLanguageItems<D>>,
     pub fn_trait: Option<FnLanguageItems<D>>,
     pub send: Option<SendLanguageItems<D>>,
+    pub owned: Option<OwnedLanguageItems<D>>,
     pub sync: Option<SyncLanguageItems<D>>,
     pub try_protocol: Option<TryLanguageItems<D>>,
     pub range: Option<RangeLanguageItems<D>>,
@@ -255,6 +264,7 @@ impl<D> Default for LanguageItems<D> {
             fn_mut: None,
             fn_trait: None,
             send: None,
+            owned: None,
             sync: None,
             try_protocol: None,
             range: None,
@@ -421,6 +431,12 @@ pub fn merge_language_item_providers_all<'a, D: Clone + 'a>(
         |items| items.send.as_ref(),
         &mut conflicts,
     );
+    let owned = merge_protocol(
+        &providers,
+        "owned",
+        |items| items.owned.as_ref(),
+        &mut conflicts,
+    );
     let sync = merge_protocol(
         &providers,
         "sync",
@@ -451,6 +467,7 @@ pub fn merge_language_item_providers_all<'a, D: Clone + 'a>(
             fn_mut,
             fn_trait,
             send,
+            owned,
             sync,
             try_protocol,
             range,

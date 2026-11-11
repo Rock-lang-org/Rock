@@ -19,6 +19,7 @@ impl BindingState {
             LanguageItemRole::FnMut => &mut self.fn_mut.root,
             LanguageItemRole::Fn => &mut self.fn_trait.root,
             LanguageItemRole::Send => &mut self.send,
+            LanguageItemRole::Owned => &mut self.owned,
             LanguageItemRole::Sync => &mut self.sync,
             LanguageItemRole::Try => &mut self.try_protocol.root,
             LanguageItemRole::FromResidual => &mut self.from_residual.root,

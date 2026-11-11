@@ -97,7 +97,7 @@ impl Lowerer {
                 .map(|param| param.ty.substitute(&substitution))
                 .collect();
             let ret = func.ret_type.substitute(&substitution);
-            return Type::function_with_safety(
+            return Type::function_item(
                 params,
                 ret,
                 crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
@@ -159,7 +159,7 @@ impl Lowerer {
             .map(|param| param.ty.substitute_generics(&subst))
             .collect();
         let ret = func.ret_type.substitute_generics(&subst);
-        Type::function_with_safety(
+        Type::function_item(
             params,
             ret,
             crate::types::FunctionSafety::from_is_unsafe(func.is_unsafe),
@@ -249,10 +249,16 @@ impl Lowerer {
             }
         }
 
-        if resolved.should_instantiate {
+        let mut ty = if resolved.should_instantiate {
             self.instantiate_generics(resolved.ty.clone(), span)
         } else {
             resolved.ty.clone()
+        };
+        if matches!(resolved.target, Some(HirVarTarget::Function(_) | HirVarTarget::Extern(_))) {
+            if let Type::Function { captures_known, .. } = &mut ty {
+                *captures_known = true;
+            }
         }
+        ty
     }
 }

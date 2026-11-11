@@ -230,7 +230,7 @@ fn process_resolved_generic_function_argument_uses_def_id_not_reference_name() {
         .expect("instance is recorded");
     assert_eq!(record.origin, InstanceOrigin::Function(identity_id));
     assert_ne!(record.origin, InstanceOrigin::Function(wrong_id));
-    assert_eq!(args[0].ty, Type::function(vec![Type::I64], Type::I64));
+    assert_eq!(args[0].ty, Type::function_item(vec![Type::I64], Type::I64, crate::types::FunctionSafety::Safe));
 }
 
 #[test]

@@ -267,3 +267,154 @@ main = !->
         "of `&Str`",
     );
 }
+
+#[test]
+fn test_spawn_borrowed_stack_capture_reports_owned_marker() {
+    compile_should_fail_with_source_diagnostic(r#"
+> std::concurrency::thread::spawn
+main = !->
+    text = String::from "local"
+    spawn (-> text.len!)
+    text.len!.println!
+"#, "thread_safety::Owned");
+}
+
+#[test]
+fn test_spawn_copied_reference_to_literal_is_not_owned() {
+    compile_should_fail(r#"
+> std::concurrency::thread::spawn
+main = !->
+    text = "static literal"
+    spawn (-> text.len!)
+"#, "thread_safety::Owned");
+}
+
+#[test]
+fn test_owned_marker_rejects_structural_reference_payload() {
+    compile_should_fail(r#"
+> std::concurrency::thread_safety::Owned
+struct Borrowed T
+    < value: T
+require_owned: T -> () where T: Owned
+require_owned = value !-> ()
+main = !->
+    number = 1
+    borrowed = Borrowed
+        value: &number
+    require_owned borrowed
+"#, "does not implement trait");
+}
+
+#[test]
+fn test_spawn_owned_string_and_vec_payloads_join_successfully() {
+    let output = compile_and_run(r#"
+> std::concurrency::thread::spawn
+main = !->
+    text = String::from "owned"
+    values: Vec I64 = Vec::from [1, 2, 3]
+    match spawn (-> text.len! + values.len!)
+        Result::Ok handle =>
+            match handle.join!
+                Result::Ok size => size.println!
+                Result::Err _ => "join failed".println!
+        Result::Err _ => "spawn failed".println!
+"#);
+    assert_eq!(output.trim(), "8");
+}
+
+#[test]
+fn test_spawn_does_not_accept_erased_borrowing_environment() {
+    compile_should_fail(r#"
+> std::concurrency::thread::spawn
+struct Holder
+    < read: () -> I64
+main = !->
+    text = String::from "borrowed"
+    holder = Holder
+        read: -> text.len!
+    spawn (-> holder.read!)
+    text.len!.println!
+"#, "thread_safety::Owned");
+}
+
+#[test]
+fn test_selected_callable_parameter_types_follow_owner_substitution() {
+    let output = compile_and_run(r#"
+struct Runner T
+    < seed: T
+impl Runner T
+    ~@apply: F -> I64 where F: FnOnce T, I64
+    ~@apply = callback -> callback self.seed
+main = !->
+    runner = Runner
+        seed: 41
+    (runner.apply (value -> value + 1)).println!
+"#);
+    assert_eq!(output.trim(), "42");
+}
+
+#[test]
+fn test_spawn_owned_nested_closure_joins_successfully() {
+    let output = compile_and_run(r#"
+> std::concurrency::thread::spawn
+main = !->
+    text = String::from "nested"
+    read = -> text.len!
+    match spawn (-> read!)
+        Result::Ok handle =>
+            match handle.join!
+                Result::Ok size => size.println!
+                Result::Err _ => "join failed".println!
+        Result::Err _ => "spawn failed".println!
+"#);
+    assert_eq!(output.trim(), "6");
+}
+
+#[test]
+fn test_spawn_rejects_owned_wrapper_around_borrowed_reference() {
+    compile_should_fail(r#"
+> std::concurrency::thread::spawn
+main = !->
+    number = 7
+    wrapped = Box::new &number
+    spawn (-> *wrapped)
+"#, "thread_safety::Owned");
+}
+
+#[test]
+fn test_spawn_branch_join_keeps_borrowed_capture_obligation() {
+    compile_should_fail(r#"
+> std::concurrency::thread::spawn
+main = !->
+    text = String::from "borrowed"
+    owned = String::from "owned"
+    read = if true
+        -> owned.len!
+    else
+        -> text.len!
+    text.len!.println!
+    spawn read
+"#, "thread_safety::Owned");
+}
+
+#[test]
+fn test_generic_join_cannot_restore_erased_capture_proof() {
+    compile_should_fail(r#"
+> std::concurrency::thread::spawn
+struct Holder
+    < read: () -> I64
+plain = -> 0
+choose = flag, left, right ->
+    if flag
+        left
+    else
+        right
+main = !->
+    text = String::from "borrowed"
+    holder = Holder
+        read: -> text.len!
+    text.len!.println!
+    task = choose false, plain, holder.read
+    spawn task
+"#, "thread_safety::Owned");
+}

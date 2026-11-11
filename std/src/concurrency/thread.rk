@@ -20,6 +20,7 @@
 > std::mem::utils::sizeof_pointee
 > std::control::result::Result
 > std::concurrency::thread_safety::Send
+> std::concurrency::thread_safety::Owned
 
 thread_unit = -> return
 
@@ -136,7 +137,7 @@ thread_state_release_joined = state ->
         thread_state_cleanup state, false
     return
 
-spawn: F -> Result (JoinHandle T), ThreadError where F: Send, T: Send, F: FnOnce (), T
+spawn: F -> Result (JoinHandle T), ThreadError where F: Send, F: Owned, T: Send, F: FnOnce (), T
 < spawn = task ->
     null_result = 0 as *T
     result_size = sizeof_pointee null_result

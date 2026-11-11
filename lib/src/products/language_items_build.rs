@@ -8,7 +8,7 @@ use crate::ids::DefId;
 use crate::infer::ResolvedHirProgram;
 use crate::language_items::{
     DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, FoldLanguageItems,
-    IndexLanguageItems, IndexMutLanguageItems, RangeLanguageItems, SendLanguageItems,
+    IndexLanguageItems, IndexMutLanguageItems, OwnedLanguageItems, RangeLanguageItems, SendLanguageItems,
     SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
 };
 
@@ -184,6 +184,15 @@ pub(super) fn product_language_items_from_program<P: HirPhase>(
         })
         .transpose()?
         .flatten();
+    let owned = language_items
+        .owned
+        .as_ref()
+        .map(|items| {
+            map_product_language_item_bundle("owned", &[items.trait_id], current_def_ids, id_remap)
+                .map(|ids| ids.map(|ids| OwnedLanguageItems { trait_id: ids[0] }))
+        })
+        .transpose()?
+        .flatten();
     let sync = language_items
         .sync
         .as_ref()
@@ -255,6 +264,7 @@ pub(super) fn product_language_items_from_program<P: HirPhase>(
         fn_mut,
         fn_trait,
         send,
+        owned,
         sync,
         try_protocol,
         range,

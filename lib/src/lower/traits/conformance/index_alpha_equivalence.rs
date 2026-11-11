@@ -108,6 +108,7 @@ pub(super) fn alpha_equivalent_type(
                 safety: left_safety,
                 callable_kind: left_kind,
                 captures: left_captures,
+                ..
             },
             Type::Function {
                 params: right_params,
@@ -115,6 +116,7 @@ pub(super) fn alpha_equivalent_type(
                 safety: right_safety,
                 callable_kind: right_kind,
                 captures: right_captures,
+                ..
             },
         ) => {
             left_safety == right_safety

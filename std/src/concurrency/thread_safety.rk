@@ -13,6 +13,16 @@ lang send
 lang sync
 < trait Sync
 
+// No borrowed storage, recursively through captures and owned payloads.
+lang owned
+< trait Owned
+
+impl Owned for Box T where T: Owned
+impl Owned for RawBuffer T where T: Owned
+impl Owned for String
+impl Owned for Mutex T where T: Owned
+impl Owned for Arc T where T: Owned
+
 impl Send for Box T where T: Send
 
 impl Sync for Box T where T: Sync

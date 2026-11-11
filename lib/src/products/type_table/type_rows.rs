@@ -168,6 +168,7 @@ pub(in crate::products) enum ProductTypeRow {
         safety: ProductFunctionSafety,
         callable_kind: ProductCallableKind,
         captures: Vec<ProductFunctionCapture>,
+        captures_known: bool,
     },
     Struct {
         id: ProductDefId,

@@ -72,11 +72,13 @@ impl ProductTypeEncoder {
                 safety,
                 callable_kind,
                 captures,
+                captures_known,
             } => ProductTypeRow::Function {
                 params: self.encode_types(params)?,
                 ret: self.encode_type(ret)?,
                 safety: (*safety).into(),
                 callable_kind: (*callable_kind).into(),
+                captures_known: *captures_known,
                 captures: captures
                     .iter()
                     .map(|capture| {
@@ -224,11 +226,13 @@ impl<'a> ProductTypeDecoder<'a> {
                 safety,
                 callable_kind,
                 captures,
+                captures_known,
             } => Type::Function {
                 params: self.decode_types(params)?,
                 ret: Box::new(self.decode_type(*ret)?),
                 safety: (*safety).into(),
                 callable_kind: (*callable_kind).into(),
+                captures_known: *captures_known,
                 captures: captures
                     .iter()
                     .map(|capture| {

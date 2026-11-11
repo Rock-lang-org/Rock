@@ -302,6 +302,7 @@ fn agreement_rejects_invalid_nested_type_id() {
     let unit = type_id(&mut type_context, Type::Unit);
     let invalid = TypeId(999);
     let function_ty = type_context.intern_ty(Ty::Function {
+        captures_known: true,
         params: vec![invalid],
         ret: unit,
         safety: FunctionSafety::Safe,
