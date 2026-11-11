@@ -93,10 +93,7 @@ read_to_string: &Str -> Result String, IoError
                 if count == 0
                     done = true
                 else
-                    i = 0
-                    while i < count
-                        bytes.push buffer[i]
-                        i = i + 1
+                    bytes.extend_from_slice (&buffer[..count])
             Result::Err (IoError::Os code) =>
                 // Retry on EINTR without losing bytes from earlier reads.
                 if code != eintr!

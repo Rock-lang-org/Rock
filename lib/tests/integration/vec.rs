@@ -1,6 +1,50 @@
 use crate::support::*;
 
 #[test]
+fn test_vec_u8_extend_from_slice() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    mut bytes: Vec U8 = Vec::new!
+    empty: [U8; 0] = []
+    bytes.extend_from_slice (&empty)
+    bytes.len!.println!
+    bytes.push (9 as U8)
+    first: [U8; 2] = [1, 2]
+    bytes.extend_from_slice (&first)
+    bytes.extend_from_slice (&empty)
+    bytes.as_slice!.println!
+    more: [U8; 7] = [3, 4, 5, 6, 7, 8, 9]
+    bytes.extend_from_slice (&more)
+    bytes.extend_from_slice (&first)
+    bytes.len!.println!
+    bytes.as_slice!.println!
+    mut fresh: Vec U8 = Vec::new!
+    fresh.extend_from_slice (&more)
+    fresh.as_slice!.println!
+"#,
+    );
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), vec![
+        "0", "[9, 1, 2]", "12", "[9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2]",
+        "[3, 4, 5, 6, 7, 8, 9]",
+    ]);
+}
+
+#[test]
+fn test_vec_u8_extend_from_slice_rejects_self_borrow() {
+    compile_should_fail(
+        r#"
+main = !->
+    mut bytes: Vec U8 = Vec::new!
+    bytes.push (1 as U8)
+    source = bytes.as_slice!
+    bytes.extend_from_slice source
+"#,
+        "borrow",
+    );
+}
+
+#[test]
 fn test_vec_get_returns_optional_reference() {
     let output = compile_and_run(
         r#"
