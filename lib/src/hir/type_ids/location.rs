@@ -2,6 +2,10 @@ use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HirTypeLocation {
+    ArrayRepeatLength {
+        owner: DefId,
+        path: Vec<usize>,
+    },
     FunctionReturn {
         function: DefId,
     },

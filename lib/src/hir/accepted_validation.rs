@@ -180,6 +180,7 @@ impl HirProgram {
                 ));
             }
             let expected_kind = match location {
+                HirTypeLocation::ArrayRepeatLength { .. } => Some(crate::type_services::kind::Kind::Usize),
                 HirTypeLocation::TypeAliasBody { .. } => None,
                 HirTypeLocation::AssociatedTypeDef {
                     impl_id,

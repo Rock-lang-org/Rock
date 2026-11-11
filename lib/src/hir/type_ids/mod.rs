@@ -123,6 +123,17 @@ pub fn collect_hir_type_ids<P: HirPhase>(
     ids
 }
 
+/// Collect every type carried by one function, including body-only metadata.
+pub(crate) fn collect_function_type_ids<P: HirPhase>(
+    function: &HirFunctionFor<P>,
+    context: &mut TypeContext,
+) -> HirTypeIds {
+    let mut ids = HirTypeIds::new();
+    collect_function_signature(function, context, &mut ids);
+    collect_block(function.id, &function.body, Vec::new(), context, &mut ids);
+    ids
+}
+
 fn record_type(
     context: &mut TypeContext,
     ids: &mut HirTypeIds,

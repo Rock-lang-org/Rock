@@ -131,7 +131,16 @@ fn collect_expr<P: HirPhase>(
                 collect_expr(owner, elem, child_path(&path, index), context, ids);
             }
         }
-        HirExprKind::ArrayRepeat(value, _) => {
+        HirExprKind::ArrayRepeat(value, len) => {
+            record_type(
+                context,
+                ids,
+                HirTypeLocation::ArrayRepeatLength {
+                    owner,
+                    path: path.clone(),
+                },
+                &len.to_const_type(),
+            );
             collect_expr(owner, value, child_path(&path, 0), context, ids);
         }
         HirExprKind::FieldAccess(inner, _, _)
@@ -229,12 +238,30 @@ fn collect_expr<P: HirPhase>(
         HirExprKind::Try {
             expr,
             branch_method,
+            branch_target,
             from_residual_target,
             output_ty,
             residual_ty,
             return_ty,
             ..
         } => {
+            // The selected branch call can carry a different static-owner type
+            // from the method authority. Observe both, including recovery HIR.
+            if let Some(crate::hir::HirCallTarget::StaticMethod(target)) = branch_target {
+                let branch_path = child_path(&path, 2);
+                record_type(
+                    context,
+                    ids,
+                    HirTypeLocation::StaticCallOwner { owner, path: branch_path.clone() },
+                    &target.owner_ty,
+                );
+                collect_method_target_types(
+                    owner, &branch_path, &target.method, context, ids,
+                    |index| HirTypeLocation::StaticCallTraitArg { owner, path: branch_path.clone(), index },
+                    |index| HirTypeLocation::StaticCallOwnerSubstitution { owner, path: branch_path.clone(), index },
+                    |index| HirTypeLocation::StaticCallMethodSubstitution { owner, path: branch_path.clone(), index },
+                );
+            }
             record_type(
                 context,
                 ids,

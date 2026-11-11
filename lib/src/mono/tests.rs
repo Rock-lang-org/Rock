@@ -247,7 +247,7 @@ fn monomorphize_impls_in_order(order: &[DefId], first_method_ids: &[DefId]) -> V
 fn backend_symbol_for_origin_uses_ids_not_display_names() {
     let function_id = DefId::new(CrateId(0), LocalDefId(42));
     let origin = InstanceOrigin::Function(function_id);
-    let mono = Monomorphizer::new();
+    let mut mono = Monomorphizer::new();
     let symbol = mono.backend_symbol_for_origin(&origin, &[]);
 
     assert!(symbol.starts_with("__rock_fn_d42_h"));
