@@ -91,8 +91,9 @@ impl Monomorphizer {
             Ty::Unit => output.push('u'),
             Ty::Never => output.push('n'),
             Ty::ConstValue(n) => {
-                output.push('c');
-                output.push_str(&n.to_string());
+                // Distinct tag from `Char` and length-delimited like other numeric tokens.
+                output.push('v');
+                Self::push_text(output, &n.to_string());
             }
             Ty::Slice(inner) => {
                 output.push('s');
