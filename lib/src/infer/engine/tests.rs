@@ -710,3 +710,28 @@ fn mutable_ref_and_pointer_unification_are_invariant_for_integer_types() {
         )
         .is_err());
 }
+
+#[test]
+fn invariant_unification_rejects_arrays_of_different_concrete_lengths() {
+    let mut engine = InferenceEngine::new();
+    let two = Type::Array(Box::new(Type::I64), 2u64.into());
+    let three = Type::Array(Box::new(Type::I64), 3u64.into());
+
+    assert!(engine.unify_invariant(&two, &three).is_err());
+    assert!(engine.unify_invariant(&two, &two).is_ok());
+}
+
+#[test]
+fn invariant_unification_binds_length_variable_to_concrete_length() {
+    let mut engine = InferenceEngine::new();
+    let var = engine.fresh_type_var_of_kind(Kind::Usize);
+    let Type::TypeVar(var_id) = var else {
+        panic!("expected a type variable");
+    };
+    let open = Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Var(var_id));
+    let two = Type::Array(Box::new(Type::I64), 2u64.into());
+    let three = Type::Array(Box::new(Type::I64), 3u64.into());
+
+    engine.unify_invariant(&open, &two).unwrap();
+    assert!(engine.unify_invariant(&open, &three).is_err());
+}
