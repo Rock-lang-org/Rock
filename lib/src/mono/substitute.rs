@@ -4,6 +4,7 @@ use super::hir_types::{
     HirBlock, HirCallTarget, HirExpr, HirExprKind, HirMatchArm, HirParam, HirPattern, HirStmt,
     HirStructLiteralField, HirStructPatternField,
 };
+use crate::diagnostic::{Diagnostic, DiagnosticCode};
 use crate::ids::TypeId;
 use crate::types::{GenericParamId, Type};
 
@@ -360,9 +361,38 @@ impl Monomorphizer {
             },
             HirExprKind::ConstParam(param) => {
                 match substitution.get(param).map(|id| self.type_for(*id)) {
-                    Some(Type::ConstValue(n)) => HirExprKind::IntLiteral(n as i64),
-                    // Left in place; post-mono validation reports it as an internal error.
-                    _ => expr.kind.clone(),
+                    Some(Type::ConstValue(n)) => match i64::try_from(n) {
+                        Ok(value) => HirExprKind::IntLiteral(value),
+                        Err(_) => {
+                            self.diagnostics.push(
+                                Diagnostic::new(
+                                    format!(
+                                        "const generic value {n} does not fit in a signed 64-bit integer"
+                                    ),
+                                    expr.span.clone(),
+                                )
+                                .with_code(DiagnosticCode::Mono),
+                            );
+                            // Compilation fails on the diagnostic above; the
+                            // placeholder only keeps the body well formed.
+                            HirExprKind::IntLiteral(0)
+                        }
+                    },
+                    // Still symbolic (another generic or inference variable):
+                    // kept for a later substitution round, and post-mono
+                    // validation reports it if it survives.
+                    Some(Type::Generic(_) | Type::TypeVar(_) | Type::Error) | None => {
+                        expr.kind.clone()
+                    }
+                    Some(other) => {
+                        self.diagnostics.push(
+                            Diagnostic::for_internal(format!(
+                                "const generic parameter {param:?} was substituted by non-const type {other:?}"
+                            ))
+                            .with_code(DiagnosticCode::Mono),
+                        );
+                        expr.kind.clone()
+                    }
                 }
             }
             _ => expr.kind.clone(),
