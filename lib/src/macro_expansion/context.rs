@@ -19,14 +19,28 @@ pub struct MacroExpansionContext<'a> {
     pub config: &'a Config,
     pub max_depth: usize,
     pub proc_macro_artifacts: Vec<ProcMacroArtifact>,
-    /// Macros exported by dependencies, keyed by `dependency::path::name`.
-    /// A module sees one after importing it with `>`.
-    pub dependency_macros: BTreeMap<String, MacroDecl>,
+    /// Exported macros of this crate and its dependencies, keyed by origin and
+    /// module path. A module sees one after importing it with `>`.
+    pub importable_macros: BTreeMap<MacroKey, MacroDecl>,
     /// Std prelude macros, keyed by alias; visible in every module.
     pub prelude_macros: BTreeMap<String, MacroDecl>,
     source_map: RefCell<MacroSourceMap>,
     latest_expansion: RefCell<Option<ExpansionId>>,
     generated_invocation_parents: RefCell<HashMap<SpanKey, VecDeque<ExpansionId>>>,
+}
+
+/// The crate that declares an importable macro.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MacroOrigin {
+    CurrentCrate,
+    Dependency(String),
+}
+
+/// Identity of an importable macro: its crate plus its crate-relative path.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MacroKey {
+    pub origin: MacroOrigin,
+    pub path: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -42,7 +56,7 @@ impl<'a> MacroExpansionContext<'a> {
             config,
             max_depth: 100,
             proc_macro_artifacts: Vec::new(),
-            dependency_macros: BTreeMap::new(),
+            importable_macros: BTreeMap::new(),
             prelude_macros: BTreeMap::new(),
             source_map: RefCell::new(MacroSourceMap::new()),
             latest_expansion: RefCell::new(None),
@@ -60,9 +74,35 @@ impl<'a> MacroExpansionContext<'a> {
         self
     }
 
-    pub fn with_dependency_macro(mut self, path: String, decl: MacroDecl) -> Self {
-        self.dependency_macros.insert(path, decl);
+    pub fn with_importable_macro(mut self, key: MacroKey, decl: MacroDecl) -> Self {
+        self.importable_macros.insert(key, decl);
         self
+    }
+
+    /// Resolves an import path written in source to a macro. A leading
+    /// dependency name selects that dependency; the current crate's own name
+    /// selects its macros, and an unnamed crate's macros are written without
+    /// a crate prefix. Dependency names never collide with own modules
+    /// because such modules are rejected at their declaration.
+    pub fn resolve_importable_macro(&self, segments: &[String]) -> Option<&MacroDecl> {
+        let (first, rest) = segments.split_first()?;
+        let dependency = MacroKey {
+            origin: MacroOrigin::Dependency(first.clone()),
+            path: rest.to_vec(),
+        };
+        if let Some(decl) = self.importable_macros.get(&dependency) {
+            return Some(decl);
+        }
+
+        let path = match self.config.current_crate_name.as_deref() {
+            Some(name) if name == first => rest.to_vec(),
+            Some(_) => return None,
+            None => segments.to_vec(),
+        };
+        self.importable_macros.get(&MacroKey {
+            origin: MacroOrigin::CurrentCrate,
+            path,
+        })
     }
 
     pub fn with_prelude_macro(mut self, alias: String, decl: MacroDecl) -> Self {

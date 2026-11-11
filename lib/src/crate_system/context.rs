@@ -6,7 +6,9 @@ use crate::ast::Program;
 use crate::collect::collect_with_source_graph;
 use crate::diagnostic::{Diagnostic, Diagnostics};
 use crate::hir::AcceptedHirImpl as HirImpl;
+use crate::macro_expansion::exports::macro_path_segments;
 use crate::macro_expansion::proc_macro::ProcMacroArtifact;
+use crate::macro_expansion::{MacroKey, MacroOrigin};
 use crate::source_loader::SourceDatabase;
 use crate::{Config, SourceProvider};
 
@@ -196,14 +198,17 @@ impl CrateContext {
             .flat_map(|dep| dep.metadata().proc_macros().iter())
     }
 
-    /// Exported declarative macros of every dependency, keyed by the path a
-    /// dependent imports them with (`dependency::module::name`).
-    pub(crate) fn dependency_macros(&self) -> Vec<(String, crate::ast::MacroDecl)> {
+    /// Exported declarative macros of every dependency, keyed by dependency
+    /// and crate-relative module path.
+    pub(crate) fn dependency_macros(&self) -> Vec<(MacroKey, crate::ast::MacroDecl)> {
         self.extern_crates()
             .flat_map(|dep| {
                 dep.metadata().macros().iter().map(move |export| {
                     (
-                        format!("{}::{}", dep.name(), export.path),
+                        MacroKey {
+                            origin: MacroOrigin::Dependency(dep.name().to_string()),
+                            path: macro_path_segments(&export.path),
+                        },
                         export.decl.clone(),
                     )
                 })

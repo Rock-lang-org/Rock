@@ -391,3 +391,109 @@ main = !->
     assert!(output.contains("IoError(WriteZero)"), "{output}");
     assert_eq!(output.lines().count(), 3, "{output}");
 }
+
+/// Publishes a `mylib` artifact whose `text::join` macro expands to `"dep"`.
+fn publish_mylib_with_join_macro(dir: &std::path::Path) -> PathBuf {
+    fs::create_dir_all(dir.join("mylib")).unwrap();
+    let library_entry = dir.join("mylib").join("lib.rk");
+    fs::write(&library_entry, "< mod text\n< f = -> 1\n").unwrap();
+    fs::write(
+        dir.join("mylib").join("text.rk"),
+        "< macro join\n    =>\n        \"dep\"\n",
+    )
+    .unwrap();
+    let mut library_config = test_config(library_entry, dir.join("mylib_build"));
+    library_config.current_crate_name = Some("mylib".to_string());
+    library_config.no_link = true;
+    let products = rock_lib::compile_with_products(&library_config)
+        .expect("library should compile")
+        .products
+        .expect("library products");
+    let artifact = dir.join("mylib.rkca");
+    products.write_artifact_to_path(&artifact).unwrap();
+    artifact
+}
+
+#[test]
+fn test_module_named_like_a_dependency_is_rejected() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let artifact = publish_mylib_with_join_macro(&dir);
+
+    let file_module = dir.join("file_module.rk");
+    fs::write(dir.join("mylib.rk"), "< g = -> 2\n").unwrap();
+    fs::write(&file_module, "mod mylib\nmain = -> 0\n").unwrap();
+
+    for entry in [file_module] {
+        let mut config = test_config(entry, dir.clone());
+        config
+            .extern_artifacts
+            .push(("mylib".to_string(), artifact.clone()));
+        let error = rock_lib::compile(&config)
+            .expect_err("a module named like a dependency must be rejected");
+        assert!(
+            error.contains("module `mylib` conflicts with dependency `mylib`"),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
+fn test_own_and_dependency_macros_with_the_same_path_are_distinct() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let artifact = publish_mylib_with_join_macro(&dir);
+    fs::write(
+        dir.join("text.rk"),
+        "< macro join\n    =>\n        \"own\"\n",
+    )
+    .unwrap();
+
+    let run = |name: &str, import: &str| {
+        let entry = dir.join(format!("{name}.rk"));
+        fs::write(
+            &entry,
+            format!("mod text\n> {import}\nmain = !->\n    (%join).println!\n"),
+        )
+        .unwrap();
+        let mut config = test_config(entry, dir.clone());
+        config.current_crate_name = Some("app".to_string());
+        config
+            .extern_artifacts
+            .push(("mylib".to_string(), artifact.clone()));
+        rock_lib::compile(&config).expect("macro import should resolve");
+        let output = Command::new(dir.join(name)).output().unwrap();
+        String::from_utf8_lossy(&output.stdout).to_string()
+    };
+
+    assert_eq!(run("from_dependency", "mylib::text::join"), "dep\n");
+    assert_eq!(run("from_self", "app::text::join"), "own\n");
+}
+
+#[test]
+fn test_named_crate_does_not_resolve_own_macros_without_crate_prefix() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    fs::write(
+        dir.join("text.rk"),
+        "< macro join\n    =>\n        \"own\"\n",
+    )
+    .unwrap();
+    let entry = dir.join("bare.rk");
+    fs::write(
+        &entry,
+        "mod text\n> text::join\nmain = !->\n    (%join).println!\n",
+    )
+    .unwrap();
+    let mut config = test_config(entry, dir.clone());
+    config.current_crate_name = Some("app".to_string());
+    let error = rock_lib::compile(&config)
+        .expect_err("own macros of a named crate are imported through the crate name");
+    assert!(error.contains("Unknown macro '%join'"), "{error:?}");
+}

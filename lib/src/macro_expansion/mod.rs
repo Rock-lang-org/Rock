@@ -27,7 +27,7 @@ pub mod registry;
 pub mod source_map;
 pub mod token_tree;
 
-pub use context::MacroExpansionContext;
+pub use context::{MacroExpansionContext, MacroKey, MacroOrigin};
 pub use source_map::{
     ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, TokenOrigin,
 };
@@ -95,9 +95,9 @@ pub fn expand_macros_with_context(
     // Imports of dependency macros are fully consumed by expansion; later passes
     // would otherwise see them as imports of items that do not exist.
     module.top_levels.retain(|top_level| match top_level {
-        TopLevel::Import(path) => !context
-            .dependency_macros
-            .contains_key(&exports::path_segments(path).join("::")),
+        TopLevel::Import(path) => context
+            .resolve_importable_macro(&exports::path_segments(path))
+            .is_none(),
         _ => true,
     });
 
@@ -123,7 +123,7 @@ fn module_registry(
         if let TopLevel::Import(path) = top_level {
             let segments = exports::path_segments(path);
             if let (Some(decl), Some(name)) = (
-                context.dependency_macros.get(&segments.join("::")),
+                context.resolve_importable_macro(&segments),
                 segments.last(),
             ) {
                 registry.insert_declaration(name.clone(), decl.clone());
