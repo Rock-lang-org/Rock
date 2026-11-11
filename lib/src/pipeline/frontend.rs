@@ -75,7 +75,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
     // graph already holds every module unexpanded, so they are known before
     // expansion starts and import resolution does not depend on load order.
     let (own_macros, _) = crate_macro_exports(
-        &source_graph.root_module().clone(),
+        source_graph.root_module(),
         &source_graph,
         config.current_crate_name.as_deref(),
     );
