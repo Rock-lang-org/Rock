@@ -3,6 +3,139 @@ use std::fs;
 use std::sync::atomic::Ordering;
 
 #[test]
+fn test_read_to_string_preserves_whole_file_bytes() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    // Put a multibyte character across the read-buffer boundary.
+    let large = format!("{}é\n{}", "x".repeat(8191), "tail\0🙂\n".repeat(3000));
+    let cases = ["", "ordinary text\nsecond line\n", "héllo 世界🙂\n", "before\0after\n", &large];
+    let mut source = String::from(
+        r#"
+> std::io::fs::read_to_string
+> std::io::stdout
+> std::control::Result
+
+main = ->
+    output = stdout!
+"#,
+    );
+    let mut expected = Vec::new();
+    for (index, contents) in cases.iter().enumerate() {
+        fs::write(dir.join(format!("input{index}.txt")), contents.as_bytes()).unwrap();
+        source.push_str(&format!(
+            r#"    match read_to_string "input{index}.txt"
+        Result::Ok text =>
+            match output.write_all text.as_bytes!
+                Result::Ok _ => 0
+                Result::Err _ => return 2
+        Result::Err _ => return 1
+"#,
+        ));
+        expected.extend_from_slice(contents.as_bytes());
+    }
+    source.push_str("    0\n");
+    let output = compile_and_run_in_working_dir(&source, &dir);
+    assert!(output.status.success(), "binary failed: {output:?}");
+    assert_eq!(output.stdout, expected);
+}
+
+#[test]
+fn test_read_to_string_reports_errors() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    fs::write(dir.join("invalid.txt"), b"valid prefix\xff").unwrap();
+    fs::write(dir.join("truncated.txt"), b"\xe2\x82").unwrap();
+    fs::write(dir.join("nul_path.txt"), b"safe").unwrap();
+    let output = compile_and_run_in_working_dir(
+        r#"
+> std::io::fs::read_to_string
+> std::io::IoError
+> std::control::Result
+> std::ffi::libc::open
+> std::ffi::libc::close
+
+main = ->
+    before = open "nul_path.txt".as_ptr!, (0 as I32), (0 as I32)
+    if before < (0 as I32)
+        return 6
+    closed = close before
+    match read_to_string "nul_path.txt"
+        Result::Ok _ => 0
+        _ => return 7
+    match read_to_string "missing.txt"
+        Result::Err (IoError::Os _) => 0
+        _ => return 1
+    match read_to_string "invalid.txt"
+        Result::Err IoError::InvalidData => 0
+        _ => return 2
+    match read_to_string "truncated.txt"
+        Result::Err IoError::InvalidData => 0
+        _ => return 3
+    match read_to_string "nul_path.txt\0suffix"
+        Result::Err IoError::InvalidPath => 0
+        _ => return 4
+    // Opening a directory succeeds on Linux, but reading it fails.
+    match read_to_string "."
+        Result::Err (IoError::Os _) => 0
+        _ => return 5
+    // A leaked descriptor on any path would change the next available fd.
+    after = open "nul_path.txt".as_ptr!, (0 as I32), (0 as I32)
+    closed_after = close after
+    if before != after
+        return 8
+    0
+"#,
+        &dir,
+    );
+    assert!(output.status.success(), "binary failed: {output:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_read_to_string_continues_after_short_reads() {
+    use std::io::Write;
+
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let fifo = dir.join("input.pipe");
+    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    let writer = std::thread::spawn(move || {
+        let mut pipe = fs::OpenOptions::new().write(true).open(fifo).unwrap();
+        // Separate short writes, including a UTF-8 character split across reads.
+        for chunk in [b"first\n\xc3".as_slice(), b"\xa9\0middle".as_slice(), b"\nlast\n".as_slice()] {
+            pipe.write_all(chunk).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    });
+    let output = compile_and_run_in_working_dir(
+        r#"
+> std::io::fs::read_to_string
+> std::io::stdout
+> std::control::Result
+
+main = ->
+    match read_to_string "input.pipe"
+        Result::Ok text =>
+            output = stdout!
+            match output.write_all text.as_bytes!
+                Result::Ok _ => 0
+                Result::Err _ => 2
+        Result::Err _ => 1
+"#,
+        &dir,
+    );
+    writer.join().unwrap();
+    assert!(output.status.success(), "binary failed: {output:?}");
+    assert_eq!(output.stdout, "first\né\0middle\nlast\n".as_bytes());
+}
+
+#[test]
 fn test_file_create_write_str_uses_generic_write_trait() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);

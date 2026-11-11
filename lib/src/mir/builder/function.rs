@@ -108,6 +108,17 @@ impl<'a> MirBuilder<'a> {
                 capture_span.clone(),
             );
             self.var_map.insert(capture.name.clone(), local);
+            if capture.kind == crate::hir::HirClosureCaptureKind::Move {
+                // Consuming closures own these environment inputs even when
+                // their bodies only borrow them. Moves in the body clear the
+                // normal drop flags; otherwise scope exit drops each once.
+                function_scope_locals.push(local);
+                self.ensure_drop_flag(local);
+                self.mark_place_initialized(
+                    &Place { local, projection: vec![] },
+                    capture_span.clone(),
+                );
+            }
             self.closures.record_capture(MirClosureCapture {
                 name: capture.name,
                 local,

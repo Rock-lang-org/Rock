@@ -13,6 +13,8 @@
 > std::ffi::libc::write
 > std::control::result::Result
 > std::string::owned::String
+> std::collections::vec::Vec
+> std::control::option::Option
 
 < struct File
     fd: I32
@@ -74,6 +76,35 @@ impl Read for File
             Result::Err (last_os_error!)
         else
             Result::Ok count
+
+// Read through EOF, preserving all bytes and rejecting invalid UTF-8.
+read_to_string: &Str -> Result String, IoError
+< read_to_string = path ->
+    mut file = File::open path?
+    mut bytes: Vec U8 = Vec::new!
+    mut buffer: [U8; 8192] = [0; 8192]
+    done = false
+    while !done
+        match file.read (&mut buffer)
+            Result::Ok count =>
+                if count == 0
+                    done = true
+                else
+                    i = 0
+                    while i < count
+                        bytes.push buffer[i]
+                        i = i + 1
+            Result::Err (IoError::Os code) =>
+                // Linux EINTR: retry without losing bytes from earlier reads.
+                if code != (4 as I32)
+                    failure: Result String, IoError = Result::Err (IoError::Os code)
+                    return failure
+            Result::Err error =>
+                failure: Result String, IoError = Result::Err error
+                return failure
+    match String::from_utf8 bytes.as_slice!
+        Option::Some text => Result::Ok text
+        Option::None => Result::Err IoError::InvalidData
 
 impl Write for File
     @write: &[U8] -> Result I64, IoError

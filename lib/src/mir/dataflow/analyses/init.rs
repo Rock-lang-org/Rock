@@ -250,6 +250,7 @@ pub struct InitializationAnalysis {
     /// Locals that are always initialized (function params, constants)
     always_init: HashSet<Local>,
     raw_pointer_locals: HashSet<Local>,
+    copy_locals: HashSet<Local>,
     place_paths: PlacePathTable,
     move_paths: MovePathTable,
 }
@@ -258,6 +259,7 @@ impl InitializationAnalysis {
     pub fn new(func: &MirFunction, type_context: &TypeContext) -> Self {
         let mut always_init = HashSet::new();
         let mut raw_pointer_locals = HashSet::new();
+        let mut copy_locals = HashSet::new();
         let type_view = TypeView::new(type_context);
 
         // Arguments are initialized
@@ -272,6 +274,9 @@ impl InitializationAnalysis {
         }
 
         for (i, decl) in func.local_decls.iter().enumerate() {
+            if type_view.is_copy(decl.ty) {
+                copy_locals.insert(Local(i));
+            }
             if matches!(type_view.ty(decl.ty), Ty::Function { .. }) {
                 always_init.insert(Local(i));
             }
@@ -288,6 +293,7 @@ impl InitializationAnalysis {
         Self {
             always_init,
             raw_pointer_locals,
+            copy_locals,
             place_paths,
             move_paths,
         }
@@ -354,7 +360,9 @@ impl InitializationAnalysis {
             Rvalue::Aggregate(_, operands) => self.move_operands(state, operands, info),
             Rvalue::Closure(closure) => {
                 for capture in &closure.captures {
-                    if capture.kind == crate::mir::MirClosureCaptureKind::ByValue {
+                    if capture.kind == crate::mir::MirClosureCaptureKind::ByValue
+                        && !self.copy_locals.contains(&capture.local)
+                    {
                         self.set_place_moved(state, &capture.place(), info.clone());
                     }
                 }

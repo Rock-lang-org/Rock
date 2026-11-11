@@ -132,10 +132,14 @@ impl BorrowChecker {
                 }
                 Rvalue::Closure(closure) => {
                     for capture in &closure.captures {
-                        if matches!(CaptureKind::from(capture.kind), CaptureKind::Move) {
-                            continue;
-                        }
-                        let capture_operand = Operand::Copy(capture.place());
+                        let capture_operand = if matches!(CaptureKind::from(capture.kind), CaptureKind::Move) {
+                            move_validation.validate_move(
+                                &capture.place(), func, stmt_span.clone(), diagnostics,
+                            );
+                            Operand::Move(capture.place())
+                        } else {
+                            Operand::Copy(capture.place())
+                        };
                         if let Err(e) = init_analysis.check_operand_at_path(&capture_operand, state)
                         {
                             diagnostics.push(Self::make_error(
@@ -303,7 +307,21 @@ impl BorrowChecker {
                         }
                     }
                 }
-                AccessKind::CaptureMove | AccessKind::Write | AccessKind::Drop => {}
+                AccessKind::CaptureMove => {
+                    let is_copy = func.local_decls.get(event.place.local.0).is_some_and(|local| {
+                        crate::type_context::TypeView::new(type_context).is_copy(local.ty)
+                    });
+                    Self::check_place_loan_access(
+                        &event.place,
+                        if is_copy { LoanKind::Shared } else { LoanKind::Mut },
+                        table,
+                        active_loans,
+                        func,
+                        diagnostics,
+                        stmt.span.clone(),
+                    );
+                }
+                AccessKind::Write | AccessKind::Drop => {}
             }
         }
     }

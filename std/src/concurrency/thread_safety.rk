@@ -5,6 +5,7 @@
 > std::mem::raw_buffer::RawBuffer
 > std::concurrency::mutex::Mutex
 > std::string::owned::String
+> std::control::result::Result
 
 lang send
 < trait Send
@@ -23,6 +24,10 @@ impl Sync for RawBuffer T where T: Sync
 impl Send for String
 
 impl Sync for String
+
+impl Send for Result T, E where T: Send, E: Send
+
+impl Sync for Result T, E where T: Sync, E: Sync
 
 impl Send for Mutex T where T: Send
 

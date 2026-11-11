@@ -19,7 +19,7 @@ pub(crate) struct BodyState {
     source_scopes: Vec<u32>,
     fold_loops: Vec<Option<FoldLoopContext>>,
     tuple_temp_counter: u32,
-    /// Addresses of the AST lambdas this body returns (see `escaping_lambdas`).
+    /// Addresses of AST lambdas returned or passed to consuming callable parameters.
     escaping_lambdas: HashSet<usize>,
 }
 

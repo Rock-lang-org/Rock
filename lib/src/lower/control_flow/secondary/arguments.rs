@@ -206,6 +206,9 @@ impl Lowerer {
                 .and_then(|params| params.get(index))
                 .cloned();
             let hir_arg = if let Some(lambda) = Self::lambda_from_expression(&argument.arg) {
+                if expected.as_ref().is_some_and(|ty| self.callable_argument_owns_environment(ty)) {
+                    self.body.mark_escaping_lambda(lambda);
+                }
                 let mut expected_params = expected
                     .as_ref()
                     .and_then(|ty| self.callable_argument_parameters(ty));
