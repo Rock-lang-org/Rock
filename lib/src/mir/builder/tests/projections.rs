@@ -95,7 +95,7 @@ fn build_monomorphized_lowers_trait_impl_projection_contract() {
         source_map: crate::source_map::SemanticSourceMap::default(),
     };
 
-    let mir = MirBuilder::build_monomorphized(&mono);
+    let mir = MirBuilder::build_monomorphized(&mono).unwrap();
     assert!(mir.backend_contract.projection_traits.contains(&trait_id));
     assert!(mir
         .backend_contract
@@ -278,7 +278,7 @@ fn build_monomorphized_lowers_projection_output_for_concrete_projection_type() {
         source_map: crate::source_map::SemanticSourceMap::default(),
     };
 
-    let mir = MirBuilder::build_monomorphized(&mono);
+    let mir = MirBuilder::build_monomorphized(&mono).unwrap();
 
     assert!(mir
         .backend_contract
@@ -442,7 +442,7 @@ fn projection_output_contract_matches_named_impl_owner() {
         source_map: crate::source_map::SemanticSourceMap::default(),
     };
 
-    let mir = MirBuilder::build_monomorphized(&mono);
+    let mir = MirBuilder::build_monomorphized(&mono).unwrap();
 
     assert!(mir
         .backend_contract

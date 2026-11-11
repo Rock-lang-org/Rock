@@ -209,3 +209,84 @@ fn rejects_invalid_substitution_on_object_provided_instance_without_body() {
     mono.check_instance_array_lengths();
     assert!(mono.diagnostics.return_if_err().is_err());
 }
+
+#[test]
+fn h3_invalid_bodies_and_closures_never_receive_backend_symbols() {
+    for body in invalid_body_cases(ArrayLen::Error) {
+        let mut mono = Monomorphizer::new();
+        let instance = mono.register_function_instance("body_only", &function(body));
+        assert!(mono.instances.record(instance).unwrap().symbols.backend_symbol.is_empty());
+        mono.finish_instance_symbols();
+        assert!(mono.diagnostics.return_if_err().is_err());
+        assert!(mono.instances.record(instance).unwrap().symbols.backend_symbol.is_empty());
+    }
+}
+
+#[test]
+fn h3_valid_symbols_remain_identical_after_deferred_materialization() {
+    let mut mono = Monomorphizer::new();
+    let function = function(HirBlock { stmts: vec![HirStmt::Expr(unit())], ty: Type::Unit });
+    let origin = crate::mono::InstanceOrigin::Function(function.id);
+    let expected = mono.backend_symbol_for_function("body_only", &origin, &[]);
+    let instance = mono.register_function_instance("body_only", &function);
+    assert!(mono.instances.record(instance).unwrap().symbols.backend_symbol.is_empty());
+    mono.finish_instance_symbols();
+    assert!(mono.diagnostics.return_if_err().is_ok());
+    assert_eq!(mono.instances.record(instance).unwrap().symbols.backend_symbol, expected);
+}
+
+#[test]
+fn h3_recursive_nominals_check_distinct_const_instantiations_and_exact_cycles() {
+    let param = GenericParamId { owner: id(), index: 0 };
+    for next_arg in [Type::Error, Type::ConstValue(2)] {
+        let mut mono = Monomorphizer::new();
+        mono.nominal_field_types.insert(id(), vec![
+            Type::Array(Box::new(Type::I64), ArrayLen::Param(param)),
+            Type::Pointer(Box::new(Type::Struct { id: id(), args: vec![next_arg.clone()] })),
+        ]);
+        let body = HirBlock { stmts: vec![HirStmt::Expr(expr(HirExprKind::Unit,
+            Type::Struct { id: id(), args: vec![Type::ConstValue(1)] },
+        ))], ty: Type::Unit };
+        let instance = mono.register_function_instance("recursive", &function(body));
+        mono.finish_instance_symbols();
+        assert_eq!(mono.diagnostics.return_if_err().is_ok(), next_arg != Type::Error);
+        assert_eq!(mono.instances.record(instance).unwrap().symbols.backend_symbol.is_empty(), next_arg == Type::Error);
+    }
+}
+
+#[test]
+fn h3_unbounded_distinct_nominal_expansion_fails_closed() {
+    let param = GenericParamId { owner: id(), index: 0 };
+    let mut mono = Monomorphizer::new();
+    mono.nominal_field_types.insert(id(), vec![Type::Pointer(Box::new(Type::Struct {
+        id: id(), args: vec![Type::Tuple(vec![Type::Generic(param)])],
+    }))]);
+    let body = HirBlock { stmts: Vec::new(), ty: Type::Struct { id: id(), args: vec![Type::I64] } };
+    mono.register_function_instance("growing", &function(body));
+    mono.finish_instance_symbols();
+    assert!(mono.diagnostics.return_if_err().is_err());
+    assert!(mono.diagnostics.contains("128 distinct nested nominal instantiations"));
+}
+
+#[test]
+fn h3_phantom_substitutions_and_declared_signatures_are_validated_before_symbols() {
+    for declaration in [false, true] {
+        let mut mono = Monomorphizer::new();
+        let invalid = Type::Array(Box::new(Type::I64), ArrayLen::Error);
+        let mut declared = function(HirBlock { stmts: Vec::new(), ty: Type::Unit });
+        declared.ret_type = invalid.clone();
+        mono.nominal_field_types.insert(id(), vec![invalid]);
+        let argument = mono.intern_type(&Type::Struct { id: id(), args: Vec::new() });
+        let origin = crate::mono::InstanceOrigin::Function(id());
+        let substitution = if declaration { Vec::new() } else { vec![argument] };
+        let instance = mono.instances.intern(crate::mono::InstanceKey::new(origin.clone(), substitution.clone()), |instance| {
+            crate::mono::InstanceRecord::new(instance, origin, substitution,
+                crate::mono::InstanceSymbols::new("phantom", ""),
+                if declaration { Some(declared) } else { None }, false, true)
+        });
+        mono.instances.insert_pre_mir_body(instance, function(HirBlock { stmts: Vec::new(), ty: Type::Unit }));
+        mono.finish_instance_symbols();
+        assert!(mono.diagnostics.return_if_err().is_err());
+        assert!(mono.instances.record(instance).unwrap().symbols.backend_symbol.is_empty());
+    }
+}

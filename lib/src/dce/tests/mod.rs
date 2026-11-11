@@ -35,7 +35,7 @@ type HirStmt = crate::hir::HirStmtFor<AcceptedHir>;
 use super::InstanceDceReport;
 
 fn prune_unreachable_instances(program: &mut MonomorphizedProgram) -> InstanceDceReport {
-    let mut bodies = crate::mir::builder::MirBuilder::take_mir_instance_bodies(program);
+    let mut bodies = crate::mir::builder::MirBuilder::take_mir_instance_bodies(program).unwrap();
     super::prune_unreachable_instances(program, &mut bodies)
 }
 

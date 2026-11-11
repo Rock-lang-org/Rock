@@ -38,7 +38,7 @@ impl Monomorphizer {
         let specialized_name = format!("{}_mono_{}", func_name, self.counter);
         self.counter += 1;
 
-        let backend_symbol = self.backend_symbol_for_origin(&origin, &substitution);
+        let backend_symbol = String::new();
         let instance_id = self
             .instances
             .intern(instance_key, |id| crate::mono::InstanceRecord {
@@ -637,7 +637,7 @@ impl Monomorphizer {
             crate::types::FunctionSafety::from_is_unsafe(specialized_func.is_unsafe),
         );
 
-        let backend_symbol = self.backend_symbol_for_origin(&origin, &substitution);
+        let backend_symbol = String::new();
         let instance_id = self
             .instances
             .intern(instance_key, |id| crate::mono::InstanceRecord {

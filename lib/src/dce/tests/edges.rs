@@ -227,7 +227,7 @@ fn prune_unreachable_instances_does_not_keep_closure_edges_from_unreachable_owne
         ),
     ]);
     let unit_id = program.type_context.intern_type(&Type::Unit);
-    let mut bodies = crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut program);
+    let mut bodies = crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut program).unwrap();
     let closure_id = MirFunctionId::Closure(Box::new(MirClosureId {
         owner: MirFunctionId::Instance(owner_instance),
         local_index: 0,
@@ -281,7 +281,7 @@ fn prune_unreachable_instances_does_not_keep_closure_edges_from_unreachable_owne
 
     let mir = crate::mir::builder::MirBuilder::build_monomorphized_with_instance_bodies(
         &program, &bodies,
-    );
+    ).unwrap();
     assert!(!mir.functions.contains_key(&closure_id));
     assert!(!mir
         .functions
@@ -368,7 +368,7 @@ fn prune_unreachable_instances_keeps_drop_impl_for_automatic_drop() {
             (drop_trait_id, "std::drop::Drop".to_string()),
         ]));
 
-    let mut bodies = crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut program);
+    let mut bodies = crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut program).unwrap();
     bodies.insert_runtime_instance_root(drop_instance);
     super::super::prune_unreachable_instances(&mut program, &mut bodies);
 

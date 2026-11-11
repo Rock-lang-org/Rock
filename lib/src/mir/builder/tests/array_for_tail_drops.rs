@@ -198,10 +198,10 @@ fn array_tail_helpers_share_by_element_type_and_elaborate_nested_cleanup() {
         });
     }
     let drops = std::collections::HashSet::from([struct_ty(0)]);
-    MirBuilder::populate_array_tail_helpers(&program, &type_context, &drops, &mut functions);
+    MirBuilder::populate_array_tail_helpers(&program, &type_context, &drops, &mut functions).unwrap();
     assert_eq!(functions.values().filter(|f| matches!(f.id, MirFunctionId::ArrayTailDrop(_))).count(), 1);
     // Repeating collection must not create another helper identity.
-    MirBuilder::populate_array_tail_helpers(&program, &type_context, &drops, &mut functions);
+    MirBuilder::populate_array_tail_helpers(&program, &type_context, &drops, &mut functions).unwrap();
     assert_eq!(functions.values().filter(|f| matches!(f.id, MirFunctionId::ArrayTailDrop(_))).count(), 1);
 
     let nested = Type::Tuple(vec![struct_ty(0), struct_ty(0)]);

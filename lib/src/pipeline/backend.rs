@@ -92,13 +92,14 @@ pub(super) fn compile_impl(
     let mut monomorphized = mono::monomorphize_with_crates(hir, crate_ctx, compilation_identity)
         .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
     let mut instance_bodies =
-        mir::builder::MirBuilder::take_mir_instance_bodies(&mut monomorphized);
+        mir::builder::MirBuilder::take_mir_instance_bodies(&mut monomorphized)
+            .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
     let _dce_report = dce::prune_unreachable_instances(&mut monomorphized, &mut instance_bodies);
 
     let mir_program = mir::builder::MirBuilder::build_monomorphized_with_instance_bodies(
         &monomorphized,
         &instance_bodies,
-    );
+    ).map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
     if config.has_debug_print(DebugPrint::Mir) {
         println!("{:#?}", mir_program);
     }

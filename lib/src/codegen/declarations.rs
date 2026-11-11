@@ -213,13 +213,13 @@ impl<'ctx> CodeGen<'ctx> {
                 .signature
                 .params
                 .iter()
-                .map(|param| self.llvm_param_type(param)),
+                .map(|param| self.llvm_param_type(param)).collect::<Result<Vec<_>, _>>()?,
         );
         let ret = declaration.signature.ret.abi_ty;
         let ret_ty = self.structural_type_for(ret);
         let fn_type = match ret_ty {
             Type::Unit => self.context.void_type().fn_type(&param_types, false),
-            _ => self.llvm_type_id(ret).fn_type(&param_types, false),
+            _ => self.llvm_type_id(ret)?.fn_type(&param_types, false),
         };
         let llvm_function =
             if let Some(existing) = self.module.get_function(&declaration.llvm_symbol) {
@@ -250,12 +250,12 @@ impl<'ctx> CodeGen<'ctx> {
             .params
             .iter()
             .map(|param| self.llvm_param_type(param))
-            .collect::<Vec<BasicMetadataTypeEnum<'ctx>>>();
+            .collect::<Result<Vec<BasicMetadataTypeEnum<'ctx>>, _>>()?;
         let ret = declaration.signature.ret.abi_ty;
         let ret_ty = self.structural_type_for(ret);
         let fn_type = match ret_ty {
             Type::Unit => self.context.void_type().fn_type(&param_types, variadic),
-            _ => self.llvm_type_id(ret).fn_type(&param_types, variadic),
+            _ => self.llvm_type_id(ret)?.fn_type(&param_types, variadic),
         };
         let base_name = link_name.split("::").last().unwrap_or(link_name);
         let llvm_function = if let Some(existing) = self.module.get_function(base_name) {
@@ -271,17 +271,17 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(llvm_function)
     }
 
-    pub(crate) fn llvm_param_type(&self, param: &MirParamAbi) -> BasicMetadataTypeEnum<'ctx> {
-        match param.pass_mode {
+    pub(crate) fn llvm_param_type(&self, param: &MirParamAbi) -> Result<BasicMetadataTypeEnum<'ctx>, CodegenError> {
+        Ok(match param.pass_mode {
             MirPassMode::Direct | MirPassMode::FatDirect => {
-                self.llvm_type_id(param.semantic_ty).into()
+                self.llvm_type_id(param.semantic_ty)?.into()
             }
             MirPassMode::Pointer => self.context.ptr_type(AddressSpace::default()).into(),
-        }
+        })
     }
 
-    pub(crate) fn type_id_lowers_to_pointer(&self, ty: TypeId) -> bool {
-        matches!(self.llvm_type_id(ty), BasicTypeEnum::PointerType(_))
+    pub(crate) fn type_id_lowers_to_pointer(&self, ty: TypeId) -> Result<bool, CodegenError> {
+        Ok(matches!(self.llvm_type_id(ty)?, BasicTypeEnum::PointerType(_)))
     }
 
     fn declare_mir_function_with_signature(
@@ -294,12 +294,12 @@ impl<'ctx> CodeGen<'ctx> {
             .params
             .iter()
             .map(|param| self.llvm_param_type(param))
-            .collect::<Vec<BasicMetadataTypeEnum<'ctx>>>();
+            .collect::<Result<Vec<BasicMetadataTypeEnum<'ctx>>, _>>()?;
         let ret = signature.ret.abi_ty;
         let ret_type = self.structural_type_for(ret);
         let fn_type = match ret_type {
             Type::Unit => self.context.void_type().fn_type(&param_types, false),
-            _ => self.llvm_type(&ret_type).fn_type(&param_types, false),
+            _ => self.llvm_type(&ret_type)?.fn_type(&param_types, false),
         };
         let llvm_function = if let Some(existing) = self.module.get_function(&llvm_symbol) {
             existing

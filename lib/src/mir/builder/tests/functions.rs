@@ -20,7 +20,7 @@ fn build_uses_canonical_function_indexes_once_per_def_id() {
         &std::collections::HashMap::from([(id, "main".to_string())]),
     );
 
-    let mir = MirBuilder::build(&program);
+    let mir = MirBuilder::build(&program).unwrap();
     let mir_id = crate::mir::MirFunctionId::Function(id);
 
     assert_eq!(mir.functions.len(), 1);
@@ -70,7 +70,7 @@ fn build_function_uses_session_source_map_for_parameter_and_return_origins() {
         false,
         Some(owner),
         Some(operation_span.clone()),
-    );
+    ).unwrap();
 
     assert_eq!(mir_func.local_decls[0].span, Some(operation_span.clone()));
     assert_eq!(mir_func.local_decls[1].span, Some(parameter_span.clone()));
@@ -126,7 +126,7 @@ fn build_function_terminates_blocks_after_if_without_else() {
         false,
         Some(func.id),
         None,
-    );
+    ).unwrap();
 
     assert!(mir_func
         .basic_blocks

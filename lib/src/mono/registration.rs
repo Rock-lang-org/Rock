@@ -96,14 +96,13 @@ impl Monomorphizer {
     ) -> InstanceId {
         let origin = InstanceOrigin::Function(func.id);
         let key = InstanceKey::new(origin.clone(), Vec::new());
-        let backend_symbol = self.backend_symbol_for_function(source_name, &origin, &[]);
         let body = func.clone();
 
         let instance_id = self.instances.intern(key, |id| InstanceRecord {
             id,
             origin,
             substitution: Vec::new(),
-            symbols: InstanceSymbols::new(source_name, backend_symbol),
+            symbols: InstanceSymbols::pending(source_name),
             declared: None,
             provided_by_object: false,
             is_specialization: false,
@@ -127,7 +126,7 @@ impl Monomorphizer {
         if let Some(instance_id) = self.instances.get(&key) {
             return instance_id;
         }
-        let backend_symbol = self.backend_symbol_for_origin(&origin, &[]);
+        let backend_symbol = String::new();
         let body = method.clone();
 
         let instance_id = self.instances.intern(key, |id| InstanceRecord {
@@ -165,7 +164,7 @@ impl Monomorphizer {
         if let Some(instance_id) = self.instances.get(&key) {
             return instance_id;
         }
-        let backend_symbol = self.backend_symbol_for_origin(&origin, &[]);
+        let backend_symbol = String::new();
         let body = method.clone();
 
         let instance_id = self.instances.intern(key, |id| InstanceRecord {

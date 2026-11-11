@@ -44,6 +44,7 @@ type HirExpr = crate::hir::HirExprFor<AcceptedHir>;
 type HirExprKind = crate::hir::HirExprKindFor<AcceptedHir>;
 
 pub struct MirBuilder<'a> {
+    diagnostics: crate::diagnostic::Diagnostics,
     program: &'a HirProgram,
     type_context: &'a RefCell<TypeContext>,
     blocks: Vec<BasicBlock>,
@@ -81,6 +82,20 @@ enum MatchScrutineeMode {
 }
 
 impl<'a> MirBuilder<'a> {
+    fn concrete_array_length(&mut self, len: crate::types::ArrayLen, span: Option<crate::lexer::Span>) -> Option<u64> {
+        if let Some(value) = len.concrete() {
+            return Some(value);
+        }
+        let message = format!("cannot lower non-concrete array length {len:?} to MIR");
+        let diagnostic = match span {
+            Some(span) => crate::diagnostic::Diagnostic::new(message, span),
+            None => crate::diagnostic::Diagnostic::for_internal(message),
+        }.with_code(crate::diagnostic::DiagnosticCode::Mono);
+        self.diagnostics.push(diagnostic);
+        self.current_block = None;
+        None
+    }
+
     fn lower_expr(&mut self, expr: &HirExpr, dest: Place) {
         self.lower_expr_with_context(expr, dest, false)
     }

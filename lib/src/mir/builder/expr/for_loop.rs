@@ -113,10 +113,38 @@ impl<'a> MirBuilder<'a> {
                 };
                 self.lower_expr(iter, iter_place.clone());
 
-                let (elem_ty, len) = match &iter.ty {
-                    Type::Array(elem, len) => ((**elem).clone(), len.concrete().unwrap_or(0) as i64),
-                    Type::Slice(elem) => ((**elem).clone(), 0),
-                    _ => (Type::I64, 0),
+                let (elem_ty, end_operand, array_len) = match &iter.ty {
+                    Type::Array(elem, len) => {
+                        let Some(len) = self.concrete_array_length(*len, Some(iter.span.clone())) else { return; };
+                        ((**elem).clone(), Operand::Constant(Constant::Int(len as i64)), Some(len))
+                    }
+                    Type::Slice(elem) => {
+                        let length = self.new_local(self.type_id_for(&Type::I64), Mutability::Not, None);
+                        self.register_scoped_temp(length);
+                        self.emit_storage_live(length, Some(iter.span.clone()));
+                        let next = self.new_block();
+                        if let Some(current) = self.current_block {
+                            self.set_terminator(current, Terminator::Call {
+                                func: Operand::Constant(Constant::Callable(crate::mir::MirCallable::Resolved(
+                                    crate::mir::MirCallableKey::Intrinsic(crate::mir::MirIntrinsicId::ArrayLen),
+                                ))),
+                                args: vec![Operand::Copy(iter_place.clone())],
+                                destination: Place { local: length, projection: Vec::new() },
+                                target: next,
+                                span: Some(iter.span.clone()),
+                            });
+                        }
+                        self.current_block = Some(next);
+                        self.mark_place_initialized(&Place { local: length, projection: Vec::new() }, Some(iter.span.clone()));
+                        ((**elem).clone(), Operand::Copy(Place { local: length, projection: Vec::new() }), None)
+                    }
+                    _ => {
+                        self.diagnostics.push(crate::diagnostic::Diagnostic::new(
+                            format!("cannot lower for-loop iterator type {}", iter.ty), iter.span.clone(),
+                        ).with_code(crate::diagnostic::DiagnosticCode::Mono));
+                        self.current_block = None;
+                        return;
+                    }
                 };
                 // A by-value array of cleanup elements is consumed by the loop: it moves
                 // each element out and drops the unvisited tail itself on every exit.
@@ -130,7 +158,7 @@ impl<'a> MirBuilder<'a> {
                     LocalSource::UserBinding,
                     binding_span.clone(),
                 );
-                if let Some(owned_elem_ty) = &loop_owned_elem_ty {
+                if let (Some(owned_elem_ty), Some(len)) = (&loop_owned_elem_ty, array_len) {
                     loop_owned_temp = Some(iter_temp);
                     self.drops.register_loop_owned_array(
                         iter_temp,
@@ -147,7 +175,7 @@ impl<'a> MirBuilder<'a> {
 
                 (
                     counter,
-                    Operand::Constant(Constant::Int(len)),
+                    end_operand,
                     Some((iter_place, loop_local)),
                     iter.ty.clone(),
                     false,

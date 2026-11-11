@@ -47,6 +47,9 @@ pub struct InstanceSymbols {
 }
 
 impl InstanceSymbols {
+    pub(super) fn pending(source_name: impl Into<String>) -> Self {
+        Self::new(source_name, String::new())
+    }
     pub fn new(source_name: impl Into<String>, backend_symbol: impl Into<String>) -> Self {
         Self {
             source_name: source_name.into(),
@@ -199,6 +202,12 @@ impl InstanceRegistry {
 
     pub fn record(&self, id: InstanceId) -> Option<&InstanceRecord> {
         self.records.get(&id)
+    }
+
+    pub(super) fn set_backend_symbol(&mut self, id: InstanceId, symbol: String) {
+        if let Some(record) = self.records.get_mut(&id) {
+            record.symbols.backend_symbol = symbol;
+        }
     }
 
     pub fn insert_pre_mir_body(&mut self, id: InstanceId, function: HirFunction) {

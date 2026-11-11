@@ -36,7 +36,7 @@ fn closure_rvalue_uses_stable_closure_identity() {
         },
         &std::collections::HashMap::from([(function_id, "make_closure".to_string())]),
     );
-    let mir = MirBuilder::build(&program);
+    let mir = MirBuilder::build(&program).unwrap();
     assert_mir_agreement_clean(&mir);
     let function = mir
         .function(crate::mir::MirFunctionId::Function(function_id))
@@ -113,7 +113,7 @@ fn build_function_emits_closure_body_function() {
         &std::collections::HashMap::from([(function_id, "make_lambda".to_string())]),
     );
 
-    let mir = MirBuilder::build(&program);
+    let mir = MirBuilder::build(&program).unwrap();
     let closure_id = crate::mir::MirClosureId {
         owner,
         local_index: 0,
@@ -217,7 +217,7 @@ fn build_function_binds_closure_body_captures() {
         &std::collections::HashMap::from([(function_id, "make_capturing_lambda".to_string())]),
     );
 
-    let mir = MirBuilder::build(&program);
+    let mir = MirBuilder::build(&program).unwrap();
     let type_context = mir.type_context.clone();
     let closure_id = crate::mir::MirClosureId {
         owner,
@@ -299,7 +299,7 @@ fn test_build_function_exposes_closure_captures() {
         false,
         Some(func.id),
         None,
-    );
+    ).unwrap();
     assert!(mir_func.closure_captures.is_empty());
     assert_eq!(
         mir_func.local_decls[0].origin(),
@@ -346,7 +346,7 @@ fn test_build_function_with_lambda_still_builds() {
         false,
         Some(func.id),
         None,
-    );
+    ).unwrap();
     assert!(mir_func.closure_captures.is_empty());
 }
 

@@ -234,8 +234,8 @@ impl<'a> MirBuilder<'a> {
                     self.type_id_for(ty),
                     DropObligationKind::Structural,
                 );
-                // Lengths are concrete here: the mono length check rejects unresolved ones earlier.
-                self.emit_array_drop_chain(elem, len.concrete().unwrap_or(0) as usize, place);
+                let Some(len) = self.concrete_array_length(*len, None) else { return; };
+                self.emit_array_drop_chain(elem, len as usize, place);
             }
             Type::Enum { id, args } => {
                 self.record_drop_obligation(

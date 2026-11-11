@@ -72,7 +72,7 @@ fn builder_output_has_no_callable_unit_placeholders_for_simple_function_refs() {
         ]),
     );
 
-    let mir = MirBuilder::build(&program);
+    let mir = MirBuilder::build(&program).unwrap();
 
     assert_mir_agreement_clean(&mir);
 }

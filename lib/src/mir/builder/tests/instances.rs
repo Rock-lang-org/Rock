@@ -45,7 +45,7 @@ fn build_monomorphized_uses_explicit_instance_body_table() {
         type_context: crate::type_context::TypeContext::new(),
         source_map: crate::source_map::SemanticSourceMap::default(),
     };
-    let mut bodies = MirBuilder::take_mir_instance_bodies(&mut monomorphized);
+    let mut bodies = MirBuilder::take_mir_instance_bodies(&mut monomorphized).unwrap();
     let unit_ty = monomorphized.type_context.intern_type(&Type::Unit);
     let closure_id = crate::mir::MirFunctionId::Closure(Box::new(crate::mir::MirClosureId {
         owner: crate::mir::MirFunctionId::Instance(instance_id),
@@ -71,7 +71,7 @@ fn build_monomorphized_uses_explicit_instance_body_table() {
         ownership: Default::default(),
     });
 
-    let mir = MirBuilder::build_monomorphized_with_instance_bodies(&monomorphized, &bodies);
+    let mir = MirBuilder::build_monomorphized_with_instance_bodies(&monomorphized, &bodies).unwrap();
 
     let id = crate::mir::MirFunctionId::Instance(instance_id);
     let function = mir.function(id.clone()).expect("instance MIR body");
@@ -140,7 +140,7 @@ fn take_mir_instance_bodies_converts_and_drains_hir_instance_bodies() {
         source_map: crate::source_map::SemanticSourceMap::default(),
     };
 
-    let bodies = MirBuilder::take_mir_instance_bodies(&mut monomorphized);
+    let bodies = MirBuilder::take_mir_instance_bodies(&mut monomorphized).unwrap();
 
     assert!(monomorphized
         .pre_mir_instance_bodies
@@ -220,7 +220,7 @@ fn build_monomorphized_program_keys_functions_by_instance_id() {
         source_map: crate::source_map::SemanticSourceMap::default(),
     };
 
-    let mir = MirBuilder::build_monomorphized(&monomorphized);
+    let mir = MirBuilder::build_monomorphized(&monomorphized).unwrap();
 
     let id = crate::mir::MirFunctionId::Instance(instance_id);
     let function = mir.function(id.clone()).expect("instance MIR body");
@@ -315,7 +315,7 @@ fn mir_builder_records_type_ids_for_return_locals_and_casts() {
         source_map: crate::source_map::SemanticSourceMap::default(),
     };
 
-    let mir = MirBuilder::build_monomorphized(&monomorphized);
+    let mir = MirBuilder::build_monomorphized(&monomorphized).unwrap();
     let main = mir
         .function(crate::mir::MirFunctionId::Instance(instance_id))
         .unwrap();

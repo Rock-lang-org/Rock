@@ -144,6 +144,8 @@ impl Monomorphizer {
         }
         program.rebuild_indexes_with_canonical_names(&canonical_names_by_id);
 
+        self.finish_instance_symbols();
+
         program
     }
 

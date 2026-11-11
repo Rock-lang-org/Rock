@@ -320,7 +320,7 @@ fn product_link_records_follow_pruned_instance_set() {
             source_map: crate::source_map::SemanticSourceMap::default(),
         };
     let mut instance_bodies =
-        crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut monomorphized);
+        crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut monomorphized).unwrap();
     crate::dce::prune_unreachable_instances(&mut monomorphized, &mut instance_bodies);
     let (products, id_remap) =
         link_test_products(vec![("main", main_source), ("unused", unused_source)]);

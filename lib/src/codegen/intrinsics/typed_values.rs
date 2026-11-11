@@ -77,7 +77,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let array_ptr = compiled_args[0].into_pointer_value();
                 let zero = self.context.i64_type().const_int(0, false);
-                let array_ty = self.llvm_type(&Type::Array(elem.clone(), *len));
+                let array_ty = self.llvm_type(&Type::Array(elem.clone(), *len))?;
                 let data_ptr = unsafe {
                     self.builder
                         .build_gep(array_ty, array_ptr, &[zero, zero], "array_ref_slice_ptr")
@@ -144,7 +144,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let idx = compiled_args[1].into_int_value();
                 let ptr_arg_ty = self.normalize_projection_type(&arg_types[0]);
                 let elem_ty = match &ptr_arg_ty {
-                    Type::Pointer(inner) => self.llvm_type(inner),
+                    Type::Pointer(inner) => self.llvm_type(inner)?,
                     other => {
                         return Err(CodegenError::from(format!(
                             "PtrOffset expected pointer input, got {other}"
@@ -192,13 +192,13 @@ impl<'ctx> CodeGen<'ctx> {
                 Type::Array(_, _) => {
                     let temp = self
                         .builder
-                        .build_alloca(self.llvm_type(&arg_types[0]), "arr_ptr_tmp")
+                        .build_alloca(self.llvm_type(&arg_types[0])?, "arr_ptr_tmp")
                         .map_err(|e| CodegenError::from(format!("Failed ArrPtr alloca: {}", e)))?;
                     self.builder
                         .build_store(temp, compiled_args[0])
                         .map_err(|e| CodegenError::from(format!("Failed ArrPtr store: {}", e)))?;
                     let zero = self.context.i64_type().const_int(0, false);
-                    let array_ty = self.llvm_type(&arg_types[0]);
+                    let array_ty = self.llvm_type(&arg_types[0])?;
                     let ptr = unsafe {
                         self.builder
                             .build_gep(array_ty, temp, &[zero, zero], "arr_raw_ptr")
@@ -216,7 +216,7 @@ impl<'ctx> CodeGen<'ctx> {
                     Type::Pointer(inner) => inner.as_ref(),
                     ty => ty,
                 };
-                let llvm_ty = self.llvm_type(elem_ty);
+                let llvm_ty = self.llvm_type(elem_ty)?;
                 let size_val = llvm_ty
                     .size_of()
                     .unwrap_or_else(|| self.context.i64_type().const_int(8, false));
@@ -299,7 +299,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let array_ptr = compiled_args[0].into_pointer_value();
                 let zero = self.context.i64_type().const_int(0, false);
-                let array_ty = self.llvm_type_id(*array_inner);
+                let array_ty = self.llvm_type_id(*array_inner)?;
                 let data_ptr = unsafe {
                     self.builder
                         .build_gep(array_ty, array_ptr, &[zero, zero], "array_ref_slice_ptr")
@@ -368,7 +368,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let ptr_arg_ty =
                     self.normalize_projection_type(&self.structural_type_for(arg_type_ids[0]));
                 let elem_ty = match &ptr_arg_ty {
-                    Type::Pointer(inner) => self.llvm_type(inner),
+                    Type::Pointer(inner) => self.llvm_type(inner)?,
                     other => {
                         return Err(CodegenError::from(format!(
                             "PtrOffset expected pointer input, got {other}"
@@ -418,13 +418,13 @@ impl<'ctx> CodeGen<'ctx> {
                 Ty::Array { .. } => {
                     let temp = self
                         .builder
-                        .build_alloca(self.llvm_type_id(arg_type_ids[0]), "arr_ptr_tmp")
+                        .build_alloca(self.llvm_type_id(arg_type_ids[0])?, "arr_ptr_tmp")
                         .map_err(|e| CodegenError::from(format!("Failed ArrPtr alloca: {}", e)))?;
                     self.builder
                         .build_store(temp, compiled_args[0])
                         .map_err(|e| CodegenError::from(format!("Failed ArrPtr store: {}", e)))?;
                     let zero = self.context.i64_type().const_int(0, false);
-                    let array_ty = self.llvm_type_id(arg_type_ids[0]);
+                    let array_ty = self.llvm_type_id(arg_type_ids[0])?;
                     let ptr = unsafe {
                         self.builder
                             .build_gep(array_ty, temp, &[zero, zero], "arr_raw_ptr")
@@ -439,8 +439,8 @@ impl<'ctx> CodeGen<'ctx> {
             },
             MirIntrinsicId::SizeOf => {
                 let elem_ty = match self.type_view().ty(arg_type_ids[0]) {
-                    Ty::Pointer(inner) => self.llvm_type_id(*inner),
-                    _ => self.llvm_type_id(arg_type_ids[0]),
+                    Ty::Pointer(inner) => self.llvm_type_id(*inner)?,
+                    _ => self.llvm_type_id(arg_type_ids[0])?,
                 };
                 let size_val = elem_ty
                     .size_of()

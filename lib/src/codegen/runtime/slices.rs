@@ -101,7 +101,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.slice_parts_from_struct(value, "slice")
             }
             Type::Array(inner, len) => {
-                let array_ty = self.llvm_type(&Type::Array(inner.clone(), len));
+                let array_ty = self.llvm_type(&Type::Array(inner.clone(), len))?;
                 let temp = self
                     .builder
                     .build_alloca(array_ty, "array_tmp")
@@ -133,7 +133,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Type::Array(elem, len) => {
                     let ptr = value.into_pointer_value();
                     let zero = self.context.i64_type().const_int(0, false);
-                    let array_ty = self.llvm_type(&Type::Array(elem.clone(), *len));
+                    let array_ty = self.llvm_type(&Type::Array(elem.clone(), *len))?;
                     let data_ptr = unsafe {
                         self.builder
                             .build_gep(array_ty, ptr, &[zero, zero], "array_ref_data_ptr")

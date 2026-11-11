@@ -311,7 +311,7 @@ impl<'ctx> CodeGen<'ctx> {
                             intrinsic
                         ))
                     })?;
-                    let coerced = self.coerce_value(value, self.llvm_type(&destination_ty))?;
+                    let coerced = self.coerce_value(value, self.llvm_type(&destination_ty)?)?;
                     self.builder
                         .build_store(destination_ptr, coerced)
                         .map_err(|e| {
@@ -402,7 +402,7 @@ impl<'ctx> CodeGen<'ctx> {
             all_args.extend(compiled_args);
             self.builder
                 .build_indirect_call(
-                    self.callable_code_type(&param_types, &ret_ty),
+                    self.callable_code_type(&param_types, &ret_ty)?,
                     code_ptr,
                     &all_args,
                     "mir_indirect_call",
@@ -418,7 +418,7 @@ impl<'ctx> CodeGen<'ctx> {
             let value = result.try_as_basic_value().left().ok_or_else(|| {
                 CodegenError::from("MIR call expected a return value but got void")
             })?;
-            let coerced = self.coerce_value(value, self.llvm_type(&destination_ty))?;
+            let coerced = self.coerce_value(value, self.llvm_type(&destination_ty)?)?;
             self.builder
                 .build_store(destination_ptr, coerced)
                 .map_err(|e| {
@@ -484,7 +484,7 @@ impl<'ctx> CodeGen<'ctx> {
         match param.pass_mode {
             MirPassMode::Direct | MirPassMode::FatDirect => Ok(value.into()),
             MirPassMode::Pointer => {
-                if self.type_id_lowers_to_pointer(param.semantic_ty) {
+                if self.type_id_lowers_to_pointer(param.semantic_ty)? {
                     return Ok(value.into());
                 }
 
@@ -495,7 +495,7 @@ impl<'ctx> CodeGen<'ctx> {
                     Operand::Constant(_) => {
                         let temp = self
                             .builder
-                            .build_alloca(self.llvm_type_id(param.semantic_ty), "mir_pointer_arg")
+                            .build_alloca(self.llvm_type_id(param.semantic_ty)?, "mir_pointer_arg")
                             .map_err(|e| {
                                 CodegenError::from(format!(
                                     "Failed to allocate MIR pointer ABI argument in '{}': {}",
@@ -503,7 +503,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 ))
                             })?;
                         let coerced =
-                            self.coerce_value(value, self.llvm_type_id(param.semantic_ty))?;
+                            self.coerce_value(value, self.llvm_type_id(param.semantic_ty)?)?;
                         self.builder.build_store(temp, coerced).map_err(|e| {
                             CodegenError::from(format!(
                                 "Failed to store MIR pointer ABI argument in '{}': {}",
@@ -528,7 +528,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(self.compile_mir_place_value(ctx, place)?.into())
             }
             MirPassMode::Pointer => {
-                if self.type_id_lowers_to_pointer(param.semantic_ty) {
+                if self.type_id_lowers_to_pointer(param.semantic_ty)? {
                     Ok(self.compile_mir_place_value(ctx, place)?.into())
                 } else {
                     Ok(self.compile_mir_place_address(ctx, place)?.into())
@@ -574,7 +574,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let zero = self.context.i64_type().const_int(0, false);
-        let array_ty = self.llvm_type(&Type::Array(array_elem, len));
+        let array_ty = self.llvm_type(&Type::Array(array_elem, len))?;
         let data_ptr = unsafe {
             self.builder
                 .build_gep(array_ty, array_ptr, &[zero, zero], "mir_array_slice_arg")
@@ -615,7 +615,7 @@ impl<'ctx> CodeGen<'ctx> {
             let value = self
                 .builder
                 .build_load(
-                    self.llvm_type_id(*return_place_ty),
+                    self.llvm_type_id(*return_place_ty)?,
                     *return_place,
                     "return_place",
                 )

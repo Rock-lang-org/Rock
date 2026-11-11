@@ -170,6 +170,14 @@ impl<'a> MirBuilder<'a> {
             self.current_source_owner,
             Some(operation_span),
         );
+        let mir_func = match mir_func {
+            Ok(function) => function,
+            Err(diagnostics) => {
+                self.diagnostics.merge(diagnostics);
+                self.current_block = None;
+                return;
+            }
+        };
         self.closures.push_nested(mir_func);
         self.closures.extend_nested(builder.closures.take_nested());
     }
