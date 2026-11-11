@@ -576,6 +576,35 @@ main = !->
 }
 
 #[test]
+fn test_by_value_self_on_reference_without_reference_impl_is_rejected() {
+    compile_should_fail(
+        r#"
+trait Consume
+    ~@consume = -> 1
+
+struct Tracked
+    < value: I64
+
+impl Drop for Tracked
+    ~@drop = ->
+        self.value.println!
+        return
+
+impl Consume for Tracked
+    ~@consume = -> self.value
+
+main = !->
+    x = Tracked
+        value: 5
+    r = &x
+    r.consume!.println!
+    x.value.println!
+"#,
+        "Cannot move non-copy value of type 'Tracked' out of a reference",
+    );
+}
+
+#[test]
 fn test_shared_self_alias_on_reference_receiver_drops_owner_once() {
     let output = compile_and_run(
         r#"
