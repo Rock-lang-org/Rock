@@ -288,7 +288,7 @@ pub fn parse_array_type(stream: Input) -> IResult<ParseType> {
     Ok((stream, result))
 }
 
-fn parse_array_len(stream: Input) -> IResult<ParseArrayLen> {
+pub(super) fn parse_array_len(stream: Input) -> IResult<ParseArrayLen> {
     if matches!(peek_token(&stream), Some(TokenType::Type(_))) {
         let (stream, ident) = type_token_with_span(stream)?;
         return Ok((stream, ParseArrayLen::Param(ident)));

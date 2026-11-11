@@ -77,7 +77,10 @@ fn serialized_method_try_and_array_repeat_roundtrip() {
                 name: "Continue".to_string(),
             },
         },
-        SerializedHirExprKind::ArrayRepeat(Box::new(unit_expr()), 256),
+        SerializedHirExprKind::ArrayRepeat(
+            Box::new(unit_expr()),
+            crate::types::ArrayLen::Value(256),
+        ),
     ];
 
     let bytes = bincode::serialize(&variants).unwrap();
@@ -96,7 +99,7 @@ fn serialized_method_try_and_array_repeat_roundtrip() {
     ));
     assert!(matches!(
         &decoded[2],
-        SerializedHirExprKind::ArrayRepeat(_, 256)
+        SerializedHirExprKind::ArrayRepeat(_, crate::types::ArrayLen::Value(256))
     ));
 }
 

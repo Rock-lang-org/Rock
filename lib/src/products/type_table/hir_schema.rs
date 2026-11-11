@@ -130,7 +130,7 @@ pub(in crate::products) enum SerializedHirExprKind {
     StringLiteral(String),
     CharLiteral(char),
     ArrayLiteral(Vec<SerializedHirExpr>),
-    ArrayRepeat(Box<SerializedHirExpr>, usize),
+    ArrayRepeat(Box<SerializedHirExpr>, crate::types::ArrayLen),
     TupleLiteral(Vec<SerializedHirExpr>),
     Unit,
     Var(String),

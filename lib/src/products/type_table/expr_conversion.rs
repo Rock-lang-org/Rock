@@ -22,6 +22,12 @@ impl SerializedHirExprKind {
                 Self::ArrayLiteral(encode_exprs(elems, encoder)?)
             }
             crate::hir::HirExprKindFor::ArrayRepeat(value, len) => {
+                if !matches!(
+                    len,
+                    crate::types::ArrayLen::Value(_) | crate::types::ArrayLen::Param(_)
+                ) {
+                    return Err(format!("array repeat length {len:?} cannot be serialized"));
+                }
                 Self::ArrayRepeat(Box::new(SerializedHirExpr::encode(value, encoder)?), *len)
             }
             crate::hir::HirExprKindFor::TupleLiteral(elems) => {
