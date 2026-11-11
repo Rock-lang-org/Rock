@@ -224,24 +224,54 @@ impl Lowerer {
                 span,
             }
         } else {
-            // Unknown struct - lower fields and use a type variable
-            let mut fields = Vec::new();
-            for (ident, expr) in &inst.fields {
-                let hir_expr = self.lower_expression(expr);
-                fields.push(HirStructLiteralField {
+            // No later phase can give an unresolved literal a type, so report
+            // it here; the Error type keeps the mistake from cascading.
+            let message = self.unknown_instance_message(&segments);
+            self.diagnostics.push_with_span(message, span.clone());
+            let fields = inst
+                .fields
+                .iter()
+                .map(|(ident, expr)| HirStructLiteralField {
                     name: ident.name.clone(),
-                    value: hir_expr,
+                    value: self.lower_expression(expr),
                     field: None,
-                });
-            }
-
-            // Might be an enum variant with named fields
-            let ty = self.engine.fresh_type_var_at(span.clone());
+                })
+                .collect();
             HirExpr {
-                ty,
+                ty: Type::Error,
                 kind: HirExprKind::StructLiteral(type_name, None, fields),
                 span,
             }
+        }
+    }
+
+    /// A bare variant name (`Some x`) is the common way to get here, so name
+    /// the qualified constructor when the last segment is a known variant.
+    fn unknown_instance_message(&self, segments: &[String]) -> String {
+        let written = segments.join("::");
+        let Some(last) = segments.last() else {
+            return format!("unknown type '{written}'");
+        };
+        let mut owners = self
+            .items
+            .enumerations()
+            .filter(|(_, enumeration)| {
+                enumeration
+                    .variants
+                    .iter()
+                    .any(|variant| &variant.name == last)
+            })
+            .map(|(_, enumeration)| format!("`{}::{last}`", enumeration.name))
+            .collect::<Vec<_>>();
+        owners.sort();
+        owners.dedup();
+        if owners.is_empty() {
+            format!("unknown type '{written}'")
+        } else {
+            format!(
+                "unknown type '{written}'; enum variants are constructed with their enum path, such as {}",
+                owners.join(" or ")
+            )
         }
     }
 

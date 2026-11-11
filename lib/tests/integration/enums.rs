@@ -299,3 +299,46 @@ main = ->
         "pattern type mismatch",
     );
 }
+
+#[test]
+fn test_bare_variant_constructor_names_the_qualified_path() {
+    compile_should_fail(
+        r#"
+wrap: I64 -> Option I64
+wrap = x -> Some x
+
+main = !->
+    (wrap 1).println!
+"#,
+        "unknown type 'Some'; enum variants are constructed with their enum path, such as `Option::Some`",
+    );
+}
+
+#[test]
+fn test_bare_payloadless_variant_is_reported_instead_of_crashing() {
+    compile_should_fail(
+        r#"
+enum Light
+    On
+    Off
+
+main = !->
+    light: Light = Off
+    ()
+"#,
+        "unknown type 'Off'; enum variants are constructed with their enum path, such as `Light::Off`",
+    );
+}
+
+#[test]
+fn test_unknown_struct_literal_is_reported() {
+    compile_should_fail(
+        r#"
+main = !->
+    point = Pointt
+        x: 1
+    ()
+"#,
+        "unknown type 'Pointt'",
+    );
+}
