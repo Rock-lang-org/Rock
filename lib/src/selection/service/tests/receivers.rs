@@ -656,3 +656,32 @@ fn selection_service_selects_borrowed_receiver_trait_method_for_value_receiver()
     assert_eq!(target.method_id(), Some(method_id));
     assert_eq!(selected.return_type, receiver_ty);
 }
+
+#[test]
+fn committing_pattern_match_leaves_substitution_untouched_on_rejection() {
+    let first = GenericParamId {
+        owner: def_id(900),
+        index: 0,
+    };
+    let second = GenericParamId {
+        owner: def_id(900),
+        index: 1,
+    };
+    let pattern = Type::Tuple(vec![Type::Generic(first), Type::Generic(second), Type::Generic(first)]);
+    let mut subst = HashMap::new();
+
+    // The first candidate binds `first` to I64 and `second` to Bool before failing on I32.
+    let rejected = Type::Tuple(vec![Type::I64, Type::Bool, Type::I32]);
+    assert!(!SelectionService::type_pattern_matches_committing(
+        &pattern, &rejected, &mut subst
+    ));
+    assert!(subst.is_empty(), "rejected match leaked bindings: {subst:?}");
+
+    // A second candidate may then bind the same parameters differently.
+    let accepted = Type::Tuple(vec![Type::I32, Type::Str, Type::I32]);
+    assert!(SelectionService::type_pattern_matches_committing(
+        &pattern, &accepted, &mut subst
+    ));
+    assert_eq!(subst.get(&first), Some(&Type::I32));
+    assert_eq!(subst.get(&second), Some(&Type::Str));
+}
