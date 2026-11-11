@@ -294,10 +294,12 @@ fn lower_loaded_modules_attach_same_named_trait_defaults_to_exact_ids() {
     let right_trait_id = lowered.resolver.item_paths["demo::right::Shared"];
 
     assert_ne!(left_trait_id, right_trait_id);
-    assert_eq!(
+    // The literal-returning default retains numeric evidence until inference
+    // supplies a caller type or applies its I64 default.
+    assert!(matches!(
         lowered.traits[&left_trait_id].methods["value"].body.ty,
-        Type::I64
-    );
+        Type::TypeVar(_)
+    ));
     assert_eq!(
         lowered.traits[&right_trait_id].methods["value"].body.ty,
         Type::Bool

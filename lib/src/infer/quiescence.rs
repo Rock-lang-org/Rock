@@ -234,6 +234,15 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
             .apply_numeric_defaults_for_owners(&hir.constraint_store, Some(owners));
     }
 
+    // Numeric defaults can discharge dependencies across SCC boundaries.
+    // Revisit deferred authority before the strict diagnostic pass, even if
+    // another component has already consumed the engine's changed-var list.
+    for (_, _, obligations) in &mut component_work {
+        for obligation in obligations {
+            obligation.wake();
+        }
+    }
+
     let mut component_queue = (0..component_work.len()).collect::<VecDeque<_>>();
     while let Some(index) = component_queue.pop_front() {
         let generation = hir.engine.substitution_generation();

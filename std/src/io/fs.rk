@@ -28,7 +28,6 @@ o_append = -> 1024
 default_mode = -> 438
 
 // Linux errno for an interrupted system call; the read loop retries on it.
-eintr: () -> I32
 eintr = -> 4
 
 path_has_nul: &Str -> Bool
