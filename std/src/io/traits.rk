@@ -111,8 +111,8 @@ impl Write for Stdout
 impl Show for IoError
     @show = ->
         err = match *self
-            IoError::Os errno => %format "Os: ", errno
-            IoError::InvalidPath => "InvalidPath:".into!
+            IoError::Os errno => %format "Os(", errno, ")"
+            IoError::InvalidPath => "InvalidPath".into!
             IoError::InvalidAddress => "InvalidAddress".into!
             IoError::InvalidInput => "InvalidInput".into!
             IoError::InvalidData => "InvalidData".into!

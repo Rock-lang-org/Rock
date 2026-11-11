@@ -386,7 +386,8 @@ main = !->
 "#,
     );
 
-    assert_eq!(output.lines().next(), Some("IoError(Os: 2)"), "{output}");
+    assert_eq!(output.lines().next(), Some("IoError(Os(2))"), "{output}");
+    assert_eq!(output.lines().nth(1), Some("IoError(InvalidPath)"), "{output}");
     assert!(output.contains("IoError(WriteZero)"), "{output}");
     assert_eq!(output.lines().count(), 3, "{output}");
 }
