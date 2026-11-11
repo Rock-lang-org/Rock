@@ -412,7 +412,7 @@ main = !->
 }
 
 #[test]
-fn test_local_closure_drops_move_capture_when_never_called() {
+fn test_local_borrowing_closure_leaves_owner_to_drop_at_scope_exit() {
     let output = compile_and_run(&format!(
         r#"{TRACKED_CAPTURE_PRELUDE}
 main = !->

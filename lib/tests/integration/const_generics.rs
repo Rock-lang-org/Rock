@@ -501,8 +501,9 @@ main = !->
     );
 }
 
+// `[]` fixes N to zero; it is T, not the array length, that remains unknown.
 #[test]
-fn test_const_generics_uninferable_length_is_a_diagnostic() {
+fn test_const_generics_empty_array_without_element_type_is_ambiguous() {
     compile_should_fail(
         r#"
 pick: [T; N] -> I64
