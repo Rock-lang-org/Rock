@@ -490,3 +490,59 @@ fn circular_module_load_reports_stack() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn re_recorded_module_drops_stale_path_aliases() {
+    let db = SourceDatabase::new();
+    let root = PathBuf::from("/virtual/app/main.rk");
+    let mut graph = ModuleGraph::new(root);
+    let empty = || Module {
+        name: None,
+        top_levels: Vec::new(),
+        is_inline: false,
+        filepath: None,
+    };
+    let old_path = PathBuf::from("/virtual/app/util.rk");
+    let old_canonical = PathBuf::from("/real/app/util.rk");
+    let new_path = PathBuf::from("/virtual/app/util_expanded.rk");
+
+    db.record_loaded_module(
+        &mut graph,
+        "util".to_string(),
+        old_path.clone(),
+        old_canonical.clone(),
+        empty(),
+    );
+    db.record_loaded_module(
+        &mut graph,
+        "util".to_string(),
+        new_path.clone(),
+        new_path.clone(),
+        empty(),
+    );
+
+    assert!(graph.module_for_path(&old_path).is_none());
+    assert!(graph.module_for_path(&old_canonical).is_none());
+    assert_eq!(graph.module_for_path(&new_path).map(|m| m.id), Some(ModuleId(0)));
+    assert_eq!(graph.modules.len(), 1);
+}
+
+#[test]
+fn re_recorded_module_indexes_new_canonical_path() {
+    let db = SourceDatabase::new();
+    let mut graph = ModuleGraph::new(PathBuf::from("/virtual/app/main.rk"));
+    let empty = || Module {
+        name: None,
+        top_levels: Vec::new(),
+        is_inline: false,
+        filepath: None,
+    };
+    let path = PathBuf::from("/virtual/app/util.rk");
+    let canonical = PathBuf::from("/real/app/util.rk");
+
+    db.record_loaded_module(&mut graph, "util".to_string(), path.clone(), path.clone(), empty());
+    db.record_loaded_module(&mut graph, "util".to_string(), path.clone(), canonical.clone(), empty());
+
+    assert_eq!(graph.module_for_path(&canonical).map(|m| m.id), Some(ModuleId(0)));
+    assert_eq!(graph.module_for_path(&path).map(|m| m.id), Some(ModuleId(0)));
+}
