@@ -423,3 +423,64 @@ main = !->
     );
     assert_eq!(output.trim(), "3");
 }
+
+#[test]
+fn test_const_generics_type_alias_over_array_length() {
+    let output = compile_and_run(
+        r#"
+type Row T, N: usize = [T; N]
+
+first: Row I64, 3 -> I64
+first = arr -> arr[0]
+
+main = !->
+    a: Row I64, 3 = [4, 5, 6]
+    first a .println!
+"#,
+    );
+    assert_eq!(output.trim(), "4");
+}
+
+#[test]
+fn test_const_generics_trait_impl_array_length_in_trait_args() {
+    let output = compile_and_run(
+        r#"
+struct Buf T, N: usize
+    < data: [T; N]
+
+trait Convert U
+    @convert: U -> U
+
+impl Convert [T; N] for Buf T, N
+    @convert = a -> a
+
+main = !->
+    b = Buf
+        data: [7, 8, 9]
+    arr: [I64; 3] = b.convert [1, 8, 3]
+    arr[1].println!
+"#,
+    );
+    assert_eq!(output.trim(), "8");
+}
+
+#[test]
+fn test_const_generics_generic_method_returning_array_through_substitution() {
+    let output = compile_and_run(
+        r#"
+struct Buf T, N: usize
+    < data: [T; N]
+
+impl Buf T, N
+    @items: [T; N] -> [T; N]
+    @items = a -> a
+
+main = !->
+    b = Buf
+        data: [1, 2, 3, 4]
+    arr: [I64; 4] = b.items [1, 2, 3, 4]
+    arr[3].println!
+"#,
+    );
+    assert_eq!(output.trim(), "4");
+}

@@ -204,6 +204,8 @@ pub enum ArrayLen {
     Param(GenericParamId),
     /// An inference variable standing for a not-yet-known length.
     Var(TypeVarId),
+    /// A length bound by an enclosing type lambda (a const parameter of a type alias).
+    Bound { depth: u32, index: u32 },
     /// Error placeholder for error recovery.
     Error,
 }
@@ -215,6 +217,10 @@ impl ArrayLen {
             Type::ConstValue(n) => ArrayLen::Value(*n),
             Type::Generic(param) => ArrayLen::Param(*param),
             Type::TypeVar(var) => ArrayLen::Var(*var),
+            Type::BoundVar { depth, index, .. } => ArrayLen::Bound {
+                depth: *depth,
+                index: *index,
+            },
             _ => ArrayLen::Error,
         }
     }
@@ -225,6 +231,11 @@ impl ArrayLen {
             ArrayLen::Value(n) => Type::ConstValue(*n),
             ArrayLen::Param(param) => Type::Generic(*param),
             ArrayLen::Var(var) => Type::TypeVar(*var),
+            ArrayLen::Bound { depth, index } => Type::BoundVar {
+                depth: *depth,
+                index: *index,
+                kind: Kind::Usize,
+            },
             ArrayLen::Error => Type::Error,
         }
     }
@@ -384,16 +395,6 @@ where
         }
         fold_type_children(ty, self)
     }
-
-    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
-        match len {
-            ArrayLen::Param(mut param) => {
-                param.remap_def_ids(self.remap);
-                ArrayLen::Param(param)
-            }
-            other => other,
-        }
-    }
 }
 
 struct TypeVarSubstituter<'a> {
@@ -413,18 +414,6 @@ impl TypeFolder for TypeVarSubstituter<'_> {
         }
     }
 
-    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
-        match len {
-            ArrayLen::Var(id) => match self.subst.get(&id) {
-                Some(replacement) => {
-                    let replacement = self.fold_type(replacement.clone());
-                    ArrayLen::from_const_type(&replacement)
-                }
-                None => len,
-            },
-            other => other,
-        }
-    }
 }
 
 struct GenericSubstituter<'a> {
@@ -451,34 +440,18 @@ impl TypeFolder for GenericSubstituter<'_> {
         substituted
     }
 
-    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
-        let ArrayLen::Param(param) = len else {
-            return len;
-        };
-        if self.visiting.contains(&param) {
-            return len;
-        }
-        let Some(replacement) = self.subst.get(&param).cloned() else {
-            return len;
-        };
-
-        self.visiting.push(param);
-        let substituted = self.fold_type(replacement);
-        self.visiting.pop();
-        ArrayLen::from_const_type(&substituted)
-    }
 }
 
 struct ArrayLenParamCollector<'a> {
     out: &'a mut std::collections::HashSet<GenericParamId>,
 }
 
-impl TypeFolder for ArrayLenParamCollector<'_> {
-    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
-        if let ArrayLen::Param(param) = len {
-            self.out.insert(param);
+impl TypeVisitor for ArrayLenParamCollector<'_> {
+    fn visit_type(&mut self, ty: &Type) {
+        if let Type::Array(_, ArrayLen::Param(param)) = ty {
+            self.out.insert(*param);
         }
-        len
+        visit_type_children(ty, self);
     }
 }
 
@@ -515,19 +488,6 @@ impl TypeFolder for TypeVarToGenericFolder<'_> {
         }
     }
 
-    fn fold_array_len(&mut self, len: ArrayLen) -> ArrayLen {
-        let ArrayLen::Var(id) = len else {
-            return len;
-        };
-        if let Some(composite) = self.composite_types.get(&id).cloned() {
-            let folded = self.fold_type(composite);
-            ArrayLen::from_const_type(&folded)
-        } else if let Some(param) = self.mapping.get(&id) {
-            ArrayLen::Param(*param)
-        } else {
-            len
-        }
-    }
 }
 
 impl Type {
@@ -633,7 +593,7 @@ impl Type {
 
     /// Collect the generic parameters used as array lengths (const generics).
     pub fn collect_array_len_params(&self, out: &mut std::collections::HashSet<GenericParamId>) {
-        fold_type(self.clone(), &mut ArrayLenParamCollector { out });
+        visit_type(self, &mut ArrayLenParamCollector { out });
     }
 
     /// Collect all distinct Generic parameter identities appearing in this type.
