@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use crate::ids::TypeId;
 use crate::mir::{
     Constant, Local, LocalSource, MirBinOp, MirCallable, MirCallableKey, MirFunction,
-    MirFunctionId, MirRuntimeHelper, Mutability, Operand, Place, Projection, Rvalue,
-    StatementData, Terminator,
+    MirFunctionId, MirOrigin, MirRuntimeHelper, MirSyntheticOrigin, Mutability, Operand, Place,
+    Projection, Rvalue, StatementData, Terminator,
 };
 use crate::type_context::TypeContext;
-use crate::types::Type;
+use crate::types::{ArrayLen, Type};
 
 use super::drop_state::LoopOwnedArray;
 use super::{HirProgram, MirBuilder};
@@ -17,6 +17,12 @@ fn place(local: Local) -> Place {
     Place { local, projection: Vec::new() }
 }
 
+// Everything built here is drop glue (an early-exit scope cleanup or the tail
+// helper), so even the index increment and return place write use
+// `cleanup_assign`. The flag only tags the origin as synthetic cleanup and
+// exempts discriminant reads from init checks; none of these statements read
+// one, so using it for non-cleanup-state writes is a labelling choice, not a
+// semantic requirement.
 impl<'a> MirBuilder<'a> {
     /// The binding already owns `counter`; transfer the remaining elements to
     /// one type-keyed helper without merging the caller's cleanup paths.
@@ -32,7 +38,7 @@ impl<'a> MirBuilder<'a> {
         let elem_id = self.type_id_for(&owned.elem_ty);
         let array_ty = Type::Array(
             Box::new(owned.elem_ty.clone()),
-            crate::types::ArrayLen::Value(owned.len as u64),
+            ArrayLen::Value(owned.len as u64),
         );
         let ref_id = self.type_id_for(&Type::Reference {
             mutable: false,
@@ -136,7 +142,7 @@ impl<'a> MirBuilder<'a> {
         let body = self.new_block();
         let done = self.new_block();
         self.current_block = Some(entry);
-        let origin = crate::mir::MirOrigin::synthetic(crate::mir::MirSyntheticOrigin::Cleanup, None);
+        let origin = MirOrigin::synthetic(MirSyntheticOrigin::Cleanup, None);
         self.blocks[entry.0].statements.push(StatementData::storage_live(condition, None));
         self.blocks[entry.0].terminator = Some(Terminator::goto(head, origin.clone()));
         self.blocks[head.0].statements.push(StatementData::cleanup_assign(

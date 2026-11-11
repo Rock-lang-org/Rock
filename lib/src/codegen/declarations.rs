@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
-use inkwell::module::Linkage;
 use inkwell::attributes::{Attribute, AttributeLoc};
+use inkwell::module::Linkage;
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
 use inkwell::values::FunctionValue;
 use inkwell::AddressSpace;
