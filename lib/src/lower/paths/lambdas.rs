@@ -109,6 +109,7 @@ impl Lowerer {
         let mut params = Vec::new();
         let mut param_types = Vec::new();
 
+        self.body.enter_callable_scope(self.scope.depth());
         self.push_scope();
 
         for (index, param_pat) in lambda.parameters.iter().enumerate() {
@@ -164,6 +165,7 @@ impl Lowerer {
         self.choose_capture_storage(&mut captures, Some(lambda));
 
         self.pop_scope();
+        self.body.leave_callable_scope();
 
         let mut func_type =
             Self::lambda_function_type(param_types, ret_type, FunctionSafety::Safe, &captures);
@@ -204,6 +206,7 @@ impl Lowerer {
         span: &crate::lexer::Span,
         expected_params: Option<&[Type]>,
     ) -> HirExpr {
+        self.body.enter_callable_scope(self.scope.depth());
         self.push_scope();
 
         let (name, inferred_ty, mutable, is_ref) =
@@ -262,6 +265,7 @@ impl Lowerer {
         self.choose_capture_storage(&mut captures, None);
 
         self.pop_scope();
+        self.body.leave_callable_scope();
 
         let mut func_type = Self::lambda_function_type(vec![ty], body_ty, FunctionSafety::Safe, &captures);
         Self::apply_lambda_body_effects(&mut func_type, &body_effects);

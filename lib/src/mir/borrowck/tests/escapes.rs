@@ -7,6 +7,7 @@ fn reference_escape_validator_uses_ownership_metadata() {
     let local_escape = reference_return_function(
         &mut type_context,
         MirOwnershipMetadata {
+            consumes_closure_environment: false,
             reference_origins: vec![(Local(0), ReferenceOrigin::Local(Local(1)))],
             temporary_locals: Vec::new(),
             drop_obligations: Vec::new(),
@@ -28,6 +29,7 @@ fn reference_escape_validator_uses_ownership_metadata() {
     let temporary_escape = reference_return_function(
         &mut type_context,
         MirOwnershipMetadata {
+            consumes_closure_environment: false,
             reference_origins: vec![(Local(0), ReferenceOrigin::Temporary(Local(2)))],
             temporary_locals: vec![Local(2)],
             drop_obligations: Vec::new(),
@@ -49,6 +51,7 @@ fn reference_escape_validator_uses_ownership_metadata() {
     let param_escape = reference_return_function(
         &mut type_context,
         MirOwnershipMetadata {
+            consumes_closure_environment: false,
             reference_origins: vec![(Local(0), ReferenceOrigin::Param(Local(1)))],
             temporary_locals: Vec::new(),
             drop_obligations: Vec::new(),
@@ -67,6 +70,7 @@ fn reference_escape_validator_uses_ownership_metadata() {
     let static_override = reference_return_function(
         &mut type_context,
         MirOwnershipMetadata {
+            consumes_closure_environment: false,
             reference_origins: vec![
                 (Local(0), ReferenceOrigin::Temporary(Local(2))),
                 (Local(0), ReferenceOrigin::Static),
@@ -153,6 +157,7 @@ fn closure_assignment_rejects_captured_reference_to_temporary() {
         arg_count: 0,
         ret_type: unit_id,
         ownership: MirOwnershipMetadata {
+            consumes_closure_environment: false,
             reference_origins: vec![(Local(1), ReferenceOrigin::Temporary(Local(2)))],
             temporary_locals: vec![Local(1), Local(2)],
             drop_obligations: Vec::new(),

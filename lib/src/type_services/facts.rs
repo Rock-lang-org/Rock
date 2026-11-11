@@ -139,13 +139,9 @@ impl TypeFacts {
             Type::Reference { mutable: false, .. } => true,
             Type::Reference { mutable: true, .. } => false,
             Type::Pointer(_) => true,
-            Type::Function { captures, .. } => captures.iter().all(|capture| match capture.kind {
-                CaptureKind::SharedBorrow => true,
-                CaptureKind::MutableBorrow => false,
-                // Copying an environment pointer must not alias mutable owned state.
-                CaptureKind::Move => capture.effect != crate::types::CaptureEffect::Mutate
-                    && Self::is_copy(&capture.ty),
-            }),
+            // Arrow types may hold a type-erased environment. Only callable
+            // item constants can be duplicated without transferring ownership.
+            Type::Function { .. } => false,
             Type::Tuple(elems) => elems.iter().all(Self::is_copy),
             Type::Str => true,
             Type::Slice(_) => true,
@@ -186,12 +182,7 @@ impl TypeFacts {
             | Ty::Str
             | Ty::Slice(_)
             | Ty::Pointer(_) => true,
-            Ty::Function { captures, .. } => captures.iter().all(|capture| match capture.kind {
-                CaptureKind::SharedBorrow => true,
-                CaptureKind::MutableBorrow => false,
-                CaptureKind::Move => capture.effect != crate::types::CaptureEffect::Mutate
-                    && Self::is_copy_id(capture.ty, ty),
-            }),
+            Ty::Function { .. } => false,
             Ty::Reference { mutable: false, .. } => true,
             Ty::Tuple(elems) => elems.iter().all(|elem| Self::is_copy_id(*elem, ty)),
             Ty::Reference { mutable: true, .. }
