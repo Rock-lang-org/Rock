@@ -396,3 +396,68 @@ main = ->
 
     assert_eq!(output.trim(), "42");
 }
+
+#[test]
+fn test_signatureless_literal_helper_compares_with_i32_value() {
+    let output = compile_and_run(
+        r#"
+four = -> 4
+
+code = -> 4 as I32
+
+main = !->
+    c = code!
+    if c != four!
+        0.println!
+    else
+        1.println!
+"#,
+    );
+    assert_eq!(output.trim(), "1");
+}
+
+#[test]
+fn test_signatureless_literal_helper_defaults_without_integer_context() {
+    let output = compile_and_run(
+        r#"
+four = -> 4
+
+main = !->
+    four!.println!
+    (four! + 1).println!
+"#,
+    );
+    assert_eq!(output.trim(), "4\n5");
+}
+
+#[test]
+fn test_signatureless_literal_helper_adds_to_i32_value() {
+    let output = compile_and_run(
+        r#"
+four = -> 4
+code = -> 3 as I32
+
+main = !->
+    z = code! + four!
+    if z == (7 as I32)
+        1.println!
+"#,
+    );
+    assert_eq!(output.trim(), "1");
+}
+
+#[test]
+fn test_explicit_i64_literal_helper_is_not_coerced_to_i32() {
+    compile_should_fail(
+        r#"
+four: () -> I64
+four = -> 4
+code = -> 4 as I32
+
+main = !->
+    if code! != four!
+        1.println!
+"#,
+        "No implementation found",
+    );
+}
