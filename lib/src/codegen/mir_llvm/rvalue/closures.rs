@@ -67,13 +67,12 @@ impl<'ctx> CodeGen<'ctx> {
         let env_ptr = if capture_values.is_empty() {
             self.context.ptr_type(AddressSpace::default()).const_null()
         } else {
-            let env_ty = self.context.struct_type(
-                &capture_values
-                    .iter()
-                    .map(|(_, ty)| self.llvm_type(ty))
-                    .collect::<Vec<_>>(),
-                false,
-            );
+            // Field 0 is the environment drop function (null when the
+            // closure owns nothing needing cleanup); captures follow.
+            let ptr_ty = self.context.ptr_type(AddressSpace::default());
+            let mut env_fields = vec![ptr_ty.into()];
+            env_fields.extend(capture_values.iter().map(|(_, ty)| self.llvm_type(ty)));
+            let env_ty = self.context.struct_type(&env_fields, false);
             let env_size = env_ty
                 .size_of()
                 .ok_or_else(|| CodegenError::from("Cannot compute MIR closure environment size"))?;
@@ -103,13 +102,32 @@ impl<'ctx> CodeGen<'ctx> {
                     CodegenError::from(format!("Failed to cast MIR closure env ptr: {}", e))
                 })?;
 
+            let drop_function_id = MirFunctionId::Closure(Box::new(closure.id.env_drop_id()));
+            let drop_ptr = match self
+                .callables
+                .function_symbol(&drop_function_id)
+                .and_then(|symbol| self.functions.get(symbol))
+            {
+                Some(function) => function.as_global_value().as_pointer_value(),
+                None => ptr_ty.const_null(),
+            };
+            let header_ptr = self
+                .builder
+                .build_struct_gep(env_ty, env_ptr, 0, "mir_closure_env_drop_slot")
+                .map_err(|e| {
+                    CodegenError::from(format!("Failed to access MIR closure env header: {}", e))
+                })?;
+            self.builder.build_store(header_ptr, drop_ptr).map_err(|e| {
+                CodegenError::from(format!("Failed to store MIR closure env header: {}", e))
+            })?;
+
             for (index, (value, ty)) in capture_values.iter().enumerate() {
                 let field_ptr = self
                     .builder
                     .build_struct_gep(
                         env_ty,
                         env_ptr,
-                        index as u32,
+                        index as u32 + 1,
                         &format!("mir_closure_capture_store_{}", index),
                     )
                     .map_err(|e| {

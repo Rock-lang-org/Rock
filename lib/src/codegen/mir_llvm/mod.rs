@@ -6,6 +6,7 @@ mod place;
 mod rvalue;
 mod terminator;
 
+use inkwell::types::BasicTypeEnum;
 use inkwell::values::{FunctionValue, PointerValue};
 use inkwell::{AddressSpace, IntPredicate};
 
@@ -401,22 +402,20 @@ impl<'ctx> CodeGen<'ctx> {
                 ))
             })?
             .into_pointer_value();
-        let env_ty = self.context.struct_type(
-            &mir_function
-                .closure_captures
-                .iter()
-                .map(|capture| {
-                    let Some(Some((_, ty))) = context.locals.get(capture.local.0) else {
-                        return Err(CodegenError::internal(format!(
-                            "MIR closure capture local {} is missing",
-                            capture.local.0
-                        )));
-                    };
-                    Ok(self.llvm_type_id(*ty))
-                })
-                .collect::<Result<Vec<_>, CodegenError>>()?,
-            false,
-        );
+        // Field 0 is the environment drop-function header.
+        let mut env_fields = vec![BasicTypeEnum::from(
+            self.context.ptr_type(AddressSpace::default()),
+        )];
+        for capture in &mir_function.closure_captures {
+            let Some(Some((_, ty))) = context.locals.get(capture.local.0) else {
+                return Err(CodegenError::internal(format!(
+                    "MIR closure capture local {} is missing",
+                    capture.local.0
+                )));
+            };
+            env_fields.push(self.llvm_type_id(*ty));
+        }
+        let env_ty = self.context.struct_type(&env_fields, false);
         let env_ptr = self
             .builder
             .build_pointer_cast(
@@ -438,7 +437,7 @@ impl<'ctx> CodeGen<'ctx> {
                 .build_struct_gep(
                     env_ty,
                     env_ptr,
-                    index as u32,
+                    index as u32 + 1,
                     &format!("mir_closure_capture_{}", index),
                 )
                 .map_err(|e| {

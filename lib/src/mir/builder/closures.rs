@@ -90,6 +90,37 @@ impl<'a> MirBuilder<'a> {
             .collect()
     }
 
+    /// An uncalled closure value still owns its by-value captures, but only the
+    /// closure body consumes them. Synthesize a second body over the same
+    /// environment whose scope exit drops every owned capture; codegen stores
+    /// it in the environment header so a drop of the closure value can run it.
+    pub(super) fn push_closure_env_drop_function(
+        &mut self,
+        closure_id: &MirClosureId,
+        lambda_name: &str,
+        captures: &[HirClosureCapture],
+        span: &Span,
+    ) {
+        let owns_cleanup = captures.iter().any(|capture| {
+            capture.kind == crate::hir::HirClosureCaptureKind::Move
+                && self.owns_runtime_cleanup(&capture.ty)
+        });
+        if !owns_cleanup {
+            return;
+        }
+        self.push_closure_body_function(
+            closure_id.env_drop_id(),
+            &format!("{lambda_name}_env_drop"),
+            Vec::new(),
+            HirBlock {
+                stmts: Vec::new(),
+                ty: Type::Unit,
+            },
+            captures.to_vec(),
+            span.clone(),
+        );
+    }
+
     pub(super) fn push_closure_body_function(
         &mut self,
         closure_id: MirClosureId,

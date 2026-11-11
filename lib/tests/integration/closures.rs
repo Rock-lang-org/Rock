@@ -410,3 +410,70 @@ main = !->
         "use of moved value `f`",
     );
 }
+
+#[test]
+fn test_local_closure_drops_move_capture_when_never_called() {
+    let output = compile_and_run(&format!(
+        r#"{TRACKED_CAPTURE_PRELUDE}
+main = !->
+    t = Tracked
+        value: 7
+    f = x -> t.value + x
+    "end".println!
+"#
+    ));
+
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), ["end", "drop"]);
+}
+
+#[test]
+fn test_returned_closure_drops_move_capture_when_never_called() {
+    let output = compile_and_run(&format!(
+        r#"{TRACKED_CAPTURE_PRELUDE}
+main = !->
+    f = make (Tracked
+        value: 7)
+    "end".println!
+"#
+    ));
+
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), ["end", "drop"]);
+}
+
+#[test]
+fn test_closure_moved_into_function_is_dropped_there_once() {
+    let output = compile_and_run(&format!(
+        r#"{TRACKED_CAPTURE_PRELUDE}
+discard = f -> "discarded".println!
+
+main = !->
+    f = make (Tracked
+        value: 7)
+    discard f
+    "end".println!
+"#
+    ));
+
+    assert_eq!(
+        output.trim().lines().collect::<Vec<_>>(),
+        ["discarded", "drop", "end"]
+    );
+}
+
+#[test]
+fn test_closure_in_struct_field_drops_move_capture_with_owner() {
+    let output = compile_and_run(&format!(
+        r#"{TRACKED_CAPTURE_PRELUDE}
+struct Holder F
+    < run: F
+
+main = !->
+    h = Holder
+        run: make (Tracked
+            value: 7)
+    "end".println!
+"#
+    ));
+
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), ["end", "drop"]);
+}

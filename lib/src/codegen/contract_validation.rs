@@ -177,6 +177,11 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let place_ty = self.mir_place_type_id_for_contract_validation(function, place)?;
                 let Some(key) = mir.backend_contract.drop_glue.get(&place_ty) else {
+                    // Closure values drop through the function stored in their
+                    // environment header, not through type-keyed glue.
+                    if matches!(self.structural_type_for(place_ty), Type::Function { .. }) {
+                        continue;
+                    }
                     if !Self::mir_place_is_projected_return_place(function, place)
                         && self.mir_drop_without_glue_is_noop(place_ty)
                     {

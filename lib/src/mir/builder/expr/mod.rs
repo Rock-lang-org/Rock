@@ -472,6 +472,7 @@ impl<'a> MirBuilder<'a> {
                     captures.clone(),
                     expr.span.clone(),
                 );
+                self.push_closure_env_drop_function(&closure_id, &lambda_name, captures, &expr.span);
                 let closure_captures = self.lower_closure_captures(captures);
                 self.emit_assign(
                     dest,
