@@ -72,7 +72,14 @@ impl<'a> SelectionService<'a> {
             subst.insert(param, ty);
         }
         if method_func.is_method {
-            if let Some(self_param) = method_func.params.first() {
+            if let Some(self_param) = method_func.params.first().filter(|self_param| {
+                !Self::generic_self_binds_receiver_by_value(
+                    &self_param.ty,
+                    method_func.self_receiver,
+                    receiver_ty,
+                    &mut subst,
+                )
+            }) {
                 let expected_self = Self::receiver_mode_expected_self_type(
                     self_param.ty.substitute_generics(&subst),
                     method_func.self_receiver,

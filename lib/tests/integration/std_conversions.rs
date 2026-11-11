@@ -290,3 +290,86 @@ main = ->
     assert_eq!(lines[18], "true");
     assert_eq!(lines[19], "x");
 }
+
+#[test]
+fn test_into_on_str_reference_receiver_converts_to_string() {
+    let output = compile_and_run(
+        r#"
+pick: Bool -> String
+pick = flag ->
+    if flag
+        "yes".into!
+    else
+        String::from "no"
+
+main = !->
+    s: String = "x".into!
+    s.println!
+    t: String = match 1
+        1 => "one".into!
+        _ => String::from "other"
+    t.println!
+    (pick true).println!
+    (pick false).println!
+"#,
+    );
+    assert_eq!(output, "x\none\nyes\nno\n");
+}
+
+#[test]
+fn test_into_on_reference_receiver_uses_user_from_impl() {
+    let output = compile_and_run(
+        r#"
+struct W
+    < v: I64
+
+impl From &Str for W
+    from = s -> W
+        v: s.len!
+
+struct Meters
+    < v: I64
+
+struct Label
+    < v: I64
+
+impl From &Meters for Label
+    from = m -> Label
+        v: m.v + 1
+
+main = !->
+    w: W = "abc".into!
+    w.v.println!
+    m = Meters
+        v: 9
+    l: Label = (&m).into!
+    l.v.println!
+"#,
+    );
+    assert_eq!(output, "3\n10\n");
+}
+
+#[test]
+fn test_into_by_value_conversions_still_work() {
+    let output = compile_and_run(
+        r#"
+struct W
+    < v: I64
+
+impl From I64 for W
+    from = n -> W
+        v: n
+
+main = !->
+    c: String = 'c'.into!
+    c.println!
+    f: F64 = 1.5.into!
+    f.println!
+    w: W = 7.into!
+    w.v.println!
+    values: Vec I64 = [1, 2, 3].into!
+    values.len!.println!
+"#,
+    );
+    assert_eq!(output, "c\n1.5\n7\n3\n");
+}

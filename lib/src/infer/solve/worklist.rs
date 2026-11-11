@@ -246,6 +246,7 @@ pub(super) fn solve_constraints_in_place_mode(
                                 kind: SolveErrorKind::TraitNotImplemented {
                                     ty: concrete_ty.clone(),
                                     trait_name: trait_name.to_string(),
+                                    trait_args: resolved_bound.type_args.clone(),
                                     context: context.clone(),
                                 },
                                 span,

@@ -36,6 +36,7 @@ pub enum SolveErrorKind {
     TraitNotImplemented {
         ty: Type,
         trait_name: String,
+        trait_args: Vec<Type>,
         context: String,
     },
     TryNonCarrier {
@@ -74,6 +75,7 @@ impl SolveError {
             SolveErrorKind::TraitNotImplemented {
                 ty,
                 trait_name,
+                trait_args,
                 context,
             } => {
                 let description = if let Type::Function { params, ret, captures, .. } = ty {
@@ -90,9 +92,15 @@ impl SolveError {
                 } else {
                     format!("type `{}`", display(ty))
                 };
+                let trait_display = if trait_args.is_empty() {
+                    trait_name.clone()
+                } else {
+                    let args = trait_args.iter().map(&display).collect::<Vec<_>>().join(", ");
+                    format!("{trait_name} {args}")
+                };
                 format!(
                     "{} does not implement trait `{}` (required by {})",
-                    description, trait_name, context
+                    description, trait_display, context
                 )
             },
             SolveErrorKind::TryNonCarrier { ty } => {
