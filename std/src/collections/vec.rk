@@ -16,6 +16,7 @@
 > std::ops::index::borrow_slice_range_mut
 > std::ops::range::Range
 > std::ffi::libc::exit
+> std::ffi::libc::memcpy
 > std::mem::raw_buffer::RawBuffer
 > std::show::Show
 > std::functional::callable::FnMut
@@ -271,6 +272,33 @@ impl Vec T
         unit: () = vec_unit!
         success: Result (), E = Result::Ok unit
         success
+
+// Byte-only bulk append: arbitrary elements require cloning, not a byte copy.
+impl Vec U8
+    ^@extend_from_slice: &[U8] -> ()
+    ^@extend_from_slice = source ->
+        count = source.len!
+        if count == 0
+            return
+        new_len = checked_add_i64 self.raw_len, count
+        source_ptr = source.as_ptr!
+        if new_len > self.raw.cap!
+            new_cap = checked_grow_capacity self.raw.cap!
+            while new_cap < new_len
+                new_cap = checked_grow_capacity new_cap
+            new_raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, new_cap
+            ptr = new_raw.ptr!
+            if self.raw_len > 0
+                old_ptr = self.raw.ptr!
+                memcpy ptr, old_ptr, self.raw_len
+            // Keep the old allocation live until both copies are complete.
+            unsafe memcpy (ptr + self.raw_len), source_ptr, count
+            self.raw = new_raw
+        else
+            // The exclusive receiver prevents a safe source borrow of self.
+            ptr = self.raw.ptr!
+            unsafe memcpy (ptr + self.raw_len), source_ptr, count
+        self.raw_len = new_len
 
 impl Drop for Vec T
     ~@drop = ->

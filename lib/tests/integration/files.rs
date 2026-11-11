@@ -10,7 +10,8 @@ fn test_read_to_string_preserves_whole_file_bytes() {
     let _cleanup = TestDirCleanup(dir.clone());
     // Put a multibyte character across the read-buffer boundary.
     let large = format!("{}é\n{}", "x".repeat(8191), "tail\0🙂\n".repeat(3000));
-    let cases = ["", "ordinary text\nsecond line\n", "héllo 世界🙂\n", "before\0after\n", &large];
+    let partial = format!("{}end", "b".repeat(8192));
+    let cases = ["", "ordinary text\nsecond line\n", "héllo 世界🙂\n", "before\0after\n", &large, &partial];
     let mut source = String::from(
         r#"
 > std::io::fs::read_to_string
