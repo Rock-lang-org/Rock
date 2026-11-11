@@ -540,3 +540,41 @@ main = !->
         "Type mismatch",
     );
 }
+
+#[test]
+fn test_const_generics_length_only_in_nested_array_is_inferred() {
+    let output = compile_and_run(
+        r#"
+keep: [[I64; N]; M] -> [[I64; N]; M]
+keep = grid -> grid
+
+main = !->
+    g: [[I64; 2]; 3] = keep [[1, 2], [3, 4], [5, 6]]
+    h: [[I64; 3]; 2] = keep [[7, 8, 9], [4, 5, 6]]
+    g.len!.println!
+    h.len!.println!
+"#,
+    );
+    assert_eq!(output.trim(), "3\n2");
+}
+
+#[test]
+fn test_const_generics_nested_array_length_through_method_call() {
+    let output = compile_and_run(
+        r#"
+struct Grid T, N: usize, M: usize
+    < rows: [[T; N]; M]
+
+impl Grid T, N, M
+    @keep: [[T; N]; M] -> [[T; N]; M]
+    @keep = a -> a
+
+main = !->
+    g = Grid
+        rows: [[1, 2], [3, 4], [5, 6]]
+    out: [[I64; 2]; 3] = g.keep [[1, 2], [3, 4], [5, 6]]
+    out.len!.println!
+"#,
+    );
+    assert_eq!(output.trim(), "3");
+}
