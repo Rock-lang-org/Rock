@@ -15,6 +15,7 @@ use super::*;
 impl<'a> MirBuilder<'a> {
     pub fn new(program: &'a HirProgram, type_context: &'a RefCell<TypeContext>) -> Self {
         Self {
+            diagnostics: Default::default(),
             program,
             type_context,
             blocks: Vec::new(),
@@ -55,7 +56,7 @@ impl<'a> MirBuilder<'a> {
         self
     }
 
-    pub fn build(program: &HirProgram) -> MirProgram {
+    pub fn build(program: &HirProgram) -> Result<MirProgram, crate::diagnostic::Diagnostics> {
         let mut functions = std::collections::BTreeMap::new();
         let mut initial_type_context = TypeContext::new();
         let _ = crate::hir::collect_hir_type_ids(program, &mut initial_type_context);
@@ -65,14 +66,14 @@ impl<'a> MirBuilder<'a> {
             let mut builder = MirBuilder::new(program, &type_context);
             let mir_id = MirFunctionId::Function(id);
             let mir_func =
-                builder.build_function(mir_id.clone(), name, func, false, Some(id), None);
+                builder.build_function(mir_id.clone(), name, func, false, Some(id), None)?;
             functions.insert(mir_id, mir_func);
             for nested in builder.closures.take_nested() {
                 functions.insert(nested.id.clone(), nested);
             }
         }
 
-        Self::populate_array_tail_helpers(program, &type_context, &HashSet::new(), &mut functions);
+        Self::populate_array_tail_helpers(program, &type_context, &HashSet::new(), &mut functions)?;
         let type_context = type_context.into_inner();
         let mut backend_contract = crate::mir::MirBackendContract::default();
         Self::populate_backend_contract_function_bodies(
@@ -82,22 +83,22 @@ impl<'a> MirBuilder<'a> {
         );
         Self::populate_backend_contract_runtime_requirements(&mut backend_contract, &functions);
 
-        MirProgram {
+        Ok(MirProgram {
             functions,
             type_context,
             backend_contract,
-        }
+        })
     }
 
-    pub fn build_monomorphized(program: &crate::mono::MonomorphizedProgram) -> MirProgram {
+    pub fn build_monomorphized(program: &crate::mono::MonomorphizedProgram) -> Result<MirProgram, crate::diagnostic::Diagnostics> {
         let mut program = program.clone();
-        let bodies = Self::take_mir_instance_bodies(&mut program);
+        let bodies = Self::take_mir_instance_bodies(&mut program)?;
         Self::build_monomorphized_with_instance_bodies(&program, &bodies)
     }
 
     pub fn take_mir_instance_bodies(
         program: &mut crate::mono::MonomorphizedProgram,
-    ) -> MirInstanceBodies {
+    ) -> Result<MirInstanceBodies, crate::diagnostic::Diagnostics> {
         let type_context = RefCell::new(program.type_context.clone());
         let callable_instances_by_def_id = Self::callable_instances_by_def_id_for_program(program);
         let method_def_ids = program
@@ -123,7 +124,7 @@ impl<'a> MirBuilder<'a> {
             if record.provided_by_object {
                 continue;
             }
-            let Some(body) = program.pre_mir_instance_bodies.take(record.id) else {
+            let Some(body) = program.pre_mir_instance_bodies.get(record.id).cloned() else {
                 continue;
             };
 
@@ -147,7 +148,7 @@ impl<'a> MirBuilder<'a> {
                 skip_self_cleanup,
                 Some(Self::instance_origin_callable_def_id(&record.origin)),
                 None,
-            );
+            )?;
             bodies.insert(
                 record.id,
                 MirInstanceBody {
@@ -160,8 +161,15 @@ impl<'a> MirBuilder<'a> {
             }
         }
 
+        // A failed build must not consume the input bodies: callers must never
+        // be able to retry and silently omit the body that caused a diagnostic.
+        for record in program.instances.values() {
+            if !record.provided_by_object {
+                program.pre_mir_instance_bodies.take(record.id);
+            }
+        }
         program.type_context = type_context.into_inner();
-        bodies
+        Ok(bodies)
     }
 
     fn drop_glue_instance_roots(
@@ -195,7 +203,7 @@ impl<'a> MirBuilder<'a> {
     pub fn build_monomorphized_with_instance_bodies(
         program: &crate::mono::MonomorphizedProgram,
         bodies: &MirInstanceBodies,
-    ) -> MirProgram {
+    ) -> Result<MirProgram, crate::diagnostic::Diagnostics> {
         let mut functions = std::collections::BTreeMap::new();
         let type_context = RefCell::new(program.type_context.clone());
 
@@ -217,7 +225,7 @@ impl<'a> MirBuilder<'a> {
             &type_context,
             &Self::direct_drop_types_for_program(program),
             &mut functions,
-        );
+        )?;
         let mut backend_contract = Self::backend_contract_for_program(
             program,
             &functions,
@@ -231,11 +239,11 @@ impl<'a> MirBuilder<'a> {
         );
         Self::populate_backend_contract_runtime_requirements(&mut backend_contract, &functions);
 
-        MirProgram {
+        Ok(MirProgram {
             functions,
             type_context: type_context.into_inner(),
             backend_contract,
-        }
+        })
     }
 
     fn callable_instances_by_def_id_for_program(

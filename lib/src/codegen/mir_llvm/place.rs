@@ -23,7 +23,7 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
         let (pointer, ty) = self.compile_mir_place_local(ctx, place)?;
         self.builder
-            .build_load(self.llvm_type(&ty), pointer, "mir_place")
+            .build_load(self.llvm_type(&ty)?, pointer, "mir_place")
             .map_err(|e| CodegenError::from(format!("Failed to load MIR place: {}", e)))
     }
 
@@ -77,7 +77,7 @@ impl<'ctx> CodeGen<'ctx> {
                         }
                     }
 
-                    let aggregate_ty = self.llvm_type(&current_ty);
+                    let aggregate_ty = self.llvm_type(&current_ty)?;
                     let field_ty =
                         self.mir_field_projection_ty(&current_ty, *index)
                             .map_err(|_err| {
@@ -105,7 +105,7 @@ impl<'ctx> CodeGen<'ctx> {
                     };
                     let index_value = self
                         .builder
-                        .build_load(self.llvm_type_id(*index_ty), *index_pointer, "mir_index")
+                        .build_load(self.llvm_type_id(*index_ty)?, *index_pointer, "mir_index")
                         .map_err(|e| {
                             CodegenError::from(format!("Failed to load MIR index: {}", e))
                         })?;
@@ -120,7 +120,7 @@ impl<'ctx> CodeGen<'ctx> {
                     match &current_ty {
                         Type::Array(element_ty, _) => {
                             let zero = self.context.i64_type().const_int(0, false);
-                            let array_ty = self.llvm_type(&current_ty);
+                            let array_ty = self.llvm_type(&current_ty)?;
                             current_pointer = unsafe {
                                 self.builder
                                     .build_gep(
@@ -142,7 +142,7 @@ impl<'ctx> CodeGen<'ctx> {
                             let slice_value = self
                                 .builder
                                 .build_load(
-                                    self.llvm_type(&current_ty),
+                                    self.llvm_type(&current_ty)?,
                                     current_pointer,
                                     "mir_slice",
                                 )
@@ -160,7 +160,7 @@ impl<'ctx> CodeGen<'ctx> {
                                     ))
                                 })?
                                 .into_pointer_value();
-                            let element_llvm_ty = self.llvm_type(element_ty);
+                            let element_llvm_ty = self.llvm_type(element_ty)?;
                             current_pointer = unsafe {
                                 self.builder
                                     .build_gep(
@@ -184,7 +184,7 @@ impl<'ctx> CodeGen<'ctx> {
                             let pointer_value = self
                                 .builder
                                 .build_load(
-                                    self.llvm_type(&current_ty),
+                                    self.llvm_type(&current_ty)?,
                                     current_pointer,
                                     "mir_raw_slice_ptr",
                                 )
@@ -210,7 +210,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 Type::Str => Type::U8,
                                 _ => unreachable!(),
                             };
-                            let element_llvm_ty = self.llvm_type(&element_ty);
+                            let element_llvm_ty = self.llvm_type(&element_ty)?;
                             current_pointer = unsafe {
                                 self.builder
                                     .build_gep(
@@ -232,7 +232,7 @@ impl<'ctx> CodeGen<'ctx> {
                             let pointer_value = self
                                 .builder
                                 .build_load(
-                                    self.llvm_type(&current_ty),
+                                    self.llvm_type(&current_ty)?,
                                     current_pointer,
                                     "mir_ptr_index_base",
                                 )
@@ -248,7 +248,7 @@ impl<'ctx> CodeGen<'ctx> {
                                     self.display_type_for_diagnostic(&current_ty)
                                 )));
                             };
-                            let element_llvm_ty = self.llvm_type(element_ty);
+                            let element_llvm_ty = self.llvm_type(element_ty)?;
                             current_pointer = unsafe {
                                 self.builder
                                     .build_gep(
@@ -290,7 +290,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 variant_index
                             ))
                         })?;
-                    let enum_llvm_ty = self.llvm_type(&current_ty);
+                    let enum_llvm_ty = self.llvm_type(&current_ty)?;
                     current_pointer = self
                         .builder
                         .build_struct_gep(
@@ -328,7 +328,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let pointer_value = self
                         .builder
                         .build_load(
-                            self.llvm_type(&current_ty),
+                            self.llvm_type(&current_ty)?,
                             current_pointer,
                             "mir_deref_ptr",
                         )

@@ -18,7 +18,7 @@ impl<'a> MirBuilder<'a> {
         skip_self_param_cleanup: bool,
         source_owner: Option<DefId>,
         operation_span: Option<Span>,
-    ) -> MirFunction {
+    ) -> Result<MirFunction, crate::diagnostic::Diagnostics> {
         self.current_function_id = Some(id.clone());
         self.current_function_name = Some(display_name.to_string());
         self.current_source_owner = source_owner;
@@ -149,7 +149,8 @@ impl<'a> MirBuilder<'a> {
             }
         }
 
-        MirFunction {
+        self.diagnostics.return_if_err()?;
+        Ok(MirFunction {
             id,
             name: display_name.to_string(),
             basic_blocks: std::mem::take(&mut self.blocks),
@@ -158,6 +159,6 @@ impl<'a> MirBuilder<'a> {
             arg_count: func.params.len(),
             ret_type: self.type_id_for(&func.ret_type),
             ownership: std::mem::take(&mut self.ownership),
-        }
+        })
     }
 }

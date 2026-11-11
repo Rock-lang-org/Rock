@@ -72,7 +72,6 @@ pub fn monomorphize(
 ) -> Result<MonomorphizedProgram, Diagnostics> {
     let mut mono = Monomorphizer::new().with_source_map(source_map);
     let program = mono.process(program.into_program());
-    mono.check_instance_array_lengths();
     mono.diagnostics.return_if_err()?;
     let (instances, pre_mir_instance_bodies) = mono.instances.into_parts();
     Ok(MonomorphizedProgram {
@@ -115,7 +114,6 @@ pub(crate) fn monomorphize_with_crates(
     mono.identity_context = identity_context;
     mono.resolver = resolver;
     let program = mono.process_with_crates(program.into_program(), crate_ctx);
-    mono.check_instance_array_lengths();
     mono.diagnostics.return_if_err()?;
     let (instances, pre_mir_instance_bodies) = mono.instances.into_parts();
     Ok(MonomorphizedProgram {

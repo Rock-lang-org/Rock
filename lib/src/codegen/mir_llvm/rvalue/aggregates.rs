@@ -32,7 +32,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let field_types = fields
                     .iter()
                     .map(|ty| self.llvm_type(ty))
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>, _>>()?;
                 let struct_ty = self.context.struct_type(&field_types, false);
                 let mut value = struct_ty.get_undef();
 
@@ -58,7 +58,7 @@ impl<'ctx> CodeGen<'ctx> {
                     )));
                 };
                 self.validate_mir_aggregate_operand_count("array aggregate", len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))? as usize, operands.len())?;
-                let element_llvm_ty = self.llvm_type(element_ty);
+                let element_llvm_ty = self.llvm_type(element_ty)?;
                 let array_ty = element_llvm_ty.array_type(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))? as u32);
                 let mut value = array_ty.get_undef();
 
@@ -110,7 +110,7 @@ impl<'ctx> CodeGen<'ctx> {
                             &self.normalize_projection_type(&ty.substitute_generics(&subst)),
                         )
                     })
-                    .collect();
+                    .collect::<Result<_, _>>()?;
                 let struct_ty = self.context.struct_type(&field_types, false);
                 let mut value = struct_ty.get_undef();
 
@@ -154,9 +154,7 @@ impl<'ctx> CodeGen<'ctx> {
                     expected_payload_count,
                     operands.len(),
                 )?;
-                let layout_types = self
-                    .enum_layout_types_by_id(*enum_id, args)
-                    .ok_or_else(|| CodegenError::layout("Unknown MIR enum layout"))?;
+                let layout_types = self.enum_layout_types_by_id(*enum_id, args)?;
                 let enum_ty = self.context.struct_type(&layout_types, false);
                 let mut value = enum_ty.get_undef();
                 value = self
@@ -182,7 +180,7 @@ impl<'ctx> CodeGen<'ctx> {
                             variant_index
                         ))
                     })?;
-                let payload_llvm_ty = self.llvm_type(&payload_ty);
+                let payload_llvm_ty = self.llvm_type(&payload_ty)?;
                 // One positional field is the payload itself, even when its
                 // type is a tuple; named fields retain their aggregate wrapper.
                 let single_positional =
@@ -267,7 +265,7 @@ impl<'ctx> CodeGen<'ctx> {
             let field_types = fields
                 .iter()
                 .map(|ty| self.llvm_type(ty))
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, _>>()?;
             let struct_ty = self.context.struct_type(&field_types, false);
             let mut payload = struct_ty.get_undef();
 

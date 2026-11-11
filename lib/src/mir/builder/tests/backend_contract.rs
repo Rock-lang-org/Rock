@@ -55,7 +55,7 @@ fn build_monomorphized_backend_contract_type_ids_use_final_mir_context() {
         source_map: crate::source_map::SemanticSourceMap::default(),
     };
 
-    let mir = MirBuilder::build_monomorphized(&mono);
+    let mir = MirBuilder::build_monomorphized(&mono).unwrap();
 
     let layout = mir
         .backend_contract
@@ -190,7 +190,7 @@ fn build_monomorphized_rejects_direct_static_method_function_target() {
         source_map: crate::source_map::SemanticSourceMap::default(),
     };
 
-    let mir = MirBuilder::build_monomorphized(&mono);
+    let mir = MirBuilder::build_monomorphized(&mono).unwrap();
     let caller = mir
         .functions
         .get(&MirFunctionId::Instance(caller_instance))

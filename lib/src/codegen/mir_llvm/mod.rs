@@ -293,7 +293,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let name = Self::mir_local_alloca_name(index, local.name.as_deref());
                 let pointer = self
                     .builder
-                    .build_alloca(self.llvm_type_id(local.ty), &name)
+                    .build_alloca(self.llvm_type_id(local.ty)?, &name)
                     .map_err(|e| {
                         CodegenError::from(format!("Failed to create MIR local: {}", e))
                     })?;
@@ -327,12 +327,11 @@ impl<'ctx> CodeGen<'ctx> {
                 let param_abi = signature
                     .as_ref()
                     .and_then(|signature| signature.params.get(param_index));
-                let coerced = if param_abi.is_some_and(|param| {
-                    param.pass_mode == MirPassMode::Pointer && !self.type_id_lowers_to_pointer(ty)
-                }) {
+                let coerced = if param_abi.is_some_and(|param| param.pass_mode == MirPassMode::Pointer)
+                    && !self.type_id_lowers_to_pointer(ty)? {
                     self.builder
                         .build_load(
-                            self.llvm_type_id(ty),
+                            self.llvm_type_id(ty)?,
                             param.into_pointer_value(),
                             "mir_pointer_param",
                         )
@@ -343,7 +342,7 @@ impl<'ctx> CodeGen<'ctx> {
                             ))
                         })?
                 } else {
-                    self.coerce_value(param, self.llvm_type_id(ty))?
+                    self.coerce_value(param, self.llvm_type_id(ty)?)?
                 };
                 self.builder.build_store(pointer, coerced).map_err(|e| {
                     CodegenError::from(format!("Failed to store MIR argument: {}", e))
@@ -413,7 +412,7 @@ impl<'ctx> CodeGen<'ctx> {
                     capture.local.0
                 )));
             };
-            env_fields.push(self.llvm_type_id(*ty));
+            env_fields.push(self.llvm_type_id(*ty)?);
         }
         let env_ty = self.context.struct_type(&env_fields, false);
         let env_ptr = self
@@ -446,7 +445,7 @@ impl<'ctx> CodeGen<'ctx> {
             let value = self
                 .builder
                 .build_load(
-                    self.llvm_type_id(*local_ty),
+                    self.llvm_type_id(*local_ty)?,
                     field_ptr,
                     "mir_closure_capture",
                 )
@@ -577,7 +576,7 @@ impl<'ctx> CodeGen<'ctx> {
                         )?
                     }
                 };
-                let coerced = self.coerce_value(value, self.llvm_type_id(ty))?;
+                let coerced = self.coerce_value(value, self.llvm_type_id(ty)?)?;
                 self.builder
                     .build_store(destination, coerced)
                     .map_err(|e| {
@@ -623,10 +622,10 @@ impl<'ctx> CodeGen<'ctx> {
             return Ok(false);
         }
 
-        let element_llvm_ty = self.llvm_type(element_ty);
+        let element_llvm_ty = self.llvm_type(element_ty)?;
         let element = self.compile_mir_operand(function, context, &operands[0])?;
         let element = self.coerce_value(element, element_llvm_ty)?;
-        let array_llvm_ty = self.llvm_type(&array_ty);
+        let array_llvm_ty = self.llvm_type(&array_ty)?;
         let index_ty = self.context.i64_type();
         let index = self
             .builder

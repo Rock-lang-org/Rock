@@ -101,7 +101,7 @@ impl<'ctx> CodeGen<'ctx> {
             return match &source_ty {
                 Type::Array(element_ty, len) => {
                     let zero = self.context.i64_type().const_int(0, false);
-                    let array_ty = self.llvm_type(&Type::Array(element_ty.clone(), *len));
+                    let array_ty = self.llvm_type(&Type::Array(element_ty.clone(), *len))?;
                     let data_ptr = unsafe {
                         self.builder
                             .build_gep(array_ty, address, &[zero, zero], "array_ref_slice_ptr")
@@ -120,7 +120,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Type::Slice(_) | Type::Str | Type::Reference { .. } | Type::Pointer(_) => {
                     let value = self
                         .builder
-                        .build_load(self.llvm_type(&source_ty), address, "mir_ref_slice_load")
+                        .build_load(self.llvm_type(&source_ty)?, address, "mir_ref_slice_load")
                         .map_err(|e| {
                             CodegenError::from(format!(
                                 "Failed to load MIR slice-compatible ref source: {}",

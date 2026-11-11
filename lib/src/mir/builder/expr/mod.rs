@@ -362,13 +362,7 @@ impl<'a> MirBuilder<'a> {
                 self.emit_assign(dest, rvalue, span);
             }
             HirExprKind::ArrayRepeat(value, len) => {
-                // Monomorphization diagnoses unresolved repeat lengths before MIR is built.
-                let Some(len) = len.value() else {
-                    panic!(
-                        "array repeat length {len:?} reached MIR lowering in {:?} ({:?})",
-                        self.current_function_id, self.current_function_name
-                    );
-                };
+                let Some(len) = self.concrete_array_length(*len, Some(expr.span.clone())) else { return; };
                 let value_temp = self.new_local_from_expr(value.ty.clone(), value);
                 let value_place = Place {
                     local: value_temp,

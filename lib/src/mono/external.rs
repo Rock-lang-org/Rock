@@ -77,6 +77,7 @@ impl Monomorphizer {
                 .map(|(id, name)| (*id, name.clone())),
         );
         program.rebuild_indexes_with_canonical_names(&canonical_names_by_id);
+        self.finish_instance_symbols();
         program
     }
 

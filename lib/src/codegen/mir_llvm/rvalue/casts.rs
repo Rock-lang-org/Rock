@@ -89,7 +89,7 @@ impl<'ctx> CodeGen<'ctx> {
         from_ty: &Type,
         target_ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, CodegenError> {
-        let to_llvm = self.llvm_type(target_ty);
+        let to_llvm = self.llvm_type(target_ty)?;
         let from_is_fat_pointer = self.is_fat_pointer_type(from_ty);
         let target_is_fat_pointer = self.is_fat_pointer_type(target_ty);
 

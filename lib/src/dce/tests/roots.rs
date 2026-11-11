@@ -128,7 +128,7 @@ fn prune_unreachable_instances_keeps_explicit_runtime_instance_root() {
             false,
         ),
     ]);
-    let mut bodies = crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut program);
+    let mut bodies = crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut program).unwrap();
     bodies.insert_runtime_instance_root(runtime_instance);
 
     super::super::prune_unreachable_instances(&mut program, &mut bodies);

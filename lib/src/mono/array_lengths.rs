@@ -17,13 +17,14 @@ impl Monomorphizer {
     pub(super) fn check_instance_array_lengths(&mut self) {
         let mut offenders = Vec::new();
         for record in self.instances.records() {
-            let function = self.instances.pre_mir_body(record.id).or(record.declared.as_ref());
+            let mut limit_exceeded = false;
             // Observation must not change canonical TypeId allocation or artifacts.
             let mut observed_types = crate::type_context::TypeContext::new();
-            let ids = function.map(|function| {
+            let ids = [self.instances.pre_mir_body(record.id), record.declared.as_ref()]
+                .into_iter().flatten().map(|function| {
                 crate::hir::collect_function_type_ids(function, &mut observed_types)
-            }).unwrap_or_default();
-            if ids.iter().any(|(location, id)| {
+            }).collect::<Vec<_>>();
+            if ids.iter().flat_map(|ids| ids.iter()).any(|(location, id)| {
                 let Ok(ty) = TypeNormalizer::new(&self.normalization_env)
                     .normalize(&observed_types.type_for(id)) else {
                     return true;
@@ -33,26 +34,39 @@ impl Monomorphizer {
                 }
                 let mut validator = LengthValidator::new(&self.nominal_field_types, &self.normalization_env);
                 visit_type(&ty, &mut validator);
+                limit_exceeded |= validator.limit_exceeded;
                 validator.invalid
             })
-                || record.substitution.iter().any(|id| unresolved_array_length(&self.type_context.type_for(*id)))
+                || record.substitution.iter().any(|id| {
+                    let Ok(ty) = TypeNormalizer::new(&self.normalization_env)
+                        .normalize(&self.type_context.type_for(*id)) else {
+                        return true;
+                    };
+                    let mut validator = LengthValidator::new(&self.nominal_field_types, &self.normalization_env);
+                    visit_type(&ty, &mut validator);
+                    limit_exceeded |= validator.limit_exceeded;
+                    validator.invalid
+                })
             {
                 let id = match record.origin {
                     super::InstanceOrigin::Function(id) => id,
                     super::InstanceOrigin::ImplMethod { method, .. }
                     | super::InstanceOrigin::TraitDefault { method, .. } => method,
                 };
-                offenders.push((id, record.symbols.source_name.clone()));
+                offenders.push((id, record.symbols.source_name.clone(), limit_exceeded));
             }
         }
-        for (id, name) in offenders {
+        for (id, name, limit_exceeded) in offenders {
             let message = format!("cannot determine the array length used by `{name}`");
-            let diagnostic = match self.source_map.definition_span(id) {
+            let mut diagnostic = match self.source_map.definition_span(id) {
                 Some(span) => Diagnostic::new(message, span.clone()),
                 None => Diagnostic::for_internal(message),
             }
             .with_code(DiagnosticCode::Mono)
             .with_help("add a type annotation that fixes the array length");
+            if limit_exceeded {
+                diagnostic = diagnostic.with_note("array layout validation exceeded 128 distinct nested nominal instantiations".to_string());
+            }
             self.diagnostics.push(diagnostic);
         }
     }
@@ -69,14 +83,15 @@ pub(super) fn unresolved_array_length(ty: &Type) -> bool {
 struct LengthValidator<'a> {
     fields: &'a HashMap<DefId, Vec<Type>>,
     env: &'a TypeNormalizationEnv,
-    nominal_stack: HashSet<DefId>,
+    nominal_stack: HashSet<Type>,
     binders: Vec<Vec<Kind>>,
     invalid: bool,
+    limit_exceeded: bool,
 }
 
 impl<'a> LengthValidator<'a> {
     fn new(fields: &'a HashMap<DefId, Vec<Type>>, env: &'a TypeNormalizationEnv) -> Self {
-        Self { fields, env, nominal_stack: Default::default(), binders: Vec::new(), invalid: false }
+        Self { fields, env, nominal_stack: Default::default(), binders: Vec::new(), invalid: false, limit_exceeded: false }
     }
 }
 
@@ -101,9 +116,18 @@ impl TypeVisitor for LengthValidator<'_> {
         }
         visit_type_children(ty, self);
         if let Type::Struct { id, args } | Type::Enum { id, args } = ty {
-            // Do not expand recursive nominal layouts indefinitely. Their type
-            // arguments are still checked by visit_type_children above.
-            if self.nominal_stack.insert(*id) {
+            // An exact instantiated cycle is safe to revisit only once. A
+            // growing sequence of distinct instantiations must fail closed,
+            // rather than skip a later instantiation's invalid fields.
+            if self.nominal_stack.contains(ty) {
+                return;
+            }
+            if self.nominal_stack.len() >= 128 {
+                self.invalid = true;
+                self.limit_exceeded = true;
+                return;
+            }
+            if self.nominal_stack.insert(ty.clone()) {
                 if let Some(fields) = self.fields.get(id) {
                     let substitution = args.iter().enumerate().map(|(index, ty)| {
                         (GenericParamId { owner: *id, index: index as u32 }, ty.clone())
@@ -115,7 +139,7 @@ impl TypeVisitor for LengthValidator<'_> {
                         }
                     }
                 }
-                self.nominal_stack.remove(id);
+                self.nominal_stack.remove(ty);
             }
         }
     }

@@ -58,7 +58,7 @@ impl<'ctx> CodeGen<'ctx> {
             );
             let wrapper_fn = self.module.add_function(
                 &wrapper_name,
-                self.callable_code_type(&param_types, &ret_type),
+                self.callable_code_type(&param_types, &ret_type)?,
                 None,
             );
             wrapper_fn.set_linkage(Linkage::Internal);
@@ -101,7 +101,7 @@ impl<'ctx> CodeGen<'ctx> {
                         .ok_or(CodegenError::from(
                             "Wrapper expected a return value but got void",
                         ))?;
-                    let ret = self.coerce_value(ret, self.llvm_type(&ret_type))?;
+                    let ret = self.coerce_value(ret, self.llvm_type(&ret_type)?)?;
                     self.builder.build_return(Some(&ret)).map_err(|e| {
                         CodegenError::from(format!("Failed to return wrapper value: {}", e))
                     })?;
@@ -133,20 +133,20 @@ impl<'ctx> CodeGen<'ctx> {
         match param.pass_mode {
             MirPassMode::Direct | MirPassMode::FatDirect => Ok(arg.into()),
             MirPassMode::Pointer => {
-                if self.type_id_lowers_to_pointer(param.semantic_ty) {
+                if self.type_id_lowers_to_pointer(param.semantic_ty)? {
                     return Ok(arg.into());
                 }
 
                 let temp = self
                     .builder
-                    .build_alloca(self.llvm_type_id(param.semantic_ty), "mir_pointer_arg")
+                    .build_alloca(self.llvm_type_id(param.semantic_ty)?, "mir_pointer_arg")
                     .map_err(|e| {
                         CodegenError::from(format!(
                             "Failed to allocate MIR pointer ABI wrapper argument for '{}': {}",
                             name, e
                         ))
                     })?;
-                let coerced = self.coerce_value(arg, self.llvm_type_id(param.semantic_ty))?;
+                let coerced = self.coerce_value(arg, self.llvm_type_id(param.semantic_ty)?)?;
                 self.builder.build_store(temp, coerced).map_err(|e| {
                     CodegenError::from(format!(
                         "Failed to store MIR pointer ABI wrapper argument for '{}': {}",

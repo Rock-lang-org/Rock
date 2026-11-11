@@ -152,7 +152,7 @@ impl Monomorphizer {
             let origin = self.method_instance_origin(&imp, &method);
             let substitution = type_args.clone();
             let instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
-            let backend_symbol = self.backend_symbol_for_origin(&origin, &substitution);
+            let backend_symbol = String::new();
 
             if let Some(instance_id) = self.instances.get(&instance_key) {
                 if self.rewrite_to_existing_instance_call(expr, args, instance_id) {

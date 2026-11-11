@@ -104,7 +104,7 @@ impl<'a> MirBuilder<'a> {
         types: &RefCell<TypeContext>,
         direct_drop_types: &HashSet<Type>,
         functions: &mut BTreeMap<MirFunctionId, MirFunction>,
-    ) {
+    ) -> Result<(), crate::diagnostic::Diagnostics> {
         let elements = functions.values().flat_map(|function| {
             function.basic_blocks.iter().filter_map(|block| match &block.terminator {
                 Some(Terminator::Call {
@@ -121,8 +121,10 @@ impl<'a> MirBuilder<'a> {
                 program, types, Default::default(), direct_drop_types.clone(),
             );
             let helper = builder.build_array_tail_helper(elem);
+            builder.diagnostics.return_if_err()?;
             functions.insert(helper.id.clone(), helper);
         }
+        Ok(())
     }
 
     pub(super) fn build_array_tail_helper(&mut self, elem: TypeId) -> MirFunction {
