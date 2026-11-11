@@ -639,17 +639,23 @@ impl SourceDatabase {
         // A module recorded again after macro expansion replaces its parsed
         // entry; keeping both would make later phases visit the stale copy.
         if let Some(&existing) = graph.modules_by_qualified_name.get(&qualified_name) {
+            // Drop path entries that still point at the replaced module before
+            // registering the new paths, so a moved module leaves no stale alias.
+            graph.modules_by_path.retain(|_, id| *id != existing);
+            graph.modules_by_path.insert(path.clone(), existing);
+            if canonical_path != path {
+                graph
+                    .modules_by_path
+                    .entry(canonical_path.clone())
+                    .or_insert(existing);
+            }
             graph.modules[existing.0] = LoadedModule {
                 id: existing,
                 qualified_name,
-                path: path.clone(),
-                canonical_path: canonical_path.clone(),
+                path,
+                canonical_path,
                 module,
             };
-            graph.modules_by_path.insert(path, existing);
-            if canonical_path != graph.modules[existing.0].path {
-                graph.modules_by_path.insert(canonical_path, existing);
-            }
             return;
         }
         let id = ModuleId(graph.modules.len());
