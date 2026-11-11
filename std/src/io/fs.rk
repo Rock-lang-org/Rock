@@ -27,6 +27,10 @@ o_trunc = -> 512
 o_append = -> 1024
 default_mode = -> 438
 
+// Linux errno for an interrupted system call; the read loop retries on it.
+eintr: () -> I32
+eintr = -> 4
+
 path_has_nul: &Str -> Bool
 path_has_nul = path ->
     ptr = path.as_ptr!
@@ -95,8 +99,8 @@ read_to_string: &Str -> Result String, IoError
                         bytes.push buffer[i]
                         i = i + 1
             Result::Err (IoError::Os code) =>
-                // Linux EINTR: retry without losing bytes from earlier reads.
-                if code != (4 as I32)
+                // Retry on EINTR without losing bytes from earlier reads.
+                if code != eintr!
                     failure: Result String, IoError = Result::Err (IoError::Os code)
                     return failure
             Result::Err error =>
