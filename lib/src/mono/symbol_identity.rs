@@ -103,8 +103,8 @@ impl Monomorphizer {
                 output.push('a');
                 match len.concrete() {
                     Some(len) => Self::push_text(output, &len.to_string()),
-                    // Unresolved lengths are rejected by the mono length check.
-                    None => output.push('?'),
+                    // Recovery must not merge distinct symbolic substitutions.
+                    None => Self::push_text(output, &format!("{len:?}")),
                 }
                 self.write_type_id(output, *inner);
             }
@@ -238,10 +238,20 @@ impl Monomorphizer {
     }
 
     pub(super) fn backend_symbol_for_origin(
-        &self,
+        &mut self,
         origin: &InstanceOrigin,
         substitution: &[TypeId],
     ) -> String {
+        if substitution.iter().any(|id| {
+            super::array_lengths::unresolved_array_length(&self.type_context.type_for(*id))
+        }) {
+            self.diagnostics.push(
+                crate::diagnostic::Diagnostic::for_internal(
+                    "cannot generate an instance symbol with an unresolved array length",
+                )
+                .with_code(crate::diagnostic::DiagnosticCode::Mono),
+            );
+        }
         let suffix = self.substitution_symbol_suffix(substitution);
         match origin {
             InstanceOrigin::Function(def_id) => {
@@ -271,7 +281,7 @@ impl Monomorphizer {
     }
 
     pub(super) fn backend_symbol_for_function(
-        &self,
+        &mut self,
         name: &str,
         origin: &InstanceOrigin,
         substitution: &[TypeId],
@@ -312,10 +322,10 @@ impl Monomorphizer {
             Type::Pointer(inner) => format!("Ptr{}", Self::type_to_mono_suffix(inner)),
             Type::Slice(inner) => format!("Slice{}", Self::type_to_mono_suffix(inner)),
             Type::Array(inner, len) => {
-                // const-generics: only concrete lengths reach mono symbol names.
+                // Keep bound constructor lengths and recovery identities distinct.
                 match len.concrete() {
                     Some(len) => format!("Arr{}_{}", Self::type_to_mono_suffix(inner), len),
-                    None => format!("Arr{}_?", Self::type_to_mono_suffix(inner)),
+                    None => format!("Arr{}_{len:?}", Self::type_to_mono_suffix(inner)),
                 }
             }
             Type::ConstValue(n) => format!("c{n}"),

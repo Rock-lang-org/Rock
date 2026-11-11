@@ -16,6 +16,7 @@ mod arrays_slices;
 mod borrowck;
 mod closures;
 mod const_generics;
+mod const_generics_body_lengths;
 mod default_type_arguments;
 mod do_notation;
 mod drops;
