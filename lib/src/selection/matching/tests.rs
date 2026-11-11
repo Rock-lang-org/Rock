@@ -463,6 +463,18 @@ fn array_pattern_rejects_conflicting_lengths_for_repeated_param() {
 }
 
 #[test]
+fn array_pattern_rejects_conflicting_length_across_shared_substitution() {
+    let (pattern, _, length) = array_pattern_with_const_param();
+    let array = |n| Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(n));
+    let mut subst = HashMap::new();
+
+    assert!(type_pattern_matches(&pattern, &array(2), &mut subst));
+    assert!(!type_pattern_matches(&pattern, &array(3), &mut subst));
+    assert_eq!(subst.get(&length), Some(&Type::ConstValue(2)));
+    assert!(type_pattern_matches(&pattern, &array(2), &mut subst));
+}
+
+#[test]
 fn array_pattern_keeps_concrete_length_mismatch_rejected() {
     let pattern = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(3));
     let actual = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(4));
