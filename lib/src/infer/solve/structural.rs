@@ -9,6 +9,7 @@ use crate::types::Type;
 
 use super::constructor_obligations::{
     infer_constructor_trait_obligation, infer_explicit_impl_trait_args,
+    infer_partially_known_self_obligation,
 };
 use super::impl_lookup::callable_trait_satisfied;
 use super::type_predicates::{contains_unresolved_type, try_head_is_pending};
@@ -185,9 +186,20 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
                     }
                 }
             }
-            Constraint::Trait { ty, bound, .. } => {
+            Constraint::Trait {
+                ty, bound, span, ..
+            } => {
                 if contains_unresolved_type(&engine.resolve(&ty)) {
-                    ObligationState::Pending
+                    infer_partially_known_self_obligation(
+                        engine,
+                        &ty,
+                        &bound,
+                        impls,
+                        structs,
+                        enums,
+                        builtin_traits,
+                        &span,
+                    )
                 } else if bound
                     .type_args
                     .iter()

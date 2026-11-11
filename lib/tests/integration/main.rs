@@ -36,6 +36,7 @@ mod method_receivers;
 mod modules;
 mod operators;
 mod option_result;
+mod partial_type_annotations;
 mod programs;
 mod raw_pointers;
 mod return_loans;

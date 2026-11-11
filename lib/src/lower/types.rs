@@ -33,6 +33,10 @@ impl TypeLoweringContext for Lowerer {
         self.diagnostics.push(message, span);
     }
 
+    fn fresh_type_hole(&mut self, span: crate::lexer::Span, kind: Kind) -> Option<Type> {
+        Some(self.engine.fresh_type_var_at_kind(span, kind))
+    }
+
     fn record_type_reference(
         &mut self,
         span: crate::lexer::Span,
@@ -181,6 +185,11 @@ impl Lowerer {
 
     pub(crate) fn lower_parse_type(&mut self, parse_type: &ast::ParseType) -> Type {
         TypeLowerer::lower_parse_type(self, parse_type)
+    }
+
+    /// Lowers a local annotation, turning `_` placeholders into inference variables.
+    pub(crate) fn lower_annotation_type(&mut self, parse_type: &ast::ParseType) -> Type {
+        TypeLowerer::lower_annotation_type(self, parse_type)
     }
 }
 

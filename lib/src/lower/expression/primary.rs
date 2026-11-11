@@ -29,7 +29,7 @@ impl Lowerer {
         // Apply type annotation if present
         if let Some(ann) = &primary.type_annotation {
             self.source_map.record_type_annotation(ann.span());
-            let ann_ty = self.lower_parse_type(ann);
+            let ann_ty = self.lower_annotation_type(ann);
             if let Err(e) = self.engine.unify(&result.ty, &ann_ty) {
                 self.diagnostics.push_type_with_span(
                     format!("Type annotation mismatch: {}", e.render(&self.engine)),

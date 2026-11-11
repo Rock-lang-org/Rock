@@ -186,7 +186,7 @@ impl Lowerer {
 
                 if let Some(ann) = type_annotation {
                     self.source_map.record_type_annotation(ann.span());
-                    let ann_ty = self.lower_parse_type(ann);
+                    let ann_ty = self.lower_annotation_type(ann);
                     if let Err(e) = self.engine.unify(&ty, &ann_ty) {
                         self.diagnostics.push_type_with_span(
                             format!(

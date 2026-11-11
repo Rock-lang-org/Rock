@@ -1,23 +1,43 @@
 use crate::ast;
+use crate::ids::TypeVarId;
 use crate::type_services::kind::Kind;
-use crate::type_services::normalize::TypeNormalizationEnv;
+use crate::type_services::normalize::{TypeNormalizationEnv, TypeNormalizer};
 use crate::types::{AssociatedTypeKey, GenericParamId, NominalTypeKind, Type};
 
 use super::kinds::lower_generic_param_kind;
 use super::{ResolvedNominalType, TypeLowerer, TypeLoweringContext};
 
+/// What `_` means while lowering one source type.
+pub(super) enum Holes {
+    /// `_` only opens a constructor section: `Vec _` is `\T -> Vec T`.
+    Sections,
+    /// Local annotations: a `_` whose position expects a proper type (or
+    /// any known kind, when bare) is a fresh inference variable, so
+    /// `Vec _` is `Vec ?T`. Positions expecting a constructor keep the
+    /// section meaning. Created variables are kept with their kinds so
+    /// normalization of the lowered type sees them.
+    Infer(Vec<(TypeVarId, Kind)>),
+}
+
 impl TypeLowerer {
+    /// `expected` is the kind the position requires, when known; it decides
+    /// whether a `_` is an inference variable or a section under
+    /// [`Holes::Infer`].
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_raw<C: TypeLoweringContext + ?Sized>(
         context: &mut C,
         parse_type: &ast::ParseType,
         allow_bare_slice: bool,
         env: &TypeNormalizationEnv,
         binders: &mut Vec<Vec<(String, Kind)>>,
+        expected: Option<&Kind>,
+        holes: &mut Holes,
     ) -> Type {
+        let value = Some(&Kind::Type);
         match parse_type {
             ast::ParseType::Unit(_) => Type::Unit,
             ast::ParseType::Type(inner) => {
-                Self::lower_inner_raw(context, inner, allow_bare_slice, env, binders)
+                Self::lower_inner_raw(context, inner, allow_bare_slice, env, binders, holes)
             }
             ast::ParseType::Application(application) => {
                 let constructor = Self::lower_raw(
@@ -26,15 +46,29 @@ impl TypeLowerer {
                     allow_bare_slice,
                     env,
                     binders,
+                    None,
+                    holes,
                 );
                 if matches!(constructor, Type::Error) {
                     return Type::Error;
                 }
+                let infer_holes =
+                    matches!(holes, Holes::Infer(_)) && expected == Some(&Kind::Type);
+                let mut remaining_kind = TypeNormalizer::new(env).kind_of(&constructor).ok();
                 let mut hole_kinds = Vec::new();
-                let args = application
-                    .args
-                    .iter()
-                    .map(|arg| match arg {
+                let mut args = Vec::with_capacity(application.args.len());
+                for arg in &application.args {
+                    let param_kind = match remaining_kind.take() {
+                        Some(Kind::Arrow(input, output)) => {
+                            remaining_kind = Some(*output);
+                            *input
+                        }
+                        _ => Kind::Type,
+                    };
+                    args.push(match arg {
+                        ast::ParseType::Hole(hole) if infer_holes => {
+                            Self::lower_hole(context, hole.span.clone(), param_kind, holes)
+                        }
                         ast::ParseType::Hole(_) => {
                             let index = hole_kinds.len() as u32;
                             hole_kinds.push(Kind::Type);
@@ -44,9 +78,17 @@ impl TypeLowerer {
                                 kind: Kind::Type,
                             }
                         }
-                        arg => Self::lower_raw(context, arg, false, env, binders),
-                    })
-                    .collect();
+                        arg => Self::lower_raw(
+                            context,
+                            arg,
+                            false,
+                            env,
+                            binders,
+                            Some(&param_kind),
+                            holes,
+                        ),
+                    });
+                }
                 let application = Type::Apply {
                     constructor: Box::new(constructor),
                     args,
@@ -73,7 +115,7 @@ impl TypeLowerer {
                     .collect::<Vec<_>>();
                 let kinds = params.iter().map(|(_, kind)| kind.clone()).collect();
                 binders.push(params);
-                let body = Self::lower_raw(context, &lambda.body, false, env, binders);
+                let body = Self::lower_raw(context, &lambda.body, false, env, binders, None, holes);
                 binders.pop();
                 Type::Lambda {
                     params: kinds,
@@ -81,15 +123,21 @@ impl TypeLowerer {
                 }
             }
             ast::ParseType::ConstValue { value, .. } => Type::ConstValue(*value),
-            ast::ParseType::Hole(_) => {
-                context.push_type_error(
-                    "type holes are not yet supported".to_string(),
-                    parse_type.span(),
-                );
-                Type::Error
-            }
+            ast::ParseType::Hole(hole) => match (&holes, expected) {
+                (Holes::Infer(_), Some(kind)) => {
+                    Self::lower_hole(context, hole.span.clone(), kind.clone(), holes)
+                }
+                _ => {
+                    context.push_type_error(
+                        "the type placeholder `_` is only allowed in local type annotations"
+                            .to_string(),
+                        parse_type.span(),
+                    );
+                    Type::Error
+                }
+            },
             ast::ParseType::Associated { base, member } => {
-                let base_ty = Self::lower_inner_raw(context, base, false, env, binders);
+                let base_ty = Self::lower_inner_raw(context, base, false, env, binders, holes);
                 let trait_name = if base.name == "Self" {
                     context
                         .current_trait_name()
@@ -161,17 +209,25 @@ impl TypeLowerer {
                     return Type::Unit;
                 }
                 if types.len() == 1 {
-                    return Self::lower_raw(context, &types[0], false, env, binders);
+                    return Self::lower_raw(context, &types[0], false, env, binders, expected, holes);
                 }
                 if types.len() == 2 && matches!(&types[0], ast::ParseType::Unit(_)) {
-                    let ret = Self::lower_raw(context, &types[1], false, env, binders);
+                    let ret = Self::lower_raw(context, &types[1], false, env, binders, value, holes);
                     return Type::function(Vec::new(), ret);
                 }
                 let params: Vec<Type> = types[..types.len() - 1]
                     .iter()
-                    .map(|ty| Self::lower_raw(context, ty, false, env, binders))
+                    .map(|ty| Self::lower_raw(context, ty, false, env, binders, value, holes))
                     .collect();
-                let ret = Self::lower_raw(context, &types[types.len() - 1], false, env, binders);
+                let ret = Self::lower_raw(
+                    context,
+                    &types[types.len() - 1],
+                    false,
+                    env,
+                    binders,
+                    value,
+                    holes,
+                );
                 Type::function(params, ret)
             }
             ast::ParseType::Slice(inner) => {
@@ -183,11 +239,11 @@ impl TypeLowerer {
                     return Type::Error;
                 }
                 Type::Slice(Box::new(Self::lower_raw(
-                    context, inner, false, env, binders,
+                    context, inner, false, env, binders, value, holes,
                 )))
             }
             ast::ParseType::Array { inner, len } => {
-                let inner_ty = Self::lower_raw(context, inner, false, env, binders);
+                let inner_ty = Self::lower_raw(context, inner, false, env, binders, value, holes);
                 let len = match len {
                     ast::ParseArrayLen::Literal(n) => crate::types::ArrayLen::Value(*n),
                     ast::ParseArrayLen::Param(ident) => {
@@ -211,17 +267,39 @@ impl TypeLowerer {
             ast::ParseType::Tuple(elems) => Type::Tuple(
                 elems
                     .iter()
-                    .map(|ty| Self::lower_raw(context, ty, false, env, binders))
+                    .map(|ty| Self::lower_raw(context, ty, false, env, binders, value, holes))
                     .collect(),
             ),
             ast::ParseType::Reference { is_mut, pointee } => Type::Reference {
                 mutable: *is_mut,
-                inner: Box::new(Self::lower_raw(context, pointee, true, env, binders)),
+                inner: Box::new(Self::lower_raw(
+                    context, pointee, true, env, binders, value, holes,
+                )),
             },
             ast::ParseType::Pointer(inner) => Type::Pointer(Box::new(Self::lower_raw(
-                context, inner, true, env, binders,
+                context, inner, true, env, binders, value, holes,
             ))),
         }
+    }
+
+    /// A `_` in an inferred position: a fresh variable of the expected kind.
+    fn lower_hole<C: TypeLoweringContext + ?Sized>(
+        context: &mut C,
+        span: crate::lexer::Span,
+        kind: Kind,
+        holes: &mut Holes,
+    ) -> Type {
+        let Some(ty) = context.fresh_type_hole(span.clone(), kind.clone()) else {
+            context.push_type_error(
+                "the type placeholder `_` is only allowed in local type annotations".to_string(),
+                span,
+            );
+            return Type::Error;
+        };
+        if let (Holes::Infer(created), Type::TypeVar(id)) = (holes, &ty) {
+            created.push((*id, kind));
+        }
+        ty
     }
 
     pub(super) fn lower_inner_raw<C: TypeLoweringContext + ?Sized>(
@@ -230,11 +308,12 @@ impl TypeLowerer {
         allow_bare_slice: bool,
         env: &TypeNormalizationEnv,
         binders: &mut Vec<Vec<(String, Kind)>>,
+        holes: &mut Holes,
     ) -> Type {
         let generics: Vec<Type> = inner
             .generics
             .iter()
-            .map(|generic| Self::lower_raw(context, generic, false, env, binders))
+            .map(|generic| Self::lower_raw(context, generic, false, env, binders, None, holes))
             .collect();
 
         let base = match inner.name.as_str() {

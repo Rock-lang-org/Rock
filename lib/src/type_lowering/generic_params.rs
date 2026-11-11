@@ -160,7 +160,15 @@ pub(crate) fn lower_param_defaults<C: TypeLoweringContext + ?Sized>(
         };
         let mut env = TypeNormalizationEnv::new();
         scoped.populate_type_normalization_env(&mut env);
-        let raw = TypeLowerer::lower_raw(&mut scoped, default, false, &env, &mut Vec::new());
+        let raw = TypeLowerer::lower_raw(
+            &mut scoped,
+            default,
+            false,
+            &env,
+            &mut Vec::new(),
+            Some(&expected),
+            &mut super::Holes::Sections,
+        );
         let raw = TypeLowerer::complete_type(&mut scoped, raw, &expected, &env, &default.span());
         let ty = TypeLowerer::normalize(&mut scoped, &env, raw, default.span());
         let mut invalid = false;

@@ -9,6 +9,8 @@ mod kinds;
 mod raw_lowering;
 mod type_aliases;
 
+use raw_lowering::Holes;
+
 pub(crate) use generic_params::{
     complete_generic_args, lower_generic_param_decls, lower_param_defaults,
 };
@@ -54,6 +56,11 @@ pub(crate) trait TypeLoweringContext {
     fn constructor_params(&self, _id: crate::ids::DefId) -> Option<Vec<GenericParamDecl>> {
         None
     }
+    /// A fresh inference variable for a `_` in a local annotation. Contexts
+    /// without an inference engine (item signatures) return `None`.
+    fn fresh_type_hole(&mut self, _span: crate::lexer::Span, _kind: Kind) -> Option<Type> {
+        None
+    }
 }
 
 pub(crate) struct TypeLowerer;
@@ -74,14 +81,23 @@ impl TypeLowerer {
         context: &mut C,
         parse_type: &ast::ParseType,
     ) -> Type {
-        Self::lower(context, parse_type, false)
+        Self::lower(context, parse_type, false, Holes::Sections)
+    }
+
+    /// A local value annotation (`x: Vec _ = ...`, `expr: T`), where `_` in
+    /// a proper-type position is left for inference.
+    pub(crate) fn lower_annotation_type<C: TypeLoweringContext + ?Sized>(
+        context: &mut C,
+        parse_type: &ast::ParseType,
+    ) -> Type {
+        Self::lower(context, parse_type, false, Holes::Infer(Vec::new()))
     }
 
     pub(crate) fn lower_unsized_type<C: TypeLoweringContext + ?Sized>(
         context: &mut C,
         parse_type: &ast::ParseType,
     ) -> Type {
-        Self::lower(context, parse_type, true)
+        Self::lower(context, parse_type, true, Holes::Sections)
     }
 
     pub(crate) fn lower_parse_type_term<C: TypeLoweringContext + ?Sized>(
@@ -90,7 +106,15 @@ impl TypeLowerer {
     ) -> Type {
         let mut env = TypeNormalizationEnv::new();
         context.populate_type_normalization_env(&mut env);
-        let raw = Self::lower_raw(context, parse_type, false, &env, &mut Vec::new());
+        let raw = Self::lower_raw(
+            context,
+            parse_type,
+            false,
+            &env,
+            &mut Vec::new(),
+            Some(&Kind::Type),
+            &mut Holes::Sections,
+        );
         Self::complete_type(context, raw, &Kind::Type, &env, &parse_type.span())
     }
 
@@ -100,7 +124,15 @@ impl TypeLowerer {
     ) -> Type {
         let mut env = TypeNormalizationEnv::new();
         context.populate_type_normalization_env(&mut env);
-        let raw = Self::lower_raw(context, parse_type, false, &env, &mut Vec::new());
+        let raw = Self::lower_raw(
+            context,
+            parse_type,
+            false,
+            &env,
+            &mut Vec::new(),
+            None,
+            &mut Holes::Sections,
+        );
         Self::normalize(context, &env, raw, parse_type.span())
     }
 
@@ -111,7 +143,15 @@ impl TypeLowerer {
     ) -> Type {
         let mut env = TypeNormalizationEnv::new();
         context.populate_type_normalization_env(&mut env);
-        let raw = Self::lower_raw(context, parse_type, false, &env, &mut Vec::new());
+        let raw = Self::lower_raw(
+            context,
+            parse_type,
+            false,
+            &env,
+            &mut Vec::new(),
+            Some(kind),
+            &mut Holes::Sections,
+        );
         let raw = Self::complete_type(context, raw, kind, &env, &parse_type.span());
         Self::normalize(context, &env, raw, parse_type.span())
     }
@@ -120,10 +160,24 @@ impl TypeLowerer {
         context: &mut C,
         parse_type: &ast::ParseType,
         allow_bare_slice: bool,
+        mut holes: Holes,
     ) -> Type {
         let mut env = TypeNormalizationEnv::new();
         context.populate_type_normalization_env(&mut env);
-        let raw = Self::lower_raw(context, parse_type, allow_bare_slice, &env, &mut Vec::new());
+        let raw = Self::lower_raw(
+            context,
+            parse_type,
+            allow_bare_slice,
+            &env,
+            &mut Vec::new(),
+            Some(&Kind::Type),
+            &mut holes,
+        );
+        if let Holes::Infer(created) = holes {
+            for (id, kind) in created {
+                env.register_inference_kind(id, kind);
+            }
+        }
         let raw = Self::complete_type(context, raw, &Kind::Type, &env, &parse_type.span());
         Self::normalize(context, &env, raw, parse_type.span())
     }

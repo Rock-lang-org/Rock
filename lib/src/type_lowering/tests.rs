@@ -4,7 +4,7 @@ use super::*;
 
 use crate::ast::{GenericParamDecl as AstGenericParamDecl, Ident, ParseType, ParseTypeInner};
 use crate::hir::{HirAssociatedTypeDecl, HirEnum, HirStruct, HirTrait};
-use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId};
+use crate::ids::{AssocTypeId, CrateId, DefId, Idx, LocalDefId, TypeVarId};
 use crate::lexer::Span;
 use crate::types::{AssociatedTypeKey, GenericParamDecl, GenericParamId, NominalTypeKind};
 
@@ -18,11 +18,20 @@ struct TestTypeContext {
     generic_owner: Option<DefId>,
     generic_params: Vec<String>,
     generic_kinds: HashMap<String, Kind>,
+    /// `Some` when the context can create inference variables for `_`; the
+    /// kinds of the variables handed out so far.
+    hole_kinds: Option<Vec<Kind>>,
 }
 
 impl TypeLoweringContext for TestTypeContext {
     fn push_type_error(&mut self, message: String, _span: crate::lexer::Span) {
         self.errors.push(message);
+    }
+
+    fn fresh_type_hole(&mut self, _span: crate::lexer::Span, kind: Kind) -> Option<Type> {
+        let kinds = self.hole_kinds.as_mut()?;
+        kinds.push(kind);
+        Some(Type::TypeVar(TypeVarId::from_raw(kinds.len() as u32 - 1)))
     }
 
     fn current_module_prefix(&self) -> Option<String> {
@@ -455,4 +464,118 @@ fn type_lowerer_creates_implicit_generic_in_context() {
     assert_eq!(ty, Type::Generic(GenericParamId { owner, index: 0 }));
     assert_eq!(context.generic_params, vec!["T".to_string()]);
     assert!(context.errors.is_empty());
+}
+
+fn hole() -> ParseType {
+    ParseType::Hole(ast::TypeHole { span: Span::test() })
+}
+
+fn context_with_result(result_id: DefId) -> TestTypeContext {
+    let mut context = TestTypeContext {
+        hole_kinds: Some(Vec::new()),
+        ..TestTypeContext::default()
+    };
+    context.enums.insert(
+        "Result".to_string(),
+        HirEnum {
+            id: result_id,
+            name: "Result".to_string(),
+            generic_params: GenericParamDecl::type_params(result_id, ["T", "E"]),
+            variants: Vec::new(),
+        },
+    );
+    context
+}
+
+#[test]
+fn annotation_hole_in_proper_type_position_is_an_inference_variable() {
+    let result_id = def_id(30);
+    let mut context = context_with_result(result_id);
+
+    let ty = TypeLowerer::lower_annotation_type(
+        &mut context,
+        &application(named_type("Result"), vec![hole(), named_type("I64")]),
+    );
+
+    assert_eq!(
+        ty,
+        Type::Enum {
+            id: result_id,
+            args: vec![Type::TypeVar(TypeVarId::from_raw(0)), Type::I64],
+        }
+    );
+    assert_eq!(context.hole_kinds, Some(vec![Kind::Type]));
+    assert!(context.errors.is_empty());
+}
+
+#[test]
+fn bare_annotation_hole_is_an_inference_variable() {
+    let mut context = TestTypeContext {
+        hole_kinds: Some(Vec::new()),
+        ..TestTypeContext::default()
+    };
+
+    let ty = TypeLowerer::lower_annotation_type(
+        &mut context,
+        &ParseType::Tuple(vec![hole(), named_type("Bool")]),
+    );
+
+    assert_eq!(
+        ty,
+        Type::Tuple(vec![Type::TypeVar(TypeVarId::from_raw(0)), Type::Bool])
+    );
+    assert!(context.errors.is_empty());
+}
+
+#[test]
+fn annotation_hole_under_constructor_kinded_parameter_stays_a_section() {
+    let result_id = def_id(31);
+    let owner = def_id(32);
+    let mut context = TestTypeContext {
+        generic_owner: Some(owner),
+        generic_params: vec!["F".to_string()],
+        generic_kinds: HashMap::from([(
+            "F".to_string(),
+            Kind::arrow(Kind::arrow(Kind::Type, Kind::Type), Kind::Type),
+        )]),
+        ..context_with_result(result_id)
+    };
+
+    // `F (Result _, I64)` with `F: (Type -> Type) -> Type`: the argument of
+    // `F` must be a constructor, so the hole keeps its section meaning even
+    // inside a local annotation.
+    let ty = TypeLowerer::lower_annotation_type(
+        &mut context,
+        &application(
+            named_type("F"),
+            vec![application(
+                named_type("Result"),
+                vec![hole(), named_type("I64")],
+            )],
+        ),
+    );
+
+    let Type::Apply { args, .. } = ty else {
+        panic!("expected an application, got {ty:?}");
+    };
+    assert!(matches!(args.as_slice(), [Type::Lambda { .. }]), "{args:?}");
+    assert_eq!(context.hole_kinds, Some(Vec::new()));
+    assert!(context.errors.is_empty());
+}
+
+#[test]
+fn hole_outside_local_annotations_is_rejected() {
+    let mut context = TestTypeContext {
+        hole_kinds: Some(Vec::new()),
+        ..TestTypeContext::default()
+    };
+
+    let ty = TypeLowerer::lower_parse_type(&mut context, &hole());
+
+    assert_eq!(ty, Type::Error);
+    assert_eq!(
+        context.errors,
+        vec!["the type placeholder `_` is only allowed in local type annotations".to_string()]
+    );
+    assert_eq!(context.hole_kinds, Some(Vec::new()));
 }
