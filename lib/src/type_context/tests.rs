@@ -195,6 +195,7 @@ fn type_view_exposes_callable_metadata() {
         callable_kind: CallableKind::FnMut,
         captures: vec![TyFunctionCapture {
             kind: CaptureKind::MutableBorrow,
+            effect: crate::types::CaptureEffect::Mutate,
             ty: capture_ty,
         }],
     });

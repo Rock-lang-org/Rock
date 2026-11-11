@@ -108,7 +108,9 @@ impl<'a> MirBuilder<'a> {
                 capture_span.clone(),
             );
             self.var_map.insert(capture.name.clone(), local);
-            if capture.kind == crate::hir::HirClosureCaptureKind::Move {
+            if capture.kind == crate::hir::HirClosureCaptureKind::Move
+                && !self.closures.borrows_owned_environment
+            {
                 // Consuming closures own these environment inputs even when
                 // their bodies only borrow them. Moves in the body clear the
                 // normal drop flags; otherwise scope exit drops each once.

@@ -40,7 +40,7 @@ impl Lowerer {
     }
 
     pub(crate) fn lower_lambda_body(&mut self, lambda: &ast::LambdaDecl) -> HirBlock {
-        self.mark_escaping_lambdas(&lambda.body);
+        self.prepare_capture_liveness(&lambda.body);
         let mut body = self.lower_block(&lambda.body);
         // A literal returned from an inferred callable carries numeric evidence,
         // not a committed I64: callers may supply its expected integer type.

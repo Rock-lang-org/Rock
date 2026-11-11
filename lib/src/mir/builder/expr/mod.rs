@@ -471,6 +471,9 @@ impl<'a> MirBuilder<'a> {
                     params.clone(),
                     body.clone(),
                     captures.clone(),
+                    !matches!(&expr.ty, Type::Function {
+                        callable_kind: crate::types::CallableKind::FnOnce, ..
+                    }),
                     expr.span.clone(),
                 );
                 self.push_closure_env_drop_function(&closure_id, &lambda_name, captures, &expr.span);

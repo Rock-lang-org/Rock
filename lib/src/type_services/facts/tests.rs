@@ -142,3 +142,20 @@ fn type_facts_include_function_capture_types_and_modes() {
     assert!(!TypeFacts::is_copy(&mutable_borrow));
     assert!(TypeFacts::contains_reference(&mutable_borrow));
 }
+
+#[test]
+fn owning_mutable_closure_environment_is_not_aliased_by_copy() {
+    let closure = Type::function_with_metadata(
+        Vec::new(), Type::I64, crate::types::FunctionSafety::Safe,
+        crate::types::CallableKind::FnMut,
+        vec![crate::types::FunctionCapture {
+            kind: crate::types::CaptureKind::Move,
+            effect: crate::types::CaptureEffect::Mutate,
+            ty: Type::I64,
+        }],
+    );
+    let mut context = crate::type_context::TypeContext::new();
+    let id = context.intern_type(&closure);
+    assert!(!TypeFacts::is_copy(&closure));
+    assert!(!TypeFacts::is_copy_id(id, |id| context.ty(id)));
+}

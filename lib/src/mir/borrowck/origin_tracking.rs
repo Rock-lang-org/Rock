@@ -128,7 +128,9 @@ fn type_id_tracks_origin_inner(
                 type_id_tracks_origin_inner(view, backend_contract, *param, tracking, seen)
             }) || type_id_tracks_origin_inner(view, backend_contract, *ret, tracking, seen)
                 || captures.iter().any(|capture| {
-                    type_id_tracks_origin_inner(view, backend_contract, capture.ty, tracking, seen)
+                    (capture.kind != crate::types::CaptureKind::Move
+                        && matches!(tracking, OriginTracking::All | OriginTracking::References))
+                        || type_id_tracks_origin_inner(view, backend_contract, capture.ty, tracking, seen)
                 })
         }
         Ty::Struct { id, args } => {
@@ -314,7 +316,9 @@ fn type_id_tracks_origin_for_structural_type(
                 tracking,
                 seen,
             ) || captures.iter().any(|capture| {
-                type_id_tracks_origin_for_structural_type(
+                (capture.kind != crate::types::CaptureKind::Move
+                    && matches!(tracking, OriginTracking::All | OriginTracking::References))
+                    || type_id_tracks_origin_for_structural_type(
                     view,
                     backend_contract,
                     &capture.ty,

@@ -117,6 +117,7 @@ impl<'a> MirBuilder<'a> {
                 ty: Type::Unit,
             },
             captures.to_vec(),
+            false,
             span.clone(),
         );
     }
@@ -128,6 +129,7 @@ impl<'a> MirBuilder<'a> {
         params: Vec<crate::hir::HirParam>,
         body: HirBlock,
         captures: Vec<HirClosureCapture>,
+        borrows_owned_environment: bool,
         operation_span: Span,
     ) {
         let hir_id = match &closure_id.owner {
@@ -161,6 +163,7 @@ impl<'a> MirBuilder<'a> {
         builder.callable_instances_by_def_id = self.callable_instances_by_def_id.clone();
         builder.method_def_ids = self.method_def_ids.clone();
         builder.closures.set_pending_body_captures(captures);
+        builder.closures.borrows_owned_environment = borrows_owned_environment;
         let function_id = MirFunctionId::Closure(Box::new(closure_id));
         let mir_func = builder.build_function(
             function_id,

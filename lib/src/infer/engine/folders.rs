@@ -21,25 +21,7 @@ impl TypeFolder for ResolveFolder<'_> {
                 .cloned()
                 .map(|replacement| self.fold_type(replacement))
                 .unwrap_or(Type::TypeVar(id)),
-            other => {
-                let resolved = fold_type_children(other, self);
-                match resolved {
-                    Type::Function {
-                        params,
-                        ret,
-                        safety,
-                        captures,
-                        ..
-                    } => Type::Function {
-                        params,
-                        ret,
-                        safety,
-                        callable_kind: crate::types::CallableKind::from_captures(&captures),
-                        captures,
-                    },
-                    other => other,
-                }
-            }
+            other => refresh_callable(fold_type_children(other, self)),
         }
     }
 }
@@ -68,7 +50,28 @@ impl TypeFolder for StrictFinalizer<'_> {
                 }
                 Type::Error
             }
-            other => fold_type_children(other, self),
+            other => refresh_callable(fold_type_children(other, self)),
         }
+    }
+}
+
+/// Body effects remain typed until resolution/defaulting finishes. Owning an
+/// environment never itself makes its invocation consuming.
+fn refresh_callable(ty: Type) -> Type {
+    match ty {
+        Type::Function { params, ret, safety, callable_kind, mut captures } => {
+            for capture in &mut captures {
+                if capture.kind == crate::types::CaptureKind::SharedBorrow
+                    && crate::type_services::facts::TypeFacts::is_copy(&capture.ty)
+                {
+                    capture.kind = crate::types::CaptureKind::Move;
+                }
+            }
+            let callable_kind = if captures.is_empty() { callable_kind } else {
+                crate::types::CallableKind::from_captures(&captures)
+            };
+            Type::Function { params, ret, safety, callable_kind, captures }
+        }
+        other => other,
     }
 }

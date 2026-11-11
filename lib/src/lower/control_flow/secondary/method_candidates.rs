@@ -347,6 +347,7 @@ impl Lowerer {
                     .iter()
                     .map(|capture| crate::types::FunctionCapture {
                         kind: capture.kind,
+                        effect: capture.effect,
                         ty: self.resolve_selected_projection_type(selected, &capture.ty),
                     })
                     .collect(),

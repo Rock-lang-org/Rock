@@ -150,17 +150,16 @@ pub enum CallableKind {
 }
 
 impl CallableKind {
+    /// Storage ownership does not imply consumption by a call. Evaluate body
+    /// effects using the resolved capture types (numeric defaults may make a
+    /// consumed value Copy).
     pub fn from_captures(captures: &[FunctionCapture]) -> Self {
-        captures
-            .iter()
-            .map(|capture| match capture.kind {
-                CaptureKind::SharedBorrow => Self::Fn,
-                CaptureKind::MutableBorrow => Self::FnMut,
-                CaptureKind::Move if TypeFacts::is_copy(&capture.ty) => Self::Fn,
-                CaptureKind::Move => Self::FnOnce,
-            })
-            .max()
-            .unwrap_or(Self::Fn)
+        captures.iter().map(|capture| match capture.effect {
+            CaptureEffect::Read => Self::Fn,
+            CaptureEffect::Mutate => Self::FnMut,
+            CaptureEffect::Consume if TypeFacts::is_copy(&capture.ty) => Self::Fn,
+            CaptureEffect::Consume => Self::FnOnce,
+        }).max().unwrap_or(Self::Fn)
     }
 
     pub fn is_default(self, captures: &[FunctionCapture]) -> bool {
@@ -176,15 +175,28 @@ pub enum CaptureKind {
     Move,
 }
 
+/// What invoking the body does to a captured binding, independently of storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CaptureEffect {
+    Read,
+    Mutate,
+    Consume,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FunctionCapture {
     pub kind: CaptureKind,
+    pub effect: CaptureEffect,
     pub ty: Type,
 }
 
 impl FunctionCapture {
     pub fn new(kind: CaptureKind, ty: Type) -> Self {
-        Self { kind, ty }
+        let effect = match kind {
+            CaptureKind::MutableBorrow => CaptureEffect::Mutate,
+            CaptureKind::SharedBorrow | CaptureKind::Move => CaptureEffect::Read,
+        };
+        Self { kind, effect, ty }
     }
 }
 

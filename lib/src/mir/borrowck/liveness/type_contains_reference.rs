@@ -44,7 +44,8 @@ fn type_id_contains_reference_inner(
                 .any(|param| type_id_contains_reference_inner(view, backend_contract, *param, seen))
                 || type_id_contains_reference_inner(view, backend_contract, *ret, seen)
                 || captures.iter().any(|capture| {
-                    type_id_contains_reference_inner(view, backend_contract, capture.ty, seen)
+                    capture.kind != crate::types::CaptureKind::Move
+                        || type_id_contains_reference_inner(view, backend_contract, capture.ty, seen)
                 })
         }
         Ty::Struct { id, args } => {
@@ -206,7 +207,8 @@ fn type_contains_reference_for_structural_type(
                 type_contains_reference_for_structural_type(view, backend_contract, param, seen)
             }) || type_contains_reference_for_structural_type(view, backend_contract, ret, seen)
                 || captures.iter().any(|capture| {
-                    type_contains_reference_for_structural_type(
+                    capture.kind != crate::types::CaptureKind::Move
+                        || type_contains_reference_for_structural_type(
                         view,
                         backend_contract,
                         &capture.ty,

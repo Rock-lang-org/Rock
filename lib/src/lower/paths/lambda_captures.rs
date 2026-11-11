@@ -385,18 +385,12 @@ impl Lowerer {
                     current_kind,
                 );
             }
-            HirExprKind::Lambda { params, body, .. } => {
-                let mut nested_defined = defined.clone();
-                for param in params {
-                    nested_defined.insert(param.name.clone());
+            HirExprKind::Lambda { captures, .. } => {
+                for capture in captures {
+                    self.record_lambda_capture(
+                        &capture.name, capture.kind, defined, used, capture_kinds,
+                    );
                 }
-                self.collect_lambda_captures_block(
-                    body,
-                    &mut nested_defined,
-                    used,
-                    capture_kinds,
-                    current_kind,
-                );
             }
             HirExprKind::Intrinsic { args, .. } => {
                 for arg in args {

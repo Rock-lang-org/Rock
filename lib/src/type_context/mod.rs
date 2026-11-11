@@ -86,6 +86,7 @@ pub enum Ty {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TyFunctionCapture {
     pub kind: CaptureKind,
+    pub effect: crate::types::CaptureEffect,
     pub ty: TypeId,
 }
 
@@ -385,6 +386,7 @@ impl TypeContext {
                     .iter()
                     .map(|capture| TyFunctionCapture {
                         kind: capture.kind,
+                        effect: capture.effect,
                         ty: self.intern_type(&capture.ty),
                     })
                     .collect();
@@ -495,6 +497,7 @@ impl TypeContext {
                     .iter()
                     .map(|capture| FunctionCapture {
                         kind: capture.kind,
+                        effect: capture.effect,
                         ty: self.type_for(capture.ty),
                     })
                     .collect(),
@@ -599,6 +602,7 @@ impl TypeContext {
                     .map(|capture| {
                         Some(TyFunctionCapture {
                             kind: capture.kind,
+                            effect: capture.effect,
                             ty: self.id_for_type(&capture.ty)?,
                         })
                     })

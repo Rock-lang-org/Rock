@@ -153,6 +153,7 @@ impl Monomorphizer {
                 Self::push_text(output, &captures.len().to_string());
                 for capture in captures {
                     Self::push_text(output, &format!("{:?}", capture.kind));
+                    Self::push_text(output, &format!("{:?}", capture.effect));
                     self.write_type_id(output, capture.ty);
                 }
             }
