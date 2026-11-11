@@ -159,6 +159,9 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let (_, place_ty) = self.compile_mir_place_local_id(ctx, place)?;
+        if matches!(self.structural_type_for(place_ty), Type::Function { .. }) {
+            return self.compile_mir_closure_env_drop(ctx, place, target);
+        }
         if !Self::mir_place_is_projected_return_place(function, place)
             && self.mir_drop_without_glue_is_noop(place_ty)
         {
@@ -205,6 +208,66 @@ impl<'ctx> CodeGen<'ctx> {
             .build_unconditional_branch(self.mir_target_block(ctx, target, "drop")?)
             .map(|_| ())
             .map_err(|e| CodegenError::from(format!("Failed to build MIR drop: {}", e)))
+    }
+
+    /// Drops a closure value by calling the drop function stored in the first
+    /// field of its environment, when the closure owns anything to drop.
+    fn compile_mir_closure_env_drop(
+        &mut self,
+        ctx: &MirFunctionContext<'ctx>,
+        place: &Place,
+        target: BasicBlockId,
+    ) -> Result<(), CodegenError> {
+        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+        let (place_ptr, _) = self.compile_mir_place_local(ctx, place)?;
+        let callable = self
+            .builder
+            .build_load(self.callable_type(), place_ptr, "mir_drop_callable")
+            .map_err(|e| CodegenError::from(format!("Failed to load closure value: {}", e)))?
+            .into_struct_value();
+        let env_ptr = self
+            .builder
+            .build_extract_value(callable, 1, "mir_drop_env")
+            .map_err(|e| CodegenError::from(format!("Failed to extract closure env: {}", e)))?
+            .into_pointer_value();
+        let current_fn = ctx.function;
+        let has_env = self.context.append_basic_block(current_fn, "mir_drop_env_present");
+        let call_block = self.context.append_basic_block(current_fn, "mir_drop_env_call");
+        let done = self.mir_target_block(ctx, target, "drop")?;
+        let is_null = self
+            .builder
+            .build_is_null(env_ptr, "mir_drop_env_null")
+            .map_err(|e| CodegenError::from(format!("Failed to test closure env: {}", e)))?;
+        self.builder
+            .build_conditional_branch(is_null, done, has_env)
+            .map_err(|e| CodegenError::from(format!("Failed to branch on closure env: {}", e)))?;
+
+        self.builder.position_at_end(has_env);
+        let drop_fn = self
+            .builder
+            .build_load(ptr_ty, env_ptr, "mir_drop_env_fn")
+            .map_err(|e| CodegenError::from(format!("Failed to load closure env drop: {}", e)))?
+            .into_pointer_value();
+        let has_drop = self
+            .builder
+            .build_is_not_null(drop_fn, "mir_drop_env_has_fn")
+            .map_err(|e| CodegenError::from(format!("Failed to test closure env drop: {}", e)))?;
+        self.builder
+            .build_conditional_branch(has_drop, call_block, done)
+            .map_err(|e| CodegenError::from(format!("Failed to branch on env drop: {}", e)))?;
+
+        self.builder.position_at_end(call_block);
+        let fn_ty = self
+            .context
+            .void_type()
+            .fn_type(&[ptr_ty.into()], false);
+        self.builder
+            .build_indirect_call(fn_ty, drop_fn, &[env_ptr.into()], "mir_drop_env_call")
+            .map_err(|e| CodegenError::from(format!("Failed to call closure env drop: {}", e)))?;
+        self.builder
+            .build_unconditional_branch(done)
+            .map(|_| ())
+            .map_err(|e| CodegenError::from(format!("Failed to build closure drop: {}", e)))
     }
 
     fn compile_mir_call_terminator(

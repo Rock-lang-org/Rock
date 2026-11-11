@@ -36,6 +36,16 @@ pub struct MirClosureId {
     pub local_index: u32,
 }
 
+impl MirClosureId {
+    /// Id of the synthesized function that drops this closure's environment.
+    pub fn env_drop_id(&self) -> MirClosureId {
+        MirClosureId {
+            owner: MirFunctionId::Closure(Box::new(self.clone())),
+            local_index: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum MirRuntimeHelper {
     BoundsCheck,
