@@ -55,6 +55,8 @@ impl BorrowChecker {
     ) {
         let stmt_span = stmt.span.clone();
 
+        debug_assert!(stmt.has_loop_owned_array_move_shape());
+
         match &stmt.kind {
             StatementKind::Assign(_dest, rvalue) => match rvalue {
                 Rvalue::Use(operand) => {

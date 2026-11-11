@@ -107,3 +107,28 @@ fn mir_origin_accessors_distinguish_source_and_synthetic_operations() {
         }
     ));
 }
+
+#[test]
+fn loop_owned_array_move_shape_requires_move_from_indexed_element() {
+    let local = |index| Place {
+        local: Local(index),
+        projection: Vec::new(),
+    };
+    let element = Place {
+        local: Local(1),
+        projection: vec![Projection::Index(Local(3))],
+    };
+    let valid = StatementData::loop_owned_array_move(local(2), Operand::Move(element.clone()), None);
+    assert!(valid.has_loop_owned_array_move_shape());
+
+    let mut flagged_copy = StatementData::assign(local(2), Rvalue::Use(Operand::Copy(element)), None);
+    flagged_copy.loop_owned_array_move = true;
+    assert!(!flagged_copy.has_loop_owned_array_move_shape());
+
+    let mut flagged_whole = StatementData::assign(local(2), Rvalue::Use(Operand::Move(local(1))), None);
+    flagged_whole.loop_owned_array_move = true;
+    assert!(!flagged_whole.has_loop_owned_array_move_shape());
+
+    let plain = StatementData::assign(local(2), Rvalue::Use(Operand::Move(local(1))), None);
+    assert!(plain.has_loop_owned_array_move_shape());
+}
