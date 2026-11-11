@@ -108,7 +108,7 @@ pub enum HirExprKindFor<P: HirPhase> {
     /// Array literal
     ArrayLiteral(Vec<HirExprFor<P>>),
     /// Fixed array initialized by evaluating one value and copying it `len` times
-    ArrayRepeat(Box<HirExprFor<P>>, usize),
+    ArrayRepeat(Box<HirExprFor<P>>, crate::types::ArrayLen),
     /// Tuple literal
     TupleLiteral(Vec<HirExprFor<P>>),
     /// Unit value

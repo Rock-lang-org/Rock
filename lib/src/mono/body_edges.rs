@@ -149,7 +149,15 @@ impl Monomorphizer {
                     self.validate_materialized_expr(owner, value, method_ids);
                 }
             }
-            HirExprKind::ArrayRepeat(value, _) => {
+            HirExprKind::ArrayRepeat(value, len) => {
+                if !len.is_concrete() {
+                    self.diagnostics.push(
+                        crate::diagnostic::Diagnostic::for_internal(format!(
+                            "post-monomorphization body '{owner}' retains array repeat length {len:?}"
+                        ))
+                        .with_code(DiagnosticCode::Mono),
+                    );
+                }
                 self.validate_materialized_expr(owner, value, method_ids);
             }
             HirExprKind::StructLiteral(_, _, fields) => {

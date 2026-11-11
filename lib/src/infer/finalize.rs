@@ -365,7 +365,8 @@ fn finalize_expr(ctx: &mut FinalizeCtx<'_>, expr: &mut HirExpr) {
         }
         HirExprKind::ArrayRepeat(value, len) => {
             finalize_expr(ctx, value);
-            if *len > 1 && !TypeFacts::is_copy(&value.ty) {
+            // A symbolic length may be larger than one, so it needs `Copy` too.
+            if len.value().map_or(true, |len| len > 1) && !TypeFacts::is_copy(&value.ty) {
                 ctx.errors.push(InferenceError {
                     error: UnifyError::NonCopyArrayRepeat {
                         found: value.ty.clone(),

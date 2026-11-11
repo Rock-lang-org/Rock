@@ -651,3 +651,66 @@ main = !->
     );
     assert_eq!(output.trim(), "3\n4");
 }
+
+#[test]
+fn test_const_generics_array_repeat_with_const_param_length() {
+    let output = compile_and_run(
+        r#"
+zeros: [I64; N] -> [I64; N]
+zeros = template -> [7; N]
+
+main = !->
+    a: [I64; 3] = zeros [1, 2, 3]
+    b: [I64; 5] = zeros [1, 2, 3, 4, 5]
+    a[2].println!
+    b[4].println!
+"#,
+    );
+    assert_eq!(output.trim(), "7\n7");
+}
+
+#[test]
+fn test_const_generics_array_repeat_in_impl_over_arrays() {
+    let output = compile_and_run(
+        r#"
+trait Blank
+    @blank = -> 0
+
+impl Blank for [I64; N]
+    @blank = -> [9; N]
+
+main = !->
+    a: [I64; 4] = [1, 2, 3, 4]
+    b: [I64; 4] = a.blank!
+    b[3].println!
+"#,
+    );
+    assert_eq!(output.trim(), "9");
+}
+
+#[test]
+fn test_const_generics_array_repeat_unknown_length_name_is_rejected() {
+    compile_should_fail(
+        r#"
+main = !->
+    a: [I64; 2] = [0; M]
+    a[0].println!
+"#,
+        "must name a `usize` const generic parameter",
+    );
+}
+
+#[test]
+fn test_const_generics_array_repeat_length_mismatch_is_rejected() {
+    compile_should_fail(
+        r#"
+zeros: [I64; N] -> [I64; N]
+zeros = template -> [7; 4]
+
+main = !->
+    a: [I64; 3] = zeros [1, 2, 3]
+    a[0].println!
+"#,
+        "Type mismatch",
+    );
+}

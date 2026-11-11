@@ -2,6 +2,7 @@
 
 use crate::ast;
 use crate::hir::*;
+use crate::lexer::Span;
 use crate::lower::Lowerer;
 use crate::types::{ArrayLen, Type};
 
@@ -105,10 +106,40 @@ impl Lowerer {
                 } else {
                     let _ = self.engine.unify(&elem_ty, &value.ty);
                 }
+                let len = self.lower_array_repeat_len(len, &span);
                 HirExpr {
-                    ty: Type::Array(Box::new(elem_ty), ArrayLen::Value(*len as u64)),
-                    kind: HirExprKind::ArrayRepeat(Box::new(value), *len),
+                    ty: Type::Array(Box::new(elem_ty), len),
+                    kind: HirExprKind::ArrayRepeat(Box::new(value), len),
                     span,
+                }
+            }
+        }
+    }
+
+    /// Resolves the length of `[value; len]`: a literal, or a name that must
+    /// be a `usize` const generic parameter in scope.
+    fn lower_array_repeat_len(&mut self, len: &ast::ParseArrayLen, span: &Span) -> ArrayLen {
+        match len {
+            ast::ParseArrayLen::Literal(n) => ArrayLen::Value(*n),
+            ast::ParseArrayLen::Param(ident) => {
+                let param = self.body.context().and_then(|context| {
+                    let id = context.generic_param_id(&ident.name)?;
+                    (context.generic_param_kind(id)
+                        == Some(&crate::type_services::kind::Kind::Usize))
+                    .then_some(id)
+                });
+                match param {
+                    Some(id) => ArrayLen::Param(id),
+                    None => {
+                        self.diagnostics.push_type_with_span(
+                            format!(
+                                "array length '{}' must name a `usize` const generic parameter",
+                                ident.name
+                            ),
+                            span.clone(),
+                        );
+                        ArrayLen::Error
+                    }
                 }
             }
         }

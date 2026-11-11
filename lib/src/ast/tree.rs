@@ -655,7 +655,10 @@ pub enum LiteralKind {
     Number(u64),
     Float(f64),
     Array(Array),
-    ArrayRepeat { value: Box<Expression>, len: usize },
+    ArrayRepeat {
+        value: Box<Expression>,
+        len: ParseArrayLen,
+    },
     String(String),
     Char(String),
 }

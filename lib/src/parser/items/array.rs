@@ -1,11 +1,12 @@
 use crate::{
     lexer::TokenType,
+    ast::ParseArrayLen,
     parser::{engine::*, Array, Expression},
 };
 
 use super::{empty_lines, expression, indent};
 
-pub fn repeat_array(stream: Input) -> IResult<(Expression, usize)> {
+pub fn repeat_array(stream: Input) -> IResult<(Expression, ParseArrayLen)> {
     let (stream, _) = TokenType::OpenBracket.process(stream)?;
     let mut bracket_depth = 0;
     let mut paren_depth = 0;
@@ -46,9 +47,9 @@ pub fn repeat_array(stream: Input) -> IResult<(Expression, usize)> {
     let (stream, _) = TokenType::Operator(";".to_string())
         .or(TokenType::StuckOperator(";".to_string()))
         .process(separator_stream)?;
-    let (stream, len) = super::primitives::int(stream)?;
+    let (stream, len) = super::parse_type::parse_array_len(stream)?;
     let (stream, _) = TokenType::CloseBracket.process(stream)?;
-    Ok((stream, (value, len as usize)))
+    Ok((stream, (value, len)))
 }
 
 pub fn multiline_array(stream: Input) -> IResult<Vec<Expression>> {
