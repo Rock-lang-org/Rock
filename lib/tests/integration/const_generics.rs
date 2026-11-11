@@ -604,3 +604,49 @@ main = !->
         "array length 'M' must name a `usize` const generic parameter",
     );
 }
+
+#[test]
+fn test_nested_array_reads_inner_element() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    g: [[I64; 2]; 3] = [[1, 2], [3, 4], [5, 6]]
+    g[1][0].println!
+    g[2][1].println!
+"#,
+    );
+    assert_eq!(output.trim(), "3\n6");
+}
+
+#[test]
+fn test_nested_array_writes_inner_element() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    mut g: [[I64; 2]; 3] = [[1, 2], [3, 4], [5, 6]]
+    g[1][0] = 30
+    g[2][1] = 60
+    g[1][0].println!
+    g[2][1].println!
+    g[0][1].println!
+"#,
+    );
+    assert_eq!(output.trim(), "30\n60\n2");
+}
+
+#[test]
+fn test_const_generics_function_indexes_nested_generic_arrays() {
+    let output = compile_and_run(
+        r#"
+corner: [[T; N]; M] -> T
+corner = grid -> grid[1][0]
+
+main = !->
+    g: [[I64; 2]; 3] = [[1, 2], [3, 4], [5, 6]]
+    h: [[I64; 3]; 2] = [[7, 8, 9], [4, 5, 6]]
+    corner g .println!
+    corner h .println!
+"#,
+    );
+    assert_eq!(output.trim(), "3\n4");
+}
