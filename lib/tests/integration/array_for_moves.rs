@@ -459,3 +459,24 @@ main = !->
     ));
     assert_eq!(output, "10\n101\n20\n102\n103\n42\n");
 }
+
+#[test]
+fn test_array_for_moves_elements_without_cleanup() {
+    let output = compile_and_run(
+        r#"
+struct Plain
+    < v: I64
+
+main = !->
+    plains = [(Plain v: 1), (Plain v: 2), (Plain v: 3)]
+    for p in plains
+        if p.v == 3
+            break
+        p.v.println!
+    options: Vec (Option I64) = [(Some 1), None, (Some 3)].into!
+    options.println!
+"#,
+    );
+
+    assert_eq!(output, "1\n2\n[Some(1), None, Some(3)]\n");
+}

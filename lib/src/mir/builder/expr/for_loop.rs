@@ -146,10 +146,12 @@ impl<'a> MirBuilder<'a> {
                         return;
                     }
                 };
-                // A by-value array of cleanup elements is consumed by the loop: it moves
+                // A by-value array of moved elements is consumed by the loop: it moves
                 // each element out and drops the unvisited tail itself on every exit.
+                // Move-only elements without cleanup (`Option I64`, plain structs) need
+                // this too, or each iteration's move reads as a partial move of the array.
                 loop_owned_elem_ty = (matches!(&iter.ty, Type::Array(_, _))
-                    && self.type_needs_cleanup(&elem_ty))
+                    && (self.type_needs_cleanup(&elem_ty) || Self::needs_move(&elem_ty)))
                 .then(|| elem_ty.clone());
                 let loop_local = self.new_local_with_source(
                     self.type_id_for(&elem_ty),
