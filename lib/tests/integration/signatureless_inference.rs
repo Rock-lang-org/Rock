@@ -461,3 +461,50 @@ main = !->
         "No implementation found",
     );
 }
+
+#[test]
+fn test_signatureless_function_generalizes_when_callers_disagree() {
+    let output = compile_and_run(
+        r#"
+show = x !-> x.println!
+
+main = !->
+    show "hi"
+    show 'c'
+    show 42
+"#,
+    );
+
+    assert_eq!(output, "hi\nc\n42\n");
+}
+
+#[test]
+fn test_signatureless_static_from_generalizes_when_callers_disagree() {
+    let output = compile_and_run(
+        r#"
+show = x !->
+    text = String::from x
+    text.println!
+
+main = !->
+    show "hi"
+    show 'c'
+"#,
+    );
+
+    assert_eq!(output, "hi\nc\n");
+}
+
+#[test]
+fn test_uncalled_signatureless_trait_method_receiver_generalizes() {
+    let output = compile_and_run(
+        r#"
+show = x !-> x.println!
+
+main = !->
+    "ok".println!
+"#,
+    );
+
+    assert_eq!(output, "ok\n");
+}

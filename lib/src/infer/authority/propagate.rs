@@ -242,7 +242,7 @@ fn propagate_method_arguments(
     let Some(method) = find_method(hir, target.method_id()) else {
         return;
     };
-    let substitutions = target
+    let mut substitutions = target
         .owner_substitution
         .iter()
         .chain(&target.method_substitution)
@@ -253,7 +253,22 @@ fn propagate_method_arguments(
     } else {
         (None, &method.params[..])
     };
-    if let Some(param) = receiver_param {
+    let trait_dispatch = matches!(
+        target.target,
+        crate::hir::HirSelectedMethodTarget::TraitMethod { .. }
+    );
+    if trait_dispatch {
+        // A trait-dispatched template is written against the trait's `Self`;
+        // learn `Self` from the receiver instead of committing the receiver to it.
+        if let Some(param) = receiver_param {
+            let receiver_ty = hir.engine.resolve(&receiver.ty);
+            if !crate::selection::type_pattern_matches(&param.ty, &receiver_ty, &mut substitutions) {
+                if let Type::Reference { inner, .. } = &param.ty {
+                    crate::selection::type_pattern_matches(inner, &receiver_ty, &mut substitutions);
+                }
+            }
+        }
+    } else if let Some(param) = receiver_param {
         let mut expected = param.ty.substitute_generics(&substitutions);
         if matches!(hir.engine.resolve(&receiver.ty), Type::TypeVar(_))
             && !method.ret_type.contains_reference()

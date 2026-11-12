@@ -193,6 +193,8 @@ pub(in crate::infer) fn propagate_function_instances_for_owners_with_progress(
     let before_generation = hir.engine.rigid_substitution_generation();
     let before_counts = authority_counts(hir, owners);
     let mut constrained_vars = HashMap::new();
+    // Callers that disagree keep the variable generic; it is generalized later.
+    let conflicting = super::call_sites::conflicting_caller_vars(hir);
     for function in hir
         .functions
         .values()
@@ -203,7 +205,8 @@ pub(in crate::infer) fn propagate_function_instances_for_owners_with_progress(
         )
         .chain(hir.impls.values().flat_map(|imp| imp.methods.values()))
     {
-        let shared = constrained_signature_vars(hir, function);
+        let mut shared = constrained_signature_vars(hir, function);
+        shared.retain(|var| !conflicting.contains(var));
         if !shared.is_empty() {
             constrained_vars.insert(function.id, shared);
         }

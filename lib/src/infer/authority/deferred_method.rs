@@ -72,6 +72,55 @@ impl MethodAuthorityContext<'_> {
         }
     }
 
+    /// A free receiver whose candidates all implement one trait member (the
+    /// trait default and its overrides) is constrained by that trait instead of
+    /// being ambiguous: `x.println!` makes `x: Show`, which generalizes.
+    fn select_shared_trait_member(
+        &mut self,
+        receiver: &HirExpr,
+        receiver_candidates: &[crate::selection::ReceiverCandidate],
+        inferred: &[SelectedMethod],
+        method_name: &str,
+        args: &[HirExpr],
+    ) -> Option<SelectedMethod> {
+        let Type::TypeVar(id) = self.resolved_type(&receiver.ty) else {
+            return None;
+        };
+        let mut members = inferred.iter().map(|candidate| {
+            match &candidate.target.target {
+                crate::hir::HirSelectedMethodTarget::ImplMethod {
+                    selected_trait: Some(selected),
+                    ..
+                } if selected.trait_args.is_empty() => Some((selected.trait_id, selected.member_id)),
+                _ => None,
+            }
+        });
+        let first = members.next()??;
+        if !members.all(|member| member == Some(first)) {
+            return None;
+        }
+        let bound = TraitBound {
+            trait_id: first.0,
+            type_args: Vec::new(),
+        };
+        self.record_trait_bound(
+            Type::TypeVar(id),
+            bound.clone(),
+            receiver.span.clone(),
+            "method call",
+        );
+        self.service()
+            .select_bound_method_matching(
+                receiver_candidates,
+                &[bound],
+                method_name,
+                Type::TypeVar(id),
+                matches!(receiver.kind, HirExprKind::Call(_, _, _)),
+                |candidate| self.deferred_method_accepts_args(candidate, args),
+            )
+            .ok()
+    }
+
     fn deferred_method_accepts_args(&self, candidate: &SelectedMethod, args: &[HirExpr]) -> bool {
         if candidate.substituted_params.len() != args.len() {
             return false;
@@ -282,6 +331,11 @@ impl MethodAuthorityContext<'_> {
                 if !self.strict && unresolved_inputs {
                     self.ambiguous = true;
                     return None;
+                }
+                if let Some(selected) =
+                    self.select_shared_trait_member(receiver, &receiver_candidates, &inferred, method_name, args)
+                {
+                    return Some(selected);
                 }
                 if let Some(expected) = _expected_ty.map(|ty| self.resolved_type(ty)) {
                     if !contains_recovery_type(&expected) {
