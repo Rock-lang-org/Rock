@@ -33,6 +33,12 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
                     }
                 }
             }
+            // Concrete-subject clauses (`where String: From T`) are assumptions too.
+            for predicate in &bounds.predicates {
+                if !result.predicates.contains(predicate) {
+                    result.predicates.push(predicate.clone());
+                }
+            }
         }
         // A parameter passed by value already requires a sized runtime layout;
         // retain that fact when proving blanket impls for references to it.
@@ -297,6 +303,7 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
         }
     }
 
+    let mut deferred_predicates = Vec::new();
     for (_, owners, _) in &component_work {
         let assumptions = declaration_bounds(hir);
         let solved = solve::solve_constraints_in_place_for_owners(
@@ -324,10 +331,145 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
                 })
                 .collect());
         }
+        deferred_predicates.extend(solved.deferred_predicates);
     }
 
+    let attached = attach_deferred_predicates(hir, &deferred_predicates, root_entrypoint_id)?;
     for (ids, _, _) in component_work {
         generalize::generalize_functions(hir, &ids, root_entrypoint_id);
     }
-    Ok(())
+    reject_ungeneralized_predicates(hir, attached)
+}
+
+/// A deferred obligation whose subject is concrete and whose trait arguments are
+/// still free after the final solve (`String: From ?x`).
+struct AttachedPredicate {
+    function_id: DefId,
+    error: solve::SolveError,
+}
+
+fn deferred_predicate_error(
+    hir: &PartialHir,
+    ty: &Type,
+    bound: &crate::types::TraitBound,
+    span: &crate::lexer::Span,
+    context: &str,
+) -> solve::SolveError {
+    solve::SolveError {
+        kind: solve::SolveErrorKind::TraitNotImplemented {
+            ty: hir.engine.resolve(ty),
+            trait_name: hir
+                .traits
+                .get(&bound.trait_id)
+                .map(|trait_def| trait_def.name.clone())
+                .unwrap_or_else(|| "<unknown trait>".to_string()),
+            trait_args: bound
+                .type_args
+                .iter()
+                .map(|arg| hir.engine.resolve(arg))
+                .collect(),
+            context: context.to_string(),
+        },
+        span: span.clone(),
+    }
+}
+
+fn type_error(hir: &PartialHir, error: solve::SolveError) -> ResolveError {
+    ResolveError::with_span_code(
+        error.render(&hir.engine),
+        error.span,
+        crate::diagnostic::DiagnosticCode::Type,
+    )
+}
+
+/// Record each deferred obligation as a where clause of its owning inferred
+/// function, so generalization can rewrite its free variables to generics.
+fn attach_deferred_predicates(
+    hir: &mut PartialHir,
+    deferred: &[super::constraints::ObligationId],
+    root_entrypoint_id: Option<DefId>,
+) -> Result<Vec<AttachedPredicate>, Vec<ResolveError>> {
+    let mut attached = Vec::new();
+    let mut errors = Vec::new();
+    for id in deferred.iter().copied() {
+        let Some(super::constraints::Constraint::Trait {
+            ty,
+            bound,
+            span,
+            context,
+        }) = hir.constraint_store.constraint(id).cloned()
+        else {
+            continue;
+        };
+        let error = deferred_predicate_error(hir, &ty, &bound, &span, &context);
+        let owner = match hir.constraint_store.owner(id) {
+            Some(ConstraintOwner::Body(function_id))
+                if root_entrypoint_id != Some(function_id)
+                    && hir
+                        .functions
+                        .get(&function_id)
+                        .is_some_and(|function| function.generic_params.is_empty()) =>
+            {
+                function_id
+            }
+            _ => {
+                errors.push(type_error(hir, error));
+                continue;
+            }
+        };
+        let predicate = crate::types::Predicate::Trait {
+            subject: hir.engine.resolve(&ty),
+            trait_id: bound.trait_id,
+            args: bound
+                .type_args
+                .iter()
+                .map(|arg| hir.engine.resolve(arg))
+                .collect(),
+        };
+        if let Some(function) = hir.functions.get_mut(&owner) {
+            if !function.generic_bounds.predicates.contains(&predicate) {
+                function.generic_bounds.predicates.push(predicate);
+            }
+        }
+        hir.constraint_store.set_state(id, ObligationState::Solved);
+        attached.push(AttachedPredicate {
+            function_id: owner,
+            error,
+        });
+    }
+    if errors.is_empty() {
+        Ok(attached)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Generalization rewrites signature variables in attached predicates to
+/// generics. A predicate that still mentions an inference variable could not be
+/// abstracted (the variable is not part of the signature) and is a real error.
+fn reject_ungeneralized_predicates(
+    hir: &mut PartialHir,
+    attached: Vec<AttachedPredicate>,
+) -> Result<(), Vec<ResolveError>> {
+    let mut errors = Vec::new();
+    let mut reported = HashSet::new();
+    for item in attached {
+        let Some(function) = hir.functions.get(&item.function_id) else {
+            continue;
+        };
+        let unresolved = function.generic_bounds.predicates.iter().any(|predicate| {
+            let crate::types::Predicate::Trait { subject, args, .. } = predicate;
+            std::iter::once(subject)
+                .chain(args)
+                .any(|ty| crate::type_services::visit::type_any(ty, |ty| matches!(ty, Type::TypeVar(_))))
+        });
+        if unresolved && reported.insert(item.function_id) {
+            errors.push(type_error(hir, item.error));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
 }

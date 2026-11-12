@@ -150,6 +150,10 @@ pub struct SolveResult {
     pub generic_bounds: HashMap<TypeVarId, Vec<TraitBound>>,
     /// Representatives changed while this worklist invocation was running.
     pub changed_type_vars: Vec<TypeVarId>,
+    /// Final-pass trait obligations on a concrete subject whose trait arguments are
+    /// still free (`String: From ?x`). The caller either turns them into where
+    /// clauses of the owning function during generalization or reports them.
+    pub deferred_predicates: Vec<crate::infer::constraints::ObligationId>,
 }
 
 /// Solve all constraints in `store`.

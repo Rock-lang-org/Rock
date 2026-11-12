@@ -151,6 +151,68 @@ main = !->
 }
 
 #[test]
+fn test_concrete_subject_where_clause_is_assumed_in_body_and_specialized_per_call() {
+    let output = compile_and_run(
+        r#"
+show: T -> () where String: From T
+show = value !->
+    text = String::from value
+    text.println!
+    again: String = value.into!
+    again.println!
+
+main = !->
+    show "hi"
+    show 'c'
+"#,
+    );
+    assert_eq!(output, "hi\nhi\nc\nc\n");
+}
+
+#[test]
+fn test_concrete_subject_where_clause_is_checked_at_call_sites() {
+    compile_should_fail(
+        r#"
+show: T -> () where String: From T
+show = value !-> ()
+
+struct Opaque
+
+main = !->
+    show Opaque
+"#,
+        "does not implement trait `std::convert::From Opaque` (required by call to generic function 'show')",
+    );
+}
+
+#[test]
+fn test_uncalled_signatureless_static_from_generalizes_to_where_clause() {
+    let output = compile_and_run(
+        r#"
+show = value !->
+    text = String::from value
+    text.println!
+
+main = !->
+    "ok".println!
+"#,
+    );
+    assert_eq!(output, "ok\n");
+}
+
+#[test]
+fn test_static_from_with_unabstractable_free_argument_still_fails() {
+    compile_should_fail(
+        r#"
+main = !->
+    text = String::from (Vec::new!)
+    ()
+"#,
+        "does not implement trait",
+    );
+}
+
+#[test]
 fn test_std_fixed_u8_arrays_convert_to_string_for_any_length() {
     let output = compile_and_run(
         r#"

@@ -32,6 +32,17 @@ pub(super) fn solve_constraints_in_place_mode(
     // Structural proofs and conditional impl bounds must retain the same
     // declaration evidence as top-level trait selection.
     let assumed = |ty: &Type, trait_id: DefId, args: &[Type]| {
+        let declared_predicate = assumptions.predicates.iter().any(|predicate| {
+            let crate::types::Predicate::Trait {
+                subject,
+                trait_id: predicate_trait,
+                args: predicate_args,
+            } = predicate;
+            *predicate_trait == trait_id && subject == ty && predicate_args.as_slice() == args
+        });
+        if declared_predicate {
+            return true;
+        }
         let Type::Generic(param) = ty else {
             return false;
         };
@@ -49,6 +60,7 @@ pub(super) fn solve_constraints_in_place_mode(
     let mut errors = Vec::new();
     let mut generic_bounds: HashMap<TypeVarId, Vec<TraitBound>> = HashMap::new();
     let mut changed_type_vars = HashSet::new();
+    let mut deferred_predicates = Vec::new();
 
     solve_structural_constraints_to_fixed_point(
         engine,
@@ -230,8 +242,8 @@ pub(super) fn solve_constraints_in_place_mode(
                                 &resolved_bound.type_args,
                             )
                             .is_ok();
-                        if !generic_impl
-                            && !impl_exists_for(
+                        let impl_found = generic_impl
+                            || impl_exists_for(
                                 concrete_ty,
                                 resolved_bound.trait_id,
                                 &resolved_bound.type_args,
@@ -240,8 +252,19 @@ pub(super) fn solve_constraints_in_place_mode(
                                 enums,
                                 builtin_traits,
                                 &assumed,
-                            )
+                            );
+                        // `String: From ?x` with `?x` still free is not a violation yet:
+                        // it may become a where clause of the owning function when the
+                        // function is generalized.
+                        if !impl_found
+                            && resolved_bound.type_args.iter().any(contains_unresolved_type)
                         {
+                            if finalize_pending {
+                                deferred_predicates.push(id);
+                            }
+                            continue;
+                        }
+                        if !impl_found {
                             if context == "try operator"
                                 && language_items
                                     .try_protocol
@@ -324,6 +347,7 @@ pub(super) fn solve_constraints_in_place_mode(
         for id in store.obligation_ids().collect::<Vec<_>>() {
             if !store.includes_owner(id, owners)
                 || store.state(id) != Some(ObligationState::Ambiguous)
+                || deferred_predicates.contains(&id)
             {
                 continue;
             }
@@ -379,5 +403,6 @@ pub(super) fn solve_constraints_in_place_mode(
         errors,
         generic_bounds,
         changed_type_vars,
+        deferred_predicates,
     }
 }

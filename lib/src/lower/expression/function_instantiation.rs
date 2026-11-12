@@ -152,6 +152,27 @@ impl Lowerer {
                 );
             }
         }
+        // Clauses on a non-parameter subject (`where String: From T`) are not keyed
+        // by a generic above, so each call must prove them for its own instance.
+        for predicate in &func.generic_bounds.predicates {
+            let crate::types::Predicate::Trait {
+                subject,
+                trait_id,
+                args,
+            } = predicate;
+            if matches!(subject, Type::Generic(param) if func.generic_bounds.contains_key(param)) {
+                continue;
+            }
+            self.constraint_store.add_trait(
+                subject.substitute_generics(&subst),
+                crate::types::TraitBound {
+                    trait_id: *trait_id,
+                    type_args: args.iter().map(|arg| arg.substitute_generics(&subst)).collect(),
+                },
+                span.clone(),
+                &context,
+            );
+        }
 
         let params = func
             .params
