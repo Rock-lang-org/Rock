@@ -602,3 +602,38 @@ main = !->
         "Type mismatch: Char vs Color",
     );
 }
+
+#[test]
+fn test_uncalled_signatureless_functor_helper_generalizes_over_constructor() {
+    let output = compile_and_run(
+        r#"
+infix 9 >|
+>| = a, f -> a <&> (>>= f)
+
+map_all = a, f -> a <&> f
+
+main = !->
+    "ok".println!
+"#,
+    );
+
+    assert_eq!(output, "ok\n");
+}
+
+#[test]
+fn test_signatureless_functor_helper_is_reused_across_constructors() {
+    let output = compile_and_run(
+        r#"
+map_all = a, f -> a <&> f
+
+main = !->
+    mut v: Vec I64 = Vec::new!
+    v.push 1
+    v.push 2
+    (map_all v, (+ 1)).println!
+    (map_all (Some 5), (* 2)).println!
+"#,
+    );
+
+    assert_eq!(output, "[2, 3]\nSome(10)\n");
+}

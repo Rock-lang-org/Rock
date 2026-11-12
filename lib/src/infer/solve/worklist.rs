@@ -27,6 +27,9 @@ pub(super) fn solve_constraints_in_place_mode(
     finalize_pending: bool,
     owners: Option<&HashSet<ConstraintOwner>>,
     assumptions: &crate::hir::HirGenericBounds,
+    // Free constructor-kinded variables that generalization will abstract
+    // (`F` in an inferred `F A -> ...` signature); others stay errors.
+    generalizable: &HashSet<TypeVarId>,
 ) -> SolveResult {
     let builtin_traits = BuiltinTraitIds::from_language_items(language_items);
     // Structural proofs and conditional impl bounds must retain the same
@@ -204,8 +207,9 @@ pub(super) fn solve_constraints_in_place_mode(
                             trait_bounds_with_supertraits(&resolved, &resolved_bound, traits),
                         );
                         if finalize_pending
-                            && engine.kind_of_type_var(*type_var)
+                            && (engine.kind_of_type_var(*type_var)
                                 == crate::type_services::kind::Kind::Type
+                                || generalizable.contains(type_var))
                         {
                             store.set_state(id, ObligationState::Solved);
                         }

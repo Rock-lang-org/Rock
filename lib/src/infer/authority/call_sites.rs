@@ -181,6 +181,42 @@ fn match_instance(
             }
             match_instance(engine, source_ret, instance_ret, out);
         }
+        // `F A` against `Vec I64` (or `Result E A`): the constructor variable takes
+        // the nominal head applied to all but the trailing arguments.
+        (
+            Type::Apply {
+                constructor,
+                args: sources,
+            },
+            Type::Struct {
+                id,
+                args: instances,
+            }
+            | Type::Enum {
+                id,
+                args: instances,
+            },
+        ) if sources.len() <= instances.len() => {
+            let flavor = if matches!(instance, Type::Struct { .. }) {
+                crate::types::NominalTypeKind::Struct
+            } else {
+                crate::types::NominalTypeKind::Enum
+            };
+            let split = instances.len() - sources.len();
+            let head = Type::Constructor { id: *id, flavor };
+            let head = if split == 0 {
+                head
+            } else {
+                Type::Apply {
+                    constructor: Box::new(head),
+                    args: instances[..split].to_vec(),
+                }
+            };
+            match_instance(engine, constructor, &head, out);
+            for (source, instance) in sources.iter().zip(&instances[split..]) {
+                match_instance(engine, source, instance, out);
+            }
+        }
         _ => {}
     }
 }

@@ -201,6 +201,7 @@ pub fn solve_constraints_in_place(
         true,
         None,
         &crate::hir::HirGenericBounds::new(),
+        &HashSet::new(),
     )
 }
 
@@ -215,6 +216,7 @@ pub(crate) fn solve_constraints_in_place_for_owners(
     owners: &HashSet<ConstraintOwner>,
     finalize_pending: bool,
     assumptions: &crate::hir::HirGenericBounds,
+    generalizable: &HashSet<TypeVarId>,
 ) -> SolveResult {
     solve_constraints_in_place_mode(
         engine,
@@ -227,6 +229,7 @@ pub(crate) fn solve_constraints_in_place_for_owners(
         finalize_pending,
         Some(owners),
         assumptions,
+        generalizable,
     )
 }
 

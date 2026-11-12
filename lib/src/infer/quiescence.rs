@@ -110,6 +110,7 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
                         owners,
                         false,
                         &assumptions,
+                        &HashSet::new(),
                     );
                     if !solved.errors.is_empty() {
                         return Err(solved
@@ -303,6 +304,26 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
         }
     }
 
+    // Free variables in the signatures of functions generalization will abstract.
+    let mut generalizable = HashSet::new();
+    for function in hir.functions.values() {
+        if root_entrypoint_id == Some(function.id) || !function.generic_params.is_empty() {
+            continue;
+        }
+        for ty in function
+            .params
+            .iter()
+            .map(|param| &param.ty)
+            .chain(std::iter::once(&function.ret_type))
+        {
+            crate::type_services::visit::visit_type(&hir.engine.resolve(ty), &mut |nested: &Type| {
+                if let Type::TypeVar(id) = nested {
+                    generalizable.insert(*id);
+                }
+            });
+        }
+    }
+
     let mut deferred_predicates = Vec::new();
     for (_, owners, _) in &component_work {
         let assumptions = declaration_bounds(hir);
@@ -317,6 +338,7 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
             &owners,
             true,
             &assumptions,
+            &generalizable,
         );
         if !solved.errors.is_empty() {
             return Err(solved
@@ -338,6 +360,15 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
     for (ids, _, _) in component_work {
         generalize::generalize_functions(hir, &ids, root_entrypoint_id);
     }
+    // Generalization mints generics (possibly constructor-kinded: `F` in `F A`);
+    // later normalization must know their kinds instead of defaulting to Type.
+    let mut env = hir.engine.normalization_env();
+    for function in hir.functions.values() {
+        for param in &function.generic_params {
+            env.register_generic_kind(param.id, param.kind.clone());
+        }
+    }
+    hir.engine.set_normalization_env(env);
     reject_ungeneralized_predicates(hir, attached)?;
     let call_errors = authority::check_monomorphic_call_arguments(hir);
     if call_errors.is_empty() {

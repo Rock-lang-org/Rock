@@ -38,6 +38,37 @@ impl Lowerer {
                 };
                 substitution.insert(variable, replacement);
             }
+            // A header variable may already be structured (`a` resolved to `F A`):
+            // its nested variables belong to the scheme too, or every call would
+            // share one `F` and the second caller's functor would mismatch.
+            let structured = substitution
+                .values()
+                .filter(|ty| !matches!(ty, Type::TypeVar(_)))
+                .cloned()
+                .collect::<Vec<_>>();
+            for ty in &structured {
+                crate::type_services::visit::visit_type(ty, &mut |nested: &Type| {
+                    if let Type::TypeVar(id) = nested {
+                        if let Type::TypeVar(representative) =
+                            self.engine.resolve(&Type::TypeVar(*id))
+                        {
+                            representatives.entry(representative).or_insert_with(|| {
+                                let kind = self.engine.kind_of_type_var(representative);
+                                self.engine.fresh_type_var_at_kind(span.clone(), kind)
+                            });
+                        }
+                    }
+                });
+            }
+            let nested = representatives
+                .iter()
+                .map(|(id, ty)| (*id, ty.clone()))
+                .collect::<HashMap<_, _>>();
+            for ty in substitution.values_mut() {
+                if !matches!(ty, Type::TypeVar(_)) {
+                    *ty = ty.substitute(&nested);
+                }
+            }
 
             // Inferred callable bounds are part of the function scheme, just
             // like its parameter/result types. Freshen their variables together
@@ -116,9 +147,14 @@ impl Lowerer {
         let subst: HashMap<GenericParamId, Type> = generic_params
             .into_iter()
             .map(|param| {
-                let kind = self
-                    .engine
-                    .kind_of(&Type::Generic(param))
+                // The declaration records each parameter's kind (`F` in `F T` is a
+                // constructor); the engine may not know an external function's generics.
+                let kind = func
+                    .generic_params
+                    .iter()
+                    .find(|decl| decl.id == param)
+                    .map(|decl| decl.kind.clone())
+                    .or_else(|| self.engine.kind_of(&Type::Generic(param)).ok())
                     .unwrap_or(crate::type_services::kind::Kind::Type);
                 (
                     param,
