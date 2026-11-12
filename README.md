@@ -3,7 +3,7 @@
 [![Book](https://github.com/Rock-lang-org/Rock/actions/workflows/book.yml/badge.svg?branch=master)](https://github.com/Rock-lang-org/Rock/actions/workflows/book.yml)
 [![Discord](https://img.shields.io/discord/990627124236939314.svg)](https://discord.gg/f6skPNB96J)
 
-[GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [Changelog](CHANGELOG.md) | [Examples](examples/)
+[GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [0.7.1 Release Notes](docs/release-notes/v0.7.1.md) | [Examples](examples/)
 
 <h3 align="center"><a href="https://rock-lang-org.github.io/Rock/">Read the Book</a></h3>
 
@@ -13,7 +13,7 @@ Rock combines type inference, pattern matching, traits, and higher-kinded types 
 
 The syntax takes inspiration from [LiveScript](https://livescript.net/), [Haskell](https://www.haskell.org/), and [Rust](https://www.rust-lang.org/). You do not need to know those languages to follow this tour. It starts with small programs and introduces the functional vocabulary through examples.
 
-Rock is experimental. The published v0.7.0 release is not a stability promise: syntax, APIs, and tooling can change, and compiler bugs remain. This checkout documents `develop`; additions in the [Unreleased changelog](CHANGELOG.md#unreleased) require a matching development toolchain rather than the published stable release.
+Rock is experimental: syntax, APIs, and tooling can change, and compiler bugs remain. This checkout prepares v0.7.1; see the [release notes](docs/release-notes/v0.7.1.md) for additions and migration requirements. Until publication, use a matching development toolchain rather than the v0.7.0 stable toolchain for these features.
 
 Recent development adds array-length const generics, imported enum constructors, expression and cross-crate macros, `%format`/`%println`, owned array iteration, and liveness-based closure captures. The book explains these alongside library and multiple-binary package targets.
 

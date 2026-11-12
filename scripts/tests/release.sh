@@ -51,8 +51,8 @@ manager=$ROCKUP_HOME/bin/rockup
 "$manager" --version
 "$ROCKUP_HOME/bin/rock" --version
 "$ROCKUP_HOME/bin/rock-lsp" --help | grep -F 'Usage: rock-lsp'
-printf '[crate]\nname = "release_smoke"\nversion = "0.1.0"\n\n[lib]\npath = "main.rk"\n' > rock.toml
-printf 'main = ->\n    "Hello, Rock!".println!\n    0\n' > main.rk
+printf '[crate]\nname = "release_smoke"\nversion = "0.1.0"\n\n[[bin]]\npath = "main.rk"\n' > rock.toml
+printf 'main = !->\n    "Hello, Rock!".println!\n' > main.rk
 "$ROCKUP_HOME/bin/rock" run | grep -Fx 'Hello, Rock!'
 # An installed compiler must ignore an unrelated checkout's stale dev sysroot.
 workspace=$stage/workspace

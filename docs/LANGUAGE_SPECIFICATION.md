@@ -2,7 +2,7 @@
 
 This reference describes the development compiler, not a stable language
 standard. The [book](https://rock-lang-org.github.io/Rock/) supplies detailed
-explanations and complete examples. The [Unreleased changelog](../CHANGELOG.md)
+explanations and complete examples. The [v0.7.1 release notes](release-notes/v0.7.1.md)
 records differences from v0.7.0. Compiler regression tests remain the authority
 for edge cases; parsed syntax is not necessarily supported end to end.
 

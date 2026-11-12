@@ -22,7 +22,7 @@ children and re-exports its public API.
 
 ## Development additions
 
-The [Unreleased changelog](../CHANGELOG.md#unreleased) tracks changes since
+The [v0.7.1 release notes](../docs/release-notes/v0.7.1.md) track changes since
 v0.7.0; rebuild std with the same compiler as its consumers.
 
 - `fmt` exports `%format` and `%println` through the prelude. They concatenate

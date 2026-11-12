@@ -1,10 +1,10 @@
 # Introduction
 
-This book follows the development branch. The
-[Unreleased changelog](https://github.com/Rock-lang-org/Rock/blob/develop/CHANGELOG.md#unreleased)
-identifies additions since v0.7.0 and migration requirements; use a matching
-development toolchain for those examples. Published release notes describe
-the corresponding stable toolchain, not every feature shown here.
+This book documents the toolchain being prepared for v0.7.1. The
+[v0.7.1 release notes](https://github.com/Rock-lang-org/Rock/blob/develop/docs/release-notes/v0.7.1.md)
+identify additions since v0.7.0 and migration requirements. Until publication,
+use a matching development toolchain for these examples rather than the
+v0.7.0 stable toolchain.
 
 Rock is a full-fledged, expression-oriented programming language designed to make powerful programs easy to read. Like Rust, it embraces a rich syntax while keeping structure visible and understandable. It provides the foundations expected of a modern systems language, including type checking, ownership, and contracts for method receivers. Indentation forms blocks, function calls use spaces and commas, and operators are supplied by the program and its explicit dependencies.
 

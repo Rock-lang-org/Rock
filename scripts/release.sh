@@ -73,8 +73,8 @@ sed -i "s/\"toolchain_version\": \"dev-[^\"]*\"/\"toolchain_version\": \"$tag\"/
 
 # Smoke-test the installed layout away from the checkout and all dev sysroots.
 mkdir -p "$stage/home" "$stage/project"
-printf '[crate]\nname = "release_smoke"\nversion = "0.1.0"\n\n[lib]\npath = "main.rk"\n' > "$stage/project/rock.toml"
-printf 'main = ->\n    "Hello, Rock!".println!\n    0\n' > "$stage/project/main.rk"
+printf '[crate]\nname = "release_smoke"\nversion = "0.1.0"\n\n[[bin]]\npath = "main.rk"\n' > "$stage/project/rock.toml"
+printf 'main = !->\n    "Hello, Rock!".println!\n' > "$stage/project/main.rk"
 (
     unset CARGO_TARGET_DIR ROCK_SYSROOT ROCKC ROCKUP_TOOLCHAIN
     export HOME=$stage/home ROCKUP_HOME=$stage/home/.rockup SHELL=/bin/sh

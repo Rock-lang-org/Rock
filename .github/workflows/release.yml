@@ -35,8 +35,7 @@ jobs:
         run: |
           test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
           test -s "docs/release-notes/$RELEASE_TAG.md"
-          cargo test --locked -p rock-shared --all-features
-          cargo test --locked -p rockup
+          cargo test --locked --workspace --release --all-features
           sh scripts/tests/install.sh
           bash scripts/release.sh "$RELEASE_TAG"
           bash scripts/tests/release.sh "dist/$RELEASE_TAG"
