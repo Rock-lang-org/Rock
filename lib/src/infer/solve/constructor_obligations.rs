@@ -20,6 +20,7 @@ pub(super) fn infer_explicit_impl_trait_args(
     structs: &HashMap<DefId, HirStruct>,
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
+    assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) -> ObligationState {
     let mut candidates = Vec::new();
     let mut impl_ids = impls.keys().copied().collect::<Vec<_>>();
@@ -59,7 +60,7 @@ pub(super) fn infer_explicit_impl_trait_args(
         {
             continue;
         }
-        if !impl_bounds_satisfied(imp, &subst, impls, structs, enums, builtin_traits) {
+        if !impl_bounds_satisfied(imp, &subst, impls, structs, enums, builtin_traits, assumed) {
             continue;
         }
         let authority = (
@@ -97,6 +98,7 @@ pub(super) fn infer_constructor_trait_obligation(
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
     operation_span: &crate::lexer::Span,
+    assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) -> ObligationState {
     let self_ty @ Type::TypeVar(_) = engine.resolve(ty) else {
         return ObligationState::Solved;
@@ -111,6 +113,7 @@ pub(super) fn infer_constructor_trait_obligation(
         builtin_traits,
         operation_span,
         UndecidedBounds::Wait,
+        assumed,
     )
 }
 
@@ -132,6 +135,7 @@ pub(super) fn infer_partially_known_self_obligation(
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
     operation_span: &crate::lexer::Span,
+    assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) -> ObligationState {
     let self_ty = engine.resolve(ty);
     if !has_nominal_head(&self_ty) {
@@ -147,6 +151,7 @@ pub(super) fn infer_partially_known_self_obligation(
         builtin_traits,
         operation_span,
         UndecidedBounds::CommitUnique,
+        assumed,
     )
 }
 
@@ -171,6 +176,7 @@ fn select_unique_impl_by_unification(
     builtin_traits: BuiltinTraitIds,
     operation_span: &crate::lexer::Span,
     undecided_bounds: UndecidedBounds,
+    assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) -> ObligationState {
     let mut candidates = Vec::new();
     let mut pending_candidate = false;
@@ -221,7 +227,7 @@ fn select_unique_impl_by_unification(
             .into_iter()
             .map(|(param, ty)| (param, probe.resolve(&ty)))
             .collect::<HashMap<_, _>>();
-        if !impl_bounds_satisfied(imp, &subst, impls, structs, enums, builtin_traits) {
+        if !impl_bounds_satisfied(imp, &subst, impls, structs, enums, builtin_traits, assumed) {
             // An unresolved impl parameter is not evidence against a candidate.
             // Wait for value/callback constraints instead of choosing a different
             // constructor merely because its bounds are already concrete.
@@ -245,6 +251,7 @@ fn select_unique_impl_by_unification(
                             structs,
                             enums,
                             builtin_traits,
+                            assumed,
                         )
                 })
             });

@@ -15,7 +15,11 @@ pub(super) fn auto_trait_satisfied(
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
     visiting: &mut std::collections::HashSet<Type>,
+    assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) -> bool {
+    if assumed(ty, trait_id, &[]) {
+        return true;
+    }
     let is_send = builtin_traits.send == Some(trait_id);
     let is_sync = builtin_traits.sync == Some(trait_id);
     let is_owned = builtin_traits.owned == Some(trait_id);
@@ -27,7 +31,10 @@ pub(super) fn auto_trait_satisfied(
     }
 
     let nested = |nested: &Type, visiting: &mut std::collections::HashSet<Type>| {
-        explicit_impl_exists_for(nested, trait_id, &[], impls, structs, enums, builtin_traits)
+        assumed(nested, trait_id, &[])
+            || explicit_impl_exists_for(
+                nested, trait_id, &[], impls, structs, enums, builtin_traits, assumed,
+            )
             || auto_trait_satisfied(
                 nested,
                 trait_id,
@@ -36,6 +43,7 @@ pub(super) fn auto_trait_satisfied(
                 enums,
                 builtin_traits,
                 visiting,
+                assumed,
             )
     };
 
@@ -70,6 +78,7 @@ pub(super) fn auto_trait_satisfied(
                     structs,
                     enums,
                     builtin_traits,
+                    assumed,
                 ) || auto_trait_satisfied(
                     inner,
                     required,
@@ -78,6 +87,7 @@ pub(super) fn auto_trait_satisfied(
                     enums,
                     builtin_traits,
                     visiting,
+                    assumed,
                 )
             })
         }
@@ -103,6 +113,7 @@ pub(super) fn auto_trait_satisfied(
                     structs,
                     enums,
                     builtin_traits,
+                    assumed,
                 ) || auto_trait_satisfied(
                     &capture.ty,
                     required,
@@ -111,6 +122,7 @@ pub(super) fn auto_trait_satisfied(
                     enums,
                     builtin_traits,
                     visiting,
+                    assumed,
                 )
             })
         }),

@@ -25,6 +25,7 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
     finalize_pending: bool,
     owners: Option<&HashSet<ConstraintOwner>>,
     changed_type_vars: &mut HashSet<TypeVarId>,
+    assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) {
     let mut queue = store.obligation_ids().collect::<VecDeque<_>>();
     let mut queued = queue.iter().copied().collect::<HashSet<_>>();
@@ -122,6 +123,7 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
                     enums,
                     builtin_traits,
                     &span,
+                    assumed,
                 )
             }
             Constraint::Trait { ty, bound, .. }
@@ -142,6 +144,7 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
                             structs,
                             enums,
                             builtin_traits,
+                            assumed,
                         );
                         store.mark_attempt(id, engine.substitution_generation());
                         store.set_state(id, state);
@@ -199,6 +202,7 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
                         enums,
                         builtin_traits,
                         &span,
+                        assumed,
                     )
                 } else if bound
                     .type_args
@@ -213,6 +217,7 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
                         structs,
                         enums,
                         builtin_traits,
+                        assumed,
                     )
                 } else {
                     ObligationState::Solved

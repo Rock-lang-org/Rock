@@ -20,7 +20,11 @@ pub(super) fn impl_exists_for(
     structs: &HashMap<DefId, HirStruct>,
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
+    assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) -> bool {
+    if assumed(ty, trait_id, trait_args) {
+        return true;
+    }
     if builtin_traits.sized == Some(trait_id) {
         return type_is_sized(ty);
     }
@@ -37,6 +41,7 @@ pub(super) fn impl_exists_for(
         structs,
         enums,
         builtin_traits,
+        assumed,
     ) {
         return true;
     }
@@ -49,6 +54,7 @@ pub(super) fn impl_exists_for(
         enums,
         builtin_traits,
         &mut std::collections::HashSet::new(),
+        assumed,
     )
 }
 
@@ -60,6 +66,7 @@ pub(super) fn explicit_impl_exists_for(
     structs: &HashMap<DefId, HirStruct>,
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
+    assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) -> bool {
     let marker_provider_crate =
         if builtin_traits.send == Some(trait_id) || builtin_traits.sync == Some(trait_id)
@@ -87,7 +94,7 @@ pub(super) fn explicit_impl_exists_for(
         };
 
         impl_trait_args_match(&imp.trait_arg_types, trait_args, &mut subst)
-            && impl_bounds_satisfied(imp, &subst, impls, structs, enums, builtin_traits)
+            && impl_bounds_satisfied(imp, &subst, impls, structs, enums, builtin_traits, assumed)
     })
 }
 
@@ -98,6 +105,7 @@ pub(super) fn impl_bounds_satisfied(
     structs: &HashMap<DefId, HirStruct>,
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
+    assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) -> bool {
     imp.bounds.iter().all(|(generic_param, bounds)| {
         let Some(ty) = subst.get(generic_param) else {
@@ -118,6 +126,7 @@ pub(super) fn impl_bounds_satisfied(
                 structs,
                 enums,
                 builtin_traits,
+                assumed,
             )
         })
     })

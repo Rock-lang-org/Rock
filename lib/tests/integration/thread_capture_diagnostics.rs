@@ -1,6 +1,111 @@
 use crate::support::*;
 
 #[test]
+fn test_spawn_generic_capture_uses_declared_marker_bounds() {
+    let output = compile_and_run(r#"
+> std::concurrency::thread::spawn
+> std::concurrency::thread_safety::Send
+> std::concurrency::thread_safety::Owned
+> std::functional::Fn
+
+launch: F -> I64 where F: Fn (), I64, F: Send, F: Owned
+launch = handler ->
+    task = -> handler.call ()
+    match spawn task
+        Result::Ok handle =>
+            match handle.join!
+                Result::Ok value => value
+                Result::Err _ => -1
+        Result::Err _ => -2
+
+main = !->
+    text = String::from "owned"
+    launch (-> text.len!) .println!
+"#);
+    assert_eq!(output.trim(), "5");
+}
+
+#[test]
+fn test_spawn_generic_arc_capture_uses_conditional_impl_bounds() {
+    let output = compile_and_run(r#"
+> std::concurrency::thread::spawn
+> std::concurrency::thread::spawn_detached
+> std::concurrency::thread_safety::Send
+> std::concurrency::thread_safety::Sync
+> std::concurrency::thread_safety::Owned
+> std::concurrency::Arc
+> std::functional::Fn
+
+invoke: &F -> I64 where F: Fn (), I64
+invoke = handler -> handler.call ()
+
+launch: F -> I64 where F: Fn (), I64, F: Send, F: Sync, F: Owned
+launch = handler ->
+    shared = Arc::new handler
+    match spawn (-> invoke &*shared)
+        Result::Ok handle =>
+            match handle.join!
+                Result::Ok value => value
+                Result::Err _ => -1
+        Result::Err _ => -2
+
+detach: F -> () where F: Fn (), (), F: Send, F: Sync, F: Owned
+detach = handler !->
+    shared = Arc::new handler
+    task = -> (&*shared).call ()
+    result = spawn_detached task
+
+main = !->
+    text = String::from "shared"
+    launch (-> text.len!) .println!
+    detach (-> return)
+"#);
+    assert_eq!(output.trim(), "6");
+}
+
+#[test]
+fn test_spawn_generic_capture_rejects_missing_marker_bounds() {
+    for (bounds, marker) in [
+        ("F: Owned", "thread_safety::Send"),
+        ("F: Send", "thread_safety::Owned"),
+    ] {
+        compile_should_fail(&format!(r#"
+> std::concurrency::thread::spawn
+> std::concurrency::thread_safety::Send
+> std::concurrency::thread_safety::Owned
+> std::functional::Fn
+launch: F -> () where F: Fn (), (), {bounds}
+launch = handler !->
+    result = spawn (-> handler.call ())
+main = !-> launch (-> return)
+"#), marker);
+    }
+}
+
+#[test]
+fn test_spawn_generic_arc_capture_rejects_missing_marker_bounds() {
+    for (bounds, marker) in [
+        ("F: Sync, F: Owned", "thread_safety::Send"),
+        ("F: Send, F: Owned", "thread_safety::Send"),
+        ("F: Send, F: Sync", "thread_safety::Owned"),
+    ] {
+        compile_should_fail(&format!(r#"
+> std::concurrency::thread::spawn
+> std::concurrency::thread_safety::Send
+> std::concurrency::thread_safety::Sync
+> std::concurrency::thread_safety::Owned
+> std::concurrency::Arc
+> std::functional::Fn
+launch: F -> () where F: Fn (), (), {bounds}
+launch = handler !->
+    shared = Arc::new handler
+    result = spawn (-> (&*shared).call ())
+main = !-> launch (-> return)
+"#), marker);
+    }
+}
+
+#[test]
 fn test_inline_owned_capture_reads_file_and_joins_signatureless() {
     let id = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let dir = test_temp_dir(id);

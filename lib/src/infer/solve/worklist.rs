@@ -29,6 +29,22 @@ pub(super) fn solve_constraints_in_place_mode(
     assumptions: &crate::hir::HirGenericBounds,
 ) -> SolveResult {
     let builtin_traits = BuiltinTraitIds::from_language_items(language_items);
+    // Structural proofs and conditional impl bounds must retain the same
+    // declaration evidence as top-level trait selection.
+    let assumed = |ty: &Type, trait_id: DefId, args: &[Type]| {
+        let Type::Generic(param) = ty else {
+            return false;
+        };
+        let required = TraitBound {
+            trait_id,
+            type_args: args.to_vec(),
+        };
+        assumptions.get(param).is_some_and(|bounds| {
+            bounds.iter().any(|bound| {
+                trait_bounds_with_supertraits(ty, bound, traits).contains(&required)
+            })
+        })
+    };
     let mut warnings = Vec::new();
     let mut errors = Vec::new();
     let mut generic_bounds: HashMap<TypeVarId, Vec<TraitBound>> = HashMap::new();
@@ -44,6 +60,7 @@ pub(super) fn solve_constraints_in_place_mode(
         finalize_pending,
         owners,
         &mut changed_type_vars,
+        &assumed,
     );
 
     // Validate equality failures only after structural propagation reaches
@@ -222,6 +239,7 @@ pub(super) fn solve_constraints_in_place_mode(
                                 structs,
                                 enums,
                                 builtin_traits,
+                                &assumed,
                             )
                         {
                             if context == "try operator"

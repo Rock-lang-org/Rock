@@ -113,6 +113,7 @@ fn concrete_trait_bound_matches_struct_impl_by_def_id() {
         &structs,
         &HashMap::new(),
         BuiltinTraitIds::default(),
+        &|_, _, _| false,
     ));
 }
 
@@ -716,6 +717,7 @@ fn same_named_traits_do_not_satisfy_each_other_by_name() {
         &structs,
         &HashMap::new(),
         BuiltinTraitIds::default(),
+        &|_, _, _| false,
     ));
 }
 
@@ -734,6 +736,7 @@ fn owned_auto_trait_checks_storage_modes_and_nested_payloads_by_id() {
     );
     let satisfies = |ty: &Type, marker| impl_exists_for(
         ty, marker, &[], &HashMap::new(), &HashMap::new(), &HashMap::new(), builtin,
+        &|_, _, _| false,
     );
     for ty in [Type::I64, Type::Tuple(vec![Type::I64]), closure(CaptureKind::Move, Type::I64)] {
         assert!(satisfies(&ty, owned), "{ty:?}");
