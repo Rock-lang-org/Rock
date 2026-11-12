@@ -185,6 +185,40 @@ fn match_instance(
     }
 }
 
+/// Variables the body uses as a field receiver. A field needs one concrete
+/// struct, so these stay caller-seeded: a disagreeing caller is then a type
+/// error at its call instead of a generic body that cannot be instantiated.
+pub(super) fn field_receiver_vars(
+    hir: &PartialHir,
+    function: &crate::hir::HirFunction,
+) -> HashSet<TypeVarId> {
+    let mut vars = HashSet::new();
+    // `x.name args` is still `Call(FieldAccess ..)` before materialization:
+    // a method call, not a field use. The walk is pre-order, so a call's
+    // callee span is known before the callee itself is visited.
+    let mut method_callees = HashSet::new();
+    block(&function.body, &mut |node| {
+        if let HirExprKind::Call(callee, _, _) = &node.kind {
+            if matches!(callee.kind, HirExprKind::FieldAccess(_, _, None)) {
+                method_callees.insert((callee.span.start, callee.span.end));
+            }
+        }
+        if method_callees.contains(&(node.span.start, node.span.end)) {
+            return;
+        }
+        if let HirExprKind::FieldAccess(receiver, _, _) = &node.kind {
+            let mut ty = hir.engine.resolve(&receiver.ty);
+            while let Type::Reference { inner, .. } = ty {
+                ty = *inner;
+            }
+            if let Type::TypeVar(id) = ty {
+                vars.insert(id);
+            }
+        }
+    });
+    vars
+}
+
 /// Signature variables of each inferred function whose direct callers supply
 /// mutually incompatible types. Such variables must not be seeded from callers.
 pub(super) fn conflicting_caller_vars(hir: &PartialHir) -> HashSet<TypeVarId> {
@@ -200,6 +234,7 @@ pub(super) fn conflicting_caller_vars(hir: &PartialHir) -> HashSet<TypeVarId> {
         if !function.generic_params.is_empty() {
             continue;
         }
+        let struct_bound = field_receiver_vars(hir, function);
         let mut instances = HashMap::<TypeVarId, Vec<Type>>::new();
         for args in &call_args {
             for (param, (arg, _)) in function.params.iter().zip(args) {
@@ -207,6 +242,9 @@ pub(super) fn conflicting_caller_vars(hir: &PartialHir) -> HashSet<TypeVarId> {
             }
         }
         for (var, types) in instances {
+            if struct_bound.contains(&var) {
+                continue;
+            }
             let mut probe = hir.engine.clone_for_probe();
             let mut iter = types.iter();
             let Some(first) = iter.next() else {

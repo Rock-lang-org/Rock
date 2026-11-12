@@ -549,6 +549,6 @@ main = !->
     show_v (Point v: 1)
     show_v 'c'
 "#,
-        "type `Char` has no field `v`",
+        "argument to 'show_v' does not match its inferred parameter type: Type mismatch: Point vs Char",
     );
 }

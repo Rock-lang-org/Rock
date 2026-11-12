@@ -207,6 +207,9 @@ pub(in crate::infer) fn propagate_function_instances_for_owners_with_progress(
     {
         let mut shared = constrained_signature_vars(hir, function);
         shared.retain(|var| !conflicting.contains(var));
+        if function.generic_params.is_empty() {
+            shared.extend(super::call_sites::field_receiver_vars(hir, function));
+        }
         if !shared.is_empty() {
             constrained_vars.insert(function.id, shared);
         }
