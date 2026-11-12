@@ -136,6 +136,21 @@ main = !->
 }
 
 #[test]
+fn test_std_into_on_signatureless_parameter_binds_target_from_annotation() {
+    let output = compile_and_run(
+        r#"
+show = value !->
+    text: String = value.into!
+    text.println!
+
+main = !->
+    show "hi"
+"#,
+    );
+    assert_eq!(output, "hi\n");
+}
+
+#[test]
 fn test_std_fixed_u8_arrays_convert_to_string_for_any_length() {
     let output = compile_and_run(
         r#"

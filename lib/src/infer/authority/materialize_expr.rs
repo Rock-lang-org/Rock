@@ -242,7 +242,10 @@ impl MethodAuthorityContext<'_> {
                 }
                 method_substitution.sort_by_key(binding_sort_key);
 
-                let mut authority = selected.target.clone();
+                // Owner parameters fixed only by the expected return type (e.g. `U` in
+                // `impl Into U for T`) are bound here, after return-type matching.
+                let mut authority =
+                    selected.target_with_substitution(&substitution, |ty| self.resolved_type(ty));
                 authority.method_substitution = method_substitution;
                 let selected_return = selected.return_type.substitute_generics(&substitution);
                 let selected_callable = Type::function_with_safety(
