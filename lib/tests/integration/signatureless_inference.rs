@@ -552,3 +552,53 @@ main = !->
         "argument to 'show_v' does not match its inferred parameter type: Type mismatch: Point vs Char",
     );
 }
+
+#[test]
+fn test_signatureless_tuple_index_parameter_is_seeded_from_callers() {
+    let output = compile_and_run(
+        r#"
+first = pair !-> pair.0.println!
+
+main = !->
+    first (1, 2)
+    first (3, 4)
+"#,
+    );
+
+    assert_eq!(output, "1\n3\n");
+}
+
+#[test]
+fn test_signatureless_tuple_index_rejects_disagreeing_caller_type() {
+    compile_should_fail(
+        r#"
+first = pair !-> pair.0.println!
+
+main = !->
+    first (1, 2)
+    first 'c'
+"#,
+        "argument to 'first' does not match its inferred parameter type",
+    );
+}
+
+#[test]
+fn test_signatureless_enum_match_rejects_disagreeing_caller_type() {
+    compile_should_fail(
+        r#"
+enum Color
+    Red
+    Green
+
+name = color !->
+    match color
+        Color::Red => "red".println!
+        Color::Green => "green".println!
+
+main = !->
+    name Color::Red
+    name 'c'
+"#,
+        "Type mismatch: Char vs Color",
+    );
+}

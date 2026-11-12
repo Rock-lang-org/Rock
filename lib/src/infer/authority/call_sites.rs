@@ -185,8 +185,8 @@ fn match_instance(
     }
 }
 
-/// Variables the body uses as a field receiver. A field needs one concrete
-/// struct, so these stay caller-seeded: a disagreeing caller is then a type
+/// Variables the body uses as a field or tuple-index receiver. Both need one
+/// concrete type, so these stay caller-seeded: a disagreeing caller is then a type
 /// error at its call instead of a generic body that cannot be instantiated.
 pub(super) fn field_receiver_vars(
     hir: &PartialHir,
@@ -206,7 +206,9 @@ pub(super) fn field_receiver_vars(
         if method_callees.contains(&(node.span.start, node.span.end)) {
             return;
         }
-        if let HirExprKind::FieldAccess(receiver, _, _) = &node.kind {
+        if let HirExprKind::FieldAccess(receiver, _, _) | HirExprKind::TupleIndex(receiver, _) =
+            &node.kind
+        {
             let mut ty = hir.engine.resolve(&receiver.ty);
             while let Type::Reference { inner, .. } = ty {
                 ty = *inner;
