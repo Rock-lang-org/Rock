@@ -18,6 +18,15 @@ pub(super) fn propagate_instance_relation(
     let source = engine.resolve(source);
     let instance = engine.resolve(instance);
     match (&source, &instance) {
+        // Occurs check: a binding whose replacement mentions its own variable
+        // would make `substitute` recurse forever (it folds replacements again).
+        (Type::TypeVar(id), _)
+            if crate::type_services::visit::type_any(&instance, |ty| ty == &Type::TypeVar(*id)) =>
+        {
+            if instance != source {
+                return;
+            }
+        }
         (Type::TypeVar(id), _) => {
             if shared.contains(id) {
                 let _ = engine.unify(&source, &instance);

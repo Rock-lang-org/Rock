@@ -15,5 +15,5 @@ bind: F A -> M -> F B where F _: Monad, M: FnMut A, (F B)
 impl MonadValue A, (F B) for F A where F _: Monad
     ~@bind = callback -> F::Monad::bind self, callback
 
->>=: F A -> (A -> F B) -> F B where F _: Monad
+>>=: F A -> M -> F B where F _: Monad, M: FnMut A, (F B)
 >>= = value, callback -> F::Monad::bind value, callback

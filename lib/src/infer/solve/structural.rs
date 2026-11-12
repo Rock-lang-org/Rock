@@ -133,7 +133,23 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
                         || builtin_traits.fn_trait == Some(bound.trait_id)) =>
             {
                 let resolved = engine.resolve(&ty);
-                let (params, ret) = match resolved {
+                // std implements the callable traits for `&F` (when `F: Fn`) and
+                // `&mut F` (when `F: FnMut`); infer through the borrow the same way,
+                // checking the callee against the trait the borrow requires.
+                let (resolved, required_trait) = match resolved {
+                    Type::Reference { mutable, inner }
+                        if matches!(engine.resolve(&inner), Type::Function { .. }) =>
+                    {
+                        let required = if mutable {
+                            builtin_traits.fn_mut
+                        } else {
+                            builtin_traits.fn_trait
+                        };
+                        (engine.resolve(&inner), required.unwrap_or(bound.trait_id))
+                    }
+                    resolved => (resolved, bound.trait_id),
+                };
+                let (params, ret) = match resolved.clone() {
                     Type::Function { params, ret, .. } => (params, ret),
                     concrete => {
                         let state = infer_explicit_impl_trait_args(
@@ -178,8 +194,8 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
                         .map(|ty| engine.resolve(ty))
                         .collect::<Vec<_>>();
                     match callable_trait_satisfied(
-                        &engine.resolve(&ty),
-                        bound.trait_id,
+                        &engine.resolve(&resolved),
+                        required_trait,
                         &args,
                         builtin_traits,
                     ) {

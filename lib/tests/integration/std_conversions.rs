@@ -472,3 +472,43 @@ main = !->
     );
     assert_eq!(output, "c\n1.5\n7\n3\n");
 }
+
+#[test]
+fn test_borrowed_callables_satisfy_functor_and_monad_operators() {
+    let output = compile_and_run(
+        r#"
+infix 9 >|
+>| = a, f -> a <&> (>>= &f)
+
+options = ->
+    mut values: Vec (Option I64) = Vec::new!
+    values.push (Some 1)
+    values.push (Some 3)
+    values
+
+main = !->
+    step = x -> Some (x + 1)
+    (options! <&> (>>= &step)).println!
+    mut counted = x -> Some (x * 10)
+    (options! <&> (>>= &mut counted)).println!
+    (options! >| (x -> Some (x - 1))).println!
+"#,
+    );
+
+    assert_eq!(output, "[Some(2), Some(4)]\n[Some(10), Some(30)]\n[Some(0), Some(2)]\n");
+}
+
+#[test]
+fn test_closure_moving_a_captured_callable_is_not_fn_mut() {
+    compile_should_fail(
+        r#"
+main = !->
+    mut values: Vec (Option I64) = Vec::new!
+    values.push (Some 1)
+    values.push (Some 3)
+    step = x -> Some (x + 1)
+    (values <&> (>>= step)).println!
+"#,
+        "does not implement trait `std::functional::callable::FnMut",
+    );
+}

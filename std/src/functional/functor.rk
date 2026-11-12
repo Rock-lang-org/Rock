@@ -17,8 +17,8 @@ impl FunctorValue A, B for F A where F _: Functor
     type Output = F B
     ~@fmap = mapper -> F::Functor::fmap mapper, self
 
-<$>: (A -> B) -> F A -> F B where F _: Functor
+<$>: M -> F A -> F B where F _: Functor, M: FnMut A, B
 <$> = mapper, value -> F::Functor::fmap mapper, value
 
-<&>: F A -> (A -> B) -> F B where F _: Functor
+<&>: F A -> M -> F B where F _: Functor, M: FnMut A, B
 <&> = value, mapper -> F::Functor::fmap mapper, value

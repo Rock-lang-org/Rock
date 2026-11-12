@@ -637,3 +637,23 @@ main = !->
 
     assert_eq!(output, "[2, 3]\nSome(10)\n");
 }
+
+#[test]
+fn test_moved_hole_typed_handles_through_borrowing_helper_report_move() {
+    compile_should_fail(
+        r#"
+> std::concurrency::thread::spawn
+
+join_all = a, f -> a <&> (>>= &f)
+
+main = !->
+    handles: Vec _ = [
+        spawn (-> 1)
+        spawn (-> 2)
+    ].into!
+    (join_all handles, (.join!)).println!
+    (join_all handles, (.join!)).println!
+"#,
+        "use of moved value `handles`",
+    );
+}
