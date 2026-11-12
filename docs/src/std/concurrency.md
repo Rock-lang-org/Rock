@@ -4,7 +4,7 @@ The standard library provides owned POSIX threads, atomic reference counting, a 
 
 ## Spawning and joining
 
-`spawn` is an explicitly imported function. It accepts an owned `FnOnce` task whose captured environment and result implement `Send`, and returns `Result (JoinHandle T), ThreadError`. `join!` consumes the handle and returns the task result or a concrete `ThreadError`.
+`spawn` is an explicitly imported function. It accepts a `FnOnce` task whose captured environment implements `Owned` and `Send`, with a result implementing `Send`, and returns `Result (JoinHandle T), ThreadError`. `join!` consumes the handle and returns the task result or a concrete `ThreadError`.
 
 ```rock
 > std::concurrency::thread::spawn
@@ -40,6 +40,12 @@ main = ->
 The explicit `return` makes the task return unit (`()`), rather than the result of `println!`. There is deliberately no expected worker output: returning from `main` does not wait for detached tasks, so the process can exit before the message is printed. Sleeping is not a completion guarantee; use `spawn` and `join!` when the work must finish before exit. Handle any recoverable task errors inside the task, since `spawn_detached` only reports startup failure.
 
 ## Owned captures
+
+Capture liveness can transfer ownership into a closure without a `move`
+keyword, but it does not erase references stored inside the captured value.
+Detached tasks must own a thread-safe environment; a reference to a local
+value is not sufficient merely because it is the last local use. The compiler
+checks the thread API's `Owned` capture contract as well as `Send` and `FnOnce`.
 
 A spawned closure cannot borrow a stack value that might end before the thread. Move owned data into the closure by using a consuming method or an owned container.
 

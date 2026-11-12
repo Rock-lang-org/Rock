@@ -1,670 +1,154 @@
-# Rock Language Syntax Specification
+# Rock Language Reference
 
-## Overview
+This reference describes the development compiler, not a stable language
+standard. The [book](https://rock-lang-org.github.io/Rock/) supplies detailed
+explanations and complete examples. The [Unreleased changelog](../CHANGELOG.md)
+records differences from v0.7.0. Compiler regression tests remain the authority
+for edge cases; parsed syntax is not necessarily supported end to end.
 
-Rock is a functional programming language with Haskell-inspired syntax, featuring strong typing, pattern matching, traits, and modern language constructs. This specification documents the complete syntax as implemented in the compiler.
+## Layout, Bindings, and Calls
 
-## 1. Lexical Structure
+Indentation delimits blocks. `//` introduces a line comment and `/* ... */` a
+block comment. Bindings use `name = expression`; annotations use `name: Type`.
+Locals shadow top-level names rather than reassigning those items. `mut`
+permits mutable access; ordinary local reassignment preserves the binding's
+type. Unknown annotation types are errors, while local `_` annotation holes
+infer their expected kind from context.
 
-### 1.1 Keywords
-```
-struct, enum, trait, impl, if, then, else, for, in, while, loop, macro,
-true, false, return, continue, break, infix, mod, extern, match, unsafe,
-type, mut, where, as, do
-```
-
-### 1.2 Operators
-- **Arithmetic**: `+`, `-`, `*`, `/`
-- **Comparison**: `=`, `!`, `<`, `>`
-- **Special**: `$`, `|`, `&`
-- **Custom operators**: User-defined with `infix` declaration
-
-### 1.3 Delimiters and Punctuation
-- **Parentheses**: `(`, `)`
-- **Brackets**: `[`, `]`
-- **Arrows**: `->` (function), `=>` (match/macro)
-- **Punctuation**: `,` (comma), `:` (colon), `::` (double colon), `.` (dot), `..` (double dot), ` .` (spaced dot)
-- **Special**: `@` (self reference), `?` (error propagation), `_` (wildcard), `=` (assignment)
-
-### 1.4 Literals
-- **Numbers**: `123`, `456`
-- **Floats**: `3.14`, `2.718`
-- **Strings**: `"hello world"`
-- **Characters**: `'a'`, `'x'`
-- **Booleans**: `true`, `false`
-- **Arrays**: `[1, 2, 3]`, `[]`
-
-### 1.5 Identifiers
-- **Variables**: lowercase starting: `variable`, `my_var`
-- **Types**: uppercase starting: `MyType`, `String`
-- **Self references**: `@field`, `@method`
-
-### 1.6 Comments
-- **Line comments**: `// comment text`
-- **Block comments**: `/* comment text */` (planned)
-
-### 1.7 Indentation
-Rock uses significant whitespace for block structure. Indentation levels are tracked and must be consistent within a block.
-
-## 2. Types
-
-### 2.1 Basic Types
-```rock
-// Primitive types
-Int8, Int16, Int32, Int64
-UInt8, UInt16, UInt32, UInt64
-Float32, Float64
-Bool
-String
-Char
-```
-
-### 2.2 Composite Types
-
-#### Function Types
-```haskell
-// Function type syntax
-add : Int -> Int -> Int
-callback : (String -> Bool) -> String
-```
-
-#### Array Types
-```haskell
-numbers : [Int]
-matrix : [[Float]]
-```
-
-#### Tuple Types
-```haskell
-point : (Int, Int)
-triple : (String, Int, Bool)
-```
-
-#### Reference Types
-```haskell
-// Mutable reference
-mut_ref : &mut Int
-// Immutable reference  
-ref : &Int
-```
-
-#### Pointer Types
-```haskell
-// Raw pointer (unsafe)
-ptr : *Int
-```
-
-#### Unit Type
-```haskell
-// Unit type (empty tuple)
-unit : ()
-```
-
-### 2.3 Generic Types
-```haskell
-// Generic struct
-struct Container T
-    value: T
-
-// Generic enum
-enum Result T, E
-    Ok T
-    Err E
-```
-
-### 2.4 Kinds and Type Constructors
-
-Ordinary types have kind `Type`. A generic type constructor has a function kind;
-for example, `Option` has kind `Type -> Type` and `Result` has kind
-`Type -> Type -> Type`.
-
-```haskell
-// F accepts one type argument.
-trait Functor for F _
-    fmap: M -> F A -> F B where M: FnMut A, B
-
-// Parenthesized annotations declare higher-order kinds explicitly.
-(H: (Type -> Type) -> Type)
-
-// A section fixes Result's error type and leaves its value type open.
-Result _, E
-
-// Type lambdas are the canonical explicit form of the same constructor.
-\T -> Result T, E
-```
-
-The `_` placeholder is valid only in a constructor section. Constructor
-application associates to the left, while a type lambda extends as far right as
-its body. Unsaturated constructors are compile-time terms and cannot be used as
-runtime value types.
-
-## 3. Expressions
-
-### 3.1 Primary Expressions
-
-#### Literals
-```haskell
-42          // number
-3.14        // float
-"hello"     // string
-'c'         // character
-true        // boolean
-[1, 2, 3]   // array
-```
-
-#### Identifiers
-```haskell
-variable    // variable reference
-MyType      // type reference
-@field      // self field reference
-```
-
-#### Parenthesized Expressions
-```haskell
-(1 + 2)     // grouped expression
-```
-
-### 3.2 Function Calls
-```haskell
-// Function call
-foo arg1, arg2
-
-// Method call with dot notation
-obj.method arg
-
-// Chained calls
-obj.method1!.method2 arg
-```
-
-A multiline dot chain following inline arguments continues the completed call, not its last argument. An argument-owned chain must be explicitly grouped or placed in its own multiline argument block.
-
-Postfix `?` closes the current ungrouped application before subsequent operators or suffixes are parsed. Thus `foo arg? + other` applies `?` to `foo arg`, regardless of the following operator's declared precedence. Field access, indexing, casts, another `?`, and further calls also operate on the propagated result. To propagate an argument before invoking its caller, place `?` inside the argument's parentheses, as in `foo (arg?)`; a comma-separated argument that needs its own propagation must be grouped this way. Delimited expressions and explicit nested bodies establish independent expression boundaries.
-
-### 3.3 Array/Tuple Access
-```haskell
-// Array indexing
-arr[0]
-arr[i + 1]
-
-// Tuple field access
-tuple.0
-tuple.1
-```
-
-### 3.4 Binary Operations
-```haskell
-// Arithmetic
-a + b
-a - b
-a * b
-a / b
-
-// Comparison
-a == b
-a != b
-a < b
-a > b
-
-// Custom operators
-a |> b      // pipe operator
-a >>= f     // method-backed bind operator
-```
-
-Custom infix operators currently have two precise resolution paths:
-- Function-backed operators resolve through normal function name resolution, for example `|>`.
-- Method-backed operators resolve against the left operand type, for example std operators like `>>=`, `<|>`, and `<&>`.
-
-### 3.5 Unary Operations
-```haskell
-// Prefix operators
--x          // negation
-!x          // logical not
-*ptr        // pointer dereference
-```
-
-### 3.6 `do` Expressions
-
-`do` introduces an indented sequencing expression. It expands during parsing to ordinary calls to the unqualified `bind` function, closures, and assignments; ordinary name resolution determines which `bind` is used. The standard prelude implementation supports `Option`, `Result`, and other `Monad` constructors.
+Function arguments are comma-separated. `function!` invokes a zero-argument
+function. `->` returns the body's result; `!->` discards it and returns unit;
+`~>` enables currying. A unit-returning `main` exits successfully. Function
+signatures are optional when inference supplies enough information.
 
 ```rock
-sum: Option I64 -> Option I64 -> Option I64
-sum = left, right -> do
-    first <- left
-    second <- right
-    total = first + second
-    pure total
+add = left, right ~> left + right
 
 main = !->
-    sum (Option::Some 20), (Option::Some 22) .unwrap_or 0 .println!
+    increment = add 1
+    increment 41 .println!
 ```
 
-- `name <- action` expands to `bind action, (name -> remainder)`; `_` discards the payload.
-- A nonfinal bare expression also binds and discards its payload.
-- Assignments retain their existing declaration/reassignment semantics and evaluation position.
-- The final expression is returned unchanged. `pure` is an ordinary function; no lifting or error conversion is inserted.
-- New bindings are scoped to the block and its continuations. Later actions execute only when the resolved `bind` invokes the continuation, with the existing closure ownership rules.
-- Blocks must be nonempty and end in an expression. Bind patterns initially support only an immutable identifier or `_`.
-- Direct `?` and `return` are rejected in the sequencing region. `break` and `continue` cannot leave it. Explicit nested functions and loops retain their own control-flow targets.
-- `<-` is recognized contextually at the start of a `do` statement, not registered as a global operator. `do` is a reserved keyword.
+This prints `42`. See [Functions](src/language/functions.md),
+[Bindings](src/language/bindings.md), and
+[Functions as Values](src/functional/function-values.md) for call holes,
+operator sections, callable bounds, and capture ownership.
 
-## 4. Statements
+## Types and Generics
 
-### 4.1 Expression Statements
-```haskell
-// Any expression can be a statement
-foo!
-1 + 2
-obj.method!
-```
+Primitive spellings include `I8` through `I64`, `U8` through `U64`, `F32`,
+`F64`, `Bool`, and `Char`. `Char` is a Unicode scalar. String literals have
+type `&Str`; `String` owns UTF-8 storage. String lengths count bytes, slicing
+checks UTF-8 boundaries, and `chars!` traverses scalars.
 
-### 4.2 Assignment
-```haskell
-// Variable assignment
-x = 42
-name = "Alice"
+Composite types include `[T; N]` arrays, borrowed `&[T]` and `&mut [T]` slices,
+tuples `(A, B)`, unit `()`, references `&T` and `&mut T`, raw pointers `*T`, and
+function types such as `I64 -> I64`. Bare slices are not ordinary owned values.
+Nested arrays support chained indexing.
 
-// Pattern assignment (destructuring)
-(a, b) = (1, 2)
-[first, ..rest] = array
+Generic arguments follow the constructor with spaces and commas: `Pair I64,
+Bool`. Defaults are declared in braces, for example `struct Pair A, {B = A}`.
+Array lengths can be declared as `N: usize`; function signatures and impl
+array shapes can introduce inferred length parameters. Constant lengths must
+be literals or in-scope length parameters, not arbitrary runtime expressions.
 
-// Type annotation
-value: Int = 42
-```
+```rock
+struct Buffer T, N: usize
+    < data: [T; N]
 
-### 4.3 Control Flow Statements
-```haskell
-// Return
-return
-return value
+filled: [I64; N] -> [I64; N]
+filled = template -> [7; N]
 
-// Break/Continue
-break
-continue
-break value
-continue value
-```
-
-## 5. Control Flow
-
-### 5.1 Conditional Expressions
-```haskell
-// Basic if-then-else
-if condition then value1 else value2
-
-// Multi-line if
-if condition
-then
-    statement1
-    statement2
-else
-    statement3
-
-// If-let pattern matching
-if Ok value = result
-then process value
-else handle_error!
-```
-
-### 5.2 Loops
-
-#### While Loops
-```haskell
-while condition
-    body_statement
-```
-
-#### For Loops
-```haskell
-for item in collection
-    process item
-```
-
-#### Infinite Loops
-```haskell
-loop
-    statement
-    if condition then break
-```
-
-### 5.3 Pattern Matching
-```haskell
-match expression
-    pattern1 => result1
-    pattern2 if guard => result2
-    _ => default_result
-```
-
-#### Pattern Types
-```haskell
-// Literal patterns
-match x
-    42 => "forty-two"
-    "hello" => "greeting"
-
-// Variable binding
-match x
-    value => process value
-
-// Tuple patterns
-match point
-    (0, 0) => "origin"
-    (x, 0) => "on x-axis"
-    (0, y) => "on y-axis"
-    (x, y) => "general point"
-
-// Array patterns
-match list
-    [] => "empty"
-    [x] => "single element"
-    [first, ..rest] => "multiple elements"
-
-// Constructor patterns
-match result
-    Ok value => value
-    Err error => handle error
-
-// Guard patterns
-match x
-    n if n > 0 => "positive"
-    n if n < 0 => "negative"
-    _ => "zero"
-
-// Binding patterns
-match data
-    value @ (x, y) if x > y => use value
-```
-
-## 6. Functions
-
-### 6.1 Function Declarations
-```haskell
-// Basic function
-add = x, y -> x + y
-
-// Function with type signature
-add : Int -> Int -> Int
-add = x, y -> x + y
-
-// Multi-line function body
-process = data ->
-    step1 = transform data
-    step2 = validate step1
-    finalize step2
-```
-
-#### Unit-Returning Functions and Entry Points
-
-The discard arrow `!->` evaluates a function or lambda body for effects, discards its result, and returns unit (`()`). Prefer it for an ordinary program's entry point:
-
-```haskell
 main = !->
-    "Hello, Rock!".println!
+    buffer: Buffer I64, 2 = Buffer
+        data: filled [1, 2]
+    buffer.data[1].println!
 ```
 
-When `main` returns unit, normal completion maps to process exit status `0`; no final `0` expression is needed. Discarding a value does not inspect it for errors or produce a failure exit status. Use the ordinary `->` arrow when intentionally returning an integer exit status:
+This prints `7`. Repeat initializers must be copyable. See
+[Generics](src/language/generics.md) for defaults, aliases, bounds, associated
+types, and const parameters. [Higher-Kinded Types](src/functional/higher-kinded-types.md)
+covers constructor kinds, sections such as `Result _, E`, and type lambdas.
 
-```haskell
-main = ->
-    "This program intentionally reports failure.".println!
-    1
-```
+## Data, Traits, and Ownership
 
-### 6.2 Lambda Expressions
-```haskell
-// Lambda syntax
-lambda = x -> x + 1
+Structs declare named fields. Enums declare variants with optional positional
+payloads. `<` exports declarations or fields. Exporting an enum exposes its
+variants through the enum path; imports provide short constructor names in
+expressions and patterns. The std prelude imports `Some`, `None`, `Ok`, and `Err`.
 
-// Multi-parameter lambda
-combine = x, y -> x + y
+```rock
+enum Light
+    On
+    Off
 
-// Function shorthand
-plus_one = (+1)
-multiply_by_two = (*2)
-```
+> Light::Off
 
-Receiver sections use `(.method!)` for `value -> value.method!` and `(!.method!)` for `value !-> value.method!`. The leading `!` discards the result of the entire section body, including any method arguments and chains, and returns `()`. The trailing `!` remains a zero-argument call.
-
-```haskell
 main = !->
-    for_each 1..=3, (!.println!)
+    light = Off
+    match light
+        Light::On => "on".println!
+        Off => "off".println!
 ```
 
-### 6.3 Function Features
+This prints `off`. Write exhaustive matches deliberately: the compiler does
+not diagnose every incomplete match. See [Enums](src/language/enums-and-patterns.md)
+for guards and borrowed payloads.
 
-#### Currying
-```haskell
-add = x, y -> x + y
-add_five = add 5
-result = add_five 3  // result is 8
-```
+Traits declare capabilities and associated types; impls supply implementations.
+`where T: Trait` supplies a generic bound. Receiver markers are `@` for shared
+borrowing, `^@` for mutable borrowing, and `~@` for consuming ownership.
+Owned non-copy values move; `Drop` performs deterministic cleanup. Owned array
+loops move their elements and drop unvisited elements on early exit.
 
-#### Higher-Order Functions
-```haskell
-apply = f, x -> f x
-map = f, list -> // implementation
-```
+Closures infer capture ownership from liveness and invocation mode from body
+effects. An owned capture need not make a closure consuming; a body that moves
+out its capture does. Borrowed captures retain lifetime restrictions. Detached
+thread tasks require `Owned` and `Send` captures and the appropriate `FnOnce`
+contract. See [Traits](src/language/traits.md), [Ownership](src/language/ownership.md),
+and [Concurrency](src/std/concurrency.md).
 
-## 7. Data Types
+## Control Flow and Operators
 
-### 7.1 Struct Declarations
-```haskell
-// Basic struct
-struct Point
-    x: Int
-    y: Int
+`if` and `match` produce values. Loops include `while`, `loop`, and `for..in`,
+with `break` and `continue`. Ranges use `..` or `..=`; open-ended forms are
+useful for slicing, not an unbounded iterator API. `?` propagates a fallible
+result. `do` notation sequences operations through ordinary `bind` resolution.
+See [Control Flow](src/language/control-flow.md) and
+[Error Handling](src/functional/error-handling.md).
 
-// Struct with default values
-struct Config
-    debug: Bool = false
-    timeout: Int = 30
+Operator declarations and implementations belong to the program or its
+explicit dependencies, not compiler-owned std fallbacks. Duplicate operator
+declarations are errors, even across dependencies. Application precedence is
+`8`; a spaced dot applies to the complete preceding expression. See
+[Operators](src/language/operators.md) and the
+[syntax reference](src/reference/syntax.md).
 
-// Generic struct
-struct Container T
-    value: T
-    count: Int
+## Modules, Macros, and Packages
 
-// Public fields
-struct PublicData
-    < public_field: String
-    private_field: Int
-```
+`mod name` loads a file-backed module. `>` imports a path; `<` exports or
+re-exports a declaration or path. Unresolved imports and modules named after
+dependencies are errors. Explicit imports take precedence over glob bindings.
+See [Modules](src/programs/modules.md).
 
-### 7.2 Struct Instantiation
-```haskell
-// Named field syntax
-point = Point
-    x: 10
-    y: 20
+Declarative macros use `%name` invocations and `$name:ident`, `$name:expr`, and
+`$name:ty` captures. Repetitions start with `$(` and close with `)*`, in both
+matchers and templates. Templates repeat inline or by line according to their
+position. Macros expand in loaded modules and expression position. Exported
+macros require explicit imports; glob imports do not import them. Names in
+templates resolve at the call site. Nested repetition remains unsupported.
+The std prelude supplies `%format` and `%println`; see [Macros](src/programs/macros.md)
+and [Prelude](src/std/prelude.md).
 
-// Constructor pattern
-point = Point::new 10, 20
-```
+Packages declare one `[lib]`, any number of `[[bin]]` targets, or both in
+`rock.toml`. `rock build` builds all targets; `rock run --bin NAME` selects a
+binary. Path dependencies must provide libraries. Compiler-level dependencies
+are explicit prebuilt artifacts; std is external, with automatic prelude import
+only when explicitly supplied. See [Packages](src/programs/packages.md) and
+[Tooling](src/reference/tooling.md).
 
-### 7.3 Enum Declarations
-```haskell
-// Simple enum
-enum Color
-    Red
-    Green  
-    Blue
+## Safety and Implementation Limits
 
-// Enum with data
-enum Result T, E
-    Ok T
-    Err E
-
-// Enum with named fields
-enum Message
-    Quit
-    Move
-        x: Int
-        y: Int
-    Write String
-    ChangeColor Int, Int, Int
-```
-
-## 8. Traits and Implementations
-
-### 8.1 Trait Declarations
-```haskell
-// Basic trait
-trait Display
-    @show : String
-
-// Trait with default implementation
-trait Printable
-    @print = -> @show!.output!
-    @show : String
-
-// Generic trait
-trait Container T
-    @get : T
-    @set : T -> ()
-```
-
-### 8.2 Implementations
-```haskell
-// Implement trait for type
-impl Display for Point
-    @show = -> "Point(" + @x.show! + ", " + @y.show! + ")"
-
-// Standalone implementation
-impl Point
-    new = x, y -> Point x: x, y: y
-    @distance_from_origin = -> sqrt (@x * @x + @y * @y)
-
-// Generic implementation
-impl Container T for Box T
-    @get = -> @value
-    @set = value -> @value = value
-```
-
-### 8.3 Constructor Traits and Functional Abstractions
-
-Traits may target type constructors. Constructor trait members are static and
-are called through the implementing constructor or an explicitly qualified
-partial constructor.
-
-```haskell
-mapped = Option::Functor::fmap inc, (Option::Some 1)
-mapped_result = (Result _, String)::Functor::fmap inc, result
-```
-
-The standard library defines `Bifunctor`, `Functor`, `Applicative`, `Monad`,
-`Foldable`, and `Traversable` as ordinary source traits. Their laws use
-extensional equality: Bifunctor and Functor preserve identity and composition;
-Applicative preserves identity, composition, homomorphism, and interchange;
-Monad preserves both identities and associativity; Traversable preserves
-identity, composition, and naturality.
-
-`Bifunctor` targets binary constructors. For `Result T, E`, `first` maps the
-success parameter `T`, `second` and `<!>` map the error parameter `E`, and
-`bimap` maps both. The generic functional operators are `<$>`, `<&>`, `<*>`,
-`<!>`, and `>>=`; their meanings live in std source rather than the compiler.
-
-These operations are strict and evaluate finite containers left-to-right.
-`Functor::fmap` and `Foldable::foldl` consume their containers. `Vec::map_ref`
-and `Vec::for_each` are explicit borrowed alternatives, while consuming Vec
-operations move each element without implicit cloning and remain stack-safe.
-`Option` and `Result _, E` implement all five unary traits, while bare `Result`
-implements the binary `Bifunctor` trait. `Vec` implements `Functor`, `Foldable`,
-and `Traversable`, but not `Applicative` or `Monad`: Cartesian application
-requires cloning and zipped application does not have list monad semantics.
-
-## 9. Modules and Imports
-
-### 9.1 Module Declarations
-```haskell
-// Inline module
-mod utils
-    helper = x -> x + 1
-    
-// External module (references utils.rk file)
-mod utils
-```
-
-### 9.2 Import/Export Syntax
-```haskell
-// Import specific items
-> std::collections::HashMap
-> utils::helper
-
-// Export items
-< MyStruct
-< my_function
-```
-
-## 10. Macros
-
-### 10.1 Macro Declarations
-```haskell
-macro debug_print
-    $msg:expr =>
-        if DEBUG
-        then print $msg
-
-// Macro with repetition
-macro vec
-    $($item:expr),* =>
-        [$(item),*]
-```
-
-### 10.2 Macro Invocations
-```haskell
-// Macro call
-%debug_print "Hello, world!"
-
-// Macro with arguments
-%vec 1, 2, 3, 4
-```
-
-## 11. Operators
-
-### 11.1 Custom Operator Definitions
-```haskell
-// Infix operator with precedence
-infix 5 |>
-|> = x, f -> f x
-
-// Usage
-result = value |> transform |> validate
-```
-
-### 11.2 Operator Precedence
-Higher declared precedence binds more tightly. Function application has precedence `8`: operators above `8` become part of the final function argument, while operators at or below `8` apply to the call result. For example, `double x + 1` means `double (x + 1)` when `+` has precedence `9`, while `Option::Some x <&> transform` applies `<&>` to `Option::Some x` when `<&>` has precedence `8`.
-
-A tight dot binds directly to its receiver: `value.method!`. A spaced dot has lower precedence than the complete expression on its left, so `double x + 1 .println!` prints the result of `double (x + 1)`. Parentheses remain available when explicit grouping is needed, such as `(double x) + 1`.
-
-## 12. Unsafe Code
-
-### 12.1 Unsafe Blocks
-```haskell
-main = !->
-    unsafe
-        ptr: *Int = get_raw_pointer!
-        value = *ptr  // dereference raw pointer
-        process value
-```
-
-## 13. Error Handling
-
-### 13.1 Error Propagation
-```haskell
-// Question mark operator for error propagation
-result = risky_operation?
-
-// Chained error propagation
-final_result = step1? |> step2? |> step3?
-```
-
-### 13.2 Result Types
-```haskell
-// Function returning Result
-divide : Int -> Int -> Result Int, String
-divide = a, b ->
-    if b == 0
-    then Err "Division by zero"
-    else Ok (a / b)
-```
-
-This specification covers the core syntax of the Rock programming language as implemented in the compiler. The language combines functional programming concepts with modern syntax and safety features.
+Raw-pointer and FFI operations require the appropriate unsafe boundary; a
+parsed construct is not evidence that it is safe or implemented. See
+[Unsafe](src/systems/unsafe.md), [FFI](src/systems/ffi.md), and
+[Known Limitations](src/reference/limitations.md) before relying on an edge case.

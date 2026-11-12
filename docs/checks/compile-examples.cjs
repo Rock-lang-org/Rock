@@ -48,9 +48,11 @@ function main() {
     console.log(`Compiler: ${compiler}\nLogs: ${output}`);
     const std = artifact("std", path.join(root, "std/src/lib.rk"), []);
     const examples = [];
-    for (const file of [path.join(root, "README.md"), ...walk(path.join(root, "docs/src"))]
+    for (const file of [path.join(root, "README.md"), path.join(root, "std/README.md"), path.join(root, "docs/LANGUAGE_SPECIFICATION.md"), ...walk(path.join(root, "docs/src"))]
         .filter(file => file.endsWith(".md"))) {
-        const markdown = fs.readFileSync(file, "utf8");
+        // The root README uses GitHub's Haskell highlighting for Rock sources.
+        // Preserve offsets so diagnostics still point to the original lines.
+        const markdown = fs.readFileSync(file, "utf8").replace(/^```haskell$/gm, "```rock   ");
         for (const fence of rockFences(markdown)) {
             const before = markdown.slice(0, fence.start);
             const line = before.split("\n").length;
@@ -58,7 +60,7 @@ function main() {
             const sectionEnd = markdown.indexOf("\n## ", fence.end);
             const section = markdown.slice(sectionStart, sectionEnd < 0 ? undefined : sectionEnd);
             const namedFiles = [];
-            if (["modules.md", "packages.md"].includes(path.basename(file))) {
+            if (["modules.md", "packages.md", "README.md"].includes(path.basename(file))) {
                 for (const listing of rockFences(section)) {
                     const name = section.slice(0, listing.start).match(/### `([^`]+\.rk)`\s*$/)?.[1];
                     if (name) namedFiles.push([name, listing.source]);
@@ -69,6 +71,10 @@ function main() {
                 source: fence.source,
                 expected: before.match(/<!-- compile-fail: (.+?) -->\s*$/)?.[1],
                 namedFiles,
+                macroLibrarySource: path.basename(file) === "macros.md" && fence.source.includes("> mylib::")
+                    ? `mod text\n` : undefined,
+                macroModuleSource: path.basename(file) === "macros.md" && fence.source.includes("> mylib::")
+                    ? rockFences(section).find(item => item.source.startsWith("< macro "))?.source : undefined,
                 noStd: path.basename(file) === "packages.md" && /no_std = true/.test(section),
             });
         }
@@ -79,10 +85,14 @@ function main() {
 
     let http;
     let geometry;
+    let tools;
+    let mylib;
     let passed = 0;
     let rejected = 0;
     const failures = [];
-    for (const [index, example] of examples.entries()) {
+    const selected = examples.filter(example => !process.env.ROCK_DOC_FILTER || example.location.split(":")[0] === process.env.ROCK_DOC_FILTER);
+    if (!selected.length) throw new Error("No examples matched ROCK_DOC_FILTER");
+    for (const [index, example] of selected.entries()) {
         const directory = path.join(output, String(index + 1));
         const dependencies = example.noStd ? [] : [std];
         try {
@@ -91,13 +101,27 @@ function main() {
                 dependencies.push(http);
             }
             for (const [name, source] of example.namedFiles) write(path.join(directory, name), source);
-            if (example.source.includes("> geometry::") && example.namedFiles.some(([name]) => name === "geometry/main.rk")) {
-                geometry ||= artifact("geometry", path.join(directory, "geometry/main.rk"), [std]);
+            if (example.source.includes("> geometry::") && example.namedFiles.some(([name]) => name === "geometry/lib.rk")) {
+                geometry ||= artifact("geometry", path.join(directory, "geometry/lib.rk"), [std]);
                 dependencies.push(geometry);
             }
+            if (example.source.includes("> tools::") && example.namedFiles.some(([name]) => name === "tools/src/lib.rk")) {
+                tools ||= artifact("tools", path.join(directory, "tools/src/lib.rk"), [std]);
+                dependencies.push(tools);
+            }
+            if (example.macroLibrarySource) {
+                if (!example.macroModuleSource) throw new Error("Missing companion macro library");
+                write(path.join(directory, "mylib/lib.rk"), example.macroLibrarySource);
+                write(path.join(directory, "mylib/text.rk"), example.macroModuleSource);
+                mylib ||= artifact("mylib", path.join(directory, "mylib/lib.rk"), [std]);
+                dependencies.push(mylib);
+            }
             const name = example.namedFiles.find(([, source]) => source === example.source)?.[0] || "main.rk";
-            const entry = path.join(directory, name);
-            write(entry, example.source);
+            write(path.join(directory, name), example.source);
+            // README module helpers rely on inference from their companion main.
+            const entryName = example.location.startsWith("README.md:") && example.namedFiles.some(([name]) => name === "main.rk")
+                ? "main.rk" : name;
+            const entry = path.join(directory, entryName);
             const result = compile(entry, path.join(directory, "build"), dependencies);
             if (example.expected) {
                 if (result.status !== 1 || !result.log.includes(example.expected)) {

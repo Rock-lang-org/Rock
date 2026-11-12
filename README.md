@@ -3,7 +3,7 @@
 [![Book](https://github.com/Rock-lang-org/Rock/actions/workflows/book.yml/badge.svg?branch=master)](https://github.com/Rock-lang-org/Rock/actions/workflows/book.yml)
 [![Discord](https://img.shields.io/discord/990627124236939314.svg)](https://discord.gg/f6skPNB96J)
 
-[GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [Examples](examples/)
+[GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [Changelog](CHANGELOG.md) | [Examples](examples/)
 
 <h3 align="center"><a href="https://rock-lang-org.github.io/Rock/">Read the Book</a></h3>
 
@@ -13,7 +13,9 @@ Rock combines type inference, pattern matching, traits, and higher-kinded types 
 
 The syntax takes inspiration from [LiveScript](https://livescript.net/), [Haskell](https://www.haskell.org/), and [Rust](https://www.rust-lang.org/). You do not need to know those languages to follow this tour. It starts with small programs and introduces the functional vocabulary through examples.
 
-Rock is experimental. Version `0.6.0` is not a stability promise: syntax, APIs, and tooling can change, and compiler bugs remain. Use it to explore, build small programs, and help shape the language.
+Rock is experimental. The published v0.7.0 release is not a stability promise: syntax, APIs, and tooling can change, and compiler bugs remain. This checkout documents `develop`; additions in the [Unreleased changelog](CHANGELOG.md#unreleased) require a matching development toolchain rather than the published stable release.
+
+Recent development adds array-length const generics, imported enum constructors, expression and cross-crate macros, `%format`/`%println`, owned array iteration, and liveness-based closure captures. The book explains these alongside library and multiple-binary package targets.
 
 ## Contents
 
@@ -166,7 +168,7 @@ main = !->
     values[..2].println!
 ```
 
-This prints `total`, `60`, and `[10, 20]`. The range `0..3` visits indices `0`, `1`, and `2`, excluding its upper bound. values[..2]` borrows the first two elements as a slice; it does not create a new owned array. `mut` makes mutable access explicit. Rock also has `while`, `loop`, `break`, and `continue`; see [Control Flow](https://rock-lang-org.github.io/Rock/language/control-flow.html).
+This prints `total`, `60`, and `[10, 20]`. The range `0..3` visits indices `0`, `1`, and `2`, excluding its upper bound. `values[..2]` borrows the first two elements as a slice; it does not create a new owned array. `mut` makes mutable access explicit. Rock also has `while`, `loop`, `break`, and `continue`; see [Control Flow](https://rock-lang-org.github.io/Rock/language/control-flow.html).
 
 ## Functions and Pipelines
 
@@ -700,12 +702,16 @@ Not every container supports every abstraction. `Option` and partially applied `
 
 `mod` loads a module, `>` imports a public name, and `<` exports one. With the earlier `rock.toml`, this is a complete two-file project; the labels name separate files, not inline modules:
 
+### `math.rk`
+
 ```haskell
-// math.rk
 square = value -> value * value
 < square
+```
 
-// main.rk
+### `main.rk`
+
+```haskell
 mod math
 > math::square
 
@@ -793,10 +799,10 @@ sudo apt install git llvm-18-dev libpolly-18-dev libzstd-dev libxml2-dev zlib1g-
 export LLVM_SYS_180_PREFIX=/usr/lib/llvm-18
 ```
 
-Use a checkout of the revision you want to build. For the `v0.6.0` release:
+Use a checkout of the revision you want to build. For the development features documented here:
 
 ```sh
-git clone --branch v0.6.0 https://github.com/Rock-lang-org/Rock.git
+git clone --branch develop https://github.com/Rock-lang-org/Rock.git
 cd Rock
 ```
 

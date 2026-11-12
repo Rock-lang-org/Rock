@@ -28,7 +28,7 @@ The condensed productions reuse a few base names throughout the chapter:
 - `PATH` and `TYPE_PATH` are `::`-separated identifier or type segments.
 - `EXPRESSION` means any expression form described in this chapter; `STATEMENT` is an expression, binding, assignment, `return`, `break`, or `continue` in a block.
 - `BODY` is either one expression after an arrow or an indented `BLOCK`; `DECLARATION` is any top-level declaration production.
-- A name ending in `_LIST` is a comma-separated sequence of the named element. `PARAMETER_LIST` is a comma-separated pattern list, `ARGUMENT_LIST` is a comma-separated expression list, and `TYPE_PARAMETER_LIST` is a comma-separated type-name list.
+- A name ending in `_LIST` is a comma-separated sequence of the named element. `PARAMETER_LIST` is a comma-separated pattern list and `ARGUMENT_LIST` is a comma-separated expression list. `TYPE_PARAMETER_LIST` contains generic parameter declarations, including `N: usize` length parameters and defaulted parameters such as `{T = I64}`; see [Generics](../language/generics.md).
 - `MACRO_PATTERN`, `MACRO_TEMPLATE`, and `MACRO_ARGUMENT` are token sequences interpreted by the declarative macro matcher; their typed captures are defined in the macro production below.
 
 These are metavariables, not words that appear literally in Rock source.
@@ -79,7 +79,7 @@ start with an uppercase letter, while functions and bindings conventionally
 start with a lowercase letter. The lexer reserves the following keywords:
 
 ```text
-KEYWORD ::= "struct" | "enum" | "trait" | "impl" | "if" | "then" | "else" | "for" | "in" | "while" | "loop" | "macro" | "mod" | "extern" | "match" | "unsafe" | "infix" | "return" | "continue" | "break" | "type" | "mut" | "where" | "as" | "true" | "false"
+KEYWORD ::= "struct" | "enum" | "trait" | "impl" | "if" | "then" | "else" | "for" | "in" | "while" | "loop" | "macro" | "mod" | "extern" | "match" | "unsafe" | "infix" | "return" | "continue" | "break" | "type" | "mut" | "where" | "as" | "do" | "true" | "false"
 ```
 
 Declaration punctuation has its own meaning:
@@ -99,7 +99,8 @@ FLOAT_LITERAL ::= DIGIT+ "." DIGIT+
 BOOLEAN_LITERAL ::= "true" | "false"
 CHAR_LITERAL ::= "'" CHARACTER "'"
 STRING_LITERAL ::= "\"" CHARACTER* "\""
-ARRAY_LITERAL ::= "[" EXPRESSION_LIST? "]" | "[" EXPRESSION ";" INTEGER_LITERAL "]"
+ARRAY_LITERAL ::= "[" EXPRESSION_LIST? "]" | "[" EXPRESSION ";" ARRAY_LENGTH "]"
+ARRAY_LENGTH ::= INTEGER_LITERAL | TYPE_NAME
 TUPLE_LITERAL ::= "(" EXPRESSION "," EXPRESSION_LIST? ")"
 RANGE_EXPRESSION ::= EXPRESSION? (".." | "..=") EXPRESSION?
 ```
@@ -122,9 +123,9 @@ main = !->
     %println count, "\n", ratio, "\n", enabled, "\n", initial, "\n", greeting, "\n", values, "\n", repeated, "\n", pair.0, "\n", pair.1
 ```
 
-Strings and characters are byte-oriented in the current implementation. Use
-ordinary ASCII escapes only when targeting the current parser and verify
-non-ASCII behavior against the target compiler.
+Strings contain UTF-8 and lengths count bytes; `Char` is a Unicode scalar.
+String slicing validates UTF-8 boundaries. Use `chars!` for scalar traversal,
+not integer string indexing.
 
 ## Bindings and places
 
@@ -248,8 +249,8 @@ main = !->
     describe shape .println!
 ```
 
-All required fields must be initialized. An enum constructor is qualified by
-its enclosing type so that the variant's payload type is unambiguous.
+All required fields must be initialized. An enum constructor can be qualified
+by its enclosing type or used by its imported short name.
 
 ## Traits, implementations, and receivers
 
@@ -332,12 +333,12 @@ Type expressions use these productions:
 ```text
 TYPE ::= TYPE_NAME | TYPE_APPLICATION | TYPE_LAMBDA | TYPE_PROJECTION | TYPE_REFERENCE | TYPE_POINTER | TYPE_ARRAY | TYPE_SLICE | TYPE_TUPLE | TYPE_FUNCTION | "()" | "_"
 TYPE_APPLICATION ::= TYPE_NAME TYPE_ARGUMENT ("," TYPE_ARGUMENT)*
-TYPE_ARGUMENT ::= TYPE | "_"
+TYPE_ARGUMENT ::= TYPE | INTEGER_LITERAL | "_"
 TYPE_LAMBDA ::= "\\" TYPE_NAME "->" TYPE
 TYPE_PROJECTION ::= TYPE_NAME "::" TYPE_NAME
 TYPE_REFERENCE ::= "&" TYPE | "&mut" TYPE
 TYPE_POINTER ::= "*" TYPE
-TYPE_ARRAY ::= "[" TYPE ";" INTEGER_LITERAL "]"
+TYPE_ARRAY ::= "[" TYPE ";" ARRAY_LENGTH "]"
 TYPE_SLICE ::= "[" TYPE "]"
 TYPE_TUPLE ::= "(" TYPE "," TYPE_LIST? ")"
 TYPE_FUNCTION ::= TYPE "->" TYPE
@@ -511,13 +512,10 @@ argument propagates the whole call, including when that argument is borrowed:
 contains a complete example. `?` is propagation syntax, not an infix operator
 whose precedence is declared by the program.
 
-This complete program defines a pipeline operator, converts its result with
+This complete program uses the std pipeline operator, converts its result with
 an associated string constructor, and prints it with a zero-argument method call:
 
 ```rock
-infix 1 |>
-|> = value, function -> function value
-
 double: I64 -> I64
 double = value -> value * 2
 
@@ -531,6 +529,10 @@ main = !->
 and `text.println!` prints it. The standard library supplies common arithmetic
 and comparison meanings, but the compiler does not assign a meaning to an
 operator spelling by itself.
+
+An operator may be declared only once across the program and its dependencies;
+do not redeclare std's `|>` in a std-backed program. A curried operator body
+may use `~>` just like an ordinary curried function.
 
 ## Macros
 

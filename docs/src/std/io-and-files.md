@@ -1,5 +1,28 @@
 # Input, Output, and Files
 
+## Reading a Whole UTF-8 File
+
+Import `read_to_string` for an owned UTF-8 result rather than managing a read
+buffer yourself. This complete program reports an error if `message.txt` does
+not exist:
+
+```rock
+> std::io::fs::read_to_string
+
+main = !->
+    match read_to_string "message.txt"
+        Ok text => text.println!
+        Err error => error.show!.println!
+```
+
+The function reads until EOF, continuing after short reads and retrying
+interrupted reads. It preserves embedded NUL bytes in the contents, but rejects
+NUL bytes in the path with `IoError::InvalidPath`. Invalid UTF-8 produces
+`IoError::InvalidData`; operating-system failures produce `IoError::Os`.
+The result owns its storage, and the file is closed on success or failure.
+`IoError` implements `Show` with specific messages such as `IoError(InvalidData)`
+and `IoError(Os(2))`, rather than a generic error label.
+
 Rock's I/O abstractions use `Result` and ownership rather than exceptions or manual close calls. `File` and `TcpStream` implement `Read` and `Write`, `Stdin` implements `Read`, and `Stdout` implements `Write`. Generic code can therefore work with more than one kind of byte stream.
 
 ## The `Read` and `Write` traits

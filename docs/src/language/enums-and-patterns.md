@@ -76,6 +76,12 @@ This prints `off` and then `empty`. `On` was not imported, so it keeps its `Ligh
 
 ## Matching variants
 
+Exporting an enum makes its variants accessible through the public enum path.
+It does not introduce those variants as short names in another module. Import
+individual variants explicitly, or re-export a variant path with `<` in a
+facade. Explicit local names take precedence over the implicit prelude's
+constructors; qualify a path when two enums use the same spelling.
+
 A constructor pattern checks the variant and binds each payload:
 
 ```rock

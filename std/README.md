@@ -18,7 +18,31 @@ children and re-exports its public API.
 | `concurrency` | Shared ownership, mutexes, thread-safety markers, and threads |
 | `ffi` | C library declarations |
 
-`clone`, `convert`, `show`, `hash`, and `env` remain standalone modules.
+`clone`, `convert`, `show`, `hash`, `fmt`, and `env` remain standalone modules.
+
+## Development additions
+
+The [Unreleased changelog](../CHANGELOG.md#unreleased) tracks changes since
+v0.7.0; rebuild std with the same compiler as its consumers.
+
+- `fmt` exports `%format` and `%println` through the prelude. They concatenate
+  `Show` representations of comma-separated values, without format strings.
+- The prelude imports `Some`, `None`, `Ok`, and `Err` as short constructors;
+  qualified `Option::Some` and `Result::Ok` remain valid.
+- Fixed arrays convert into `Vec` with `Vec::from` or `.into!` across lengths.
+  `Vec U8` provides `extend_from_slice` for bulk byte append.
+- `std::io::fs::read_to_string` returns `Result String, IoError`, reads through
+  EOF, retries interrupted reads, and validates UTF-8 without discarding NULs.
+
+```rock
+main = !->
+    values: Vec I64 = Vec::from [1, 2, 3]
+    message = %format "items: ", values.len!
+    %println message
+```
+
+This prints `items: 3`. See the book's [prelude](../docs/src/std/prelude.md)
+and [file I/O](../docs/src/std/io-and-files.md) chapters for the contracts.
 
 ## Integer arithmetic and comparisons
 

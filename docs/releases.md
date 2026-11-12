@@ -97,3 +97,9 @@ The tag workflow for `v*` runs on Ubuntu 24.04, tests and packages the toolchain
 6. For the first new-format stable release, ensure GitHub marks it as Latest rather than leaving a historical release selected, then test the anonymous `latest/download/install.sh` flow and a pinned install in disposable homes.
 
 No local packaging command or tag workflow should silently publish publicly. Do not claim Windows, macOS, nightly, automatic cross-target support, or Rustup feature parity. If the public smoke test fails, communicate the problem and correct the release deliberately rather than telling users to skip checksum checks.
+
+## Development changelog
+
+For changes on `develop` since the published v0.7.0 release, see the
+[Unreleased changelog](../CHANGELOG.md#unreleased), including migration notes.
+It is separate from published release notes and does not assign a new version.

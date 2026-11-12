@@ -62,6 +62,28 @@ main = !->
 
 `add_offset` captures `offset` by shared access because it only reads it. The output is `15`. The capture cannot outlive the value it refers to.
 
+## Owning a Returned Capture
+
+A closure can own a captured value when the enclosing scope no longer needs
+it. This permits a returned closure without a separate `move` keyword:
+
+```rock
+make_message = ->
+    text = String::from "hello"
+    -> text
+
+main = !->
+    message = make_message!
+    message!.println!
+```
+
+This prints `hello`. The returned closure owns `text`; its body moves that
+string out, so it is callable once. Owning an environment does not by itself
+make a closure `FnOnce`: a body that only reads an owned capture can still
+support shared invocation. Captures borrowed from values that remain live
+retain their borrow restrictions. Dropping an uncalled closure also drops its
+owned captures, including when stored behind a function-type annotation.
+
 ## Callable Bounds
 
 The standard library expresses callback requirements with callable traits. Call a trait-bound parameter with ordinary function-call syntax: `function value`, or `function!` when there are no arguments. This works for functions, closures, and user-defined types implementing the callable traits.

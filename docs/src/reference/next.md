@@ -104,18 +104,18 @@ checkpoint. Run one exact test while investigating compiler behavior, then run t
 library suite:
 
 ```console
-$ cargo test -p rock-lib --test integration test_functions -- --exact
-$ cargo test -p rock-lib --test integration test_enum_match -- --exact
-$ cargo test -p rock-lib --test integration test_for_loop -- --exact
-$ cargo test -p rock-lib --test integration test_std_program_args_are_owned_and_available_outside_main -- --exact
-$ cargo test -p rock-lib
+$ cargo test --release -p rock-lib --test integration language_basics::test_functions -- --exact
+$ cargo test --release -p rock-lib --test integration enums::test_enum_match -- --exact
+$ cargo test --release -p rock-lib --test integration language_basics::test_for_loop -- --exact
+$ cargo test --release -p rock-lib --test integration language_basics::test_std_program_args_are_owned_and_available_outside_main -- --exact
+$ cargo test --release -p rock-lib
 ```
 
 For unsafe boundaries, use the exact diagnostic test that checks the contract:
 
 ```console
-$ cargo test -p rock-lib --test integration test_unsafe_operator_function_requires_unsafe -- --exact
-$ cargo test -p rock-lib --test integration test_unsafe_ampersand_function_reference_call_requires_unsafe -- --exact
+$ cargo test --release -p rock-lib --test integration unsafe_callables::test_unsafe_operator_function_requires_unsafe -- --exact
+$ cargo test --release -p rock-lib --test integration unsafe_callables::test_unsafe_ampersand_function_reference_call_requires_unsafe -- --exact
 ```
 
 There is no application-level `rock test` command yet. Keep executable

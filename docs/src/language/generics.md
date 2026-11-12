@@ -152,6 +152,40 @@ main = !->
 
 The receiver establishes `T = I64` and matches the required array length of three. The trait declares the argument and result of `echo` as `I64` independently of `T`; the method returns its argument, so the output is `7`. A generic implementation is not a promise that every possible instantiation works; its own bounds and receiver shape still have to match.
 
+## Array-Length Parameters
+
+An array's length can be a compile-time parameter. Declare it as `N: usize`
+alongside ordinary type parameters; `usize` here describes a constant argument,
+not an ordinary element type.
+
+```rock
+struct Buffer T, N: usize
+    < data: [T; N]
+
+impl Buffer T, N
+    @len = -> N
+
+filled: [I64; N] -> [I64; N]
+filled = template -> [7; N]
+
+main = !->
+    buffer: Buffer I64, 3 = Buffer
+        data: [10, 20, 30]
+    buffer.len!.println!
+    values = filled [1, 2]
+    values[1].println!
+```
+
+This prints `3` and `7`. The function signature introduces `N` from its array
+shape; each call specializes it to the argument's length. Data declarations
+must declare length parameters explicitly. Length arguments also work in enums,
+traits, and aliases. Repeated uses of `N` require equal lengths, including in
+nested arrays. Repeat literals still require a copyable initializer.
+
+These are array-length constants, not arbitrary compile-time computation: use
+a nonnegative integer literal or an in-scope length parameter, not a runtime
+variable or an arithmetic length expression.
+
 ## Type Aliases
 
 An alias gives an existing type another spelling. It does not create a new nominal type or change ownership.

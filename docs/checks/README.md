@@ -2,7 +2,7 @@
 
 ## Compile Examples
 
-Compile every Rock fence in the README and book, plus the sources under
+Compile every Rock fence in the root and std READMEs, language reference, and book, plus the sources under
 `docs/examples`, using the current compiler:
 
 ```sh
@@ -10,8 +10,15 @@ cargo build --release -p rockc
 node docs/checks/compile-examples.cjs
 ```
 
-The runner rebuilds the std, assembles the companion files in the modules and
-packages chapters, and builds their dependencies. The HTTP examples require the
+To recheck a single file after a failure without recompiling the entire book:
+
+```sh
+ROCK_DOC_FILTER=README.md node docs/checks/compile-examples.cjs
+```
+
+The runner rebuilds the std, assembles companion files in the modules and
+packages chapters, and builds their library dependencies, including the
+cross-crate macro example's library. The HTTP examples require the
 `rock_http` checkout and revision documented in the HTTP chapter, at
 `../rock_http` by default. Set `ROCK_HTTP_ROOT` to use another checkout location,
 or `ROCKC` to select another compiler binary. Missing dependencies fail the check;

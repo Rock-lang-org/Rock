@@ -84,7 +84,34 @@ main = !->
     matrix = [row, second_row]
 ```
 
-The output is `7` and `1`. Nested fixed-array literals are valid, but the current implementation does not support chained indexing directly on an inner fixed-array value; borrow a row as a slice before indexing when a program needs that operation.
+The output is `7` and `1`. Nested fixed arrays also support direct chained indexing for reads and writes:
+
+```rock
+main = !->
+    mut matrix = [[1, 2], [3, 4]]
+    matrix[1][0] = 30
+    matrix[1][0].println!
+```
+
+This prints `30`. Each index is checked against its own dimension. Lengths can
+also be [const generic parameters](generics.md#array-length-parameters).
+
+### Consuming Arrays
+
+Owned array loops move non-copy elements into the loop binding.
+
+```rock
+main = !->
+    words = [(String::from "first"), (String::from "second")]
+    for word in words
+        word.println!
+        break
+```
+
+This prints `first`. Cleanup drops the visited element and the unvisited
+`second` element on `break`; a consuming loop moves the array. To obtain a
+growable collection instead, use `Vec::from [1, 2, 3]` or an expected `Vec`
+type with `[1, 2, 3].into!`.
 
 ## Slices
 

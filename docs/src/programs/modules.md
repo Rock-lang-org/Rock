@@ -240,6 +240,10 @@ The output is `42`. If both paths are imported under the same short name, name r
 
 ## Current limits and common mistakes
 
+- Unresolved imports are compilation errors, even if the imported name is never used. A valid target may be declared later in its module.
+- Do not name a local module after an explicit dependency: the compiler rejects that namespace collision.
+- Import enum constructors with paths such as `> std::control::Option::Some`; exporting an enum makes its variants accessible through that enum, not automatically available as short names. See [Enums and Pattern Matching](../language/enums-and-patterns.md#importing-variants).
+- Exported macros require explicit imports; a module glob does not import them. See [Macros](macros.md#sharing-macros-between-crates).
 - Use file-backed modules. Inline-module syntax is parsed in parts of the front end but is not supported through the complete compilation pipeline.
 - A missing module reports the searched file and directory candidates; check both `name.rk` and `name/mod.rk` layouts.
 - A circular module load is an error; move shared declarations into a third module rather than creating a cycle.
