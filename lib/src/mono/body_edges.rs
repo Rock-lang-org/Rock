@@ -136,6 +136,27 @@ impl Monomorphizer {
                     );
                 }
             }
+            HirExprKind::FieldAccess(base, field, Some(location)) => {
+                // Inference fixes the field's struct; an inferred generic body
+                // instantiated with another type (callers disagreeing) must fail
+                // here as a type error rather than as an invalid MIR projection.
+                let mut base_ty = &base.ty;
+                while let crate::types::Type::Reference { inner, .. } = base_ty {
+                    base_ty = inner;
+                }
+                if !matches!(base_ty, crate::types::Type::Struct { id, .. } if *id == location.owner) {
+                    self.diagnostics.push(
+                        crate::diagnostic::Diagnostic::new(
+                            format!(
+                                "type `{base_ty}` has no field `{field}` (required by '{owner}' instantiated with this type)"
+                            ),
+                            expr.span.clone(),
+                        )
+                        .with_code(DiagnosticCode::Type),
+                    );
+                }
+                self.validate_materialized_expr(owner, base, method_ids)
+            }
             HirExprKind::FieldAccess(base, _, _)
             | HirExprKind::TupleIndex(base, _)
             | HirExprKind::UnaryOp(_, base)

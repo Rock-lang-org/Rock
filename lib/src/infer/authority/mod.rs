@@ -18,6 +18,7 @@ mod try_operator;
 mod type_predicates;
 mod type_vars;
 
+pub(super) use call_sites::check_monomorphic_call_arguments;
 pub(super) use materialize_pending::finalize_method_instantiations;
 pub(super) use obligations::{
     authority_obligations, propagate_function_instances_for_owners_with_progress,

@@ -508,3 +508,47 @@ main = !->
 
     assert_eq!(output, "ok\n");
 }
+
+#[test]
+fn test_signatureless_receiver_generalizes_over_parameterized_trait_member() {
+    let output = compile_and_run(
+        r#"
+struct Left
+struct Right
+
+trait Tag T
+    @tag: T -> String
+
+impl Tag I64 for Left
+    @tag = n -> String::from "left with int"
+
+impl Tag Char for Right
+    @tag = c -> String::from "right with char"
+
+tag_with = x, y -> x.tag y
+
+main = !->
+    (tag_with Left, 1).println!
+    (tag_with Right, 'c').println!
+"#,
+    );
+
+    assert_eq!(output, "left with int\nright with char\n");
+}
+
+#[test]
+fn test_signatureless_field_access_rejects_disagreeing_caller_type() {
+    compile_should_fail(
+        r#"
+struct Point
+    < v: I64
+
+show_v = x !-> x.v.println!
+
+main = !->
+    show_v (Point v: 1)
+    show_v 'c'
+"#,
+        "type `Char` has no field `v`",
+    );
+}

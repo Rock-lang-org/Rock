@@ -13,21 +13,35 @@ use crate::infer::{InferenceEngine, PartialHir};
 use crate::types::Type;
 
 /// Argument types of every direct call, keyed by callee.
-fn collect_call_arguments(hir: &PartialHir) -> HashMap<DefId, Vec<Vec<Type>>> {
-    let mut calls = HashMap::new();
-    let bodies = hir
-        .functions
-        .values()
-        .chain(hir.impls.values().flat_map(|imp| imp.methods.values()))
-        .chain(hir.traits.values().flat_map(|tr| tr.methods.values()))
-        .map(|function| &function.body);
-    for body in bodies {
-        block(body, &mut calls);
+fn collect_call_arguments(hir: &PartialHir) -> HashMap<DefId, Vec<Vec<(Type, crate::lexer::Span)>>> {
+    let mut calls = HashMap::<DefId, Vec<Vec<(Type, crate::lexer::Span)>>>::new();
+    for function in all_functions(hir) {
+        block(&function.body, &mut |node| {
+            if let HirExprKind::Call(callee, args, _) = &node.kind {
+                if let HirExprKind::ResolvedVar(HirVarRef {
+                    target: HirVarTarget::Function(function_id),
+                    ..
+                }) = &callee.kind
+                {
+                    calls
+                        .entry(*function_id)
+                        .or_default()
+                        .push(args.iter().map(|arg| (arg.ty.clone(), arg.span.clone())).collect());
+                }
+            }
+        });
     }
     calls
 }
 
-fn block(node: &HirBlock, calls: &mut HashMap<DefId, Vec<Vec<Type>>>) {
+fn all_functions(hir: &PartialHir) -> impl Iterator<Item = &crate::hir::HirFunction> {
+    hir.functions
+        .values()
+        .chain(hir.impls.values().flat_map(|imp| imp.methods.values()))
+        .chain(hir.traits.values().flat_map(|tr| tr.methods.values()))
+}
+
+fn block(node: &HirBlock, calls: &mut dyn FnMut(&HirExpr)) {
     for stmt in &node.stmts {
         match stmt {
             HirStmt::Let { value, .. }
@@ -39,21 +53,11 @@ fn block(node: &HirBlock, calls: &mut HashMap<DefId, Vec<Vec<Type>>>) {
     }
 }
 
-fn expr(node: &HirExpr, calls: &mut HashMap<DefId, Vec<Vec<Type>>>) {
+fn expr(node: &HirExpr, calls: &mut dyn FnMut(&HirExpr)) {
+    calls(node);
     match &node.kind {
         HirExprKind::Call(callee, args, _) => {
-            if let HirExprKind::ResolvedVar(HirVarRef {
-                target: HirVarTarget::Function(function_id),
-                ..
-            }) = &callee.kind
-            {
-                calls
-                    .entry(*function_id)
-                    .or_default()
-                    .push(args.iter().map(|arg| arg.ty.clone()).collect());
-            } else {
-                expr(callee, calls);
-            }
+            expr(callee, calls);
             for arg in args {
                 expr(arg, calls);
             }
@@ -198,7 +202,7 @@ pub(super) fn conflicting_caller_vars(hir: &PartialHir) -> HashSet<TypeVarId> {
         }
         let mut instances = HashMap::<TypeVarId, Vec<Type>>::new();
         for args in &call_args {
-            for (param, arg) in function.params.iter().zip(args) {
+            for (param, (arg, _)) in function.params.iter().zip(args) {
                 match_instance(&hir.engine, &param.ty, arg, &mut instances);
             }
         }
@@ -215,3 +219,50 @@ pub(super) fn conflicting_caller_vars(hir: &PartialHir) -> HashSet<TypeVarId> {
     }
     conflicting
 }
+
+/// After inference, every direct call to a non-generic function must agree with
+/// its final parameter types. Caller seeding is unchecked, so a disagreement
+/// that inference could not generalize away is reported here, not in codegen.
+pub(in crate::infer) fn check_monomorphic_call_arguments(
+    hir: &PartialHir,
+) -> Vec<crate::lower::ResolveError> {
+    let mut errors = Vec::new();
+    let mut calls = collect_call_arguments(hir).into_iter().collect::<Vec<_>>();
+    calls.sort_by_key(|(id, _)| *id);
+    for (function_id, call_args) in calls {
+        let Some(function) = hir.functions.get(&function_id) else {
+            continue;
+        };
+        if !function.generic_params.is_empty() {
+            continue;
+        }
+        for args in call_args {
+            for (param, (arg, span)) in function.params.iter().zip(args) {
+                let expected = hir.engine.resolve(&param.ty);
+                let actual = hir.engine.resolve(&arg);
+                let unresolved = |ty: &Type| {
+                    crate::type_services::visit::type_any(ty, |ty| {
+                        matches!(ty, Type::TypeVar(_) | Type::Generic(_))
+                    })
+                };
+                if unresolved(&expected) || unresolved(&actual) {
+                    continue;
+                }
+                let mut probe = hir.engine.clone_for_probe();
+                if let Err(error) = probe.unify(&expected, &actual) {
+                    errors.push(crate::lower::ResolveError::with_span_code(
+                        format!(
+                            "argument to '{}' does not match its inferred parameter type: {}",
+                            function.name,
+                            error.render(&hir.engine)
+                        ),
+                        span,
+                        crate::diagnostic::DiagnosticCode::Type,
+                    ));
+                }
+            }
+        }
+    }
+    errors
+}
+

@@ -338,7 +338,13 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
     for (ids, _, _) in component_work {
         generalize::generalize_functions(hir, &ids, root_entrypoint_id);
     }
-    reject_ungeneralized_predicates(hir, attached)
+    reject_ungeneralized_predicates(hir, attached)?;
+    let call_errors = authority::check_monomorphic_call_arguments(hir);
+    if call_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(call_errors)
+    }
 }
 
 /// A deferred obligation whose subject is concrete and whose trait arguments are

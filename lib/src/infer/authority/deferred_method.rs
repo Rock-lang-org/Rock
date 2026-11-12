@@ -86,22 +86,38 @@ impl MethodAuthorityContext<'_> {
         let Type::TypeVar(id) = self.resolved_type(&receiver.ty) else {
             return None;
         };
-        let mut members = inferred.iter().map(|candidate| {
-            match &candidate.target.target {
-                crate::hir::HirSelectedMethodTarget::ImplMethod {
-                    selected_trait: Some(selected),
-                    ..
-                } if selected.trait_args.is_empty() => Some((selected.trait_id, selected.member_id)),
-                _ => None,
-            }
+        let mut members = inferred.iter().map(|candidate| match &candidate.target.target {
+            crate::hir::HirSelectedMethodTarget::ImplMethod {
+                selected_trait: Some(selected),
+                ..
+            } => Some((selected.trait_id, selected.member_id, selected.trait_args.clone())),
+            _ => None,
         });
-        let first = members.next()??;
-        if !members.all(|member| member == Some(first)) {
+        let (trait_id, member_id, sample_args) = members.next()??;
+        if !members.all(|member| {
+            member.is_some_and(|(other_trait, other_member, other_args)| {
+                other_trait == trait_id
+                    && other_member == member_id
+                    && other_args.len() == sample_args.len()
+            })
+        }) {
             return None;
         }
+        // Trait arguments (`Rhs` in `Add Rhs`) are left to the call's arguments
+        // and later generalization, never to one arbitrary impl.
+        let type_args = sample_args
+            .iter()
+            .map(|arg| {
+                let mut engine = self.engine.borrow_mut();
+                let kind = engine
+                    .kind_of(arg)
+                    .unwrap_or(crate::type_services::kind::Kind::Type);
+                engine.fresh_type_var_of_kind(kind)
+            })
+            .collect();
         let bound = TraitBound {
-            trait_id: first.0,
-            type_args: Vec::new(),
+            trait_id,
+            type_args,
         };
         self.record_trait_bound(
             Type::TypeVar(id),

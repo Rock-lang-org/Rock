@@ -149,6 +149,16 @@ impl MethodAuthorityContext<'_> {
                         actual = self.engine.borrow().resolve(&arg.ty);
                     }
                     let mut matches = type_pattern_matches(&param.ty, &actual, &mut substitution);
+                    if !matches && contains_inference_type(&expected) {
+                        // A trait argument still free (`?r` in `x: Tag ?r`) is fixed by
+                        // this call's argument rather than rejected.
+                        let mut engine = self.engine.borrow_mut();
+                        let mut probe = engine.clone_for_probe();
+                        if probe.unify(&arg.ty, &expected).is_ok() {
+                            engine.commit_probe(probe);
+                            matches = true;
+                        }
+                    }
                     if !matches {
                         if !contains_inference_type(&expected) {
                             if let (
