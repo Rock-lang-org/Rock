@@ -45,15 +45,34 @@ impl CollectContext {
             return false;
         }
 
+        let segment_span = |segment: &ast::IdentOrType| match segment {
+            ast::IdentOrType::Ident(ident) => ident.span.clone(),
+            ast::IdentOrType::Type(ty) => ty.span(),
+        };
+        let span = path.segments().first().zip(path.segments().last()).map(|(first, last)| {
+            let first = segment_span(first);
+            crate::lexer::Span::new(first.file_path, first.start, segment_span(last).end)
+        });
+        if self.import_enum_variant(&names, canonical_prefix, span.clone(), true) {
+            return true;
+        }
+
         let qualified_name = names.join("::");
         let short_name = names.last().cloned().unwrap_or_default();
-        self.import_qualified_name(
-            short_name,
+        let resolved = self.import_qualified_name(
+            short_name.clone(),
             qualified_name,
             true,
             record_canonical_aliases,
             canonical_prefix,
-        )
+        );
+        if resolved {
+            let key = canonical_prefix.filter(|prefix| !prefix.is_empty())
+                .map(|prefix| format!("{prefix}::{short_name}"))
+                .unwrap_or(short_name);
+            self.record_explicit_import(&key, None, span);
+        }
+        resolved
     }
 
     /// Binds `short_name` to the item at `qualified_name`. Returns `false` when no
@@ -66,6 +85,12 @@ impl CollectContext {
         record_canonical_aliases: bool,
         canonical_prefix: Option<&str>,
     ) -> bool {
+        // Variant exports share the normal import paths, including globs and
+        // artifact root exports, but must never be bound as their enum type.
+        if self.resolve_variant_source(&qualified_name).is_some() {
+            let path = qualified_name.split("::").map(str::to_string).collect::<Vec<_>>();
+            return self.import_enum_variant(&path, canonical_prefix, None, is_explicit);
+        }
         let Some(resolution) =
             self.resolve_import(&qualified_name, record_canonical_aliases, canonical_prefix)
         else {

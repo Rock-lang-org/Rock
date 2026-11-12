@@ -104,13 +104,35 @@ main = !->
 }
 
 #[test]
-fn test_std_string_from_rejects_integer_sources() {
-    for ty in ["I64", "U64"] {
-        compile_should_fail(
-            &format!("main = !->\n    value = 1 as {ty}\n    String::from value .println!\n"),
-            "does not implement trait",
-        );
-    }
+fn test_std_string_from_integer_sources() {
+    let output = compile_and_run(
+        r#"
+convert: T -> U where U: From T
+convert = value -> U::from value
+
+main = !->
+    String::from 0 .println!
+    String::from 42 .println!
+    String::from (-7) .println!
+    String::from (-9223372036854775807 - 1) .println!
+    String::from 9223372036854775807 .println!
+    String::from (0 as U64) .println!
+    String::from (42 as U64) .println!
+    String::from ((-1) as U64) .println!
+    signed: String = (-7).into!
+    unsigned: String = ((-1) as U64).into!
+    signed.println!
+    unsigned.println!
+    generic_signed: String = convert 42
+    generic_unsigned: String = convert (42 as U64)
+    generic_signed.println!
+    generic_unsigned.println!
+"#,
+    );
+    assert_eq!(
+        output,
+        "0\n42\n-7\n-9223372036854775808\n9223372036854775807\n0\n42\n18446744073709551615\n-7\n18446744073709551615\n42\n42\n"
+    );
 }
 
 #[test]

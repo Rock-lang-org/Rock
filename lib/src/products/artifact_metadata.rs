@@ -38,6 +38,9 @@ pub struct ProductIdentityTable {
     pub dependencies: BTreeMap<ProductCrateId, ProductCrateIdentity>,
     pub display_names: BTreeMap<ProductDefId, String>,
     pub export_names: BTreeMap<String, ProductDefId>,
+    /// Ordinary public variant paths, distinct from exports of their enum.
+    #[serde(default)]
+    pub variant_export_names: BTreeMap<String, (ProductDefId, String)>,
     #[serde(default)]
     pub import_alias_names: BTreeMap<String, ProductDefId>,
     #[serde(default)]

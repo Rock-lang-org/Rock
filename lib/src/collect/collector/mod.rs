@@ -36,6 +36,7 @@ impl LocalCollector {
     pub fn collect_local_declarations(&mut self, module: &ast::Module, root_module_id: ModuleId) {
         self.predeclare_nominal_identities(module, root_module_id, None);
         self.predeclare_export_aliases(module, None, false);
+        self.register_export_aliases("", &collect_exports(module));
         if let Some(crate_name) = self.context.current_crate_name.clone() {
             let root_exports = collect_exports(module);
             self.predeclare_source_backed_trait_identities(

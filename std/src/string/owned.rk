@@ -91,7 +91,13 @@ impl String
             raw: raw
             raw_len: len
 
-// Decimal formatting helpers used by Show and the integer conversion function.
+impl From I64 for String
+    from = x -> format_i64 x
+
+impl From U64 for String
+    from = x -> format_u64 x
+
+// Decimal formatting helpers used by Show and integer conversions.
 format_i64: I64 -> String
 < format_i64 = x ->
     mut buf: [U8; 20] = [0 as U8; 20]

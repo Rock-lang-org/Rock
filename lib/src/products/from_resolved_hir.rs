@@ -441,6 +441,19 @@ impl CompilerProducts {
             &hir.resolver.module_aliases,
             &id_remap,
         );
+        for (alias, target) in &hir.resolver.variant_exports {
+            let requested = ProductDefId::from(target.enum_id);
+            let id = if requested.crate_id == local_crate {
+                super::identity_recording::unambiguous_product_id(requested, &id_remap)
+                    .ok_or_else(|| format!("variant export '{alias}' has no unique enum identity"))?
+            } else {
+                requested
+            };
+            identity_table.variant_export_names.insert(
+                alias.clone(),
+                (id, target.variant.clone()),
+            );
+        }
 
         let link = remap_link_data(link, &id_remap);
 

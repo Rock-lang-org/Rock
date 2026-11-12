@@ -182,12 +182,8 @@ impl Lowerer {
                 let written_name: String = path_names(&inst_pat.name.path).join("::");
                 // An imported variant (`> Light::Off`, the prelude's `Some`)
                 // is matched exactly like its qualified spelling.
-                let imported = (!written_name.contains("::"))
-                    .then(|| {
-                        crate::lower::resolution::LowerResolutionContext::new(self)
-                            .resolve_imported_variant(&written_name)
-                    })
-                    .flatten();
+                let imported = crate::lower::resolution::LowerResolutionContext::new(self)
+                    .resolve_imported_variant(&written_name);
                 let (type_name, imported_enum) = match imported {
                     Some(resolved) => (
                         format!("{}::{}", resolved.owner.name, resolved.variant.name),

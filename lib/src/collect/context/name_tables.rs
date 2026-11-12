@@ -3,7 +3,7 @@
 //! `NameTables`, so the alias rules (which entry wins, what an explicit import
 //! replaces) live in one place instead of in each module that records a name.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ids::DefId;
 
@@ -18,6 +18,7 @@ pub(crate) struct NameTables {
     scoped_module_aliases: HashMap<String, HashMap<String, DefId>>,
     /// Re-export path to the qualified path of its source.
     export_aliases: HashMap<String, String>,
+    local_export_paths: HashSet<String>,
     /// Every current-crate item by canonical path, known before any header is
     /// lowered, so imports resolve without waiting for their target's types.
     declared_items: HashMap<String, DefId>,
@@ -91,13 +92,23 @@ impl NameTables {
         self.export_aliases.get(path).map(String::as_str)
     }
 
+    pub(crate) fn export_sources(&self) -> impl Iterator<Item = (&String, &String)> {
+        self.export_aliases.iter().filter(|(name, _)| self.local_export_paths.contains(*name))
+    }
+
     pub(crate) fn set_export_alias(&mut self, path: String, source: String) {
+        self.local_export_paths.insert(path.clone());
+        self.export_aliases.insert(path, source);
+    }
+
+    pub(crate) fn set_dependency_export_alias(&mut self, path: String, source: String) {
         self.export_aliases.insert(path, source);
     }
 
     /// Records a re-export found before its module is walked; the walk itself
     /// may later refine it with `set_export_alias`.
     pub(crate) fn default_export_alias(&mut self, path: String, source: String) {
+        self.local_export_paths.insert(path.clone());
         self.export_aliases.entry(path).or_insert(source);
     }
 

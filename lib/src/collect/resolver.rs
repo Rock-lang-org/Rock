@@ -20,6 +20,9 @@ pub struct ResolverTables {
     /// crate root, `module::name` inside a module.
     #[serde(default)]
     pub variant_aliases: HashMap<String, VariantAlias>,
+    /// Public paths that re-export variants rather than their owning enums.
+    #[serde(default)]
+    pub variant_exports: HashMap<String, VariantAlias>,
 }
 
 /// An imported enum variant; variants are not items, so they are named by
@@ -28,6 +31,8 @@ pub struct ResolverTables {
 pub struct VariantAlias {
     pub enum_id: DefId,
     pub variant: String,
+    /// Prelude and glob imports yield to explicit declarations and imports.
+    pub fallback: bool,
 }
 
 /// The variant an export names when its id is an enum but its source path
@@ -48,8 +53,15 @@ impl ResolverTables {
     /// `module_path` over one made at the crate root.
     pub fn resolve_variant_alias(&self, module_path: Option<&str>, name: &str) -> Option<&VariantAlias> {
         module_path
-            .and_then(|module_path| self.variant_aliases.get(&format!("{module_path}::{name}")))
-            .or_else(|| self.variant_aliases.get(name))
+            .and_then(|module_path| self.variant_at_path(&format!("{module_path}::{name}")))
+            .or_else(|| self.variant_at_path(name))
+    }
+
+    fn variant_at_path(&self, name: &str) -> Option<&VariantAlias> {
+        let imported = self.variant_aliases.get(name);
+        imported.filter(|alias| !alias.fallback)
+            .or_else(|| self.variant_exports.get(name))
+            .or(imported)
     }
 
     pub fn resolve_item_or_alias(&self, name: &str) -> Option<DefId> {
@@ -120,6 +132,9 @@ impl ResolverTables {
                 .extend(aliases.clone());
         }
         self.module_aliases.extend(other.module_aliases.clone());
+        self.variant_exports.extend(other.variant_exports.iter()
+            .filter(|(name, _)| name.contains("::"))
+            .map(|(name, target)| (name.clone(), target.clone())));
     }
 }
 
@@ -219,6 +234,7 @@ pub fn build_resolver_tables(
         scoped_module_aliases,
         module_aliases: HashMap::new(),
         variant_aliases: HashMap::new(),
+        variant_exports: HashMap::new(),
     }
 }
 

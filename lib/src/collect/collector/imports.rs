@@ -21,6 +21,17 @@ impl LocalCollector {
     ) {
         if let (Some(prefix), true) = (prefix, source_backed) {
             for (export_name, source) in collect_exports(module) {
+                // `< Off` may re-export an import whose module has not been
+                // walked yet. Resolve its written source during predeclaration.
+                let source = source.or_else(|| {
+                    module.top_levels.iter().find_map(|top_level| {
+                        let ast::TopLevel::Import(path) = top_level else {
+                            return None;
+                        };
+                        let names = path_names(path.segments());
+                        (names.last() == Some(&export_name)).then(|| names.join("::"))
+                    })
+                });
                 let Some(source) = source else {
                     continue;
                 };
@@ -83,12 +94,16 @@ impl LocalCollector {
         exports: &HashMap<String, Option<String>>,
     ) {
         for (export_name, source) in exports {
-            let Some(source) = source else {
-                continue;
+            let qualified_export = if prefix.is_empty() {
+                export_name.clone()
+            } else {
+                format!("{}::{}", prefix, export_name)
             };
-
-            let qualified_export = format!("{}::{}", prefix, export_name);
-            let qualified_source = qualify_export_source(&self.context, prefix, source);
+            let qualified_source = match source {
+                Some(source) if prefix.is_empty() => source.clone(),
+                Some(source) => qualify_export_source(&self.context, prefix, source),
+                None => qualified_export.clone(),
+            };
 
             self.context
                 .names
@@ -138,13 +153,6 @@ impl LocalCollector {
         }
 
         if !resolved {
-            resolved = self.context.import_enum_variant(
-                &path_names(path.segments()),
-                canonical_prefix.as_deref(),
-                path_span(path.segments()),
-            );
-        }
-        if !resolved {
             self.report_unresolved_import(path);
         }
     }
@@ -181,13 +189,6 @@ impl LocalCollector {
             resolved |= self.import_type_alias_local(prefix, short_name, qualified_name);
         }
 
-        if !resolved {
-            resolved = self.context.import_enum_variant(
-                &original_names,
-                Some(prefix),
-                path_span(path.segments()),
-            );
-        }
         if !resolved {
             self.report_unresolved_import(path);
         }

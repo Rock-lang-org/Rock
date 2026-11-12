@@ -13,7 +13,7 @@ pub(super) fn qualify_export_source(
     source: &str,
 ) -> String {
     let first_segment = source.split("::").next().unwrap_or(source);
-    let is_absolute = context.modules.is_loaded_name(first_segment);
+    let is_absolute = local_path_segment_is_absolute(context, first_segment);
 
     if is_absolute {
         source.to_string()

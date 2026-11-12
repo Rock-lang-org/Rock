@@ -492,7 +492,7 @@ fn compiler_products_rejects_unsupported_format_before_full_deserialize() {
 
 #[test]
 fn product_artifact_format_version_matches_shared_contract() {
-    assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 55);
+    assert_eq!(PRODUCT_ARTIFACT_FORMAT_VERSION, 56);
     assert_eq!(
         PRODUCT_ARTIFACT_FORMAT_VERSION,
         rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION

@@ -56,6 +56,7 @@ impl CollectContext {
             crate::collect::resolver::VariantAlias {
                 enum_id: export.id,
                 variant,
+                fallback: true,
             },
         );
         true
@@ -102,7 +103,19 @@ impl CollectContext {
         for (alias, id) in &metadata.resolver().export_aliases {
             if let Some(source) = metadata.resolver().canonical_name(*id) {
                 self.names
-                    .set_export_alias(alias.clone(), source.to_string());
+                    .set_dependency_export_alias(alias.clone(), source.to_string());
+            }
+        }
+        for (alias, target) in &metadata.resolver().variant_exports {
+            if let Some(owner) = interface.canonical_names.get(&target.enum_id).map(String::as_str)
+                .or_else(|| self.names.canonical_name(target.enum_id))
+            {
+                let qualified = if alias.starts_with(&format!("{crate_name}::")) {
+                    alias.clone()
+                } else {
+                    format!("{crate_name}::{alias}")
+                };
+                self.names.set_dependency_export_alias(qualified, format!("{owner}::{}", target.variant));
             }
         }
 

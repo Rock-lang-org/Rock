@@ -14,7 +14,7 @@ use super::ProductCrateId;
 use bincode::Options;
 use serde::{Deserialize, Serialize};
 
-pub const PRODUCT_ARTIFACT_FORMAT_VERSION: u32 = 55;
+pub use rock_shared::sysroot::PRODUCT_ARTIFACT_FORMAT_VERSION;
 pub const PRODUCT_ARTIFACT_MAGIC: [u8; 8] = *b"ROCKRKCA";
 pub const MAX_PRODUCT_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 pub const MAX_PRODUCT_ARTIFACT_HEADER_BYTES: u64 = 4 * 1024 * 1024;

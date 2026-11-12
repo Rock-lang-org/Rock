@@ -57,6 +57,30 @@ pub(super) fn interface_from_products(
         let source = qualify_product_name(crate_name, &display_name);
         root_export_ids.insert(alias.clone(), ArtifactExport { source, id: def_id });
     }
+    for (alias, (id, variant)) in &products.identity_table.variant_export_names {
+        let def_id = remap.def_id(*id)?;
+        let enumeration = products.interface.enums.get(id).map(|enm| {
+            enm.variants.iter().any(|candidate| candidate.name == *variant)
+        }).or_else(|| {
+            ctx.extern_crates().find_map(|dep| {
+                dep.metadata().interface().enums.get(&def_id).map(|enm| {
+                    enm.variants.iter().any(|candidate| candidate.name == *variant)
+                })
+            })
+        });
+        if enumeration != Some(true) {
+            return Err(format!("Product artifact variant export '{alias}' has no matching enum variant"));
+        }
+        let owner = canonical_names.get(&def_id).cloned().or_else(|| {
+            ctx.extern_crates().find_map(|dep| {
+                dep.metadata().resolver().canonical_name(def_id).map(str::to_string)
+            })
+        }).ok_or_else(|| format!("Product artifact variant export '{alias}' has no enum name"))?;
+        root_export_ids.insert(alias.clone(), ArtifactExport {
+            source: format!("{owner}::{variant}"),
+            id: def_id,
+        });
+    }
 
     let functions = products
         .interface
@@ -284,6 +308,13 @@ pub(super) fn resolver_from_products(
                 resolver.insert_import_alias_with_name(alias.clone(), source, def_id);
             }
         }
+    }
+    for (alias, (id, variant)) in &products.identity_table.variant_export_names {
+        resolver.variant_exports.insert(qualify_product_name(crate_name, alias), crate::collect::resolver::VariantAlias {
+            enum_id: remap.def_id(*id)?,
+            variant: variant.clone(),
+            fallback: false,
+        });
     }
     for (alias, id) in &products.identity_table.module_alias_names {
         if let Some(def_id) = product_def_id_to_alias_def_id(products, remap, *id)? {

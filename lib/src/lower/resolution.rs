@@ -188,6 +188,9 @@ impl<'a> LowerResolutionContext<'a> {
         if let [name] = segments {
             return self.resolve_imported_variant(name);
         }
+        if let Some(variant) = self.resolve_imported_variant(&segments.join("::")) {
+            return Some(variant);
+        }
         if segments.len() != 2 {
             return None;
         }
@@ -211,16 +214,15 @@ impl<'a> LowerResolutionContext<'a> {
         })
     }
 
-    /// A variant brought into scope by an import or the prelude. A struct of
-    /// the same name in scope takes precedence.
+    /// Explicit imports beat prelude items; local structs beat prelude variants.
     pub(crate) fn resolve_imported_variant(&self, name: &str) -> Option<LowerResolvedEnumVariant> {
-        if self.resolve_struct_type(name).is_some() {
-            return None;
-        }
         let alias = self
             .lowerer
             .resolver
             .resolve_variant_alias(self.current_module_prefix().as_deref(), name)?;
+        if alias.fallback && self.resolve_struct_type(name).is_some() {
+            return None;
+        }
         let owner = self.lowerer.items.enumeration(alias.enum_id)?.clone();
         let variant = owner
             .variants
