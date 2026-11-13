@@ -26,7 +26,7 @@ homepage = "https://rock-lang-org.github.io/Rock/"
 
 [workspace.dependencies]
 clap = { version = "4.5.3", features = ["derive"] }
-ariadne = { version = "0.4.1", features = ["auto-color"] }
+ariadne = { version = "0.6.0", features = ["auto-color"] }
 paste = "1.0.15"
 inkwell = { version = "0.5", features = ["llvm18-0-force-static"] }
 toml = "0.8"

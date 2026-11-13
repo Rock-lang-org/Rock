@@ -66,8 +66,11 @@ impl Diagnostic {
                 DiagnosticSeverity::Warning => ReportKind::Warning,
                 DiagnosticSeverity::Info | DiagnosticSeverity::Hint => ReportKind::Advice,
             };
-            let mut builder = Report::build(report_kind, file_id.clone(), primary_span.start)
-                .with_message(self.message.clone());
+            let mut builder = Report::build(
+                report_kind,
+                (file_id.clone(), primary_span.start..primary_span.end),
+            )
+            .with_message(self.message.clone());
             if let Some(code) = self.code {
                 builder = builder.with_code(code);
             }
