@@ -247,8 +247,8 @@ pub(super) fn field_receiver_vars(
     vars
 }
 
-/// Signature variables of each inferred function whose direct callers supply
-/// mutually incompatible types. Such variables must not be seeded from callers.
+/// Signature variables whose direct callers disagree or cannot yet be proved
+/// to agree. Such variables must not be seeded from a particular caller.
 pub(super) fn conflicting_caller_vars(hir: &PartialHir) -> HashSet<TypeVarId> {
     let calls = collect_call_arguments(hir);
     let mut conflicting = HashSet::new();
@@ -271,6 +271,17 @@ pub(super) fn conflicting_caller_vars(hir: &PartialHir) -> HashSet<TypeVarId> {
         }
         for (var, types) in instances {
             if struct_bound.contains(&var) {
+                continue;
+            }
+            // An unresolved caller is not evidence of agreement. Committing a
+            // different caller now would irreversibly specialize this header
+            // before the unresolved call can reveal its own receiver type.
+            if types.len() < call_args.len() || types.iter().any(|ty| {
+                crate::type_services::visit::type_any(ty, |nested| {
+                    matches!(nested, Type::TypeVar(_) | Type::Projection { .. })
+                })
+            }) {
+                conflicting.insert(var);
                 continue;
             }
             let mut probe = hir.engine.clone_for_probe();
@@ -331,4 +342,3 @@ pub(in crate::infer) fn check_monomorphic_call_arguments(
     }
     errors
 }
-

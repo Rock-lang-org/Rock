@@ -45,7 +45,11 @@ pub enum SolveErrorKind {
     IntegerLiteral {
         found: Type,
     },
-    Message(String),
+    /// An obligation still undecided after the final solve. Often a consequence
+    /// of a definite failure elsewhere that left its types unsolved.
+    Ambiguous {
+        context: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -124,8 +128,14 @@ impl SolveError {
                 "integer literal resolved to non-integer type `{}`",
                 display(found)
             ),
-            SolveErrorKind::Message(message) => message.clone(),
+            SolveErrorKind::Ambiguous { context } => format!(
+                "ambiguous constraint at quiescence: {context}; add type information to select one canonical solution"
+            ),
         }
+    }
+
+    pub fn is_ambiguity(&self) -> bool {
+        matches!(self.kind, SolveErrorKind::Ambiguous { .. })
     }
 }
 

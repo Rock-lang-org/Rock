@@ -501,9 +501,7 @@ pub(super) fn solve_constraints_in_place_mode(
                 | Constraint::Try { span, .. } => span.clone(),
             };
             errors.push(SolveError {
-                kind: SolveErrorKind::Message(format!(
-                    "ambiguous constraint at quiescence: {context}; add type information to select one canonical solution"
-                )),
+                kind: SolveErrorKind::Ambiguous { context },
                 span,
             });
         }

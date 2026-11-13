@@ -1,4 +1,47 @@
+use std::sync::atomic::Ordering;
+
 use crate::support::*;
+
+#[test]
+fn test_bad_nested_bind_callback_is_reported_before_print_ambiguity() {
+    let source = r#"
+infix 9 >|
+>| = a, mut f -> a <&> (>>= &mut f)
+
+run = !->
+    values: Vec (Option I64) = [
+        Option::Some 1
+    ].into!
+    (values >| (+ 1)).println!
+
+main = !-> run!
+"#;
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let entry = dir.join("test.rk");
+    std::fs::write(&entry, source).unwrap();
+    let result = rock_lib::compile(&test_config(entry, dir.clone()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let diagnostics = result.expect_err("plain integer callback must not satisfy nested bind");
+    let messages = diagnostics.0.iter().map(|d| d.message.as_str()).collect::<Vec<_>>();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("FnMut I64, (Option _)"), "{messages:?}");
+    assert!(!messages[0].contains("quiescence"), "{messages:?}");
+}
+
+#[test]
+fn test_receiver_helper_with_unresolved_chained_caller_stays_polymorphic() {
+    let output = compile_and_run(r#"
+show = value !-> value.println!
+identity = value -> value
+
+main = !->
+    show 42
+    show (identity 'c')
+"#);
+    assert_eq!(output, "42\nc\n");
+}
 
 #[test]
 fn test_signatureless_curried_function_calls_captured_callables() {

@@ -461,21 +461,19 @@ fn write_user_type(
                 context.short_definition_name(*id).unwrap_or("<unknown type>")
             )
         }
+        // A constructor section applied to its arguments reads as the applied
+        // type: `(Result _, E) I64` is `Result I64, E`.
         Type::Apply { constructor, args } => {
-            write_user_type(constructor, context, f)?;
-            write_user_type_args(args, context, f)
-        }
-        Type::Lambda { params, body } => {
-            write!(f, "\\")?;
-            for (index, kind) in params.iter().enumerate() {
-                if index > 0 {
-                    write!(f, ", ")?;
+            match crate::type_services::normalize::apply_type_lambda(constructor, args) {
+                Some(applied) => write_user_type(&applied, context, f),
+                None => {
+                    write_user_type(constructor, context, f)?;
+                    write_user_type_args(args, context, f)
                 }
-                write!(f, "{kind}")?;
             }
-            write!(f, " -> ")?;
-            write_user_type(body, context, f)
         }
+        // A section is written as in source, its holes as `_`: `Result _, E`.
+        Type::Lambda { body, .. } => write_user_type(body, context, f),
         Type::BoundVar { .. } => write!(f, "_"),
     }
 }

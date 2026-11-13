@@ -341,17 +341,13 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
             &generalizable,
         );
         if !solved.errors.is_empty() {
-            return Err(solved
-                .errors
-                .into_iter()
-                .map(|error| {
-                    ResolveError::with_span_code(
-                        error.render(&hir.engine),
-                        error.span,
-                        crate::diagnostic::DiagnosticCode::Type,
-                    )
-                })
-                .collect());
+            return Err(final_solve_errors(
+                hir,
+                solved.errors,
+                &solved.deferred_predicates,
+                root_entrypoint_id,
+                &generalizable,
+            ));
         }
         deferred_predicates.extend(solved.deferred_predicates);
     }
@@ -419,6 +415,77 @@ fn type_error(hir: &PartialHir, error: solve::SolveError) -> ResolveError {
     )
 }
 
+/// The inferred function a deferred obligation can become a where clause of:
+/// not the entrypoint, and not a function that already has a signature.
+fn deferred_predicate_owner(
+    hir: &PartialHir,
+    id: super::constraints::ObligationId,
+    root_entrypoint_id: Option<DefId>,
+) -> Option<DefId> {
+    match hir.constraint_store.owner(id) {
+        Some(ConstraintOwner::Body(function_id))
+            if root_entrypoint_id != Some(function_id)
+                && hir
+                    .functions
+                    .get(&function_id)
+                    .is_some_and(|function| function.generic_params.is_empty()) =>
+        {
+            Some(function_id)
+        }
+        _ => None,
+    }
+}
+
+/// Final-solve errors, root causes first. A deferred obligation no function can
+/// take as a where clause is a definite failure (`closure (I64) -> I64` is not
+/// `FnMut I64, (Option _)`); the types it leaves unsolved make later sites
+/// such as `result.println!` ambiguous. Those ambiguities are consequences, so
+/// they are reported only when nothing definite failed.
+fn final_solve_errors(
+    hir: &PartialHir,
+    errors: Vec<solve::SolveError>,
+    deferred: &[super::constraints::ObligationId],
+    root_entrypoint_id: Option<DefId>,
+    generalizable: &HashSet<crate::ids::TypeVarId>,
+) -> Vec<ResolveError> {
+    let mut definite = deferred
+        .iter()
+        .copied()
+        .filter_map(|id| match hir.constraint_store.constraint(id) {
+            Some(super::constraints::Constraint::Trait {
+                ty,
+                bound,
+                span,
+                context,
+            }) => {
+                // As in `reject_ungeneralized_predicates`: only signature
+                // variables of a generalized function can be abstracted.
+                let abstractable = deferred_predicate_owner(hir, id, root_entrypoint_id)
+                    .is_some()
+                    && std::iter::once(ty).chain(&bound.type_args).all(|ty| {
+                        !crate::type_services::visit::type_any(&hir.engine.resolve(ty), |ty| {
+                            matches!(ty, Type::TypeVar(var) if !generalizable.contains(var))
+                        })
+                    });
+                (!abstractable).then(|| deferred_predicate_error(hir, ty, bound, span, context))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let (ambiguous, failed): (Vec<_>, Vec<_>) =
+        errors.into_iter().partition(solve::SolveError::is_ambiguity);
+    definite.extend(failed);
+    let reported = if definite.is_empty() {
+        ambiguous
+    } else {
+        definite
+    };
+    reported
+        .into_iter()
+        .map(|error| type_error(hir, error))
+        .collect()
+}
+
 /// Record each deferred obligation as a where clause of its owning inferred
 /// function, so generalization can rewrite its free variables to generics.
 fn attach_deferred_predicates(
@@ -439,20 +506,9 @@ fn attach_deferred_predicates(
             continue;
         };
         let error = deferred_predicate_error(hir, &ty, &bound, &span, &context);
-        let owner = match hir.constraint_store.owner(id) {
-            Some(ConstraintOwner::Body(function_id))
-                if root_entrypoint_id != Some(function_id)
-                    && hir
-                        .functions
-                        .get(&function_id)
-                        .is_some_and(|function| function.generic_params.is_empty()) =>
-            {
-                function_id
-            }
-            _ => {
-                errors.push(type_error(hir, error));
-                continue;
-            }
+        let Some(owner) = deferred_predicate_owner(hir, id, root_entrypoint_id) else {
+            errors.push(type_error(hir, error));
+            continue;
         };
         let predicate = crate::types::Predicate::Trait {
             subject: hir.engine.resolve(&ty),

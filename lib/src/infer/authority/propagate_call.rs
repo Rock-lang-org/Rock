@@ -117,6 +117,19 @@ pub(super) fn propagate_call_instance(
             // by specializing the declaration's callback to one caller.
             let callback_instances = instance_bindings.clone();
             for (source_id, instance) in callback_instances {
+                // Point an unsatisfied callable bound at the argument passing it.
+                let bound_span = source_params
+                    .iter()
+                    .position(|param| {
+                        let mut param = hir.engine.resolve(param);
+                        while let Type::Reference { inner, .. } = param {
+                            param = *inner;
+                        }
+                        param == Type::TypeVar(source_id)
+                    })
+                    .and_then(|index| args.get(index))
+                    .map(|arg| arg.span.clone())
+                    .unwrap_or_else(|| callee.span.clone());
                 let native = hir.engine.resolve(&instance);
                 let mut native_type = &native;
                 while let Type::Reference { inner, .. } = native_type {
@@ -130,7 +143,18 @@ pub(super) fn propagate_call_instance(
                     [param] => param.clone(),
                     params => Type::Tuple(params.to_vec()),
                 };
-                for bound in hir.engine.get_bounds(source_id) {
+                let bounds = hir.engine.get_bounds(source_id);
+                for bound in &bounds {
+                    let kind = hir.language_items.callable_protocols()
+                        .find_map(|(kind, id, _)| (id == bound.trait_id).then_some(kind));
+                    if kind.is_some_and(|kind| bounds.iter().any(|other| {
+                        other.type_args == bound.type_args
+                            && hir.language_items.callable_protocols().any(|(other_kind, id, _)| {
+                                id == other.trait_id && other_kind < kind
+                            })
+                    })) {
+                        continue;
+                    }
                     if bound.type_args.len() != 2
                         || !hir
                             .language_items
@@ -158,7 +182,7 @@ pub(super) fn propagate_call_instance(
                     };
                     let already_recorded = hir.constraint_store.iter().any(|(_, constraint)| {
                         matches!(constraint, Constraint::Trait { ty, bound, span, .. }
-                            if span == &callee.span
+                            if span == &bound_span
                                 && hir.engine.resolve(ty) == hir.engine.resolve(&instance)
                                 && bound.trait_id == instantiated.trait_id
                                 && bound.type_args.iter().map(|ty| hir.engine.resolve(ty)).collect::<Vec<_>>()
@@ -168,7 +192,7 @@ pub(super) fn propagate_call_instance(
                         hir.constraint_store.add_trait(
                             instance.clone(),
                             instantiated,
-                            callee.span.clone(),
+                            bound_span.clone(),
                             "inferred callable argument",
                         );
                     }
