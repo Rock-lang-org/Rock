@@ -143,6 +143,24 @@ impl ConstraintStore {
         self.push_obligation()
     }
 
+    /// Moves the callee-span trait obligations on `var` (a generic parameter
+    /// instantiated at a call) onto the argument that supplies it, so an
+    /// unsatisfied bound points at the offending argument.
+    pub fn retarget_trait_spans(&mut self, var: TypeVarId, from: &Span, to: &Span) {
+        for constraint in &mut self.constraints {
+            if let Constraint::Trait {
+                ty: Type::TypeVar(id),
+                span,
+                ..
+            } = constraint
+            {
+                if *id == var && span == from {
+                    *span = to.clone();
+                }
+            }
+        }
+    }
+
     pub fn add_int_literal(&mut self, var: TypeVarId, span: Span) -> ObligationId {
         self.constraints.push(Constraint::IntLiteral { var, span });
         self.push_obligation()

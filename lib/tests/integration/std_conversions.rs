@@ -512,3 +512,36 @@ main = !->
         "does not implement trait `FnMut",
     );
 }
+
+#[test]
+fn test_operator_bound_failure_points_at_its_operand() {
+    let source = r#"
+main = !->
+    mut values: Vec (Option I64) = Vec::new!
+    values.push (Some 1)
+    step = x -> Some (x + 1)
+    (values <&> (>>= step)).println!
+"#;
+    let id = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let source_path = dir.join("test.rk");
+    std::fs::write(&source_path, source).unwrap();
+    let diagnostics = rock_lib::compile(&test_config(source_path, dir.clone()))
+        .expect_err("expected compilation to fail");
+    let diagnostic = diagnostics
+        .0
+        .iter()
+        .find(|diagnostic| diagnostic.message.contains("does not implement trait `FnMut"))
+        .expect("expected an FnMut diagnostic");
+    let rock_lib::diagnostic::DiagnosticLocation::Source(span) = &diagnostic.location else {
+        panic!("diagnostic should have a source location");
+    };
+    // The unsatisfied `M: FnMut` bound is the right operand's, not the call's.
+    assert!(
+        source[span.start..span.end].starts_with(">>="),
+        "span covers {:?}",
+        &source[span.start..span.end]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

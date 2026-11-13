@@ -555,6 +555,10 @@ impl Lowerer {
                 let Some(arg) = args_iter.next() else {
                     break;
                 };
+                if let Type::TypeVar(var) = param {
+                    self.constraint_store
+                        .retarget_trait_spans(*var, &expr.span, &arg.span);
+                }
                 coerced_args.push(self.coerce_argument_to_expected(arg, param));
             }
 

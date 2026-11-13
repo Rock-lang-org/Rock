@@ -310,6 +310,15 @@ impl Lowerer {
             });
 
         if let Some((func_ty, hir_name, target)) = func_binding {
+            // Bounds on an operand's generic (`M: FnMut ...`) belong to that operand.
+            if let Type::Function { params, .. } = &func_ty {
+                for (param, operand) in params.iter().zip([&left, &right]) {
+                    if let Type::TypeVar(var) = param {
+                        self.constraint_store
+                            .retarget_trait_spans(*var, &left.span, &operand.span);
+                    }
+                }
+            }
             self.infer_bounded_constructor_heads(&func_ty, &[&left, &right]);
             let resolved_func_ty = self.resolve_projection_type(&self.engine.resolve(&func_ty));
 
