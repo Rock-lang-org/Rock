@@ -899,3 +899,31 @@ main = ->
 
     assert_eq!(output.lines().collect::<Vec<_>>(), vec!["2", "4", "-1"]);
 }
+
+#[test]
+fn test_nested_constructor_section_monomorphizes_with_leading_hole() {
+    // `U` only occurs nested in `T (U A)`; at `Result (Cell I64), I64` it must be
+    // `λx. Result x, I64` (as inferred), not `Result (Cell I64)` applied to `I64`,
+    // or `U B` keeps the payload layout and later elements are read wrongly.
+    let output = compile_and_run(
+        r#"
+struct Cell T
+    < a: I64
+    < v: T
+    < b: I64
+
+bind_each: T (U A) -> M -> T (U B) where T _: Functor, U _: Monad, M: FnMut A, (U B)
+bind_each = values, mut f -> values <&> (value -> value >>= &mut f)
+
+main = !->
+    cells: Vec (Result (Cell I64), I64) = [
+        Result::Ok (Cell a: 7, v: 1, b: 8)
+        Result::Ok (Cell a: 7, v: 2, b: 8)
+        Result::Err 5
+    ].into!
+    (bind_each cells, (cell -> Result::Ok (cell.a * 100 + cell.v * 10 + cell.b))).println!
+"#,
+    );
+
+    assert_eq!(output.trim(), "[Ok(718), Ok(728), Err(5)]");
+}

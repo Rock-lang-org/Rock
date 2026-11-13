@@ -3,7 +3,7 @@ use std::collections::{hash_map::Entry, HashMap};
 use super::hir_types::{HirBlock, HirExpr, HirFunction, HirParam};
 use crate::ids::{CrateId, DefId, LocalDefId, TypeId};
 use crate::selection::{constructor_target_from_applied_type, type_pattern_matches};
-use crate::type_services::normalize::apply_type_lambda;
+use crate::type_services::normalize::{apply_type_lambda, leading_hole_constructor};
 use crate::types::{ArrayLen, GenericParamId, Type};
 
 use super::Monomorphizer;
@@ -387,26 +387,18 @@ impl Monomorphizer {
                         }
                     }
                 }
-                let constructor_arg_count = args.len() - param_args.len();
-                let flavor = match arg_ty {
-                    Type::Struct { .. } => crate::types::NominalTypeKind::Struct,
-                    Type::Enum { .. } => crate::types::NominalTypeKind::Enum,
-                    _ => unreachable!(),
-                };
-                let mut arg_constructor = Type::Constructor { id: *id, flavor };
-                if constructor_arg_count > 0 {
-                    arg_constructor = Type::Apply {
-                        constructor: Box::new(arg_constructor),
-                        args: args[..constructor_arg_count].to_vec(),
-                    };
+                // Same convention as the inference unifier: `F A` against
+                // `Result I64, E` binds `A` to the leading argument and `F` to
+                // the section `λx. Result x, E`.
+                if let Some(arg_constructor) = leading_hole_constructor(arg_ty, param_args.len()) {
+                    self.extract_generics_from_type(
+                        constructor,
+                        &arg_constructor,
+                        generic_ids,
+                        substitution,
+                    );
                 }
-                self.extract_generics_from_type(
-                    constructor,
-                    &arg_constructor,
-                    generic_ids,
-                    substitution,
-                );
-                for (param_arg, arg_arg) in param_args.iter().zip(&args[constructor_arg_count..]) {
+                for (param_arg, arg_arg) in param_args.iter().zip(args) {
                     self.extract_generics_from_type(param_arg, arg_arg, generic_ids, substitution);
                 }
             }

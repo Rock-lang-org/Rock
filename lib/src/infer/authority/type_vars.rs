@@ -132,19 +132,38 @@ pub(super) fn collect_block_type_vars(
     }
 }
 
-pub(super) fn constrained_signature_vars(
-    hir: &PartialHir,
-    function: &HirFunction,
-) -> HashSet<crate::ids::TypeVarId> {
-    let mut signature_vars = HashSet::new();
+fn signature_vars(hir: &PartialHir, function: &HirFunction) -> HashSet<crate::ids::TypeVarId> {
+    let mut vars = HashSet::new();
     for ty in function
         .params
         .iter()
         .map(|param| &param.ty)
         .chain(std::iter::once(&function.ret_type))
     {
-        collect_type_vars(&hir.engine.resolve(ty), &mut signature_vars);
+        collect_type_vars(&hir.engine.resolve(ty), &mut vars);
     }
+    vars
+}
+
+/// Signature variables an unresolved method, operator or field site of the body
+/// depends on: selecting that member needs one concrete receiver type.
+pub(super) fn receiver_signature_vars(
+    hir: &PartialHir,
+    function: &HirFunction,
+) -> HashSet<crate::ids::TypeVarId> {
+    let mut authority_vars = HashSet::new();
+    collect_unresolved_authority_vars(&function.body, &hir.engine, &mut authority_vars);
+    signature_vars(hir, function)
+        .intersection(&authority_vars)
+        .copied()
+        .collect()
+}
+
+pub(super) fn constrained_signature_vars(
+    hir: &PartialHir,
+    function: &HirFunction,
+) -> HashSet<crate::ids::TypeVarId> {
+    let signature_vars = signature_vars(hir, function);
     let mut shared = HashSet::new();
     for (obligation, constraint) in hir.constraint_store.iter() {
         if hir.constraint_store.owner(obligation) != Some(ConstraintOwner::Body(function.id)) {
@@ -203,8 +222,6 @@ pub(super) fn constrained_signature_vars(
         }
         shared.extend(signature_vars.intersection(&obligation_vars).copied());
     }
-    let mut authority_vars = HashSet::new();
-    collect_unresolved_authority_vars(&function.body, &hir.engine, &mut authority_vars);
-    shared.extend(signature_vars.intersection(&authority_vars).copied());
+    shared.extend(receiver_signature_vars(hir, function));
     shared
 }

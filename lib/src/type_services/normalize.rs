@@ -562,6 +562,47 @@ fn substitute_lambda_group(
     }
 }
 
+/// The constructor `F` with `F A1 .. An == applied` for a fully applied nominal
+/// type, matching the unifier's convention: the `holes` arguments are the
+/// leading ones, so `Result I64, E` with one hole is `λx. Result x, E` (std's
+/// `impl Functor for Result _, E`). With as many holes as arguments it is the
+/// bare constructor.
+pub(crate) fn leading_hole_constructor(applied: &Type, holes: usize) -> Option<Type> {
+    let (id, args, flavor) = match applied {
+        Type::Struct { id, args } => (*id, args, NominalTypeKind::Struct),
+        Type::Enum { id, args } => (*id, args, NominalTypeKind::Enum),
+        _ => return None,
+    };
+    if holes > args.len() {
+        return None;
+    }
+    if holes == args.len() {
+        return Some(Type::Constructor { id, flavor });
+    }
+    let section_args = (0..holes as u32)
+        .map(|index| Type::BoundVar {
+            depth: 0,
+            index,
+            kind: Kind::Type,
+        })
+        .chain(args[holes..].iter().cloned())
+        .collect();
+    let body = match flavor {
+        NominalTypeKind::Struct => Type::Struct {
+            id,
+            args: section_args,
+        },
+        _ => Type::Enum {
+            id,
+            args: section_args,
+        },
+    };
+    Some(Type::Lambda {
+        params: vec![Kind::Type; holes],
+        body: Box::new(body),
+    })
+}
+
 pub(crate) fn apply_type_lambda(ty: &Type, args: &[Type]) -> Option<Type> {
     let Type::Lambda { params, body } = ty else {
         return None;

@@ -131,6 +131,24 @@ pub(super) fn propagate_instance_relation(
                 propagate_instance_relation(engine, source, instance, bindings, shared);
             }
         }
+        // `F A` against `Vec I64` or `Result I64, E`: instantiate the source and
+        // let the unifier pick the constructor section, so the instance follows
+        // the same hole convention as every other `F A` unification.
+        (Type::Apply { .. }, Type::Struct { .. } | Type::Enum { .. }) => {
+            let mut source_vars = HashSet::new();
+            collect_type_vars(&source, &mut source_vars);
+            for id in source_vars {
+                if shared.contains(&id) {
+                    continue;
+                }
+                bindings.entry(id).or_insert_with(|| {
+                    let kind = engine.kind_of_type_var(id);
+                    engine.fresh_type_var_of_kind(kind)
+                });
+            }
+            let specialized = source.substitute(bindings);
+            let _ = engine.unify(&specialized, &instance);
+        }
         _ => {}
     }
 }

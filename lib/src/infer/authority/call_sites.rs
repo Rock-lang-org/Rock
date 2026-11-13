@@ -1,9 +1,10 @@
 //! Caller agreement for inferred (signatureless) function headers.
 //!
-//! Instance propagation seeds a signature variable that the body constrains
-//! from its callers. That is only sound while every direct caller agrees on the
-//! type: with `f "hi"` and `f 'c'` the header must stay generic instead of
-//! being committed to the first caller.
+//! A signatureless function is generalized and instantiated per call, except
+//! for variables the body uses as a member, operator, field or tuple-index
+//! receiver: instance propagation seeds those from callers. That is only sound
+//! while every direct caller agrees on the type: with `f "hi"` and `f 'c'` the
+//! header must stay generic instead of being committed to the first caller.
 
 use std::collections::{HashMap, HashSet};
 
@@ -181,39 +182,28 @@ fn match_instance(
             }
             match_instance(engine, source_ret, instance_ret, out);
         }
-        // `F A` against `Vec I64` (or `Result E A`): the constructor variable takes
-        // the nominal head applied to all but the trailing arguments.
+        // `F A` against `Vec I64` or `Result I64, E`: like the unifier, the
+        // arguments take the leading instance arguments and the constructor
+        // variable the section over them (`λx. Result x, E`).
         (
             Type::Apply {
                 constructor,
                 args: sources,
             },
             Type::Struct {
-                id,
-                args: instances,
+                args: instances, ..
             }
             | Type::Enum {
-                id,
-                args: instances,
+                args: instances, ..
             },
-        ) if sources.len() <= instances.len() => {
-            let flavor = if matches!(instance, Type::Struct { .. }) {
-                crate::types::NominalTypeKind::Struct
-            } else {
-                crate::types::NominalTypeKind::Enum
-            };
-            let split = instances.len() - sources.len();
-            let head = Type::Constructor { id: *id, flavor };
-            let head = if split == 0 {
-                head
-            } else {
-                Type::Apply {
-                    constructor: Box::new(head),
-                    args: instances[..split].to_vec(),
-                }
+        ) => {
+            let Some(head) =
+                crate::type_services::normalize::leading_hole_constructor(&instance, sources.len())
+            else {
+                return;
             };
             match_instance(engine, constructor, &head, out);
-            for (source, instance) in sources.iter().zip(&instances[split..]) {
+            for (source, instance) in sources.iter().zip(instances) {
                 match_instance(engine, source, instance, out);
             }
         }

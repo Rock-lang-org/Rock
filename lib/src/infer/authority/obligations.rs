@@ -7,7 +7,10 @@ use crate::lower::ResolveError;
 use super::propagate::propagate_block;
 use super::sites::{collect_authority_sites, materialize_authority_site};
 use super::status::{authority_counts, authority_pass_result, owner_selected};
-use super::type_vars::{collect_block_type_vars, collect_type_vars, constrained_signature_vars};
+use super::type_vars::{
+    collect_block_type_vars, collect_type_vars, constrained_signature_vars,
+    receiver_signature_vars,
+};
 use super::{
     AuthorityObligation, AuthorityObligationId, AuthorityObligationKind, AuthorityPassResult,
 };
@@ -193,7 +196,7 @@ pub(in crate::infer) fn propagate_function_instances_for_owners_with_progress(
     let before_generation = hir.engine.rigid_substitution_generation();
     let before_counts = authority_counts(hir, owners);
     let mut constrained_vars = HashMap::new();
-    // Callers that disagree keep the variable generic; it is generalized later.
+    // Callers that disagree keep a receiver variable generic; it is generalized later.
     let conflicting = super::call_sites::conflicting_caller_vars(hir);
     for function in hir
         .functions
@@ -205,7 +208,19 @@ pub(in crate::infer) fn propagate_function_instances_for_owners_with_progress(
         )
         .chain(hir.impls.values().flat_map(|imp| imp.methods.values()))
     {
-        let mut shared = constrained_signature_vars(hir, function);
+        // A signatureless free function is generalized after quiescence, so each
+        // call instantiates its header fresh instead of seeding it: seeding from
+        // one caller is irreversible and merges callers whose argument types are
+        // still unsolved. Only receivers of the body's member, operator, field
+        // and tuple-index sites need one concrete type; those stay caller-seeded
+        // unless callers disagree.
+        let signatureless_free_function =
+            function.generic_params.is_empty() && hir.functions.contains_key(&function.id);
+        let mut shared = if signatureless_free_function {
+            receiver_signature_vars(hir, function)
+        } else {
+            constrained_signature_vars(hir, function)
+        };
         shared.retain(|var| !conflicting.contains(var));
         if function.generic_params.is_empty() {
             shared.extend(super::call_sites::field_receiver_vars(hir, function));

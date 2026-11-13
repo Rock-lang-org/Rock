@@ -639,6 +639,69 @@ main = !->
 }
 
 #[test]
+fn test_uncalled_signatureless_helper_borrowing_its_callback_generalizes() {
+    let output = compile_and_run(
+        r#"
+infix 9 >|
+>| = a, mut f -> a <&> (>>= &mut f)
+
+main = !->
+    "ok".println!
+"#,
+    );
+
+    assert_eq!(output, "ok\n");
+}
+
+#[test]
+fn test_signatureless_operator_chain_instantiates_each_use() {
+    // The second `>|` receives the first one's still-unsolved result: callers
+    // must not be merged into one monomorphic header.
+    let output = compile_and_run(
+        r#"
+> std::concurrency::thread::spawn
+
+infix 9 >|
+>| = a, mut f -> a <&> (>>= &mut f)
+
+main = !->
+    handles: Vec _ = [
+        spawn (-> 1)
+        spawn (-> 2)
+        spawn (-> 3)
+    ].into!
+    (handles >| (.join!) >| (x -> Result::Ok (x * 10))).println!
+"#,
+    );
+
+    assert_eq!(output.trim(), "[Ok(10), Ok(20), Ok(30)]");
+}
+
+#[test]
+fn test_signatureless_operator_is_reused_at_different_constructors() {
+    let output = compile_and_run(
+        r#"
+infix 9 >|
+>| = a, mut f -> a <&> (>>= &mut f)
+
+main = !->
+    options: Vec (Option I64) = [
+        Option::Some 1
+        Option::None
+    ].into!
+    results: Vec (Result String, I64) = [
+        Result::Ok (String::from "ab")
+        Result::Err 7
+    ].into!
+    (options >| (x -> Option::Some (x + 1))).println!
+    (results >| (text -> Result::Ok text.len!)).println!
+"#,
+    );
+
+    assert_eq!(output.trim(), "[Some(2), None]\n[Ok(2), Err(7)]");
+}
+
+#[test]
 fn test_moved_hole_typed_handles_through_borrowing_helper_report_move() {
     compile_should_fail(
         r#"

@@ -16,6 +16,97 @@ use super::trait_bounds::trait_bounds_with_supertraits;
 use super::type_predicates::{contains_inference_pending_type, contains_unresolved_type};
 use super::{BuiltinTraitIds, SolveError, SolveErrorKind, SolveResult};
 
+/// std implements the callable traits for `&F` when `F: Fn` and for `&mut F`
+/// when `F: FnMut`. A callable bound on a borrow of a free variable is
+/// therefore a bound on the variable itself: that is the bound callers
+/// instantiate for their callback and generalization exports.
+fn borrowed_free_callable_subject(
+    engine: &InferenceEngine,
+    subject: Type,
+    bound: TraitBound,
+    builtin_traits: &BuiltinTraitIds,
+) -> (Type, TraitBound) {
+    let callable = [
+        builtin_traits.fn_once,
+        builtin_traits.fn_mut,
+        builtin_traits.fn_trait,
+    ]
+    .contains(&Some(bound.trait_id));
+    let Type::Reference { mutable, inner } = &subject else {
+        return (subject, bound);
+    };
+    let inner = engine.resolve(inner);
+    let required = if *mutable {
+        builtin_traits.fn_mut
+    } else {
+        builtin_traits.fn_trait
+    };
+    match (callable, &inner, required) {
+        (true, Type::TypeVar(_), Some(trait_id)) => (
+            inner,
+            TraitBound {
+                trait_id,
+                type_args: bound.type_args,
+            },
+        ),
+        _ => (subject, bound),
+    }
+}
+
+/// `Result String, ?e: Sync` holds exactly when `?e: Sync` does. For an auto
+/// trait on a type that still contains free variables, prove it while assuming
+/// the free variables and return those assumptions (with the trait each
+/// position requires): they become bounds of the variables, like a direct
+/// `?v: Sync`, and where clauses once the owner is generalized.
+fn auto_trait_residual_bounds(
+    subject: &Type,
+    bound: &TraitBound,
+    impls: &HashMap<DefId, HirImpl>,
+    structs: &HashMap<DefId, HirStruct>,
+    enums: &HashMap<DefId, HirEnum>,
+    builtin_traits: BuiltinTraitIds,
+    assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
+) -> Option<Vec<(TypeVarId, DefId)>> {
+    let auto_trait = [builtin_traits.send, builtin_traits.sync, builtin_traits.owned]
+        .contains(&Some(bound.trait_id));
+    if !auto_trait
+        || !bound.type_args.is_empty()
+        || matches!(subject, Type::TypeVar(_))
+        || !crate::type_services::visit::type_any(subject, |ty| matches!(ty, Type::TypeVar(_)))
+        || crate::type_services::visit::type_any(subject, |ty| {
+            matches!(ty, Type::Projection { .. } | Type::Error)
+        })
+    {
+        return None;
+    }
+    let residual = std::cell::RefCell::new(Vec::new());
+    let assume_free = |ty: &Type, trait_id: DefId, args: &[Type]| {
+        if assumed(ty, trait_id, args) {
+            return true;
+        }
+        match ty {
+            Type::TypeVar(var) if args.is_empty() => {
+                if !residual.borrow().contains(&(*var, trait_id)) {
+                    residual.borrow_mut().push((*var, trait_id));
+                }
+                true
+            }
+            _ => false,
+        }
+    };
+    let satisfied = super::auto_traits::auto_trait_satisfied(
+        subject,
+        bound.trait_id,
+        impls,
+        structs,
+        enums,
+        builtin_traits,
+        &mut HashSet::new(),
+        &assume_free,
+    );
+    satisfied.then(|| residual.into_inner())
+}
+
 pub(super) fn solve_constraints_in_place_mode(
     engine: &mut InferenceEngine,
     store: &mut ConstraintStore,
@@ -182,6 +273,32 @@ pub(super) fn solve_constraints_in_place_mode(
                 let resolved = TypeNormalizer::new(&normalization_env)
                     .normalize(&resolved_ty)
                     .unwrap_or(resolved_ty);
+                let (resolved, bound) = borrowed_free_callable_subject(
+                    engine,
+                    resolved,
+                    bound,
+                    &builtin_traits,
+                );
+                if finalize_pending {
+                    if let Some(residual) = auto_trait_residual_bounds(
+                        &resolved,
+                        &bound,
+                        impls,
+                        structs,
+                        enums,
+                        builtin_traits,
+                        &assumed,
+                    ) {
+                        for (var, trait_id) in residual {
+                            generic_bounds.entry(var).or_default().push(TraitBound {
+                                trait_id,
+                                type_args: Vec::new(),
+                            });
+                        }
+                        store.set_state(id, ObligationState::Solved);
+                        continue;
+                    }
+                }
                 if !matches!(resolved, Type::TypeVar(_) | Type::Generic(_))
                     && contains_inference_pending_type(&resolved)
                 {
