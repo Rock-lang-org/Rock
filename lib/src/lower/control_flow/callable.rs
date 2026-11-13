@@ -147,8 +147,8 @@ impl Lowerer {
         match result {
             Ok(selected) => selected,
             Err(error) => {
-                self.diagnostics
-                    .push_selection_with_span(error.message(), span);
+                let message = self.display_selection_error(&error);
+                self.diagnostics.push_selection_with_span(message, span);
                 None
             }
         }

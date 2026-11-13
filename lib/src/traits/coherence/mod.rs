@@ -55,10 +55,12 @@ impl CoherencePhase {
             let message = error.render_with(
                 |ty| lowerer.display_type(ty),
                 |id| {
-                    lowerer
-                        .canonical_name_for_def_id(id)
-                        .unwrap_or("<unknown item>")
-                        .to_string()
+                    crate::type_services::display::short_item_name(
+                        lowerer
+                            .canonical_name_for_def_id(id)
+                            .unwrap_or("<unknown item>"),
+                    )
+                    .to_string()
                 },
             );
             let labels = error

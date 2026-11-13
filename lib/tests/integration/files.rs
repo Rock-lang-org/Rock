@@ -409,6 +409,6 @@ main = ->
         fd: 0
     0
 "#,
-        "Cannot construct struct 'std::io::fs::File' because it has private fields",
+        "Cannot construct struct 'File' because it has private fields",
     );
 }

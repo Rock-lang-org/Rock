@@ -120,7 +120,7 @@ fn user_type_display_uses_resolved_rock_names() {
     };
     assert_eq!(
         display_type_with_context(&nested, &context).to_string(),
-        "Result T, PtrBox [I64]"
+        "Result T, (PtrBox [I64])"
     );
     let projection = Type::Projection {
         ty: Box::new(Type::Generic(generic)),

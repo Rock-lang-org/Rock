@@ -427,6 +427,6 @@ main = ->
         fd: 0
     0
 "#,
-        "Cannot construct struct 'std::io::net::TcpListener' because it has private fields",
+        "Cannot construct struct 'TcpListener' because it has private fields",
     );
 }

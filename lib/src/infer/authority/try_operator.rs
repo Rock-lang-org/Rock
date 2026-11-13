@@ -109,7 +109,7 @@ impl MethodAuthorityContext<'_> {
                         errors.push(ResolveError::with_span(
                             format!(
                                 "Call to unsafe function '{}' requires an unsafe block",
-                                function.name
+                                crate::type_services::display::short_item_name(&function.name)
                             ),
                             expr.span.clone(),
                         ));
@@ -273,7 +273,7 @@ impl MethodAuthorityContext<'_> {
                         errors.push(ResolveError::with_span(
                             format!(
                                 "Call to unsafe function '{}' requires an unsafe block",
-                                function.name
+                                crate::type_services::display::short_item_name(&function.name)
                             ),
                             expr.span.clone(),
                         ));

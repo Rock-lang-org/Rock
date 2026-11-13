@@ -181,7 +181,7 @@ struct Opaque
 main = !->
     show Opaque
 "#,
-        "does not implement trait `std::convert::From Opaque` (required by call to generic function 'show')",
+        "does not implement trait `From Opaque` (required by call to generic function 'show')",
     );
 }
 
@@ -509,6 +509,6 @@ main = !->
     step = x -> Some (x + 1)
     (values <&> (>>= step)).println!
 "#,
-        "does not implement trait `std::functional::callable::FnMut",
+        "does not implement trait `FnMut",
     );
 }

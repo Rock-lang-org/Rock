@@ -92,10 +92,24 @@ impl SolveError {
                 } else {
                     format!("type `{}`", display(ty))
                 };
+                // Users read `FnMut`, not its module path; arguments that are
+                // themselves applied types are grouped as in source syntax.
+                let trait_name = trait_name.rsplit("::").next().unwrap_or(trait_name);
                 let trait_display = if trait_args.is_empty() {
-                    trait_name.clone()
+                    trait_name.to_string()
                 } else {
-                    let args = trait_args.iter().map(&display).collect::<Vec<_>>().join(", ");
+                    let args = trait_args
+                        .iter()
+                        .map(|arg| {
+                            let shown = display(arg);
+                            if shown.contains(' ') && !shown.starts_with('(') {
+                                format!("({shown})")
+                            } else {
+                                shown
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     format!("{trait_name} {args}")
                 };
                 format!(

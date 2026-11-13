@@ -466,18 +466,27 @@ impl TraitConformanceService<'_> {
                         .get(&required_trait)
                         .map(|required| required.name.as_str())
                         .unwrap_or("<unknown>");
+                    // Written as source syntax: `Task: FnOnce (), ()`.
+                    let required_args = bound
+                        .type_args
+                        .iter()
+                        .map(|arg| self.display_type(arg))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let required = if required_args.is_empty() {
+                        crate::type_services::display::short_item_name(required_name).to_string()
+                    } else {
+                        format!(
+                            "{} {required_args}",
+                            crate::type_services::display::short_item_name(required_name)
+                        )
+                    };
                     let message = format!(
-                        "implementation of trait '{}' for '{}' does not satisfy supertrait obligation '{}: {} ({})'",
-                        trait_def.name,
-                        imp.type_name,
+                        "implementation of trait '{}' for '{}' does not satisfy supertrait obligation '{}: {}'",
+                        crate::type_services::display::short_item_name(&trait_def.name),
+                        crate::type_services::display::short_item_name(&imp.type_name),
                         self.display_type(&subject),
-                        required_name,
-                        bound
-                            .type_args
-                            .iter()
-                            .map(|arg| self.display_type(arg))
-                            .collect::<Vec<_>>()
-                            .join(", "),
+                        required,
                     );
                     let span = self.source_map.definition_declaration_span(imp.id).cloned();
                     self.output

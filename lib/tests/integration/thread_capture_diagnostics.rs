@@ -66,8 +66,8 @@ main = !->
 #[test]
 fn test_spawn_generic_capture_rejects_missing_marker_bounds() {
     for (bounds, marker) in [
-        ("F: Owned", "thread_safety::Send"),
-        ("F: Send", "thread_safety::Owned"),
+        ("F: Owned", "trait `Send`"),
+        ("F: Send", "trait `Owned`"),
     ] {
         compile_should_fail(&format!(r#"
 > std::concurrency::thread::spawn
@@ -85,9 +85,9 @@ main = !-> launch (-> return)
 #[test]
 fn test_spawn_generic_arc_capture_rejects_missing_marker_bounds() {
     for (bounds, marker) in [
-        ("F: Sync, F: Owned", "thread_safety::Send"),
-        ("F: Send, F: Owned", "thread_safety::Send"),
-        ("F: Send, F: Sync", "thread_safety::Owned"),
+        ("F: Sync, F: Owned", "trait `Send`"),
+        ("F: Send, F: Owned", "trait `Send`"),
+        ("F: Send, F: Sync", "trait `Owned`"),
     ] {
         compile_should_fail(&format!(r#"
 > std::concurrency::thread::spawn
@@ -381,7 +381,7 @@ main = !->
     text = String::from "local"
     spawn (-> text.len!)
     text.len!.println!
-"#, "thread_safety::Owned");
+"#, "trait `Owned`");
 }
 
 #[test]
@@ -391,7 +391,7 @@ fn test_spawn_copied_reference_to_literal_is_not_owned() {
 main = !->
     text = "static literal"
     spawn (-> text.len!)
-"#, "thread_safety::Owned");
+"#, "trait `Owned`");
 }
 
 #[test]
@@ -439,7 +439,7 @@ main = !->
         read: -> text.len!
     spawn (-> holder.read!)
     text.len!.println!
-"#, "thread_safety::Owned");
+"#, "trait `Owned`");
 }
 
 #[test]
@@ -483,7 +483,7 @@ main = !->
     number = 7
     wrapped = Box::new &number
     spawn (-> *wrapped)
-"#, "thread_safety::Owned");
+"#, "trait `Owned`");
 }
 
 #[test]
@@ -499,7 +499,7 @@ main = !->
         -> text.len!
     text.len!.println!
     spawn read
-"#, "thread_safety::Owned");
+"#, "trait `Owned`");
 }
 
 #[test]
@@ -521,5 +521,5 @@ main = !->
     text.len!.println!
     task = choose false, plain, holder.read
     spawn task
-"#, "thread_safety::Owned");
+"#, "trait `Owned`");
 }

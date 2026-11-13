@@ -115,7 +115,7 @@ impl Lowerer {
                 self.diagnostics.push_selection_with_span(
                     format!(
                         "Call to unsafe function '{}' requires an unsafe block",
-                        func.name
+                        crate::type_services::display::short_item_name(&func.name)
                     ),
                     span.clone(),
                 );
@@ -259,7 +259,7 @@ impl Lowerer {
                 self.diagnostics.push_selection_with_span(
                     format!(
                         "Call to unsafe function '{}' requires an unsafe block",
-                        func.name
+                        crate::type_services::display::short_item_name(&func.name)
                     ),
                     span.clone(),
                 );

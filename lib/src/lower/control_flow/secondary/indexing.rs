@@ -226,7 +226,7 @@ impl Lowerer {
                 self.diagnostics.push_selection_with_span(
                     format!(
                         "Call to unsafe function '{}' requires an unsafe block",
-                        selected_method_name
+                        crate::type_services::display::short_item_name(&selected_method_name)
                     ),
                     span.clone(),
                 );

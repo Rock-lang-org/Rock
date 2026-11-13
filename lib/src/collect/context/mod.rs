@@ -263,6 +263,23 @@ impl CollectContext {
                 Ok(ty) => {
                     normalized.insert(id, ty);
                 }
+                Err(crate::type_services::normalize::NormalizeError::AliasCycle(ids)) => {
+                    // Name the aliases (`A -> B -> A`), never their internal ids.
+                    let names = ids
+                        .iter()
+                        .map(|id| {
+                            self.type_aliases
+                                .values()
+                                .find(|alias| alias.id == *id)
+                                .map(|alias| {
+                                    crate::type_services::display::short_item_name(&alias.name)
+                                        .to_string()
+                                })
+                                .unwrap_or_else(|| "_".to_string())
+                        })
+                        .collect::<Vec<_>>();
+                    self.push_error(format!("type alias cycle: {}", names.join(" -> ")));
+                }
                 Err(error) => self.push_error(error.to_string()),
             }
         }

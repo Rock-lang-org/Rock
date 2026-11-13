@@ -149,7 +149,7 @@ impl Lowerer {
                 self.diagnostics.push_with_span(
                     format!(
                         "Cannot construct struct '{}' because it has private fields",
-                        type_name
+                        crate::type_services::display::short_item_name(&type_name)
                     ),
                     span.clone(),
                 );

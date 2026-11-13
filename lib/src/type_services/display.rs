@@ -133,6 +133,31 @@ impl TypeDisplayContext {
     pub fn definition_name(&self, id: DefId) -> Option<&str> {
         self.definitions.get(&id).map(String::as_str)
     }
+
+    /// The final path segment (`JoinHandle` for `std::concurrency::thread::JoinHandle`),
+    /// or the full path when another known definition shares that segment.
+    fn short_definition_name(&self, id: DefId) -> Option<&str> {
+        let full = self.definitions.get(&id)?;
+        let short = last_segment(full);
+        let ambiguous = self
+            .definitions
+            .iter()
+            .any(|(other, name)| *other != id && name != full && last_segment(name) == short);
+        Some(if ambiguous { full } else { short })
+    }
+}
+
+fn last_segment(path: &str) -> &str {
+    path.rsplit("::").next().unwrap_or(path)
+}
+
+/// User-facing name of a resolved item path: diagnostics name `drop_in_place`,
+/// `File` or `Eq`, not their module paths.
+pub fn short_item_name(path: &str) -> &str {
+    last_segment(path)
+}
+
+impl TypeDisplayContext {
 }
 
 pub struct UserTypeDisplay<'a> {
@@ -362,8 +387,13 @@ fn write_user_type(
             if matches!(safety, FunctionSafety::Unsafe) {
                 write!(f, "unsafe ")?;
             }
+            // `() -> R` keeps a nullary function distinct from its result, and a
+            // function-typed parameter is grouped: `(A -> B) -> C`.
+            if params.is_empty() {
+                write!(f, "() -> ")?;
+            }
             for param in params {
-                write_user_type(param, context, f)?;
+                write_grouped_function(param, context, f)?;
                 write!(f, " -> ")?;
             }
             write_user_type(ret, context, f)
@@ -372,7 +402,7 @@ fn write_user_type(
             write!(
                 f,
                 "{}",
-                context.definition_name(*id).unwrap_or("<unknown type>")
+                context.short_definition_name(*id).unwrap_or("<unknown type>")
             )?;
             write_user_type_args(args, context, f)
         }
@@ -382,11 +412,11 @@ fn write_user_type(
             } else {
                 write!(f, "&")?;
             }
-            write_user_type(inner, context, f)
+            write_grouped_function(inner, context, f)
         }
         Type::Pointer(inner) => {
             write!(f, "*")?;
-            write_user_type(inner, context, f)
+            write_grouped_function(inner, context, f)
         }
         Type::TypeVar(_) | Type::Error => write!(f, "_"),
         Type::Generic(param) => write!(
@@ -410,7 +440,7 @@ fn write_user_type(
                 f,
                 " as {}",
                 context
-                    .definition_name(*trait_id)
+                    .short_definition_name(*trait_id)
                     .unwrap_or("<unknown trait>")
             )?;
             write_user_type_args(trait_args, context, f)?;
@@ -428,7 +458,7 @@ fn write_user_type(
             write!(
                 f,
                 "{}",
-                context.definition_name(*id).unwrap_or("<unknown type>")
+                context.short_definition_name(*id).unwrap_or("<unknown type>")
             )
         }
         Type::Apply { constructor, args } => {
@@ -450,6 +480,20 @@ fn write_user_type(
     }
 }
 
+fn write_grouped_function(
+    ty: &Type,
+    context: &TypeDisplayContext,
+    f: &mut fmt::Formatter<'_>,
+) -> fmt::Result {
+    if matches!(ty, Type::Function { .. }) {
+        write!(f, "(")?;
+        write_user_type(ty, context, f)?;
+        write!(f, ")")
+    } else {
+        write_user_type(ty, context, f)
+    }
+}
+
 fn write_user_type_args(
     args: &[Type],
     context: &TypeDisplayContext,
@@ -459,7 +503,28 @@ fn write_user_type_args(
         return Ok(());
     }
     write!(f, " ")?;
-    write_user_type_list(args, context, f)
+    for (index, arg) in args.iter().enumerate() {
+        if index > 0 {
+            write!(f, ", ")?;
+        }
+        // `Result (JoinHandle I64), E`: an applied or function argument is
+        // grouped, as in source syntax, so its own arguments stay attached.
+        let grouped = match arg {
+            Type::Struct { args, .. } | Type::Enum { args, .. } | Type::Apply { args, .. } => {
+                !args.is_empty()
+            }
+            Type::Function { .. } => true,
+            _ => false,
+        };
+        if grouped {
+            write!(f, "(")?;
+        }
+        write_user_type(arg, context, f)?;
+        if grouped {
+            write!(f, ")")?;
+        }
+    }
+    Ok(())
 }
 
 fn write_user_type_list(
