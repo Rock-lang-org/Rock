@@ -61,6 +61,18 @@ fn borrowed_free_callable_subject(
 /// the free variables and return those assumptions (with the trait each
 /// position requires): they become bounds of the variables, like a direct
 /// `?v: Sync`, and where clauses once the owner is generalized.
+///
+/// When the proof fails even with every free variable assumed, no solution
+/// of those variables can make it hold: `Result Raw, ?e: Send` fails because
+/// of `Raw`. That is reported as a violation, not as an ambiguity about `?e`.
+/// An application with an unsolved head (`?f I64`) has no structure to
+/// prove yet, so it stays undecided.
+enum AutoTraitResidual {
+    NotApplicable,
+    Holds(Vec<(TypeVarId, DefId)>),
+    Fails,
+}
+
 fn auto_trait_residual_bounds(
     subject: &Type,
     bound: &TraitBound,
@@ -69,7 +81,7 @@ fn auto_trait_residual_bounds(
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
     assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
-) -> Option<Vec<(TypeVarId, DefId)>> {
+) -> AutoTraitResidual {
     let auto_trait = [builtin_traits.send, builtin_traits.sync, builtin_traits.owned]
         .contains(&Some(bound.trait_id));
     if !auto_trait
@@ -80,7 +92,7 @@ fn auto_trait_residual_bounds(
             matches!(ty, Type::Projection { .. } | Type::Error)
         })
     {
-        return None;
+        return AutoTraitResidual::NotApplicable;
     }
     let residual = std::cell::RefCell::new(Vec::new());
     let assume_free = |ty: &Type, trait_id: DefId, args: &[Type]| {
@@ -107,7 +119,17 @@ fn auto_trait_residual_bounds(
         &mut HashSet::new(),
         &assume_free,
     );
-    satisfied.then(|| residual.into_inner())
+    if satisfied {
+        return AutoTraitResidual::Holds(residual.into_inner());
+    }
+    let unsolved_head = crate::type_services::visit::type_any(subject, |ty| {
+        matches!(ty, Type::Apply { constructor, .. } if matches!(constructor.as_ref(), Type::TypeVar(_)))
+    });
+    if unsolved_head {
+        AutoTraitResidual::NotApplicable
+    } else {
+        AutoTraitResidual::Fails
+    }
 }
 
 pub(super) fn solve_constraints_in_place_mode(
@@ -283,7 +305,7 @@ pub(super) fn solve_constraints_in_place_mode(
                     &builtin_traits,
                 );
                 if finalize_pending {
-                    if let Some(residual) = auto_trait_residual_bounds(
+                    match auto_trait_residual_bounds(
                         &resolved,
                         &bound,
                         impls,
@@ -292,14 +314,34 @@ pub(super) fn solve_constraints_in_place_mode(
                         builtin_traits,
                         &assumed,
                     ) {
-                        for (var, trait_id) in residual {
-                            generic_bounds.entry(var).or_default().push(TraitBound {
-                                trait_id,
-                                type_args: Vec::new(),
-                            });
+                        AutoTraitResidual::Holds(residual) => {
+                            for (var, trait_id) in residual {
+                                generic_bounds.entry(var).or_default().push(TraitBound {
+                                    trait_id,
+                                    type_args: Vec::new(),
+                                });
+                            }
+                            store.set_state(id, ObligationState::Solved);
+                            continue;
                         }
-                        store.set_state(id, ObligationState::Solved);
-                        continue;
+                        AutoTraitResidual::Fails => {
+                            let trait_name = traits
+                                .get(&bound.trait_id)
+                                .map(|trait_def| trait_def.name.as_str())
+                                .unwrap_or("<unknown trait>");
+                            errors.push(SolveError {
+                                kind: SolveErrorKind::TraitNotImplemented {
+                                    ty: resolved.clone(),
+                                    trait_name: trait_name.to_string(),
+                                    trait_args: Vec::new(),
+                                    context: context.clone(),
+                                },
+                                span,
+                            });
+                            store.set_state(id, ObligationState::Failed);
+                            continue;
+                        }
+                        AutoTraitResidual::NotApplicable => {}
                     }
                 }
                 if !matches!(resolved, Type::TypeVar(_) | Type::Generic(_))

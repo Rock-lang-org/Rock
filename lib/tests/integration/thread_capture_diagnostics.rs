@@ -555,6 +555,37 @@ main = !->
 }
 
 #[test]
+fn test_partly_unresolved_capture_reports_missing_send_not_ambiguity() {
+    // `Result Raw, ?e` is not `Send` whatever `?e` becomes: report the
+    // violation instead of an ambiguity about `?e`.
+    let source = r#"
+> std::concurrency::thread::spawn
+
+struct Raw
+    < ptr: *I64
+
+run = value -> spawn (-> Result::Ok value)
+
+main = !->
+    handle = run (Raw ptr: 0 as *I64)
+"#;
+    let id = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let entry = dir.join("test.rk");
+    std::fs::write(&entry, source).unwrap();
+    let result = rock_lib::compile(&test_config(entry, dir.clone()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let diagnostics = result.expect_err("a non-Send capture must be rejected");
+    let messages = diagnostics.0.iter().map(|d| d.message.as_str()).collect::<Vec<_>>();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(
+        messages[0].contains("type `Result Raw, _` does not implement trait `Send`"),
+        "{messages:?}"
+    );
+}
+
+#[test]
 fn test_unresolved_send_subject_in_entrypoint_is_still_ambiguous() {
     compile_should_fail(r#"
 > std::concurrency::thread::spawn
