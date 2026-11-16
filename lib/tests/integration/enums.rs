@@ -27,6 +27,36 @@ main = !->
 }
 
 #[test]
+fn test_stored_multi_payload_constructor_value_from_docs() {
+    let output = compile_and_run(
+        r#"
+enum Packet
+    Data I64, &Str
+    Empty
+
+main = !->
+    make_packet = Packet::Data
+    packet = make_packet 7, "hello"
+    match packet
+        Packet::Data number, text => text.println!
+        Packet::Empty => "empty".println!
+"#,
+    );
+    assert_eq!(output, "hello\n");
+}
+
+#[test]
+fn test_unapplied_generic_constructor_value_needs_its_payload_type() {
+    compile_should_fail(
+        r#"
+main = !->
+    make = Option::Some
+"#,
+        "ambiguous",
+    );
+}
+
+#[test]
 fn test_imported_multi_argument_constructor_value() {
     let output = compile_and_run(
         r#"
