@@ -8,29 +8,23 @@ use super::Monomorphizer;
 
 impl Monomorphizer {
     pub(super) fn materialize_registered_body_edges(&mut self) {
-        let mut processed = std::collections::HashSet::new();
-        loop {
-            let bodies = self
-                .instances
-                .records()
-                .filter(|record| !processed.contains(&record.id))
-                .filter_map(|record| {
-                    self.instances
-                        .pre_mir_body(record.id)
-                        .cloned()
-                        .map(|body| (record.id, body))
-                })
-                .collect::<Vec<_>>();
-            if bodies.is_empty() {
-                break;
+        while let Some(instance_id) = self.instances.next_pending_body() {
+            let Some(mut body) = self.instances.pre_mir_body(instance_id).cloned() else {
+                continue;
+            };
+            let original_id = body.id;
+            // Specialized payload ids are not source owners. Keep local spans
+            // tied to the definition identified by the instance origin.
+            if let Some(record) = self.instances.record(instance_id) {
+                body.id = match record.origin {
+                    super::InstanceOrigin::Function(id) => id,
+                    super::InstanceOrigin::ImplMethod { method, .. }
+                    | super::InstanceOrigin::TraitDefault { method, .. } => method,
+                };
             }
-
-            for (instance_id, body) in bodies {
-                let processed_body = self.process_function(body);
-                self.instances
-                    .replace_pre_mir_body(instance_id, processed_body);
-                processed.insert(instance_id);
-            }
+            let mut processed_body = self.process_function(body);
+            processed_body.id = original_id;
+            self.instances.replace_pre_mir_body(instance_id, processed_body);
         }
     }
 

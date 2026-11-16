@@ -281,7 +281,8 @@ fn process_targetless_generic_function_argument_does_not_specialize_by_name() {
         panic!("expression should remain a call");
     };
     assert!(matches!(&args[0].kind, HirExprKind::Var(name) if name == "identity"));
-    assert!(mono.instances.records().next().is_none());
+    assert!(mono.instances.records().all(|record| record.origin != InstanceOrigin::Function(identity_id)));
+    assert!(mono.instances.records().any(|record| record.origin == InstanceOrigin::Function(apply_id)));
 }
 
 #[test]

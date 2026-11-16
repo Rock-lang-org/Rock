@@ -271,7 +271,7 @@ fn product_link_records_reject_ambiguous_callable_remap() {
 }
 
 #[test]
-fn product_link_records_follow_pruned_instance_set() {
+fn product_link_records_follow_emitted_instance_set() {
     let main_id = DefId::new(CrateId(0), LocalDefId(1));
     let unused_id = DefId::new(CrateId(0), LocalDefId(2));
     let main_source = link_test_function(main_id, "main");
@@ -280,7 +280,6 @@ fn product_link_records_follow_pruned_instance_set() {
     let unused = accepted_link_test_function(unused_source.clone());
     let mut pre_mir_instance_bodies = crate::mono::PreMirInstanceBodies::new();
     pre_mir_instance_bodies.insert(InstanceId(0), main.clone());
-    pre_mir_instance_bodies.insert(InstanceId(1), unused.clone());
     let mut monomorphized = MonomorphizedProgram {
             program: crate::hir::HirProgramFor::<crate::hir::AcceptedHir>::from_accepted_id_parts_with_names_and_canonical_names(
                 HashMap::from([
@@ -309,19 +308,14 @@ fn product_link_records_follow_pruned_instance_set() {
                     InstanceId(0),
                     link_test_instance(InstanceId(0), &main, "main"),
                 ),
-                (
-                    InstanceId(1),
-                    link_test_instance(InstanceId(1), &unused, "unused"),
-                ),
             ]),
             pre_mir_instance_bodies,
             generated_drop_instances: Default::default(),
             type_context: crate::type_context::TypeContext::new(),
             source_map: crate::source_map::SemanticSourceMap::default(),
         };
-    let mut instance_bodies =
+    let instance_bodies =
         crate::mir::builder::MirBuilder::take_mir_instance_bodies(&mut monomorphized).unwrap();
-    crate::dce::prune_unreachable_instances(&mut monomorphized, &mut instance_bodies);
     let (products, id_remap) =
         link_test_products(vec![("main", main_source), ("unused", unused_source)]);
     let mut products = Some(products);
@@ -332,7 +326,7 @@ fn product_link_records_follow_pruned_instance_set() {
         .collect::<Vec<_>>();
 
     attach_product_link_records(&mut products, &candidates, &HashMap::new(), Some(&id_remap))
-        .expect("pruned candidates should retain one callable remap target");
+        .expect("emitted candidates should retain one callable remap target");
 
     let products = products.expect("products should be present");
     assert!(products

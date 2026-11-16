@@ -159,16 +159,38 @@ unfinished Phase 2 work; the existing name-occurrence check is not Rust-equivale
 
 ## Phase 5 — Demand-driven monomorphization
 
-23. [ ] Replace eager registration in `mono/external.rs` (`process_with_crates_impl`: all concrete
-    functions, all concrete impl methods, trait defaults, all imported dependency functions) with
-   a worklist seeded from roots (bin: `main`; lib: exported concrete items; required lang items).
-24. [ ] Collect edges while processing each instance body: direct/method/operator calls, function
-   values, drop glue for constructed types, trait defaults; intern and enqueue new instances.
-25. [ ] Register dependency function/impl instances lazily on first use.
-26. [ ] Verify with `validate_materialized_body_edges` and the old DCE's `missing_instance_edges`
-   logic that no edge is missed (run the old DCE in an assertion mode during transition testing).
-27. [ ] Remove `dce::prune_unreachable_instances` and its tests once no instance is ever pruned.
-28. [ ] Perf check vs baseline: compile time and IR size must not regress.
+23. [x] Replace eager body passes with an instance worklist (`mono/demand.rs`).
+   Production receives the explicit crate kind and root crate id. Bins seed `main`; libraries
+   seed surviving concrete current-crate callable API/helpers after Phase 4 pruning.
+   Generic impl members are not roots merely because a particular member signature is concrete.
+   The standalone HIR-only API compiles a library (it has no source visibility configuration).
+24. [x] Follow direct/method/operator calls, callable values, closures and destruction while
+   draining a FIFO body queue. Each instance body is enqueued only on first insertion;
+   substituted bodies are registered before processing, supporting recursive specializations.
+   Removed recursive eager body processing and the repeated whole-registry scan.
+   Destruction demand includes nominal fields, arrays, tuples, owned closure captures, and
+   explicit `DropInPlace` pointees; no whole-type-table Drop scan remains.
+25. [x] Dependency object function/method metadata is indexed separately from instances.
+   Referencing a key interns its object declaration, preserving artifact symbols and avoiding
+   any local body emission. Unreferenced object symbols allocate no instance ids.
+26. [x] Transitional full release run: 2441 unit + 1023 integration tests passed while the
+   old MIR DCE was required to report zero removals and zero missing instance edges.
+   Existing materialized-body and MIR/backend agreement validation stays enabled.
+27. [x] Remove the post-mono DCE, its superseded tests and DCE-only MIR root/retention tables.
+   Product linking now tests the emitted instance set directly. New worklist tests exercise
+   dead bodies independently of source pruning, recursive substitutions, callable/closure edges,
+   selected trait members, lazy object symbols and structural destruction demand.
+   Final post-removal release library validation: 2418 unit + 1024 integration tests pass.
+   Release CLI validation also passes: 89 `rock` + 51 `rockc` tests.
+   One prior run hit a proc-macro launch error (`Text file busy`); the full retry passed.
+28. [x] Compare saved Phase 4/5 release compilers with `scripts/bench_phases.sh`
+   (two paired runs) and `scripts/bench_mono.py` (five alternating runs).
+   Std median mono: 747.93 → 498.91 ms; MIR bodies: 730.83 → 698.36 ms.
+   The 256-impl/one-call benchmark: total 344.16 → 300.46 ms, mono
+   13.46 → 6.22 ms, MIR bodies 38.76 → 0.51 ms; LLVM IR stays 2902 bytes.
+   Example IR sizes are unchanged or slightly smaller; std 2200590 → 2200589 bytes.
+   Small-app mono/MIR timings improve or stay effectively unchanged. Matrix total
+   varied upward with load/parse noise; no end-to-end speedup is claimed for it.
 
 ## Phase 6 — Wrap-up
 

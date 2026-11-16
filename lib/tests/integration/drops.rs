@@ -271,6 +271,33 @@ main = ->
 }
 
 #[test]
+fn test_structural_drop_demand_without_other_owners_of_the_element_type() {
+    for (binding, expected) in [
+        ("values = [Tracked\n        value: 1, Tracked\n        value: 2]", vec!["1", "2", "done"]),
+        ("values = (Tracked\n        value: 1, Tracked\n        value: 2)", vec!["1", "2", "done"]),
+        ("values: [Tracked; 0] = []", vec!["done"]),
+    ] {
+        let output = compile_and_run(&format!(
+            r#"
+struct Tracked
+    < value: I64
+
+impl Drop for Tracked
+    ~@drop = !->
+        self.value.println!
+
+main = !->
+    {binding}
+    "done".println!
+"#
+        ));
+        let mut lines = output.trim().lines().collect::<Vec<_>>();
+        lines.sort();
+        assert_eq!(lines, expected, "{binding}");
+    }
+}
+
+#[test]
 fn test_expression_statement_temporary_is_dropped() {
     let output = compile_and_run(
         r#"

@@ -329,10 +329,6 @@ impl TypeContext {
         visit(self, id, &mut HashSet::new(), &mut HashSet::new())
     }
 
-    pub(crate) fn len(&self) -> usize {
-        self.tys.len()
-    }
-
     pub fn intern_type(&mut self, ty: &Type) -> TypeId {
         assert!(
             self.accepting_normalized_hkt

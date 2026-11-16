@@ -7,7 +7,7 @@ use super::hir_types::{
 use crate::ids::DefId;
 use crate::types::Type;
 
-use super::{InstanceKey, InstanceOrigin, Monomorphizer};
+use super::Monomorphizer;
 
 impl Monomorphizer {
     pub(super) fn register_effective_trait_methods(
@@ -42,13 +42,8 @@ impl Monomorphizer {
         imp.methods.values().find(|method| method.id == method_id)
     }
 
-    fn zero_substitution_function_instance(&self, id: DefId) -> Option<crate::mono::InstanceId> {
-        self.instances
-            .get(&InstanceKey::new(InstanceOrigin::Function(id), Vec::new()))
-    }
-
-    fn zero_substitution_callable_instance(&self, id: DefId) -> Option<crate::mono::InstanceId> {
-        self.zero_substitution_function_instance(id)
+    fn zero_substitution_callable_instance(&mut self, id: DefId) -> Option<crate::mono::InstanceId> {
+        self.demand_function(id)
     }
 
     pub(super) fn process(
@@ -94,54 +89,11 @@ impl Monomorphizer {
             }
         }
 
-        let mut function_ids = self.concrete_functions.keys().copied().collect::<Vec<_>>();
-        function_ids.sort();
-        for id in function_ids {
-            if let Some(func) = self.concrete_functions.remove(&id) {
-                let processed = self.process_function(func);
-                self.concrete_functions.insert(id, processed);
-            }
-        }
-
-        let mut impl_ids = program.impls.keys().copied().collect::<Vec<_>>();
-        impl_ids.sort();
-        for impl_id in impl_ids {
-            let Some(imp) = program.impls.get_mut(&impl_id) else {
-                continue;
-            };
-            let method_names = Self::method_names_in_id_order(&imp.methods);
-            for name in method_names {
-                if let Some(func) = imp.methods.remove(&name) {
-                    let processed = self.process_function(func);
-                    if Self::should_register_method_instance(&processed) {
-                        self.register_impl_method_instance(imp, &name, &processed);
-                    }
-                    imp.methods.insert(name, processed);
-                }
-            }
-        }
-
-        self.process_and_register_concrete_trait_defaults(&mut program);
-        self.monomorphize_known_drop_types();
-
-        program.functions.clear();
-        program.names.functions_by_name.clear();
-        let mut functions = std::mem::take(&mut self.concrete_functions)
-            .into_iter()
-            .collect::<Vec<_>>();
-        functions.sort_by_key(|(id, _)| *id);
-        for (id, func) in functions {
-            let name = self
-                .function_names_by_id
-                .get(&id)
-                .expect("registered function must retain canonical display metadata")
-                .clone();
-            if Self::should_register_function_instance(&func) {
-                self.register_function_instance(&name, &func);
-            }
-            program.names.functions_by_name.insert(name, id);
-            program.functions.insert(id, func);
-        }
+        self.seed_function_roots();
+        self.seed_method_roots(&program);
+        self.materialize_registered_body_edges();
+        self.finish_demanded_functions(&mut program);
+        self.validate_materialized_body_edges();
         program.rebuild_indexes_with_canonical_names(&canonical_names_by_id);
 
         self.finish_instance_symbols();
@@ -179,7 +131,9 @@ impl Monomorphizer {
             param.ty = self.substitute_generics(&param.ty);
             let param_span =
                 owner.and_then(|owner| self.source_map.local_span(owner, param.local_id).cloned());
-            self.monomorphize_drop_for_type(&param.ty, param_span);
+            if !param.is_ref {
+                self.monomorphize_drop_for_type(&param.ty, param_span);
+            }
             let ty_id = self.intern_type(&param.ty);
             self.var_types.insert(param.local_id, ty_id);
         }
@@ -238,6 +192,13 @@ impl Monomorphizer {
                     HirVarTarget::Instance(_) | HirVarTarget::Local(_) => return,
                 };
 
+                if generic_target.is_none() {
+                    if let HirVarTarget::Function(id) | HirVarTarget::Extern(id) = reference.target {
+                        if let Some(instance) = self.demand_function(id) {
+                            reference.target = HirVarTarget::Instance(instance);
+                        }
+                    }
+                }
                 if let Some((lookup_name, generic_func)) = generic_target {
                     if !self.contains_generic(&expr.ty) {
                         if let Some(type_args) =
@@ -640,9 +601,19 @@ impl Monomorphizer {
                 self.process_expr(lhs);
                 self.process_expr(rhs);
             }
-            HirExprKind::Intrinsic { args, .. } => {
-                for arg in args {
+            HirExprKind::Intrinsic { name, args } => {
+                for arg in args.iter_mut() {
                     self.process_expr(arg);
+                }
+                // Explicit destruction owns a pointee, not the pointer value.
+                // There need not be a managed local of this type anywhere in
+                // the program (e.g. a value written directly into malloc'd memory).
+                if name == "DropInPlace" {
+                    if let [arg] = args.as_slice() {
+                        if let Type::Pointer(pointee) = &arg.ty {
+                            self.monomorphize_drop_for_type(pointee, Some(expr.span.clone()));
+                        }
+                    }
                 }
             }
             _ => {}

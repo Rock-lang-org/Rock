@@ -208,9 +208,6 @@ impl ExternBodyProviders {
         &self.generic_impls_by_id
     }
 
-    pub(crate) fn generic_impl(&self, id: DefId) -> Option<&HirImpl> {
-        self.generic_impls_by_id.get(&id)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -422,10 +419,6 @@ impl<'a> ExternCrateRef<'a> {
         imp.methods
             .values()
             .any(|method| self.provides_impl_method_body(imp, method))
-    }
-
-    pub(crate) fn provides_dependency_impl_body(&self, imp: &HirImpl) -> bool {
-        self.provides_impl_body(imp) || self.body_providers().generic_impl(imp.id).is_some()
     }
 
     pub(crate) fn imported_impl_method_symbol(

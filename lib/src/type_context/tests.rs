@@ -1,4 +1,5 @@
 use super::*;
+
 use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId, TypeVarId};
 use crate::type_context::TypeView;
 use crate::type_services::kind::Kind;
@@ -9,6 +10,14 @@ use crate::types::{
     AssociatedTypeKey, CallableKind, CaptureKind, FunctionCapture, GenericParamId, NominalTypeKind,
     Type,
 };
+
+// Only tests inspect the whole intern table; production mono follows demanded
+// types instead of scanning every interned type for implicit destruction.
+impl TypeContext {
+    pub(crate) fn len(&self) -> usize {
+        self.tys.len()
+    }
+}
 
 fn def_id(index: u32) -> DefId {
     DefId::new(CrateId(0), LocalDefId(index))

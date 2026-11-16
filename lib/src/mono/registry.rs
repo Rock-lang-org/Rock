@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 
 use super::hir_types::{HirFunction, HirProgram};
 use crate::ids::{DefId, InstanceId, TypeId};
@@ -168,6 +169,7 @@ pub struct InstanceRegistry {
     by_key: HashMap<InstanceKey, InstanceId>,
     records: BTreeMap<InstanceId, InstanceRecord>,
     pre_mir_bodies: PreMirInstanceBodies,
+    pending_bodies: VecDeque<InstanceId>,
 }
 
 impl InstanceRegistry {
@@ -177,6 +179,7 @@ impl InstanceRegistry {
             by_key: HashMap::new(),
             records: BTreeMap::new(),
             pre_mir_bodies: PreMirInstanceBodies::new(),
+            pending_bodies: VecDeque::new(),
         }
     }
 
@@ -211,7 +214,14 @@ impl InstanceRegistry {
     }
 
     pub fn insert_pre_mir_body(&mut self, id: InstanceId, function: HirFunction) {
+        if !self.pre_mir_bodies.contains(id) {
+            self.pending_bodies.push_back(id);
+        }
         self.pre_mir_bodies.insert(id, function);
+    }
+
+    pub(super) fn next_pending_body(&mut self) -> Option<InstanceId> {
+        self.pending_bodies.pop_front()
     }
 
     pub fn replace_pre_mir_body(&mut self, id: InstanceId, function: HirFunction) {

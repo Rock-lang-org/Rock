@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::ids::TypeId;
 use crate::source_map::SourceSymbol;
 use crate::types::{GenericParamId, Type};
 
@@ -61,6 +60,30 @@ impl Monomorphizer {
     }
 
     pub(super) fn monomorphize_drop_fields_for_type(&mut self, ty: &Type) {
+        // Structural owners can contain destructible values without a named
+        // local or constructor call for an individual element.
+        match ty {
+            Type::Array(_, crate::types::ArrayLen::Value(0)) => return,
+            Type::Array(element, _) | Type::Slice(element) => {
+                self.monomorphize_drop_for_type(element, None);
+                return;
+            }
+            Type::Tuple(elements) => {
+                for element in elements {
+                    self.monomorphize_drop_for_type(element, None);
+                }
+                return;
+            }
+            Type::Function { captures, .. } => {
+                for capture in captures {
+                    if capture.kind == crate::types::CaptureKind::Move {
+                        self.monomorphize_drop_for_type(&capture.ty, None);
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
         let (Type::Struct { id, args } | Type::Enum { id, args }) = ty else {
             return;
         };
@@ -104,12 +127,4 @@ impl Monomorphizer {
             .remove(&type_key);
     }
 
-    pub(super) fn monomorphize_known_drop_types(&mut self) {
-        let mut index = 0;
-        while index < self.type_context.len() {
-            let ty = self.type_for(TypeId(index as u32));
-            index += 1;
-            self.monomorphize_drop_for_type(&ty, None);
-        }
-    }
 }

@@ -8,7 +8,7 @@ use crate::products::identity::{
 };
 use crate::products::link::{attach_product_link_records, attach_product_object_path};
 use crate::products::{CompilerProducts, ProductCrateIdentity, ProductLinkData};
-use crate::{analysis, codegen, dce, mir, mono};
+use crate::{analysis, codegen, mir, mono};
 
 use super::frontend::{compile_frontend, FrontendOutput};
 use super::{module_name_from_entry, CompileOutput, Config, DebugPrint};
@@ -119,15 +119,13 @@ fn compile_backend(
     timer.lap("products");
 
     // Phase 5: Monomorphization
-    let mut monomorphized = mono::monomorphize_with_crates(hir, crate_ctx, compilation_identity)
+    let mut monomorphized = mono::monomorphize_with_crates(hir, crate_ctx, compilation_identity, config.crate_kind)
         .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
     timer.lap("mono");
-    let mut instance_bodies =
+    let instance_bodies =
         mir::builder::MirBuilder::take_mir_instance_bodies(&mut monomorphized)
             .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
     timer.lap("mir-bodies");
-    let _dce_report = dce::prune_unreachable_instances(&mut monomorphized, &mut instance_bodies);
-    timer.lap("instance-dce");
 
     let mir_program = mir::builder::MirBuilder::build_monomorphized_with_instance_bodies(
         &monomorphized,

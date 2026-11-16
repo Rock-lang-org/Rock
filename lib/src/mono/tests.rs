@@ -1,4 +1,6 @@
 use super::*;
+mod demand;
+mod demand_drop;
 use super::{
     CompilationIdentityContext, InstanceImplOwner, InstanceKey, InstanceOrigin, MonoError,
     MonoErrorKind, Monomorphizer,

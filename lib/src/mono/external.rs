@@ -180,11 +180,7 @@ impl Monomorphizer {
             }
             let origin = self.function_instance_origin(&func);
             let key = crate::mono::InstanceKey::new(origin, Vec::new());
-            let provided_by_object = self
-                .instances
-                .get(&key)
-                .and_then(|id| self.instances.record(id))
-                .is_some_and(|record| record.provided_by_object);
+            let provided_by_object = self.object_instances.contains_key(&key);
             if provided_by_object {
                 continue;
             }
@@ -200,90 +196,10 @@ impl Monomorphizer {
             }
         }
 
-        let mut function_ids = self.concrete_functions.keys().copied().collect::<Vec<_>>();
-        function_ids.sort();
-        for id in function_ids {
-            if let Some(func) = self.concrete_functions.remove(&id) {
-                let processed = self.process_function(func);
-                self.concrete_functions.insert(id, processed);
-            }
-        }
-
-        let mut concrete_methods = program
-            .impls
-            .iter()
-            .filter(|(_, imp)| !crate_ctx.provides_dependency_impl_body(imp))
-            .flat_map(|(_, imp)| {
-                imp.methods.iter().filter_map(|(name, method)| {
-                    hir_function_is_codegen_concrete(method).then_some((
-                        imp.id,
-                        method.id,
-                        imp.clone(),
-                        name.clone(),
-                        method.clone(),
-                    ))
-                })
-            })
-            .collect::<Vec<_>>();
-        concrete_methods.sort_by_key(|(impl_id, method_id, _, _, _)| (*impl_id, *method_id));
-        for (_, _, imp, name, method) in concrete_methods {
-            self.register_impl_method_instance(&imp, &name, &method);
-        }
-
-        let mut impl_ids = program.impls.keys().copied().collect::<Vec<_>>();
-        impl_ids.sort();
-        for impl_id in impl_ids {
-            let Some(imp) = program.impls.get_mut(&impl_id) else {
-                continue;
-            };
-            if crate_ctx.provides_dependency_impl_body(imp) {
-                continue;
-            }
-
-            let method_names = Self::method_names_in_id_order(&imp.methods);
-            for name in method_names {
-                if let Some(func) = imp.methods.remove(&name) {
-                    if !hir_function_is_codegen_concrete(&func) {
-                        imp.methods.insert(name, func);
-                        continue;
-                    }
-                    let processed = self.process_function(func);
-                    let instance_key = crate::mono::InstanceKey::new(
-                        self.method_instance_origin(imp, &processed),
-                        Vec::new(),
-                    );
-                    if let Some(instance_id) = self.instances.get(&instance_key) {
-                        self.instances
-                            .replace_pre_mir_body(instance_id, processed.clone());
-                    } else if Self::should_register_method_instance(&processed) {
-                        self.register_impl_method_instance(imp, &name, &processed);
-                    }
-                    imp.methods.insert(name, processed);
-                }
-            }
-        }
-
-        self.process_and_register_concrete_trait_defaults(program);
-
-        program.functions.clear();
-        program.names.functions_by_name.clear();
-        let mut functions = std::mem::take(&mut self.concrete_functions)
-            .into_iter()
-            .collect::<Vec<_>>();
-        functions.sort_by_key(|(id, _)| *id);
-        for (id, func) in functions {
-            let name = self
-                .function_names_by_id
-                .get(&id)
-                .expect("registered function must retain canonical display metadata")
-                .clone();
-            if Self::should_register_function_instance(&func) {
-                self.register_function_instance(&name, &func);
-            }
-            program.names.functions_by_name.insert(name, id);
-            program.functions.insert(id, func);
-        }
+        self.seed_function_roots();
+        self.seed_method_roots(program);
         self.materialize_registered_body_edges();
+        self.finish_demanded_functions(program);
         self.validate_materialized_body_edges();
     }
 
@@ -302,18 +218,12 @@ impl Monomorphizer {
                 let mut declared = declared;
                 declared.name = name.clone();
 
-                self.instances
-                    .intern(instance_key, |id| crate::mono::InstanceRecord {
-                        id,
-                        origin: origin.clone(),
-                        substitution: Vec::new(),
+                self.object_instances.insert(instance_key, super::demand::ObjectInstance {
                         symbols: crate::mono::InstanceSymbols::new(
                             name.clone(),
                             backend_symbol.clone(),
                         ),
-                        declared: Some(declared.clone()),
-                        provided_by_object: true,
-                        is_specialization: false,
+                        declaration: declared,
                     });
             }
         }
@@ -374,18 +284,12 @@ impl Monomorphizer {
             let mut declared = method.clone();
             declared.name = format!("{}::{}", crate_name, method_name);
 
-            self.instances
-                .intern(instance_key, |id| crate::mono::InstanceRecord {
-                    id,
-                    origin: origin.clone(),
-                    substitution: Vec::new(),
+            self.object_instances.insert(instance_key, super::demand::ObjectInstance {
                     symbols: crate::mono::InstanceSymbols::new(
                         declared.name.clone(),
                         backend_symbol.clone(),
                     ),
-                    declared: Some(declared),
-                    provided_by_object: true,
-                    is_specialization: false,
+                    declaration: declared,
                 });
         }
     }

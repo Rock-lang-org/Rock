@@ -220,7 +220,7 @@ fn extern_crate_bodies_expose_categories_without_raw_bundle_access() {
         "id"
     );
     assert!(bodies.providers().trait_with_defaults(trait_id).is_some());
-    assert!(bodies.providers().generic_impl(impl_id).is_some());
+    assert!(bodies.providers().generic_impls().contains_key(&impl_id));
 }
 
 #[test]

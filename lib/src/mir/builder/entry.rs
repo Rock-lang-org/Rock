@@ -116,10 +116,6 @@ impl<'a> MirBuilder<'a> {
         );
         let direct_drop_types = Self::direct_drop_types_for_program(program);
         let mut bodies = MirInstanceBodies::new();
-        for instance_id in Self::drop_glue_instance_roots(program) {
-            bodies.insert_runtime_instance_root(instance_id);
-        }
-
         for record in program.instances.values() {
             if record.provided_by_object {
                 continue;
@@ -170,16 +166,6 @@ impl<'a> MirBuilder<'a> {
         }
         program.type_context = type_context.into_inner();
         Ok(bodies)
-    }
-
-    fn drop_glue_instance_roots(
-        program: &crate::mono::MonomorphizedProgram,
-    ) -> std::collections::BTreeSet<InstanceId> {
-        program
-            .generated_drop_instances
-            .values()
-            .map(|generated| generated.instance_id)
-            .collect()
     }
 
     pub(super) fn instance_is_drop_method(

@@ -6,7 +6,6 @@ pub mod codegen;
 pub mod collect;
 pub mod crate_artifact;
 pub mod crate_system;
-pub mod dce;
 mod dead_code;
 pub mod diagnostic;
 pub mod fmt;

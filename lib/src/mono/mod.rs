@@ -26,6 +26,7 @@ mod array_lengths;
 mod body_edges;
 mod callable;
 mod diagnostic_context;
+mod demand;
 mod drop_fields;
 mod error;
 mod external;
@@ -99,6 +100,7 @@ pub(crate) fn monomorphize_with_crates(
     program: ResolvedHirProgram,
     crate_ctx: &CrateContext,
     identity_context: CompilationIdentityContext,
+    crate_kind: crate::CrateKind,
 ) -> Result<MonomorphizedProgram, Diagnostics> {
     let ResolvedHirProgram {
         program,
@@ -106,9 +108,12 @@ pub(crate) fn monomorphize_with_crates(
         type_context,
         normalization_env,
         source_map,
+        root_crate_id,
         ..
     } = program;
     let mut mono = Monomorphizer::with_type_context(type_context);
+    mono.crate_kind = crate_kind;
+    mono.root_crate_id = root_crate_id;
     mono.source_map = source_map;
     mono.normalization_env = normalization_env;
     mono.identity_context = identity_context;
@@ -127,6 +132,11 @@ pub(crate) fn monomorphize_with_crates(
 }
 
 struct Monomorphizer {
+    /// Production uses the explicit target kind; the standalone HIR API
+    /// compiles a complete library without source visibility information.
+    crate_kind: crate::CrateKind,
+    root_crate_id: crate::ids::CrateId,
+    object_instances: HashMap<InstanceKey, demand::ObjectInstance>,
     language_items: crate::hir::HirLanguageItems,
     /// Concrete function payloads, selected exclusively by canonical identity.
     concrete_functions: HashMap<DefId, HirFunction>,
@@ -148,9 +158,6 @@ struct Monomorphizer {
     dependency_resolvers: Vec<ResolverTables>,
     /// Counter for generating unique names
     counter: u32,
-    /// Current impl being processed (for method calls)
-    /// Current type arguments for the impl being processed
-    current_type_args: Vec<TypeId>,
     /// Trait implementations keyed by canonical trait identity.
     trait_impls: HashMap<DefId, Vec<HirImpl>>,
     /// Concrete implementation methods keyed by `(impl, trait member)`.
@@ -187,6 +194,9 @@ struct Monomorphizer {
 impl Monomorphizer {
     fn new() -> Self {
         Self {
+            crate_kind: crate::CrateKind::Lib,
+            root_crate_id: crate::ids::CrateId(0),
+            object_instances: HashMap::new(),
             language_items: crate::hir::HirLanguageItems::default(),
             concrete_functions: HashMap::new(),
             generic_functions: HashMap::new(),
@@ -201,7 +211,6 @@ impl Monomorphizer {
             resolver: ResolverTables::default(),
             dependency_resolvers: Vec::new(),
             counter: 0,
-            current_type_args: Vec::new(),
             trait_impls: HashMap::new(),
             effective_trait_methods: HashMap::new(),
             generic_impls: HashMap::new(),

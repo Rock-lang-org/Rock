@@ -480,13 +480,9 @@ impl Monomorphizer {
             }
         }
 
-        let mut body = self.substitute_block(&generic_func.body, &substitution);
-        let old_var_types = self.var_types.clone();
-        self.var_types.clear();
-        let mut params_for_body = signature.params.clone();
-        self.process_params(Some(generic_func.id), &mut params_for_body);
-        self.process_block(&mut body);
-        self.var_types = old_var_types;
+        // Queue the substituted body; processing it here recurses before its
+        // instance key exists and repeats work when the body queue is drained.
+        let body = self.substitute_block(&generic_func.body, &substitution);
 
         HirFunction {
             id: DefId::new(CrateId(0), LocalDefId(0)),

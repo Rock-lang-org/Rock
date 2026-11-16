@@ -1,5 +1,19 @@
 use super::*;
 
+/// Explicitly demand the fixture's object methods in canonical member-id order.
+fn demand_objects(mono: &mut Monomorphizer) -> Vec<crate::mono::InstanceRecord> {
+    let mut keys = mono.object_instances.keys().cloned().collect::<Vec<_>>();
+    keys.sort_by_key(|key| match key.origin {
+        crate::mono::InstanceOrigin::Function(id) => id,
+        crate::mono::InstanceOrigin::ImplMethod { method, .. }
+        | crate::mono::InstanceOrigin::TraitDefault { method, .. } => method,
+    });
+    for key in keys {
+        mono.demand_object(&key).expect("object method should be available");
+    }
+    mono.instances.records().cloned().collect()
+}
+
 #[test]
 fn process_with_crates_records_object_backed_instances_without_re_emitting() {
     let byte_slice_ty = Type::Reference {
@@ -50,13 +64,10 @@ fn process_with_crates_records_object_backed_instances_without_re_emitting() {
         &ctx,
     );
 
-    assert!(output
-        .instances
-        .values()
-        .any(|record| record.provided_by_object));
-    let record = output
-        .instances
-        .values()
+    assert!(output.instances.is_empty(), "unused object methods must remain declarations");
+    let records = demand_objects(&mut mono);
+    let record = records
+        .iter()
         .find(|record| record.provided_by_object)
         .expect("object-backed method instance should be recorded");
     assert_eq!(
@@ -156,13 +167,10 @@ fn process_with_crates_records_concrete_method_from_mixed_object_backed_impl() {
         &ctx,
     );
 
-    let object_records = output
-        .instances
-        .values()
-        .filter(|record| record.provided_by_object)
-        .collect::<Vec<_>>();
+    assert!(output.instances.is_empty());
+    let object_records = demand_objects(&mut mono);
     assert_eq!(object_records.len(), 1);
-    let concrete_record = object_records[0];
+    let concrete_record = &object_records[0];
     assert_eq!(
         concrete_record.origin,
         crate::mono::InstanceOrigin::ImplMethod {
@@ -230,6 +238,8 @@ fn record_imported_impl_allocates_object_method_instances_by_method_def_id() {
         let mut mono = Monomorphizer::new();
 
         mono.record_imported_impl("std", &imp, Some(dep));
+        assert_eq!(mono.instances.len(), 0);
+        demand_objects(&mut mono);
 
         mono.instances
             .records()
@@ -313,9 +323,10 @@ fn process_with_crates_uses_artifact_backend_symbols_for_object_backed_methods()
         &ctx,
     );
 
-    let record = output
-        .instances
-        .values()
+    assert!(output.instances.is_empty());
+    let records = demand_objects(&mut mono);
+    let record = records
+        .iter()
         .find(|record| record.provided_by_object)
         .expect("object-backed method instance should be recorded");
     assert_eq!(record.symbols.source_name, "std::println");
@@ -390,11 +401,8 @@ fn object_backed_impls_with_same_display_names_use_distinct_ids() {
         &ctx,
     );
 
-    let object_records = output
-        .instances
-        .values()
-        .filter(|record| record.provided_by_object)
-        .collect::<Vec<_>>();
+    assert!(output.instances.is_empty());
+    let object_records = demand_objects(&mut mono);
     assert_eq!(object_records.len(), 2);
     assert!(object_records.iter().any(|record| {
         record.origin

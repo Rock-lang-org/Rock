@@ -86,16 +86,6 @@ impl Monomorphizer {
 
         self.update_self_types(&mut body, &specialized_impl_type);
 
-        let old_type_args = self.current_type_args.clone();
-        let old_var_types = self.var_types.clone();
-        self.current_type_args = type_args.to_vec();
-        self.var_types.clear();
-        let mut params_for_body = params.clone();
-        self.process_params(Some(method.id), &mut params_for_body);
-        self.process_block(&mut body);
-        self.current_type_args = old_type_args;
-        self.var_types = old_var_types;
-
         HirFunction {
             id: DefId::new(CrateId(0), LocalDefId(0)),
             name: specialized_name.to_string(),

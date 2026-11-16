@@ -14,7 +14,7 @@ pub mod integer;
 use crate::ids::{DefId, InstanceId, TypeId, VariantId};
 use crate::lexer::Span;
 use crate::type_context::TypeContext;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 pub use backend_contract::{
     validate_backend_contract, validate_backend_contract_against_functions,
@@ -49,7 +49,6 @@ impl MirProgram {
 pub struct MirInstanceBodies {
     bodies: BTreeMap<InstanceId, MirInstanceBody>,
     nested_functions: Vec<MirFunction>,
-    runtime_instance_roots: BTreeSet<InstanceId>,
 }
 
 impl MirInstanceBodies {
@@ -73,13 +72,6 @@ impl MirInstanceBodies {
         self.bodies.iter()
     }
 
-    pub fn retain<F>(&mut self, mut keep: F)
-    where
-        F: FnMut(InstanceId, &mut MirInstanceBody) -> bool,
-    {
-        self.bodies.retain(|id, body| keep(*id, body));
-    }
-
     pub fn push_nested(&mut self, function: MirFunction) {
         self.nested_functions.push(function);
     }
@@ -88,20 +80,6 @@ impl MirInstanceBodies {
         &self.nested_functions
     }
 
-    pub fn retain_nested_functions<F>(&mut self, mut keep: F)
-    where
-        F: FnMut(&MirFunction) -> bool,
-    {
-        self.nested_functions.retain(|function| keep(function));
-    }
-
-    pub fn insert_runtime_instance_root(&mut self, id: InstanceId) {
-        self.runtime_instance_roots.insert(id);
-    }
-
-    pub fn runtime_instance_roots(&self) -> impl Iterator<Item = InstanceId> + '_ {
-        self.runtime_instance_roots.iter().copied()
-    }
 }
 
 #[derive(Debug, Clone)]

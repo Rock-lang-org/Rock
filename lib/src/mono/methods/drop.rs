@@ -21,6 +21,12 @@ impl Monomorphizer {
         ty: &Type,
         origin_span: Option<crate::lexer::Span>,
     ) {
+        // Selection may peel references when resolving ordinary receiver
+        // methods. Destruction must not do that: borrowed/raw pointees are
+        // owned elsewhere. DropInPlace explicitly passes the pointee type.
+        if matches!(ty, Type::Reference { .. } | Type::Pointer(_)) {
+            return;
+        }
         let origin_span = origin_span.or_else(|| self.source_span_for_type(ty));
         self.monomorphize_drop_fields_for_type(ty);
 
@@ -109,7 +115,7 @@ impl Monomorphizer {
         let substitution = type_args.clone();
         let instance_key = crate::mono::InstanceKey::new(origin.clone(), substitution.clone());
         let backend_symbol = String::new();
-        if let Some(instance_id) = self.instances.get(&instance_key) {
+        if let Some(instance_id) = self.demand_object(&instance_key) {
             let receiver = self
                 .instances
                 .pre_mir_body(instance_id)

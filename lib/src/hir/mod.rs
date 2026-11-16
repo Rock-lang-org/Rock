@@ -200,7 +200,7 @@ use accepted_validation::type_contains_backend_forbidden_sentinel;
 pub use codegen_concrete::hir_function_is_codegen_concrete;
 pub(crate) use codegen_concrete::{
     function_is_object_provided_candidate, function_requires_downstream_specialization,
-    hir_function_signature_is_codegen_concrete, impl_requires_downstream_specialization,
+    impl_requires_downstream_specialization,
 };
 use definition_indexes::{display_aliases_for_id, ordered_owned_ids, sorted_definition_ids};
 pub use definition_indexes::{
