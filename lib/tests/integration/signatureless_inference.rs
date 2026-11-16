@@ -781,3 +781,41 @@ main = !->
         "use of moved value `handles`",
     );
 }
+
+#[test]
+fn test_borrowed_callback_keeps_fn_bound_through_mutable_borrow() {
+    let output = compile_and_run(
+        r#"
+> std::functional::Fn
+
+run_fn: F -> () where F: Fn I64, ()
+run_fn = f !-> f 1
+
+forward = mut f !-> run_fn &mut f
+
+main = !->
+    forward (x !-> x.println!)
+"#,
+    );
+    assert_eq!(output, "1\n");
+}
+
+#[test]
+fn test_borrowed_callback_rejects_fn_mut_closure_for_fn_bound() {
+    compile_should_fail(
+        r#"
+> std::functional::Fn
+
+run_fn: F -> () where F: Fn I64, ()
+run_fn = f !-> f 1
+
+forward = mut f !-> run_fn &mut f
+
+main = !->
+    count = 0
+    forward (x !-> count = count + x)
+    count.println!
+"#,
+        "Fn",
+    );
+}

@@ -16,10 +16,11 @@ use super::trait_bounds::trait_bounds_with_supertraits;
 use super::type_predicates::{contains_inference_pending_type, contains_unresolved_type};
 use super::{BuiltinTraitIds, SolveError, SolveErrorKind, SolveResult};
 
-/// std implements the callable traits for `&F` when `F: Fn` and for `&mut F`
-/// when `F: FnMut`. A callable bound on a borrow of a free variable is
-/// therefore a bound on the variable itself: that is the bound callers
-/// instantiate for their callback and generalization exports.
+/// std implements the callable traits for `&F` when `F: Fn`, `FnOnce` and
+/// `FnMut` for `&mut F` when `F: FnMut`, and `Fn` for `&mut F` when `F: Fn`.
+/// A callable bound on a borrow of a free variable is therefore a bound on the
+/// variable itself: that is the bound callers instantiate for their callback
+/// and generalization exports.
 fn borrowed_free_callable_subject(
     engine: &InferenceEngine,
     subject: Type,
@@ -36,7 +37,9 @@ fn borrowed_free_callable_subject(
         return (subject, bound);
     };
     let inner = engine.resolve(inner);
-    let required = if *mutable {
+    // `&mut F: Fn` needs `F: Fn`; weakening it to `FnMut` would accept a
+    // closure that mutates its captures.
+    let required = if *mutable && Some(bound.trait_id) != builtin_traits.fn_trait {
         builtin_traits.fn_mut
     } else {
         builtin_traits.fn_trait
