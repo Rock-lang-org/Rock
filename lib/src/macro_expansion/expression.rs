@@ -243,6 +243,7 @@ impl ExpressionExpander<'_, '_> {
                 .push(Diagnostic::new(message, span).with_code(DiagnosticCode::Macro));
             return None;
         };
+        self.context.mark_import_used(self.registry.import_id(name));
 
         let parent = parent.or_else(|| self.context.take_parent_expansion_for_invocation(&span));
         let (body, expansion_id) = match expand_declarative_tokens(

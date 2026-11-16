@@ -13,6 +13,7 @@ use crate::{
 };
 
 use super::{ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap};
+use super::imports::{MacroImportId, MacroImportScope, MacroImportUsage, MacroImportUses};
 
 #[derive(Debug)]
 pub struct MacroExpansionContext<'a> {
@@ -27,6 +28,7 @@ pub struct MacroExpansionContext<'a> {
     source_map: RefCell<MacroSourceMap>,
     latest_expansion: RefCell<Option<ExpansionId>>,
     generated_invocation_parents: RefCell<HashMap<SpanKey, VecDeque<ExpansionId>>>,
+    import_uses: RefCell<MacroImportUses>,
 }
 
 /// The crate that declares an importable macro.
@@ -61,6 +63,7 @@ impl<'a> MacroExpansionContext<'a> {
             source_map: RefCell::new(MacroSourceMap::new()),
             latest_expansion: RefCell::new(None),
             generated_invocation_parents: RefCell::new(HashMap::new()),
+            import_uses: RefCell::new(MacroImportUses::default()),
         }
     }
 
@@ -108,6 +111,29 @@ impl<'a> MacroExpansionContext<'a> {
     pub fn with_prelude_macro(mut self, alias: String, decl: MacroDecl) -> Self {
         self.prelude_macros.insert(alias, decl);
         self
+    }
+
+    pub(super) fn register_import(
+        &self,
+        scope: &MacroImportScope,
+        path: &crate::ast::Path,
+        segments: &[String],
+    ) -> Option<MacroImportId> {
+        if self.config.lint_levels.is_allowed(crate::lint::Lint::UnusedImports) {
+            return None;
+        }
+        self.import_uses.borrow_mut().register(scope, path, segments.join("::"))
+    }
+
+    pub(super) fn mark_import_used(&self, id: Option<MacroImportId>) {
+        if let Some(id) = id {
+            self.import_uses.borrow_mut().mark_used(id);
+        }
+    }
+
+    /// Explicit macro imports from every module expanded with this context.
+    pub fn import_usage(&self) -> Vec<MacroImportUsage> {
+        self.import_uses.borrow().snapshot()
     }
 
     pub fn depth_exceeded_diagnostic(&self, span: Span) -> Diagnostic {

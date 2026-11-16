@@ -101,12 +101,19 @@ The five new unused extern imports in `std/src/io/net.rk` (`bind`, `accept`,
 `connect`, `read`, `shutdown`) are confirmed: their calls use fully qualified
 paths. Removing those imports belongs to Phase 6 cleanup.
 
+Macro imports (`lib/src/macro_expansion/imports.rs`): expansion registers each explicit
+`> path::macro` site (keyed by file + inline-module lineage + span, so re-expansion rounds
+reuse one id) and marks it used when a top-level or expression invocation selects that
+binding. A later local declaration of the same name drops the import binding. Recording is
+skipped entirely when `unused_imports` is allowed. Release validation: 2421 unit + 1042
+integration tests pass (25 focused unused-lint tests).
+
 8. [x] ~~Stable id per import binding~~ → import sites collected from the expanded AST
    (span = whole path).
 9. [~] Explicit function/extern uses follow resolved semantic references. Remaining:
-   authoritative type/trait/variant binding usage, glob selection and macro provenance.
-10. [~] Emit `unused_imports` per unused `>` import. Not yet: glob imports (`GlobImport` has
-   no span in the AST) and macro imports (removed during expansion).
+   authoritative type/trait/variant binding usage and glob selection. Macro provenance done.
+10. [~] Emit `unused_imports` per unused `>` import, including macro imports. Not yet: glob
+   imports (`GlobImport` has no span in the AST).
 11. [x] Exclude the injected std prelude (it is not in the AST).
 12. [~] Tests: used value/type/variant/trait-bound imports, unused imports, file-module span,
     root import used only by a child module; value shadowing, qualified calls, callbacks,

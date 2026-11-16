@@ -326,6 +326,97 @@ fn test_shadowed_value_import_respects_allow_and_deny() {
 }
 
 #[test]
+fn test_unused_macro_import_warns_at_the_consumed_import_path() {
+    let warnings = lint("> std::fmt::format\nmain = !-> ()\n", &[]).unwrap();
+    assert_eq!(messages(&warnings), ["unused import: `std::fmt::format`"]);
+    let span = &warnings.0[0].primary.as_ref().unwrap().span;
+    assert_eq!((span.start, span.end), (2, 18));
+}
+
+#[test]
+fn test_expression_and_generated_macro_calls_use_the_imported_binding() {
+    for body in [
+        "main = !-> (%format \"used\").println!\n",
+        "macro wrapper\n    =>\n        %format \"used\"\nmain = !-> (%wrapper).println!\n",
+        "unused = -> %format \"used\"\nmain = !-> ()\n",
+    ] {
+        let warnings = lint(
+            &format!("> std::fmt::format\n{body}"),
+            &[("dead_code", LintLevel::Allow)],
+        ).unwrap();
+        assert!(warnings.0.is_empty(), "{body}: {:?}", messages(&warnings));
+    }
+}
+
+#[test]
+fn test_local_macro_and_unexpanded_tokens_do_not_use_a_macro_import() {
+    for body in [
+        "macro format\n    =>\n        \"local\"\nmain = !-> (%format).println!\n",
+        "macro wrapper\n    =>\n        %format \"not expanded\"\nmain = !-> ()\n",
+        "main = !->\n    format = 7\n    format.println!\n",
+    ] {
+        let warnings = lint(&format!("> std::fmt::format\n{body}"), &[]).unwrap();
+        assert_eq!(messages(&warnings), ["unused import: `std::fmt::format`"], "{body}");
+    }
+}
+
+#[test]
+fn test_top_level_macro_import_remains_used_across_expansion_rounds() {
+    // Macro templates resolve nested invocations in the importing module.
+    // Supply the local second round there, not in the defining module.
+    let warnings = lint_files(
+        "mod defs\n> defs::make_main\nmacro finish\n    =>\n        main = !-> ()\n%make_main\n",
+        &[("defs", "< macro make_main\n    =>\n        %finish\n")],
+        &[],
+    ).unwrap();
+    assert!(warnings.0.is_empty(), "{:?}", messages(&warnings));
+}
+
+#[test]
+fn test_macro_import_usage_is_module_local_and_keeps_file_spans() {
+    let warnings = lint_files(
+        "> std::fmt::format\nmod helper\nmain = !->\n    (%format \"used\").println!\n    helper::run!\n",
+        &[("helper", "> std::fmt::format\n< run = !-> ()\n")],
+        &[],
+    ).unwrap();
+    assert_eq!(messages(&warnings), ["unused import: `std::fmt::format`"]);
+    assert!(warnings.0[0].primary.as_ref().unwrap().span.file_path.ends_with("helper.rk"));
+
+    let warnings = lint_files(
+        "> std::fmt::format\nmod helper\nmain = !-> helper::run!\n",
+        &[("helper", "< run = !-> (%format \"prelude\").println!\n")],
+        &[],
+    ).unwrap();
+    assert_eq!(messages(&warnings), ["unused import: `std::fmt::format`"]);
+    assert!(warnings.0[0].primary.as_ref().unwrap().span.file_path.ends_with("test.rk"));
+}
+
+#[test]
+fn test_macro_import_warn_allow_deny_and_mixed_finding_order() {
+    let source = "> std::fmt::format\n> std::ffi::libc::malloc\nmain = !-> ()\n";
+    let warnings = lint(source, &[]).unwrap();
+    assert_eq!(messages(&warnings), [
+        "unused import: `std::fmt::format`",
+        "unused import: `std::ffi::libc::malloc`",
+    ]);
+    assert!(lint(source, &[("unused", LintLevel::Allow)]).unwrap().0.is_empty());
+    let errors = lint(source, &[("unused_imports", LintLevel::Deny)]).unwrap_err();
+    assert_eq!(messages(&errors), messages(&warnings));
+    assert!(errors.0.iter().all(|error| error.severity == DiagnosticSeverity::Error));
+}
+
+#[test]
+fn test_named_crate_unused_macro_import_is_reported_once() {
+    let warnings = lint_files_named(
+        "mod defs\n> app::defs::unused\nmain = !-> ()\n",
+        &[("defs", "< macro unused\n    =>\n        1\n")],
+        &[],
+        Some("app"),
+    ).unwrap();
+    assert_eq!(messages(&warnings), ["unused import: `app::defs::unused`"]);
+}
+
+#[test]
 fn test_allowed_lint_is_silent_and_denied_lint_fails_the_build() {
     let source = "main = !->\n    t = 5\n";
     assert!(lint(source, &[("unused", LintLevel::Allow)]).unwrap().0.is_empty());

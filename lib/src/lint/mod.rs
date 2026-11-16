@@ -14,14 +14,15 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Diagnost
 use crate::infer::ResolvedHirProgram;
 
 /// Runs every lint pass over the current crate: its expanded source modules
-/// and its finalized HIR.
+/// and its finalized HIR, including imports consumed by macro expansion.
 pub fn run_lints(
     modules: &SourceModules<'_>,
     hir: &ResolvedHirProgram,
+    macro_imports: &[crate::macro_expansion::MacroImportUsage],
     levels: &LintLevels,
 ) -> Diagnostics {
     let mut sink = LintSink::new(levels);
-    unused_imports::check_unused_imports(modules, hir, &mut sink);
+    unused_imports::check_unused_imports(modules, hir, macro_imports, &mut sink);
     unused_variables::check_unused_variables(hir, &mut sink);
     sink.finish()
 }

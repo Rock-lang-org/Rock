@@ -20,6 +20,7 @@ mod correspondances;
 pub mod declarative;
 pub mod exports;
 mod expression;
+mod imports;
 pub mod generated_parser;
 mod macro_arg_matcher;
 pub mod proc_macro;
@@ -28,14 +29,28 @@ pub mod source_map;
 pub mod token_tree;
 
 pub use context::{MacroExpansionContext, MacroKey, MacroOrigin};
+pub use imports::MacroImportUsage;
 pub use source_map::{
     ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap, TokenOrigin,
 };
 pub use token_tree::{Delimiter, TokenStream, TokenTree};
 
 pub fn expand_macros_with_context(
+    program: Program,
+    context: &MacroExpansionContext<'_>,
+) -> Result<Program, Diagnostics> {
+    let scope = imports::MacroImportScope {
+        file_path: program.module.filepath.clone()
+            .unwrap_or_else(|| context.config.entry_file.clone()),
+        inline_modules: Vec::new(),
+    };
+    expand_macros_in_scope(program, context, &scope)
+}
+
+fn expand_macros_in_scope(
     mut program: Program,
     context: &MacroExpansionContext<'_>,
+    scope: &imports::MacroImportScope,
 ) -> Result<Program, Diagnostics> {
     let mut depth = 0;
     let mut module = program.module;
@@ -43,11 +58,12 @@ pub fn expand_macros_with_context(
     while module.has_macro_invoc() {
         let mut decls = HashMap::new();
         let mut proc_macros = HashMap::new();
-        let registry = module_registry(&module, context);
+        let registry = module_registry(&module, context, scope);
 
         for (i, top_level) in module.top_levels.iter().enumerate() {
             if let TopLevel::MacroInvoc(invocation) = &top_level {
                 if let Some(decl) = registry.declaration(&invocation.name.name) {
+                    context.mark_import_used(registry.import_id(&invocation.name.name));
                     decls.insert(
                         i,
                         (
@@ -89,10 +105,10 @@ pub fn expand_macros_with_context(
         }
     }
 
-    let registry = module_registry(&module, context);
+    let registry = module_registry(&module, context, scope);
     expression::expand_module_expressions(&mut module, &registry, context)?;
 
-    // Imports of dependency macros are fully consumed by expansion; later passes
+    // Macro imports are fully consumed by expansion; later passes
     // would otherwise see them as imports of items that do not exist.
     module.top_levels.retain(|top_level| match top_level {
         TopLevel::Import(path) => context
@@ -101,7 +117,7 @@ pub fn expand_macros_with_context(
         _ => true,
     });
 
-    program.module = expand_inline_modules(module, context)?;
+    program.module = expand_inline_modules(module, context, scope)?;
 
     Ok(program)
 }
@@ -112,6 +128,7 @@ pub fn expand_macros_with_context(
 fn module_registry(
     module: &Module,
     context: &MacroExpansionContext<'_>,
+    scope: &imports::MacroImportScope,
 ) -> registry::MacroRegistry {
     let mut registry = registry::MacroRegistry::new();
 
@@ -126,7 +143,8 @@ fn module_registry(
                 context.resolve_importable_macro(&segments),
                 segments.last(),
             ) {
-                registry.insert_declaration(name.clone(), decl.clone());
+                let import = context.register_import(scope, path, &segments);
+                registry.insert_imported_declaration(name.clone(), decl.clone(), import);
             }
         }
     }
@@ -143,13 +161,19 @@ fn module_registry(
 fn expand_inline_modules(
     mut module: Module,
     context: &MacroExpansionContext<'_>,
+    scope: &imports::MacroImportScope,
 ) -> Result<Module, Diagnostics> {
     let top_levels = std::mem::take(&mut module.top_levels);
     module.top_levels = top_levels
         .into_iter()
-        .map(|top_level| match top_level {
+        .enumerate()
+        .map(|(index, top_level)| match top_level {
             TopLevel::Module(ModuleDecl(inner)) => {
-                let expanded = expand_macros_with_context(Program { module: inner }, context)?;
+                let mut child_scope = scope.clone();
+                child_scope.inline_modules.push(index);
+                let expanded = expand_macros_in_scope(
+                    Program { module: inner }, context, &child_scope,
+                )?;
                 Ok(TopLevel::Module(ModuleDecl(expanded.module)))
             }
             other => Ok(other),

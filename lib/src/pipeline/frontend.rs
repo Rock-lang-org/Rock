@@ -158,7 +158,9 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         files: crate_relative_file_modules(&source_graph, config.current_crate_name.as_deref()),
         current_crate_name: config.current_crate_name.as_deref(),
     };
-    let mut warnings = crate::lint::run_lints(&lint_modules, &hir, &config.lint_levels);
+    let mut warnings = crate::lint::run_lints(
+        &lint_modules, &hir, &macro_context.import_usage(), &config.lint_levels,
+    );
     timer.lap("lints");
     let reachability = crate::dead_code::Reachability::compute(
         &hir,

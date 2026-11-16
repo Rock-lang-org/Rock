@@ -4,8 +4,8 @@
 //! Value imports use the semantic references recorded during lowering, paired
 //! with the written path head: locals, fields and fully qualified references
 //! do not use a same-named import. Type/variant imports still use conservative
-//! name occurrences. Glob and macro provenance remain separate follow-up work;
-//! the injected std prelude is not an import.
+//! name occurrences. Macro imports use expansion's selected-binding records.
+//! Glob provenance remains follow-up work; the injected std prelude is not an import.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -36,10 +36,14 @@ pub struct SourceModules<'a> {
 pub(crate) fn check_unused_imports(
     modules: &SourceModules<'_>,
     hir: &ResolvedHirProgram,
+    macro_imports: &[crate::macro_expansion::MacroImportUsage],
     sink: &mut LintSink<'_>,
 ) {
     if !sink.is_enabled(Lint::UnusedImports) {
         return;
+    }
+    for import in macro_imports.iter().filter(|import| !import.used) {
+        emit_unused_import(&import.written, &import.span, sink);
     }
     let mut imported_values = HashSet::new();
     let mut has_imports = collect_value_import_targets(
@@ -121,14 +125,18 @@ pub(crate) fn check_unused_imports(
                 .any(|other| other.names.contains(&import.name))
             };
             if !used {
-                sink.emit(
-                    Lint::UnusedImports,
-                    Diagnostic::new(format!("unused import: `{}`", import.written), import.span.clone())
-                        .with_help("remove the unused import"),
-                );
+                emit_unused_import(&import.written, &import.span, sink);
             }
         }
     }
+}
+
+fn emit_unused_import(written: &str, span: &Span, sink: &mut LintSink<'_>) {
+    sink.emit(
+        Lint::UnusedImports,
+        Diagnostic::new(format!("unused import: `{written}`"), span.clone())
+            .with_help("remove the unused import"),
+    );
 }
 
 fn collect_value_import_targets(

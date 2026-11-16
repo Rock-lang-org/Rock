@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::ast::{MacroDecl, Module, TopLevel};
 use crate::macro_expansion::declarative::DeclarativeMacro;
 use crate::macro_expansion::proc_macro::{ProcMacroArtifact, ProcMacroExport};
+use super::imports::MacroImportId;
 
 #[derive(Debug, Clone)]
 pub struct ProcMacroRegistryEntry {
@@ -15,6 +16,7 @@ pub struct MacroRegistry {
     declarative: HashMap<String, DeclarativeMacro>,
     declarations: HashMap<String, MacroDecl>,
     proc_macros: HashMap<String, ProcMacroRegistryEntry>,
+    imports: HashMap<String, MacroImportId>,
 }
 
 impl MacroRegistry {
@@ -39,9 +41,26 @@ impl MacroRegistry {
 
     /// Makes `decl` callable as `%name`, replacing any macro of that name.
     pub fn insert_declaration(&mut self, name: String, decl: MacroDecl) {
+        self.imports.remove(&name);
         self.declarative
             .insert(name.clone(), DeclarativeMacro::from_ast(&decl));
         self.declarations.insert(name, decl);
+    }
+
+    pub(crate) fn insert_imported_declaration(
+        &mut self,
+        name: String,
+        decl: MacroDecl,
+        import: Option<MacroImportId>,
+    ) {
+        self.insert_declaration(name.clone(), decl);
+        if let Some(id) = import {
+            self.imports.insert(name, id);
+        }
+    }
+
+    pub(crate) fn import_id(&self, name: &str) -> Option<MacroImportId> {
+        self.imports.get(name).copied()
     }
 
     pub fn declarative(&self, name: &str) -> Option<&DeclarativeMacro> {
