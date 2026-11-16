@@ -3,6 +3,24 @@ use std::sync::atomic::Ordering;
 use crate::support::*;
 
 #[test]
+fn test_nested_bind_callback_can_pipe_to_result_constructor() {
+    let output = compile_and_run(r#"
+> std::concurrency::thread::spawn
+
+infix 9 >|
+>| = a, mut f -> a <&> (>>= &mut f)
+
+main = !->
+    values: Vec _ = [
+        spawn (-> 1)
+        spawn (-> 2)
+    ].into!
+    values >| (.join!) >| (+ 1 |> Result::Ok) .println!
+"#);
+    assert_eq!(output, "[Ok(2), Ok(3)]\n");
+}
+
+#[test]
 fn test_bad_nested_bind_callback_is_reported_before_print_ambiguity() {
     let source = r#"
 infix 9 >|

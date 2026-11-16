@@ -74,6 +74,39 @@ main = !->
 
 This prints `off` and then `empty`. `On` was not imported, so it keeps its `Light::` path. A variant that is not imported has no short name: writing `On` alone is an error that suggests `Light::On`. An import inside a module only affects that module, and a struct with the same name as an imported variant takes precedence over the variant.
 
+### Constructors as functions
+
+A variant with positional payloads can also be used as a function. Without
+arguments, its path denotes a constructor taking one argument per payload:
+
+```rock
+enum Packet
+    Data I64, &Str
+    Empty
+
+main = !->
+    make_packet = Packet::Data
+    packet = make_packet 7, "hello"
+    match packet
+        Packet::Data number, text => text.println!
+        Packet::Empty => "empty".println!
+```
+
+Constructor functions can be passed as callbacks or used with `|>`. For example:
+
+```rock
+main = !->
+    result: Result I64, &Str = 42 |> Result::Ok
+    result.println!
+    values: Vec _ = [1, 2].into!
+    (values <&> Option::Some).println!
+```
+
+This prints `Ok(42)` and `[Some(1), Some(2)]`. The result annotation fixes the
+error type, which `Ok` alone does not determine. Imported constructor names work
+the same way. A payloadless variant, such as `Packet::Empty` or `None`, remains
+a value rather than a function.
+
 ## Matching variants
 
 Exporting an enum makes its variants accessible through the public enum path.

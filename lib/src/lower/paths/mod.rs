@@ -2,6 +2,7 @@
 
 mod constructor_members;
 mod capture_liveness;
+mod enum_constructor_values;
 mod identifier_path;
 mod instance;
 mod lambda_captures;

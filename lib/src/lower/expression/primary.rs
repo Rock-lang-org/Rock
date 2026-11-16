@@ -19,7 +19,7 @@ impl Lowerer {
         if let Some(lambda) = Self::desugar_call_holes(primary) {
             return self.lower_lambda(&lambda);
         }
-        if let Some(rewritten) = self.imported_variant_call(primary) {
+        if let Some(rewritten) = self.variant_payload_call(primary) {
             return self.lower_primary_expr_with_use(&rewritten, use_kind);
         }
 
@@ -28,6 +28,16 @@ impl Lowerer {
         } else {
             self.lower_operand_with_use(&primary.operand, use_kind)
         };
+        // A directly applied variant stays on the construction path; without
+        // arguments its positional payload is a first-class constructor.
+        if use_kind == ExprUse::Value
+            && !matches!(
+                primary.secondaries.as_ref().and_then(|secondaries| secondaries.first()),
+                Some(ast::SecondaryExpr::Arguments(_))
+            )
+        {
+            result = self.enum_constructor_value(result);
+        }
 
         // Apply type annotation if present
         if let Some(ann) = &primary.type_annotation {
@@ -126,16 +136,15 @@ impl Lowerer {
         })
     }
 
-    /// A one-word head takes the capitalized words after it as type
-    /// arguments (`Vec I64`), so `Some Off` parses as the type `Some Off`.
-    /// When the head is an imported variant those words are its payload:
-    /// rewrite to the call `Some (Off)`; each word is lowered as a value.
-    fn imported_variant_call(&self, primary: &ast::PrimaryExpr) -> Option<ast::PrimaryExpr> {
+    /// Capitalized payloads parse as type arguments: `Some Off` and
+    /// `Result::Ok Box`. For a resolved variant, rewrite those arguments
+    /// to a constructor call so each payload is lowered as a value.
+    fn variant_payload_call(&self, primary: &ast::PrimaryExpr) -> Option<ast::PrimaryExpr> {
         let ast::Operand::Instance(instance) = &primary.operand else {
             return None;
         };
-        let [ast::IdentOrType::Type(ast::ParseType::Application(application))] =
-            instance.name.path.as_slice()
+        let (ast::IdentOrType::Type(ast::ParseType::Application(application)), prefix) =
+            instance.name.path.split_last()?
         else {
             return None;
         };
@@ -145,8 +154,10 @@ impl Lowerer {
         if !instance.fields.is_empty() || !head.generics.is_empty() {
             return None;
         }
+        let mut path = prefix.to_vec();
+        path.push(ast::IdentOrType::Type(ast::ParseType::Type(head.clone())));
         crate::lower::resolution::LowerResolutionContext::new(self)
-            .resolve_imported_variant(&head.name)?;
+            .resolve_enum_variant_path(&crate::lower::path_names(&path))?;
         let arguments = application
             .args
             .iter()
@@ -186,7 +197,7 @@ impl Lowerer {
         let mut rewritten = primary.clone();
         rewritten.operand = ast::Operand::Instance(ast::Instance {
             name: ast::TypePath {
-                path: vec![ast::IdentOrType::Type(ast::ParseType::Type(head.clone()))],
+                path,
             },
             fields: Default::default(),
         });

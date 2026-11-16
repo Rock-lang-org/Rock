@@ -4,6 +4,157 @@ use std::sync::atomic::Ordering;
 use crate::support::*;
 
 #[test]
+fn test_enum_constructor_values_pipe_and_map() {
+    let output = compile_and_run(
+        r#"
+wrap = value -> value |> Option::Some
+constructor = -> Option::Some
+
+main = !->
+    result: Result I64, &Str = 42 |> Result::Ok
+    result.println!
+    (wrap 7).println!
+    (wrap 'c').println!
+    values: Vec _ = [1, 2].into!
+    (values <&> Option::Some).println!
+    empty: Option I64 = None
+    empty.println!
+    make = constructor!
+    (make 9).println!
+"#,
+    );
+    assert_eq!(output, "Ok(42)\nSome(7)\nSome(c)\n[Some(1), Some(2)]\nNone\nSome(9)\n");
+}
+
+#[test]
+fn test_imported_multi_argument_constructor_value() {
+    let output = compile_and_run(
+        r#"
+enum Pair T
+    Both T, T
+    Neither
+
+> Pair::Both
+> Pair::Neither
+
+sum = pair -> match pair
+    Pair::Both a, b => a + b
+    Pair::Neither => 0
+
+apply = f, a, b -> f a, b
+
+main = !->
+    (sum (apply Both, 2, 3)).println!
+    make = Both
+    (sum (make 4, 5)).println!
+"#,
+    );
+    assert_eq!(output, "5\n9\n");
+}
+
+#[test]
+fn test_enum_constructor_value_rejects_wrong_payload_type() {
+    compile_should_fail(
+        r#"
+enum Number
+    Value I64
+
+main = !->
+    value = 'c' |> Number::Value
+"#,
+        "function type mismatch",
+    );
+}
+
+#[test]
+fn test_qualified_constructor_call_accepts_capitalized_payload() {
+    let output = compile_and_run(
+        r#"
+struct Payload
+
+enum Envelope
+    Wrapped Payload
+
+enum Light
+    Off
+
+enum Signal
+    Wrapped Light
+
+main = !->
+    wrapped = Envelope::Wrapped Payload
+    match wrapped
+        Envelope::Wrapped _ => 1.println!
+    signal = Signal::Wrapped Light::Off
+    match signal
+        Signal::Wrapped Light::Off => 2.println!
+"#,
+    );
+    assert_eq!(output, "1\n2\n");
+}
+
+#[test]
+fn test_enum_constructor_values_survive_deleted_source_artifact() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    std::fs::create_dir_all(dir.join("producer")).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let entry = dir.join("producer/lib.rk");
+    std::fs::write(
+        &entry,
+        r#"
+enum Package T
+    Value T
+    Empty
+
+wrap = value -> value |> Package::Value
+constructor = -> Package::Value
+
+< Package
+< Package::Value
+< wrap
+< constructor
+"#,
+    ).unwrap();
+    let mut config = test_config(entry, dir.join("producer-build"));
+    config.current_crate_name = Some("packages".to_string());
+    config.no_link = true;
+    let products = rock_lib::compile_with_products(&config)
+        .expect("producer should compile").products.expect("producer products");
+    let artifact = dir.join("packages.rkca");
+    products.write_artifact_to_path(&artifact).unwrap();
+    std::fs::remove_dir_all(dir.join("producer")).unwrap();
+
+    let entry = dir.join("test.rk");
+    std::fs::write(
+        &entry,
+        r#"
+> packages::Package
+> packages::Value
+
+wrap = value -> value |> Value
+unwrap = package -> match package
+    Package::Value value => value
+    Package::Empty => 0
+
+main = !->
+    (unwrap (wrap 42)).println!
+    make = packages::Value
+    (unwrap (make 7)).println!
+    (unwrap (packages::wrap 8)).println!
+    external_make = packages::constructor!
+    (unwrap (external_make 9)).println!
+"#,
+    ).unwrap();
+    let mut consumer = test_config(entry, dir.clone());
+    consumer.extern_artifacts.push(("packages".to_string(), artifact));
+    rock_lib::compile(&consumer).expect("source-free payload variants should be callable");
+    let output = Command::new(dir.join("test")).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n7\n8\n9\n");
+}
+
+#[test]
 fn test_enums() {
     let output = compile_example("enums");
     let lines: Vec<&str> = output.trim().lines().collect();
