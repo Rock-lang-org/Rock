@@ -75,23 +75,43 @@ Example `parse` is dominated by loading the std artifact.
 
 ## Phase 2 — Unused imports
 
-Implemented differently from the original resolver-hook idea (8–9): the resolver is
-string-keyed across many tables (collection aliases, scoped module aliases, prelude
-injection), so hooking every lookup was invasive and error-prone. Instead
-`lib/src/lint/unused_imports.rs` checks the macro-expanded AST: an import is used when its
-short name is written anywhere in its module scope (module + submodules) outside import
-statements. This can never flag an import that resolution goes through (no false positives;
-verified by deleting all 24 std findings and rebuilding std); a same-named local, field or
-method name can hide an unused import (false negative only). Cost: ~5 ms on std.
+`lib/src/lint/unused_imports.rs` pairs macro-expanded source import sites with semantic
+references already recorded by lowering. Explicit function/extern imports are matched by
+written path head **and resolved DefId**, not arbitrary name occurrences. Local parameters,
+locals, closure parameters, patterns and fields do not use a same-named value import;
+fully qualified calls do not use its short import either. A nearer explicit value import
+receives the use instead of an outer import of the same target. Callback references,
+references in dead bodies and explicit re-exports still count. This reuses the source map;
+it does not add resolver hooks or re-type-check source bodies.
+
+Type/trait/variant imports still use the earlier conservative name-occurrence check.
+Their shadowing and binding provenance remain unfinished, as do globs and macros.
+Named-crate source graphs can also contain the entry file as a module after a
+crate-qualified import; exclude it from file-module lint input to avoid duplicate findings.
+Value-import milestone release validation: 2418 unit + 1035 integration tests pass
+(18 focused unused-lint tests), plus 89 `rock` + 51 `rockc` tests.
+The value-reference index includes only imported callable targets; crates without
+explicit imports skip the pass, and type-only imports do not build a value index.
+Two paired release runs with `scripts/bench_phases.sh`: combined lint median
+4.662 → 4.761 ms on std; example lint medians 0.051–0.117 → 0.043–0.069 ms.
+LLVM IR sizes match for std and all four examples. Std total varied
+16.342 → 16.618 s, mostly from inference/load/lower before the lint pass;
+example totals varied -0.6% to +3.2%. No end-to-end speedup is claimed.
+The five new unused extern imports in `std/src/io/net.rk` (`bind`, `accept`,
+`connect`, `read`, `shutdown`) are confirmed: their calls use fully qualified
+paths. Removing those imports belongs to Phase 6 cleanup.
 
 8. [x] ~~Stable id per import binding~~ → import sites collected from the expanded AST
    (span = whole path).
-9. [x] ~~Mark bindings used during resolution~~ → name occurrence in the module scope.
+9. [~] Explicit function/extern uses follow resolved semantic references. Remaining:
+   authoritative type/trait/variant binding usage, glob selection and macro provenance.
 10. [~] Emit `unused_imports` per unused `>` import. Not yet: glob imports (`GlobImport` has
    no span in the AST) and macro imports (removed during expansion).
 11. [x] Exclude the injected std prelude (it is not in the AST).
-12. [x] Tests: used value/type/variant/trait-bound imports, unused imports, file-module span,
-   root import used only by a child module.
+12. [~] Tests: used value/type/variant/trait-bound imports, unused imports, file-module span,
+    root import used only by a child module; value shadowing, qualified calls, callbacks,
+    dead bodies, nearer imports, re-exports, named crates and extern allow/deny levels.
+    Remaining regression coverage follows the unfinished binding kinds above.
 
 Language issue found (not fixed here): imports in the root module leak into child file
 modules (a child compiles without its own import). Rust keeps imports module-private. The
@@ -155,7 +175,7 @@ Phase 4 intentionally remains conservative for trait impl candidates, implicit D
 and library variants. It does not remove variant layout slots or eagerly guess which impl
 a downstream generic body will select. Phase 5 can narrow runtime instances without changing
 this source-level safety policy. Precise resolved import-use tracking remains separate
-unfinished Phase 2 work; the existing name-occurrence check is not Rust-equivalent.
+unfinished Phase 2 work; non-value imports still use a non-Rust-equivalent name-occurrence check.
 
 ## Phase 5 — Demand-driven monomorphization
 

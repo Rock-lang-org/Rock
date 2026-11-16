@@ -121,6 +121,7 @@ fn filtered_type_locations_match_full_recollection() {
     let modules = crate::lint::SourceModules {
         root: &analysis.ast.module,
         files: Default::default(),
+        current_crate_name: None,
     };
     let reachable = super::Reachability::compute(&analysis.hir, &modules, &config, []);
     reachable.prune(&mut analysis.hir);

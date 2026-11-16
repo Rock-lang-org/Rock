@@ -156,6 +156,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
     let lint_modules = crate::lint::SourceModules {
         root: &ast.module,
         files: crate_relative_file_modules(&source_graph, config.current_crate_name.as_deref()),
+        current_crate_name: config.current_crate_name.as_deref(),
     };
     let mut warnings = crate::lint::run_lints(&lint_modules, &hir, &config.lint_levels);
     timer.lap("lints");
@@ -234,8 +235,12 @@ fn crate_relative_file_modules<'a>(
     source_graph: &'a source_loader::ModuleGraph,
     current_crate_name: Option<&str>,
 ) -> BTreeMap<String, &'a ast::Module> {
+    // Crate-qualified imports may also index the entry file as a module.
+    // Its expanded AST is already supplied separately as SourceModules::root.
     source_graph
         .modules()
+        .filter(|loaded| loaded.path != source_graph.root_path()
+            && loaded.canonical_path != source_graph.root_path())
         .map(|loaded| {
             (
                 crate_relative_path(&loaded.qualified_name, current_crate_name),

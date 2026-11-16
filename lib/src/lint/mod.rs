@@ -21,7 +21,7 @@ pub fn run_lints(
     levels: &LintLevels,
 ) -> Diagnostics {
     let mut sink = LintSink::new(levels);
-    unused_imports::check_unused_imports(modules, &mut sink);
+    unused_imports::check_unused_imports(modules, hir, &mut sink);
     unused_variables::check_unused_variables(hir, &mut sink);
     sink.finish()
 }
