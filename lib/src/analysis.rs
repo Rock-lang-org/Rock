@@ -15,6 +15,8 @@ use crate::types::{GenericParamDecl, GenericParamId, Type};
 pub struct Analysis {
     pub ast: Program,
     pub hir: ResolvedHirProgram,
+    /// Lint findings at their configured level (warnings, or errors for denied lints).
+    pub warnings: crate::diagnostic::Diagnostics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

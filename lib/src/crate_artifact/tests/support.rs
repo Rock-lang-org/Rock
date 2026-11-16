@@ -262,6 +262,8 @@ pub(super) fn build_product_artifact_with_extern_artifacts(
         no_prelude,
         no_std,
         sysroot: None,
+        crate_kind: crate::CrateKind::Lib,
+        lint_levels: Default::default(),
     })
     .unwrap();
 
@@ -385,6 +387,7 @@ pub(super) fn cached_std_product_artifact(std_dir: &PathBuf, artifact_dir: &Path
         no_std: true,
         no_link: true,
         emit_object: Some(object_path),
+        crate_kind: crate::CrateKind::Lib,
         ..Config::default()
     })
     .unwrap();
@@ -438,6 +441,8 @@ pub(super) fn compile_with_options(
         no_prelude,
         no_std,
         sysroot,
+        crate_kind: Default::default(),
+        lint_levels: Default::default(),
     };
 
     crate::compile(&config).unwrap();

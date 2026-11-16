@@ -152,12 +152,16 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
     })?;
     timer.lap("infer");
 
+    let warnings =
+        crate::lint::run_lints(&hir, &config.lint_levels).with_sources(&diagnostic_sources);
+    timer.lap("lints");
+
     if config.has_debug_print(DebugPrint::Hir) {
         println!("{:#?}", hir.program);
     }
 
     Ok(FrontendOutput {
-        analysis: analysis::Analysis { ast, hir },
+        analysis: analysis::Analysis { ast, hir, warnings },
         crate_ctx: ctx,
         diagnostic_sources,
         loaded_prelude_export_ids,

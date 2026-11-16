@@ -39,6 +39,8 @@ pub(crate) struct Package {
     pub(crate) manifest: CrateManifest,
     pub(crate) profile: BuildProfile,
     pub(crate) target: CrateTarget,
+    /// `-A/-W/-D` arguments forwarded to rockc, in command-line order.
+    pub(crate) lint_args: Vec<String>,
     build_root: PathBuf,
     dependency_key: Option<String>,
 }
@@ -63,7 +65,13 @@ impl Package {
             manifest,
             target,
             profile: BuildProfile::default(),
+            lint_args: Vec::new(),
         })
+    }
+
+    /// True for the package being built, as opposed to one of its dependencies.
+    pub(crate) fn is_project_root(&self) -> bool {
+        self.dependency_key.is_none()
     }
 
     pub(crate) fn use_project_build(&mut self, project_root: &Path) {

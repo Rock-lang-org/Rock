@@ -39,6 +39,8 @@ fn test_compile_with_std_artifact() {
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        crate_kind: crate::CrateKind::Lib,
+        lint_levels: Default::default(),
     })
     .unwrap();
 
@@ -201,6 +203,8 @@ fn test_std_product_artifact_links_arithmetic_operator_impl_methods() {
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        crate_kind: crate::CrateKind::Lib,
+        lint_levels: Default::default(),
     })
     .unwrap();
 
@@ -251,6 +255,8 @@ fn test_compile_requires_explicit_std_artifact_even_with_sysroot() {
         no_prelude: false,
         no_std: false,
         sysroot: Some(sysroot),
+        crate_kind: crate::CrateKind::Lib,
+        lint_levels: Default::default(),
     };
 
     assert!(crate::compile(&config).is_err());
@@ -313,6 +319,8 @@ fn test_compile_without_explicit_std_artifact_fails_with_no_std() {
         no_prelude: false,
         no_std: true,
         sysroot: Some(sysroot),
+        crate_kind: crate::CrateKind::Lib,
+        lint_levels: Default::default(),
     };
 
     assert!(crate::compile(&config).is_err());

@@ -24,6 +24,8 @@ fn test_config() -> Config {
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        crate_kind: Default::default(),
+        lint_levels: Default::default(),
     }
 }
 

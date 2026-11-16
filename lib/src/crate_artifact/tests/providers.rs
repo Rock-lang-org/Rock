@@ -25,6 +25,8 @@ fn compile_artifact_app_without_std_failure(
         no_prelude: true,
         no_std: true,
         sysroot: None,
+        crate_kind: crate::CrateKind::Lib,
+        lint_levels: Default::default(),
     })
     .expect_err("no-std compilation should fail")
 }
@@ -319,6 +321,8 @@ main = -> probe 0
         no_prelude: true,
         no_std: true,
         sysroot: None,
+        crate_kind: crate::CrateKind::Lib,
+        lint_levels: Default::default(),
     })
     .expect("downstream source should compile from the provider artifact only");
     let products = output

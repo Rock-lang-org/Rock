@@ -360,6 +360,8 @@ pub(crate) fn std_artifact_path() -> PathBuf {
                 no_prelude: false,
                 no_std: true,
                 sysroot: None,
+                crate_kind: rock_lib::CrateKind::Lib,
+                lint_levels: Default::default(),
             })
             .unwrap_or_else(|diagnostics| {
                 diagnostics.report();
@@ -400,6 +402,8 @@ pub(crate) fn test_config(entry_file: PathBuf, output_dir: PathBuf) -> rock_lib:
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        crate_kind: Default::default(),
+        lint_levels: Default::default(),
     }
 }
 

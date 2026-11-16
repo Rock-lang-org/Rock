@@ -55,6 +55,8 @@ fn compile_source_to_resolved_hir_for_test(source: &str) -> ResolvedHirProgram {
         no_prelude: true,
         no_std: true,
         sysroot: None,
+        crate_kind: Default::default(),
+        lint_levels: Default::default(),
     };
 
     let ast = parser::parse_source(entry_file, source, &config)

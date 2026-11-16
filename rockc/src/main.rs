@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
-use clap::{Parser, ValueEnum};
-use rock_lib::{diagnostic::Diagnostics, DebugPrint};
+use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
+use rock_lib::lint::{LintLevel, LintLevels};
+use rock_lib::{diagnostic::Diagnostics, CrateKind, DebugPrint};
 
 mod artifact_deps;
 mod artifact_emit;
@@ -22,7 +23,8 @@ fn main() {
 }
 
 fn run() -> Result<(), Diagnostics> {
-    run_config(Config::parse())
+    let config = Config::parse_from_args(std::env::args_os()).unwrap_or_else(|error| error.exit());
+    run_config(config)
 }
 
 fn run_config(config: Config) -> Result<(), Diagnostics> {
@@ -53,6 +55,7 @@ fn run_config(config: Config) -> Result<(), Diagnostics> {
 
     if let Some(path) = emit_artifact {
         let output = rock_lib::compile_with_products(&compiler_config)?;
+        output.warnings.report();
         let mut products = output.products.ok_or_else(|| {
             diagnostics_from_message("Compiler did not produce product data for artifact emission")
         })?;
@@ -73,7 +76,9 @@ fn run_config(config: Config) -> Result<(), Diagnostics> {
             .write_artifact_to_path(&path)
             .map_err(diagnostics_from_message)?;
     } else {
-        rock_lib::compile(&compiler_config)?;
+        rock_lib::compile_with_warnings(&compiler_config)?
+            .warnings
+            .report();
     }
 
     Ok(())
@@ -143,11 +148,70 @@ pub struct Config {
     /// Validate a product artifact can be loaded and its object path exists
     #[arg(long)]
     validate_artifact: Option<PathBuf>,
+    /// What the crate is built as: `lib` roots reachability at its public exports
+    #[arg(long, value_enum, default_value_t = CrateType::Bin)]
+    crate_type: CrateType,
+    /// Allow a lint or lint group (e.g. `unused`, `dead_code`)
+    #[arg(short = 'A', long = "allow", value_name = "LINT")]
+    allow: Vec<String>,
+    /// Warn on a lint or lint group
+    #[arg(short = 'W', long = "warn", value_name = "LINT")]
+    warn: Vec<String>,
+    /// Deny a lint or lint group, turning its warnings into errors
+    #[arg(short = 'D', long = "deny", value_name = "LINT")]
+    deny: Vec<String>,
+    /// `-A/-W/-D` overrides in command-line order (later ones win).
+    #[arg(skip)]
+    lint_overrides: Vec<(LintLevel, String)>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum CrateType {
+    Bin,
+    Lib,
 }
 
 impl Config {
+    /// Parses arguments, keeping `-A/-W/-D` in their command-line order.
+    fn parse_from_args<I, T>(args: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let matches = Config::command().try_get_matches_from(args)?;
+        let mut config = Config::from_arg_matches(&matches)?;
+        let mut overrides = Vec::new();
+        for (id, level) in [
+            ("allow", LintLevel::Allow),
+            ("warn", LintLevel::Warn),
+            ("deny", LintLevel::Deny),
+        ] {
+            let (Some(indices), Some(values)) =
+                (matches.indices_of(id), matches.get_many::<String>(id))
+            else {
+                continue;
+            };
+            overrides.extend(indices.zip(values).map(|(index, name)| (index, level, name.clone())));
+        }
+        overrides.sort_by_key(|(index, _, _)| *index);
+        config.lint_overrides = overrides
+            .into_iter()
+            .map(|(_, level, name)| (level, name))
+            .collect();
+        Ok(config)
+    }
+
+    fn lint_levels(&self) -> Result<LintLevels, Diagnostics> {
+        let mut levels = LintLevels::default();
+        for (level, name) in &self.lint_overrides {
+            levels.set(name, *level).map_err(diagnostics_from_message)?;
+        }
+        Ok(levels)
+    }
+
     fn into_compiler_config(self) -> Result<rock_lib::Config, Diagnostics> {
         let config = self;
+        let lint_levels = config.lint_levels()?;
         let entry_file = config.entry_file.ok_or_else(|| {
             diagnostics_from_message("Missing required --entry-file unless --print is used")
         })?;
@@ -159,6 +223,11 @@ impl Config {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(rock_lib::Config {
+            crate_kind: match config.crate_type {
+                CrateType::Bin => CrateKind::Bin,
+                CrateType::Lib => CrateKind::Lib,
+            },
+            lint_levels,
             entry_file,
             output_dir: config.output_dir,
             debug_print: config

@@ -14,6 +14,7 @@ pub mod ids;
 pub mod infer;
 pub mod language_items;
 mod lexer;
+pub mod lint;
 pub mod lower;
 pub mod macro_expansion;
 pub mod mir;
@@ -32,6 +33,7 @@ pub mod type_services;
 pub mod types;
 
 pub use pipeline::{
-    analyze, compile, compile_with_products, CompileOutput, Config, DebugPrint, SourceProvider,
+    analyze, compile, compile_with_products, compile_with_warnings, CompileOutput, Config,
+    CrateKind, DebugPrint, SourceProvider,
 };
 pub use source_loader::source_load_errors_to_diagnostics;

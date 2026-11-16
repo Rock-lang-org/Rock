@@ -66,6 +66,7 @@ pub enum DiagnosticCode {
     Borrow,
     Mono,
     Codegen,
+    Lint,
     Internal,
 }
 
@@ -86,6 +87,7 @@ impl DiagnosticCode {
             Self::Borrow => "borrow",
             Self::Mono => "mono",
             Self::Codegen => "codegen",
+            Self::Lint => "lint",
             Self::Internal => "internal",
         }
     }

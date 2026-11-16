@@ -159,7 +159,7 @@ pub(crate) fn build_project(
     root: &Path,
     profile: crate::package::BuildProfile,
 ) -> Result<PathBuf, String> {
-    let products = crate::build::build_project(root, profile)?;
+    let products = crate::build::build_project(root, profile, Vec::new())?;
     let paths = products.paths().cloned().collect::<Vec<_>>();
     assert_eq!(
         paths.len(),
@@ -174,7 +174,7 @@ pub(crate) fn run_project(
     profile: crate::package::BuildProfile,
     args: &[String],
 ) -> Result<i32, String> {
-    crate::build::run_project(root, profile, args, None)
+    crate::build::run_project(root, profile, Vec::new(), args, None)
 }
 
 pub(super) fn assert_sysroot_std_files_exist() {

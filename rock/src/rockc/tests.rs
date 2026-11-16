@@ -68,6 +68,30 @@ fn test_invocations_and_output_paths_use_the_selected_profile() {
 }
 
 #[test]
+fn test_invocations_forward_lint_args_and_mark_libraries() {
+    let temp_dir = temp_test_dir("rockc_lint_args");
+    write_package(&temp_dir, "app", "src/main.rk", &[], "main = !-> ()\n");
+    let mut package = load_package(temp_dir.clone());
+    package.lint_args = vec!["-D".to_string(), "unused".to_string()];
+    let executable = PathBuf::from("rockc");
+
+    let library = args_as_strings(&build_dependency_artifact_invocation(
+        executable.clone(),
+        &package,
+        &[],
+    ));
+    assert!(library
+        .windows(2)
+        .any(|pair| pair[0] == "--crate-type" && pair[1] == "lib"));
+    let root = args_as_strings(&build_root_invocation(executable, &package, &[]));
+    assert!(!root.contains(&"--crate-type".to_string()));
+    for args in [library, root] {
+        assert!(args.windows(2).any(|pair| pair[0] == "-D" && pair[1] == "unused"));
+    }
+    let _ = std::fs::remove_dir_all(temp_dir);
+}
+
+#[test]
 fn test_dependency_invocation_uses_extern_artifact_for_all_deps() {
     let temp_dir = temp_test_dir("rockc_dep_invocation");
     write_package(

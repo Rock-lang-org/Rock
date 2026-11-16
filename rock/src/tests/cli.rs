@@ -9,6 +9,20 @@ use crate::{
 use super::support::{run_isolated_test, temp_test_dir, write_package};
 
 #[test]
+fn test_lint_flags_are_forwarded_in_command_line_order() {
+    use clap::CommandFactory;
+
+    let matches = Config::command()
+        .try_get_matches_from(["rock", "build", "-D", "unused", "--allow", "dead_code", "-W", "x"])
+        .unwrap();
+    let (_, build) = matches.subcommand().unwrap();
+    assert_eq!(
+        crate::cli::ordered_lint_args(build),
+        ["-D", "unused", "-A", "dead_code", "-W", "x"]
+    );
+}
+
+#[test]
 fn test_quiet_flag_is_global_and_off_by_default() {
     let config = <Config as clap::Parser>::try_parse_from(["rock", "build"]).unwrap();
     assert!(!config.quiet);
@@ -52,7 +66,7 @@ fn test_build_profiles_parse_for_build_and_run() {
             args.extend(flags);
             let config = <Config as clap::Parser>::try_parse_from(args).unwrap();
             let profile = match config.command {
-                Command::Build { profile } | Command::Run { profile, .. } => profile,
+                Command::Build { profile, .. } | Command::Run { profile, .. } => profile,
                 other => panic!("Expected build profile, got {other:?}"),
             };
             assert_eq!(profile.selected(), expected);
@@ -95,7 +109,7 @@ fn test_run_selects_a_named_binary_and_preserves_trailing_arguments() {
     ])
     .unwrap();
     match config.command {
-        Command::Run { profile, bin, args } => {
+        Command::Run { profile, bin, args, .. } => {
             assert_eq!(profile.selected(), BuildProfile::Release);
             assert_eq!(bin.as_deref(), Some("server"));
             assert_eq!(args, ["--bin", "client"]);

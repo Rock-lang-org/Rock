@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::lint::LintLevels;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebugPrint {
     Ast,
@@ -29,8 +31,19 @@ impl From<&str> for DebugPrint {
     }
 }
 
+/// What the crate is built as; decides which items are roots for
+/// reachability (a bin's exports are crate-internal only).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum CrateKind {
+    #[default]
+    Bin,
+    Lib,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Config {
+    pub crate_kind: CrateKind,
+    pub lint_levels: LintLevels,
     pub entry_file: PathBuf,
     pub output_dir: PathBuf,
     pub debug_print: Vec<DebugPrint>,

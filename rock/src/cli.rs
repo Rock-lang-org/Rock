@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::{
     build::{build_project, run_project},
@@ -10,7 +10,12 @@ use crate::{
 };
 
 pub fn run() -> Result<CliOutcome, String> {
-    let config = Config::parse();
+    let matches = Config::command().get_matches();
+    let config = Config::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    let lint_args = matches
+        .subcommand()
+        .map(|(_, sub)| ordered_lint_args(sub))
+        .unwrap_or_default();
     progress::set_capture_tool_output(config.quiet);
 
     match config.command {
@@ -25,16 +30,20 @@ pub fn run() -> Result<CliOutcome, String> {
             progress::cleaned(clean_project(&current_project_root()?)?);
             Ok(CliOutcome::Success)
         }
-        Command::Build { profile } => {
-            let products = build_project(&current_project_root()?, profile.selected())?;
+        Command::Build { profile, .. } => {
+            let products =
+                build_project(&current_project_root()?, profile.selected(), lint_args)?;
             for path in products.paths() {
                 println!("{}", path.display());
             }
             Ok(CliOutcome::Success)
         }
-        Command::Run { profile, args, bin } => run_project(
+        Command::Run {
+            profile, args, bin, ..
+        } => run_project(
             &current_project_root()?,
             profile.selected(),
+            lint_args,
             &args,
             bin.as_deref(),
         )
@@ -76,11 +85,15 @@ pub(crate) enum Command {
     Build {
         #[command(flatten)]
         profile: ProfileArgs,
+        #[command(flatten)]
+        lints: LintArgs,
     },
     /// Build the crate and execute it if it is a binary
     Run {
         #[command(flatten)]
         profile: ProfileArgs,
+        #[command(flatten)]
+        lints: LintArgs,
         /// Select a binary target by name
         #[arg(long)]
         bin: Option<String>,
@@ -88,6 +101,38 @@ pub(crate) enum Command {
         args: Vec<String>,
     },
     Expand,
+}
+
+/// Lint level overrides for the project's own crate, forwarded to rockc.
+#[derive(Args, Debug)]
+pub(crate) struct LintArgs {
+    /// Allow a lint or lint group (e.g. `unused`, `dead_code`)
+    #[arg(short = 'A', long = "allow", value_name = "LINT")]
+    allow: Vec<String>,
+    /// Warn on a lint or lint group
+    #[arg(short = 'W', long = "warn", value_name = "LINT")]
+    warn: Vec<String>,
+    /// Deny a lint or lint group, turning its warnings into errors
+    #[arg(short = 'D', long = "deny", value_name = "LINT")]
+    deny: Vec<String>,
+}
+
+/// `-A/-W/-D` occurrences as rockc arguments, in command-line order.
+pub(crate) fn ordered_lint_args(matches: &clap::ArgMatches) -> Vec<String> {
+    let mut ordered = Vec::new();
+    for (id, flag) in [("allow", "-A"), ("warn", "-W"), ("deny", "-D")] {
+        let (Some(indices), Some(values)) =
+            (matches.indices_of(id), matches.get_many::<String>(id))
+        else {
+            continue;
+        };
+        ordered.extend(indices.zip(values).map(|(index, name)| (index, flag, name.clone())));
+    }
+    ordered.sort_by_key(|(index, _, _)| *index);
+    ordered
+        .into_iter()
+        .flat_map(|(_, flag, name)| [flag.to_string(), name])
+        .collect()
 }
 
 #[derive(Args, Debug)]

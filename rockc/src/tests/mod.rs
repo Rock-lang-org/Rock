@@ -16,6 +16,7 @@ mod artifact_emit;
 mod artifact_validation;
 mod cli_args;
 mod format;
+mod lints;
 mod source_commands;
 
 fn product_artifact(

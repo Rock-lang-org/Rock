@@ -13,12 +13,35 @@ use crate::{analysis, codegen, dce, mir, mono};
 use super::frontend::{compile_frontend, FrontendOutput};
 use super::{module_name_from_entry, CompileOutput, Config, DebugPrint};
 
+/// Runs the whole pipeline. Lint findings are returned as `warnings` on
+/// success and prepended to the errors on failure; a denied lint fails the
+/// build before the backend runs.
 pub(super) fn compile_impl(
     config: &Config,
     emit_products: bool,
 ) -> Result<CompileOutput, Diagnostics> {
+    let mut frontend = compile_frontend(config)?;
+    let warnings = std::mem::take(&mut frontend.analysis.warnings);
+    if warnings.has_errors() {
+        return Err(warnings);
+    }
+    match compile_backend(config, emit_products, frontend) {
+        Ok(output) => Ok(CompileOutput { warnings, ..output }),
+        Err(errors) => {
+            let mut all = warnings;
+            all.merge(errors);
+            Err(all)
+        }
+    }
+}
+
+fn compile_backend(
+    config: &Config,
+    emit_products: bool,
+    frontend: FrontendOutput,
+) -> Result<CompileOutput, Diagnostics> {
     let FrontendOutput {
-        analysis: analysis::Analysis { ast, hir },
+        analysis: analysis::Analysis { ast, hir, .. },
         crate_ctx: ctx,
         diagnostic_sources,
         loaded_prelude_export_ids,
@@ -29,7 +52,7 @@ pub(super) fn compile_impl(
         effective_current_crate_name,
         exported_macros,
         prelude_macros,
-    } = compile_frontend(config)?;
+    } = frontend;
     let mut timer = super::timing::PhaseTimer::from_env();
     let crate_ctx = &ctx;
 
@@ -217,5 +240,9 @@ pub(super) fn compile_impl(
 
     timer.lap("emit");
 
-    Ok(CompileOutput { ast, products })
+    Ok(CompileOutput {
+        ast,
+        products,
+        warnings: Diagnostics::default(),
+    })
 }

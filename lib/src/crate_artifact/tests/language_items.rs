@@ -44,6 +44,8 @@ main = ->
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        crate_kind: crate::CrateKind::Lib,
+        lint_levels: Default::default(),
     })
     .expect("std-backed indexing should lower");
     let products = output.products.expect("products should be emitted");

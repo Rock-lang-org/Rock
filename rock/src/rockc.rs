@@ -65,6 +65,8 @@ pub(crate) fn build_dependency_artifact_invocation(
         .arg(package.entry_file())
         .arg("--output-dir")
         .arg(package.object_dir())
+        .arg("--crate-type")
+        .arg("lib")
         .arg("--no-link")
         .arg("--emit-object")
         .arg(package.object_path())
@@ -76,6 +78,9 @@ pub(crate) fn build_dependency_artifact_invocation(
     }
     if package.manifest.crate_.no_std {
         invocation = invocation.arg("--no-prelude");
+    }
+    for arg in &package.lint_args {
+        invocation = invocation.arg(arg);
     }
 
     for artifact in dependency_artifacts {
@@ -107,6 +112,9 @@ pub(crate) fn build_root_invocation(
     }
     if package.manifest.crate_.no_std {
         invocation = invocation.arg("--no-prelude");
+    }
+    for arg in &package.lint_args {
+        invocation = invocation.arg(arg);
     }
 
     for artifact in artifacts {

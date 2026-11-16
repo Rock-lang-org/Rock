@@ -64,6 +64,12 @@ impl Diagnostics {
         }
     }
 
+    pub fn has_errors(&self) -> bool {
+        self.0
+            .iter()
+            .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    }
+
     pub fn contains(&self, text: &str) -> bool {
         self.0.iter().any(|diagnostic| {
             diagnostic.message.contains(text)

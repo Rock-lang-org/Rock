@@ -19,6 +19,7 @@ use crate::{
 
 pub(crate) struct ArtifactBuildState {
     profile: BuildProfile,
+    lint_args: Vec<String>,
     project_root: PathBuf,
     artifacts: HashMap<PathBuf, PathBuf>,
     artifact_dependencies: HashMap<PathBuf, Vec<(String, PathBuf)>>,
@@ -31,6 +32,7 @@ impl ArtifactBuildState {
     pub(crate) fn new(package: &Package) -> Self {
         Self {
             profile: package.profile,
+            lint_args: package.lint_args.clone(),
             project_root: package.root_dir.clone(),
             artifacts: HashMap::new(),
             artifact_dependencies: HashMap::new(),
@@ -185,6 +187,12 @@ pub(crate) fn ensure_artifact(
         package.target = library.clone();
         package.profile = state.profile;
         package.use_project_build(&state.project_root);
+        // Like cargo, lints are reported for the project's own crate only.
+        package.lint_args = if package.is_project_root() {
+            state.lint_args.clone()
+        } else {
+            vec!["-A".to_string(), "unused".to_string()]
+        };
         let mut implicit_artifact_inputs = if package_requires_sysroot_std(&package) {
             vec![ensure_sysroot_std_available()?.std_artifact.clone()]
         } else {
