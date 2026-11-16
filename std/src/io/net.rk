@@ -15,7 +15,7 @@
 > std::ffi::libc::ntohs
 > std::ffi::libc::htonl
 > std::ffi::libc::ntohl
-> std::ffi::libc::close
+> std::io::fd::close_fd
 > std::mem::raw_buffer::RawBuffer
 > std::control::result::Result
 
@@ -166,13 +166,14 @@ impl TcpListener
                 bind_result = std::ffi::libc::bind fd, sockaddr.ptr!, sockaddr_in_len!
                 if bind_result < (0 as I32)
                     err = last_os_error!
-                    _closed = close fd
+                    // Preserve the bind error; cleanup must not replace it.
+                    close_fd fd
                     Result::Err (err)
                 else
                     listen_result = listen fd, somaxconn_default!
                     if listen_result < (0 as I32)
                         err = last_os_error!
-                        _closed = close fd
+                        close_fd fd
                         Result::Err (err)
                     else
                         Result::Ok (tcp_listener_from_fd fd)
@@ -217,7 +218,7 @@ impl TcpStream
                 connect_result = std::ffi::libc::connect fd, sockaddr.ptr!, sockaddr_in_len!
                 if connect_result < (0 as I32)
                     err = last_os_error!
-                    _closed = close fd
+                    close_fd fd
                     Result::Err (err)
                 else
                     Result::Ok (tcp_stream_from_fd fd)
@@ -256,12 +257,30 @@ impl TcpStream
         else
             Result::Ok (unit!)
 
+impl TcpListener
+    ~@close: Result (), IoError
+    ~@close = ->
+        fd = self.fd
+        self.fd = (0 as I32) - (1 as I32)
+        close_fd fd
+
+impl TcpStream
+    ~@close: Result (), IoError
+    ~@close = ->
+        fd = self.fd
+        self.fd = (0 as I32) - (1 as I32)
+        close_fd fd
+
+// Destructors cannot return errors: use explicit close to observe them.
+// Negative fd means explicit close already ran, even if it returned an error.
 impl Drop for TcpListener
     ~@drop = ->
-        _closed = close self.fd
+        if self.fd >= (0 as I32)
+            close_fd self.fd
         return
 
 impl Drop for TcpStream
     ~@drop = ->
-        _closed = close self.fd
+        if self.fd >= (0 as I32)
+            close_fd self.fd
         return

@@ -7,7 +7,7 @@
 > std::io::traits::last_os_error
 > std::io::traits::write_all
 > std::io::traits::write_str
-> std::ffi::libc::close
+> std::io::fd::close_fd
 > std::ffi::libc::open
 > std::ffi::libc::read
 > std::ffi::libc::write
@@ -59,6 +59,14 @@ open_with_flags = path, flags ->
             Result::Ok (file_from_fd fd)
 
 impl File
+    // Consume and invalidate before closing so Drop never retries, even when
+    // close reports an error. Use this to observe delayed write/close errors.
+    ~@close: Result (), IoError
+    ~@close = ->
+        fd = self.fd
+        self.fd = (0 as I32) - (1 as I32)
+        close_fd fd
+
     open: &Str -> Result File, IoError
     open = path ->
         open_with_flags path, o_rdonly!
@@ -120,5 +128,8 @@ impl Write for File
 
 impl Drop for File
     ~@drop = ->
-        _closed = close self.fd
+        // Drop cannot return an I/O error. Explicit close reports errors;
+        // automatic cleanup is best-effort and must never retry a close.
+        if self.fd >= (0 as I32)
+            close_fd self.fd
         return

@@ -121,6 +121,8 @@ Use `write_all (&buffer[..count])` to forward a received prefix and `write_all (
 
 Listeners and streams are ordinary owned values. Moving an accepted stream into a worker transfers descriptor responsibility. `Arc` can share ownership, but it does not serialize complete messages: concurrent writers can interleave their writes. Use a single writer or explicit synchronization when ordering matters. `IoError::InvalidAddress` covers an invalid port, while `IoError::Os code` carries an operating-system failure such as a refused connection or failed bind. Complete-write helpers can also return `IoError::WriteZero`.
 
+Both socket types also provide a consuming `close!`, returning `Result (), IoError`, like the [file close example](io-and-files.md#files). Unlike `shutdown!`, it releases ownership of the descriptor. Automatic destruction is best-effort and cannot report close errors; explicit close reports them and prevents a second close by the destructor. Neither path retries Linux `close`, even after `EINTR`. If bind, listen, or connect fails, cleanup preserves that original error rather than replacing it with a secondary close error.
+
 Do not read a TCP message by assuming one `recv` equals one application message. TCP is a byte stream: implement framing, handle partial reads and writes, and define a shutdown path before adding protocol logic.
 
 ## Current scope and limits

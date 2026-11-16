@@ -44,6 +44,13 @@
 < extern sched_yield: () -> I32
 < extern usleep: U32 -> I32
 
+// Linux 64-bit timespec layout: time_t and long are both 64-bit.
+< struct Timespec
+    < seconds: I64
+    < nanoseconds: I64
+
+< extern nanosleep: *Timespec -> *Timespec -> I32
+
 // String functions
 < extern strlen: *U8 -> I64
 < extern strcmp: *U8 -> *U8 -> I32

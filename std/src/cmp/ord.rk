@@ -146,7 +146,7 @@ impl Ord for Char
     @cmp = other -> (*self as U32).cmp &(*other as U32)
 
 impl Ord for ()
-    @cmp = _other -> Ordering::Equal
+    @cmp = _ -> Ordering::Equal
 
 impl Ord for Ordering
     @cmp = other -> self.rank!.cmp &(other.rank!)

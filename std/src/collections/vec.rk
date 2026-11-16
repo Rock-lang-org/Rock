@@ -261,7 +261,7 @@ impl Vec T
             item = unsafe &ptr[i]
             result: Result (), E = action item
             match result
-                Result::Ok _unit => vec_unit!
+                Result::Ok _ => vec_unit!
                 Result::Err error =>
                     failure: Result (), E = Result::Err error
                     return failure

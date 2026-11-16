@@ -9,7 +9,7 @@
 > std::ops::deref::DerefMut
 > std::mem::drop::Drop
 > std::mem::drop::drop_in_place
-> std::ffi::libc::sched_yield
+> std::concurrency::thread::yield_now
 > std::control::option::Option
 
 struct MutexInner T
@@ -60,7 +60,7 @@ impl Mutex T
             if previous == (0 as U64)
                 acquired = true
             else
-                _yielded = sched_yield!
+                yield_now!
         mutex_guard self.inner
 
     @try_lock: Option (MutexGuard T)
@@ -75,7 +75,7 @@ impl Mutex T
 mutex_guard: *MutexInner T -> MutexGuard T
 mutex_guard = inner ->
     refs = unsafe &(*inner).refs
-    _previous = refs.fetch_add (1 as U64)
+    refs.fetch_add (1 as U64)
     unsafe *((&inner) as *MutexGuard T)
 
 impl MutexGuard T

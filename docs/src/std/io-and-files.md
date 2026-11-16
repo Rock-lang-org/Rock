@@ -23,7 +23,7 @@ The result owns its storage, and the file is closed on success or failure.
 `IoError` implements `Show` with specific messages such as `IoError(InvalidData)`
 and `IoError(Os(2))`, rather than a generic error label.
 
-Rock's I/O abstractions use `Result` and ownership rather than exceptions or manual close calls. `File` and `TcpStream` implement `Read` and `Write`, `Stdin` implements `Read`, and `Stdout` implements `Write`. Generic code can therefore work with more than one kind of byte stream.
+Rock's I/O abstractions use `Result` and ownership rather than exceptions. Ownership provides automatic cleanup, while an explicit `close!` lets callers observe close errors. `File` and `TcpStream` implement `Read` and `Write`, `Stdin` implements `Read`, and `Stdout` implements `Write`. Generic code can therefore work with more than one kind of byte stream.
 
 ## The `Read` and `Write` traits
 
@@ -77,12 +77,16 @@ The free functions `std::io::write_all` and `std::io::write_str` supply the same
 write_greeting: &Str -> Result I64, IoError
 write_greeting = path ->
     file = File::create path?
-    file.write_str "Hello from Rock\n"
+    count = file.write_str "Hello from Rock\n"?
+    file.close!?
+    Result::Ok count
 
 append_greeting: &Str -> Result I64, IoError
 append_greeting = path ->
     file = File::append path?
-    file.write_str "Again\n"
+    count = file.write_str "Again\n"?
+    file.close!?
+    Result::Ok count
 
 main = ->
     result = do
@@ -95,7 +99,9 @@ main = ->
     status.unwrap_or 1
 ```
 
-The successful output is `22`, and `rock-greeting.txt` contains `Hello from Rock` followed by `Again`, each followed by a newline. The descriptor is closed by `Drop`; callers do not call a separate close API. `create` and `append` can create a missing file, as this example requires; `open` reports an operating-system `IoError::Os code` when the file is absent. A path containing a null byte reports `IoError::InvalidPath` before the operating-system call.
+The successful output is `22`, and `rock-greeting.txt` contains `Hello from Rock` followed by `Again`, each followed by a newline. `close!` consumes the file and returns `Result (), IoError`; `?` propagates a close error as well as a write error. The file cannot be used again, and its destructor will not close it a second time, even if the close failed. `create` and `append` can create a missing file, as this example requires; `open` reports an operating-system `IoError::Os code` when the file is absent. A path containing a null byte reports `IoError::InvalidPath` before the operating-system call.
+
+When a file leaves scope without an explicit close, `Drop` still closes it automatically, but cannot return an error. Use explicit close when delayed write or close failures matter. This is Linux descriptor handling: a failed close, including `EINTR`, is not retried because the descriptor may already have been released and reused. Closing successfully does not by itself guarantee that bytes have reached durable storage.
 
 `do` keeps the successful counts in scope without nested callbacks. Each `<-` sequences through the prelude's `bind`, which continues only for `Result::Ok`; `pure` wraps the sum in the same carrier. This has the sequencing behavior of `>>=`. At the boundary, `<&>` prints a successful total and produces exit code `0`, while `unwrap_or 1` turns either operation's error into exit code `1`. See [error handling](../functional/error-handling.md) for `do` and the named combinators.
 

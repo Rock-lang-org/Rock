@@ -20,6 +20,8 @@ main = !->
 
 The output is `42`. A successful `spawn` transfers the closure to the new thread; `join!` transfers its result back. Dropping an unjoined handle detaches the thread without blocking, and the worker cleans up its result when it finishes. A failed create or join is data in `ThreadError`, not an exception.
 
+Detaching an owned, unjoined handle is an ownership invariant: an unexpected `pthread_detach` failure terminates the process with status `1`, rather than continuing with a leaked joinable thread. Unlike create and join failures, it cannot be returned from `Drop`.
+
 ## Detached tasks
 
 Use the explicitly imported `spawn_detached` when no join handle is needed. It accepts an owned `Send` task implementing `FnOnce (), ()` and returns `Result (), ThreadError`: success reports that the thread started, not that the task finished.
@@ -195,6 +197,8 @@ main = !->
 ```
 
 The first line is a host-specific pthread identifier; the program then yields and sleeps for approximately one millisecond. Neither helper creates parallel work or guarantees a scheduling order.
+
+Both helpers return unit. `sleep_ms` treats nonpositive intervals as a no-op, splits positive intervals into seconds and nanoseconds without narrowing to 32-bit microseconds, and resumes the remaining interval when a signal interrupts `nanosleep`. Other sleep errors, or an unexpected `sched_yield` failure, terminate the process with status `1`. The mutex's contention loop uses the same checked yield operation.
 
 ## Current limits and common mistakes
 

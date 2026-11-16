@@ -14,9 +14,9 @@ impl Global
     unsafe alloc: Layout -> *U8
     unsafe alloc = layout -> malloc layout.size
     unsafe dealloc: *U8 -> Layout -> ()
-    unsafe dealloc = ptr, _layout -> free ptr
+    unsafe dealloc = ptr, _ -> free ptr
     unsafe realloc: *U8 -> Layout -> I64 -> *U8
-    unsafe realloc = ptr, _old_layout, new_size -> realloc ptr, new_size
+    unsafe realloc = ptr, _, new_size -> realloc ptr, new_size
 
 require_non_zero_size: I64 -> ()
 < require_non_zero_size = size ->

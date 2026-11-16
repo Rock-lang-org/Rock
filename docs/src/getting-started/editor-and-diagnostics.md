@@ -231,17 +231,19 @@ main = !->
 
 This version builds without warnings and prints `circle`, `12`, `9`, and `12`.
 
-Sometimes a value is unused on purpose: a parameter that a trait requires but an implementation ignores, or the result of a call that you only run for its effect. Start the name with an underscore to say so:
+Sometimes a parameter is unused on purpose, for example when a trait requires it but an implementation ignores it. Use the wildcard `_` when it needs no name. A call made only for its effects can stand alone; there is no need to bind its result just to silence a warning:
 
 ```rock
-always_zero = _input -> 0
+always_zero = _ -> 0
+
+announce = message -> message.println!
 
 main = !->
-    _ignored = always_zero 5
+    announce "starting"
     (always_zero 7).println!
 ```
 
-Names starting with `_` never trigger `unused_variables`.
+This prints `starting` and then `0`. Names starting with `_`, such as `_input`, also silence `unused_variables`, but a bare `_` expresses that the parameter is not bound to a name. Do not discard a fallible call's result just to remove a warning: handle the error when the operation can fail.
 
 ### Choosing lint levels
 

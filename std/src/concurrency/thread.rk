@@ -12,7 +12,10 @@
 > std::ffi::libc::pthread_join
 > std::ffi::libc::pthread_self
 > std::ffi::libc::sched_yield
-> std::ffi::libc::usleep
+> std::ffi::libc::nanosleep
+> std::ffi::libc::Timespec
+> std::ffi::libc::__errno_location
+> std::ffi::libc::exit
 > std::mem::utils::forget
 > std::mem::utils::sizeof
 > std::mem::utils::sizeof_pointee
@@ -173,7 +176,7 @@ spawn_detached: F -> Result (), ThreadError where F: Send, F: FnOnce (), ()
 < spawn_detached = task ->
     started: Result (JoinHandle ()), ThreadError = spawn task
     match started
-        Result::Ok _handle => Result::Ok (thread_unit!)
+        Result::Ok _ => Result::Ok (thread_unit!)
         Result::Err error => Result::Err error
 
 impl JoinHandle T
@@ -193,7 +196,11 @@ impl JoinHandle T
 impl Drop for JoinHandle T
     ~@drop = ->
         if !self.joined
-            _status = pthread_detach self.thread
+            // Our handle owns one valid, joinable pthread. Failure here means
+            // that ownership invariant was violated; do not silently leak it.
+            status = pthread_detach self.thread
+            if status != (0 as I32)
+                exit (1 as I32)
             thread_state_release_detached self.state
         return
 
@@ -202,13 +209,28 @@ current_id: () -> U64
 
 yield_now: () -> ()
 < yield_now = ->
-    _status = sched_yield!
+    // Linux sched_yield has no documented errors. Keep the infallible API,
+    // but fail fast if the operating system rejects this invariant.
+    if sched_yield! != (0 as I32)
+        exit (1 as I32)
     return
 
 sleep_ms: I64 -> ()
 < sleep_ms = milliseconds ->
     if milliseconds <= 0
         return
-    micros = milliseconds * 1000
-    _status = usleep (micros as U32)
+    // Split before scaling: converting the whole interval to U32 microseconds
+    // truncated long sleeps. Retry only EINTR, using the remaining interval.
+    mut request = Timespec
+        seconds: milliseconds / 1000
+        nanoseconds: (milliseconds % 1000) * 1000000
+    mut remaining = Timespec
+        seconds: 0
+        nanoseconds: 0
+    while (nanosleep ((&request) as *Timespec), ((&mut remaining) as *Timespec)) != (0 as I32)
+        error = unsafe *(__errno_location!)
+        if error != (4 as I32)
+            exit (1 as I32)
+        request.seconds = remaining.seconds
+        request.nanoseconds = remaining.nanoseconds
     return

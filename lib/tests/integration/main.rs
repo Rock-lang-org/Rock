@@ -44,6 +44,8 @@ mod signatureless_inference;
 mod std_cache;
 mod std_conversions;
 mod std_iteration;
+#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+mod std_discard_errors;
 mod structs;
 mod threads_sync;
 mod thread_capture_diagnostics;
