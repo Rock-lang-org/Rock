@@ -440,7 +440,10 @@ fn deferred_predicate_owner(
 /// take as a where clause is a definite failure (`closure (I64) -> I64` is not
 /// `FnMut I64, (Option _)`); the types it leaves unsolved make later sites
 /// such as `result.println!` ambiguous. Those ambiguities are consequences, so
-/// they are reported only when nothing definite failed.
+/// they are reported only when nothing definite failed. This is program-wide:
+/// an ambiguity unrelated to the failure is also held back and appears on the
+/// next compile, once the definite errors are fixed. Narrowing it to the
+/// failure's own types would need obligation identity on `SolveError`.
 fn final_solve_errors(
     hir: &PartialHir,
     errors: Vec<solve::SolveError>,
