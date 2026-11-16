@@ -152,8 +152,12 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
     })?;
     timer.lap("infer");
 
-    let warnings =
-        crate::lint::run_lints(&hir, &config.lint_levels).with_sources(&diagnostic_sources);
+    let lint_modules = crate::lint::SourceModules {
+        root: &ast.module,
+        files: crate_relative_file_modules(&source_graph, config.current_crate_name.as_deref()),
+    };
+    let warnings = crate::lint::run_lints(&lint_modules, &hir, &config.lint_levels)
+        .with_sources(&diagnostic_sources);
     timer.lap("lints");
 
     if config.has_debug_print(DebugPrint::Hir) {
@@ -212,6 +216,30 @@ fn reject_modules_named_like_dependencies(
     }
 }
 
+/// Every file module of the crate by crate-relative path, the expanded entry
+/// winning when the graph lists a module twice (as parsed, then as expanded).
+fn crate_relative_file_modules<'a>(
+    source_graph: &'a source_loader::ModuleGraph,
+    current_crate_name: Option<&str>,
+) -> BTreeMap<String, &'a ast::Module> {
+    source_graph
+        .modules()
+        .map(|loaded| {
+            (
+                crate_relative_path(&loaded.qualified_name, current_crate_name),
+                &loaded.module,
+            )
+        })
+        .collect()
+}
+
+fn crate_relative_path(qualified: &str, current_crate_name: Option<&str>) -> String {
+    current_crate_name
+        .and_then(|name| qualified.strip_prefix(name)?.strip_prefix("::"))
+        .unwrap_or(qualified)
+        .to_string()
+}
+
 /// Collects this crate's `< macro` declarations with their crate-relative
 /// paths, and, for std, the prelude aliases that re-export them.
 fn crate_macro_exports(
@@ -225,12 +253,8 @@ fn crate_macro_exports(
         .modules()
         .map(|loaded| (loaded.qualified_name.as_str(), &loaded.module))
         .collect::<BTreeMap<_, _>>();
-    let crate_relative = |qualified: &str| -> String {
-        current_crate_name
-            .and_then(|name| qualified.strip_prefix(name)?.strip_prefix("::"))
-            .unwrap_or(qualified)
-            .to_string()
-    };
+    let crate_relative =
+        |qualified: &str| -> String { crate_relative_path(qualified, current_crate_name) };
 
     let mut exported = Vec::new();
     macro_expansion::exports::collect_exported_macros(root, "", &mut exported);

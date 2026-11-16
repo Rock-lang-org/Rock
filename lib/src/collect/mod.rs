@@ -44,6 +44,7 @@ use validation::{supertrait_operation_span, validate_supported_current_crate_ids
 
 pub use declarations::DeclarationItems;
 
+pub(crate) use context::path_names;
 pub(crate) use scope::DeclarationScope;
 
 pub use scope::DeclarationTypeVars;
