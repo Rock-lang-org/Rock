@@ -4,6 +4,7 @@
 mod backend;
 mod config;
 mod frontend;
+mod timing;
 #[cfg(test)]
 mod tests;
 

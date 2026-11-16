@@ -25,6 +25,7 @@ pub(super) struct FrontendOutput {
 }
 
 pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
+    let mut timer = super::timing::PhaseTimer::from_env();
     let effective_current_crate_name = config
         .current_crate_name
         .clone()
@@ -56,6 +57,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
     let ast = Program {
         module: source_graph.root_module().clone(),
     };
+    timer.lap("load+parse");
 
     if config.has_debug_print(DebugPrint::AstFull) {
         println!("{:#?}", ast);
@@ -122,6 +124,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         &source_graph,
         config.current_crate_name.as_deref(),
     );
+    timer.lap("expand");
 
     let declarations = collect::collect_with_source_graph(
         &ast,
@@ -131,6 +134,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         config.current_crate_name.as_deref(),
     )
     .map_err(|errors| Diagnostics::from_resolve_errors(errors).with_sources(&diagnostic_sources))?;
+    timer.lap("collect");
     let loaded_prelude_export_ids = declarations.loaded_prelude_export_ids.clone();
     let infix_precedence = declarations.infix_precedence.clone();
     let infix_owners = declarations.infix_owners.clone();
@@ -142,9 +146,11 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
             .map_err(|errors| {
                 Diagnostics::from_resolve_errors(errors).with_sources(&diagnostic_sources)
             })?;
+    timer.lap("lower");
     let hir = infer::finalize_with_crates(partial_hir, &ctx).map_err(|errors| {
         Diagnostics::from_resolve_errors(errors).with_sources(&diagnostic_sources)
     })?;
+    timer.lap("infer");
 
     if config.has_debug_print(DebugPrint::Hir) {
         println!("{:#?}", hir.program);

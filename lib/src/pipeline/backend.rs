@@ -30,6 +30,7 @@ pub(super) fn compile_impl(
         exported_macros,
         prelude_macros,
     } = compile_frontend(config)?;
+    let mut timer = super::timing::PhaseTimer::from_env();
     let crate_ctx = &ctx;
 
     let source_fingerprint =
@@ -88,18 +89,24 @@ pub(super) fn compile_impl(
         (None, None)
     };
 
+    timer.lap("products");
+
     // Phase 5: Monomorphization
     let mut monomorphized = mono::monomorphize_with_crates(hir, crate_ctx, compilation_identity)
         .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
+    timer.lap("mono");
     let mut instance_bodies =
         mir::builder::MirBuilder::take_mir_instance_bodies(&mut monomorphized)
             .map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
+    timer.lap("mir-bodies");
     let _dce_report = dce::prune_unreachable_instances(&mut monomorphized, &mut instance_bodies);
+    timer.lap("instance-dce");
 
     let mir_program = mir::builder::MirBuilder::build_monomorphized_with_instance_bodies(
         &monomorphized,
         &instance_bodies,
     ).map_err(|diagnostics| diagnostics.with_sources(&diagnostic_sources))?;
+    timer.lap("mir-build");
     if config.has_debug_print(DebugPrint::Mir) {
         println!("{:#?}", mir_program);
     }
@@ -117,6 +124,7 @@ pub(super) fn compile_impl(
         )));
         return Err(diagnostics);
     }
+    timer.lap("borrowck");
 
     // Phase 6: Code generation
     let context = Context::create();
@@ -137,6 +145,7 @@ pub(super) fn compile_impl(
         let diagnostics = diagnostics.with_sources(&diagnostic_sources);
         return Err(diagnostics);
     }
+    timer.lap("codegen");
     attach_product_link_records(
         &mut products,
         &mir_program.backend_contract.artifact_exports,
@@ -205,6 +214,8 @@ pub(super) fn compile_impl(
             return Err(diagnostics);
         }
     }
+
+    timer.lap("emit");
 
     Ok(CompileOutput { ast, products })
 }
