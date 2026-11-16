@@ -523,3 +523,44 @@ main = !->
     spawn task
 "#, "trait `Owned`");
 }
+
+#[test]
+fn test_signatureless_spawn_helper_exports_residual_send_bound() {
+    // `Vec ?T: Send` in the helper is proved by assuming `?T: Send`; that
+    // assumption becomes a where clause, so each caller still checks it.
+    let output = compile_and_run(r#"
+> std::concurrency::thread::spawn
+
+run = values -> spawn (-> values.len!)
+
+main = !->
+    values: Vec _ = [1, 2].into!
+    handle = run values
+    "ok".println!
+"#);
+    assert_eq!(output, "ok\n");
+
+    compile_should_fail(r#"
+> std::concurrency::thread::spawn
+
+struct Raw
+    < ptr: *I64
+
+run = values -> spawn (-> values.len!)
+
+main = !->
+    values: Vec _ = [Raw ptr: 0 as *I64].into!
+    handle = run values
+"#, "does not implement trait `Send`");
+}
+
+#[test]
+fn test_unresolved_send_subject_in_entrypoint_is_still_ambiguous() {
+    compile_should_fail(r#"
+> std::concurrency::thread::spawn
+
+main = !->
+    values = Vec::new!
+    handle = spawn (-> values.len!)
+"#, "ambiguous type");
+}
