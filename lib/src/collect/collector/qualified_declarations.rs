@@ -214,7 +214,7 @@ impl LocalCollector {
         for top_level in &module.top_levels {
             match top_level {
                 ast::TopLevel::Import(path) => self.handle_import_in_context(path, prefix),
-                ast::TopLevel::GlobImport(module_path) => {
+                ast::TopLevel::GlobImport(module_path, _) => {
                     self.handle_glob_import_in_context(module_path, prefix)
                 }
                 _ => {}

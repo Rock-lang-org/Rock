@@ -97,7 +97,18 @@ intended cases remained (value shadowing tests and the five `net.rk` libc import
 Imports without a resolved item target (variant and module imports) keep the path-head
 name check, where only `a` in `a::B` can use an import and declared names never do.
 Release validation: 2421 unit + 1045 integration (29 focused lint tests), 89 `rock` +
-51 `rockc`; std warnings identical to the head-only commit. Globs remain unfinished.
+51 `rockc`; std warnings identical to the head-only commit.
+
+Globs: `> m::*` is used when a reference's head name resolves to `m::name` for the same
+item and no nearer module declaration or explicit import binds that name first (explicit
+imports shadow globs at the same level). Glob members without `Definition` references
+(enum variant exports, modules) fall back to the path-head name check; variant exports are
+recognized through the resolver's variant export table. When any glob exists, the lint
+indexes all `Definition` references instead of only explicitly imported ones. A
+transitional probe logged every glob reported unused across the full test suite: only the
+intended test cases and one artifact app whose `> dep::*` really provides nothing
+(`root_glob_import_keeps_local_direct_calls_direct_in_artifact_app`) remained; an earlier
+variant-only artifact glob false positive was fixed by the variant-export fallback.
 Performance: the extra references first cost std lowering ~13% (1.34 → 1.52 s). Cause:
 `SemanticSourceMap::record_reference_in_scope` deduplicated by scanning every recorded
 reference (quadratic). References are now indexed by span offsets; std lowering is
@@ -127,17 +138,18 @@ integration tests pass (25 focused unused-lint tests).
 
 8. [x] ~~Stable id per import binding~~ → import sites collected from the expanded AST
    (span = whole path).
-9. [~] Function/extern/struct/enum/alias/trait imports follow resolved semantic references;
-   macro provenance done. Remaining: glob selection (variant/module imports use the
-   path-head name check).
-10. [~] Emit `unused_imports` per unused `>` import, including macro imports. Not yet: glob
-   imports (`GlobImport` has no span in the AST).
+9. [x] Function/extern/struct/enum/alias/trait imports follow resolved semantic references;
+   macro provenance and glob selection done. Variant/module imports (no `Definition`
+   references) use the path-head name check.
+10. [x] Emit `unused_imports` per unused `>` import, including macro and glob imports
+   (`TopLevel::GlobImport` now carries the written path's span).
 11. [x] Exclude the injected std prelude (it is not in the AST).
-12. [~] Tests: used value/type/variant/trait-bound imports, unused imports, file-module span,
+12. [x] Tests: used value/type/variant/trait-bound imports, unused imports, file-module span,
     root import used only by a child module; value shadowing, qualified calls, callbacks,
     dead bodies, nearer imports, re-exports, named crates and extern allow/deny levels;
     macro imports; qualified type paths; type imports used by static calls, patterns and
-    bounds; nearer type imports. Remaining coverage follows glob imports.
+    bounds; nearer type imports; used/unused globs, explicit imports shadowing globs,
+    type members through globs.
 
 Language issue found (not fixed here): imports in the root module leak into child file
 modules (a child compiles without its own import). Rust keeps imports module-private. The

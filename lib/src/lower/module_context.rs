@@ -419,7 +419,7 @@ impl ModuleLoweringContext {
         module
             .top_levels
             .iter()
-            .any(|top_level| matches!(top_level, ast::TopLevel::GlobImport(_)))
+            .any(|top_level| matches!(top_level, ast::TopLevel::GlobImport(..)))
     }
 
     pub(crate) fn with_module_local_aliases<F>(

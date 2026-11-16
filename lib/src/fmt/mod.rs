@@ -213,7 +213,7 @@ impl FormatNode for TopLevel {
                 path.fmt_with(context, f)?;
                 writeln!(f)
             }
-            TopLevel::GlobImport(segs) => writeln!(f, "> {}::*", segs.join("::")),
+            TopLevel::GlobImport(segs, _) => writeln!(f, "> {}::*", segs.join("::")),
             TopLevel::Export(path) => {
                 write!(f, "< ")?;
                 path.fmt_with(context, f)?;

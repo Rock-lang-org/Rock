@@ -49,7 +49,7 @@ pub enum TopLevel {
     Module(ModuleDecl),
     Mod(Ident, bool), // mod name; - loads a .rk file (bool = exported)
     Import(Path),
-    GlobImport(Vec<String>), // > module::path::* - import all exported items into scope
+    GlobImport(Vec<String>, Span), // > module::path::* - import all exported items; span = written path
     Export(Path),
     GlobExport(Vec<String>), // < module::path::* — re-export all items from a module
     Extern(FunctionSig),
@@ -630,6 +630,17 @@ impl Path {
             Path::Ident(path) => &path.path,
             Path::Type(path) => &path.path,
         }
+    }
+
+    /// From the first segment's start to the last segment's end.
+    pub fn span(&self) -> Option<Span> {
+        let segment_span = |segment: &IdentOrType| match segment {
+            IdentOrType::Ident(ident) => ident.span.clone(),
+            IdentOrType::Type(ty) => ty.span(),
+        };
+        let first = segment_span(self.segments().first()?);
+        let last = segment_span(self.segments().last()?);
+        Some(Span::new(first.file_path, first.start, last.end))
     }
 }
 

@@ -13,8 +13,9 @@ fn test_glob_import_syntax() {
     let (rest, top_level) = top_level.process(ParseCtx::from(&tokens, &config)).unwrap();
 
     match top_level {
-        TopLevel::GlobImport(path) => {
+        TopLevel::GlobImport(path, span) => {
             assert_eq!(path, vec!["std", "string"]);
+            assert_eq!((span.start, span.end), (2, 16), "span covers `std::string::*`");
         }
         _ => panic!("Expected glob import, got: {:?}", top_level),
     }

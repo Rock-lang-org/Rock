@@ -318,6 +318,36 @@ fn test_a_nearer_type_import_does_not_use_the_outer_import() {
 }
 
 #[test]
+fn test_glob_imports_are_used_by_resolved_members_only() {
+    let helpers = "< answer = -> 42\n< other = -> 7\n";
+    let used = lint_files(
+        "mod helpers\n> helpers::*\nmain = !-> answer!.println!\n",
+        &[("helpers", helpers)],
+        &[("dead_code", LintLevel::Allow)],
+    ).unwrap();
+    assert_eq!(messages(&used), Vec::<String>::new());
+
+    let unused = lint_files(
+        "mod helpers\n> helpers::*\nanswer = -> 1\nmain = !-> (answer! + helpers::other!).println!\n",
+        &[("helpers", helpers)],
+        &[("dead_code", LintLevel::Allow)],
+    ).unwrap();
+    assert_eq!(messages(&unused), ["unused import: `helpers::*`"]);
+    assert_eq!(unused.0[0].primary.as_ref().unwrap().span.start, 14);
+}
+
+#[test]
+fn test_explicit_import_shadows_a_glob_and_types_use_globs() {
+    let warnings = lint_files(
+        "mod helpers\nmod shapes\n> helpers::*\n> helpers::answer\n> shapes::*\n\
+         main = !-> (Point::zero!.x + answer!).println!\n",
+        &[("helpers", "< answer = -> 42\n"), ("shapes", POINT_MODULE)],
+        &[],
+    ).unwrap();
+    assert_eq!(messages(&warnings), ["unused import: `helpers::*`"]);
+}
+
+#[test]
 fn test_a_value_import_reexport_counts_as_used() {
     let warnings = lint_files(
         "mod helpers\nmod api\nmain = !-> api::answer!.println!\n",

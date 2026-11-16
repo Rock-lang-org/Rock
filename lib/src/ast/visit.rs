@@ -145,7 +145,7 @@ pub fn walk_top_level<'a, V: Visitor<'a>>(visitor: &mut V, top_level: &'a TopLev
         TopLevel::Module(m) => visitor.visit_module_decl(m),
         TopLevel::Mod(ident, _) => visitor.visit_ident(ident),
         TopLevel::Import(path) => visitor.visit_path(path),
-        TopLevel::GlobImport(_) => (),
+        TopLevel::GlobImport(..) => (),
         TopLevel::Export(path) => visitor.visit_path(path),
         TopLevel::GlobExport(_) => (),
         TopLevel::InfixOperator(_precedence, _name) => (),

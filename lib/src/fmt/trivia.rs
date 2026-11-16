@@ -233,7 +233,7 @@ impl<'a> FormatTrivia<'a> {
             TopLevel::Module(module) => module.0.name.as_ref().map(|name| &name.span),
             TopLevel::Mod(ident, _) => Some(&ident.span),
             TopLevel::Import(path) | TopLevel::Export(path) => Self::path_span(path),
-            TopLevel::GlobImport(_) | TopLevel::GlobExport(_) | TopLevel::InfixOperator(_, _) => {
+            TopLevel::GlobImport(..) | TopLevel::GlobExport(_) | TopLevel::InfixOperator(_, _) => {
                 None
             }
             TopLevel::Extern(sig) | TopLevel::FunctionSig(sig) => Some(&sig.name.span),

@@ -30,10 +30,10 @@ impl LocalCollector {
                     self.handle_import_in_context(path, prefix)
                 }
                 (ast::TopLevel::Import(path), None) => self.handle_import(path),
-                (ast::TopLevel::GlobImport(module_path), Some(prefix)) => {
+                (ast::TopLevel::GlobImport(module_path, _), Some(prefix)) => {
                     self.handle_glob_import_in_context(module_path, prefix)
                 }
-                (ast::TopLevel::GlobImport(module_path), None) => {
+                (ast::TopLevel::GlobImport(module_path, _), None) => {
                     self.handle_glob_import(module_path)
                 }
                 _ => {}

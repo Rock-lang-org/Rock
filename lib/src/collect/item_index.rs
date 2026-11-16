@@ -542,7 +542,7 @@ fn item_name_and_kind(top_level: &ast::TopLevel) -> Option<(String, ItemKind, cr
             Some((name.name.clone(), ItemKind::NewType, name.span.clone()))
         }
         ast::TopLevel::Import(_)
-        | ast::TopLevel::GlobImport(_)
+        | ast::TopLevel::GlobImport(..)
         | ast::TopLevel::Export(_)
         | ast::TopLevel::GlobExport(_)
         | ast::TopLevel::InfixOperator(_, _)

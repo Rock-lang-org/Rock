@@ -51,7 +51,9 @@ fn import_top_level(path: crate::ast::Path) -> TopLevel {
         .map(|segment| segment == "*")
         .unwrap_or(false)
     {
-        TopLevel::GlobImport(segments[..segments.len() - 1].to_vec())
+        // Every parsed path has at least the `*` segment.
+        let span = path.span().expect("glob import path has segments");
+        TopLevel::GlobImport(segments[..segments.len() - 1].to_vec(), span)
     } else {
         TopLevel::Import(path)
     }

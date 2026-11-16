@@ -7,7 +7,11 @@
 //! references do not use a same-named import. Imports without a resolved item
 //! target (variants, modules) fall back to path-head name occurrences. Macro
 //! imports use expansion's selected-binding records.
-//! Glob provenance remains follow-up work; the injected std prelude is not an import.
+//! A glob `> m::*` is used when a reference's head name resolves to `m::name`
+//! for the same item, unless a nearer declaration or explicit import (which
+//! shadows globs) binds that name first; members without recorded references
+//! (variants, modules) use the path-head name check. The injected std prelude
+//! is not an import.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
@@ -48,24 +52,25 @@ pub(crate) fn check_unused_imports(
         emit_unused_import(&import.written, &import.span, sink);
     }
     let mut imported_items = HashSet::new();
+    let mut has_globs = false;
     let mut has_imports = collect_item_import_targets(
-        modules.root, "", hir, modules, &mut imported_items,
+        modules.root, "", hir, modules, &mut imported_items, &mut has_globs,
     );
     for (path, module) in &modules.files {
         has_imports |= collect_item_import_targets(
-            module, path, hir, modules, &mut imported_items,
+            module, path, hir, modules, &mut imported_items, &mut has_globs,
         );
     }
     if !has_imports {
         return;
     }
-    // Index only references to imported items, not every reference in the
-    // crate; crates without resolved item imports skip the index.
+    // Index only references to explicitly imported items, not every reference
+    // in the crate; a glob can provide any item, so globs index all of them.
     let mut references: HashMap<_, Vec<_>> = HashMap::new();
-    if !imported_items.is_empty() {
+    if has_globs || !imported_items.is_empty() {
         for reference in hir.source_map.references() {
             if let SourceSymbol::Definition(id) = reference.target {
-                if imported_items.contains(&id) {
+                if has_globs || imported_items.contains(&id) {
                     references.entry((reference.span.file_path.clone(), reference.span.start))
                         .or_default().push((reference.span.end, id));
                 }
@@ -95,6 +100,19 @@ pub(crate) fn check_unused_imports(
     let declared: HashMap<&str, &HashSet<String>> = scopes.iter()
         .map(|scope| (scope.path.as_str(), &scope.declared))
         .collect();
+    let scope_by_path: HashMap<&str, usize> = scopes.iter().enumerate()
+        .map(|(index, scope)| (scope.path.as_str(), index))
+        .collect();
+    // What `M::name` names, for a glob `> M::*` in a scope, by (scope, glob, name).
+    let mut glob_members: HashMap<(usize, usize, String), Option<DefId>> = HashMap::new();
+    let mut glob_member = |scope: usize, glob: usize, name: &str| {
+        *glob_members.entry((scope, glob, name.to_string())).or_insert_with(|| {
+            let scope = &scopes[scope];
+            let written = format!("{}::{name}", scope.globs[glob].module);
+            resolve_written(hir, modules, &scope.path, &written)
+        })
+    };
+    let mut used_globs = HashSet::new();
     let mut used_items = HashSet::new();
     for scope in &scopes {
         let uses = scope.values.iter().map(|(name, id)| (name, Some(*id)))
@@ -115,10 +133,47 @@ pub(crate) fn check_unused_imports(
                     }
                     break;
                 }
+                // Explicit imports shadow globs of the same module.
+                if let Some(&scope_index) = scope_by_path.get(path) {
+                    let globs = scopes[scope_index].globs.len();
+                    let provider = (0..globs).find(|&glob| {
+                        glob_member(scope_index, glob, name)
+                            .is_some_and(|member| id.is_none_or(|id| member == id))
+                    });
+                    if let Some(glob) = provider {
+                        used_globs.insert((scope_index, glob));
+                        break;
+                    }
+                }
                 if path.is_empty() {
                     break;
                 }
                 path = path.rsplit_once("::").map_or("", |(parent, _)| parent);
+            }
+        }
+    }
+
+    for (scope_index, scope) in scopes.iter().enumerate() {
+        for (glob_index, glob) in scope.globs.iter().enumerate() {
+            if used_globs.contains(&(scope_index, glob_index)) {
+                continue;
+            }
+            // Members without recorded references (variants, modules) keep
+            // the path-head name check.
+            let used = scopes
+                .iter()
+                .filter(|other| is_within(&other.path, &scope.path))
+                .flat_map(|other| &other.names)
+                .any(|name| {
+                    match glob_member(scope_index, glob_index, name) {
+                        Some(member) => !is_referenced_kind(hir, member),
+                        None => names_variant(
+                            hir, modules, &scope.path, &format!("{}::{name}", glob.module),
+                        ),
+                    }
+                });
+            if !used {
+                emit_unused_import(&format!("{}::*", glob.module), &glob.span, sink);
             }
         }
     }
@@ -154,10 +209,15 @@ fn collect_item_import_targets(
     hir: &ResolvedHirProgram,
     modules: &SourceModules<'_>,
     targets: &mut HashSet<DefId>,
+    has_globs: &mut bool,
 ) -> bool {
     let mut has_imports = false;
     for item in &module.top_levels {
         match item {
+            TopLevel::GlobImport(..) => {
+                has_imports = true;
+                *has_globs = true;
+            }
             TopLevel::Import(path) => {
                 has_imports = true;
                 let written = path_names(path.segments()).join("::");
@@ -174,7 +234,7 @@ fn collect_item_import_targets(
                     }
                 });
                 has_imports |= collect_item_import_targets(
-                    &child.0, path.as_deref().unwrap_or(scope), hir, modules, targets,
+                    &child.0, path.as_deref().unwrap_or(scope), hir, modules, targets, has_globs,
                 );
             }
             _ => {}
@@ -189,7 +249,50 @@ fn item_import_target(
     scope: &str,
     written: &str,
 ) -> Option<DefId> {
-    let resolver = &hir.resolver;
+    resolve_written(hir, modules, scope, written).filter(|id| is_referenced_kind(hir, *id))
+}
+
+/// Items whose uses the source map records as `Definition` references.
+fn is_referenced_kind(hir: &ResolvedHirProgram, id: DefId) -> bool {
+    let program = &hir.program;
+    program.functions.contains_key(&id)
+        || program.externs.contains_key(&id)
+        || program.structs.contains_key(&id)
+        || program.enums.contains_key(&id)
+        || program.type_aliases.contains_key(&id)
+        || program.traits.contains_key(&id)
+}
+
+/// Resolves a path as written in module `scope`, like an import does.
+fn resolve_written(
+    hir: &ResolvedHirProgram,
+    modules: &SourceModules<'_>,
+    scope: &str,
+    written: &str,
+) -> Option<DefId> {
+    written_candidates(modules, scope, written)
+        .find_map(|path| hir.resolver.resolve_item_or_alias(&path))
+}
+
+/// Whether a path written in `scope` names an enum variant export. Variants
+/// are not items and record no `Definition` references.
+fn names_variant(
+    hir: &ResolvedHirProgram,
+    modules: &SourceModules<'_>,
+    scope: &str,
+    written: &str,
+) -> bool {
+    written_candidates(modules, scope, written)
+        .any(|path| hir.resolver.resolve_variant_alias(None, &path).is_some())
+}
+
+/// The spellings an import path may resolve under: as written, relative to the
+/// importing module, and crate-qualified forms of both.
+fn written_candidates(
+    modules: &SourceModules<'_>,
+    scope: &str,
+    written: &str,
+) -> impl Iterator<Item = String> {
     let relative = if scope.is_empty() {
         written.to_string()
     } else {
@@ -197,18 +300,9 @@ fn item_import_target(
     };
     let qualified = modules.current_crate_name.map(|name| format!("{name}::{relative}"));
     let root_qualified = modules.current_crate_name.map(|name| format!("{name}::{written}"));
-    let id = resolver.resolve_item_or_alias(written)
-        .or_else(|| resolver.resolve_item_or_alias(&relative))
-        .or_else(|| qualified.as_deref().and_then(|name| resolver.resolve_item_or_alias(name)))
-        .or_else(|| root_qualified.as_deref().and_then(|name| resolver.resolve_item_or_alias(name)))?;
-    let program = &hir.program;
-    (program.functions.contains_key(&id)
-        || program.externs.contains_key(&id)
-        || program.structs.contains_key(&id)
-        || program.enums.contains_key(&id)
-        || program.type_aliases.contains_key(&id)
-        || program.traits.contains_key(&id))
-        .then_some(id)
+    [Some(written.to_string()), Some(relative), qualified, root_qualified]
+        .into_iter()
+        .flatten()
 }
 
 /// True when module `path` is `scope` or one of its submodules.
@@ -236,6 +330,13 @@ struct ModuleScope {
     values: Vec<(String, DefId)>,
     reexports: HashSet<String>,
     declared: HashSet<String>,
+    globs: Vec<GlobSite>,
+}
+
+/// `> module::*`: `module` as written, span over the whole path.
+struct GlobSite {
+    module: String,
+    span: Span,
 }
 
 type ValueReferences = HashMap<(PathBuf, usize), Vec<(usize, DefId)>>;
@@ -255,6 +356,7 @@ fn collect_scopes(
         reexports: HashSet::new(),
         declaring: false,
         declared: HashSet::new(),
+        globs: Vec::new(),
     };
     walk_module(&mut collector, module);
     let ScopeCollector {
@@ -264,6 +366,7 @@ fn collect_scopes(
         values,
         reexports,
         declared,
+        globs,
         ..
     } = collector;
     scopes.push(ModuleScope {
@@ -273,6 +376,7 @@ fn collect_scopes(
         values,
         reexports,
         declared,
+        globs,
     });
     for (name, child) in children {
         let child_path = if path.is_empty() {
@@ -293,6 +397,7 @@ struct ScopeCollector<'a, 'r> {
     reexports: HashSet<String>,
     declaring: bool,
     declared: HashSet<String>,
+    globs: Vec<GlobSite>,
 }
 
 impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
@@ -411,7 +516,10 @@ impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
                     });
                 }
             }
-            TopLevel::GlobImport(_) => {}
+            TopLevel::GlobImport(path, span) => self.globs.push(GlobSite {
+                module: path.join("::"),
+                span: span.clone(),
+            }),
             TopLevel::Export(path) => {
                 if let Some(head) = path_names(path.segments()).first() {
                     self.reexports.insert(head.clone());

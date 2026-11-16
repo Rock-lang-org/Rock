@@ -76,7 +76,7 @@ impl Lowerer {
                         }
                     }
                 }
-                ast::TopLevel::GlobImport(module_path) => {
+                ast::TopLevel::GlobImport(module_path, _) => {
                     if let Ok(targets) = self.glob_import_targets(module_path) {
                         for (short, qualified) in targets {
                             let qualified = qualify_module_local_target(self, prefix, &qualified);

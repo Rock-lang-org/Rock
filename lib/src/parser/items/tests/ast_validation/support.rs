@@ -297,7 +297,7 @@ impl TopLevelCounter {
                 TopLevel::TraitDecl(_) => c.traits += 1,
                 TopLevel::Impl(_) => c.impls += 1,
                 TopLevel::Extern(_) => c.externs += 1,
-                TopLevel::Import(_) | TopLevel::GlobImport(_) => c.imports += 1,
+                TopLevel::Import(_) | TopLevel::GlobImport(..) => c.imports += 1,
                 TopLevel::Export(_) => c.exports += 1,
                 _ => {}
             }
