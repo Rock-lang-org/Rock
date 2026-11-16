@@ -213,7 +213,9 @@ pub(in crate::infer) fn propagate_function_instances_for_owners_with_progress(
         // one caller is irreversible and merges callers whose argument types are
         // still unsolved. Only receivers of the body's member, operator, field
         // and tuple-index sites need one concrete type; those stay caller-seeded
-        // unless callers disagree.
+        // unless callers disagree. Item signatures cannot contain holes, so a
+        // non-generic free function with header variables is signatureless; an
+        // annotated one has no header variables and takes this branch harmlessly.
         let signatureless_free_function =
             function.generic_params.is_empty() && hir.functions.contains_key(&function.id);
         let mut shared = if signatureless_free_function {
