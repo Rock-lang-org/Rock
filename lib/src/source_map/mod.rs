@@ -57,6 +57,9 @@ pub struct SourceScope {
 pub struct SemanticSourceMap {
     symbols: HashMap<SourceSymbol, SourceSymbolInfo>,
     references: Vec<SourceReference>,
+    /// Indices of `references` by span offsets. Recording deduplicates every
+    /// reference; a linear scan made source-map construction quadratic.
+    reference_index: HashMap<(usize, usize), Vec<usize>>,
     expressions: Vec<Span>,
     type_annotations: Vec<Span>,
     scopes: Vec<SourceScope>,
@@ -211,20 +214,35 @@ impl SemanticSourceMap {
         lexical_owner: Option<DefId>,
         scope_id: Option<u32>,
     ) {
-        if self.references.iter().any(|reference| {
-            reference.span == span
-                && reference.target == target
-                && reference.lexical_owner == lexical_owner
-                && reference.scope_id == scope_id
-        }) {
+        let duplicate = self
+            .reference_index
+            .get(&(span.start, span.end))
+            .is_some_and(|indices| {
+                indices.iter().any(|&index| {
+                    let reference = &self.references[index];
+                    reference.span == span
+                        && reference.target == target
+                        && reference.lexical_owner == lexical_owner
+                        && reference.scope_id == scope_id
+                })
+            });
+        if duplicate {
             return;
         }
-        self.references.push(SourceReference {
+        self.push_reference(SourceReference {
             span,
             target,
             lexical_owner,
             scope_id,
         });
+    }
+
+    fn push_reference(&mut self, reference: SourceReference) {
+        self.reference_index
+            .entry((reference.span.start, reference.span.end))
+            .or_default()
+            .push(self.references.len());
+        self.references.push(reference);
     }
 
     pub fn references(&self) -> &[SourceReference] {
@@ -310,7 +328,9 @@ impl SemanticSourceMap {
                 })
             })
             .collect::<Vec<_>>();
-        self.references.extend(references);
+        for reference in references {
+            self.push_reference(reference);
+        }
 
         for scope in &mut self.scopes {
             if scope.owner == from {
