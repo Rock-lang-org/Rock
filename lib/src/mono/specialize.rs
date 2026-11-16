@@ -396,6 +396,13 @@ impl Monomorphizer {
                 let arg_constructor = leading_hole_constructor(arg_ty, param_args.len(), |ty| {
                     normalizer.kind_of(ty).ok()
                 });
+                // The guard ensures enough arguments, so only an unknown kind
+                // fails here; `F` would then stay unbound for later phases.
+                debug_assert!(
+                    arg_constructor.is_some(),
+                    "no constructor section for `{arg_ty:?}` with {} holes",
+                    param_args.len()
+                );
                 if let Some(arg_constructor) = arg_constructor {
                     self.extract_generics_from_type(
                         constructor,
