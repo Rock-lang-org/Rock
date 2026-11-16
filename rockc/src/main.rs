@@ -46,6 +46,13 @@ fn run_config(config: Config) -> Result<(), Diagnostics> {
     }
 
     let emit_artifact = config.emit_artifact.clone();
+    // A binary compiles only what `main` reaches, so its exports have no
+    // object code for dependents to link against.
+    if emit_artifact.is_some() && config.crate_type != CrateType::Lib {
+        return Err(diagnostics_from_message(
+            "--emit-artifact requires --crate-type lib so exported items are compiled",
+        ));
+    }
     let compiler_config = config.into_compiler_config()?;
     if emit_artifact.is_some() && !compiler_config.no_link {
         return Err(diagnostics_from_message(
@@ -151,13 +158,22 @@ pub struct Config {
     /// What the crate is built as: `lib` roots reachability at its public exports
     #[arg(long, value_enum, default_value_t = CrateType::Bin)]
     crate_type: CrateType,
-    /// Allow a lint or lint group (e.g. `unused`, `dead_code`)
+    /// Allow a lint or lint group, silencing its warnings
+    ///
+    /// Lints: `unused_imports`, `unused_variables`, `dead_code`; the `unused`
+    /// group names all three. Flags apply in command-line order, later ones win.
     #[arg(short = 'A', long = "allow", value_name = "LINT")]
     allow: Vec<String>,
-    /// Warn on a lint or lint group
+    /// Warn on a lint or lint group (the default for every lint)
+    ///
+    /// Lints: `unused_imports`, `unused_variables`, `dead_code`; the `unused`
+    /// group names all three. Flags apply in command-line order, later ones win.
     #[arg(short = 'W', long = "warn", value_name = "LINT")]
     warn: Vec<String>,
     /// Deny a lint or lint group, turning its warnings into errors
+    ///
+    /// Lints: `unused_imports`, `unused_variables`, `dead_code`; the `unused`
+    /// group names all three. Flags apply in command-line order, later ones win.
     #[arg(short = 'D', long = "deny", value_name = "LINT")]
     deny: Vec<String>,
     /// `-A/-W/-D` overrides in command-line order (later ones win).

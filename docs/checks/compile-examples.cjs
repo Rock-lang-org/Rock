@@ -37,7 +37,7 @@ function artifact(name, entry, dependencies) {
     const directory = path.join(output, "dependencies", name);
     const destination = path.join(directory, `${name}.rkca`);
     const result = compile(entry, directory, dependencies, [
-        "--crate-name", name, "--emit-artifact", destination,
+        "--crate-name", name, "--crate-type", "lib", "--emit-artifact", destination,
         ...(name === "std" ? ["--no-prelude"] : []),
     ]);
     if (result.status !== 0) throw new Error(`Cannot build ${name}:\n${result.log}`);

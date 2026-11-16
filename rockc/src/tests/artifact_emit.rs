@@ -23,12 +23,50 @@ fn test_run_config_rejects_emit_artifact_without_no_link() {
         "--no-prelude",
         "--crate-name",
         "demo",
+        "--crate-type",
+        "lib",
         "--emit-artifact",
         artifact_path.to_str().unwrap(),
     ])
     .unwrap();
 
     assert!(run_config(config).is_err());
+    assert!(!artifact_path.exists());
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn test_run_config_rejects_emit_artifact_for_binary_crates() {
+    let base = std::env::temp_dir().join(format!(
+        "rockc_product_artifact_{}_{}",
+        std::process::id(),
+        "requires_lib"
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let entry_file = base.join("lib.rk");
+    let artifact_path = base.join("build").join("demo.rkca");
+    std::fs::write(&entry_file, "< answer = -> 42\n").unwrap();
+
+    let config = Config::try_parse_from([
+        "rockc",
+        "--entry-file",
+        entry_file.to_str().unwrap(),
+        "--output-dir",
+        base.join("build").to_str().unwrap(),
+        "--no-std",
+        "--no-prelude",
+        "--no-link",
+        "--crate-name",
+        "demo",
+        "--emit-artifact",
+        artifact_path.to_str().unwrap(),
+    ])
+    .unwrap();
+
+    let error = run_config(config).expect_err("a binary has no exported object code");
+    assert!(format!("{error:?}").contains("--emit-artifact requires --crate-type lib"));
     assert!(!artifact_path.exists());
 
     let _ = std::fs::remove_dir_all(&base);
@@ -46,7 +84,7 @@ fn test_run_config_emits_product_artifact_and_object() {
     let entry_file = base.join("main.rk");
     let artifact_path = base.join("build").join("demo.rkca");
     let object_path = base.join("build").join("demo.o");
-    std::fs::write(&entry_file, "main = ->\n    0\n").unwrap();
+    std::fs::write(&entry_file, "< main = ->\n    0\n").unwrap();
 
     let config = Config::try_parse_from([
         "rockc",
@@ -59,6 +97,8 @@ fn test_run_config_emits_product_artifact_and_object() {
         "--no-link",
         "--crate-name",
         "demo",
+        "--crate-type",
+        "lib",
         "--emit-artifact",
         artifact_path.to_str().unwrap(),
         "--emit-object",
@@ -113,6 +153,8 @@ fn test_run_config_emits_colocated_product_artifact_with_relative_object_path() 
         "--no-link",
         "--crate-name",
         "demo",
+        "--crate-type",
+        "lib",
         "--emit-artifact",
         artifact_path.to_str().unwrap(),
         "--emit-object",
@@ -248,6 +290,8 @@ fn test_run_config_emits_filename_only_product_artifact() {
         "--no-link",
         "--crate-name",
         "demo",
+        "--crate-type",
+        "lib",
         "--emit-artifact",
         artifact_filename.as_str(),
         "--emit-object",
