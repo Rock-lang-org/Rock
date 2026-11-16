@@ -466,6 +466,14 @@ fn write_user_type(
         Type::Apply { constructor, args } => {
             match crate::type_services::normalize::apply_type_lambda(constructor, args) {
                 Some(applied) => write_user_type(&applied, context, f),
+                // A section that cannot take these arguments stays grouped:
+                // `(Result _, E) I64, Bool`, not `Result _, E I64, Bool`.
+                None if matches!(constructor.as_ref(), Type::Lambda { .. }) => {
+                    write!(f, "(")?;
+                    write_user_type(constructor, context, f)?;
+                    write!(f, ")")?;
+                    write_user_type_args(args, context, f)
+                }
                 None => {
                     write_user_type(constructor, context, f)?;
                     write_user_type_args(args, context, f)
@@ -511,7 +519,7 @@ fn write_user_type_args(
             Type::Struct { args, .. } | Type::Enum { args, .. } | Type::Apply { args, .. } => {
                 !args.is_empty()
             }
-            Type::Function { .. } => true,
+            Type::Function { .. } | Type::Lambda { .. } => true,
             _ => false,
         };
         if grouped {

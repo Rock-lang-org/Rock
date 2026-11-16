@@ -1,5 +1,6 @@
 use super::*;
 use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId, TypeVarId};
+use crate::type_services::kind::Kind;
 use crate::types::{AssociatedTypeKey, GenericParamId};
 
 fn def_id(index: u32) -> DefId {
@@ -132,6 +133,52 @@ fn user_type_display_uses_resolved_rock_names() {
         display_type_with_context(&projection, &context).to_string(),
         "<T as Iterator>::Item"
     );
+}
+
+#[test]
+fn user_type_display_writes_constructor_sections_as_source() {
+    let result = def_id(2);
+    let option = def_id(3);
+    let mut resolver = ResolverTables::default();
+    resolver
+        .item_names_by_id
+        .insert(result, "Result".to_string());
+    resolver
+        .item_names_by_id
+        .insert(option, "Option".to_string());
+    let context = TypeDisplayContext::from_resolver(&resolver);
+    let section = Type::Lambda {
+        params: vec![Kind::Type],
+        body: Box::new(Type::Enum {
+            id: result,
+            args: vec![
+                Type::BoundVar {
+                    depth: 0,
+                    index: 0,
+                    kind: Kind::Type,
+                },
+                Type::Bool,
+            ],
+        }),
+    };
+    let show = |ty: &Type| display_type_with_context(ty, &context).to_string();
+
+    assert_eq!(show(&section), "Result _, Bool");
+    let applied = Type::Apply {
+        constructor: Box::new(section.clone()),
+        args: vec![Type::I64],
+    };
+    assert_eq!(show(&applied), "Result I64, Bool");
+    let over_applied = Type::Apply {
+        constructor: Box::new(section.clone()),
+        args: vec![Type::I64, Type::Bool],
+    };
+    assert_eq!(show(&over_applied), "(Result _, Bool) I64, Bool");
+    let nested = Type::Enum {
+        id: option,
+        args: vec![section],
+    };
+    assert_eq!(show(&nested), "Option (Result _, Bool)");
 }
 
 #[test]
