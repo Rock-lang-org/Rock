@@ -6,7 +6,6 @@
 > std::control::control_flow::ControlFlow
 > std::control::control_flow::FromResidual
 > std::control::control_flow::Try
-> std::functional::callable::FnMut
 > std::functional::bifunctor::Bifunctor
 > std::functional::functor::Functor
 > std::functional::applicative::Applicative
@@ -20,18 +19,6 @@
 
 < enum ResultResidual E
     Err E
-
-result_map: Result T, E -> (T -> U) -> Result U, E
-result_map = res, f ->
-    match res
-        Result::Ok val => Result::Ok (f val)
-        Result::Err err => Result::Err err
-
-result_and_then: Result T, E -> (T -> Result U, E) -> Result U, E
-result_and_then = res, f ->
-    match res
-        Result::Ok val => f val
-        Result::Err err => Result::Err err
 
 impl Bifunctor for Result
     bimap = mut map_ok, mut map_err, value ->

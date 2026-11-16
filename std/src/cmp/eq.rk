@@ -66,7 +66,7 @@ impl PartialEq for &Str
             equal
 
 impl PartialEq for ()
-    @== = other -> true
+    @== = _other -> true
 
 impl Eq for I64
 impl Eq for I32

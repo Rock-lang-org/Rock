@@ -2,8 +2,6 @@
 //
 // These functions provide common integer utility operations.
 
-> std::cmp::ord::PartialOrd
-> std::num::integer::Integer
 
 // Absolute value of an integer
 abs: I64 -> I64

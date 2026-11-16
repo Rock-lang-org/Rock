@@ -6,7 +6,6 @@
 > std::control::control_flow::ControlFlow
 > std::control::control_flow::FromResidual
 > std::control::control_flow::Try
-> std::functional::callable::FnMut
 > std::functional::functor::Functor
 > std::functional::applicative::Applicative
 > std::functional::monad::Monad
@@ -19,18 +18,6 @@
 
 < enum OptionResidual
     None
-
-option_map: Option T -> (T -> U) -> Option U
-option_map = opt, f ->
-    match opt
-        Option::Some val => Option::Some (f val)
-        Option::None => Option::None
-
-option_and_then: Option T -> (T -> Option U) -> Option U
-option_and_then = opt, f ->
-    match opt
-        Option::Some val => f val
-        Option::None => Option::None
 
 impl Functor for Option
     fmap = mut mapper, value ->

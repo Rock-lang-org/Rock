@@ -3,8 +3,13 @@ enum Color
     Green
     Blue
 
-main = ->
-    c = Color::Red
-    "enum test".println!
-    42.println!
-    0
+describe = color ->
+    match color
+        Color::Red => "red"
+        Color::Green => "green"
+        Color::Blue => "blue"
+
+main = !->
+    (describe Color::Red).println!
+    (describe Color::Green).println!
+    (describe Color::Blue).println!

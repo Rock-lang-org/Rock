@@ -1,7 +1,6 @@
 // Dedicated arithmetic operator traits.
 
 > std::mem::sized::Sized
-> std::num::integer::Integer
 
 < trait Add Rhs
     type Output

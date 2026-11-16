@@ -189,8 +189,7 @@ main = !->
 fn test_enums() {
     let output = compile_example("enums");
     let lines: Vec<&str> = output.trim().lines().collect();
-    assert_eq!(lines[0], "enum test");
-    assert_eq!(lines[1], "42");
+    assert_eq!(lines, ["red", "green", "blue"]);
 }
 
 #[test]

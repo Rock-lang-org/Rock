@@ -5,7 +5,6 @@
 > std::mem::alloc::checked_alloc
 > std::mem::utils::sizeof_pointee
 > std::concurrency::atomic::AtomicU64
-> std::cmp::eq::PartialEq
 > std::ops::deref::Deref
 > std::ops::deref::DerefMut
 > std::mem::drop::Drop
@@ -61,7 +60,7 @@ impl Mutex T
             if previous == (0 as U64)
                 acquired = true
             else
-                yielded = sched_yield!
+                _yielded = sched_yield!
         mutex_guard self.inner
 
     @try_lock: Option (MutexGuard T)
@@ -76,7 +75,7 @@ impl Mutex T
 mutex_guard: *MutexInner T -> MutexGuard T
 mutex_guard = inner ->
     refs = unsafe &(*inner).refs
-    previous = refs.fetch_add (1 as U64)
+    _previous = refs.fetch_add (1 as U64)
     unsafe *((&inner) as *MutexGuard T)
 
 impl MutexGuard T

@@ -252,6 +252,24 @@ unfinished Phase 2 work; non-value imports still use a non-Rust-equivalent name-
 
 ## Phase 6 — Wrap-up
 
-29. [ ] Fix or suppress new warnings in `std`, examples and test projects.
-30. [ ] Document lints and `-A/-W/-D` in the book and CLI help.
-31. [ ] Run `cargo test -p rock-lib --release` serialized; update this file's status.
+29. [x] Std now builds with zero warnings (was 29 unused imports, 17 unused variables,
+   4 dead functions). Removing the flagged trait imports (`PartialEq`, `Add`, `Mod`, ...)
+   compiled cleanly, confirming operators/methods do not need those traits in scope.
+   Intentional discards (`close`/`sched_yield` results, trait-required parameters) use `_`
+   names; the private, unreferenced `option_map`/`option_and_then`/`result_map`/
+   `result_and_then` helpers (superseded by the Functor/Monad impls) were deleted.
+   `examples/enums.rk` and `examples/showcase.rk` now use every item (0 warnings). Eleven
+   other examples already fail to compile for unrelated, pre-existing reasons (stale
+   syntax/APIs and intentional circular-module fixtures); they are out of scope here.
+   `docs/examples/http-server` builds with the book check against `ROCK_HTTP_ROOT`.
+   Found while validating: the book example runner built std without `--crate-type lib`.
+   Since Phase 4 a binary compiles only what `main` reaches, so that artifact advertised
+   exported functions without object code and failed to load. `rockc` now rejects
+   `--emit-artifact` unless `--crate-type lib`; the runner and rockc tests pass it.
+30. [x] Book: "Warnings about unused code" and "Choosing lint levels" in
+   `getting-started/editor-and-diagnostics.md`, a "Lint levels" section in
+   `reference/tooling.md`. `rock`/`rockc` help lists the lints, the `unused` group and the
+   ordering rule. All book examples compile (`docs/checks/compile-examples.cjs`: 339 compiled,
+   4 expected failures, with `ROCK_HTTP_ROOT` set for the HTTP chapter).
+31. [x] Final serialized release validation: 2421 unit + 1047 integration `rock-lib`
+   tests, 89 `rock` + 52 `rockc` tests pass.

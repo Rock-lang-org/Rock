@@ -4,8 +4,6 @@
 > std::mem::alloc::Layout
 > std::mem::alloc::checked_alloc
 > std::concurrency::atomic::AtomicU64
-> std::cmp::eq::PartialEq
-> std::cmp::ord::PartialOrd
 > std::functional::callable::FnOnce
 > std::mem::drop::Drop
 > std::mem::drop::drop_in_place
@@ -175,7 +173,7 @@ spawn_detached: F -> Result (), ThreadError where F: Send, F: FnOnce (), ()
 < spawn_detached = task ->
     started: Result (JoinHandle ()), ThreadError = spawn task
     match started
-        Result::Ok handle => Result::Ok (thread_unit!)
+        Result::Ok _handle => Result::Ok (thread_unit!)
         Result::Err error => Result::Err error
 
 impl JoinHandle T
@@ -195,7 +193,7 @@ impl JoinHandle T
 impl Drop for JoinHandle T
     ~@drop = ->
         if !self.joined
-            status = pthread_detach self.thread
+            _status = pthread_detach self.thread
             thread_state_release_detached self.state
         return
 
@@ -204,7 +202,7 @@ current_id: () -> U64
 
 yield_now: () -> ()
 < yield_now = ->
-    status = sched_yield!
+    _status = sched_yield!
     return
 
 sleep_ms: I64 -> ()
@@ -212,5 +210,5 @@ sleep_ms: I64 -> ()
     if milliseconds <= 0
         return
     micros = milliseconds * 1000
-    status = usleep (micros as U32)
+    _status = usleep (micros as U32)
     return

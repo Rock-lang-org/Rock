@@ -1,7 +1,6 @@
 // Profile-independent integer arithmetic. The overflowing primitives report a
 // wrapped value and a flag; std owns Option construction and saturation policy.
 > std::control::option::Option
-> std::cmp::eq::PartialEq
 
 < trait Integer
     @min_value: Self

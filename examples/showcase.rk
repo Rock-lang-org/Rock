@@ -64,6 +64,7 @@ main = ->
     v3 = v1.add v2
     v3.x.println!
     v3.y.println!
+    (v3.scale 2).x.println!
     dot = v1.dot v2_for_dot
     dot.println!
     v1.magnitude_sq!.println!

@@ -15,14 +15,11 @@
 > std::ops::index::borrow_slice_range
 > std::ops::index::borrow_slice_range_mut
 > std::ops::range::Range
-> std::ffi::libc::exit
 > std::ffi::libc::memcpy
 > std::mem::raw_buffer::RawBuffer
 > std::show::Show
 > std::functional::callable::FnMut
 > std::functional::functor::Functor
-> std::functional::applicative::Applicative
-> std::functional::monad::Monad
 > std::functional::foldable::Foldable
 > std::functional::traversable::Traversable
 > std::control::control_flow::ControlFlow
@@ -264,7 +261,7 @@ impl Vec T
             item = unsafe &ptr[i]
             result: Result (), E = action item
             match result
-                Result::Ok unit => vec_unit!
+                Result::Ok _unit => vec_unit!
                 Result::Err error =>
                     failure: Result (), E = Result::Err error
                     return failure

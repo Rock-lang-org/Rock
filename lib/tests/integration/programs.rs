@@ -465,21 +465,26 @@ main = ->
 fn test_showcase_example() {
     let output = compile_example("showcase");
     let lines: Vec<&str> = output.trim().lines().collect();
-    assert_eq!(lines.len(), 14);
-    assert_eq!(lines[0], "4"); // v3.x = 3+1
-    assert_eq!(lines[1], "6"); // v3.y = 4+2
-    assert_eq!(lines[2], "11"); // v1.dot(v2) = 3*1+4*2
-    assert_eq!(lines[3], "25"); // magnitude_sq = 9+16
-    assert_eq!(lines[4], "75"); // circle area = 5*5*3
-    assert_eq!(lines[5], "16"); // square area = 4*4
-    assert_eq!(lines[6], "3628800"); // factorial(10)
-    assert_eq!(lines[7], "1"); // is_prime(97)
-    assert_eq!(lines[8], "150"); // sum_array
-    assert_eq!(lines[9], "5"); // array_len
-    assert_eq!(lines[10], "Result: 11"); // string concat
-    assert_eq!(lines[11], "42"); // abs(-42)
-    assert_eq!(lines[12], "5"); // min(5,10)
-    assert_eq!(lines[13], "10"); // max(5,10)
+    assert_eq!(
+        lines,
+        [
+            "4",          // v3.x = 3+1
+            "6",          // v3.y = 4+2
+            "8",          // (v3.scale 2).x = 4*2
+            "11",         // v1.dot(v2) = 3*1+4*2
+            "25",         // magnitude_sq = 9+16
+            "75",         // circle area = 5*5*3
+            "16",         // square area = 4*4
+            "3628800",    // factorial(10)
+            "1",          // is_prime(97)
+            "150",        // sum_array
+            "5",          // array_len
+            "Result: 11", // string concat
+            "42",         // abs(-42)
+            "5",          // min(5,10)
+            "10",         // max(5,10)
+        ]
+    );
 }
 
 #[test]

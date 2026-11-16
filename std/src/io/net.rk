@@ -8,13 +8,8 @@
 > std::io::traits::write_all
 > std::io::traits::write_str
 > std::ffi::libc::socket
-> std::ffi::libc::bind
 > std::ffi::libc::listen
-> std::ffi::libc::accept
-> std::ffi::libc::connect
-> std::ffi::libc::read
 > std::ffi::libc::send
-> std::ffi::libc::shutdown
 > std::ffi::libc::getsockname
 > std::ffi::libc::htons
 > std::ffi::libc::ntohs
@@ -171,13 +166,13 @@ impl TcpListener
                 bind_result = std::ffi::libc::bind fd, sockaddr.ptr!, sockaddr_in_len!
                 if bind_result < (0 as I32)
                     err = last_os_error!
-                    closed = close fd
+                    _closed = close fd
                     Result::Err (err)
                 else
                     listen_result = listen fd, somaxconn_default!
                     if listen_result < (0 as I32)
                         err = last_os_error!
-                        closed = close fd
+                        _closed = close fd
                         Result::Err (err)
                     else
                         Result::Ok (tcp_listener_from_fd fd)
@@ -222,7 +217,7 @@ impl TcpStream
                 connect_result = std::ffi::libc::connect fd, sockaddr.ptr!, sockaddr_in_len!
                 if connect_result < (0 as I32)
                     err = last_os_error!
-                    closed = close fd
+                    _closed = close fd
                     Result::Err (err)
                 else
                     Result::Ok (tcp_stream_from_fd fd)
@@ -263,10 +258,10 @@ impl TcpStream
 
 impl Drop for TcpListener
     ~@drop = ->
-        closed = close self.fd
+        _closed = close self.fd
         return
 
 impl Drop for TcpStream
     ~@drop = ->
-        closed = close self.fd
+        _closed = close self.fd
         return

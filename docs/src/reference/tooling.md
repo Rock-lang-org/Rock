@@ -46,6 +46,24 @@ Path dependencies must provide a library target. Their binaries are not built wh
 
 There is no `rock test` command. Use a complete Rock executable as an application smoke test, or use the Rust integration suite when changing the compiler itself.
 
+## Lint levels
+
+`rock build` and `rock run` report warnings for unused code from three lints: `unused_imports`, `unused_variables`, and `dead_code`. The group `unused` names all three. Every lint warns by default:
+
+```console
+$ rock build -A unused_imports
+$ rock build -W dead_code
+$ rock run -D unused
+```
+
+| Flag | Long form | Effect |
+| --- | --- | --- |
+| `-A <lint>` | `--allow` | Silence the lint |
+| `-W <lint>` | `--warn` | Report it as a warning (the default) |
+| `-D <lint>` | `--deny` | Report it as an error and fail the build |
+
+Flags may be repeated and are applied in command-line order, so a later flag overrides an earlier one for the same lint. An unknown lint name is an error. The levels apply to the project's own crate; dependencies are not linted. `rockc` accepts the same flags. Prefixing a binding or parameter with `_` silences `unused_variables` for that name. [Editors and Diagnostics](../getting-started/editor-and-diagnostics.md#warnings-about-unused-code) explains each lint with examples.
+
 ## Debug and release builds
 
 `rock build` and `rock run` use the debug profile by default for both binary and library crates. This profile disables optimization; you can also select it explicitly with `--debug`. Use `--release` to enable full optimization for the project and its source-built dependencies:

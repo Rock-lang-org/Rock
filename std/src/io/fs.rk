@@ -120,5 +120,5 @@ impl Write for File
 
 impl Drop for File
     ~@drop = ->
-        closed = close self.fd
+        _closed = close self.fd
         return

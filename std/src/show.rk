@@ -5,7 +5,6 @@
 > std::convert::float_to_string
 > std::string::owned::String
 > std::string::owned::format_u64
-> std::clone::Clone
 
 show_println_string: String -> I32
 show_println_string = out -> out.as_str!.println!

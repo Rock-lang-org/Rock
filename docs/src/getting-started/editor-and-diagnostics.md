@@ -160,6 +160,103 @@ This version prints `1` and then `2`. The last use of `view` now precedes the as
 
 The editor may show no error for the incorrect version: its main-project analysis checks the source frontend, including types, but does not run borrow checking, code generation, or linking. A clean editor diagnostic list is not proof that `rock build` will succeed.
 
+## Warnings about unused code
+
+Not every diagnostic stops the build. Rock also reports *warnings*: the program compiles, but some of it has no effect. These warnings come from three lints:
+
+- `unused_imports`: an import (`>`) that nothing in its module uses.
+- `unused_variables`: a binding or parameter whose value is never read.
+- `dead_code`: a function, type, method, or enum variant that nothing reachable uses.
+
+Here is a complete program that compiles, runs, and still triggers all three.
+
+**A program with unused code.**
+
+```rock
+> std::collections::vec::Vec
+
+enum Shape
+    Circle I64
+    Square I64
+
+area = shape ->
+    match shape
+        Shape::Circle radius => radius * radius * 3
+        Shape::Square side => side * side
+
+perimeter = side -> side * 4
+
+main = !->
+    label = "circle"
+    (area Shape::Circle 2).println!
+```
+
+`rock run` prints `12`, and `rock build` reports four warnings:
+
+```text
+[lint] Warning: unused import: `std::collections::vec::Vec`
+[lint] Warning: unused variable: `label`
+[lint] Warning: variant `Shape::Square` is never constructed
+[lint] Warning: function `perimeter` is never used
+```
+
+1. `Vec` is never mentioned, so the import has no effect. Delete it.
+2. `label` is assigned and never read.
+3. `area` can match `Shape::Square`, but no code ever builds one.
+4. Nothing reachable from `main` calls `perimeter`.
+
+A warning always describes an item or binding by name and points at its declaration, so you can act on it the same way you would read an error. Unused items are still type-checked: an error inside `perimeter` would still fail the build. They are just not compiled into the program.
+
+**Corrected program: every item is used.**
+
+```rock
+enum Shape
+    Circle I64
+    Square I64
+
+area = shape ->
+    match shape
+        Shape::Circle radius => radius * radius * 3
+        Shape::Square side => side * side
+
+perimeter = side -> side * 4
+
+main = !->
+    label = "circle"
+    label.println!
+    (area Shape::Circle 2).println!
+    (area Shape::Square 3).println!
+    (perimeter 3).println!
+```
+
+This version builds without warnings and prints `circle`, `12`, `9`, and `12`.
+
+Sometimes a value is unused on purpose: a parameter that a trait requires but an implementation ignores, or the result of a call that you only run for its effect. Start the name with an underscore to say so:
+
+```rock
+always_zero = _input -> 0
+
+main = !->
+    _ignored = always_zero 5
+    (always_zero 7).println!
+```
+
+Names starting with `_` never trigger `unused_variables`.
+
+### Choosing lint levels
+
+Every lint starts at the `warn` level. On the command line, `-A` (allow) silences a lint, `-W` (warn) restores the warning, and `-D` (deny) turns its warnings into errors that fail the build. Each flag takes a lint name or the group `unused`, which covers all three:
+
+```console
+$ rock build -A dead_code
+$ rock build -D unused
+$ rock build -D unused -A unused_variables
+```
+
+Flags apply in command-line order and later ones win, so the last command denies unused imports and dead code but allows unused variables. `rock run` accepts the same flags. They apply to your project's own crate only: dependencies, including the standard library, are not linted when you build your project.
+
+A library is linted differently from a binary. In a library, an item marked public with `<` is part of its API and is never reported as unused, even if the library itself does not call it. In a binary, only what `main` reaches counts.
+
 ## When the location is not your source
 
 Source-aware diagnostics keep labels associated with the file and source text they describe. A label in another module, a macro-related source location, or source retained with a dependency artifact is not an instruction to edit the same line number in `main.rk`. Follow the displayed path and read the related labels. Artifact-backed excerpts can describe the source used to build the artifact rather than your current working copy.

@@ -106,13 +106,22 @@ pub(crate) enum Command {
 /// Lint level overrides for the project's own crate, forwarded to rockc.
 #[derive(Args, Debug)]
 pub(crate) struct LintArgs {
-    /// Allow a lint or lint group (e.g. `unused`, `dead_code`)
+    /// Allow a lint or lint group, silencing its warnings
+    ///
+    /// Lints: `unused_imports`, `unused_variables`, `dead_code`; the `unused`
+    /// group names all three. Flags apply in command-line order, later ones win.
     #[arg(short = 'A', long = "allow", value_name = "LINT")]
     allow: Vec<String>,
-    /// Warn on a lint or lint group
+    /// Warn on a lint or lint group (the default for every lint)
+    ///
+    /// Lints: `unused_imports`, `unused_variables`, `dead_code`; the `unused`
+    /// group names all three. Flags apply in command-line order, later ones win.
     #[arg(short = 'W', long = "warn", value_name = "LINT")]
     warn: Vec<String>,
     /// Deny a lint or lint group, turning its warnings into errors
+    ///
+    /// Lints: `unused_imports`, `unused_variables`, `dead_code`; the `unused`
+    /// group names all three. Flags apply in command-line order, later ones win.
     #[arg(short = 'D', long = "deny", value_name = "LINT")]
     deny: Vec<String>,
 }

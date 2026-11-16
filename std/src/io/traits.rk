@@ -4,11 +4,8 @@
 > std::ffi::libc::read
 > std::ffi::libc::write
 > std::concurrency::arc::Arc
-> std::ops::index::Index
-> std::ops::range::Range
 > std::control::result::Result
 > std::show::Show
-> std::string::owned::String
 > std::fmt::format
 
 < enum IoError
