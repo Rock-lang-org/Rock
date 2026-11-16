@@ -5,12 +5,30 @@ use crate::ids::DefId;
 use crate::infer::constraints::Constraint;
 use crate::infer::PartialHir;
 use crate::lower::ResolveError;
-use crate::types::{FunctionSafety, Type};
+use crate::types::{CallableKind, FunctionSafety, TraitBound, Type};
 
 use super::instance_relation::{
     find_method, propagate_generic_scheme_type, propagate_instance_relation,
 };
 use super::type_predicates::contains_recovery_type;
+
+fn callable_kind(hir: &PartialHir, trait_id: DefId) -> Option<CallableKind> {
+    hir.language_items
+        .callable_protocols()
+        .find_map(|(kind, id, _)| (id == trait_id).then_some(kind))
+}
+
+/// A callable bound implied by a stronger one with the same arguments
+/// (`FnOnce A, R` next to `Fn A, R`) needs no separate check.
+fn subsumed_by_stronger_callable(hir: &PartialHir, bound: &TraitBound, bounds: &[TraitBound]) -> bool {
+    let Some(kind) = callable_kind(hir, bound.trait_id) else {
+        return false;
+    };
+    bounds.iter().any(|other| {
+        other.type_args == bound.type_args
+            && callable_kind(hir, other.trait_id).is_some_and(|other_kind| other_kind < kind)
+    })
+}
 
 pub(super) fn propagate_call_instance(
     hir: &mut PartialHir,
@@ -145,14 +163,7 @@ pub(super) fn propagate_call_instance(
                 };
                 let bounds = hir.engine.get_bounds(source_id);
                 for bound in &bounds {
-                    let kind = hir.language_items.callable_protocols()
-                        .find_map(|(kind, id, _)| (id == bound.trait_id).then_some(kind));
-                    if kind.is_some_and(|kind| bounds.iter().any(|other| {
-                        other.type_args == bound.type_args
-                            && hir.language_items.callable_protocols().any(|(other_kind, id, _)| {
-                                id == other.trait_id && other_kind < kind
-                            })
-                    })) {
+                    if subsumed_by_stronger_callable(hir, bound, &bounds) {
                         continue;
                     }
                     if bound.type_args.len() != 2
