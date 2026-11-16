@@ -237,6 +237,7 @@ fn collect_scopes(
         references,
         values: Vec::new(),
         reexports: HashSet::new(),
+        declaring: false,
     };
     walk_module(&mut collector, module);
     let ScopeCollector {
@@ -271,6 +272,7 @@ struct ScopeCollector<'a, 'r> {
     references: &'r ValueReferences,
     values: Vec<(String, DefId)>,
     reexports: HashSet<String>,
+    declaring: bool,
 }
 
 impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
@@ -288,18 +290,46 @@ impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
                 }
             }
         }
-        crate::ast::visit::walk_identifier_path(self, node);
+        self.visit_path_head(&node.path);
+    }
+
+    fn visit_type_path(&mut self, node: &'a ast::TypePath) {
+        self.visit_path_head(&node.path);
+    }
+
+    fn visit_struct_decl(&mut self, node: &'a ast::StructDecl) {
+        self.declaring = true;
+        crate::ast::visit::walk_struct_decl(self, node);
+    }
+
+    fn visit_enum_decl(&mut self, node: &'a ast::EnumDecl) {
+        self.declaring = true;
+        crate::ast::visit::walk_enum_decl(self, node);
+    }
+
+    fn visit_enum_variant(&mut self, node: &'a ast::EnumVariant) {
+        self.declaring = true;
+        crate::ast::visit::walk_enum_variant(self, node);
     }
 
     fn visit_parse_type_inner(&mut self, node: &'a ParseTypeInner) {
-        self.names
-            .extend(node.name.split("::").map(str::to_string));
+        // A declared item name is a definition, not a use of an import.
+        if std::mem::take(&mut self.declaring) {
+            walk_parse_type_inner(self, node);
+            return;
+        }
+        // Only the head of `a::B` binds through an import; later segments
+        // are members of that binding, not uses of a same-named import.
+        if let Some(head) = node.name.split("::").next() {
+            self.names.insert(head.to_string());
+        }
         walk_parse_type_inner(self, node);
     }
 
     // The shared walker skips these type positions; names written there still
     // use imports.
     fn visit_trait_decl(&mut self, node: &'a ast::TraitDecl) {
+        self.declaring = true;
         walk_trait_decl(self, node);
         walk_list!(self, visit_where_clause, &node.where_clauses);
         for associated in &node.associated_types {
@@ -358,6 +388,22 @@ impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
                 walk_top_level(self, node);
             }
             _ => walk_top_level(self, node),
+        }
+    }
+}
+
+impl<'a> ScopeCollector<'a, '_> {
+    /// Only the head of `a::B` binds through an import; later segments are
+    /// members of that binding. Their generic arguments are still type uses.
+    fn visit_path_head(&mut self, path: &'a [IdentOrType]) {
+        for (index, segment) in path.iter().enumerate() {
+            match segment {
+                _ if index == 0 => crate::ast::visit::walk_ident_or_type(self, segment),
+                IdentOrType::Type(ast::ParseType::Type(inner)) => {
+                    walk_list!(self, visit_parse_type, &inner.generics);
+                }
+                _ => {}
+            }
         }
     }
 }

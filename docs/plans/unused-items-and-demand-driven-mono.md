@@ -84,8 +84,14 @@ receives the use instead of an outer import of the same target. Callback referen
 references in dead bodies and explicit re-exports still count. This reuses the source map;
 it does not add resolver hooks or re-type-check source bodies.
 
-Type/trait/variant imports still use the earlier conservative name-occurrence check.
-Their shadowing and binding provenance remain unfinished, as do globs and macros.
+Type/trait/variant imports still use a name-occurrence check, now restricted to path
+**heads**: in `a::B` only `a` can use an import, and declared item/variant names
+(`struct B`, `enum E`, `trait T`, variants) are definitions, not uses. A transitional probe
+showed semantic references are not yet authoritative for these kinds: static owner paths
+(`Global::dealloc`), variant paths (`Option::Some`), struct literals, where-clause bounds
+and some trait signatures record no `Definition` reference. Making type imports exact
+requires recording those references in lowering first (it would also help editor tooling).
+Std produced no new type/trait findings with the head-only rule. Globs remain unfinished.
 Named-crate source graphs can also contain the entry file as a module after a
 crate-qualified import; exclude it from file-module lint input to avoid duplicate findings.
 Value-import milestone release validation: 2418 unit + 1035 integration tests pass
@@ -111,7 +117,8 @@ integration tests pass (25 focused unused-lint tests).
 8. [x] ~~Stable id per import binding~~ → import sites collected from the expanded AST
    (span = whole path).
 9. [~] Explicit function/extern uses follow resolved semantic references. Remaining:
-   authoritative type/trait/variant binding usage and glob selection. Macro provenance done.
+   authoritative type/trait/variant binding usage (needs missing lowering references; head-only
+   occurrence check meanwhile) and glob selection. Macro provenance done.
 10. [~] Emit `unused_imports` per unused `>` import, including macro imports. Not yet: glob
    imports (`GlobImport` has no span in the AST).
 11. [x] Exclude the injected std prelude (it is not in the AST).

@@ -275,6 +275,20 @@ fn test_a_nearer_import_of_the_same_function_does_not_use_the_outer_import() {
 }
 
 #[test]
+fn test_only_the_head_of_a_qualified_type_path_uses_an_import() {
+    let warnings = lint_files(
+        "mod shapes\n> shapes::Point\n> shapes::Color\n\
+         main = !->\n    c = Color::Red\n    p = shapes::Point\n        x: 1\n    p.x.println!\n",
+        &[(
+            "shapes",
+            "< struct Point\n    < x: I64\n< enum Color\n    Red\n    Blue\n",
+        )],
+        &[("unused_variables", LintLevel::Allow), ("dead_code", LintLevel::Allow)],
+    ).unwrap();
+    assert_eq!(messages(&warnings), ["unused import: `shapes::Point`"]);
+}
+
+#[test]
 fn test_a_value_import_reexport_counts_as_used() {
     let warnings = lint_files(
         "mod helpers\nmod api\nmain = !-> api::answer!.println!\n",
