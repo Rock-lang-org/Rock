@@ -323,3 +323,55 @@ fn aliases_expand_and_application_kind_mismatches_are_rejected() {
         }) if actual == higher_kind
     ));
 }
+
+#[test]
+fn leading_hole_constructor_keeps_the_kind_of_each_abstracted_argument() {
+    let id = def_id(40);
+    let normalizer_env = TypeNormalizationEnv::new();
+    let normalizer = TypeNormalizer::new(&normalizer_env);
+    let applied = Type::Struct {
+        id,
+        args: vec![Type::ConstValue(3), Type::I64, Type::Bool],
+    };
+
+    let section = leading_hole_constructor(&applied, 1, |ty| normalizer.kind_of(ty).ok())
+        .expect("one leading hole");
+
+    assert_eq!(
+        section,
+        Type::Lambda {
+            params: vec![Kind::Usize],
+            body: Box::new(Type::Struct {
+                id,
+                args: vec![
+                    Type::BoundVar {
+                        depth: 0,
+                        index: 0,
+                        kind: Kind::Usize,
+                    },
+                    Type::I64,
+                    Type::Bool,
+                ],
+            }),
+        }
+    );
+    assert_eq!(
+        apply_type_lambda(&section, &[Type::ConstValue(3)]),
+        Some(applied)
+    );
+}
+
+#[test]
+fn leading_hole_constructor_is_the_bare_constructor_when_every_argument_is_a_hole() {
+    let id = def_id(41);
+    let applied = Type::Enum {
+        id,
+        args: vec![Type::I64],
+    };
+
+    assert_eq!(
+        leading_hole_constructor(&applied, 1, |_| Some(Kind::Type)),
+        Some(constructor(id, NominalTypeKind::Enum))
+    );
+    assert_eq!(leading_hole_constructor(&applied, 2, |_| Some(Kind::Type)), None);
+}

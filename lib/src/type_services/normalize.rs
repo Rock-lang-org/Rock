@@ -566,8 +566,13 @@ fn substitute_lambda_group(
 /// type, matching the unifier's convention: the `holes` arguments are the
 /// leading ones, so `Result I64, E` with one hole is `λx. Result x, E` (std's
 /// `impl Functor for Result _, E`). With as many holes as arguments it is the
-/// bare constructor.
-pub(crate) fn leading_hole_constructor(applied: &Type, holes: usize) -> Option<Type> {
+/// bare constructor. Each hole takes the kind of the argument it abstracts
+/// (`kind_of`), so const and constructor parameters keep their kinds.
+pub(crate) fn leading_hole_constructor(
+    applied: &Type,
+    holes: usize,
+    kind_of: impl Fn(&Type) -> Option<Kind>,
+) -> Option<Type> {
     let (id, args, flavor) = match applied {
         Type::Struct { id, args } => (*id, args, NominalTypeKind::Struct),
         Type::Enum { id, args } => (*id, args, NominalTypeKind::Enum),
@@ -579,11 +584,17 @@ pub(crate) fn leading_hole_constructor(applied: &Type, holes: usize) -> Option<T
     if holes == args.len() {
         return Some(Type::Constructor { id, flavor });
     }
-    let section_args = (0..holes as u32)
-        .map(|index| Type::BoundVar {
+    let hole_kinds = args[..holes]
+        .iter()
+        .map(kind_of)
+        .collect::<Option<Vec<_>>>()?;
+    let section_args = hole_kinds
+        .iter()
+        .enumerate()
+        .map(|(index, kind)| Type::BoundVar {
             depth: 0,
-            index,
-            kind: Kind::Type,
+            index: index as u32,
+            kind: kind.clone(),
         })
         .chain(args[holes..].iter().cloned())
         .collect();
@@ -598,7 +609,7 @@ pub(crate) fn leading_hole_constructor(applied: &Type, holes: usize) -> Option<T
         },
     };
     Some(Type::Lambda {
-        params: vec![Kind::Type; holes],
+        params: hole_kinds,
         body: Box::new(body),
     })
 }

@@ -198,7 +198,11 @@ fn match_instance(
             },
         ) => {
             let Some(head) =
-                crate::type_services::normalize::leading_hole_constructor(&instance, sources.len())
+                crate::type_services::normalize::leading_hole_constructor(
+                    &instance,
+                    sources.len(),
+                    |ty| engine.kind_of(ty).ok(),
+                )
             else {
                 return;
             };

@@ -3,7 +3,9 @@ use std::collections::{hash_map::Entry, HashMap};
 use super::hir_types::{HirBlock, HirExpr, HirFunction, HirParam};
 use crate::ids::{CrateId, DefId, LocalDefId, TypeId};
 use crate::selection::{constructor_target_from_applied_type, type_pattern_matches};
-use crate::type_services::normalize::{apply_type_lambda, leading_hole_constructor};
+use crate::type_services::normalize::{
+    apply_type_lambda, leading_hole_constructor, TypeNormalizer,
+};
 use crate::types::{ArrayLen, GenericParamId, Type};
 
 use super::Monomorphizer;
@@ -390,7 +392,11 @@ impl Monomorphizer {
                 // Same convention as the inference unifier: `F A` against
                 // `Result I64, E` binds `A` to the leading argument and `F` to
                 // the section `λx. Result x, E`.
-                if let Some(arg_constructor) = leading_hole_constructor(arg_ty, param_args.len()) {
+                let normalizer = TypeNormalizer::new(&self.normalization_env);
+                let arg_constructor = leading_hole_constructor(arg_ty, param_args.len(), |ty| {
+                    normalizer.kind_of(ty).ok()
+                });
+                if let Some(arg_constructor) = arg_constructor {
                     self.extract_generics_from_type(
                         constructor,
                         &arg_constructor,
