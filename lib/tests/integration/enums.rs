@@ -148,6 +148,7 @@ constructor = -> Package::Value
     ).unwrap();
     let mut config = test_config(entry, dir.join("producer-build"));
     config.current_crate_name = Some("packages".to_string());
+    config.crate_kind = rock_lib::CrateKind::Lib;
     config.no_link = true;
     let products = rock_lib::compile_with_products(&config)
         .expect("producer should compile").products.expect("producer products");
@@ -764,6 +765,7 @@ fn test_variant_reexports_survive_deleted_source_artifacts() {
     std::fs::write(dir.join("producer/signals.rk"), "enum Light\n    Off\n    On\n\n< Light::Off\n").unwrap();
     let mut config = test_config(entry, dir.join("producer-build"));
     config.current_crate_name = Some("lamps".to_string());
+    config.crate_kind = rock_lib::CrateKind::Lib;
     config.no_link = true;
     let products = rock_lib::compile_with_products(&config).expect("producer should compile")
         .products.expect("producer products");
@@ -775,6 +777,7 @@ fn test_variant_reexports_survive_deleted_source_artifacts() {
     std::fs::write(&facade_entry, "> lamps::Off\n< Off\n").unwrap();
     let mut facade_config = test_config(facade_entry.clone(), dir.join("facade-build"));
     facade_config.current_crate_name = Some("facade".to_string());
+    facade_config.crate_kind = rock_lib::CrateKind::Lib;
     facade_config.no_link = true;
     facade_config.extern_artifacts.push(("lamps".to_string(), artifact.clone()));
     let facade_products = rock_lib::compile_with_products(&facade_config)

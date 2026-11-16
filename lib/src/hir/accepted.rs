@@ -37,6 +37,10 @@ impl TryFrom<HirProgram> for AcceptedHirProgram {
 }
 
 impl AcceptedHirProgram {
+    pub(crate) fn program_mut(&mut self) -> &mut HirProgramFor<AcceptedHir> {
+        &mut self.program
+    }
+
     pub fn program(&self) -> &HirProgramFor<AcceptedHir> {
         &self.program
     }

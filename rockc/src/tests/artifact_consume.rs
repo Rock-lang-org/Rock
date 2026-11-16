@@ -24,6 +24,8 @@ fn test_run_config_consumes_product_artifact_dependency() {
 
     let dep_config = Config::try_parse_from([
         "rockc",
+        "--crate-type",
+        "lib",
         "--entry-file",
         dep_entry.to_str().unwrap(),
         "--output-dir",
@@ -88,6 +90,8 @@ fn test_run_config_rejects_extern_artifact_name_mismatch() {
 
     let dep_config = Config::try_parse_from([
         "rockc",
+        "--crate-type",
+        "lib",
         "--entry-file",
         dep_entry.to_str().unwrap(),
         "--output-dir",
@@ -148,6 +152,8 @@ fn test_run_config_consumes_product_artifact_generic_dependency() {
 
     let dep_config = Config::try_parse_from([
         "rockc",
+        "--crate-type",
+        "lib",
         "--entry-file",
         dep_entry.to_str().unwrap(),
         "--output-dir",

@@ -7,6 +7,7 @@ use crate::hir::{
 use crate::ids::HirLocalId;
 
 pub(crate) trait HirVisitor {
+    fn visit_type(&mut self, _ty: &crate::types::Type) {}
     /// Called before an expression's children; return `false` to skip them.
     fn enter_expr(&mut self, _expr: &AcceptedHirExpr) -> bool {
         true
@@ -30,14 +31,17 @@ fn walk_params(visitor: &mut impl HirVisitor, params: &[HirParam]) {
 }
 
 pub(crate) fn walk_block(visitor: &mut impl HirVisitor, block: &AcceptedHirBlock) {
+    visitor.visit_type(&block.ty);
     for stmt in &block.stmts {
         match stmt {
             HirStmtFor::Let {
                 name,
                 local_id,
                 value,
+                ty,
                 ..
             } => {
+                visitor.visit_type(ty);
                 walk_expr(visitor, value);
                 visitor.bind_local(name, *local_id);
             }

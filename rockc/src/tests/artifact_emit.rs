@@ -162,6 +162,8 @@ fn test_run_config_emits_sibling_layout_product_artifact_with_relative_object_pa
 
     let dep_config = Config::try_parse_from([
         "rockc",
+        "--crate-type",
+        "lib",
         "--entry-file",
         dep_entry.to_str().unwrap(),
         "--output-dir",

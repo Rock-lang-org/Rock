@@ -23,6 +23,12 @@ pub struct HirTypeIds {
 }
 
 impl HirTypeIds {
+    /// Whole-item pruning leaves locations inside surviving bodies unchanged.
+    /// Filter their owners instead of traversing and interning every type again.
+    pub(crate) fn retain_owners(&mut self, mut keep: impl FnMut(&DefId) -> bool) {
+        self.ids.retain(|location, _| keep(&location.owner()));
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

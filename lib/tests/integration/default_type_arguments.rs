@@ -171,6 +171,7 @@ fn test_default_type_arguments_mutual_fields_in_deleted_source_artifacts() {
         entry_file: entry.clone(),
         output_dir: dir.clone(),
         current_crate_name: Some("recursive".to_string()),
+        crate_kind: rock_lib::CrateKind::Lib,
         no_std: true,
         no_prelude: true,
         no_link: true,

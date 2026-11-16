@@ -93,6 +93,7 @@ impl Sub for I8
             entry_file: dependency.clone(),
             output_dir: dir.clone(),
             current_crate_name: Some("operators".to_string()),
+            crate_kind: rock_lib::CrateKind::Lib,
             overflow_checks: Some(checked),
             no_std: true,
             no_prelude: true,
@@ -193,6 +194,7 @@ impl Divide for I8
         entry_file: entry.clone(),
         output_dir: dir.clone(),
         current_crate_name: Some("arithmetic".to_string()),
+        crate_kind: rock_lib::CrateKind::Lib,
         no_std: true,
         no_prelude: true,
         no_link: true,
@@ -261,6 +263,7 @@ impl Relay for I8
     rock_lib::compile_with_products(&rock_lib::Config {
         entry_file: bridge.clone(),
         current_crate_name: Some("bridge".to_string()),
+        crate_kind: rock_lib::CrateKind::Lib,
         extern_artifacts: vec![("arithmetic".to_string(), artifact.clone())],
         ..config.clone()
     })
@@ -352,6 +355,7 @@ compute: I8 -> I8
             let output = rock_lib::compile_with_products(&rock_lib::Config {
                 entry_file: dependency.clone(),
                 current_crate_name: Some("dependency".to_string()),
+                crate_kind: rock_lib::CrateKind::Lib,
                 no_link: true,
                 emit_object: Some(dir.join("dependency.o")),
                 ..config.clone()
@@ -406,6 +410,7 @@ fn test_std_release_artifact_keeps_wrapping_operators_in_checked_consumers() {
         entry_file: std_entry,
         output_dir: dir.clone(),
         current_crate_name: Some("std".to_string()),
+        crate_kind: rock_lib::CrateKind::Lib,
         opt_level: 3,
         no_std: true,
         no_link: true,

@@ -72,6 +72,7 @@ unsafe borrow_mut: *I64 -> I64 -> &mut [I64]
         let config = rock_lib::Config {
             entry_file: dependency.clone(),
             current_crate_name: Some("raw_slices".to_string()),
+            crate_kind: rock_lib::CrateKind::Lib,
             output_dir: dir.clone(),
             opt_level,
             no_std: true,
@@ -92,6 +93,7 @@ unsafe borrow_mut: *I64 -> I64 -> &mut [I64]
         let config = rock_lib::Config {
             entry_file: entry.clone(),
             current_crate_name: None,
+            crate_kind: rock_lib::CrateKind::Bin,
             extern_artifacts: vec![("raw_slices".to_string(), artifact)],
             no_link: false,
             emit_object: None,

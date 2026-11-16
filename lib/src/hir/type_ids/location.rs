@@ -1,5 +1,55 @@
 use super::*;
 
+impl HirTypeLocation {
+    pub(crate) fn owner(&self) -> DefId {
+        match self {
+            Self::FunctionReturn { function }
+            | Self::FunctionParam { function, .. }
+            | Self::FunctionBoundArg { function, .. } => *function,
+            Self::ExternReturn { extern_id }
+            | Self::ExternParam { extern_id, .. } => *extern_id,
+            Self::TraitSignatureReturn { trait_id, .. }
+            | Self::TraitSignatureParam { trait_id, .. }
+            | Self::TraitSignatureBoundArg { trait_id, .. } => *trait_id,
+            Self::ImplReceiverArg { impl_id, .. }
+            | Self::ImplTraitArg { impl_id, .. }
+            | Self::ImplBoundArg { impl_id, .. }
+            | Self::AssociatedTypeDef { impl_id, .. } => *impl_id,
+            Self::TypeAliasBody { alias } => *alias,
+            Self::ArrayRepeatLength { owner, .. }
+            | Self::StructField { owner, .. }
+            | Self::EnumVariantNamedField { owner, .. }
+            | Self::EnumVariantPositionalField { owner, .. }
+            | Self::PredicateSubject { owner, .. }
+            | Self::PredicateArg { owner, .. }
+            | Self::Block { owner, .. }
+            | Self::LetStmt { owner, .. }
+            | Self::Expr { owner, .. }
+            | Self::ClosureCapture { owner, .. }
+            | Self::ClosureParam { owner, .. }
+            | Self::CastTarget { owner, .. }
+            | Self::MethodCallTraitArg { owner, .. }
+            | Self::MethodCallOwnerSubstitution { owner, .. }
+            | Self::MethodCallMethodSubstitution { owner, .. }
+            | Self::StaticCallOwner { owner, .. }
+            | Self::StaticCallTraitArg { owner, .. }
+            | Self::StaticCallOwnerSubstitution { owner, .. }
+            | Self::StaticCallMethodSubstitution { owner, .. }
+            | Self::TryOutput { owner, .. }
+            | Self::TryResidual { owner, .. }
+            | Self::TryReturn { owner, .. }
+            | Self::TryBranchTraitArg { owner, .. }
+            | Self::TryBranchOwnerSubstitution { owner, .. }
+            | Self::TryBranchMethodSubstitution { owner, .. }
+            | Self::TryFromResidualStaticCallOwner { owner, .. }
+            | Self::TryFromResidualStaticCallTraitArg { owner, .. }
+            | Self::TryFromResidualStaticCallOwnerSubstitution { owner, .. }
+            | Self::TryFromResidualStaticCallMethodSubstitution { owner, .. }
+            | Self::StructPatternArg { owner, .. } => *owner,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum HirTypeLocation {
     ArrayRepeatLength {

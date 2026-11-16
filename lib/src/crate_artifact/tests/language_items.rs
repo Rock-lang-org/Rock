@@ -10,7 +10,7 @@ fn std_index_selection_persists_exact_impl_and_trait_authority() {
 to_slice: &[I64] -> &[I64]
 to_slice = slice -> slice
 
-struct Probe T
+< struct Probe T
 impl Probe T
     @probe = ->
         mut arr: [I64; 3] = [1, 2, 3]

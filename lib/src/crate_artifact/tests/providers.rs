@@ -243,7 +243,7 @@ impl WriteAt I64 for Cell
     ^@write_at = _ -> &mut @write_value
 
 probe: T -> I64
-probe = _ ->
+< probe = _ ->
     mut target = Cell
         read_value: 1
         write_value: 0

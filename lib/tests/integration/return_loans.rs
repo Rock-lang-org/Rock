@@ -113,6 +113,7 @@ identity: *I64 -> *I64
         entry_file: dependency.clone(),
         output_dir: dir.clone(),
         current_crate_name: Some("loans".to_string()),
+        crate_kind: rock_lib::CrateKind::Lib,
         no_std: true,
         no_prelude: true,
         no_link: true,
@@ -170,6 +171,7 @@ main = ->
                 let result = rock_lib::compile(&rock_lib::Config {
                     entry_file: entry,
                     current_crate_name: None,
+                    crate_kind: rock_lib::CrateKind::Bin,
                     opt_level,
                     extern_artifacts: vec![("loans".to_string(), artifact.clone())],
                     no_link: invalid,
@@ -412,6 +414,7 @@ unsafe borrow_mut: Holder -> (&mut I64, I64)
         entry_file: dependency.clone(),
         output_dir: dir.clone(),
         current_crate_name: Some("loans".to_string()),
+        crate_kind: rock_lib::CrateKind::Lib,
         no_std: true,
         no_prelude: true,
         no_link: true,
@@ -456,6 +459,7 @@ main = ->
             let result = rock_lib::compile(&rock_lib::Config {
                 entry_file: entry,
                 current_crate_name: None,
+                crate_kind: rock_lib::CrateKind::Bin,
                 extern_artifacts: vec![("loans".to_string(), artifact.clone())],
                 ..config.clone()
             });
@@ -526,6 +530,7 @@ unsafe second: *I64 -> *I64 -> &mut I64
         entry_file: dependency.clone(),
         output_dir: dir.clone(),
         current_crate_name: Some("loans".to_string()),
+        crate_kind: rock_lib::CrateKind::Lib,
         no_std: true,
         no_prelude: true,
         no_link: true,
@@ -569,6 +574,7 @@ main = ->
         let result = rock_lib::compile(&rock_lib::Config {
             entry_file: entry,
             current_crate_name: None,
+            crate_kind: rock_lib::CrateKind::Bin,
             extern_artifacts: vec![("loans".to_string(), artifact.clone())],
             ..config.clone()
         });

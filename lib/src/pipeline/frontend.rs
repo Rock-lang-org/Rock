@@ -10,6 +10,7 @@ use crate::{analysis, collect, infer, lower, macro_expansion, products, source_l
 use super::{module_name_from_entry, Config, DebugPrint};
 
 pub(super) struct FrontendOutput {
+    pub(super) reachability: crate::dead_code::Reachability,
     pub(super) analysis: analysis::Analysis,
     pub(super) crate_ctx: CrateContext,
     pub(super) diagnostic_sources: diagnostic::DiagnosticSourceMap,
@@ -156,15 +157,26 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         root: &ast.module,
         files: crate_relative_file_modules(&source_graph, config.current_crate_name.as_deref()),
     };
-    let warnings = crate::lint::run_lints(&lint_modules, &hir, &config.lint_levels)
-        .with_sources(&diagnostic_sources);
+    let mut warnings = crate::lint::run_lints(&lint_modules, &hir, &config.lint_levels);
     timer.lap("lints");
+    let reachability = crate::dead_code::Reachability::compute(
+        &hir,
+        &lint_modules,
+        config,
+        loaded_prelude_export_ids.values().map(|export| export.id),
+    );
+    let mut sink = crate::lint::LintSink::new(&config.lint_levels);
+    reachability.warn(&hir, &mut sink);
+    warnings.merge(sink.finish());
+    warnings.attach_sources(&diagnostic_sources);
+    timer.lap("reachability");
 
     if config.has_debug_print(DebugPrint::Hir) {
         println!("{:#?}", hir.program);
     }
 
     Ok(FrontendOutput {
+        reachability,
         analysis: analysis::Analysis { ast, hir, warnings },
         crate_ctx: ctx,
         diagnostic_sources,

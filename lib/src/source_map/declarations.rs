@@ -75,7 +75,15 @@ impl SemanticSourceMap {
                 declaration_span,
                 None,
             );
+            let reference_start = self.references.len();
             self.record_top_level_type_references(top_level, item.def_id, items, resolver);
+            // Preserve ownership of annotation references after normalization
+            // erases aliases from HIR types.
+            for reference in &mut self.references[reference_start..] {
+                if reference.lexical_owner.is_none() {
+                    reference.lexical_owner = Some(item.def_id);
+                }
+            }
 
             match top_level {
                 ast::TopLevel::FunctionSig(signature) => {

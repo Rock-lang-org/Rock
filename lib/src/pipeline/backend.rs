@@ -25,6 +25,9 @@ pub(super) fn compile_impl(
     if warnings.has_errors() {
         return Err(warnings);
     }
+    let mut timer = super::timing::PhaseTimer::from_env();
+    frontend.reachability.prune(&mut frontend.analysis.hir);
+    timer.lap("hir-prune");
     match compile_backend(config, emit_products, frontend) {
         Ok(output) => Ok(CompileOutput { warnings, ..output }),
         Err(errors) => {
@@ -41,6 +44,7 @@ fn compile_backend(
     frontend: FrontendOutput,
 ) -> Result<CompileOutput, Diagnostics> {
     let FrontendOutput {
+        reachability: _,
         analysis: analysis::Analysis { ast, hir, .. },
         crate_ctx: ctx,
         diagnostic_sources,

@@ -328,6 +328,7 @@ increment: F I64 -> F I64 where F _: Monad
     let artifact = dir.join("helpers.rkca");
     let mut config = test_config(library, dir.clone());
     config.current_crate_name = Some("helpers".into());
+    config.crate_kind = rock_lib::CrateKind::Lib;
     config.no_link = true;
     config.emit_object = Some(object);
     let mut products = rock_lib::compile_with_products(&config)

@@ -6,7 +6,7 @@
 
 mod unused_imports;
 mod unused_variables;
-mod walk;
+pub(crate) mod walk;
 
 pub use unused_imports::SourceModules;
 
@@ -128,7 +128,7 @@ impl<'a> LintSink<'a> {
             LintLevel::Deny => (DiagnosticSeverity::Error, "denied"),
         };
         let note = format!("`{}` {note}", lint.name());
-        self.diagnostics.push(
+        self.diagnostics.0.push(
             diagnostic
                 .with_code(DiagnosticCode::Lint)
                 .with_severity(severity)
