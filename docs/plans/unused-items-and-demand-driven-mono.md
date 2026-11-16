@@ -84,14 +84,25 @@ receives the use instead of an outer import of the same target. Callback referen
 references in dead bodies and explicit re-exports still count. This reuses the source map;
 it does not add resolver hooks or re-type-check source bodies.
 
-Type/trait/variant imports still use a name-occurrence check, now restricted to path
-**heads**: in `a::B` only `a` can use an import, and declared item/variant names
-(`struct B`, `enum E`, `trait T`, variants) are definitions, not uses. A transitional probe
-showed semantic references are not yet authoritative for these kinds: static owner paths
-(`Global::dealloc`), variant paths (`Option::Some`), struct literals, where-clause bounds
-and some trait signatures record no `Definition` reference. Making type imports exact
-requires recording those references in lowering first (it would also help editor tooling).
-Std produced no new type/trait findings with the head-only rule. Globs remain unfinished.
+Struct, enum, type-alias and trait imports now use the same resolved-reference matching.
+Missing references were added first: lowering records the head item of every qualified
+expression/literal/pattern path (`Global::dealloc`, `Option::Some`, `shapes::Point x: 1`)
+via `Lowerer::record_path_head_reference`, single-segment struct literals and struct
+patterns record their struct, and header type references (bounds, supertraits, impl trait
+arguments, signatures) resolve through the declaring module's import aliases instead of a
+crate-global name lookup. A module's own struct/enum/trait declaration shadows imports of
+enclosing modules. Before switching, a transitional probe logged every import the old
+name check called used but references called unused: on std and the full test suite only
+intended cases remained (value shadowing tests and the five `net.rk` libc imports).
+Imports without a resolved item target (variant and module imports) keep the path-head
+name check, where only `a` in `a::B` can use an import and declared names never do.
+Release validation: 2421 unit + 1045 integration (29 focused lint tests), 89 `rock` +
+51 `rockc`; std warnings identical to the head-only commit. Globs remain unfinished.
+Performance: the extra references first cost std lowering ~13% (1.34 → 1.52 s). Cause:
+`SemanticSourceMap::record_reference_in_scope` deduplicated by scanning every recorded
+reference (quadratic). References are now indexed by span offsets; std lowering is
+~1.345 → ~0.90 s versus the previous compiler (two paired runs), collect/infer unchanged
+within noise, LLVM IR sizes unchanged.
 Named-crate source graphs can also contain the entry file as a module after a
 crate-qualified import; exclude it from file-module lint input to avoid duplicate findings.
 Value-import milestone release validation: 2418 unit + 1035 integration tests pass
@@ -116,16 +127,17 @@ integration tests pass (25 focused unused-lint tests).
 
 8. [x] ~~Stable id per import binding~~ → import sites collected from the expanded AST
    (span = whole path).
-9. [~] Explicit function/extern uses follow resolved semantic references. Remaining:
-   authoritative type/trait/variant binding usage (needs missing lowering references; head-only
-   occurrence check meanwhile) and glob selection. Macro provenance done.
+9. [~] Function/extern/struct/enum/alias/trait imports follow resolved semantic references;
+   macro provenance done. Remaining: glob selection (variant/module imports use the
+   path-head name check).
 10. [~] Emit `unused_imports` per unused `>` import, including macro imports. Not yet: glob
    imports (`GlobImport` has no span in the AST).
 11. [x] Exclude the injected std prelude (it is not in the AST).
 12. [~] Tests: used value/type/variant/trait-bound imports, unused imports, file-module span,
     root import used only by a child module; value shadowing, qualified calls, callbacks,
-    dead bodies, nearer imports, re-exports, named crates and extern allow/deny levels.
-    Remaining regression coverage follows the unfinished binding kinds above.
+    dead bodies, nearer imports, re-exports, named crates and extern allow/deny levels;
+    macro imports; qualified type paths; type imports used by static calls, patterns and
+    bounds; nearer type imports. Remaining coverage follows glob imports.
 
 Language issue found (not fixed here): imports in the root module leak into child file
 modules (a child compiles without its own import). Rust keeps imports module-private. The

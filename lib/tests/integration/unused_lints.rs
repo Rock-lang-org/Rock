@@ -288,6 +288,35 @@ fn test_only_the_head_of_a_qualified_type_path_uses_an_import() {
     assert_eq!(messages(&warnings), ["unused import: `shapes::Point`"]);
 }
 
+const POINT_MODULE: &str =
+    "< struct Point\n    < x: I64\nimpl Point\n    zero = -> Point\n        x: 0\n";
+
+#[test]
+fn test_type_imports_used_by_static_calls_patterns_and_bounds_count_as_used() {
+    let warnings = lint_files(
+        "mod shapes\n> shapes::Point\n> std::clone::Clone\n\
+         same: T -> T where T: Clone\nsame = value -> value\n\
+         main = !->\n    match Point::zero!\n        Point x: x => (same x).println!\n",
+        &[("shapes", POINT_MODULE)],
+        &[],
+    ).unwrap();
+    assert_eq!(messages(&warnings), Vec::<String>::new());
+}
+
+#[test]
+fn test_a_nearer_type_import_does_not_use_the_outer_import() {
+    let warnings = lint_files(
+        "mod shapes\n> shapes::Point\nmod child\nmain = !-> child::run!.println!\n",
+        &[
+            ("shapes", POINT_MODULE),
+            ("child", "> shapes::Point\n< run = -> Point::zero!.x\n"),
+        ],
+        &[],
+    ).unwrap();
+    assert_eq!(messages(&warnings), ["unused import: `shapes::Point`"]);
+    assert_eq!(warnings.0[0].primary.as_ref().unwrap().span.start, 13);
+}
+
 #[test]
 fn test_a_value_import_reexport_counts_as_used() {
     let warnings = lint_files(

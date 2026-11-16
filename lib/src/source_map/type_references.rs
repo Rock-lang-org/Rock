@@ -14,7 +14,9 @@ impl SemanticSourceMap {
         owner: DefId,
         items: &crate::collect::DeclarationItems,
         resolver: &crate::collect::resolver::ResolverTables,
+        module: Option<&str>,
     ) {
+        let resolver = &ScopedResolver { tables: resolver, module };
         let generic_params = match top_level {
             ast::TopLevel::StructDecl(_) => items
                 .structure(owner)
@@ -279,10 +281,26 @@ impl SemanticSourceMap {
     }
 }
 
+/// Header names resolve like lowering does: the declaring module's own import
+/// aliases first, then crate-wide item paths. A bare global lookup would miss
+/// names that are only imported into this module.
+struct ScopedResolver<'a> {
+    tables: &'a crate::collect::resolver::ResolverTables,
+    module: Option<&'a str>,
+}
+
+impl ScopedResolver<'_> {
+    fn resolve_item_or_alias(&self, name: &str) -> Option<DefId> {
+        self.module
+            .and_then(|module| self.tables.resolve_module_local_alias(module, name))
+            .or_else(|| self.tables.resolve_item_or_alias(name))
+    }
+}
+
 fn record_type_references(
     ty: &ast::ParseType,
     generic_ids: &HashMap<String, GenericParamId>,
-    resolver: &crate::collect::resolver::ResolverTables,
+    resolver: &ScopedResolver<'_>,
     map: &mut SemanticSourceMap,
 ) {
     match ty {
@@ -334,7 +352,7 @@ fn record_type_references(
 fn record_type_inner_reference(
     inner: &ast::ParseTypeInner,
     generic_ids: &HashMap<String, GenericParamId>,
-    resolver: &crate::collect::resolver::ResolverTables,
+    resolver: &ScopedResolver<'_>,
     map: &mut SemanticSourceMap,
 ) {
     if let Some(generic) = generic_ids.get(&inner.name) {
@@ -366,7 +384,7 @@ pub(super) fn type_inner_name_span(inner: &ast::ParseTypeInner) -> Span {
 fn record_type_application(
     application: &ast::TypeApplication,
     generic_ids: &HashMap<String, GenericParamId>,
-    resolver: &crate::collect::resolver::ResolverTables,
+    resolver: &ScopedResolver<'_>,
     map: &mut SemanticSourceMap,
 ) {
     record_type_references(&application.constructor, generic_ids, resolver, map);

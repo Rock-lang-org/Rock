@@ -8,7 +8,7 @@ use crate::types::Type;
 use std::collections::HashMap;
 
 impl Lowerer {
-    pub(super) fn full_path_span(path: &[ast::IdentOrType]) -> Span {
+    pub(crate) fn full_path_span(path: &[ast::IdentOrType]) -> Span {
         let first = path.first().expect("path must not be empty");
         let last = path.last().expect("path must not be empty");
         let start = match first {
@@ -24,6 +24,30 @@ impl Lowerer {
             ast::IdentOrType::Type(ty) => ty.span().file_path,
         };
         Span::new(file_path, start, end)
+    }
+
+    /// Records the item named by the head of a qualified path (`Owner` in
+    /// `Owner::member`). Branches below record the member; the head binding
+    /// is what an import of `Owner` provides.
+    pub(crate) fn record_path_head_reference(&mut self, path: &[ast::IdentOrType]) {
+        let [head, _, ..] = path else {
+            return;
+        };
+        let Some(name) = seg_name(head) else {
+            return;
+        };
+        if self.current_generic_param_id_for_name(&name).is_some() {
+            return;
+        }
+        let Some(id) = crate::lower::resolution::LowerResolutionContext::new(self)
+            .resolve_nominal_item_id(&name)
+        else {
+            return;
+        };
+        self.record_source_reference(
+            Self::full_path_span(std::slice::from_ref(head)),
+            crate::source_map::SourceSymbol::Definition(id),
+        );
     }
 
     fn record_var_reference(&mut self, span: Span, target: &HirVarTarget) {
@@ -175,6 +199,7 @@ impl Lowerer {
         }
 
         // Multi-segment path (e.g., Crate::func, Module::func, or Enum::Variant)
+        self.record_path_head_reference(&path.path);
         let names = path_names(&path.path);
 
         if names.len() == 3 {

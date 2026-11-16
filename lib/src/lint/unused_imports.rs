@@ -1,10 +1,12 @@
 //! `unused_imports`: `>` imports not used in the importing module or its
 //! submodules.
 //!
-//! Value imports use the semantic references recorded during lowering, paired
-//! with the written path head: locals, fields and fully qualified references
-//! do not use a same-named import. Type/variant imports still use conservative
-//! name occurrences. Macro imports use expansion's selected-binding records.
+//! Imports of functions, externs, structs, enums, type aliases and traits use
+//! the semantic references recorded by collection and lowering, paired with
+//! the written path head: locals, fields, declarations and fully qualified
+//! references do not use a same-named import. Imports without a resolved item
+//! target (variants, modules) fall back to path-head name occurrences. Macro
+//! imports use expansion's selected-binding records.
 //! Glob provenance remains follow-up work; the injected std prelude is not an import.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -45,25 +47,25 @@ pub(crate) fn check_unused_imports(
     for import in macro_imports.iter().filter(|import| !import.used) {
         emit_unused_import(&import.written, &import.span, sink);
     }
-    let mut imported_values = HashSet::new();
-    let mut has_imports = collect_value_import_targets(
-        modules.root, "", hir, modules, &mut imported_values,
+    let mut imported_items = HashSet::new();
+    let mut has_imports = collect_item_import_targets(
+        modules.root, "", hir, modules, &mut imported_items,
     );
     for (path, module) in &modules.files {
-        has_imports |= collect_value_import_targets(
-            module, path, hir, modules, &mut imported_values,
+        has_imports |= collect_item_import_targets(
+            module, path, hir, modules, &mut imported_items,
         );
     }
     if !has_imports {
         return;
     }
-    // Index only references to imported callables, not every callable in the
-    // crate. Type-only imports need no value-reference index at all.
+    // Index only references to imported items, not every reference in the
+    // crate; crates without resolved item imports skip the index.
     let mut references: HashMap<_, Vec<_>> = HashMap::new();
-    if !imported_values.is_empty() {
+    if !imported_items.is_empty() {
         for reference in hir.source_map.references() {
             if let SourceSymbol::Definition(id) = reference.target {
-                if imported_values.contains(&id) {
+                if imported_items.contains(&id) {
                     references.entry((reference.span.file_path.clone(), reference.span.start))
                         .or_default().push((reference.span.end, id));
                 }
@@ -78,31 +80,38 @@ pub(crate) fn check_unused_imports(
 
     for scope in &mut scopes {
         for import in &mut scope.imports {
-            import.value_target = value_import_target(hir, modules, &scope.path, &import.written);
+            import.item_target = item_import_target(hir, modules, &scope.path, &import.written);
         }
     }
-    let mut value_bindings: HashMap<_, Vec<_>> = HashMap::new();
+    let mut item_bindings: HashMap<_, Vec<_>> = HashMap::new();
     for (scope_index, scope) in scopes.iter().enumerate() {
         for (import_index, import) in scope.imports.iter().enumerate() {
-            if let Some(id) = import.value_target {
-                value_bindings.entry((scope.path.as_str(), import.name.as_str()))
+            if let Some(id) = import.item_target {
+                item_bindings.entry((scope.path.as_str(), import.name.as_str()))
                     .or_default().push((id, scope_index, import_index));
             }
         }
     }
-    let mut used_values = HashSet::new();
+    let declared: HashMap<&str, &HashSet<String>> = scopes.iter()
+        .map(|scope| (scope.path.as_str(), &scope.declared))
+        .collect();
+    let mut used_items = HashSet::new();
     for scope in &scopes {
         let uses = scope.values.iter().map(|(name, id)| (name, Some(*id)))
             .chain(scope.reexports.iter().map(|name| (name, None)));
         for (name, id) in uses {
             let mut path = scope.path.as_str();
             loop {
-                if let Some(bindings) = value_bindings.get(&(path, name.as_str())) {
+                // A module's own item shadows imports of enclosing modules.
+                if declared.get(path).is_some_and(|names| names.contains(name)) {
+                    break;
+                }
+                if let Some(bindings) = item_bindings.get(&(path, name.as_str())) {
                     // A nearer import owns this name even if its target differs.
                     if let Some((_, scope, import)) = bindings.iter().rev()
                         .find(|(target, _, _)| id.is_none_or(|id| *target == id))
                     {
-                        used_values.insert((*scope, *import));
+                        used_items.insert((*scope, *import));
                     }
                     break;
                 }
@@ -116,8 +125,8 @@ pub(crate) fn check_unused_imports(
 
     for (scope_index, scope) in scopes.iter().enumerate() {
         for (import_index, import) in scope.imports.iter().enumerate() {
-            let used = if import.value_target.is_some() {
-                used_values.contains(&(scope_index, import_index))
+            let used = if import.item_target.is_some() {
+                used_items.contains(&(scope_index, import_index))
             } else {
                 scopes
                 .iter()
@@ -139,7 +148,7 @@ fn emit_unused_import(written: &str, span: &Span, sink: &mut LintSink<'_>) {
     );
 }
 
-fn collect_value_import_targets(
+fn collect_item_import_targets(
     module: &ast::Module,
     scope: &str,
     hir: &ResolvedHirProgram,
@@ -152,7 +161,7 @@ fn collect_value_import_targets(
             TopLevel::Import(path) => {
                 has_imports = true;
                 let written = path_names(path.segments()).join("::");
-                if let Some(id) = value_import_target(hir, modules, scope, &written) {
+                if let Some(id) = item_import_target(hir, modules, scope, &written) {
                     targets.insert(id);
                 }
             }
@@ -164,7 +173,7 @@ fn collect_value_import_targets(
                         format!("{scope}::{}", name.name)
                     }
                 });
-                has_imports |= collect_value_import_targets(
+                has_imports |= collect_item_import_targets(
                     &child.0, path.as_deref().unwrap_or(scope), hir, modules, targets,
                 );
             }
@@ -174,7 +183,7 @@ fn collect_value_import_targets(
     has_imports
 }
 
-fn value_import_target(
+fn item_import_target(
     hir: &ResolvedHirProgram,
     modules: &SourceModules<'_>,
     scope: &str,
@@ -192,7 +201,13 @@ fn value_import_target(
         .or_else(|| resolver.resolve_item_or_alias(&relative))
         .or_else(|| qualified.as_deref().and_then(|name| resolver.resolve_item_or_alias(name)))
         .or_else(|| root_qualified.as_deref().and_then(|name| resolver.resolve_item_or_alias(name)))?;
-    (hir.program.functions.contains_key(&id) || hir.program.externs.contains_key(&id))
+    let program = &hir.program;
+    (program.functions.contains_key(&id)
+        || program.externs.contains_key(&id)
+        || program.structs.contains_key(&id)
+        || program.enums.contains_key(&id)
+        || program.type_aliases.contains_key(&id)
+        || program.traits.contains_key(&id))
         .then_some(id)
 }
 
@@ -209,7 +224,7 @@ struct ImportSite {
     name: String,
     written: String,
     span: Span,
-    value_target: Option<DefId>,
+    item_target: Option<DefId>,
 }
 
 /// One module body: its imports and every other name written in it, nested
@@ -220,6 +235,7 @@ struct ModuleScope {
     names: HashSet<String>,
     values: Vec<(String, DefId)>,
     reexports: HashSet<String>,
+    declared: HashSet<String>,
 }
 
 type ValueReferences = HashMap<(PathBuf, usize), Vec<(usize, DefId)>>;
@@ -238,6 +254,7 @@ fn collect_scopes(
         values: Vec::new(),
         reexports: HashSet::new(),
         declaring: false,
+        declared: HashSet::new(),
     };
     walk_module(&mut collector, module);
     let ScopeCollector {
@@ -246,6 +263,7 @@ fn collect_scopes(
         children,
         values,
         reexports,
+        declared,
         ..
     } = collector;
     scopes.push(ModuleScope {
@@ -254,6 +272,7 @@ fn collect_scopes(
         names,
         values,
         reexports,
+        declared,
     });
     for (name, child) in children {
         let child_path = if path.is_empty() {
@@ -273,6 +292,7 @@ struct ScopeCollector<'a, 'r> {
     values: Vec<(String, DefId)>,
     reexports: HashSet<String>,
     declaring: bool,
+    declared: HashSet<String>,
 }
 
 impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
@@ -298,11 +318,13 @@ impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
     }
 
     fn visit_struct_decl(&mut self, node: &'a ast::StructDecl) {
+        self.declared.insert(node.name.name.clone());
         self.declaring = true;
         crate::ast::visit::walk_struct_decl(self, node);
     }
 
     fn visit_enum_decl(&mut self, node: &'a ast::EnumDecl) {
+        self.declared.insert(node.name.name.clone());
         self.declaring = true;
         crate::ast::visit::walk_enum_decl(self, node);
     }
@@ -318,6 +340,14 @@ impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
             walk_parse_type_inner(self, node);
             return;
         }
+        let span = &node.span;
+        if let Some(targets) = self.references.get(&(span.file_path.clone(), span.start)) {
+            if let Some(head) = node.name.split("::").next() {
+                for (_, id) in targets.iter().filter(|(end, _)| *end <= span.end) {
+                    self.values.push((head.to_string(), *id));
+                }
+            }
+        }
         // Only the head of `a::B` binds through an import; later segments
         // are members of that binding, not uses of a same-named import.
         if let Some(head) = node.name.split("::").next() {
@@ -329,6 +359,7 @@ impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
     // The shared walker skips these type positions; names written there still
     // use imports.
     fn visit_trait_decl(&mut self, node: &'a ast::TraitDecl) {
+        self.declared.insert(node.name.name.clone());
         self.declaring = true;
         walk_trait_decl(self, node);
         walk_list!(self, visit_where_clause, &node.where_clauses);
@@ -376,7 +407,7 @@ impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
                         name: name.clone(),
                         written: names.join("::"),
                         span,
-                        value_target: None,
+                        item_target: None,
                     });
                 }
             }

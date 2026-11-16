@@ -38,6 +38,7 @@ impl Lowerer {
             }
         }
         let segments = path_names(&inst.name.path);
+        self.record_path_head_reference(&inst.name.path);
 
         let struct_resolution = crate::lower::resolution::LowerResolutionContext::new(self)
             .resolve_struct_literal_path(&segments);
@@ -138,6 +139,12 @@ impl Lowerer {
 
         // Check if this is a known struct
         if let Some(hir_struct) = struct_resolution.structure {
+            if let [head] = inst.name.path.as_slice() {
+                self.record_source_reference(
+                    Self::full_path_span(std::slice::from_ref(head)),
+                    crate::source_map::SourceSymbol::Definition(hir_struct.id),
+                );
+            }
             let current_impl_matches = self.item_scope.struct_impl() == Some(type_name.as_str())
                 || self.item_scope.struct_impl().is_some_and(|name| {
                     crate::lower::resolution::LowerResolutionContext::new(self)

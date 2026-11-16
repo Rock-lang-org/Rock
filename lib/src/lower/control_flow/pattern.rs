@@ -179,6 +179,7 @@ impl Lowerer {
                         }
                     }
                 }
+                self.record_path_head_reference(&inst_pat.name.path);
                 let written_name: String = path_names(&inst_pat.name.path).join("::");
                 // An imported variant (`> Light::Off`, the prelude's `Some`)
                 // is matched exactly like its qualified spelling.
@@ -639,6 +640,14 @@ impl Lowerer {
                         let struct_info =
                             crate::lower::resolution::LowerResolutionContext::new(self)
                                 .resolve_struct_type(&type_name);
+                        if let ([head], Some(struct_def)) =
+                            (inst_pat.name.path.as_slice(), struct_info.as_ref())
+                        {
+                            self.record_source_reference(
+                                Self::full_path_span(std::slice::from_ref(head)),
+                                crate::source_map::SourceSymbol::Definition(struct_def.id),
+                            );
+                        }
                         let resolved_expected_ty = self.engine.resolve(expected_ty);
                         let type_args = match &resolved_expected_ty {
                             Type::Struct {

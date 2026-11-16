@@ -663,7 +663,7 @@ impl<'a> LowerResolutionContext<'a> {
             .cloned()
     }
 
-    fn resolve_nominal_item_id(&self, name: &str) -> Option<DefId> {
+    pub(crate) fn resolve_nominal_item_id(&self, name: &str) -> Option<DefId> {
         let id = self.resolve_module_alias_or_item_id(name)?;
         self.canonical_name(id).map(|_| id)
     }

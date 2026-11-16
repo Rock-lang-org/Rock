@@ -76,7 +76,10 @@ impl SemanticSourceMap {
                 None,
             );
             let reference_start = self.references.len();
-            self.record_top_level_type_references(top_level, item.def_id, items, resolver);
+            let module_name = resolver.module_names_by_id.get(&module_id).map(String::as_str);
+            self.record_top_level_type_references(
+                top_level, item.def_id, items, resolver, module_name,
+            );
             // Preserve ownership of annotation references after normalization
             // erases aliases from HIR types.
             for reference in &mut self.references[reference_start..] {
