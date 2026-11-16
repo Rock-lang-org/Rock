@@ -268,9 +268,18 @@ pub(super) fn conflicting_caller_vars(hir: &PartialHir) -> HashSet<TypeVarId> {
         }
         let struct_bound = field_receiver_vars(hir, function);
         let mut instances = HashMap::<TypeVarId, Vec<Type>>::new();
-        for args in &call_args {
+        // Calls that bound each variable. A variable can occur in several
+        // parameters, so counting its instances would let one caller that
+        // binds it twice hide another caller that binds it not at all.
+        let mut binding_calls = HashMap::<TypeVarId, HashSet<usize>>::new();
+        for (call_index, args) in call_args.iter().enumerate() {
+            let mut call_instances = HashMap::<TypeVarId, Vec<Type>>::new();
             for (param, (arg, _)) in function.params.iter().zip(args) {
-                match_instance(&hir.engine, &param.ty, arg, &mut instances);
+                match_instance(&hir.engine, &param.ty, arg, &mut call_instances);
+            }
+            for (var, types) in call_instances {
+                binding_calls.entry(var).or_default().insert(call_index);
+                instances.entry(var).or_default().extend(types);
             }
         }
         for (var, types) in instances {
@@ -280,7 +289,10 @@ pub(super) fn conflicting_caller_vars(hir: &PartialHir) -> HashSet<TypeVarId> {
             // An unresolved caller is not evidence of agreement. Committing a
             // different caller now would irreversibly specialize this header
             // before the unresolved call can reveal its own receiver type.
-            if types.len() < call_args.len() || types.iter().any(|ty| {
+            let every_call_binds = binding_calls
+                .get(&var)
+                .is_some_and(|calls| calls.len() == call_args.len());
+            if !every_call_binds || types.iter().any(|ty| {
                 crate::type_services::visit::type_any(ty, |nested| {
                     matches!(nested, Type::TypeVar(_) | Type::Projection { .. })
                 })
