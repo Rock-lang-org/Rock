@@ -52,5 +52,6 @@ mod trait_dispatch;
 mod try_protocol;
 mod type_checking;
 mod unsafe_callables;
+mod unused_lints;
 mod utf8_strings;
 mod vec;

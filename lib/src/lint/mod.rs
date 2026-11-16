@@ -4,12 +4,17 @@
 //! Lint passes report through [`LintSink::emit`]; the configured
 //! [`LintLevels`] decide whether a finding is dropped, warned or denied.
 
+mod unused_variables;
+mod walk;
+
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Diagnostics};
 use crate::infer::ResolvedHirProgram;
 
 /// Runs every lint pass over the finalized HIR of the current crate.
-pub fn run_lints(_hir: &ResolvedHirProgram, levels: &LintLevels) -> Diagnostics {
-    LintSink::new(levels).finish()
+pub fn run_lints(hir: &ResolvedHirProgram, levels: &LintLevels) -> Diagnostics {
+    let mut sink = LintSink::new(levels);
+    unused_variables::check_unused_variables(hir, &mut sink);
+    sink.finish()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
