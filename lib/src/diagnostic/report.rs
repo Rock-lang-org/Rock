@@ -109,8 +109,14 @@ impl Diagnostic {
                 } else {
                     span.file_path.to_string_lossy().to_string()
                 };
+                // The primary label takes the severity's header colour
+                // (ariadne's error/warning/advice colours).
                 let color = if i == 0 {
-                    Color::Fixed(9)
+                    match self.severity {
+                        DiagnosticSeverity::Error => Color::Fixed(9),
+                        DiagnosticSeverity::Warning => Color::Yellow,
+                        DiagnosticSeverity::Info | DiagnosticSeverity::Hint => Color::Fixed(147),
+                    }
                 } else {
                     colors.next()
                 };
