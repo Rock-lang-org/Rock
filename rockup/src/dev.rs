@@ -53,6 +53,8 @@ pub(crate) fn build_std_package_invocation(
         args: vec![
             "--crate-name".into(),
             rock_shared::sysroot::STD_CRATE_NAME.into(),
+            "--crate-type".into(),
+            "lib".into(),
             "--entry-file".into(),
             std_root.join(library.path()).into_os_string(),
             "--output-dir".into(),

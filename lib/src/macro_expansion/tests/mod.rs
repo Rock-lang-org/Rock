@@ -1,7 +1,6 @@
 use super::*;
 use crate::{language_items::LanguageItemRole, parser::parse_string, Config};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -27,10 +26,16 @@ fn proc_macro_artifact_with_response(
     fs::create_dir_all(&temp_dir).unwrap();
     let host = temp_dir.join("proc_macro_host");
     fs::write(host.with_extension("response"), response).unwrap();
-    fs::write(&host, "#!/bin/sh\ncat >/dev/null\ncat \"$0.response\"\n").unwrap();
-    let mut permissions = fs::metadata(&host).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&host, permissions).unwrap();
+    // Write the executable from a child process: a write fd opened here could
+    // leak into another test thread's fork and make exec fail with ETXTBSY.
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("printf '#!/bin/sh\\ncat >/dev/null\\ncat \"$0.response\"\\n' > \"$1\" && chmod 755 \"$1\"")
+        .arg("sh")
+        .arg(&host)
+        .status()
+        .unwrap();
+    assert!(status.success());
 
     let artifact = proc_macro::ProcMacroArtifact {
         artifact_format_version: crate::products::PRODUCT_ARTIFACT_FORMAT_VERSION,

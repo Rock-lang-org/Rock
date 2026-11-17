@@ -526,12 +526,15 @@ fn test_no_std_root_with_no_std_dependency_does_not_load_explicit_empty_sysroot(
 #[test]
 fn test_build_project_reports_missing_rockc_override() {
     let temp_dir = temp_test_dir("missing_rockc_override");
-    write_package(
+    // no_std: a cold std sysroot would otherwise be packaged first and fail
+    // in rockup, before the root rockc spawn this test is about.
+    write_package_with_options(
         &temp_dir,
         "missing_rockc",
         "src/main.rk",
         &[],
         "main = -> 0\n",
+        true,
     );
     if run_isolated_test(
         "tests::build::test_build_project_reports_missing_rockc_override",
@@ -543,7 +546,7 @@ fn test_build_project_reports_missing_rockc_override() {
     let result = build_project(&temp_dir, BuildProfile::Debug);
 
     let error = result.unwrap_err();
-    assert!(error.contains("Failed to spawn rockc"));
+    assert!(error.contains("Failed to spawn rockc"), "{error}");
     assert!(error.contains("root executable for crate 'missing_rockc'"));
 
     let _ = fs::remove_dir_all(temp_dir);
