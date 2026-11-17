@@ -200,6 +200,42 @@ main = ->
 }
 
 #[test]
+fn library_inherent_impl_on_foreign_type_survives_dead_code_pruning() {
+    let temp_dir = temp_test_dir("foreign_extension_impl");
+    let provider_dir = temp_dir.join("provider");
+    let provider_artifact = temp_dir.join("provider.rkca");
+    let extension_dir = temp_dir.join("extension");
+    let extension_artifact = temp_dir.join("extension.rkca");
+
+    write_crate(&provider_dir, "provider", "", "< struct Foreign\n    < value: I64\n");
+    build_product_artifact(&provider_dir, "provider", &provider_artifact, true, true);
+
+    write_crate(
+        &extension_dir,
+        "extension",
+        "",
+        "> provider::Foreign\n\nimpl Foreign\n    @answer = -> @value\n",
+    );
+    build_product_artifact_with_extern_artifacts(
+        &extension_dir,
+        "extension",
+        &extension_artifact,
+        true,
+        true,
+        vec![("provider".to_string(), provider_artifact.clone())],
+    );
+
+    let (_, exit_code) = compile_and_run_artifact_app(
+        "> provider::Foreign\n\nmain = ->\n    item = Foreign\n        value: 42\n    item.answer!\n",
+        vec![
+            ("provider".to_string(), provider_artifact),
+            ("extension".to_string(), extension_artifact),
+        ],
+    );
+    assert_eq!(exit_code, 42);
+}
+
+#[test]
 fn renamed_artifact_index_and_index_mut_drive_downstream_syntax() {
     let temp_dir = temp_test_dir("renamed_artifact_index_pair");
     let provider_dir = temp_dir.join("provider");

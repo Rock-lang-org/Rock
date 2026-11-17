@@ -77,12 +77,14 @@ impl Reachability {
                     | crate::hir::HirImplReceiverPattern::Constructor(ty) => nominal_receiver(ty),
                     crate::hir::HirImplReceiverPattern::SliceFamily { .. } => None,
                 };
-                if let Some(owner) = receiver {
-                    nominal_impls.entry(owner).or_default().push(imp.id);
-                } else {
-                    // Primitive/slice and blanket implementations have no local
-                    // nominal visibility gate and can be selected downstream.
-                    pending.push(imp.id);
+                match receiver {
+                    Some(owner) if owner.crate_id == imp.id.crate_id => {
+                        nominal_impls.entry(owner).or_default().push(imp.id);
+                    }
+                    // Primitive/slice, blanket and foreign-receiver implementations
+                    // have no local nominal visibility gate and can be selected
+                    // downstream.
+                    _ => pending.push(imp.id),
                 }
             }
         }
