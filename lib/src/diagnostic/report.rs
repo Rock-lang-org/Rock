@@ -81,7 +81,26 @@ impl Diagnostic {
                 builder = builder.with_help(self.help.join("\n"));
             }
 
-            for (i, label) in self.primary.iter().chain(self.secondary.iter()).enumerate() {
+            // ariadne starts a new section whenever a label sits above the
+            // previous one, so add labels in source order (primary file first)
+            // to render one snippet per file, read top to bottom.
+            let mut ordered: Vec<_> = self
+                .primary
+                .iter()
+                .chain(self.secondary.iter())
+                .enumerate()
+                .collect();
+            ordered.sort_by(|(_, left), (_, right)| {
+                let key = |label: &DiagnosticLabel| {
+                    (
+                        label.span.file_path != primary_span.file_path,
+                        label.span.file_path.clone(),
+                        label.span.start,
+                    )
+                };
+                key(left).cmp(&key(right))
+            });
+            for (i, label) in ordered {
                 let span = &label.span;
                 let label_file_id = if span.file_path == primary_span.file_path {
                     file_id.clone()
