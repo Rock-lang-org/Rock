@@ -137,6 +137,25 @@ fn test_library_build_creates_artifact_and_object() {
 }
 
 #[test]
+fn test_changed_lint_levels_invalidate_cached_library() {
+    let temp_dir = temp_test_dir("lint_levels_invalidate_cache");
+    write_package(
+        &temp_dir,
+        "lint_cache",
+        "lib.rk",
+        &[],
+        "< probe = ->\n    unused = 1\n    2\n",
+    );
+    let lints = |flag: &str| vec![flag.to_string(), "unused".to_string()];
+
+    crate::build::build_project(&temp_dir, BuildProfile::Debug, lints("-A")).unwrap();
+    let error = crate::build::build_project(&temp_dir, BuildProfile::Debug, lints("-D"));
+    assert!(error.is_err(), "denied lints must rebuild a cached library");
+
+    let _ = fs::remove_dir_all(temp_dir);
+}
+
+#[test]
 fn test_missing_dependency_object_triggers_rebuild() {
     let temp_dir = temp_test_dir("missing_object_rebuild");
     let dep = temp_dir.join("dep");

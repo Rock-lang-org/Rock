@@ -275,6 +275,10 @@ pub(crate) fn ensure_artifact(
                     package.manifest.crate_.name
                 ),
             )?;
+            let stamp = lint_stamp_path(&artifact_path);
+            fs::write(&stamp, lint_stamp(&package)).map_err(|e| {
+                format!("Failed to write lint stamp {}: {}", stamp.display(), e)
+            })?;
         }
 
         state
@@ -303,6 +307,12 @@ fn artifact_is_fresh(
 ) -> Result<bool, String> {
     let object_path = package.object_path();
     if !artifact_path.exists() || !object_path.exists() {
+        return Ok(false);
+    }
+
+    // Lint levels change the outcome (denied lints fail the build), so an
+    // artifact built under different levels is stale.
+    if fs::read_to_string(lint_stamp_path(artifact_path)).ok() != Some(lint_stamp(package)) {
         return Ok(false);
     }
 
@@ -343,6 +353,14 @@ fn artifact_is_fresh(
     }
 
     Ok(true)
+}
+
+fn lint_stamp_path(artifact_path: &Path) -> PathBuf {
+    artifact_path.with_extension("lints")
+}
+
+fn lint_stamp(package: &Package) -> String {
+    package.lint_args.join("\n")
 }
 
 fn validate_artifact_with_rockc(artifact_path: &Path) -> Result<bool, String> {
