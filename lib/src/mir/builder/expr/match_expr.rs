@@ -95,6 +95,21 @@ impl<'a> MirBuilder<'a> {
             }
             _ => false,
         };
+        // `true => ..` and `false => ..` cover every Bool: the last arm needs no
+        // check, so no unmatched path reaches the merge without a value.
+        let bool_patterns_exhaustive = matches!(scrutinee.ty, Type::Bool) && {
+            let covered: HashSet<bool> = arms
+                .iter()
+                .filter(|arm| arm.guard.is_none())
+                .filter_map(|arm| match &arm.pattern {
+                    crate::hir::HirPattern::Literal(crate::hir::HirLiteralPattern::Bool(value)) => {
+                        Some(*value)
+                    }
+                    _ => None,
+                })
+                .collect();
+            covered.len() == 2
+        };
         if let Some(current) = self.current_block {
             let target = check_blocks.first().copied().unwrap_or(merge_block);
             self.blocks[current.0].terminator = Some(Terminator::goto(
@@ -149,7 +164,9 @@ impl<'a> MirBuilder<'a> {
                         Some(scrutinee.span.clone()),
                     );
                 }
-            } else if self.match_arm_is_catch_all(&arm.pattern) {
+            } else if self.match_arm_is_catch_all(&arm.pattern)
+                || (bool_patterns_exhaustive && index + 1 == arms.len() && arm.guard.is_none())
+            {
                 if let Some(current) = self.current_block {
                     self.blocks[current.0].terminator = Some(Terminator::goto(
                         matched_block,

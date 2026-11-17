@@ -639,3 +639,29 @@ main = ->
     );
     assert_eq!(output.trim(), "50");
 }
+
+#[test]
+fn bool_match_with_both_literals_initializes_its_binding() {
+    let output = compile_and_run(
+        r#"
+pick = flag !->
+    value = match flag
+        true => 3
+        false => 4
+    value.println!
+
+pick_or_return = flag !->
+    value = match flag
+        true => 5
+        false => return
+    value.println!
+
+main = !->
+    pick false
+    pick true
+    pick_or_return false
+    pick_or_return true
+"#,
+    );
+    assert_eq!(output, "4\n3\n5\n");
+}
