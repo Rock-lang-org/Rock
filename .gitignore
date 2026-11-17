@@ -15,6 +15,7 @@ MEMORY.md
 /dist/
 /.beads/
 /.vscode/
+/.agent-work/
 
 # Beads / Dolt files (added by bd init)
 .dolt/
