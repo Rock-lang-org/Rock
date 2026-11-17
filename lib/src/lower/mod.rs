@@ -90,6 +90,9 @@ pub struct Lowerer {
     /// `return` values whose expected type was still unknown, checked once
     /// the body's own value has fixed it (see `check_return_type`).
     pub(crate) pending_return_checks: Vec<statement::PendingReturnCheck>,
+    /// The function or closure whose body is being lowered, named by `return`
+    /// diagnostics.
+    pub(crate) return_owner: Option<statement::ReturnOwner>,
 }
 
 impl Lowerer {
@@ -124,6 +127,7 @@ impl Lowerer {
             body: BodyState::default(),
             source_map: Default::default(),
             pending_return_checks: Vec::new(),
+            return_owner: None,
         }
     }
 

@@ -60,6 +60,17 @@ impl LowerDiagnosticSink {
         self.push_with_code(message, span, DiagnosticCode::Type);
     }
 
+    pub(crate) fn push_type_with_span_and_labels(
+        &mut self,
+        message: String,
+        span: Span,
+        labels: Vec<crate::diagnostic::DiagnosticLabel>,
+    ) {
+        let mut error = ResolveError::with_span_and_labels(message, span, labels);
+        error.code = DiagnosticCode::Type;
+        self.diagnostics.errors.push(error);
+    }
+
     pub(crate) fn push_selection_with_span(&mut self, message: String, span: Span) {
         self.push_with_code(message, span, DiagnosticCode::Selection);
     }

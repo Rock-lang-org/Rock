@@ -153,6 +153,7 @@ impl Lowerer {
         let lambda_return_ty = self.engine.fresh_type_var_at(lambda.span.clone());
         let loop_stack = self.body.suspend_loops();
         let return_checks = self.return_checks_mark();
+        let return_owner = self.enter_return_owner(lambda.span.clone(), "closure".to_string());
         let mut body = self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
             lowerer.lower_lambda_body(lambda)
         });
@@ -160,7 +161,8 @@ impl Lowerer {
         let span = lambda.span.clone();
         self.flush_return_checks_for_diverging_body(return_checks, &body.ty);
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
-        self.flush_return_checks(return_checks);
+        self.flush_return_checks(return_checks, Some(&body));
+        self.restore_return_owner(return_owner);
         let ret_type = self.engine.resolve(&lambda_return_ty);
         Self::type_diverging_body_as_return(&mut body, &ret_type);
         self.body.borrowed_capture_sources = enclosing_borrows;
@@ -262,7 +264,7 @@ impl Lowerer {
         self.body.resume_loops(loop_stack);
         self.flush_return_checks_for_diverging_body(return_checks, &body.ty);
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
-        self.flush_return_checks(return_checks);
+        self.flush_return_checks(return_checks, Some(&body));
         let body_ty = self.engine.resolve(&lambda_return_ty);
         Self::type_diverging_body_as_return(&mut body, &body_ty);
         let mut captures = self.collect_lambda_captures(&body, std::slice::from_ref(&param));

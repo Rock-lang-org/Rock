@@ -325,6 +325,8 @@ impl Lowerer {
             body_context.register_generic_param(generic);
         }
         let return_checks = self.return_checks_mark();
+        let return_owner =
+            self.enter_return_owner(fd.name.span.clone(), format!("function `{base_name}`"));
         let body = self.with_body_context(body_context, |lowerer| {
             lowerer.push_scope();
 
@@ -368,7 +370,8 @@ impl Lowerer {
             self.diagnostics
                 .push_type_with_span(message, fd.lambda.span.clone());
         }
-        self.flush_return_checks(return_checks);
+        self.flush_return_checks(return_checks, Some(&body));
+        self.restore_return_owner(return_owner);
         func.body = body;
         self.resolve_all_types_in_function(&mut func);
         self.items.insert_function(func);
@@ -669,6 +672,10 @@ impl Lowerer {
                 body_context
                     .seed_after_existing_locals(func.params.iter().map(|param| param.local_id));
                 let return_checks = self.return_checks_mark();
+                let return_owner = self.enter_return_owner(
+                    fd.name.span.clone(),
+                    format!("method `{type_name}.{method_name}`"),
+                );
                 let body = self.with_body_context(body_context, |lowerer| {
                     lowerer.with_current_struct_impl(current_struct_impl, |lowerer| {
                         lowerer.lower_function_body_block(fd)
@@ -686,7 +693,8 @@ impl Lowerer {
                     self.diagnostics
                         .push_type_with_span(message, fd.lambda.span.clone());
                 }
-                self.flush_return_checks(return_checks);
+                self.flush_return_checks(return_checks, Some(&body));
+                self.restore_return_owner(return_owner);
                 func.body = body;
                 self.resolve_all_types_in_function(&mut func);
                 self.pop_scope();

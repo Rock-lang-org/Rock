@@ -181,6 +181,10 @@ impl Lowerer {
             }
             context.seed_after_existing_locals(func.params.iter().map(|param| param.local_id));
             let return_checks = self.return_checks_mark();
+            let return_owner = self.enter_return_owner(
+                fd.name.span.clone(),
+                format!("method `{trait_name}.{method_name}`"),
+            );
             let body = self.with_body_context(context, |lowerer| {
                 lowerer.push_scope();
 
@@ -228,7 +232,8 @@ impl Lowerer {
                         .push_type_with_span(message, fd.lambda.span.clone());
                 }
             }
-            self.flush_return_checks(return_checks);
+            self.flush_return_checks(return_checks, Some(&body));
+            self.restore_return_owner(return_owner);
 
             func.body = body;
 

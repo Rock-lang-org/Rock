@@ -12,6 +12,16 @@ pub(crate) struct PendingReturnCheck {
     value_ty: Type,
     expected: Type,
     span: crate::lexer::Span,
+    owner: Option<ReturnOwner>,
+}
+
+/// The function or closure a `return` leaves, for diagnostic context.
+#[derive(Clone)]
+pub(crate) struct ReturnOwner {
+    /// Declaration site: the function name, or the closure's arrow.
+    pub(crate) span: crate::lexer::Span,
+    /// How diagnostics name it, e.g. "function `explicit`" or "closure".
+    pub(crate) description: String,
 }
 
 impl Lowerer {
@@ -106,6 +116,7 @@ impl Lowerer {
             value_ty: value_ty.clone(),
             expected,
             span: span.clone(),
+            owner: self.return_owner.clone(),
         };
         // An inferred return type is still open here. Binding it to an early
         // `return` would blame the body's final value instead: defer until the
@@ -113,8 +124,22 @@ impl Lowerer {
         if matches!(self.engine.resolve(&check.expected), Type::TypeVar(_)) {
             self.pending_return_checks.push(check);
         } else {
-            self.apply_return_check(check);
+            self.apply_return_check(check, None);
         }
+    }
+
+    /// Makes `owner` the target named by `return` diagnostics while lowering
+    /// its body; returns the previous owner for `restore_return_owner`.
+    pub(crate) fn enter_return_owner(
+        &mut self,
+        span: crate::lexer::Span,
+        description: String,
+    ) -> Option<ReturnOwner> {
+        self.return_owner.replace(ReturnOwner { span, description })
+    }
+
+    pub(crate) fn restore_return_owner(&mut self, previous: Option<ReturnOwner>) {
+        self.return_owner = previous;
     }
 
     /// Marks where a body's deferred return checks start.
@@ -127,7 +152,19 @@ impl Lowerer {
     /// return type: the returned values do, so run their checks first.
     pub(crate) fn flush_return_checks_for_diverging_body(&mut self, mark: usize, body_ty: &Type) {
         if self.engine.resolve(body_ty) == Type::Never {
-            self.flush_return_checks(mark);
+            self.flush_return_checks(mark, None);
+        }
+    }
+
+    /// The span of the value a body completes with, which fixes an inferred
+    /// return type. None when the body ends in `return`, `break`, ...
+    fn body_result_span(body: &HirBlock) -> Option<crate::lexer::Span> {
+        if body.ty == Type::Never {
+            return None;
+        }
+        match body.stmts.last()? {
+            HirStmt::Expr(value) if value.ty != Type::Never => Some(value.span.clone()),
+            _ => None,
         }
     }
 
@@ -141,16 +178,46 @@ impl Lowerer {
 
     /// Runs the return checks deferred since `mark`, after the body's owner
     /// unified the body value with its return type.
-    pub(crate) fn flush_return_checks(&mut self, mark: usize) {
+    /// `body` is the owner's lowered body, used to point at its final value.
+    pub(crate) fn flush_return_checks(&mut self, mark: usize, body: Option<&HirBlock>) {
         if mark >= self.pending_return_checks.len() {
             return;
         }
+        let result_span = body.and_then(Self::body_result_span);
         for check in self.pending_return_checks.split_off(mark) {
-            self.apply_return_check(check);
+            self.apply_return_check(check, result_span.clone());
         }
     }
 
-    fn apply_return_check(&mut self, check: PendingReturnCheck) {
+    fn report_return_mismatch(
+        &mut self,
+        message: String,
+        check: PendingReturnCheck,
+        result_span: Option<crate::lexer::Span>,
+        expected: String,
+    ) {
+        let mut labels = Vec::new();
+        if let Some(owner) = &check.owner {
+            labels.push(crate::diagnostic::DiagnosticLabel::new(
+                format!("{} returns {expected}", owner.description),
+                owner.span.clone(),
+            ));
+        }
+        if let Some(span) = result_span.filter(|span| *span != check.span) {
+            labels.push(crate::diagnostic::DiagnosticLabel::new(
+                format!("this final value makes it {expected}"),
+                span,
+            ));
+        }
+        self.diagnostics
+            .push_type_with_span_and_labels(message, check.span, labels);
+    }
+
+    fn apply_return_check(
+        &mut self,
+        check: PendingReturnCheck,
+        result_span: Option<crate::lexer::Span>,
+    ) {
         // A trailing integer literal leaves the return type an open integer
         // variable. Unifying it with a non-integer `return` would blame the
         // literal: report the `return` instead.
@@ -168,15 +235,15 @@ impl Lowerer {
                     "Return type mismatch: this body returns an integer, but this `return` gives `{}`",
                     self.display_type(&value)
                 );
-                self.diagnostics.push_type_with_span(message, check.span);
+                self.report_return_mismatch(message, check, result_span, "an integer".to_string());
                 return;
             }
         }
         if let Err(error) = self.engine.unify(&check.value_ty, &check.expected) {
-            self.diagnostics.push_type_with_span(
-                format!("Return type mismatch: {}", error.render(&self.engine)),
-                check.span,
-            );
+            let message = format!("Return type mismatch: {}", error.render(&self.engine));
+            let expected = self.engine.resolve(&check.expected);
+            let expected = format!("`{}`", self.display_type(&expected));
+            self.report_return_mismatch(message, check, result_span, expected);
         }
     }
 
