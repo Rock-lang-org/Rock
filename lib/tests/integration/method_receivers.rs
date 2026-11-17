@@ -247,6 +247,18 @@ main = ->
 }
 
 #[test]
+fn method_with_unmet_impl_bounds_reports_innermost_missing_impl() {
+    compile_should_fail(
+        r#"
+main = !->
+    items: Vec (Result (I64 -> I64), I64) = Vec::new!
+    items.println!
+"#,
+        "method `println` from trait `Show` exists for `Vec (Result (I64 -> I64), I64)`, but its requirements are not met: requires `(Result (I64 -> I64), I64): Show`, which requires `(I64 -> I64): Show`; `I64 -> I64` does not implement `Show`",
+    );
+}
+
+#[test]
 fn mutable_binding_can_call_mut_receiver_method() {
     let output = compile_and_run(
         r#"

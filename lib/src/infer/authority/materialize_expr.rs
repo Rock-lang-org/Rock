@@ -80,6 +80,12 @@ impl MethodAuthorityContext<'_> {
                     {
                         return;
                     }
+                    if let Some(error) =
+                        self.unsatisfied_method_error(&receiver, &method_name, &expr.span)
+                    {
+                        errors.push(error);
+                        return;
+                    }
                     self.materialize_field_access(callee, errors);
                     if matches!(callee.kind, HirExprKind::FieldAccess(_, _, Some(_))) {
                         self.materialize_value_call(expr, errors);

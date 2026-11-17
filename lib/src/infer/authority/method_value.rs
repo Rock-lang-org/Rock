@@ -6,6 +6,67 @@ use super::type_predicates::contains_inference_type;
 use super::MethodAuthorityContext;
 
 impl MethodAuthorityContext<'_> {
+    /// When `receiver.method_name` names no field but an impl provides the
+    /// method under unmet `where` bounds, report the unmet bound instead of
+    /// letting the call fall back to an "unknown field" error.
+    pub(super) fn unsatisfied_method_error(
+        &mut self,
+        receiver: &HirExpr,
+        method_name: &str,
+        span: &crate::Span,
+    ) -> Option<ResolveError> {
+        let receiver_ty = self.resolved_type(&receiver.ty);
+        let struct_ty = match &receiver_ty {
+            Type::Reference { inner, .. } => inner.as_ref(),
+            ty => ty,
+        };
+        if let Type::Struct { id, .. } = struct_ty {
+            let has_field = self
+                .structs
+                .get(id)
+                .is_some_and(|structure| structure.fields.iter().any(|f| f.name == method_name));
+            if has_field {
+                return None;
+            }
+        }
+        let candidates = self.receiver_adjustment_candidates(receiver.clone());
+        let explained = self.service().explain_unsatisfied_method(
+            &candidates,
+            method_name,
+            |ty| self.resolved_type(ty),
+        )?;
+
+        let provider = explained
+            .method_trait
+            .as_deref()
+            .map(|name| format!(" from trait `{}`", name.rsplit("::").next().unwrap_or(name)))
+            .unwrap_or_default();
+        let mut message = format!(
+            "method `{method_name}`{provider} exists for `{}`, but its requirements are not met",
+            self.display_type(&explained.receiver)
+        );
+        for (index, (ty, trait_name)) in explained.chain.iter().enumerate() {
+            let trait_name = trait_name.rsplit("::").next().unwrap_or(trait_name);
+            let lead = if index == 0 { ": requires" } else { ", which requires" };
+            let shown = self.display_type(ty);
+            // `Result A, E: Show` would read as two bounds; group applied types.
+            let shown = if shown.contains(' ') { format!("({shown})") } else { shown };
+            message.push_str(&format!("{lead} `{shown}: {trait_name}`"));
+        }
+        if let Some((ty, trait_name)) = explained.chain.last() {
+            let trait_name = trait_name.rsplit("::").next().unwrap_or(trait_name);
+            message.push_str(&format!(
+                "; `{}` does not implement `{trait_name}`",
+                self.display_type(ty)
+            ));
+        }
+        Some(ResolveError::with_span_code(
+            message,
+            span.clone(),
+            crate::diagnostic::DiagnosticCode::Selection,
+        ))
+    }
+
     pub(super) fn materialize_field_access(
         &mut self,
         expr: &mut HirExpr,

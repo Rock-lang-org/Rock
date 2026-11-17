@@ -26,6 +26,9 @@ mod instantiation;
 mod self_adjustment;
 mod trait_selection;
 mod unresolved_methods;
+mod unsatisfied_methods;
+
+pub use unsatisfied_methods::UnsatisfiedMethodBound;
 
 pub struct SelectionService<'a> {
     traits: &'a HashMap<DefId, HirTrait>,

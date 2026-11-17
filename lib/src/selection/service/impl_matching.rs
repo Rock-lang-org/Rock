@@ -129,8 +129,18 @@ impl<'a> SelectionService<'a> {
         imp: &HirImpl,
         subst: &HashMap<GenericParamId, Type>,
     ) -> Option<Vec<(Type, TraitBound)>> {
+        self.check_impl_bounds(imp, subst).ok()
+    }
+
+    /// Like [`Self::impl_bound_obligations`], but a failure names the first
+    /// concrete bound that does not hold, for diagnostics.
+    pub(super) fn check_impl_bounds(
+        &self,
+        imp: &HirImpl,
+        subst: &HashMap<GenericParamId, Type>,
+    ) -> Result<Vec<(Type, TraitBound)>, (Type, TraitBound)> {
         if imp.bounds.is_empty() && imp.bounds.predicates.is_empty() {
-            return Some(Vec::new());
+            return Ok(Vec::new());
         }
 
         let mut obligations = Vec::new();
@@ -155,10 +165,10 @@ impl<'a> SelectionService<'a> {
                     continue;
                 }
                 if !self.trait_bound_satisfied(&subject, &bound) {
-                    return None;
+                    return Err((subject, bound));
                 }
             }
-            return Some(obligations);
+            return Ok(obligations);
         }
 
         for (param, bounds) in &imp.bounds {
@@ -182,12 +192,12 @@ impl<'a> SelectionService<'a> {
                     continue;
                 }
                 if !self.trait_bound_satisfied(&bounded_ty, &bound) {
-                    return None;
+                    return Err((bounded_ty, bound));
                 }
             }
         }
 
-        Some(obligations)
+        Ok(obligations)
     }
 
     pub(super) fn type_contains_type_var(ty: &Type) -> bool {
