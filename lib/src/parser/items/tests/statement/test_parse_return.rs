@@ -25,7 +25,7 @@ fn test_parse_return() {
                 secondaries: None,
                 type_annotation: None,
             },
-        )))),
+        ))), Span::test()),
     );
 
     assert_eq!(rest.len(), 0);

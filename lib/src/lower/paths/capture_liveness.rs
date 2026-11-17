@@ -188,7 +188,7 @@ impl<'a> Visitor<'a> for Liveness<'_> {
 
     fn visit_statement(&mut self, statement: &'a ast::Statement) {
         match statement {
-            ast::Statement::Return(value) => {
+            ast::Statement::Return(value, _) => {
                 self.live.clear();
                 if let Some(value) = value { value.visit(self); }
             }

@@ -13,10 +13,17 @@ pub(crate) struct FoldLoopContext {
     next_variant: HirVariantLocation,
     exit_ty: Type,
     callback_ty: Type,
+    /// Return type of the body enclosing the loop: a `return` inside the loop
+    /// body returns from that body, not from the generated callback.
+    return_ty: Type,
     span: Span,
 }
 
 impl FoldLoopContext {
+    pub(crate) fn return_ty(&self) -> &Type {
+        &self.return_ty
+    }
+
     pub(crate) fn unit(&self) -> HirExpr {
         HirExpr {
             kind: HirExprKind::Unit,
@@ -264,6 +271,7 @@ impl Lowerer {
             next_variant,
             exit_ty,
             callback_ty: callback_ty.clone(),
+            return_ty: return_ty.clone(),
             span: span.clone(),
         };
 

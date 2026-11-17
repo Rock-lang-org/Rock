@@ -180,6 +180,7 @@ impl Lowerer {
                 context.register_generic_param(generic);
             }
             context.seed_after_existing_locals(func.params.iter().map(|param| param.local_id));
+            let return_checks = self.return_checks_mark();
             let body = self.with_body_context(context, |lowerer| {
                 lowerer.push_scope();
 
@@ -215,6 +216,7 @@ impl Lowerer {
                 .map(|ret| !type_contains_projection(ret))
                 .unwrap_or(true);
             if validate_return_now {
+                self.flush_return_checks_for_diverging_body(return_checks, &body.ty);
                 if let Err(e) = self.engine.unify(&body.ty, &func.ret_type) {
                     let message = format!(
                         "In trait default method '{}.{}': return type mismatch: {}",
@@ -226,6 +228,7 @@ impl Lowerer {
                         .push_type_with_span(message, fd.lambda.span.clone());
                 }
             }
+            self.flush_return_checks(return_checks);
 
             func.body = body;
 

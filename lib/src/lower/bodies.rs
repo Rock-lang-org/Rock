@@ -324,6 +324,7 @@ impl Lowerer {
         for generic in &func.generic_params {
             body_context.register_generic_param(generic);
         }
+        let return_checks = self.return_checks_mark();
         let body = self.with_body_context(body_context, |lowerer| {
             lowerer.push_scope();
 
@@ -357,6 +358,7 @@ impl Lowerer {
             body
         });
         // Unify return type with body type
+        self.flush_return_checks_for_diverging_body(return_checks, &body.ty);
         if let Err(e) = self.engine.unify(&body.ty, &func.ret_type) {
             let message = format!(
                 "In function '{}': return type mismatch: {}",
@@ -366,6 +368,7 @@ impl Lowerer {
             self.diagnostics
                 .push_type_with_span(message, fd.lambda.span.clone());
         }
+        self.flush_return_checks(return_checks);
         func.body = body;
         self.resolve_all_types_in_function(&mut func);
         self.items.insert_function(func);
@@ -665,12 +668,14 @@ impl Lowerer {
                 }
                 body_context
                     .seed_after_existing_locals(func.params.iter().map(|param| param.local_id));
+                let return_checks = self.return_checks_mark();
                 let body = self.with_body_context(body_context, |lowerer| {
                     lowerer.with_current_struct_impl(current_struct_impl, |lowerer| {
                         lowerer.lower_function_body_block(fd)
                     })
                 });
 
+                self.flush_return_checks_for_diverging_body(return_checks, &body.ty);
                 if let Err(e) = self.engine.unify(&body.ty, &func.ret_type) {
                     let message = format!(
                         "In method '{}.{}': return type mismatch: {}",
@@ -681,6 +686,7 @@ impl Lowerer {
                     self.diagnostics
                         .push_type_with_span(message, fd.lambda.span.clone());
                 }
+                self.flush_return_checks(return_checks);
                 func.body = body;
                 self.resolve_all_types_in_function(&mut func);
                 self.pop_scope();

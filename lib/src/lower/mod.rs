@@ -87,6 +87,9 @@ pub struct Lowerer {
     pub(crate) imported_effective_trait_methods: HashMap<(DefId, DefId), DefId>,
     pub(crate) body: BodyState,
     pub(crate) source_map: crate::source_map::SemanticSourceMap,
+    /// `return` values whose expected type was still unknown, checked once
+    /// the body's own value has fixed it (see `check_return_type`).
+    pub(crate) pending_return_checks: Vec<statement::PendingReturnCheck>,
 }
 
 impl Lowerer {
@@ -120,6 +123,7 @@ impl Lowerer {
             imported_effective_trait_methods: HashMap::new(),
             body: BodyState::default(),
             source_map: Default::default(),
+            pending_return_checks: Vec::new(),
         }
     }
 

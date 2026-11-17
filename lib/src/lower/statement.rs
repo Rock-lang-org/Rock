@@ -7,6 +7,13 @@ use crate::types::Type;
 
 use crate::lower::Lowerer;
 
+/// A `return` whose value type is checked against its body's return type.
+pub(crate) struct PendingReturnCheck {
+    value_ty: Type,
+    expected: Type,
+    span: crate::lexer::Span,
+}
+
 impl Lowerer {
     // ============================================================
     // Statement Lowering Methods
@@ -75,10 +82,101 @@ impl Lowerer {
         match stmt {
             HirStmt::Let { .. } => Type::Unit,
             HirStmt::Expr(e) => e.ty.clone(),
-            HirStmt::Return(Some(e)) => e.ty.clone(),
-            HirStmt::Return(None) => Type::Unit,
+            // Control leaves the block: its value never reaches the enclosing
+            // expression, so a returning `if`/`match` arm does not shape it.
+            HirStmt::Return(_) => Type::Never,
             HirStmt::Break(_) => Type::Never,
             HirStmt::Continue => Type::Never,
+        }
+    }
+
+    /// A `return` exits the enclosing function or closure, so its value (unit
+    /// for a bare `return`) must have that body's return type. Inside `for`
+    /// loops, the outermost loop recorded the type of the body it exits.
+    fn check_return_type(&mut self, value_ty: &Type, span: &crate::lexer::Span) {
+        let outermost_loop = self.body.fold_loops().next().map(|l| l.return_ty().clone());
+        let expected = match outermost_loop {
+            Some(return_ty) => Some(return_ty),
+            None => self.current_body_return_type(),
+        };
+        let Some(expected) = expected else {
+            return;
+        };
+        let check = PendingReturnCheck {
+            value_ty: value_ty.clone(),
+            expected,
+            span: span.clone(),
+        };
+        // An inferred return type is still open here. Binding it to an early
+        // `return` would blame the body's final value instead: defer until the
+        // owner has unified its body (`flush_return_checks`).
+        if matches!(self.engine.resolve(&check.expected), Type::TypeVar(_)) {
+            self.pending_return_checks.push(check);
+        } else {
+            self.apply_return_check(check);
+        }
+    }
+
+    /// Marks where a body's deferred return checks start.
+    pub(crate) fn return_checks_mark(&self) -> usize {
+        self.pending_return_checks.len()
+    }
+
+    /// Call before unifying a body with its return type. When the body never
+    /// completes (it ends in `return`), its `Never` type must not decide the
+    /// return type: the returned values do, so run their checks first.
+    pub(crate) fn flush_return_checks_for_diverging_body(&mut self, mark: usize, body_ty: &Type) {
+        if self.engine.resolve(body_ty) == Type::Never {
+            self.flush_return_checks(mark);
+        }
+    }
+
+    /// A callable body ending in `return` has type `Never`, but later phases
+    /// compare the body with the callable's signature: give it the return type.
+    pub(crate) fn type_diverging_body_as_return(body: &mut HirBlock, return_ty: &Type) {
+        if body.ty == Type::Never && *return_ty != Type::Never {
+            body.ty = return_ty.clone();
+        }
+    }
+
+    /// Runs the return checks deferred since `mark`, after the body's owner
+    /// unified the body value with its return type.
+    pub(crate) fn flush_return_checks(&mut self, mark: usize) {
+        if mark >= self.pending_return_checks.len() {
+            return;
+        }
+        for check in self.pending_return_checks.split_off(mark) {
+            self.apply_return_check(check);
+        }
+    }
+
+    fn apply_return_check(&mut self, check: PendingReturnCheck) {
+        // A trailing integer literal leaves the return type an open integer
+        // variable. Unifying it with a non-integer `return` would blame the
+        // literal: report the `return` instead.
+        let expected = self.engine.resolve(&check.expected);
+        let value = self.engine.resolve(&check.value_ty);
+        if let Type::TypeVar(_) = expected {
+            let integer_literal = self
+                .constraint_store
+                .int_literal_vars()
+                .any(|var| self.engine.resolve(&Type::TypeVar(var)) == expected);
+            let concrete_non_integer = !matches!(value, Type::TypeVar(_) | Type::Never | Type::Error)
+                && !value.is_integer();
+            if integer_literal && concrete_non_integer {
+                let message = format!(
+                    "Return type mismatch: this body returns an integer, but this `return` gives `{}`",
+                    self.display_type(&value)
+                );
+                self.diagnostics.push_type_with_span(message, check.span);
+                return;
+            }
+        }
+        if let Err(error) = self.engine.unify(&check.value_ty, &check.expected) {
+            self.diagnostics.push_type_with_span(
+                format!("Return type mismatch: {}", error.render(&self.engine)),
+                check.span,
+            );
         }
     }
 
@@ -89,11 +187,13 @@ impl Lowerer {
                 let hir_expr = self.lower_expression(expr);
                 HirStmt::Expr(hir_expr)
             }
-            ast::Statement::Return(Some(expr)) => {
+            ast::Statement::Return(Some(expr), _) => {
                 let hir_expr = self.lower_expression(expr);
+                self.check_return_type(&hir_expr.ty, &hir_expr.span);
                 HirStmt::Return(Some(self.wrap_fold_return(hir_expr)))
             }
-            ast::Statement::Return(None) => {
+            ast::Statement::Return(None, span) => {
+                self.check_return_type(&Type::Unit, span);
                 if let Some(context) = self.body.fold_loops().last() {
                     let unit = context.unit();
                     HirStmt::Return(Some(self.wrap_fold_return(unit)))

@@ -152,13 +152,17 @@ impl Lowerer {
 
         let lambda_return_ty = self.engine.fresh_type_var_at(lambda.span.clone());
         let loop_stack = self.body.suspend_loops();
-        let body = self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
+        let return_checks = self.return_checks_mark();
+        let mut body = self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
             lowerer.lower_lambda_body(lambda)
         });
         self.body.resume_loops(loop_stack);
         let span = lambda.span.clone();
+        self.flush_return_checks_for_diverging_body(return_checks, &body.ty);
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
+        self.flush_return_checks(return_checks);
         let ret_type = self.engine.resolve(&lambda_return_ty);
+        Self::type_diverging_body_as_return(&mut body, &ret_type);
         self.body.borrowed_capture_sources = enclosing_borrows;
         let mut captures = self.collect_lambda_captures(&body, &params);
         let body_effects = captures.clone();
@@ -237,7 +241,8 @@ impl Lowerer {
 
         let lambda_return_ty = self.engine.fresh_type_var_at(span.clone());
         let loop_stack = self.body.suspend_loops();
-        let body = if params.len() == 1 {
+        let return_checks = self.return_checks_mark();
+        let mut body = if params.len() == 1 {
             self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
                 lowerer.prepare_capture_liveness(body);
                 lowerer.lower_block(body)
@@ -255,8 +260,11 @@ impl Lowerer {
             }
         };
         self.body.resume_loops(loop_stack);
+        self.flush_return_checks_for_diverging_body(return_checks, &body.ty);
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);
+        self.flush_return_checks(return_checks);
         let body_ty = self.engine.resolve(&lambda_return_ty);
+        Self::type_diverging_body_as_return(&mut body, &body_ty);
         let mut captures = self.collect_lambda_captures(&body, std::slice::from_ref(&param));
         let body_effects = captures.clone();
         // A synthetic curried stage only returns the next stage. It has no

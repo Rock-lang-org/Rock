@@ -10,7 +10,7 @@ impl FormatNode for Statement {
         match self {
             Statement::Assignment(assign) => assign.fmt_with(context, f),
             Statement::Expression(expr) => expr.fmt_with(context, f),
-            Statement::Return(expr) => {
+            Statement::Return(expr, _) => {
                 if let Some(expr) = expr {
                     write!(f, "return ")?;
                     expr.fmt_with(context, f)

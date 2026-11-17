@@ -5,9 +5,15 @@ use crate::{
 
 use super::{expression, parse_type, pattern, seek, unary_expr};
 
-pub fn statement(stream: Input) -> IResult<Statement> {
+fn return_statement(stream: Input) -> IResult<Statement> {
+    let span = stream.seek()?.span.clone();
     preceded(TokenType::Keyword("return".to_string()), expression.opt())
-        .map(Statement::Return)
+        .map(move |value| Statement::Return(value, span.clone()))
+        .process(stream)
+}
+
+pub fn statement(stream: Input) -> IResult<Statement> {
+    return_statement
         .or(
             preceded(TokenType::Keyword("continue".to_string()), expression.opt())
                 .map(Statement::Continue),

@@ -426,7 +426,9 @@ pub struct Block {
 pub enum Statement {
     Assignment(Assignment),
     Expression(Expression),
-    Return(Option<Expression>),
+    /// The span covers the `return` keyword, so a valueless return can still
+    /// be reported.
+    Return(Option<Expression>, Span),
     Continue(Option<Expression>),
     Break(Option<Expression>),
 }

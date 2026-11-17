@@ -40,6 +40,7 @@ mod partial_type_annotations;
 mod programs;
 mod raw_pointers;
 mod return_loans;
+mod returns;
 mod signatureless_inference;
 mod std_cache;
 mod std_conversions;

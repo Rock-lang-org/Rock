@@ -166,6 +166,14 @@ impl ConstraintStore {
         self.push_obligation()
     }
 
+    /// Type variables recorded as integer literals (unresolved ids as recorded).
+    pub fn int_literal_vars(&self) -> impl Iterator<Item = TypeVarId> + '_ {
+        self.constraints.iter().filter_map(|constraint| match constraint {
+            Constraint::IntLiteral { var, .. } => Some(*var),
+            _ => None,
+        })
+    }
+
     pub fn add_float_literal(&mut self, var: TypeVarId, span: Span) -> ObligationId {
         self.constraints
             .push(Constraint::FloatLiteral { var, span });

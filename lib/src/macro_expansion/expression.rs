@@ -95,7 +95,7 @@ impl ExpressionExpander<'_, '_> {
                 self.expression(&mut assignment.rhs, depth, parent);
             }
             Statement::Expression(expr) => self.expression(expr, depth, parent),
-            Statement::Return(expr) | Statement::Continue(expr) | Statement::Break(expr) => {
+            Statement::Return(expr, _) | Statement::Continue(expr) | Statement::Break(expr) => {
                 if let Some(expr) = expr {
                     self.expression(expr, depth, parent);
                 }

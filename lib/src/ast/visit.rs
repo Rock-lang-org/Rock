@@ -260,7 +260,7 @@ pub fn walk_statement<'a, V: Visitor<'a>>(visitor: &mut V, statement: &'a Statem
     match &statement {
         Statement::Assignment(assign) => visitor.visit_assignment(assign),
         Statement::Expression(expr) => visitor.visit_expression(expr),
-        Statement::Return(expr) => {
+        Statement::Return(expr, _) => {
             if let Some(expr) = expr {
                 visitor.visit_expression(expr);
             }

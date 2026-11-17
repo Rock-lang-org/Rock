@@ -111,7 +111,7 @@ fn ast_statement_span(statement: &ast::Statement) -> Option<Span> {
     match statement {
         ast::Statement::Assignment(assignment) => ast_expression_span(&assignment.rhs),
         ast::Statement::Expression(expression) => ast_expression_span(expression),
-        ast::Statement::Return(expression)
+        ast::Statement::Return(expression, _)
         | ast::Statement::Continue(expression)
         | ast::Statement::Break(expression) => expression.as_ref().and_then(ast_expression_span),
     }

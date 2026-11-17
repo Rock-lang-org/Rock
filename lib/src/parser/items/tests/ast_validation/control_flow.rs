@@ -203,7 +203,7 @@ fn return_statement() {
     let f = first_fn(&p);
     assert!(matches!(
         &f.lambda.body.statements[0],
-        Statement::Return(Some(_)),
+        Statement::Return(Some(_), _),
     ));
 }
 

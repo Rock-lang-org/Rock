@@ -122,6 +122,15 @@ impl Lowerer {
         let left = self.resolve_projection_type(&self.engine.resolve(left));
         let right = self.resolve_projection_type(&self.engine.resolve(right));
 
+        // A branch that never completes (`return`, `break`, ...) contributes no
+        // value: the other branch alone decides the result type.
+        if left == Type::Never {
+            return right;
+        }
+        if right == Type::Never {
+            return left;
+        }
+
         match (&left, &right) {
             (Type::TypeVar(_), _) => {
                 let merged = Self::make_function_slots_conservative(&right, covariant);

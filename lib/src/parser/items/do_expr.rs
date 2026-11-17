@@ -158,7 +158,7 @@ impl<'ast> visit::Visitor<'ast> for ControlFlowCheck {
 
     fn visit_statement(&mut self, node: &'ast Statement) {
         match node {
-            Statement::Return(_) => {
+            Statement::Return(..) => {
                 self.error = Some("Use the final expression instead of return in a do block")
             }
             Statement::Break(_) | Statement::Continue(_) if self.loops == 0 => {

@@ -93,7 +93,7 @@ fn loop_control_statements_do_not_require_a_value_span() {
     let mut lowerer = Lowerer::new_for_test();
     for statement in [
         Statement::Continue(None),
-        Statement::Return(None),
+        Statement::Return(None, Span::test()),
         Statement::Break(None),
     ] {
         let loop_expr = crate::ast::Loop::Loop(

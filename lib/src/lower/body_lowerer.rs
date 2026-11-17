@@ -208,7 +208,7 @@ impl<'ast> ast::visit::Visitor<'ast> for FunctionReferenceCollector {
                 }
             }
             ast::Statement::Expression(expression) => self.visit_expression(expression),
-            ast::Statement::Return(expression)
+            ast::Statement::Return(expression, _)
             | ast::Statement::Continue(expression)
             | ast::Statement::Break(expression) => {
                 if let Some(expression) = expression {
