@@ -358,6 +358,32 @@ main = ->
 }
 
 #[test]
+fn test_borrowed_temporary_is_the_only_owner_of_its_drop_type() {
+    let output = compile_and_run(
+        r#"
+> std::mem::drop::Drop
+
+struct Holder
+    < value: I64
+
+impl Drop for Holder
+    ~@drop = !-> 2.println!
+
+use_holder: &Holder -> ()
+use_holder = holder !-> holder.value.println!
+
+main = !->
+    use_holder (&(Holder
+        value: 1))
+    3.println!
+"#,
+    );
+
+    let lines: Vec<&str> = output.trim().lines().collect();
+    assert_eq!(lines, vec!["1", "2", "3"]);
+}
+
+#[test]
 fn test_return_expression_temporary_drops_before_returning_to_caller() {
     let output = compile_and_run(
         r#"

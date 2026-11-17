@@ -173,6 +173,13 @@ impl Monomorphizer {
     }
 
     fn process_expr(&mut self, expr: &mut HirExpr) {
+        self.process_expr_kind(expr);
+        // Any owned value an expression yields may become a temporary (e.g.
+        // `&(make!)`) that MIR drops, so its destructor is demanded here.
+        self.monomorphize_drop_for_type(&expr.ty, Some(expr.span.clone()));
+    }
+
+    fn process_expr_kind(&mut self, expr: &mut HirExpr) {
         expr.ty = self.substitute_generics(&expr.ty);
 
         match &mut expr.kind {
