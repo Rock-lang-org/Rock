@@ -314,7 +314,7 @@ impl Lowerer {
 
         // Flatten the right-recursive BinopExpr chain into a list
         let mut operands: Vec<AstExprOperand<'_>> = Vec::new();
-        let mut operators: Vec<String> = Vec::new();
+        let mut operators = Vec::new();
 
         self.flatten_binop(expr, &mut operands, &mut operators);
 
@@ -331,12 +331,12 @@ impl Lowerer {
         &mut self,
         expr: &'a ast::Expression,
         operands: &mut Vec<AstExprOperand<'a>>,
-        operators: &mut Vec<String>,
+        operators: &mut Vec<&'a ast::Operator>,
     ) {
         match expr {
             ast::Expression::BinopExpr(lhs, op, rhs) => {
                 operands.push(AstExprOperand::Unary(lhs));
-                operators.push(op.value.clone());
+                operators.push(op);
                 self.flatten_binop(rhs, operands, operators);
             }
             ast::Expression::UnaryExpr(unary) => {

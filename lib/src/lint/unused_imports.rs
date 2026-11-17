@@ -495,6 +495,15 @@ impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
         walk_expression(self, node);
     }
 
+    fn visit_operator(&mut self, node: &'a ast::Operator) {
+        let span = &node.span;
+        if let Some(targets) = self.references.get(&(span.file_path.clone(), span.start)) {
+            for (_, id) in targets.iter().filter(|(end, _)| *end == span.end) {
+                self.values.push((node.value.clone(), *id));
+            }
+        }
+    }
+
     fn visit_module_decl(&mut self, node: &'a ast::ModuleDecl) {
         match &node.0.name {
             Some(name) => self.children.push((name.name.clone(), &node.0)),

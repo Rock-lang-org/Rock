@@ -16,6 +16,7 @@ MEMORY.md
 /.beads/
 /.vscode/
 /.agent-work/
+/lib/tests/fixtures/macros/**/build/
 
 # Beads / Dolt files (added by bd init)
 .dolt/

@@ -10,7 +10,7 @@ impl Lowerer {
     pub(super) fn build_precedence_tree_with_use(
         &mut self,
         operands: &[AstExprOperand<'_>],
-        operators: &[String],
+        operators: &[&crate::ast::Operator],
         start: usize,
         end: usize,
         use_kind: ExprUse,
@@ -22,7 +22,7 @@ impl Lowerer {
         let mut min_prec = u8::MAX;
         let mut split_at = start;
         for i in start..end {
-            let prec = match self.op_precedence(&operators[i]) {
+            let prec = match self.op_precedence(&operators[i].value) {
                 Ok(prec) => prec,
                 Err(error) => {
                     let Some(span) = ast_expr_operand_span(&operands[start]) else {
@@ -39,8 +39,8 @@ impl Lowerer {
             }
         }
 
-        let op = &operators[split_at];
-        let (left_use, right_use) = if op == "=" {
+        let op = operators[split_at];
+        let (left_use, right_use) = if op.value == "=" {
             (ExprUse::AssignmentPlace, ExprUse::Value)
         } else {
             (ExprUse::Value, ExprUse::Value)
@@ -50,11 +50,12 @@ impl Lowerer {
         let right =
             self.build_precedence_tree_with_use(operands, operators, split_at + 1, end, right_use);
 
-        self.build_precedence_tree(&[left, right], std::slice::from_ref(op), 0, 1)
+        self.lower_binary_operator(left, right, &op.value, Some(&op.span))
     }
 
     /// Build a correctly-precedenced tree from a flat list using
     /// a simple algorithm: find the lowest-precedence operator and split there
+    #[cfg(test)]
     pub(crate) fn build_precedence_tree(
         &mut self,
         operands: &[HirExpr],
@@ -92,8 +93,16 @@ impl Lowerer {
         let left = self.build_precedence_tree(operands, operators, start, split_at);
         let right = self.build_precedence_tree(operands, operators, split_at + 1, end);
 
-        let op_str = &operators[split_at];
+        self.lower_binary_operator(left, right, &operators[split_at], None)
+    }
 
+    fn lower_binary_operator(
+        &mut self,
+        left: HirExpr,
+        right: HirExpr,
+        op_str: &str,
+        operator_span: Option<&crate::Span>,
+    ) -> HirExpr {
         // Assignment operator: special handling
         if op_str == "=" {
             if let Err(error) = self.engine.unify(&right.ty, &left.ty) {
@@ -247,7 +256,7 @@ impl Lowerer {
                     ty: ret_ty,
                     kind: HirExprKind::MethodCall(
                         Box::new(adjusted_recv),
-                        op_str.clone(),
+                        op_str.to_string(),
                         coerced_args,
                         method_func.self_receiver,
                         Some(target),
@@ -292,7 +301,7 @@ impl Lowerer {
                     ty: ret_ty,
                     kind: HirExprKind::MethodCall(
                         Box::new(adjusted_recv),
-                        op_str.clone(),
+                        op_str.to_string(),
                         coerced_args,
                         method_func.self_receiver,
                         Some(target),
@@ -303,13 +312,21 @@ impl Lowerer {
         }
 
         let func_binding = crate::lower::resolution::LowerResolutionContext::new(self)
-            .resolve_identifier_value(op_str.as_str())
+            .resolve_identifier_value(op_str)
             .map(|resolved| {
                 let func_ty = self.instantiate_resolved_value_type(&resolved, left.span.clone());
                 (func_ty, resolved.name, resolved.target)
             });
 
         if let Some((func_ty, hir_name, target)) = func_binding {
+            if let (Some(span), Some(HirVarTarget::Function(id) | HirVarTarget::Extern(id))) =
+                (operator_span, &target)
+            {
+                self.record_source_reference(
+                    span.clone(),
+                    crate::source_map::SourceSymbol::Definition(*id),
+                );
+            }
             // Bounds on an operand's generic (`M: FnMut ...`) belong to that operand.
             if let Type::Function { params, .. } = &func_ty {
                 for (param, operand) in params.iter().zip([&left, &right]) {
@@ -421,7 +438,7 @@ impl Lowerer {
         }
 
         // Use operator symbol directly as method name (e.g. "+" -> "+", ">>=" -> ">>=")
-        let method_name = op_str.clone();
+        let method_name = op_str.to_string();
 
         if matches!(resolved_ty, Type::TypeVar(_)) {
             match self.infer_unresolved_binary_operator_receiver(&left, &right, &method_name) {

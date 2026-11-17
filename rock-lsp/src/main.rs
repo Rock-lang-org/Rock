@@ -163,43 +163,39 @@ impl Backend {
             self.state.write().await.projects.insert(key, project);
         }
 
-        match analysis {
+        let diagnostics = match analysis {
             Ok(analysis) => {
+                let analysis = Arc::new(analysis);
                 self.state
                     .write()
                     .await
                     .analyses
-                    .insert(uri.clone(), Arc::new(analysis));
-                self.client
-                    .publish_diagnostics(uri, Vec::new(), Some(document.version))
-                    .await;
+                    .insert(uri.clone(), Arc::clone(&analysis));
+                analysis.warnings.clone()
             }
             Err(diagnostics) => {
                 // Keep the last successful snapshot so a temporary edit error does not
                 // disable hover and signature help across the whole document.
-                let documents = self.state.read().await.documents.clone();
-                for (diagnostic_uri, diagnostic_document) in documents {
-                    let converted = diagnostics
-                        .0
-                        .iter()
-                        .filter_map(|diagnostic| {
-                            diagnostic_to_lsp(
-                                diagnostic,
-                                &diagnostic_uri,
-                                &diagnostic_document.text,
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    if diagnostic_uri == uri || !converted.is_empty() {
-                        self.client
-                            .publish_diagnostics(
-                                diagnostic_uri,
-                                converted,
-                                Some(diagnostic_document.version),
-                            )
-                            .await;
-                    }
-                }
+                diagnostics
+            }
+        };
+        let documents = self.state.read().await.documents.clone();
+        for (diagnostic_uri, diagnostic_document) in documents {
+            let converted = diagnostics
+                .0
+                .iter()
+                .filter_map(|diagnostic| {
+                    diagnostic_to_lsp(diagnostic, &diagnostic_uri, &diagnostic_document.text)
+                })
+                .collect::<Vec<_>>();
+            if diagnostic_uri == uri || !converted.is_empty() {
+                self.client
+                    .publish_diagnostics(
+                        diagnostic_uri,
+                        converted,
+                        Some(diagnostic_document.version),
+                    )
+                    .await;
             }
         }
     }
@@ -378,6 +374,11 @@ fn analysis_config(
         source_providers: providers,
         extern_artifacts: artifacts.into_iter().collect(),
         current_crate_name: project.and_then(|project| project.current_crate_name.clone()),
+        crate_kind: if project.is_some_and(|project| project.current_crate_name.is_some()) {
+            rock_lib::CrateKind::Lib
+        } else {
+            rock_lib::CrateKind::Bin
+        },
         no_prelude: settings.no_prelude
             || project
                 .map(|project| project.no_prelude)

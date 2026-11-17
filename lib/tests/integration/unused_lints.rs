@@ -348,6 +348,16 @@ fn test_explicit_import_shadows_a_glob_and_types_use_globs() {
 }
 
 #[test]
+fn test_imported_infix_operator_counts_as_used() {
+    let warnings = lint_files(
+        "mod ops\n> ops::+++\nmain = -> 1 +++ 2\n",
+        &[("ops", "infix 4 +++\n< +++ = x, _ -> x\n")],
+        &[("unused_imports", LintLevel::Deny)],
+    ).unwrap();
+    assert!(warnings.0.is_empty(), "{warnings:?}");
+}
+
+#[test]
 fn test_a_value_import_reexport_counts_as_used() {
     let warnings = lint_files(
         "mod helpers\nmod api\nmain = !-> api::answer!.println!\n",

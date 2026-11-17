@@ -14,6 +14,7 @@ pub fn run() -> Result<CliOutcome, String> {
     let config = Config::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
     let lint_args = matches
         .subcommand()
+        .filter(|(name, _)| matches!(*name, "build" | "run"))
         .map(|(_, sub)| ordered_lint_args(sub))
         .unwrap_or_default();
     progress::set_capture_tool_output(config.quiet);
