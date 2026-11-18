@@ -242,8 +242,8 @@ pub(super) fn impl_receiver_owner_matches<P: HirPhase>(
         return false;
     };
     if let (
-        Type::Reference { .. },
-        HirImplReceiverPattern::Exact(pattern @ Type::Reference { .. }),
+        Type::Reference { .. } | Type::Array(..),
+        HirImplReceiverPattern::Exact(pattern @ (Type::Reference { .. } | Type::Array(..))),
     ) = (ty, pattern)
     {
         // Generic borrowed receivers have different display spellings once

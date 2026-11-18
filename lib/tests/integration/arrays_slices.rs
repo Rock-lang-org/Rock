@@ -227,6 +227,26 @@ main = -> 0
 }
 
 #[test]
+fn test_slice_fmap_borrows_elements_and_returns_vec() {
+    let output = compile_and_run(
+        r#"
+increment: &I64 -> I64
+increment = x -> *x + 1
+
+main = !->
+    values: Vec I64 = [1, 2, 3].into!
+    slice = values.as_slice!
+    mapped = slice.fmap (x -> *x + 1)
+    mapped.println!
+    array_mapped = [1, 2, 3] <&> (x -> x + 1)
+    array_mapped.println!
+    (increment <$> slice).println!
+"#,
+    );
+    assert_eq!(output.trim(), "[2, 3, 4]\n[2, 3, 4]\n[2, 3, 4]");
+}
+
+#[test]
 fn test_arrays_of_copy_elements_can_be_used_after_assignment() {
     let output = compile_and_run(
         r#"
