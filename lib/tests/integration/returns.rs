@@ -132,6 +132,28 @@ main = !->
 }
 
 #[test]
+fn bare_return_in_spawn_match_must_match_function_result() {
+    compile_should_fail(
+        r#"
+> std::concurrency::thread::spawn
+
+explicit = ->
+    thread = spawn (-> 42)
+    join_result = match thread
+        Result::Ok handle => handle.join!
+        Result::Err _ =>
+            "thread failed".println!
+            return
+    join_result.println!
+
+main = !->
+    explicit!
+"#,
+        "Return type mismatch: Type mismatch: () vs I32",
+    );
+}
+
+#[test]
 fn bare_return_in_unit_bodies_still_compiles() {
     let output = compile_and_run(
         r#"
