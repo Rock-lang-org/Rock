@@ -93,6 +93,25 @@ fn private_module_export_is_dead_unless_reexported() {
 }
 
 #[test]
+fn regression_pruned_variant_exports_do_not_break_library_products() {
+    let mut config = config("mod inner\n< Choice::Public\n< enum Choice\n    Public\n", CrateKind::Lib);
+    config.current_crate_name = Some("review".into());
+    config.source_providers.push(SourceProvider::Virtual {
+        path: "/virtual/dead_code/inner.rk".into(),
+        text: "enum Private\n    Hidden\n< Private::Hidden\n".into(),
+    });
+    let dir = std::env::temp_dir().join(format!("rock_variant_exports_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    config.output_dir = dir.clone();
+    let result = compile_with_products(&config);
+    std::fs::remove_dir_all(dir).unwrap();
+    let products = result.unwrap().products.unwrap();
+    let exports = &products.identity_table.variant_export_names;
+    assert!(exports.values().any(|(_, variant)| variant == "Public"), "{exports:?}");
+    assert!(!exports.values().any(|(_, variant)| variant == "Hidden"));
+}
+
+#[test]
 fn variant_patterns_do_not_count_as_construction() {
     let analysis = analyze(&config(
         "enum Choice\n    First\n    Second\nmain = ->\n    value = Choice::First\n    match value\n        Choice::First => 0\n        Choice::Second => 1\n",

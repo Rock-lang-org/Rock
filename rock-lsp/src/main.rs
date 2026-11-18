@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Parser;
@@ -53,6 +53,33 @@ struct State {
     documents: HashMap<Url, Document>,
     analyses: HashMap<Url, Arc<Analysis>>,
     projects: HashMap<(PathBuf, PathBuf), rock::project::AnalysisProject>,
+    diagnostic_entries: HashMap<Url, PathBuf>,
+}
+
+impl State {
+    fn diagnostic_updates(
+        &mut self,
+        entry: &Path,
+        trigger: &Url,
+        diagnostics: &Diagnostics,
+    ) -> Vec<(Url, i32, Vec<Diagnostic>)> {
+        let mut updates = Vec::new();
+        for (uri, document) in &self.documents {
+            let converted = diagnostics.0.iter()
+                .filter_map(|diagnostic| diagnostic_to_lsp(diagnostic, uri, &document.text))
+                .collect::<Vec<_>>();
+            if converted.is_empty() {
+                if uri != trigger && self.diagnostic_entries.get(uri).map(PathBuf::as_path) != Some(entry) {
+                    continue;
+                }
+                self.diagnostic_entries.remove(uri);
+            } else {
+                self.diagnostic_entries.insert(uri.clone(), entry.to_path_buf());
+            }
+            updates.push((uri.clone(), document.version, converted));
+        }
+        updates
+    }
 }
 
 struct Backend {
@@ -159,6 +186,9 @@ impl Backend {
             return;
         }
 
+        let entry = resolved_project.as_ref()
+            .map(|project| project.entry_file.clone())
+            .or_else(|| uri.to_file_path().ok());
         if let (Some(key), Some(project)) = (project_key, resolved_project) {
             self.state.write().await.projects.insert(key, project);
         }
@@ -179,24 +209,12 @@ impl Backend {
                 diagnostics
             }
         };
-        let documents = self.state.read().await.documents.clone();
-        for (diagnostic_uri, diagnostic_document) in documents {
-            let converted = diagnostics
-                .0
-                .iter()
-                .filter_map(|diagnostic| {
-                    diagnostic_to_lsp(diagnostic, &diagnostic_uri, &diagnostic_document.text)
-                })
-                .collect::<Vec<_>>();
-            if diagnostic_uri == uri || !converted.is_empty() {
-                self.client
-                    .publish_diagnostics(
-                        diagnostic_uri,
-                        converted,
-                        Some(diagnostic_document.version),
-                    )
-                    .await;
-            }
+        let Some(entry) = entry else {
+            return;
+        };
+        let updates = self.state.write().await.diagnostic_updates(&entry, &uri, &diagnostics);
+        for (uri, version, diagnostics) in updates {
+            self.client.publish_diagnostics(uri, diagnostics, Some(version)).await;
         }
     }
 }
@@ -280,6 +298,7 @@ impl LanguageServer for Backend {
         let mut state = self.state.write().await;
         state.documents.remove(&uri);
         state.analyses.remove(&uri);
+        state.diagnostic_entries.remove(&uri);
         drop(state);
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }

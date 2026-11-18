@@ -237,6 +237,8 @@ impl Reachability {
         program.functions.retain(|id, _| keep(id));
         program.structs.retain(|id, _| keep(id));
         program.enums.retain(|id, _| keep(id));
+        // Artifact serialization requires an identity for each exported variant.
+        hir.resolver.variant_exports.retain(|_, variant| keep(&variant.enum_id));
         program.traits.retain(|id, _| keep(id));
         program.impls.retain(|id, _| keep(id));
         for imp in program.impls.values_mut() {
