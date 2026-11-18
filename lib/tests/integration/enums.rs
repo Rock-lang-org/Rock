@@ -46,6 +46,18 @@ main = !->
 }
 
 #[test]
+fn test_unapplied_payload_constructor_is_not_an_enum_value() {
+    compile_should_fail(
+        r#"
+main = !->
+    x: Option I64 = Option::Some
+    ()
+"#,
+        "Type mismatch",
+    );
+}
+
+#[test]
 fn test_unapplied_generic_constructor_value_needs_its_payload_type() {
     compile_should_fail(
         r#"
