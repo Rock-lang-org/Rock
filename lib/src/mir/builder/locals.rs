@@ -1,6 +1,5 @@
 use crate::ids::{DefId, TypeId};
 use crate::lexer::Span;
-use crate::type_services::facts::TypeFacts;
 use crate::types::Type;
 
 use crate::mir::{
@@ -69,8 +68,8 @@ impl<'a> MirBuilder<'a> {
         id
     }
 
-    pub(super) fn needs_move(ty: &Type) -> bool {
-        !TypeFacts::is_copy(ty)
+    pub(super) fn needs_move(&self, ty: &Type) -> bool {
+        !crate::infer::solve::program_type_is_copy(self.program, ty)
     }
 
     pub(super) fn get_local_type(&self, local: Local) -> Option<Type> {

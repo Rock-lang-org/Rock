@@ -734,7 +734,7 @@ fn owned_auto_trait_checks_storage_modes_and_nested_payloads_by_id() {
         Vec::new(), Type::I64, FunctionSafety::Safe, CallableKind::Fn,
         vec![FunctionCapture::new(kind, ty)],
     );
-    let satisfies = |ty: &Type, marker| impl_exists_for(
+    let satisfies = |ty: &Type, marker| impl_exists_for::<crate::hir::UnresolvedHir>(
         ty, marker, &[], &HashMap::new(), &HashMap::new(), &HashMap::new(), builtin,
         &|_, _, _| false,
     );

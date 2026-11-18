@@ -159,6 +159,10 @@ impl TypeContext {
         id
     }
 
+    pub(crate) fn type_ids(&self) -> impl Iterator<Item = TypeId> + '_ {
+        self.interned.values().copied()
+    }
+
     fn kind_for_ty(&self, ty: &Ty) -> Kind {
         match ty {
             Ty::Constructor { id, flavor } => {

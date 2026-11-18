@@ -2,6 +2,7 @@
 < mod alloc
 < mod drop
 < mod sized
+< mod copy
 < mod raw_buffer
 < mod box
 < mod utils
@@ -9,5 +10,6 @@
 < alloc::*
 < drop::*
 < sized::Sized
+< copy::Copy
 < box::Box
 < utils::*

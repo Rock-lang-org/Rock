@@ -33,10 +33,11 @@ pub enum LanguageItemRole {
     RangeToInclusive,
     RangeExclusive,
     RangeInclusive,
+    Copy,
 }
 
 impl LanguageItemRole {
-    pub const ALL_NAMES: [&str; 27] = [
+    pub const ALL_NAMES: [&str; 28] = [
         "sized",
         "drop",
         "fold",
@@ -64,6 +65,7 @@ impl LanguageItemRole {
         "range_to_inclusive",
         "range_exclusive",
         "range_inclusive",
+        "copy",
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -78,6 +80,7 @@ impl LanguageItemRole {
             Self::Fn => "fn",
             Self::Send => "send",
             Self::Owned => "owned",
+            Self::Copy => "copy",
             Self::Sync => "sync",
             Self::Try => "try",
             Self::FromResidual => "from_residual",
@@ -114,6 +117,7 @@ impl FromStr for LanguageItemRole {
             "fn" => Ok(Self::Fn),
             "send" => Ok(Self::Send),
             "owned" => Ok(Self::Owned),
+            "copy" => Ok(Self::Copy),
             "sync" => Ok(Self::Sync),
             "try" => Ok(Self::Try),
             "from_residual" => Ok(Self::FromResidual),
@@ -250,6 +254,7 @@ pub struct LanguageItems<D> {
     pub sync: Option<SyncLanguageItems<D>>,
     pub try_protocol: Option<TryLanguageItems<D>>,
     pub range: Option<RangeLanguageItems<D>>,
+    pub copy: Option<D>,
 }
 
 impl<D> Default for LanguageItems<D> {
@@ -268,6 +273,7 @@ impl<D> Default for LanguageItems<D> {
             sync: None,
             try_protocol: None,
             range: None,
+            copy: None,
         }
     }
 }
@@ -437,6 +443,7 @@ pub fn merge_language_item_providers_all<'a, D: Clone + 'a>(
         |items| items.owned.as_ref(),
         &mut conflicts,
     );
+    let copy = merge_protocol(&providers, "copy", |items| items.copy.as_ref(), &mut conflicts);
     let sync = merge_protocol(
         &providers,
         "sync",
@@ -467,7 +474,8 @@ pub fn merge_language_item_providers_all<'a, D: Clone + 'a>(
             fn_mut,
             fn_trait,
             send,
-            owned,
+        owned,
+        copy,
             sync,
             try_protocol,
             range,

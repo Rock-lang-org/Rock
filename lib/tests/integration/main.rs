@@ -17,6 +17,7 @@ mod borrowck;
 mod closures;
 mod const_generics;
 mod const_generics_body_lengths;
+mod copy;
 mod default_type_arguments;
 mod do_notation;
 mod drops;

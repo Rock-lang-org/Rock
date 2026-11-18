@@ -47,7 +47,7 @@ impl<'a> MirBuilder<'a> {
                     projection: vec![],
                 };
                 self.lower_expr_with_context(scrutinee, scrut_place.clone(), false);
-                if Self::needs_move(&scrutinee.ty) {
+            if self.needs_move(&scrutinee.ty) {
                     if let Some(source_place) = self.move_source_place_for_expr(scrutinee) {
                         self.mark_place_moved_for_cleanup(source_place);
                     }

@@ -139,9 +139,98 @@ impl SolveError {
     }
 }
 
+pub(crate) fn program_type_is_copy<P: crate::hir::HirPhase>(
+    program: &crate::hir::HirProgramFor<P>,
+    ty: &Type,
+) -> bool {
+    let Some(copy) = program.language_items.copy else {
+        return crate::type_services::facts::TypeFacts::is_copy(ty);
+    };
+    impl_lookup::impl_exists_for(
+        ty,
+        copy,
+        &[],
+        &program.impls,
+        &program.structs,
+        &program.enums,
+        BuiltinTraitIds::from_language_items(&program.language_items),
+        &|_, _, _| false,
+    )
+}
+
+pub(crate) fn validate_copy_impls(program: &crate::hir::HirProgram) -> Vec<String> {
+    use crate::hir::{HirImplReceiverPattern, HirVariantFields};
+    use crate::types::GenericParamId;
+
+    let Some(copy) = program.language_items.copy else {
+        return Vec::new();
+    };
+    let builtin = BuiltinTraitIds::from_language_items(&program.language_items);
+    let mut errors = Vec::new();
+    let mut implementations: Vec<_> = program.impls.values().collect();
+    implementations.sort_by_key(|imp| imp.id);
+    for imp in implementations.into_iter().filter(|imp| imp.trait_id == Some(copy)) {
+        let HirImplReceiverPattern::Exact(receiver) = &imp.receiver_pattern else {
+            errors.push("Copy may only be implemented for a struct or enum".into());
+            continue;
+        };
+        let (id, args, fields): (_, _, Vec<_>) = match receiver {
+            Type::Struct { id, args } => (
+                id,
+                args,
+                program.structs[id].fields.iter().map(|field| &field.ty).collect(),
+            ),
+            Type::Enum { id, args } => (
+                id,
+                args,
+                program.enums[id].variants.iter().flat_map(|variant| match &variant.fields {
+                    HirVariantFields::Unit => Vec::new(),
+                    HirVariantFields::Positional(fields) => fields.iter().collect(),
+                    HirVariantFields::Named(fields) => fields.iter().map(|field| &field.ty).collect(),
+                }).collect(),
+            ),
+            _ => {
+                errors.push("Copy may only be implemented for a struct or enum".into());
+                continue;
+            }
+        };
+        if program.language_items.drop.as_ref().is_some_and(|drop| {
+            program.impls.values().any(|other| {
+                other.trait_id == Some(drop.trait_id)
+                    && impl_lookup::impl_receiver_owner_matches(
+                        receiver, other, &program.structs, &program.enums,
+                    )
+            })
+        }) {
+            errors.push(format!("{} cannot implement Copy because it implements Drop", imp.type_name));
+        }
+        let subst = args.iter().cloned().enumerate().map(|(index, ty)| {
+            (GenericParamId { owner: *id, index: index as u32 }, ty)
+        }).collect();
+        for field in fields {
+            let field = field.substitute_generics(&subst);
+            let proved = impl_lookup::impl_exists_for(
+                &field, copy, &[], &program.impls, &program.structs, &program.enums, builtin,
+                &|ty, trait_id, args| match ty {
+                    Type::Generic(param) => imp.bounds.get(param).is_some_and(|bounds| {
+                        bounds.iter().any(|bound| bound.trait_id == trait_id && bound.type_args == args)
+                    }),
+                    _ => false,
+                },
+            );
+            if !proved {
+                errors.push(format!("{} cannot implement Copy because a field is not Copy", imp.type_name));
+                break;
+            }
+        }
+    }
+    errors
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct BuiltinTraitIds {
     sized: Option<DefId>,
+    copy: Option<DefId>,
     fn_once: Option<DefId>,
     fn_mut: Option<DefId>,
     fn_trait: Option<DefId>,
@@ -154,6 +243,7 @@ impl BuiltinTraitIds {
     fn from_language_items(items: &LanguageItems<DefId>) -> Self {
         Self {
             sized: items.sized.as_ref().map(|items| items.trait_id),
+            copy: items.copy,
             fn_once: items.fn_once.as_ref().map(|items| items.trait_id),
             fn_mut: items.fn_mut.as_ref().map(|items| items.trait_id),
             fn_trait: items.fn_trait.as_ref().map(|items| items.trait_id),

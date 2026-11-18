@@ -157,7 +157,7 @@ impl<'a> MirBuilder<'a> {
             && !self.type_needs_cleanup(ty)
         {
             Operand::Copy(place)
-        } else if Self::needs_move(ty) {
+        } else if self.needs_move(ty) {
             Operand::Move(place)
         } else {
             Operand::Copy(place)

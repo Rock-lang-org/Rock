@@ -38,6 +38,7 @@ pub(super) fn root_expected_kind(role: LanguageItemRole) -> Option<ItemKind> {
         | LanguageItemRole::Fn
         | LanguageItemRole::Send
         | LanguageItemRole::Owned
+        | LanguageItemRole::Copy
         | LanguageItemRole::Sync
         | LanguageItemRole::Try
         | LanguageItemRole::FromResidual => Some(ItemKind::Trait),
@@ -107,6 +108,7 @@ pub(super) fn role_order(role: LanguageItemRole) -> u8 {
         LanguageItemRole::Fn => 6,
         LanguageItemRole::Send => 7,
         LanguageItemRole::Owned => 26,
+        LanguageItemRole::Copy => 27,
         LanguageItemRole::Sync => 8,
         LanguageItemRole::Try => 9,
         LanguageItemRole::FromResidual => 10,

@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use crate::hir::{HirLiteralPattern, HirPattern};
 use crate::ids::VariantId;
 use crate::lexer::Span;
-use crate::type_services::facts::TypeFacts;
 use crate::types::Type;
 
 use crate::mir::{
@@ -33,7 +32,7 @@ impl<'a> MirBuilder<'a> {
                 let binding_span = self.source_local_span(self.current_source_owner, *local_id);
                 let borrowed_payload =
                     enum_payload && scrutinee_mode == MatchScrutineeMode::Borrowed;
-                if enum_payload && !borrowed_payload && !TypeFacts::is_copy(source_ty) {
+        if enum_payload && !borrowed_payload && self.needs_move(source_ty) {
                     if guarded {
                         return;
                     }

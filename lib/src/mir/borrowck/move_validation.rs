@@ -112,7 +112,7 @@ impl<'a> MoveValidationContext<'a> {
                 .normalize_type(self.type_context, &next_ty);
         }
 
-        if reference_owned_path && !current_ty.is_copy() {
+        if reference_owned_path && !self.backend_contract.is_copy(self.type_context, &current_ty) {
             diagnostics.push(mir_diagnostic(
                 format!(
                     "Cannot move non-copy value of type '{}' out of a reference",

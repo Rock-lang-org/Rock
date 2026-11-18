@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 
-use crate::hir::{HirEnum, HirImpl, HirStruct, HirVariantFields};
+use crate::hir::{HirEnum, HirImplFor, HirPhase, HirStruct, HirVariantFields};
 use crate::ids::DefId;
 use crate::types::{CaptureKind, GenericParamId, Type};
 
 use super::impl_lookup::explicit_impl_exists_for;
 use super::BuiltinTraitIds;
 
-pub(super) fn auto_trait_satisfied(
+pub(super) fn auto_trait_satisfied<P: HirPhase>(
     ty: &Type,
     trait_id: DefId,
-    impls: &HashMap<DefId, HirImpl>,
+    impls: &HashMap<DefId, HirImplFor<P>>,
     structs: &HashMap<DefId, HirStruct>,
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,

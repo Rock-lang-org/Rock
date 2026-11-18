@@ -258,6 +258,10 @@ impl<'a> MirBuilder<'a> {
         );
         Self::populate_backend_contract_drop_glue(&mut contract, &program.generated_drop_instances);
 
+        contract.copy_types.extend(type_context.type_ids().filter(|&id| {
+            let ty = type_context.type_for(id);
+            !ty.is_copy() && crate::infer::solve::program_type_is_copy(&program.program, &ty)
+        }));
         contract
     }
 

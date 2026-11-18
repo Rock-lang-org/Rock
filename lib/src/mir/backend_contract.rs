@@ -167,11 +167,15 @@ pub struct MirBackendContract {
     pub projection_outputs: BTreeMap<MirProjectionKey, TypeId>,
     pub projection_traits: BTreeSet<DefId>,
     pub drop_glue: BTreeMap<TypeId, MirCallableKey>,
+    pub copy_types: BTreeSet<TypeId>,
     pub runtime_requirements: BTreeSet<MirRuntimeHelper>,
     pub artifact_exports: Vec<MirArtifactExport>,
 }
 
 impl MirBackendContract {
+    pub(crate) fn is_copy(&self, context: &TypeContext, ty: &Type) -> bool {
+        ty.is_copy() || context.id_for_type(ty).is_some_and(|id| self.copy_types.contains(&id))
+    }
     pub fn callable(&self, key: &MirCallableKey) -> Option<&MirCallableDecl> {
         self.callables.get(key)
     }

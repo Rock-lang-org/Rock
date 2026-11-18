@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::hir::{HirEnum, HirImpl, HirImplReceiverPattern, HirStruct};
+use crate::hir::{HirEnum, HirImplFor, HirImplReceiverPattern, HirPhase, HirStruct};
 use crate::ids::DefId;
 use crate::types::{CallableKind, Type};
 
@@ -12,11 +12,11 @@ use super::BuiltinTraitIds;
 /// Matches on the `type_name` field of `HirImpl`. Generic impls (with
 /// `type_generics` non-empty, e.g. `impl<T> Show for Vec<T>`) are treated as
 /// matching any type of the right shape.
-pub(super) fn impl_exists_for(
+pub(super) fn impl_exists_for<P: HirPhase>(
     ty: &Type,
     trait_id: DefId,
     trait_args: &[Type],
-    impls: &HashMap<DefId, HirImpl>,
+    impls: &HashMap<DefId, HirImplFor<P>>,
     structs: &HashMap<DefId, HirStruct>,
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
@@ -27,6 +27,29 @@ pub(super) fn impl_exists_for(
     }
     if builtin_traits.sized == Some(trait_id) {
         return type_is_sized(ty);
+    }
+    if builtin_traits.copy == Some(trait_id) {
+        if !trait_args.is_empty() {
+            return false;
+        }
+        let element_is_copy = |element: &Type| {
+            impl_exists_for(
+                element,
+                trait_id,
+                &[],
+                impls,
+                structs,
+                enums,
+                builtin_traits,
+                assumed,
+            )
+        };
+        match ty {
+            Type::Tuple(elements) => return elements.iter().all(element_is_copy),
+            Type::Array(element, _) => return element_is_copy(element),
+            Type::Struct { .. } | Type::Enum { .. } => {}
+            _ => return crate::type_services::facts::TypeFacts::is_copy(ty),
+        }
     }
 
     if let Some(satisfied) = callable_trait_satisfied(ty, trait_id, trait_args, builtin_traits) {
@@ -58,11 +81,11 @@ pub(super) fn impl_exists_for(
     )
 }
 
-pub(super) fn explicit_impl_exists_for(
+pub(super) fn explicit_impl_exists_for<P: HirPhase>(
     ty: &Type,
     trait_id: DefId,
     trait_args: &[Type],
-    impls: &HashMap<DefId, HirImpl>,
+    impls: &HashMap<DefId, HirImplFor<P>>,
     structs: &HashMap<DefId, HirStruct>,
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
@@ -98,10 +121,10 @@ pub(super) fn explicit_impl_exists_for(
     })
 }
 
-pub(super) fn impl_bounds_satisfied(
-    imp: &HirImpl,
+pub(super) fn impl_bounds_satisfied<P: HirPhase>(
+    imp: &HirImplFor<P>,
     subst: &HashMap<crate::types::GenericParamId, Type>,
-    impls: &HashMap<DefId, HirImpl>,
+    impls: &HashMap<DefId, HirImplFor<P>>,
     structs: &HashMap<DefId, HirStruct>,
     enums: &HashMap<DefId, HirEnum>,
     builtin_traits: BuiltinTraitIds,
@@ -173,15 +196,15 @@ pub(super) fn callable_trait_satisfied(
     Some(args_match && trait_args[1] == **ret)
 }
 
-pub(super) fn callable_impl_substitution(
-    imp: &HirImpl,
+pub(super) fn callable_impl_substitution<P: HirPhase>(
+    imp: &HirImplFor<P>,
     ty: &Type,
     trait_id: DefId,
     builtin: BuiltinTraitIds,
-    impls: &HashMap<DefId, HirImpl>,
+    impls: &HashMap<DefId, HirImplFor<P>>,
 ) -> Option<HashMap<crate::types::GenericParamId, Type>> {
     if [builtin.fn_trait, builtin.fn_mut, builtin.fn_once].contains(&Some(trait_id)) {
-        if let crate::hir::HirImplReceiverPattern::Exact(pattern) = &imp.receiver_pattern {
+        if let Some(HirImplReceiverPattern::Exact(pattern)) = P::impl_receiver_pattern(&imp.receiver_pattern) {
             let mut subst = HashMap::new();
             return crate::selection::type_pattern_matches(pattern, ty, &mut subst)
                 .then_some(subst);
@@ -209,26 +232,29 @@ fn impl_trait_args_match(
         })
 }
 
-pub(super) fn impl_receiver_owner_matches(
+pub(super) fn impl_receiver_owner_matches<P: HirPhase>(
     ty: &Type,
-    imp: &HirImpl,
+    imp: &HirImplFor<P>,
     structs: &HashMap<DefId, HirStruct>,
     enums: &HashMap<DefId, HirEnum>,
 ) -> bool {
+    let Some(pattern) = P::impl_receiver_pattern(&imp.receiver_pattern) else {
+        return false;
+    };
     if let (
         Type::Reference { .. },
         HirImplReceiverPattern::Exact(pattern @ Type::Reference { .. }),
-    ) = (ty, &imp.receiver_pattern)
+    ) = (ty, pattern)
     {
         // Generic borrowed receivers have different display spellings once
         // instantiated; compare their structure and nominal IDs instead.
         return crate::selection::type_pattern_matches(pattern, ty, &mut HashMap::new());
     }
     if matches!(
-        &imp.receiver_pattern,
+        pattern,
         HirImplReceiverPattern::Exact(Type::Generic(_))
     ) || matches!(
-        &imp.receiver_pattern,
+        pattern,
         HirImplReceiverPattern::Exact(Type::Apply { constructor, .. })
             if matches!(constructor.as_ref(), Type::Generic(_))
     ) {
@@ -258,8 +284,8 @@ fn constructor_owner_id(ty: &Type) -> Option<DefId> {
     }
 }
 
-fn receiver_owner_id(imp: &HirImpl) -> Option<DefId> {
-    match &imp.receiver_pattern {
+fn receiver_owner_id<P: HirPhase>(imp: &HirImplFor<P>) -> Option<DefId> {
+    match P::impl_receiver_pattern(&imp.receiver_pattern)? {
         crate::hir::HirImplReceiverPattern::Exact(Type::Struct { id, .. })
         | crate::hir::HirImplReceiverPattern::Exact(Type::Enum { id, .. }) => Some(*id),
         crate::hir::HirImplReceiverPattern::Constructor(ty) => constructor_owner_id(ty),

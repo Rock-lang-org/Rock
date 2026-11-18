@@ -19,6 +19,7 @@ pub(in crate::crate_artifact) fn language_items_from_products(
 
     let language_items = &products.interface.language_items;
     Ok(HirLanguageItems {
+        copy: language_items.copy.map(|id| remap.def_id(id)).transpose()?,
         fold: language_items
             .fold
             .as_ref()

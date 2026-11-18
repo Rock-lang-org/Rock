@@ -20,6 +20,7 @@ impl BindingState {
             LanguageItemRole::Fn => &mut self.fn_trait.root,
             LanguageItemRole::Send => &mut self.send,
             LanguageItemRole::Owned => &mut self.owned,
+            LanguageItemRole::Copy => &mut self.copy,
             LanguageItemRole::Sync => &mut self.sync,
             LanguageItemRole::Try => &mut self.try_protocol.root,
             LanguageItemRole::FromResidual => &mut self.from_residual.root,

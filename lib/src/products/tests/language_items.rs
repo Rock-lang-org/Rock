@@ -131,6 +131,7 @@ fn product_artifact_roundtrip_preserves_complete_language_item_registry() {
         fn_trait: None,
         send: None,
         owned: Some(crate::language_items::OwnedLanguageItems { trait_id: product_def_id(89) }),
+        copy: Some(product_def_id(90)),
         sync: None,
         try_protocol: Some(TryLanguageItems {
             try_trait_id: product_def_id(43),

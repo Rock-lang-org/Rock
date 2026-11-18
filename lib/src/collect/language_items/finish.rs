@@ -227,6 +227,7 @@ impl BindingState {
             fn_trait,
             send,
             owned,
+            copy: self.copy.map(|root| root.id),
             sync,
             try_protocol,
             range,

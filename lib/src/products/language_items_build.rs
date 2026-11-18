@@ -184,6 +184,12 @@ pub(super) fn product_language_items_from_program<P: HirPhase>(
         })
         .transpose()?
         .flatten();
+    let copy = language_items
+        .copy
+        .map(|id| map_product_language_item_bundle("copy", &[id], current_def_ids, id_remap))
+        .transpose()?
+        .flatten()
+        .map(|ids| ids[0]);
     let owned = language_items
         .owned
         .as_ref()
@@ -265,6 +271,7 @@ pub(super) fn product_language_items_from_program<P: HirPhase>(
         fn_trait,
         send,
         owned,
+        copy,
         sync,
         try_protocol,
         range,

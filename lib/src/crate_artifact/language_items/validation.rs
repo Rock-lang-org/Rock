@@ -25,6 +25,7 @@ pub(in crate::crate_artifact) fn validate_product_language_items(
         && language_items.fn_trait.is_none()
         && language_items.send.is_none()
         && language_items.owned.is_none()
+        && language_items.copy.is_none()
         && language_items.sync.is_none()
         && language_items.try_protocol.is_none()
         && language_items.range.is_none()
@@ -42,6 +43,15 @@ pub(in crate::crate_artifact) fn validate_product_language_items(
     validate_product_index_mut_impls(products, language_items)?;
 
     let program = product_language_item_program(products)?;
+    validate_bundle(
+        &program,
+        language_items.copy.map(|id| {
+            ("copy.trait", id, HirLanguageItems {
+                copy: Some(product_def_id(id)),
+                ..HirLanguageItems::default()
+            })
+        }),
+    )?;
     validate_bundle(
         &program,
         language_items.fold.as_ref().map(|items| {
@@ -342,6 +352,9 @@ fn validate_product_local_ids(
     }
     if let Some(items) = &language_items.owned {
         ids.push(("owned.trait", items.trait_id));
+    }
+    if let Some(id) = language_items.copy {
+        ids.push(("copy.trait", id));
     }
     if let Some(items) = &language_items.sync {
         ids.push(("sync.trait", items.trait_id));
