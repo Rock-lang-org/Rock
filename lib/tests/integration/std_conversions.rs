@@ -545,3 +545,16 @@ main = !->
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+#[test]
+fn trait_qualified_from_infers_implementation() {
+    let output = crate::support::compile_and_run(
+        r#"
+main = !->
+    result: String = From::from "hello"
+    result.println!
+    other: String = Into::into "world"
+    other.println!
+"#,
+    );
+    assert_eq!(output.trim(), "hello\nworld");
+}

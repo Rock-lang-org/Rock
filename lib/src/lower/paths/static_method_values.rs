@@ -158,8 +158,20 @@ impl Lowerer {
                     })
             })
         });
-        let call = if let Some((method_name, method)) =
-            method_info.filter(|(_, method)| method.self_receiver.is_some())
+        let receiver_info = method_info
+            .and_then(|(name, method)| method.self_receiver.map(|mode| (name, mode)))
+            .or_else(|| {
+                let trait_def = self.trait_by_id(target.method.trait_id()?)?;
+                let id = target.method.method_id()?;
+                trait_def.signatures.iter().find_map(|(name, sig)| {
+                    (sig.id == id).then_some(sig.self_receiver).flatten()
+                        .map(|mode| (name.clone(), mode))
+                }).or_else(|| trait_def.methods.iter().find_map(|(name, method)| {
+                    (method.id == id).then_some(method.self_receiver).flatten()
+                        .map(|mode| (name.clone(), mode))
+                }))
+            });
+        let call = if let Some((method_name, mode)) = receiver_info
         {
             let Some(receiver) = args.first().cloned() else {
                 self.diagnostics.push_with_span(
@@ -174,7 +186,7 @@ impl Lowerer {
                     Box::new(receiver),
                     method_name.clone(),
                     args.into_iter().skip(1).collect(),
-                    method.self_receiver,
+                    Some(mode),
                     Some(target.method.clone()),
                 ),
                 span: span.clone(),
