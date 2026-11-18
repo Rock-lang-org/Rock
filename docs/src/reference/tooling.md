@@ -91,6 +91,10 @@ $ rockc --entry-file main.rk --extern-artifact std=build/std.rkca --release
 
 `rockc` writes to its configured `--output-dir` (default: `build/`); `rock` chooses the profile-specific directories. `cargo build --release` optimizes the Rust compiler executable itself; use `rock build --release`, `rock run --release`, or `rockc --release` to optimize the Rock program being compiled.
 
+When building a reusable `.rkca` directly with `rockc`, use `--emit-artifact PATH` with both `--crate-type lib` and `--no-link`. Binary targets cannot emit reusable crate artifacts. Package builds select the crate type and output flags for you.
+
+For compiler performance investigations, set `ROCK_TIME_PHASES=1` when running `rockc` to print per-phase wall-clock timings. `scripts/bench_phases.sh` collects timings and LLVM IR sizes for std and selected examples.
+
 ## Cleaning build output
 
 Run this from the directory containing the project's `rock.toml`:

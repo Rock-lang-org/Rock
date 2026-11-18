@@ -248,7 +248,7 @@ main = !->
     name Color::Blue .println!
 ```
 
-The current compiler does not diagnose every incomplete enum match, so exhaustive source is an important programmer responsibility. Put specific patterns before broad ones; a wildcard first would make later arms unreachable in intent even where the compiler does not report it.
+A `Bool` match with unguarded `true` and `false` arms needs no wildcard. The current compiler does not diagnose every incomplete enum match, so make sure each variant is covered. Put specific patterns before broad ones; a wildcard first would make later arms unreachable even where the compiler does not report it.
 
 ## Pattern reference
 

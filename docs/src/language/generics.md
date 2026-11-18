@@ -99,6 +99,21 @@ At the first call, inference chooses `T = I64`; at the second, it chooses `T = B
 
 A generic body may only use operations promised by its bounds. Put bounds in a `where` clause.
 
+A bound can also name a concrete type on the left. `String: From T` means that the caller may choose any `T` that `String` knows how to convert:
+
+```rock
+print_as_string: T -> () where String: From T
+print_as_string = value !->
+    text: String = value.into!
+    text.println!
+
+main = !->
+    print_as_string "hi"
+    print_as_string 'c'
+```
+
+This prints `hi` and `c`. The result type of `.into!` is fixed by the `String` annotation, while the input type varies by call.
+
 ```rock
 struct Box T
     < value: T

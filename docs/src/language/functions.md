@@ -32,6 +32,20 @@ main = !->
 
 The signature lists three parameter types followed by the return type. The branches of `clamp` all produce `I64`, so the definition satisfies the contract.
 
+### Inferred generic functions
+
+Without a signature, Rock uses both the body and the calls to infer an interface. It can infer a generic function when the same operation works at several argument types:
+
+```rock
+print_value = value !-> value.println!
+
+main = !->
+    print_value 42
+    print_value 'c'
+```
+
+This prints `42` and `c` on separate lines. The first call does not fix `value` to an integer for later calls: each call must support the print operation. Write a signature when you want to make the supported types and bounds explicit.
+
 ## Calling functions
 
 Arguments follow the function and are separated by commas. Each argument consumes a complete expression, including a nested call with its own comma-separated arguments:
@@ -135,6 +149,8 @@ main = !->
 ```
 
 For `(3, 9)`, the first branch returns `3` and skips `right`. For `(0, 9)`, execution reaches the final expression and returns `9`.
+
+An explicit `return` exits the innermost function or lambda, even inside a loop or match. Its value must agree with the function's return type, just like a reachable final expression. The branch containing `return` does not itself deliver a value to the surrounding expression.
 
 ## Unit-returning functions
 
