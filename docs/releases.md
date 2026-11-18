@@ -110,8 +110,9 @@ Before merging `develop` into `master`:
 - Fast-forward `master` to the reviewed `develop` tip with `git merge --ff-only develop`
   from `master`. Stop if a fast-forward is not possible; do not squash, rebase,
   or create a merge commit for this release.
-- Run `cargo test --locked --workspace --release --all-features`, documentation checks, and
-  installer tests. Formatting work remains deferred.
+- Build the standalone CLI binaries with `cargo build --locked --workspace --release --all-features`
+  before running `cargo test --locked --workspace --release --all-features`.
+  Run documentation and installer checks. Formatting work remains deferred.
 - Confirm packaging smoke projects use `[[bin]]`, not `[lib]`, for executables.
 - Review the release notes and commit the version, lockfile, and release changes.
 
