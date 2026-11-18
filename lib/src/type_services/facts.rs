@@ -143,9 +143,9 @@ impl TypeFacts {
             // item constants can be duplicated without transferring ownership.
             Type::Function { .. } => false,
             Type::Tuple(elems) => elems.iter().all(Self::is_copy),
+            Type::Array(elem, _) => Self::is_copy(elem),
             Type::Str => true,
             Type::Slice(_) => true,
-            Type::Array(_, _) => false,
             Type::Projection { .. } => false,
             Type::Struct { .. } => false,
             Type::Enum { .. } => false,
@@ -185,8 +185,8 @@ impl TypeFacts {
             Ty::Function { .. } => false,
             Ty::Reference { mutable: false, .. } => true,
             Ty::Tuple(elems) => elems.iter().all(|elem| Self::is_copy_id(*elem, ty)),
+            Ty::Array { inner, .. } => Self::is_copy_id(*inner, ty),
             Ty::Reference { mutable: true, .. }
-            | Ty::Array { .. }
             | Ty::Projection { .. }
             | Ty::Struct { .. }
             | Ty::Enum { .. }

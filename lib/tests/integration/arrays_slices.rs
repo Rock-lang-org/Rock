@@ -227,6 +227,20 @@ main = -> 0
 }
 
 #[test]
+fn test_arrays_of_copy_elements_can_be_used_after_assignment() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    original = [42, 7]
+    duplicate = original
+    original[0].println!
+    duplicate[0].println!
+"#,
+    );
+    assert_eq!(output.trim(), "42\n42");
+}
+
+#[test]
 fn test_array_literal_keeps_fixed_array_type_until_coercion() {
     let output = compile_and_run(
         r#"
