@@ -238,9 +238,9 @@ main = !->
     slice = values.as_slice!
     mapped = slice.fmap (x -> *x + 1)
     mapped.println!
-    array_mapped = [1, 2, 3] <&> (x -> x + 1)
+    array_mapped = [1, 2, 3].fmap (x -> x + 1)
     array_mapped.println!
-    (increment <$> slice).println!
+    (slice.fmap increment).println!
 "#,
     );
     assert_eq!(output.trim(), "[2, 3, 4]\n[2, 3, 4]\n[2, 3, 4]");

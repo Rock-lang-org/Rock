@@ -718,7 +718,7 @@ main = !->
 fn const_parameter_defaults_fill_omitted_lengths() {
     let output = crate::support::compile_and_run(
         r#"
-struct Buf T, N: usize = 3
+struct Buf T, {N: usize = 3}
     < items: [T; N]
 
 main = !->

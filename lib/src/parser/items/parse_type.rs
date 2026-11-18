@@ -365,16 +365,7 @@ pub fn parse_generic_param_list(mut stream: Input) -> IResult<Vec<GenericParamDe
         } else if matches!(stream.seek()?.token_type, TokenType::OpenParen) {
             parse_parenthesized_constructor_param(stream)?
         } else {
-            let (stream, mut param) = parse_plain_generic_param(stream)?;
-            if param.kind.is_some() && matches!(stream.seek()?.token_type, TokenType::Equal) {
-                let (stream, _) = TokenType::Equal.process(stream)?;
-                let (stream, default) = parse_type(stream)?;
-                param.span = join_spans(&param.span, &default.span());
-                param.default = Some(Box::new(default));
-                (stream, param)
-            } else {
-                (stream, param)
-            }
+            parse_plain_generic_param(stream)?
         };
         params.push(param);
         stream = next_stream;

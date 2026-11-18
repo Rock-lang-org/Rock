@@ -32,8 +32,10 @@ impl FunctorValue A, B, Vec B for [A; N]
             output.push (mapper item)
         output
 
-<$>: M -> C -> O where C: FunctorValue A, B, O, M: FnMut A, B
-<$> = mapper, value -> value.fmap mapper
+// The operators stay constructor-shaped (`F A -> F B`) so signatureless
+// helpers can infer the constructor; arrays and slices map with `.fmap`.
+<$>: M -> F A -> F B where F _: Functor, M: FnMut A, B
+<$> = mapper, value -> F::Functor::fmap mapper, value
 
-<&>: C -> M -> O where C: FunctorValue A, B, O, M: FnMut A, B
-<&> = value, mapper -> value.fmap mapper
+<&>: F A -> M -> F B where F _: Functor, M: FnMut A, B
+<&> = value, mapper -> F::Functor::fmap mapper, value
