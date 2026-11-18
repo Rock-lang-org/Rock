@@ -434,7 +434,17 @@ impl Lowerer {
         // Create a temp variable for the tuple value
         let uid = self.body.fresh_tuple_temp_id();
         let tmp_name = format!("__tuple_tmp_{}", uid);
-        let tmp_ty = rhs_expr.ty.clone();
+        let tuple_ty = Type::Tuple(
+            sub_patterns
+                .iter()
+                .map(|_| self.engine.fresh_type_var_at(rhs_span.clone()))
+                .collect(),
+        );
+        if let Err(error) = self.engine.unify(&rhs_expr.ty, &tuple_ty) {
+            self.diagnostics
+                .push_type_with_span(error.render(&self.engine), rhs_span.clone());
+        }
+        let tmp_ty = self.engine.resolve(&tuple_ty);
         let tmp_local_id = self.fresh_local_id();
         self.scope
             .define_local(tmp_name.clone(), tmp_ty.clone(), false, tmp_local_id);

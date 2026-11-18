@@ -88,6 +88,21 @@ main = !->
 }
 
 #[test]
+fn test_signatureless_tuple_destructuring_is_constrained_by_call_site() {
+    let output = compile_and_run(
+        r#"
+product = pair ->
+    (a, b) = pair
+    a * b
+
+main = !->
+    (product (3, 4)).println!
+"#,
+    );
+    assert_eq!(output.trim(), "12");
+}
+
+#[test]
 fn test_signatureless_method_receiver_is_constrained_by_call_site() {
     let output = compile_and_run(
         r#"
