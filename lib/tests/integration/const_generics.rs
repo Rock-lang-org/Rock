@@ -714,3 +714,21 @@ main = !->
         "Type mismatch",
     );
 }
+#[test]
+fn const_parameter_defaults_fill_omitted_lengths() {
+    let output = crate::support::compile_and_run(
+        r#"
+struct Buf T, N: usize = 3
+    < items: [T; N]
+
+main = !->
+    defaulted: Buf I64 = Buf
+        items: [1, 2, 3]
+    explicit: Buf I64, 2 = Buf
+        items: [4, 5]
+    defaulted.items[2].println!
+    explicit.items[1].println!
+"#,
+    );
+    assert_eq!(output.trim(), "3\n5");
+}
