@@ -98,21 +98,24 @@ The tag workflow for `v*` runs on Ubuntu 24.04, tests and packages the toolchain
 
 No local packaging command or tag workflow should silently publish publicly. Do not claim Windows, macOS, nightly, automatic cross-target support, or Rustup feature parity. If the public smoke test fails, communicate the problem and correct the release deliberately rather than telling users to skip checksum checks.
 
-## v0.7.1 Preparation
+## v0.7.2 Preparation
 
-The next release is v0.7.1. Its [release notes](release-notes/v0.7.1.md) include
-the development changelog and migration notes; all six Cargo packages must use
-0.7.1 with a matching lockfile. Published v0.7.0 notes remain unchanged.
+The next release is v0.7.2. See the [release notes](release-notes/v0.7.2.md)
+and [changelog](../CHANGELOG.md). All six Cargo packages must use 0.7.2 with
+a matching lockfile. Leave published release notes unchanged.
 
 Before merging `develop` into `master`:
 
 - Fetch the remote branches and confirm the intended base and reviewed head.
+- Fast-forward `master` to the reviewed `develop` tip with `git merge --ff-only develop`
+  from `master`. Stop if a fast-forward is not possible; do not squash, rebase,
+  or create a merge commit for this release.
 - Run `cargo test --locked --workspace --release --all-features`, documentation checks, and
   installer tests. Formatting work remains deferred.
 - Confirm packaging smoke projects use `[[bin]]`, not `[lib]`, for executables.
 - Review the release notes and commit the version, lockfile, and release changes.
 
-After the reviewed merge, create the v0.7.1 tag on the intended `master` commit
+After the reviewed merge, create the v0.7.2 tag on the intended `master` commit
 through the maintainer's normal process. Tagging triggers the release workflow:
 Ubuntu 24.04 packaging, clean-runtime smoke tests, then draft creation. Review
 the draft before publishing. Local Arch Linux builds can validate functionality
