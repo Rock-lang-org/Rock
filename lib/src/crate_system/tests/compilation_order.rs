@@ -67,6 +67,8 @@ fn test_compilation_order_with_deps() {
                 Dependency {
                     path: Some("../crate_a".to_string()),
                     version: None,
+                    git: None,
+                    rev: None,
                 },
             );
             Some(deps)
