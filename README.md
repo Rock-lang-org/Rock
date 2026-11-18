@@ -340,9 +340,7 @@ The offsets are `0`, `1`, and `3`. Generalized loops also support owned and borr
 
 ```haskell
 main = !->
-    mut numbers = Vec::new!
-    for value in [1, 2, 3, 4]
-        numbers.push value
+    numbers: Vec _ = [1, 2, 3, 4].into!
 
     numbers.filter (value -> value % 2 == 0)
         <&> (* 10)
@@ -600,9 +598,7 @@ You do not need a separate mapping helper for each container. `<&>` is one gener
 double = value -> value * 2
 
 main = !->
-    mut values = Vec::new!
-    for value in [1, 2, 3]
-        values.push value
+    values: Vec _ = [1, 2, 3].into!
 
     Option::Some 4
         <&> double
@@ -660,9 +656,7 @@ Two more constructor traits address common collection tasks:
 
 ```haskell
 make_values = ->
-    mut values = Vec::new!
-    for value in [1, 2, 3]
-        values.push value
+    values: Vec _ = [1, 2, 3].into!
     values
 
 append_digit = pair -> pair.0 * 10 + pair.1
@@ -685,9 +679,10 @@ Use `traverse_m` when later callbacks should be skipped after failure. Ordinary 
 
 ```haskell
 main = !->
-    mut values = Vec::new!
-    values.push Option::Some 4
-    values.push Option::Some 5
+    values: Vec _ = [
+        Option::Some 4
+        Option::Some 5
+    ].into!
 
     values
         |> sequence
