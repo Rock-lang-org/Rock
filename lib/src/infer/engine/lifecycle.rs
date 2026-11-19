@@ -67,7 +67,7 @@ impl InferenceEngine {
         &mut self,
         context: crate::type_services::display::TypeDisplayContext,
     ) {
-        self.type_display_context = context;
+        self.type_display_context = context.into();
     }
 
     pub fn display_type(&self, ty: &Type) -> String {

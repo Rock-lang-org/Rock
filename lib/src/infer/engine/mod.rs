@@ -37,7 +37,7 @@ pub struct InferenceEngine {
     // Most probes only read normalization data. Fresh variables in a probe
     // update a private copy rather than changing the parent engine.
     normalization_env: Arc<TypeNormalizationEnv>,
-    type_display_context: crate::type_services::display::TypeDisplayContext,
+    type_display_context: Arc<crate::type_services::display::TypeDisplayContext>,
     generic_defaults: Vec<(Type, Type)>,
 }
 
