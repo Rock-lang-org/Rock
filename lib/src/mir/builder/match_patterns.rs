@@ -104,6 +104,22 @@ impl<'a> MirBuilder<'a> {
                 );
             }
             HirPattern::Array { patterns, rest, .. } => {
+                if guarded
+                    && !source_place.projection.contains(&Projection::Deref)
+                    && self.needs_move(source_ty)
+                {
+                    let span = self.locals[source_place.local.0].span.clone();
+                    self.diagnostics.push(match span {
+                        Some(span) => crate::diagnostic::Diagnostic::new(
+                            "unsupported guarded non-copy array pattern".to_string(),
+                            span,
+                        ),
+                        None => crate::diagnostic::Diagnostic::for_internal(
+                            "unsupported guarded non-copy array pattern".to_string(),
+                        ),
+                    });
+                    return;
+                }
                 for (pattern, place, ty) in
                     self.array_pattern_children(patterns, *rest, &source_place, source_ty, true)
                 {
