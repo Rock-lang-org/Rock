@@ -557,13 +557,8 @@ impl Lowerer {
             }
             _ => {
                 let ty = self.engine.fresh_type_var_at(fallback);
-                // For complex patterns, use a generated name
-                let name = pattern
-                    .binding
-                    .as_ref()
-                    .map(|b| b.name.clone())
-                    .unwrap_or_else(|| "_arg".to_string());
-                (name, ty, false, false)
+                // The body destructures it; see `param_destructuring_prelude`.
+                (Self::destructured_param_name(pattern), ty, false, false)
             }
         }
     }

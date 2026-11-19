@@ -418,15 +418,29 @@ impl SerializedHirPattern {
                 name,
                 local_id,
                 mutable,
+                mode,
             } => Self::Binding {
                 name: name.clone(),
                 local_id: *local_id,
                 mutable: *mutable,
+                mode: *mode,
             },
+            crate::hir::HirPattern::Deref(inner) => {
+                Self::Deref(Box::new(Self::encode(inner, encoder)?))
+            }
             crate::hir::HirPattern::Literal(value) => Self::Literal(value.clone()),
             crate::hir::HirPattern::Tuple(patterns) => {
                 Self::Tuple(encode_patterns(patterns, encoder)?)
             }
+            crate::hir::HirPattern::Array {
+                patterns,
+                rest,
+                irrefutable,
+            } => Self::Array {
+                patterns: encode_patterns(patterns, encoder)?,
+                rest: *rest,
+                irrefutable: *irrefutable,
+            },
             crate::hir::HirPattern::Struct(name, struct_id, type_args, fields) => Self::Struct(
                 name.clone(),
                 *struct_id,
@@ -458,15 +472,27 @@ impl SerializedHirPattern {
                 name,
                 local_id,
                 mutable,
+                mode,
             } => crate::hir::HirPattern::Binding {
                 name,
                 local_id,
                 mutable,
+                mode,
             },
+            Self::Deref(inner) => crate::hir::HirPattern::Deref(Box::new(inner.decode(decoder)?)),
             Self::Literal(value) => crate::hir::HirPattern::Literal(value),
             Self::Tuple(patterns) => {
                 crate::hir::HirPattern::Tuple(decode_patterns(patterns, decoder)?)
             }
+            Self::Array {
+                patterns,
+                rest,
+                irrefutable,
+            } => crate::hir::HirPattern::Array {
+                patterns: decode_patterns(patterns, decoder)?,
+                rest,
+                irrefutable,
+            },
             Self::Struct(name, struct_id, type_args, fields) => crate::hir::HirPattern::Struct(
                 name,
                 struct_id,

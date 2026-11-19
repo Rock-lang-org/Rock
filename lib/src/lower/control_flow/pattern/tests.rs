@@ -301,7 +301,9 @@ fn pattern_binding_allocates_local_id_and_defines_scope() {
             name,
             local_id,
             mutable,
+            mode,
         } => {
+            assert_eq!(mode, crate::hir::HirBindingMode::Value);
             assert_eq!(name, "value");
             assert!(!mutable);
             assert_ne!(local_id, HirLocalId(u32::MAX));

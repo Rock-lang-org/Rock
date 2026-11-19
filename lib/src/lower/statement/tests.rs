@@ -48,12 +48,20 @@ fn binding_pattern(name: &str) -> Pattern {
     }
 }
 
+fn tuple_pattern(elements: Vec<Pattern>) -> Pattern {
+    Pattern {
+        binding: None,
+        kind: PatternKind::Tuple(elements),
+    }
+}
+
 #[test]
 fn tuple_destructuring_temp_name_does_not_consume_type_var_id() {
     let mut lowerer = Lowerer::new_for_test();
 
-    let _ = lowerer
-        .with_test_body_context(|lowerer| lowerer.lower_tuple_destructuring(&[], &number_expr(1)));
+    let _ = lowerer.with_test_body_context(|lowerer| {
+        lowerer.lower_pattern_destructuring(&tuple_pattern(Vec::new()), None, &number_expr(1))
+    });
 
     assert_eq!(lowerer.engine.fresh_type_var(), Type::TypeVar(TypeVarId(0)));
 }
@@ -62,8 +70,9 @@ fn tuple_destructuring_temp_name_does_not_consume_type_var_id() {
 fn tuple_destructuring_assigns_ids_to_temp_and_bindings() {
     let mut lowerer = Lowerer::new_for_test();
     let stmts = lowerer.with_test_body_context(|lowerer| {
-        lowerer.lower_tuple_destructuring(
-            &[binding_pattern("left"), binding_pattern("right")],
+        lowerer.lower_pattern_destructuring(
+            &tuple_pattern(vec![binding_pattern("left"), binding_pattern("right")]),
+            None,
             &tuple_expr(vec![int_expr(1), int_expr(2)]),
         )
     });
@@ -74,9 +83,9 @@ fn tuple_destructuring_assigns_ids_to_temp_and_bindings() {
         ..
     } = &stmts[0]
     else {
-        panic!("expected tuple temp let");
+        panic!("expected pattern temp let");
     };
-    assert!(temp_name.starts_with("__tuple_tmp_"));
+    assert!(temp_name.starts_with("__pattern_tmp_"));
 
     let HirStmt::Let {
         name: left_name,

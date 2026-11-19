@@ -6,7 +6,9 @@ use crate::lower::Lowerer;
 
 fn resolve_pattern_types(pattern: &mut HirPattern, lowerer: &Lowerer) {
     match pattern {
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => {
             for pattern in patterns {
                 resolve_pattern_types(pattern, lowerer);
             }
@@ -24,6 +26,7 @@ fn resolve_pattern_types(pattern: &mut HirPattern, lowerer: &Lowerer) {
                 resolve_pattern_types(pattern, lowerer);
             }
         }
+        HirPattern::Deref(inner) => resolve_pattern_types(inner, lowerer),
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }
 }

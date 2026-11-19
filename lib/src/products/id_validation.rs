@@ -378,7 +378,9 @@ fn assert_valid_product_method_target(target: &HirMethodCallTarget) {
 
 fn assert_valid_product_pattern_ids(pattern: &HirPattern) {
     match pattern {
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => {
             for pattern in patterns {
                 assert_valid_product_pattern_ids(pattern);
             }
@@ -405,6 +407,7 @@ fn assert_valid_product_pattern_ids(pattern: &HirPattern) {
                 assert_valid_product_pattern_ids(pattern);
             }
         }
+        HirPattern::Deref(inner) => assert_valid_product_pattern_ids(inner),
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }
 }

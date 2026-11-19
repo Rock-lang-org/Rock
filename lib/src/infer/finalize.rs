@@ -24,7 +24,9 @@ impl<'a> FinalizeCtx<'a> {
 
 fn finalize_pattern(ctx: &mut FinalizeCtx<'_>, pattern: &mut HirPattern) {
     match pattern {
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => {
             for pattern in patterns {
                 finalize_pattern(ctx, pattern);
             }
@@ -42,6 +44,7 @@ fn finalize_pattern(ctx: &mut FinalizeCtx<'_>, pattern: &mut HirPattern) {
                 finalize_pattern(ctx, pattern);
             }
         }
+        HirPattern::Deref(inner) => finalize_pattern(ctx, inner),
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }
 }

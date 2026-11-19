@@ -192,9 +192,9 @@ fn hir_expr_is_codegen_concrete<P: HirPhase>(expr: &HirExprFor<P>) -> bool {
 fn hir_pattern_is_codegen_concrete(pattern: &HirPattern) -> bool {
     match pattern {
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => true,
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
-            patterns.iter().all(hir_pattern_is_codegen_concrete)
-        }
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => patterns.iter().all(hir_pattern_is_codegen_concrete),
         HirPattern::Struct(_, _, type_args, fields) => {
             type_args.iter().all(hir_type_is_codegen_concrete)
                 && fields
@@ -202,5 +202,6 @@ fn hir_pattern_is_codegen_concrete(pattern: &HirPattern) -> bool {
                     .all(|field| hir_pattern_is_codegen_concrete(&field.pattern))
         }
         HirPattern::Enum(_, _, _, patterns) => patterns.iter().all(hir_pattern_is_codegen_concrete),
+        HirPattern::Deref(inner) => hir_pattern_is_codegen_concrete(inner),
     }
 }

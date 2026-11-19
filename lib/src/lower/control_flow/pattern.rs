@@ -17,6 +17,25 @@ fn identifier_path_span(path: &ast::TypePath) -> crate::lexer::Span {
     }
 }
 
+/// Whether `pattern` matches every value of its type: bindings, wildcards and
+/// tuples, structs or dereferences made only of such patterns.
+pub(crate) fn pattern_is_irrefutable(pattern: &HirPattern) -> bool {
+    match pattern {
+        HirPattern::Wildcard | HirPattern::Binding { .. } => true,
+        HirPattern::Tuple(patterns) => patterns.iter().all(pattern_is_irrefutable),
+        HirPattern::Struct(_, _, _, fields) => fields
+            .iter()
+            .all(|field| pattern_is_irrefutable(&field.pattern)),
+        HirPattern::Deref(inner) => pattern_is_irrefutable(inner),
+        HirPattern::Array {
+            patterns,
+            irrefutable,
+            ..
+        } => *irrefutable && patterns.iter().all(pattern_is_irrefutable),
+        HirPattern::Literal(_) | HirPattern::Enum(..) | HirPattern::Or(_) => false,
+    }
+}
+
 fn inferred_pattern_span(
     lowerer: &Lowerer,
     pattern: &ast::Pattern,
@@ -45,15 +64,52 @@ impl Lowerer {
         );
     }
 
+    /// Lowers a pattern matched against a value of `expected_ty`.
+    ///
+    /// Tuple, struct and enum patterns see through references: they match the
+    /// referenced value and their bindings borrow from it (`&mut` only when
+    /// every reference on the way is mutable). An explicit `&pat` matches the
+    /// referenced value with by-value bindings, which may only copy.
     pub(crate) fn lower_pattern(
         &mut self,
         pattern: &ast::Pattern,
         expected_ty: &Type,
     ) -> HirPattern {
+        self.lower_pattern_in_mode(pattern, expected_ty, HirBindingMode::Value)
+    }
+
+    pub(super) fn lower_pattern_in_mode(
+        &mut self,
+        pattern: &ast::Pattern,
+        expected_ty: &Type,
+        mode: HirBindingMode,
+    ) -> HirPattern {
+        if matches!(
+            pattern.kind,
+            ast::PatternKind::Tuple(_) | ast::PatternKind::Instance(_) | ast::PatternKind::Array(_)
+        ) {
+            if let Type::Reference { mutable, inner } = self.engine.resolve(expected_ty) {
+                let mode = HirBindingMode::Ref {
+                    mutable: match mode {
+                        HirBindingMode::Value => mutable,
+                        HirBindingMode::Ref { mutable: outer } => outer && mutable,
+                    },
+                };
+                return HirPattern::Deref(Box::new(
+                    self.lower_pattern_in_mode(pattern, &inner, mode),
+                ));
+            }
+        }
         match &pattern.kind {
             ast::PatternKind::Wildcard => HirPattern::Wildcard,
             ast::PatternKind::Ident(ident_pat) => {
-                let ty = expected_ty.clone();
+                let ty = match mode {
+                    HirBindingMode::Value => expected_ty.clone(),
+                    HirBindingMode::Ref { mutable } => Type::Reference {
+                        mutable,
+                        inner: Box::new(expected_ty.clone()),
+                    },
+                };
                 let local_id = self.fresh_local_id();
                 if let Some(owner) = self.current_body_def_id() {
                     self.source_map.insert_local_in_scope(
@@ -69,6 +125,7 @@ impl Lowerer {
                     name: ident_pat.name.name.clone(),
                     local_id,
                     mutable: ident_pat.mut_,
+                    mode,
                 }
             }
             ast::PatternKind::Literal(lit) => match &lit.kind {
@@ -119,12 +176,20 @@ impl Lowerer {
                     })
                     .collect();
                 let tuple_ty = Type::Tuple(elem_types.clone());
-                let _ = self.engine.unify(expected_ty, &tuple_ty);
+                if let Err(error) = self.engine.unify(expected_ty, &tuple_ty) {
+                    if let Some(span) = span {
+                        self.diagnostics.push_type_with_span(
+                            format!("pattern type mismatch: {}", error.render(&self.engine)),
+                            span,
+                        );
+                    }
+                    return HirPattern::Wildcard;
+                }
 
                 let patterns: Vec<HirPattern> = pats
                     .iter()
                     .zip(elem_types.iter())
-                    .map(|(p, t)| self.lower_pattern(p, t))
+                    .map(|(p, t)| self.lower_pattern_in_mode(p, t, mode))
                     .collect();
                 HirPattern::Tuple(patterns)
             }
@@ -169,7 +234,7 @@ impl Lowerer {
                                 &inst_pat.args
                             {
                                 args.extend(existing.iter().cloned());
-                                return self.lower_pattern(
+                                return self.lower_pattern_in_mode(
                                     &ast::Pattern {
                                         binding: pattern.binding.clone(),
                                         kind: ast::PatternKind::Instance(ast::InstancePattern {
@@ -184,6 +249,7 @@ impl Lowerer {
                                         }),
                                     },
                                     expected_ty,
+                                    mode,
                                 );
                             }
                         }
@@ -319,7 +385,7 @@ impl Lowerer {
                                     let patterns: Vec<HirPattern> = args
                                         .iter()
                                         .zip(arg_types.iter())
-                                        .map(|(p, t)| self.lower_pattern(p, t))
+                                        .map(|(p, t)| self.lower_pattern_in_mode(p, t, mode))
                                         .collect();
 
                                     return HirPattern::Enum(
@@ -389,7 +455,7 @@ impl Lowerer {
                                         let patterns: Vec<HirPattern> = args
                                             .iter()
                                             .zip(arg_types.iter())
-                                            .map(|(p, t)| self.lower_pattern(p, t))
+                                            .map(|(p, t)| self.lower_pattern_in_mode(p, t, mode))
                                             .collect();
 
                                         return HirPattern::Enum(
@@ -444,7 +510,7 @@ impl Lowerer {
                                 let t = self
                                     .engine
                                     .fresh_type_var_at(identifier_path_span(&inst_pat.name));
-                                self.lower_pattern(p, &t)
+                                self.lower_pattern_in_mode(p, &t, mode)
                             })
                             .collect();
 
@@ -631,7 +697,11 @@ impl Lowerer {
                                         continue;
                                     };
                                     let field_ty = variant_field.ty.substitute_generics(&subst);
-                                    patterns.push(self.lower_pattern(&field.pattern, &field_ty));
+                                    patterns.push(self.lower_pattern_in_mode(
+                                        &field.pattern,
+                                        &field_ty,
+                                        mode,
+                                    ));
                                 }
 
                                 return HirPattern::Enum(
@@ -716,13 +786,15 @@ impl Lowerer {
                         let field_patterns: Vec<HirStructPatternField> = fields
                             .iter()
                             .map(|f| {
-                                let field = struct_info.fields.iter().find(|field| field.name == f.name.name).map(|field| {
-                                    HirFieldLocation {
+                                let field = struct_info
+                                    .fields
+                                    .iter()
+                                    .find(|field| field.name == f.name.name)
+                                    .map(|field| HirFieldLocation {
                                         owner: struct_info.id,
                                         field_id: field.id,
                                         name: field.name.clone(),
-                                    }
-                                });
+                                    });
                                 let t = self
                                     .lower_struct_field_type(
                                         &type_name,
@@ -730,23 +802,10 @@ impl Lowerer {
                                         &f.name.name,
                                         &f.name.span,
                                     )
-                                     .unwrap_or_else(|| {
-                                         self.engine
-                                             .fresh_type_var_at(f.name.span.clone())
-                                     });
-                                let pat = match &f.pattern.kind {
-                                    ast::PatternKind::Wildcard | ast::PatternKind::Ident(_) => {
-                                        self.lower_pattern(&f.pattern, &t)
-                                    }
-                                    _ => {
-                                        self.diagnostics.push_type_with_span(
-                                            "Struct field patterns currently only support bindings and wildcards"
-                                                .to_string(),
-                                            f.name.span.clone(),
-                                        );
-                                        HirPattern::Wildcard
-                                    }
-                                };
+                                    .unwrap_or_else(|| {
+                                        self.engine.fresh_type_var_at(f.name.span.clone())
+                                    });
+                                let pat = self.lower_pattern_in_mode(&f.pattern, &t, mode);
                                 HirStructPatternField {
                                     name: f.name.name.clone(),
                                     field,
@@ -758,9 +817,38 @@ impl Lowerer {
                     }
                 }
             }
-            ast::PatternKind::Array(_) => HirPattern::Wildcard,
-            ast::PatternKind::Nested(inner) => self.lower_pattern(inner, expected_ty),
-            ast::PatternKind::Reference { .. } => HirPattern::Wildcard,
+            ast::PatternKind::Array(elements) => {
+                self.lower_array_pattern(pattern, elements, expected_ty, mode)
+            }
+            ast::PatternKind::Nested(inner) => self.lower_pattern_in_mode(inner, expected_ty, mode),
+            ast::PatternKind::Reference {
+                pattern: inner_pattern,
+                mutable,
+            } => {
+                let span = inferred_pattern_span(self, pattern, expected_ty);
+                let target = span
+                    .clone()
+                    .map(|span| self.engine.fresh_type_var_at(span))
+                    .unwrap_or_else(|| self.engine.fresh_type_var());
+                let reference = Type::Reference {
+                    mutable: *mutable,
+                    inner: Box::new(target.clone()),
+                };
+                if let Err(error) = self.engine.unify(expected_ty, &reference) {
+                    if let Some(span) = span {
+                        self.diagnostics.push_type_with_span(
+                            format!("pattern type mismatch: {}", error.render(&self.engine)),
+                            span,
+                        );
+                    }
+                    return HirPattern::Wildcard;
+                }
+                HirPattern::Deref(Box::new(self.lower_pattern_in_mode(
+                    inner_pattern,
+                    &target,
+                    HirBindingMode::Value,
+                )))
+            }
         }
     }
 }

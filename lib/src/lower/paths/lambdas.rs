@@ -270,6 +270,7 @@ impl Lowerer {
         let lambda_return_ty = self.engine.fresh_type_var_at(span.clone());
         let loop_stack = self.body.suspend_loops();
         let return_checks = self.return_checks_mark();
+        let prelude = self.param_destructuring_prelude(&params[..1]);
         let mut body = if params.len() == 1 {
             self.with_body_return_type(lambda_return_ty.clone(), |lowerer| {
                 lowerer.prepare_capture_liveness(body);
@@ -287,6 +288,7 @@ impl Lowerer {
                 stmts: vec![HirStmt::Expr(inner)],
             }
         };
+        body.stmts.splice(0..0, prelude);
         self.body.resume_loops(loop_stack);
         self.flush_return_checks_for_diverging_body(return_checks, &body.ty);
         let _ = self.engine.unify(&body.ty, &lambda_return_ty);

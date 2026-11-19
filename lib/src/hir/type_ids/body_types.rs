@@ -94,7 +94,9 @@ pub(crate) fn collect_pattern_type_ids(
                 );
             }
         }
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => {
             for (index, pattern) in patterns.iter().enumerate() {
                 collect_pattern_type_ids(owner, pattern, child_path(&path, index), context, ids);
             }
@@ -103,6 +105,9 @@ pub(crate) fn collect_pattern_type_ids(
             for (index, pattern) in patterns.iter().enumerate() {
                 collect_pattern_type_ids(owner, pattern, child_path(&path, index), context, ids);
             }
+        }
+        HirPattern::Deref(inner) => {
+            collect_pattern_type_ids(owner, inner, child_path(&path, 0), context, ids);
         }
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }

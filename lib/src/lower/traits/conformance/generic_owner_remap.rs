@@ -80,7 +80,11 @@ fn remap_pattern_generic_owner(pattern: &mut HirPattern, old_owner: DefId, new_o
                 remap_pattern_generic_owner(&mut field.pattern, old_owner, new_owner);
             }
         }
-        HirPattern::Tuple(items) | HirPattern::Or(items) => {
+        HirPattern::Tuple(items)
+        | HirPattern::Array {
+            patterns: items, ..
+        }
+        | HirPattern::Or(items) => {
             for nested in items {
                 remap_pattern_generic_owner(nested, old_owner, new_owner);
             }
@@ -90,6 +94,7 @@ fn remap_pattern_generic_owner(pattern: &mut HirPattern, old_owner: DefId, new_o
                 remap_pattern_generic_owner(nested, old_owner, new_owner);
             }
         }
+        HirPattern::Deref(inner) => remap_pattern_generic_owner(inner, old_owner, new_owner),
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }
 }

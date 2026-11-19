@@ -4,5 +4,6 @@ mod callable;
 pub(crate) mod fold_loop;
 mod if_match;
 mod loops;
-mod pattern;
+pub(crate) mod pattern;
+mod pattern_arrays;
 mod secondary;

@@ -193,7 +193,12 @@ pub(super) fn remap_pattern_child_locations(
             }
             Ok(())
         }
-        crate::hir::HirPattern::Tuple(sub_patterns) | crate::hir::HirPattern::Or(sub_patterns) => {
+        crate::hir::HirPattern::Tuple(sub_patterns)
+        | crate::hir::HirPattern::Array {
+            patterns: sub_patterns,
+            ..
+        }
+        | crate::hir::HirPattern::Or(sub_patterns) => {
             for pattern in sub_patterns {
                 remap_pattern_child_locations(
                     pattern,
@@ -204,6 +209,9 @@ pub(super) fn remap_pattern_child_locations(
                 )?;
             }
             Ok(())
+        }
+        crate::hir::HirPattern::Deref(inner) => {
+            remap_pattern_child_locations(inner, remap, validator, type_validator, depth + 1)
         }
         crate::hir::HirPattern::Wildcard
         | crate::hir::HirPattern::Binding { .. }

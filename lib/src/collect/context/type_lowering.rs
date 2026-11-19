@@ -370,11 +370,7 @@ impl CollectContext {
             }
             _ => {
                 let ty = self.type_vars.fresh_type_var_at(fallback);
-                let name = pattern
-                    .binding
-                    .as_ref()
-                    .map(|binding| binding.name.clone())
-                    .unwrap_or_else(|| "_arg".to_string());
+                let name = crate::lower::Lowerer::destructured_param_name(pattern);
                 (name, ty, false, false)
             }
         }

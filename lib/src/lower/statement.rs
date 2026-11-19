@@ -37,9 +37,17 @@ impl Lowerer {
             let is_last = i == block.statements.len() - 1;
             // Check if this is a tuple destructuring assignment
             if let ast::Statement::Assignment(assign) = stmt {
-                if let ast::AssignmentLHS::Pattern { pattern, .. } = &assign.lhs {
-                    if let ast::PatternKind::Tuple(sub_patterns) = &pattern.kind {
-                        let expanded = self.lower_tuple_destructuring(sub_patterns, &assign.rhs);
+                if let ast::AssignmentLHS::Pattern {
+                    pattern,
+                    type_annotation,
+                } = &assign.lhs
+                {
+                    if Self::is_destructuring_pattern(pattern) {
+                        let expanded = self.lower_pattern_destructuring(
+                            pattern,
+                            type_annotation.as_ref(),
+                            &assign.rhs,
+                        );
                         for s in &expanded {
                             last_ty = self.stmt_type(s);
                         }
@@ -58,7 +66,9 @@ impl Lowerer {
 
     pub(crate) fn lower_lambda_body(&mut self, lambda: &ast::LambdaDecl) -> HirBlock {
         self.prepare_capture_liveness(&lambda.body);
+        let prelude = self.param_destructuring_prelude(&lambda.parameters);
         let mut body = self.lower_block(&lambda.body);
+        body.stmts.splice(0..0, prelude);
         // A literal returned from an inferred callable carries numeric evidence,
         // not a committed I64: callers may supply its expected integer type.
         let inferred_return = self
@@ -424,114 +434,235 @@ impl Lowerer {
         }
     }
 
-    pub(crate) fn lower_tuple_destructuring(
+    /// Lowers `pattern = rhs` for a destructuring pattern. The value is kept
+    /// in a temporary and each binding becomes a `let` of its projection, so
+    /// the pattern's bindings stay in scope for the rest of the block. Typing
+    /// and binding modes come from `lower_pattern`, shared with `match`.
+    pub(crate) fn lower_pattern_destructuring(
         &mut self,
-        sub_patterns: &[ast::Pattern],
+        pattern: &ast::Pattern,
+        type_annotation: Option<&ast::ParseType>,
         rhs: &ast::Expression,
     ) -> Vec<HirStmt> {
-        let mut stmts = Vec::new();
-        let rhs_expr = self.lower_expression(rhs);
-        let rhs_span = rhs_expr.span.clone();
-
-        // Create a temp variable for the tuple value
-        let uid = self.body.fresh_tuple_temp_id();
-        let tmp_name = format!("__tuple_tmp_{}", uid);
-        let tuple_ty = Type::Tuple(
-            sub_patterns
-                .iter()
-                .map(|_| self.engine.fresh_type_var_at(rhs_span.clone()))
-                .collect(),
-        );
-        // Destructuring through references binds each element by reference
-        // (`(a, b) = &pair` gives `a: &A`, `b: &B`); `&mut` binds `&mut`.
-        // Nested references collapse to the innermost one's mutability.
-        let mut borrow = None;
-        let mut deref_types = Vec::new();
-        let mut target_ty = self.engine.resolve(&rhs_expr.ty);
-        while let Type::Reference { mutable, inner } = target_ty {
-            borrow = Some(borrow.map_or(mutable, |outer: bool| outer && mutable));
-            target_ty = self.engine.resolve(&inner);
-            deref_types.push(target_ty.clone());
-        }
-        if let Err(error) = self.engine.unify(&target_ty, &tuple_ty) {
-            self.diagnostics
-                .push_type_with_span(error.render(&self.engine), rhs_span.clone());
-        }
-        let tuple_ty = self.engine.resolve(&tuple_ty);
-        let tmp_ty = self.engine.resolve(&rhs_expr.ty);
-        let tmp_local_id = self.fresh_local_id();
-        self.scope
-            .define_local(tmp_name.clone(), tmp_ty.clone(), false, tmp_local_id);
-        stmts.push(HirStmt::Let {
-            name: tmp_name.clone(),
-            local_id: tmp_local_id,
-            ty: tmp_ty.clone(),
-            value: rhs_expr,
-            mutable: false,
-        });
-
-        // Extract each element of the tuple
-        for (idx, sub_pat) in sub_patterns.iter().enumerate() {
-            let (name, mutable) = self.extract_pattern_binding(sub_pat);
-            if name == "_" {
-                continue; // Skip wildcard bindings
+        let mut rhs_expr = self.lower_expression(rhs);
+        if let Some(annotation) = type_annotation {
+            self.source_map.record_type_annotation(annotation.span());
+            let annotated = self.lower_annotation_type(annotation);
+            if let Err(error) = self.engine.unify(&rhs_expr.ty, &annotated) {
+                self.diagnostics.push_type_with_span(
+                    format!("Type annotation mismatch: {}", error.render(&self.engine)),
+                    annotation.span(),
+                );
             }
+            rhs_expr.ty = annotated;
+        }
+        let rhs_span = rhs_expr.span.clone();
+        let value_ty = rhs_expr.ty.clone();
+        self.bind_destructuring(pattern, rhs_expr, &value_ty, rhs_span)
+    }
 
-            // Determine the element type from the tuple type
-            let elem_ty = match &tuple_ty {
-                Type::Tuple(types) if idx < types.len() => types[idx].clone(),
-                _ => self.engine.fresh_type_var_at(rhs_span.clone()),
-            };
-
-            let mut tuple_expr = HirExpr {
-                ty: tmp_ty.clone(),
+    /// Binds `pattern` against `value` (of type `value_ty`) as a temporary
+    /// followed by one `let` per binding. Refutable patterns are rejected.
+    pub(crate) fn bind_destructuring(
+        &mut self,
+        pattern: &ast::Pattern,
+        value: HirExpr,
+        value_ty: &Type,
+        span: crate::lexer::Span,
+    ) -> Vec<HirStmt> {
+        let hir_pattern = self.lower_pattern(pattern, value_ty);
+        if !crate::lower::control_flow::pattern::pattern_is_irrefutable(&hir_pattern) {
+            self.diagnostics.push_type_with_span(
+                "refutable pattern in assignment: it may not match every value; use `match`"
+                    .to_string(),
+                Self::pattern_binding_span(pattern).unwrap_or_else(|| span.clone()),
+            );
+        }
+        let value_ty = self.engine.resolve(value_ty);
+        let mut stmts = Vec::new();
+        // A local is read in place, so taking some of its fields moves only
+        // those (and copies nothing else); other values go to a temporary.
+        let place = if matches!(
+            value.kind,
+            HirExprKind::ResolvedVar(HirVarRef {
+                target: HirVarTarget::Local(_),
+                ..
+            })
+        ) {
+            HirExpr {
+                ty: value_ty,
+                ..value
+            }
+        } else {
+            let uid = self.body.fresh_pattern_temp_id();
+            let tmp_name = format!("__pattern_tmp_{uid}");
+            let tmp_local_id = self.fresh_local_id();
+            self.scope
+                .define_local(tmp_name.clone(), value_ty.clone(), false, tmp_local_id);
+            stmts.push(HirStmt::Let {
+                name: tmp_name.clone(),
+                local_id: tmp_local_id,
+                ty: value_ty.clone(),
+                value,
+                mutable: false,
+            });
+            HirExpr {
+                ty: value_ty,
                 kind: HirExprKind::ResolvedVar(HirVarRef {
-                    name: tmp_name.clone(),
+                    name: tmp_name,
                     target: HirVarTarget::Local(tmp_local_id),
                 }),
-                span: rhs_span.clone(),
-            };
-            for ty in &deref_types {
-                tuple_expr = HirExpr {
-                    ty: ty.clone(),
-                    kind: HirExprKind::Deref(Box::new(tuple_expr)),
-                    span: rhs_span.clone(),
-                };
+                span: span.clone(),
             }
-            let mut index_expr = HirExpr {
-                ty: elem_ty.clone(),
-                kind: HirExprKind::TupleIndex(Box::new(tuple_expr), idx as u32),
-                span: rhs_span.clone(),
-            };
-            let elem_ty = match borrow {
-                Some(mutable) => {
-                    let ty = Type::Reference {
-                        mutable,
-                        inner: Box::new(elem_ty),
-                    };
-                    index_expr = HirExpr {
-                        ty: ty.clone(),
-                        kind: HirExprKind::Ref(mutable, Box::new(index_expr)),
-                        span: rhs_span.clone(),
-                    };
-                    ty
-                }
-                None => elem_ty,
-            };
+        };
+        self.push_pattern_projections(&hir_pattern, place, &span, &mut stmts);
+        stmts
+    }
 
-            let local_id = self.fresh_local_id();
-            self.scope
-                .define_local(name.clone(), elem_ty.clone(), mutable, local_id);
-            stmts.push(HirStmt::Let {
+    /// Destructures the parameters written as patterns (`(a, b) -> ...`).
+    /// Each one arrives under its hidden parameter name, already in scope.
+    pub(crate) fn param_destructuring_prelude(&mut self, params: &[ast::Pattern]) -> Vec<HirStmt> {
+        let mut stmts = Vec::new();
+        for pattern in params {
+            if !Self::param_is_destructuring(pattern) {
+                continue;
+            }
+            let name = Self::destructured_param_name(pattern);
+            let Some(binding) = self.scope.lookup(&name).cloned() else {
+                continue;
+            };
+            let Some(local_id) = binding.local_id else {
+                continue;
+            };
+            // A pattern with no binding has nothing to bind.
+            let Some(span) = Self::pattern_binding_span(pattern) else {
+                continue;
+            };
+            let value = HirExpr {
+                ty: binding.ty.clone(),
+                kind: HirExprKind::ResolvedVar(HirVarRef {
+                    name,
+                    target: HirVarTarget::Local(local_id),
+                }),
+                span: span.clone(),
+            };
+            stmts.extend(self.bind_destructuring(pattern, value, &binding.ty, span));
+        }
+        stmts
+    }
+
+    /// A parameter pattern that destructures its argument. A reference
+    /// pattern around a plain name (`&x`) only declares a reference parameter.
+    pub(crate) fn param_is_destructuring(pattern: &ast::Pattern) -> bool {
+        match &pattern.kind {
+            ast::PatternKind::Tuple(_)
+            | ast::PatternKind::Instance(_)
+            | ast::PatternKind::Array(_) => true,
+            ast::PatternKind::Nested(inner)
+            | ast::PatternKind::Reference { pattern: inner, .. } => {
+                Self::param_is_destructuring(inner)
+            }
+            _ => false,
+        }
+    }
+
+    /// Emits a `let` for each binding of `pattern`, reading it from `place`.
+    fn push_pattern_projections(
+        &mut self,
+        pattern: &HirPattern,
+        place: HirExpr,
+        span: &crate::lexer::Span,
+        stmts: &mut Vec<HirStmt>,
+    ) {
+        let place_ty = self.engine.resolve(&place.ty);
+        let project = |kind, ty| HirExpr {
+            ty,
+            kind,
+            span: span.clone(),
+        };
+        match pattern {
+            HirPattern::Binding {
                 name,
                 local_id,
-                ty: elem_ty,
-                value: index_expr,
                 mutable,
-            });
+                mode,
+            } => {
+                let (ty, value) = match mode {
+                    crate::hir::HirBindingMode::Value => (place_ty, place),
+                    crate::hir::HirBindingMode::Ref { mutable } => {
+                        let ty = Type::Reference {
+                            mutable: *mutable,
+                            inner: Box::new(place_ty),
+                        };
+                        let value =
+                            project(HirExprKind::Ref(*mutable, Box::new(place)), ty.clone());
+                        (ty, value)
+                    }
+                };
+                stmts.push(HirStmt::Let {
+                    name: name.clone(),
+                    local_id: *local_id,
+                    ty,
+                    value,
+                    mutable: *mutable,
+                });
+            }
+            HirPattern::Tuple(patterns) => {
+                let Type::Tuple(element_types) = place_ty else {
+                    return;
+                };
+                for (index, (pattern, ty)) in patterns.iter().zip(element_types).enumerate() {
+                    let element = project(
+                        HirExprKind::TupleIndex(Box::new(place.clone()), index as u32),
+                        ty,
+                    );
+                    self.push_pattern_projections(pattern, element, span, stmts);
+                }
+            }
+            HirPattern::Struct(type_name, _, type_args, fields) => {
+                for field in fields {
+                    let ty = self
+                        .lower_struct_field_type(type_name, type_args, &field.name, span)
+                        .unwrap_or(Type::Error);
+                    let access = project(
+                        HirExprKind::FieldAccess(
+                            Box::new(place.clone()),
+                            field.name.clone(),
+                            field.field.clone(),
+                        ),
+                        ty,
+                    );
+                    self.push_pattern_projections(&field.pattern, access, span, stmts);
+                }
+            }
+            HirPattern::Deref(inner) => {
+                let Type::Reference { inner: target, .. } = place_ty else {
+                    return;
+                };
+                let target = project(HirExprKind::Deref(Box::new(place)), *target);
+                self.push_pattern_projections(inner, target, span, stmts);
+            }
+            HirPattern::Array { .. } => {
+                self.push_array_pattern_bindings(pattern, place, span, stmts)
+            }
+            // Refutable patterns were already reported.
+            HirPattern::Wildcard
+            | HirPattern::Literal(_)
+            | HirPattern::Enum(..)
+            | HirPattern::Or(_) => {}
         }
+    }
 
-        stmts
+    /// Patterns that take a value apart rather than naming it.
+    pub(crate) fn is_destructuring_pattern(pattern: &ast::Pattern) -> bool {
+        match &pattern.kind {
+            ast::PatternKind::Tuple(_)
+            | ast::PatternKind::Array(_)
+            | ast::PatternKind::Instance(_)
+            | ast::PatternKind::Reference { .. } => true,
+            ast::PatternKind::Nested(inner) => Self::is_destructuring_pattern(inner),
+            _ => false,
+        }
     }
 
     pub(crate) fn extract_pattern_binding(&self, pattern: &ast::Pattern) -> (String, bool) {

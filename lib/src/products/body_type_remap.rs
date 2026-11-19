@@ -195,7 +195,9 @@ where
     F: FnMut(&mut crate::types::Type),
 {
     match pattern {
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => {
             for pattern in patterns {
                 remap_pattern_types(pattern, remap_type);
             }
@@ -213,6 +215,7 @@ where
                 remap_pattern_types(pattern, remap_type);
             }
         }
+        HirPattern::Deref(inner) => remap_pattern_types(inner, remap_type),
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }
 }

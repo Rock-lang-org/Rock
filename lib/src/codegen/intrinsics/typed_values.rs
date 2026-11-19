@@ -16,6 +16,11 @@ impl<'ctx> CodeGen<'ctx> {
         arg_types: &[Type],
         ret_ty: &Type,
     ) -> Result<Option<BasicValueEnum<'ctx>>, CodegenError> {
+        if intrinsic == MirIntrinsicId::ArrayUnpack {
+            return self
+                .compile_array_unpack(compiled_args, arg_types, ret_ty)
+                .map(Some);
+        }
         if let MirIntrinsicId::Integer(integer) = intrinsic {
             return self.compile_integer_intrinsic(integer, compiled_args, arg_types);
         }
@@ -256,6 +261,16 @@ impl<'ctx> CodeGen<'ctx> {
         arg_type_ids: &[TypeId],
         ret_type_id: TypeId,
     ) -> Result<Option<BasicValueEnum<'ctx>>, CodegenError> {
+        if intrinsic == MirIntrinsicId::ArrayUnpack {
+            let types: Vec<_> = arg_type_ids
+                .iter()
+                .map(|id| self.structural_type_for(*id))
+                .collect();
+            let result = self.structural_type_for(ret_type_id);
+            return self
+                .compile_array_unpack(compiled_args, &types, &result)
+                .map(Some);
+        }
         if let MirIntrinsicId::Integer(integer) = intrinsic {
             let types = arg_type_ids
                 .iter()

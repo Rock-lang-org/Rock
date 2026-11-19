@@ -306,9 +306,16 @@ pub(in crate::products) enum SerializedHirPattern {
         name: String,
         local_id: crate::ids::HirLocalId,
         mutable: bool,
+        mode: crate::hir::HirBindingMode,
     },
+    Deref(Box<SerializedHirPattern>),
     Literal(crate::hir::HirLiteralPattern),
     Tuple(Vec<SerializedHirPattern>),
+    Array {
+        patterns: Vec<SerializedHirPattern>,
+        rest: Option<usize>,
+        irrefutable: bool,
+    },
     Struct(
         String,
         Option<crate::ids::DefId>,

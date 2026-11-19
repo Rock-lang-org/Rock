@@ -239,6 +239,7 @@ fn enum_match_payload_binding_uses_downcast_field_projection() {
                         name: "value".to_string(),
                         local_id: crate::ids::HirLocalId(0),
                         mutable: false,
+                        mode: crate::hir::HirBindingMode::Value,
                     }],
                 ),
                 Some(guard),
@@ -569,8 +570,7 @@ fn enum_match_literal_payload_pattern_lowers_payload_check_before_body() {
 }
 
 #[test]
-#[should_panic(expected = "unsupported refutable enum payload pattern")]
-fn enum_match_string_payload_pattern_panics_loudly() {
+fn enum_match_string_payload_pattern_emits_equality_check() {
     let enum_id = DefId::new(CrateId(0), LocalDefId(40));
     let some_id = VariantId(1);
     let program = option_program(vec![(
@@ -630,11 +630,21 @@ fn enum_match_string_payload_pattern_panics_loudly() {
             projection: vec![],
         },
     );
+    assert!(builder
+        .blocks
+        .iter()
+        .flat_map(|block| &block.statements)
+        .any(|statement| {
+            matches!(&statement.kind,
+                StatementKind::Assign(_, Rvalue::BinaryOp(
+                    crate::mir::MirBinOp::Eq, _, Operand::Constant(Constant::String(value))
+                )) if value == "x"
+            )
+        }));
 }
 
 #[test]
-#[should_panic(expected = "unsupported refutable enum payload pattern")]
-fn enum_match_float_payload_pattern_panics_loudly() {
+fn enum_match_float_payload_pattern_emits_equality_check() {
     let enum_id = DefId::new(CrateId(0), LocalDefId(40));
     let some_id = VariantId(1);
     let program = option_program(vec![(
@@ -692,4 +702,15 @@ fn enum_match_float_payload_pattern_panics_loudly() {
             projection: vec![],
         },
     );
+    assert!(builder
+        .blocks
+        .iter()
+        .flat_map(|block| &block.statements)
+        .any(|statement| {
+            matches!(&statement.kind,
+                StatementKind::Assign(_, Rvalue::BinaryOp(
+                    crate::mir::MirBinOp::Eq, _, Operand::Constant(Constant::Float(value))
+                )) if *value == 1.5
+            )
+        }));
 }

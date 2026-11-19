@@ -108,6 +108,21 @@ impl Monomorphizer {
                     .map(|pattern| self.substitute_pattern(pattern, substitution))
                     .collect(),
             ),
+            HirPattern::Deref(inner) => {
+                HirPattern::Deref(Box::new(self.substitute_pattern(inner, substitution)))
+            }
+            HirPattern::Array {
+                patterns,
+                rest,
+                irrefutable,
+            } => HirPattern::Array {
+                patterns: patterns
+                    .iter()
+                    .map(|pattern| self.substitute_pattern(pattern, substitution))
+                    .collect(),
+                rest: *rest,
+                irrefutable: *irrefutable,
+            },
             HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {
                 pattern.clone()
             }

@@ -19,6 +19,7 @@ mod const_generics;
 mod const_generics_body_lengths;
 mod copy;
 mod default_type_arguments;
+mod destructuring;
 mod do_notation;
 mod drops;
 mod enums;
@@ -45,7 +46,6 @@ mod returns;
 mod signatureless_inference;
 mod std_cache;
 mod std_conversions;
-mod tuple_destructuring;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod std_discard_errors;
 mod std_iteration;

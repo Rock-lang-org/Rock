@@ -213,10 +213,10 @@ pub use definitions::{
     HirVariant, HirVariantFields,
 };
 pub use expr::{
-    BinOp, HirBlock, HirBlockFor, HirCallTarget, HirClosureCapture, HirClosureCaptureKind, HirExpr,
-    HirExprFor, HirExprKind, HirExprKindFor, HirLiteralPattern, HirMatchArm, HirMatchArmFor,
-    HirPattern, HirStmt, HirStmtFor, HirStructLiteralField, HirStructLiteralFieldFor,
-    HirStructPatternField, HirVarRef, HirVarTarget, UnaryOp,
+    BinOp, HirBindingMode, HirBlock, HirBlockFor, HirCallTarget, HirClosureCapture,
+    HirClosureCaptureKind, HirExpr, HirExprFor, HirExprKind, HirExprKindFor, HirLiteralPattern,
+    HirMatchArm, HirMatchArmFor, HirPattern, HirStmt, HirStmtFor, HirStructLiteralField,
+    HirStructLiteralFieldFor, HirStructPatternField, HirVarRef, HirVarTarget, UnaryOp,
 };
 pub use generic_bounds::HirGenericBounds;
 pub use method_target::{

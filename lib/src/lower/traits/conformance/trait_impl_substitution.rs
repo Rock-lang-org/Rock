@@ -264,7 +264,11 @@ fn substitute_trait_impl_types_in_pattern(
                 );
             }
         }
-        HirPattern::Tuple(items) | HirPattern::Or(items) => {
+        HirPattern::Tuple(items)
+        | HirPattern::Array {
+            patterns: items, ..
+        }
+        | HirPattern::Or(items) => {
             for nested in items {
                 substitute_trait_impl_types_in_pattern(
                     nested,
@@ -288,6 +292,14 @@ fn substitute_trait_impl_types_in_pattern(
                 );
             }
         }
+        HirPattern::Deref(inner) => substitute_trait_impl_types_in_pattern(
+            inner,
+            impl_type,
+            impl_trait_id,
+            impl_trait_arg_types,
+            impl_associated_types,
+            generic_subst,
+        ),
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }
 }

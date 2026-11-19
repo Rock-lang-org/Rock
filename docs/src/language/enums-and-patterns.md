@@ -227,6 +227,64 @@ main = !->
 
 The `*message` scrutinee is a borrowed match. The original `message` remains available after `show_message` returns because the match did not consume the enum.
 
+## Destructuring borrowed values
+
+Tuple, struct, enum, and array patterns can match through a reference without an explicit `*`. Bindings then borrow the corresponding part of the value rather than moving it out:
+
+```rock
+main = !->
+    message = Option::Some (String::from "hello")
+    match &message
+        Option::Some text => text.println!
+        Option::None => ()
+    message.println!
+```
+
+Here `text` is an `&String`, and `message` remains available after the match. Matching through `&mut` instead gives mutable references to the bound parts. Nested structural patterns follow the same rule; a shared reference anywhere along the path prevents a mutable binding.
+
+## Arrays, slices, and rest patterns
+
+An array pattern checks its length as well as its elements. `..name` binds the remaining elements, and `..` ignores them. A rest may appear between a prefix and a suffix, but only once in a pattern:
+
+```rock
+score: &[I64] -> I64
+score = values -> match values
+    [] => 0
+    [one] => *one
+    [first, ..middle, last] => *first + middle.len! + *last
+
+main = !->
+    values: Vec I64 = [1, 2, 3, 4].into!
+    (score values.as_slice!).println!
+```
+
+This prints `7`. The first and last bindings are references to elements; `middle` borrows the slice between them. Shorter inputs try the earlier arms without accessing out-of-bounds elements.
+
+With an owned fixed array, a named rest is an owned array of the remaining elements. With a borrowed fixed array it is a reference to that remaining array; with a borrowed slice it is a slice reference.
+
+```rock
+main = !->
+    [first, ..middle, last] = [1, 2, 3, 4]
+    first.println!
+    middle.println!
+    last.println!
+```
+
+This prints `1`, `[2, 3]`, and `4`.
+
+Assignments, function parameters, and `for` bindings require an **irrefutable** pattern: one that matches every value of its input type. A two-element array can be destructured with `[a, b]`; a slice of unknown length needs a `match` with length-dependent arms. Tuple and struct patterns may nest in all these positions.
+
+```rock
+sum: (I64, I64) -> I64
+sum = (a, b) -> a + b
+
+main = !->
+    for (left, right) in [(1, 2), (3, 4)]
+        (sum (left, right)).println!
+```
+
+This prints `3` and `7`.
+
 ## Exhaustiveness and arm order
 
 List every variant or finish with a wildcard:

@@ -273,17 +273,36 @@ pub enum HirPattern {
         name: String,
         local_id: HirLocalId,
         mutable: bool,
+        mode: HirBindingMode,
     },
+    /// Match the value behind a reference: written `&pat`, or inserted when a
+    /// structural pattern meets a reference (then its bindings borrow).
+    Deref(Box<HirPattern>),
     /// Literal pattern
     Literal(HirLiteralPattern),
     /// Tuple pattern
     Tuple(Vec<HirPattern>),
+    /// Array/slice pattern; `rest` is the optional rest binding's index in
+    /// `patterns` (the remaining entries are prefix/suffix element patterns).
+    Array {
+        patterns: Vec<HirPattern>,
+        rest: Option<usize>,
+        irrefutable: bool,
+    },
     /// Struct pattern
     Struct(String, Option<DefId>, Vec<Type>, Vec<HirStructPatternField>),
     /// Enum variant pattern
     Enum(String, String, Option<HirVariantLocation>, Vec<HirPattern>),
     /// Or pattern (not yet used)
     Or(Vec<HirPattern>),
+}
+
+/// How a binding takes its value: by value (move or copy), or by reference
+/// when reached through an automatically dereferenced reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HirBindingMode {
+    Value,
+    Ref { mutable: bool },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

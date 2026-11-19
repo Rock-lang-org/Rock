@@ -48,6 +48,7 @@ fn add_pattern_local_ids(
             local_scope.insert(*local_id);
         }
         crate::hir::HirPattern::Tuple(patterns)
+        | crate::hir::HirPattern::Array { patterns, .. }
         | crate::hir::HirPattern::Enum(_, _, _, patterns)
         | crate::hir::HirPattern::Or(patterns) => {
             for pattern in patterns {
@@ -59,6 +60,7 @@ fn add_pattern_local_ids(
                 add_pattern_local_ids(&field.pattern, local_scope);
             }
         }
+        crate::hir::HirPattern::Deref(inner) => add_pattern_local_ids(inner, local_scope),
         crate::hir::HirPattern::Wildcard | crate::hir::HirPattern::Literal(_) => {}
     }
 }

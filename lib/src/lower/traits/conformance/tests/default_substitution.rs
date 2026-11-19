@@ -370,6 +370,7 @@ fn conformance_substitutes_default_method_match_guard_and_pattern_types() {
                                             name: "value".to_string(),
                                             local_id: crate::ids::HirLocalId(0),
                                             mutable: false,
+                                            mode: crate::hir::HirBindingMode::Value,
                                         },
                                     }],
                                 ),

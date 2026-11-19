@@ -174,6 +174,8 @@ pub enum MirIntrinsicId {
     BoolXor,
     BoolNot,
     ArrayRefToSlice,
+    /// Compiler-generated whole-array decomposition into owned tuple fields.
+    ArrayUnpack,
     ArrayLen,
     PtrOffset,
     PtrFromParts,

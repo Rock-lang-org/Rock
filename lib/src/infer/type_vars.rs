@@ -15,7 +15,9 @@ fn replace_type_vars_in_pattern_composite(
     composite_types: &HashMap<TypeVarId, Type>,
 ) {
     match pattern {
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => {
             for pattern in patterns {
                 replace_type_vars_in_pattern_composite(engine, pattern, mapping, composite_types);
             }
@@ -38,6 +40,9 @@ fn replace_type_vars_in_pattern_composite(
             for pattern in patterns {
                 replace_type_vars_in_pattern_composite(engine, pattern, mapping, composite_types);
             }
+        }
+        HirPattern::Deref(inner) => {
+            replace_type_vars_in_pattern_composite(engine, inner, mapping, composite_types);
         }
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }

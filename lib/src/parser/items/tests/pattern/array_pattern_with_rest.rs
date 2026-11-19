@@ -34,3 +34,21 @@ fn array_pattern_with_rest() {
 
     assert_eq!(rest_tokens.len(), 0);
 }
+
+#[test]
+fn array_patterns_parse_named_and_anonymous_rest_with_suffix() {
+    for (input, name) in [("[a, ..middle, z]", "middle"), ("[a, .., z]", "_")] {
+        let tokens = lex_test(input);
+        let config = Config::default();
+        let (remaining, parsed) = pattern.process(ParseCtx::from(&tokens, &config)).unwrap();
+        assert!(remaining.is_empty());
+        let PatternKind::Array(parts) = parsed.kind else {
+            panic!("expected an array pattern");
+        };
+        assert_eq!(parts.len(), 3);
+        let ArrayPattern::Rest(rest) = &parts[1] else {
+            panic!("expected a rest pattern");
+        };
+        assert_eq!(rest.name.name, name);
+    }
+}

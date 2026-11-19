@@ -58,6 +58,7 @@ pub(crate) fn walk_pattern(visitor: &mut impl HirVisitor, pattern: &HirPattern) 
     match pattern {
         HirPattern::Binding { name, local_id, .. } => visitor.bind_local(name, *local_id),
         HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
         | HirPattern::Or(patterns)
         | HirPattern::Enum(_, _, _, patterns) => patterns
             .iter()
@@ -65,6 +66,7 @@ pub(crate) fn walk_pattern(visitor: &mut impl HirVisitor, pattern: &HirPattern) 
         HirPattern::Struct(_, _, _, fields) => fields
             .iter()
             .for_each(|field| walk_pattern(visitor, &field.pattern)),
+        HirPattern::Deref(inner) => walk_pattern(visitor, inner),
         HirPattern::Wildcard | HirPattern::Literal(_) => {}
     }
 }

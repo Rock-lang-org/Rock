@@ -220,22 +220,25 @@ main = ->
 }
 
 #[test]
-fn test_struct_pattern_rejects_refutable_field_subpatterns() {
-    compile_should_fail(
+fn test_struct_pattern_checks_refutable_field_subpatterns() {
+    let output = compile_and_run(
         r#"
 struct Point
     < x: I64
     < y: I64
 
-main = ->
+main = !->
     p = Point
         x: 10
         y: 20
-    match p
+    result = match p
+        Point x: 9, y: _ => 0
         Point x: 10, y: y => y
+        _ => -1
+    result.println!
 "#,
-        "Struct field patterns currently only support bindings and wildcards",
     );
+    assert_eq!(output.trim(), "20");
 }
 
 #[test]

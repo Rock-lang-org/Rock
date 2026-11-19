@@ -90,6 +90,7 @@ impl Lowerer {
                 }
             })
             .collect();
+        let (scrutinee, arms) = self.match_through_reference(scrutinee, arms);
 
         HirExpr {
             ty: result_ty
@@ -101,6 +102,65 @@ impl Lowerer {
             },
             span,
         }
+    }
+
+    /// When the arms of a match on a reference look through it, matches the
+    /// referenced value instead (`match *r`), so the arms test it directly.
+    /// Catch-all arms then reborrow it rather than copying the reference.
+    fn match_through_reference(
+        &mut self,
+        scrutinee: HirExpr,
+        arms: Vec<HirMatchArm>,
+    ) -> (HirExpr, Vec<HirMatchArm>) {
+        let Type::Reference { mutable, inner } = self.engine.resolve(&scrutinee.ty) else {
+            return (scrutinee, arms);
+        };
+        let looks_through = |pattern: &HirPattern| matches!(pattern, HirPattern::Deref(_));
+        let catch_all = |pattern: &HirPattern| {
+            matches!(
+                pattern,
+                HirPattern::Wildcard
+                    | HirPattern::Binding {
+                        mode: crate::hir::HirBindingMode::Value,
+                        ..
+                    }
+            )
+        };
+        if !arms.iter().any(|arm| looks_through(&arm.pattern))
+            || !arms
+                .iter()
+                .all(|arm| looks_through(&arm.pattern) || catch_all(&arm.pattern))
+        {
+            return (scrutinee, arms);
+        }
+        let span = scrutinee.span.clone();
+        let scrutinee = HirExpr {
+            ty: *inner,
+            kind: HirExprKind::Deref(Box::new(scrutinee)),
+            span,
+        };
+        let arms = arms
+            .into_iter()
+            .map(|mut arm| {
+                arm.pattern = match arm.pattern {
+                    HirPattern::Deref(inner) => *inner,
+                    HirPattern::Binding {
+                        name,
+                        local_id,
+                        mutable: binding_mutable,
+                        ..
+                    } => HirPattern::Binding {
+                        name,
+                        local_id,
+                        mutable: binding_mutable,
+                        mode: crate::hir::HirBindingMode::Ref { mutable },
+                    },
+                    other => other,
+                };
+                arm
+            })
+            .collect();
+        self.match_through_reference(scrutinee, arms)
     }
 
     fn merge_control_flow_types(
@@ -493,6 +553,7 @@ impl Lowerer {
                     }
                 }
             }
+            HirPattern::Array { .. } => {}
             HirPattern::Struct(_, _, _, fields) => {
                 for field in fields {
                     self.validate_enum_payload_pattern_support(
@@ -506,6 +567,11 @@ impl Lowerer {
             HirPattern::Or(patterns) => {
                 for pattern in patterns {
                     self.validate_enum_payload_pattern_support(pattern, source_ty, guarded, span);
+                }
+            }
+            HirPattern::Deref(inner) => {
+                if let Type::Reference { inner: target, .. } = source_ty {
+                    self.validate_enum_payload_pattern_support(inner, target, guarded, span);
                 }
             }
             HirPattern::Enum(_, _, None, subpatterns) => {
@@ -546,7 +612,11 @@ impl Lowerer {
     fn enum_payload_pattern_has_unsupported_literal(pattern: &HirPattern) -> bool {
         match pattern {
             HirPattern::Literal(HirLiteralPattern::Float(_) | HirLiteralPattern::String(_)) => true,
-            HirPattern::Tuple(fields) | HirPattern::Or(fields) => fields
+            HirPattern::Tuple(fields)
+            | HirPattern::Array {
+                patterns: fields, ..
+            }
+            | HirPattern::Or(fields) => fields
                 .iter()
                 .any(Self::enum_payload_pattern_has_unsupported_literal),
             HirPattern::Struct(_, _, _, fields) => fields
@@ -555,6 +625,7 @@ impl Lowerer {
             HirPattern::Enum(_, _, _, fields) => fields
                 .iter()
                 .any(Self::enum_payload_pattern_has_unsupported_literal),
+            HirPattern::Deref(inner) => Self::enum_payload_pattern_has_unsupported_literal(inner),
             HirPattern::Wildcard
             | HirPattern::Binding { .. }
             | HirPattern::Literal(
@@ -563,16 +634,21 @@ impl Lowerer {
         }
     }
 
+    /// Whether the pattern moves or copies part of the payload; borrowing
+    /// bindings leave it in place.
     fn pattern_binds_payload(pattern: &HirPattern) -> bool {
         match pattern {
-            HirPattern::Binding { .. } => true,
-            HirPattern::Tuple(fields) | HirPattern::Or(fields) => {
-                fields.iter().any(Self::pattern_binds_payload)
+            HirPattern::Binding { mode, .. } => *mode == crate::hir::HirBindingMode::Value,
+            HirPattern::Tuple(fields)
+            | HirPattern::Array {
+                patterns: fields, ..
             }
+            | HirPattern::Or(fields) => fields.iter().any(Self::pattern_binds_payload),
             HirPattern::Struct(_, _, _, fields) => fields
                 .iter()
                 .any(|field| Self::pattern_binds_payload(&field.pattern)),
             HirPattern::Enum(_, _, _, fields) => fields.iter().any(Self::pattern_binds_payload),
+            HirPattern::Deref(inner) => Self::pattern_binds_payload(inner),
             HirPattern::Wildcard | HirPattern::Literal(_) => false,
         }
     }

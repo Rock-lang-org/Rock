@@ -1,3 +1,4 @@
+mod array_patterns;
 mod array_tail;
 mod backend_contract;
 mod blocks;

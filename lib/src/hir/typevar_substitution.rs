@@ -55,7 +55,9 @@ fn substitute_typevars_in_pattern(
     concrete_ty: &Type,
 ) {
     match pattern {
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => {
             for pattern in patterns {
                 substitute_typevars_in_pattern(
                     pattern,
@@ -88,6 +90,9 @@ fn substitute_typevars_in_pattern(
                     concrete_ty,
                 );
             }
+        }
+        HirPattern::Deref(inner) => {
+            substitute_typevars_in_pattern(inner, target_ids, target_generic_ids, concrete_ty);
         }
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }

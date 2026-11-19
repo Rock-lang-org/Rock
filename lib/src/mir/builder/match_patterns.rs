@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::hir::{HirLiteralPattern, HirPattern};
+use crate::hir::{HirBindingMode, HirLiteralPattern, HirPattern};
 use crate::ids::VariantId;
 use crate::lexer::Span;
 use crate::types::Type;
@@ -28,11 +28,25 @@ impl<'a> MirBuilder<'a> {
                 name,
                 local_id,
                 mutable,
+                mode,
             } => {
                 let binding_span = self.source_local_span(self.current_source_owner, *local_id);
-                let borrowed_payload =
-                    enum_payload && scrutinee_mode == MatchScrutineeMode::Borrowed;
-                if enum_payload && !borrowed_payload && self.needs_move(source_ty) {
+                // A binding reached through a dereferenced reference borrows
+                // its place; a borrowed enum scrutinee lends its payloads.
+                let borrow = match mode {
+                    HirBindingMode::Ref { mutable } => Some(if *mutable {
+                        Mutability::Mut
+                    } else {
+                        Mutability::Not
+                    }),
+                    HirBindingMode::Value
+                        if enum_payload && scrutinee_mode == MatchScrutineeMode::Borrowed =>
+                    {
+                        Some(Mutability::Not)
+                    }
+                    HirBindingMode::Value => None,
+                };
+                if enum_payload && borrow.is_none() && self.needs_move(source_ty) {
                     if guarded {
                         return;
                     }
@@ -43,13 +57,12 @@ impl<'a> MirBuilder<'a> {
                 } else {
                     Mutability::Not
                 };
-                let binding_ty = if borrowed_payload {
-                    Type::Reference {
-                        mutable: false,
+                let binding_ty = match borrow {
+                    Some(borrow) => Type::Reference {
+                        mutable: borrow == Mutability::Mut,
                         inner: Box::new(source_ty.clone()),
-                    }
-                } else {
-                    source_ty.clone()
+                    },
+                    None => source_ty.clone(),
                 };
                 let local = self.new_local_with_source(
                     self.type_id_for(&binding_ty),
@@ -67,12 +80,44 @@ impl<'a> MirBuilder<'a> {
                     local,
                     projection: vec![],
                 };
-                let rvalue = if borrowed_payload {
-                    Rvalue::Ref(Mutability::Not, source_place)
-                } else {
-                    Rvalue::Use(self.operand_for_place(source_ty, source_place, guarded))
+                let rvalue = match borrow {
+                    Some(borrow) => Rvalue::Ref(borrow, source_place),
+                    None => Rvalue::Use(self.operand_for_place(source_ty, source_place, guarded)),
                 };
                 self.emit_assign(dest, rvalue, binding_span);
+            }
+            HirPattern::Deref(inner) => {
+                let Type::Reference { inner: target, .. } = source_ty else {
+                    return;
+                };
+                let mut target_place = source_place;
+                target_place.projection.push(Projection::Deref);
+                self.bind_match_pattern_places(
+                    inner,
+                    target_place,
+                    target,
+                    guarded,
+                    enum_payload,
+                    scrutinee_mode,
+                    moved_enum_scrutinee,
+                    restored_bindings,
+                );
+            }
+            HirPattern::Array { patterns, rest, .. } => {
+                for (pattern, place, ty) in
+                    self.array_pattern_children(patterns, *rest, &source_place, source_ty, true)
+                {
+                    self.bind_match_pattern_places(
+                        &pattern,
+                        place,
+                        &ty,
+                        guarded,
+                        enum_payload,
+                        scrutinee_mode,
+                        moved_enum_scrutinee,
+                        restored_bindings,
+                    );
+                }
             }
             HirPattern::Enum(_, _, Some(location), subpatterns) => {
                 let field_types =
@@ -224,34 +269,8 @@ impl<'a> MirBuilder<'a> {
             .all(Self::pattern_is_irrefutable_for_struct_match)
     }
 
-    fn enum_payload_pattern_check_supported(pattern: &HirPattern) -> bool {
-        match pattern {
-            HirPattern::Literal(
-                HirLiteralPattern::Int(_) | HirLiteralPattern::Bool(_) | HirLiteralPattern::Char(_),
-            ) => true,
-            HirPattern::Literal(HirLiteralPattern::Float(_) | HirLiteralPattern::String(_)) => {
-                false
-            }
-            HirPattern::Enum(_, _, Some(_), _) => Self::enum_payload_patterns_irrefutable(pattern),
-            _ => Self::pattern_is_irrefutable_for_struct_match(pattern),
-        }
-    }
-
-    fn assert_enum_payload_patterns_supported(&self, pattern: &HirPattern) {
-        let HirPattern::Enum(_, _, Some(_), subpatterns) = pattern else {
-            return;
-        };
-
-        if subpatterns
-            .iter()
-            .any(|pattern| !Self::enum_payload_pattern_check_supported(pattern))
-        {
-            panic!("unsupported refutable enum payload pattern: {pattern:?}");
-        }
-    }
-
     pub(super) fn match_arm_is_catch_all(&self, pattern: &HirPattern) -> bool {
-        matches!(pattern, HirPattern::Wildcard | HirPattern::Binding { .. })
+        Self::pattern_is_irrefutable_for_struct_match(pattern)
     }
 
     fn pattern_is_irrefutable_for_struct_match(pattern: &HirPattern) -> bool {
@@ -263,6 +282,17 @@ impl<'a> MirBuilder<'a> {
             HirPattern::Struct(_, _, _, fields) => fields
                 .iter()
                 .all(|field| Self::pattern_is_irrefutable_for_struct_match(&field.pattern)),
+            HirPattern::Deref(inner) => Self::pattern_is_irrefutable_for_struct_match(inner),
+            HirPattern::Array {
+                patterns,
+                irrefutable,
+                ..
+            } => {
+                *irrefutable
+                    && patterns
+                        .iter()
+                        .all(Self::pattern_is_irrefutable_for_struct_match)
+            }
             HirPattern::Literal(_) | HirPattern::Enum(_, _, _, _) | HirPattern::Or(_) => false,
         }
     }
@@ -286,6 +316,7 @@ impl<'a> MirBuilder<'a> {
                 }
             }
             HirPattern::Enum(_, _, Some(location), _) => {
+                let payload_block = self.new_block();
                 let discr_temp =
                     self.new_local(self.type_id_for(&Type::I64), Mutability::Not, None);
                 self.emit_storage_live(discr_temp, None);
@@ -295,17 +326,26 @@ impl<'a> MirBuilder<'a> {
                 };
                 self.emit_assign(
                     discr_place.clone(),
-                    Rvalue::Discriminant(source_place),
+                    Rvalue::Discriminant(source_place.clone()),
                     None,
                 );
                 if let Some(current) = self.current_block {
                     self.blocks[current.0].terminator = Some(crate::mir::Terminator::switch_int(
                         Operand::Copy(discr_place),
-                        vec![(location.variant_id.0 as i64, success)],
+                        vec![(location.variant_id.0 as i64, payload_block)],
                         failure,
                         self.source_origin(origin_span.clone()),
                     ));
                 }
+                self.current_block = Some(payload_block);
+                self.lower_enum_payload_pattern_checks(
+                    pattern,
+                    source_place,
+                    source_ty,
+                    success,
+                    failure,
+                    origin_span,
+                );
             }
             HirPattern::Literal(literal) => {
                 let bool_temp =
@@ -350,6 +390,23 @@ impl<'a> MirBuilder<'a> {
                     ));
                 }
             }
+            HirPattern::Deref(inner) => {
+                // Tests run on the referenced value.
+                let target = match source_ty {
+                    Type::Reference { inner, .. } => inner.as_ref().clone(),
+                    _ => Type::Error,
+                };
+                let mut target_place = source_place;
+                target_place.projection.push(Projection::Deref);
+                self.lower_match_pattern_check(
+                    inner,
+                    target_place,
+                    &target,
+                    success,
+                    failure,
+                    origin_span,
+                );
+            }
             HirPattern::Tuple(_) | HirPattern::Struct(_, _, _, _)
                 if Self::pattern_is_irrefutable_for_struct_match(pattern) =>
             {
@@ -363,11 +420,151 @@ impl<'a> MirBuilder<'a> {
                     ));
                 }
             }
-            HirPattern::Tuple(_)
-            | HirPattern::Struct(_, _, _, _)
-            | HirPattern::Or(_)
+            HirPattern::Tuple(patterns) => {
+                let Type::Tuple(types) = source_ty else {
+                    return;
+                };
+                let children = patterns
+                    .iter()
+                    .zip(types)
+                    .enumerate()
+                    .map(|(index, (pattern, ty))| {
+                        let mut place = source_place.clone();
+                        place.projection.push(Projection::Field {
+                            index,
+                            identity: None,
+                        });
+                        (pattern, place, ty.clone())
+                    })
+                    .collect();
+                self.check_pattern_children(children, success, failure, origin_span);
+            }
+            HirPattern::Array { patterns, rest, .. } => {
+                let length = self.array_pattern_length(&source_place, source_ty);
+                let required = patterns.len() - usize::from(rest.is_some());
+                let local = self.new_local(self.type_id_for(&Type::Bool), Mutability::Not, None);
+                self.emit_storage_live(local, origin_span.clone());
+                let condition = Place {
+                    local,
+                    projection: vec![],
+                };
+                self.emit_assign(
+                    condition.clone(),
+                    Rvalue::BinaryOp(
+                        if rest.is_some() {
+                            MirBinOp::Ge
+                        } else {
+                            MirBinOp::Eq
+                        },
+                        length,
+                        Operand::Constant(crate::mir::Constant::Int(required as i64)),
+                    ),
+                    origin_span.clone(),
+                );
+                let elements = self.new_block();
+                if let Some(current) = self.current_block {
+                    self.blocks[current.0].terminator = Some(crate::mir::Terminator::switch_int(
+                        Operand::Copy(condition),
+                        vec![(1, elements)],
+                        failure,
+                        self.source_origin(origin_span.clone()),
+                    ));
+                }
+                self.current_block = Some(elements);
+                // A rest binding itself imposes no value constraint.
+                let checks: Vec<_> = patterns
+                    .iter()
+                    .enumerate()
+                    .map(|(index, pattern)| {
+                        if *rest == Some(index) || matches!(pattern, HirPattern::Binding { .. }) {
+                            HirPattern::Wildcard
+                        } else {
+                            pattern.clone()
+                        }
+                    })
+                    .collect();
+                let children =
+                    self.array_pattern_children(&checks, *rest, &source_place, source_ty, false);
+                let children = children
+                    .iter()
+                    .map(|(pattern, place, ty)| (pattern, place.clone(), ty.clone()))
+                    .collect();
+                self.check_pattern_children(children, success, failure, origin_span);
+            }
+            HirPattern::Struct(_, Some(id), args, fields) => {
+                let Some((_, structure)) = self.program.struct_by_id(*id) else {
+                    return;
+                };
+                let substitution = args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, ty)| {
+                        (
+                            crate::types::GenericParamId {
+                                owner: *id,
+                                index: index as u32,
+                            },
+                            ty.clone(),
+                        )
+                    })
+                    .collect();
+                let children = fields
+                    .iter()
+                    .filter_map(|field| {
+                        let (index, definition) = structure
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .find(|(_, definition)| definition.name == field.name)?;
+                        let mut place = source_place.clone();
+                        place.projection.push(self.field_projection(
+                            index,
+                            Some(*id),
+                            Some(definition.id),
+                        ));
+                        Some((
+                            &field.pattern,
+                            place,
+                            definition.ty.substitute_generics(&substitution),
+                        ))
+                    })
+                    .collect();
+                self.check_pattern_children(children, success, failure, origin_span);
+            }
+            HirPattern::Or(_)
+            | HirPattern::Struct(_, None, _, _)
             | HirPattern::Enum(_, _, None, _) => {
                 panic!("unsupported refutable MIR match pattern: {pattern:?}");
+            }
+        }
+    }
+
+    fn check_pattern_children(
+        &mut self,
+        children: Vec<(&HirPattern, Place, Type)>,
+        success: BasicBlockId,
+        failure: BasicBlockId,
+        origin: Option<Span>,
+    ) {
+        let count = children.len();
+        if count == 0 {
+            if let Some(current) = self.current_block {
+                self.blocks[current.0].terminator = Some(crate::mir::Terminator::goto(
+                    success,
+                    self.source_origin(origin),
+                ));
+            }
+            return;
+        }
+        for (index, (pattern, place, ty)) in children.into_iter().enumerate() {
+            let next = if index + 1 == count {
+                success
+            } else {
+                self.new_block()
+            };
+            self.lower_match_pattern_check(pattern, place, &ty, next, failure, origin.clone());
+            if index + 1 != count {
+                self.current_block = Some(next);
             }
         }
     }
@@ -390,8 +587,6 @@ impl<'a> MirBuilder<'a> {
             }
             return;
         };
-
-        self.assert_enum_payload_patterns_supported(pattern);
 
         if subpatterns.is_empty() {
             if let Some(current) = self.current_block {

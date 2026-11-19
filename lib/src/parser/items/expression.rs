@@ -280,8 +280,13 @@ pub fn operand(stream: Input) -> IResult<Operand> {
             .map(|(span, _, block)| Operand::Unsafe(block, span)))
         .or(self_ident)
         .or(reset_inside_argument_list(instance).map(Operand::Instance))
+        // A parenthesized list followed by an arrow is a lambda's tuple
+        // parameter pattern: `(a, b) -> a + b`.
         .or(tuple
             .followed_by(not(TokenType::DoubleColon))
+            .followed_by(not(TokenType::Arrow))
+            .followed_by(not(TokenType::UnitArrow))
+            .followed_by(not(TokenType::CurriedArrow))
             .map(Operand::Tuple))
         .or(function_shorthand.map(Operand::LambdaDecl))
         // Try lambda_decl before parenthesized expressions so nested parameter

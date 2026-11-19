@@ -267,11 +267,14 @@ fn remap_pattern_location_product_ids(pattern: &mut HirPattern, id_remap: &Produ
                 remap_pattern_location_product_ids(pattern, id_remap);
             }
         }
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => {
             for pattern in patterns {
                 remap_pattern_location_product_ids(pattern, id_remap);
             }
         }
+        HirPattern::Deref(inner) => remap_pattern_location_product_ids(inner, id_remap),
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }
 }

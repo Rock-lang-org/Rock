@@ -101,6 +101,17 @@ impl Lowerer {
             HirPattern::Or(patterns) => patterns
                 .iter()
                 .any(|pattern| self.fold_pattern_is_irrefutable(pattern)),
+            HirPattern::Deref(inner) => self.fold_pattern_is_irrefutable(inner),
+            HirPattern::Array {
+                patterns,
+                irrefutable,
+                ..
+            } => {
+                *irrefutable
+                    && patterns
+                        .iter()
+                        .all(|pattern| self.fold_pattern_is_irrefutable(pattern))
+            }
             HirPattern::Literal(_) | HirPattern::Enum(_, _, None, _) => false,
         }
     }
@@ -416,6 +427,7 @@ impl Lowerer {
                                 name: return_name,
                                 local_id: return_id,
                                 mutable: false,
+                                mode: crate::hir::HirBindingMode::Value,
                             },
                         )),
                         guard: None,

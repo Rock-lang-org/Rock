@@ -239,6 +239,20 @@ impl Lowerer {
             .record_reference_in_scope(span, target, owner, scope_id);
     }
 
+    /// Name of the parameter that receives a destructured argument: the
+    /// pattern's own binding name, or a hidden name derived from its position
+    /// so collection and lowering agree on it.
+    pub(crate) fn destructured_param_name(pattern: &ast::Pattern) -> String {
+        pattern
+            .binding
+            .as_ref()
+            .map(|binding| binding.name.clone())
+            .unwrap_or_else(|| {
+                let position = Self::pattern_binding_span(pattern).map_or(0, |span| span.start);
+                format!("__param_{position}")
+            })
+    }
+
     pub(crate) fn pattern_binding_span(pattern: &ast::Pattern) -> Option<Span> {
         match &pattern.kind {
             ast::PatternKind::Ident(binding) => Some(binding.name.span.clone()),

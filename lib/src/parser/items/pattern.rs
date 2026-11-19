@@ -68,6 +68,15 @@ pub fn ident_pattern(stream: Input) -> IResult<IdentPattern> {
 pub fn array_pattern(stream: Input) -> IResult<ArrayPattern> {
     (TokenType::DoubleDot, ident_pattern)
         .map(|(_, ident)| ArrayPattern::Rest(ident))
+        .or((super::get_span, TokenType::DoubleDot).map(|(span, _)| {
+            ArrayPattern::Rest(IdentPattern {
+                name: crate::ast::Ident {
+                    name: "_".to_string(),
+                    span,
+                },
+                mut_: false,
+            })
+        }))
         .or(pattern.map(ArrayPattern::Pattern))
         .process(stream)
 }

@@ -18,7 +18,7 @@ pub(crate) struct BodyState {
     source_scopes: Vec<u32>,
     fold_loops: Vec<Option<FoldLoopContext>>,
     reusable_call_scopes: Vec<usize>,
-    tuple_temp_counter: u32,
+    pattern_temp_counter: u32,
     pub(crate) capture_live_after: HashMap<usize, HashSet<String>>,
     pub(crate) borrowed_capture_sources: HashSet<crate::ids::HirLocalId>,
 }
@@ -30,7 +30,7 @@ pub(crate) struct BodyFrame {
     source_scopes: Vec<u32>,
     fold_loops: Vec<Option<FoldLoopContext>>,
     reusable_call_scopes: Vec<usize>,
-    tuple_temp_counter: u32,
+    pattern_temp_counter: u32,
     capture_live_after: HashMap<usize, HashSet<String>>,
     borrowed_capture_sources: HashSet<crate::ids::HirLocalId>,
 }
@@ -43,7 +43,7 @@ impl BodyState {
             source_scopes: std::mem::replace(&mut self.source_scopes, vec![root_scope]),
             fold_loops: std::mem::take(&mut self.fold_loops),
             reusable_call_scopes: std::mem::take(&mut self.reusable_call_scopes),
-            tuple_temp_counter: std::mem::take(&mut self.tuple_temp_counter),
+            pattern_temp_counter: std::mem::take(&mut self.pattern_temp_counter),
             capture_live_after: std::mem::take(&mut self.capture_live_after),
             borrowed_capture_sources: std::mem::take(&mut self.borrowed_capture_sources),
         }
@@ -54,7 +54,7 @@ impl BodyState {
         self.source_scopes = frame.source_scopes;
         self.fold_loops = frame.fold_loops;
         self.reusable_call_scopes = frame.reusable_call_scopes;
-        self.tuple_temp_counter = frame.tuple_temp_counter;
+        self.pattern_temp_counter = frame.pattern_temp_counter;
         self.capture_live_after = frame.capture_live_after;
         self.borrowed_capture_sources = frame.borrowed_capture_sources;
     }
@@ -123,11 +123,11 @@ impl BodyState {
         self.fold_loops.last().and_then(Option::as_ref)
     }
 
-    pub(crate) fn fresh_tuple_temp_id(&mut self) -> u32 {
-        let id = self.tuple_temp_counter;
-        self.tuple_temp_counter = id
+    pub(crate) fn fresh_pattern_temp_id(&mut self) -> u32 {
+        let id = self.pattern_temp_counter;
+        self.pattern_temp_counter = id
             .checked_add(1)
-            .expect("tuple destructuring temp counter exhausted");
+            .expect("destructuring temp counter exhausted");
         id
     }
 }

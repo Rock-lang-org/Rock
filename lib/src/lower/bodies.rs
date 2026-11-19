@@ -754,6 +754,7 @@ impl Lowerer {
     fn lower_function_body_block(&mut self, fd: &ast::FunctionDecl) -> crate::hir::HirBlock {
         if fd.lambda.arrow_kind == ast::LambdaArrowKind::Curried && fd.lambda.parameters.len() > 1 {
             let span = fd.name.span.clone();
+            let prelude = self.param_destructuring_prelude(&fd.lambda.parameters[..1]);
             let remaining_params = &fd.lambda.parameters[1..];
             let curried_signature = self.current_body_return_type().and_then(|mut ty| {
                 let mut parameter_types = Vec::with_capacity(remaining_params.len());
@@ -781,10 +782,10 @@ impl Lowerer {
                 self.lower_curried_lambda_stage(remaining_params, &fd.lambda.body, &span)
             };
 
-            crate::hir::HirBlock {
-                ty: inner.ty.clone(),
-                stmts: vec![crate::hir::HirStmt::Expr(inner)],
-            }
+            let mut stmts = prelude;
+            let ty = inner.ty.clone();
+            stmts.push(crate::hir::HirStmt::Expr(inner));
+            crate::hir::HirBlock { ty, stmts }
         } else {
             self.lower_lambda_body(&fd.lambda)
         }

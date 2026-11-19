@@ -29,7 +29,12 @@ impl Lowerer {
             ast::Loop::For(pattern, iter_expr, body, _) => {
                 let iter = self.lower_expression(iter_expr);
                 let span = iter.span.clone();
-                let (var_name, _) = self.extract_pattern_binding(pattern);
+                let destructures = Self::param_is_destructuring(pattern);
+                let var_name = if destructures {
+                    Self::destructured_param_name(pattern)
+                } else {
+                    self.extract_pattern_binding(pattern).0
+                };
 
                 let range_variant = match &iter.kind {
                     HirExprKind::EnumVariant(_, _, _, Some(location)) => self
@@ -82,7 +87,9 @@ impl Lowerer {
                 self.scope
                     .define_local(var_name.clone(), elem_ty, false, local_id);
                 self.body.enter_loop(None, self.scope.depth() - 1);
-                let body = self.lower_block(body);
+                let prelude = self.param_destructuring_prelude(std::slice::from_ref(pattern));
+                let mut body = self.lower_block(body);
+                body.stmts.splice(0..0, prelude);
                 self.body.leave_loop();
                 self.pop_scope();
 

@@ -20,6 +20,23 @@ fn lambda_params_are_patterns() {
 }
 
 #[test]
+fn tuple_parameter_lambda_in_expression_position() {
+    let p = parse("main = ->\n    add = (a, b) -> a + b\n    add\n");
+    let f = first_fn(&p);
+    let assign = as_assign(&f.lambda.body.statements[0]);
+    let pe = as_primary(&assign.rhs);
+    let Operand::LambdaDecl(lambda) = &pe.operand else {
+        panic!("expected LambdaDecl, got {:?}", pe.operand);
+    };
+    assert_eq!(lambda.parameters.len(), 1);
+    assert!(matches!(
+        &lambda.parameters[0].kind,
+        PatternKind::Tuple(elems) if elems.len() == 2
+    ));
+    assert!(pe.secondaries.is_none());
+}
+
+#[test]
 fn lambda_body_expression_vs_block() {
     // Inline body: `f = x -> x + 1`
     let p = parse("f = x -> x + 1\n");

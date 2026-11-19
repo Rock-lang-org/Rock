@@ -411,7 +411,9 @@ fn remap_method_target_owned_type_ids(
 
 pub(super) fn remap_pattern_owned_type_ids(pattern: &mut HirPattern, old_id: DefId, new_id: DefId) {
     match pattern {
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => {
             for pattern in patterns {
                 remap_pattern_owned_type_ids(pattern, old_id, new_id);
             }
@@ -438,6 +440,7 @@ pub(super) fn remap_pattern_owned_type_ids(pattern: &mut HirPattern, old_id: Def
                 remap_pattern_owned_type_ids(pattern, old_id, new_id);
             }
         }
+        HirPattern::Deref(inner) => remap_pattern_owned_type_ids(inner, old_id, new_id),
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }
 }

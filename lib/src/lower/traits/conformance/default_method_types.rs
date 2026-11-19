@@ -224,7 +224,9 @@ fn resolve_generated_default_stmt_types(engine: &mut InferenceEngine, stmt: &mut
 
 fn resolve_generated_default_pattern_types(engine: &mut InferenceEngine, pattern: &mut HirPattern) {
     match pattern {
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) => {
+        HirPattern::Tuple(patterns)
+        | HirPattern::Array { patterns, .. }
+        | HirPattern::Or(patterns) => {
             for pattern in patterns {
                 resolve_generated_default_pattern_types(engine, pattern);
             }
@@ -242,6 +244,7 @@ fn resolve_generated_default_pattern_types(engine: &mut InferenceEngine, pattern
                 resolve_generated_default_pattern_types(engine, pattern);
             }
         }
+        HirPattern::Deref(inner) => resolve_generated_default_pattern_types(engine, inner),
         HirPattern::Wildcard | HirPattern::Binding { .. } | HirPattern::Literal(_) => {}
     }
 }

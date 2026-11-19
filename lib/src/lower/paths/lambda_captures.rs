@@ -70,6 +70,7 @@ impl Lowerer {
                 defined.insert(name.clone());
             }
             HirPattern::Tuple(patterns)
+            | HirPattern::Array { patterns, .. }
             | HirPattern::Or(patterns)
             | HirPattern::Enum(_, _, _, patterns) => {
                 for pattern in patterns {
@@ -81,6 +82,7 @@ impl Lowerer {
                     Self::define_capture_pattern(&field.pattern, defined);
                 }
             }
+            HirPattern::Deref(inner) => Self::define_capture_pattern(inner, defined),
             HirPattern::Wildcard | HirPattern::Literal(_) => {}
         }
     }
