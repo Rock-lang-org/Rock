@@ -104,6 +104,7 @@ pub struct ConstraintStore {
     constraints: Vec<Constraint>,
     obligations: Vec<ObligationMeta>,
     dependencies: HashMap<TypeVarId, Vec<ObligationId>>,
+    by_owner: HashMap<ConstraintOwner, Vec<ObligationId>>,
     owner: ConstraintOwner,
 }
 
@@ -265,6 +266,7 @@ impl ConstraintStore {
 
     fn push_obligation(&mut self) -> ObligationId {
         let id = ObligationId::new(self.obligations.len() as u32);
+        self.by_owner.entry(self.owner).or_default().push(id);
         self.obligations.push(ObligationMeta {
             id,
             owner: self.owner,
@@ -287,6 +289,24 @@ impl ConstraintStore {
 
     pub fn obligation_ids(&self) -> impl Iterator<Item = ObligationId> + '_ {
         self.obligations.iter().map(|obligation| obligation.id)
+    }
+
+    pub(crate) fn selected_ids(
+        &self,
+        owners: Option<&HashSet<ConstraintOwner>>,
+    ) -> Vec<ObligationId> {
+        let Some(owners) = owners else {
+            return self.obligation_ids().collect();
+        };
+        let mut ids: Vec<_> = owners
+            .iter()
+            .filter_map(|owner| self.by_owner.get(owner))
+            .flatten()
+            .copied()
+            .collect();
+        // Preserve insertion order regardless of the owner set's iteration order.
+        ids.sort_unstable_by_key(|id| id.raw());
+        ids
     }
 
     pub fn obligation_id_at(&self, index: usize) -> Option<ObligationId> {

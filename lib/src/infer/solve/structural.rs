@@ -27,7 +27,7 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
     changed_type_vars: &mut HashSet<TypeVarId>,
     assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) {
-    let mut queue = store.obligation_ids().collect::<VecDeque<_>>();
+    let mut queue = VecDeque::from(store.selected_ids(owners));
     let mut queued = queue.iter().copied().collect::<HashSet<_>>();
 
     while let Some(id) = queue.pop_front() {
@@ -285,9 +285,8 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
         store.refresh_dependencies(id, engine);
     }
     if finalize_pending {
-        for id in store.obligation_ids().collect::<Vec<_>>() {
-            if store.includes_owner(id, owners) && store.state(id) == Some(ObligationState::Pending)
-            {
+        for id in store.selected_ids(owners) {
+            if store.state(id) == Some(ObligationState::Pending) {
                 store.set_state(id, ObligationState::Ambiguous);
             }
         }

@@ -201,14 +201,20 @@ pub(super) fn solve_constraints_in_place_mode(
 
     // Validate equality failures only after structural propagation reaches
     // quiescence, so temporarily unresolved constructor equations can settle.
-    for (id, constraint) in store
-        .iter()
-        .filter(|(id, value)| {
-            matches!(value, Constraint::Equality { .. }) && store.includes_owner(*id, owners)
-        })
-        .map(|(id, value)| (id, value.clone()))
-        .collect::<Vec<_>>()
-    {
+    let selected = store.selected_ids(owners);
+    let snapshot = |store: &ConstraintStore, includes: fn(&Constraint) -> bool| {
+        selected
+            .iter()
+            .copied()
+            .filter_map(|id| {
+                store
+                    .constraint(id)
+                    .filter(|value| includes(value))
+                    .map(|value| (id, value.clone()))
+            })
+            .collect::<Vec<_>>()
+    };
+    for (id, constraint) in snapshot(store, |value| matches!(value, Constraint::Equality { .. })) {
         let Constraint::Equality {
             left,
             right,
@@ -245,14 +251,7 @@ pub(super) fn solve_constraints_in_place_mode(
         }
     }
 
-    for (id, constraint) in store
-        .iter()
-        .filter(|(id, value)| {
-            matches!(value, Constraint::Coercion { .. }) && store.includes_owner(*id, owners)
-        })
-        .map(|(id, value)| (id, value.clone()))
-        .collect::<Vec<_>>()
-    {
+    for (id, constraint) in snapshot(store, |value| matches!(value, Constraint::Coercion { .. })) {
         let Constraint::Coercion {
             actual,
             expected,
@@ -283,19 +282,14 @@ pub(super) fn solve_constraints_in_place_mode(
         }
     }
 
-    for (id, constraint) in store
-        .iter()
-        .filter(|(id, value)| {
+    for (id, constraint) in snapshot(store, |value| {
             matches!(
                 value,
                 Constraint::Trait { .. }
                     | Constraint::IntLiteral { .. }
                     | Constraint::FloatLiteral { .. }
-            ) && store.includes_owner(*id, owners)
-        })
-        .map(|(id, value)| (id, value.clone()))
-        .collect::<Vec<_>>()
-    {
+            )
+    }) {
         match constraint {
             Constraint::Trait {
                 ty,
@@ -519,9 +513,8 @@ pub(super) fn solve_constraints_in_place_mode(
     }
 
     if finalize_pending {
-        for id in store.obligation_ids().collect::<Vec<_>>() {
-            if !store.includes_owner(id, owners)
-                || store.state(id) != Some(ObligationState::Ambiguous)
+        for id in selected {
+            if store.state(id) != Some(ObligationState::Ambiguous)
                 || deferred_predicates.contains(&id)
             {
                 continue;
