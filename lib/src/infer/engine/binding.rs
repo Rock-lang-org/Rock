@@ -36,7 +36,7 @@ impl InferenceEngine {
                 std::sync::Arc::make_mut(&mut self.var_spans).insert(*target_id, span);
             }
         }
-        self.substitutions.insert(id, ty);
+        std::sync::Arc::make_mut(&mut self.substitutions).insert(id, ty);
         self.substitution_generation = self.substitution_generation.wrapping_add(1);
         if !crate::type_services::visit::type_any(&self.substitutions[&id], |nested| {
             matches!(nested, Type::TypeVar(_))
@@ -80,7 +80,7 @@ impl InferenceEngine {
             return;
         }
         if self.substitutions.contains_key(id) && self.substitutions.get(id) != Some(&normalized) {
-            self.substitutions.insert(*id, normalized);
+            std::sync::Arc::make_mut(&mut self.substitutions).insert(*id, normalized);
             self.substitution_generation = self.substitution_generation.wrapping_add(1);
             self.changed_type_vars.push(*id);
         }

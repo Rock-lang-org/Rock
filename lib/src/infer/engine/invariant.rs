@@ -107,7 +107,7 @@ impl InferenceEngine {
                     .unwrap_or_else(|| ty.clone());
                 let replacement = replacement(&current);
                 if current != replacement {
-                    self.substitutions.insert(*id, replacement);
+                    std::sync::Arc::make_mut(&mut self.substitutions).insert(*id, replacement);
                     self.substitution_generation = self.substitution_generation.wrapping_add(1);
                     self.rigid_substitution_generation =
                         self.rigid_substitution_generation.wrapping_add(1);

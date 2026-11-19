@@ -25,7 +25,7 @@ use crate::types::{TraitBound, Type};
 /// Type inference engine using unification
 pub struct InferenceEngine {
     next_var: IdGen<TypeVarId>,
-    substitutions: HashMap<TypeVarId, Type>,
+    substitutions: Arc<HashMap<TypeVarId, Type>>,
     substitution_generation: u64,
     rigid_substitution_generation: u64,
     changed_type_vars: Vec<TypeVarId>,

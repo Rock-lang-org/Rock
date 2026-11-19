@@ -40,7 +40,7 @@ impl InferenceEngine {
         if a == b {
             if let Type::TypeVar(id) = original_a {
                 if self.substitutions.contains_key(&id) && self.substitutions.get(&id) != Some(&a) {
-                    self.substitutions.insert(id, a.clone());
+                    std::sync::Arc::make_mut(&mut self.substitutions).insert(id, a.clone());
                     self.substitution_generation = self.substitution_generation.wrapping_add(1);
                     self.changed_type_vars.push(id);
                 }

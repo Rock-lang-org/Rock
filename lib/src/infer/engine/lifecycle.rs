@@ -11,7 +11,7 @@ impl InferenceEngine {
     pub fn new() -> Self {
         Self {
             next_var: IdGen::new(),
-            substitutions: HashMap::new(),
+            substitutions: Default::default(),
             substitution_generation: 0,
             rigid_substitution_generation: 0,
             changed_type_vars: Vec::new(),
@@ -34,7 +34,7 @@ impl InferenceEngine {
         }
         Self {
             next_var: IdGen::with_next_raw(next),
-            substitutions: HashMap::new(),
+            substitutions: Default::default(),
             substitution_generation: 0,
             rigid_substitution_generation: 0,
             changed_type_vars: Vec::new(),
