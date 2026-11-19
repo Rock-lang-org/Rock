@@ -134,6 +134,9 @@ impl<'a> MirBuilder<'a> {
             if rest == Some(index) {
                 let remaining = self.pattern_subtract(length.clone(), required);
                 if let Operand::Constant(Constant::Int(count)) = remaining {
+                    // Even an arm that fails its length check has its body
+                    // lowered. Match HIR's zero-sized rest in that dead arm.
+                    let count = count.max(0);
                     let array_ty =
                         Type::Array(Box::new(element.clone()), ArrayLen::Value(count as u64));
                     if matches!(
