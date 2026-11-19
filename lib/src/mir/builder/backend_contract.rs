@@ -257,12 +257,26 @@ impl<'a> MirBuilder<'a> {
             type_context,
         );
         Self::populate_backend_contract_drop_glue(&mut contract, &program.generated_drop_instances);
-
-        contract.copy_types.extend(type_context.type_ids().filter(|&id| {
-            let ty = type_context.type_for(id);
-            !ty.is_copy() && crate::infer::solve::program_type_is_copy(&program.program, &ty)
-        }));
         contract
+    }
+
+    /// Records nominal types that are Copy through explicit impls. Runs after
+    /// every body is built so the interned type set is final and borrow
+    /// checking sees the same answers the builder used.
+    pub(super) fn populate_backend_contract_copy_types<P: crate::hir::HirPhase>(
+        contract: &mut crate::mir::MirBackendContract,
+        program: &crate::hir::HirProgramFor<P>,
+        type_context: &TypeContext,
+    ) {
+        if program.language_items.copy.is_none() {
+            return;
+        }
+        contract
+            .copy_types
+            .extend(type_context.type_ids().filter(|&id| {
+                let ty = type_context.type_for(id);
+                !ty.is_copy() && crate::infer::solve::program_type_is_copy(program, &ty)
+            }));
     }
 
     pub(super) fn mir_generic_param_ids(

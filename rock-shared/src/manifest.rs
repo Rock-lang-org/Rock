@@ -165,19 +165,35 @@ pub fn parse_rock_toml(content: &str) -> Result<CrateManifest, String> {
                 .get("version")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
-            let git = dep.get("git").map(|v| v.as_str().ok_or("git must be a string")).transpose()?.map(str::to_string);
-            let rev = dep.get("rev").map(|v| v.as_str().ok_or("rev must be a string")).transpose()?.map(str::to_string);
+            let git = dep
+                .get("git")
+                .map(|v| v.as_str().ok_or("git must be a string"))
+                .transpose()?
+                .map(str::to_string);
+            let rev = dep
+                .get("rev")
+                .map(|v| v.as_str().ok_or("rev must be a string"))
+                .transpose()?
+                .map(str::to_string);
             if let Some(url) = &git {
                 let valid_repo = url.strip_prefix("https://github.com/").is_some_and(|repo| {
                     let parts: Vec<_> = repo.split('/').collect();
-                    parts.len() == 2 && parts.iter().all(|part| {
-                        !part.is_empty() && !matches!(*part, "." | "..") && part.bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
-                    })
+                    parts.len() == 2
+                        && parts.iter().all(|part| {
+                            !part.is_empty()
+                                && !matches!(*part, "." | "..")
+                                && part.bytes().all(|b| {
+                                    b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_')
+                                })
+                        })
                 });
-                if !valid_repo || path.is_some() || version.is_some() || !rev.as_ref().is_some_and(|rev| {
-                    rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit())
-                }) {
+                if !valid_repo
+                    || path.is_some()
+                    || version.is_some()
+                    || !rev.as_ref().is_some_and(|rev| {
+                        rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit())
+                    })
+                {
                     return Err(format!("Dependency '{dep_name}' requires a GitHub HTTPS repository and a full commit SHA, without path or version"));
                 }
             } else if rev.is_some() || (path.is_none() && version.is_none()) {
@@ -186,7 +202,15 @@ pub fn parse_rock_toml(content: &str) -> Result<CrateManifest, String> {
                     dep_name
                 ));
             }
-            dep_map.insert(dep_name.clone(), Dependency { path, version, git, rev });
+            dep_map.insert(
+                dep_name.clone(),
+                Dependency {
+                    path,
+                    version,
+                    git,
+                    rev,
+                },
+            );
         }
         Some(dep_map)
     } else {

@@ -728,17 +728,42 @@ fn owned_auto_trait_checks_storage_modes_and_nested_payloads_by_id() {
     let owned = def_id(701);
     let send = def_id(702);
     let sync = def_id(703);
-    let builtin = BuiltinTraitIds { owned: Some(owned), send: Some(send), sync: Some(sync), ..Default::default() };
-    let reference = Type::Reference { mutable: false, inner: Box::new(Type::I64) };
-    let closure = |kind, ty| Type::function_with_metadata(
-        Vec::new(), Type::I64, FunctionSafety::Safe, CallableKind::Fn,
-        vec![FunctionCapture::new(kind, ty)],
-    );
-    let satisfies = |ty: &Type, marker| impl_exists_for::<crate::hir::UnresolvedHir>(
-        ty, marker, &[], &HashMap::new(), &HashMap::new(), &HashMap::new(), builtin,
-        &|_, _, _| false,
-    );
-    for ty in [Type::I64, Type::Tuple(vec![Type::I64]), closure(CaptureKind::Move, Type::I64)] {
+    let builtin = BuiltinTraitIds {
+        owned: Some(owned),
+        send: Some(send),
+        sync: Some(sync),
+        ..Default::default()
+    };
+    let reference = Type::Reference {
+        mutable: false,
+        inner: Box::new(Type::I64),
+    };
+    let closure = |kind, ty| {
+        Type::function_with_metadata(
+            Vec::new(),
+            Type::I64,
+            FunctionSafety::Safe,
+            CallableKind::Fn,
+            vec![FunctionCapture::new(kind, ty)],
+        )
+    };
+    let satisfies = |ty: &Type, marker| {
+        impl_exists_for::<crate::hir::UnresolvedHir>(
+            ty,
+            marker,
+            &[],
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            builtin,
+            &|_, _, _| false,
+        )
+    };
+    for ty in [
+        Type::I64,
+        Type::Tuple(vec![Type::I64]),
+        closure(CaptureKind::Move, Type::I64),
+    ] {
         assert!(satisfies(&ty, owned), "{ty:?}");
     }
     for ty in [

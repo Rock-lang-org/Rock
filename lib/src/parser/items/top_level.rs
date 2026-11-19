@@ -167,8 +167,8 @@ fn language_item_top_level(stream: Input) -> IResult<TopLevel> {
                     | LanguageItemRole::FnMut
                     | LanguageItemRole::Fn
                     | LanguageItemRole::Send
-                | LanguageItemRole::Owned
-                | LanguageItemRole::Copy
+                    | LanguageItemRole::Owned
+                    | LanguageItemRole::Copy
                     | LanguageItemRole::Sync
                     | LanguageItemRole::Try
                     | LanguageItemRole::FromResidual

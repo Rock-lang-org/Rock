@@ -69,7 +69,12 @@ impl<'a> MirBuilder<'a> {
     }
 
     pub(super) fn needs_move(&self, ty: &Type) -> bool {
-        !crate::infer::solve::program_type_is_copy(self.program, ty)
+        if let Some(&copy) = self.copy_cache.borrow().get(ty) {
+            return !copy;
+        }
+        let copy = crate::infer::solve::program_type_is_copy(self.program, ty);
+        self.copy_cache.borrow_mut().insert(ty.clone(), copy);
+        !copy
     }
 
     pub(super) fn get_local_type(&self, local: Local) -> Option<Type> {

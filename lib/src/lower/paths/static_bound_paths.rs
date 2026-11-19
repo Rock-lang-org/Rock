@@ -64,23 +64,49 @@ impl Lowerer {
                     .selection_service()
                     .trait_bounds_with_supertraits(&owner_ty, bounds);
                 (owner_ty, bounds)
-            } else if let Some(trait_def) = required_trait_id.is_none()
-                .then(|| self.trait_by_name(owner_name).cloned()).flatten()
+            } else if let Some(trait_def) = required_trait_id
+                .is_none()
+                // A nominal type in scope keeps precedence over a same-named trait.
+                .then(|| {
+                    crate::lower::resolution::LowerResolutionContext::new(self)
+                        .resolve_nominal_type(owner_name)
+                        .is_none()
+                })
+                .unwrap_or(false)
+                .then(|| self.trait_by_name(owner_name).cloned())
+                .flatten()
             {
-                let kind = trait_def.target.as_ref().map(|target| target.kind.clone())
+                let kind = trait_def
+                    .target
+                    .as_ref()
+                    .map(|target| target.kind.clone())
                     .unwrap_or(crate::type_services::kind::Kind::Type);
-                let owner_ty = self.engine.fresh_type_var_at_kind(operation_span.clone(), kind);
+                let owner_ty = self
+                    .engine
+                    .fresh_type_var_at_kind(operation_span.clone(), kind);
                 let bound = crate::types::TraitBound {
                     trait_id: trait_def.id,
-                    type_args: trait_def.generic_params.iter().map(|param| {
-                        self.engine.fresh_type_var_at_kind(operation_span.clone(), param.kind.clone())
-                    }).collect(),
+                    type_args: trait_def
+                        .generic_params
+                        .iter()
+                        .map(|param| {
+                            self.engine
+                                .fresh_type_var_at_kind(operation_span.clone(), param.kind.clone())
+                        })
+                        .collect(),
                 };
-                if !trait_def.methods.contains_key(method_name) && !trait_def.signatures.contains_key(method_name) {
-                    return Err(format!("trait `{owner_name}` has no member `{method_name}`"));
+                if !trait_def.methods.contains_key(method_name)
+                    && !trait_def.signatures.contains_key(method_name)
+                {
+                    return Err(format!(
+                        "trait `{owner_name}` has no member `{method_name}`"
+                    ));
                 }
                 self.constraint_store.add_trait(
-                    owner_ty.clone(), bound.clone(), operation_span.clone(), "static trait member",
+                    owner_ty.clone(),
+                    bound.clone(),
+                    operation_span.clone(),
+                    "static trait member",
                 );
                 (owner_ty, vec![bound])
             } else {
@@ -220,11 +246,9 @@ impl Lowerer {
                         method.ret_type.clone(),
                         crate::types::FunctionSafety::from_is_unsafe(method.is_unsafe),
                     )
-                } else if let Some(sig) = trait_def
-                    .signatures
-                    .get(method_name)
-                    .filter(|sig| sig.self_receiver.is_none() || matches!(owner_ty, Type::TypeVar(_)))
-                {
+                } else if let Some(sig) = trait_def.signatures.get(method_name).filter(|sig| {
+                    sig.self_receiver.is_none() || matches!(owner_ty, Type::TypeVar(_))
+                }) {
                     (
                         sig.id,
                         sig.generic_params.clone(),

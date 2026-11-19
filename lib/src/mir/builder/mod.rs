@@ -64,6 +64,8 @@ pub struct MirBuilder<'a> {
     ownership: MirOwnershipMetadata,
     source_map: SemanticSourceMap,
     current_source_owner: Option<DefId>,
+    /// Memoized Copy answers for nominal-bearing types; see `needs_move`.
+    copy_cache: RefCell<HashMap<Type, bool>>,
 }
 
 #[derive(Debug, Clone, Copy)]

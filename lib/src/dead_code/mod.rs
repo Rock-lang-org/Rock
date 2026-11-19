@@ -66,10 +66,13 @@ impl Reachability {
             }
         }
         // Library impls are downstream API even without a direct source call.
-        // Drop impls can also be selected implicitly from interned types.
+        // Drop and Copy impls are also selected implicitly from interned types
+        // (cleanup glue and move/copy decisions) without any source reference.
         let drop_trait = program.language_items.drop.as_ref().map(|items| items.trait_id);
+        let copy_trait = program.language_items.copy;
         for imp in program.impls.values() {
-            if imp.trait_id == drop_trait && drop_trait.is_some() {
+            if imp.trait_id.is_some() && (imp.trait_id == drop_trait || imp.trait_id == copy_trait)
+            {
                 pending.push(imp.id);
             } else if config.crate_kind == CrateKind::Lib {
                 let receiver = match &imp.receiver_pattern {

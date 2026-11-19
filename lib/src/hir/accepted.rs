@@ -26,9 +26,6 @@ impl TryFrom<HirProgram> for AcceptedHirProgram {
         let mut errors = program.validate_method_authorities();
         errors.extend(super::language_items::validate_language_items(&program));
         errors.extend(program.validate_accepted_types());
-        if errors.is_empty() {
-            errors.extend(crate::infer::solve::validate_copy_impls(&program));
-        }
         if !errors.is_empty() {
             return Err(errors);
         }

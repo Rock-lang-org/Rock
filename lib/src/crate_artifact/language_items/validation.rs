@@ -46,10 +46,14 @@ pub(in crate::crate_artifact) fn validate_product_language_items(
     validate_bundle(
         &program,
         language_items.copy.map(|id| {
-            ("copy.trait", id, HirLanguageItems {
-                copy: Some(product_def_id(id)),
-                ..HirLanguageItems::default()
-            })
+            (
+                "copy.trait",
+                id,
+                HirLanguageItems {
+                    copy: Some(product_def_id(id)),
+                    ..HirLanguageItems::default()
+                },
+            )
         }),
     )?;
     validate_bundle(

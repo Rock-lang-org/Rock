@@ -181,6 +181,27 @@ impl Lowerer {
             }
         }
 
+        // A trait member returning a non-function cannot absorb extra
+        // arguments; report the arity instead of a function-typed trait arg.
+        if let (Some((member, arity)), Type::Function { ret, .. }) = (
+            self.trait_member_value_arity(&expr),
+            self.engine.resolve(&expr.ty),
+        ) {
+            if args.len() > arity && !matches!(self.engine.resolve(&ret), Type::Function { .. }) {
+                let plural = |count: usize| if count == 1 { "" } else { "s" };
+                self.diagnostics.push_type_with_span(
+                    format!(
+                        "`{member}` takes {arity} argument{} but {} argument{} were supplied",
+                        plural(arity),
+                        args.len(),
+                        plural(args.len()),
+                    ),
+                    span.clone(),
+                );
+                return self.error_expression_at(span.clone());
+            }
+        }
+
         let callable_selection = if matches!(self.engine.resolve(&expr.ty), Type::Function { .. })
             || matches!(expr.kind, HirExprKind::EnumVariant(..))
         {

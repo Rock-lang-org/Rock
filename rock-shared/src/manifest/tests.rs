@@ -4,11 +4,16 @@ const CRATE_HEADER: &str = "[crate]\nname = \"example\"\nversion = \"0.1.0\"\n";
 
 #[test]
 fn github_dependencies_require_full_commit_ids() {
-    let manifest = |rev| format!(
+    let manifest = |rev| {
+        format!(
         "{CRATE_HEADER}\n[lib]\n[dependencies]\nfoo = {{git = \"https://github.com/org/foo\", rev = \"{rev}\"}}\n"
-    );
+    )
+    };
     let sha = "0123456789abcdef0123456789abcdef01234567";
-    let dependencies = parse_rock_toml(&manifest(sha)).unwrap().dependencies.unwrap();
+    let dependencies = parse_rock_toml(&manifest(sha))
+        .unwrap()
+        .dependencies
+        .unwrap();
     assert_eq!(dependencies["foo"].rev.as_deref(), Some(sha));
     assert!(parse_rock_toml(&manifest("main")).is_err());
 }

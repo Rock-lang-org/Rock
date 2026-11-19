@@ -558,3 +558,15 @@ main = !->
     );
     assert_eq!(output.trim(), "hello\nworld");
 }
+
+#[test]
+fn trait_qualified_method_call_rejects_extra_arguments() {
+    crate::support::compile_should_fail(
+        r#"
+main = !->
+    other: String = Into::into "world", "extra"
+    other.println!
+"#,
+        "`Into::into` takes 1 argument but 2 arguments were supplied",
+    );
+}

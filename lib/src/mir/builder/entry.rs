@@ -35,6 +35,7 @@ impl<'a> MirBuilder<'a> {
             ownership: MirOwnershipMetadata::default(),
             source_map: SemanticSourceMap::default(),
             current_source_owner: None,
+            copy_cache: RefCell::default(),
         }
     }
 
@@ -81,6 +82,7 @@ impl<'a> MirBuilder<'a> {
             &functions,
             &type_context,
         );
+        Self::populate_backend_contract_copy_types(&mut backend_contract, program, &type_context);
         Self::populate_backend_contract_runtime_requirements(&mut backend_contract, &functions);
 
         Ok(MirProgram {
@@ -221,6 +223,11 @@ impl<'a> MirBuilder<'a> {
         Self::populate_backend_contract_function_bodies(
             &mut backend_contract,
             &functions,
+            &type_context.borrow(),
+        );
+        Self::populate_backend_contract_copy_types(
+            &mut backend_contract,
+            &program.program,
             &type_context.borrow(),
         );
         Self::populate_backend_contract_runtime_requirements(&mut backend_contract, &functions);

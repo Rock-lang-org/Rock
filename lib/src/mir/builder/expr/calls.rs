@@ -187,7 +187,7 @@ impl<'a> MirBuilder<'a> {
                 }
             } else if move_receiver {
                 if let Some(place) = self.lower_place(arg) {
-            let operand = if !self.needs_move(&arg.ty) {
+                    let operand = if !self.needs_move(&arg.ty) {
                         Operand::Copy(place)
                     } else {
                         Operand::Move(place)

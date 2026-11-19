@@ -61,7 +61,11 @@ impl ArtifactBuildState {
     }
 }
 
-fn collect_package_roots(package: &Package, project_root: &Path, roots: &mut HashSet<PathBuf>) -> Result<(), String> {
+fn collect_package_roots(
+    package: &Package,
+    project_root: &Path,
+    roots: &mut HashSet<PathBuf>,
+) -> Result<(), String> {
     roots.insert(package.root_dir.clone());
     if let Some(dependencies) = &package.manifest.dependencies {
         for (name, dependency) in dependencies {
@@ -132,7 +136,8 @@ fn collect_dependency_artifacts_into(
     };
 
     for (dep_name, dependency) in dependencies {
-        let dep_root = resolve_dependency_root(&package.root_dir, &state.project_root, dep_name, dependency)?;
+        let dep_root =
+            resolve_dependency_root(&package.root_dir, &state.project_root, dep_name, dependency)?;
         let dep_root = dep_root
             .canonicalize()
             .map_err(|e| format!("Failed to resolve crate root {}: {}", dep_root.display(), e))?;
@@ -202,7 +207,12 @@ pub(crate) fn ensure_artifact(
         let mut dependencies_use_std = false;
         if let Some(dependencies) = &package.manifest.dependencies {
             for (dep_name, dependency) in dependencies {
-                let dep_root = resolve_dependency_root(&package.root_dir, &state.project_root, dep_name, dependency)?;
+                let dep_root = resolve_dependency_root(
+                    &package.root_dir,
+                    &state.project_root,
+                    dep_name,
+                    dependency,
+                )?;
                 let artifact = ensure_artifact(&dep_root, state)?;
                 if dep_name != STD_CRATE_NAME {
                     dependencies_use_std |= state.uses_std.get(&artifact).copied().unwrap_or(false);

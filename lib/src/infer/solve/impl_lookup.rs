@@ -45,6 +45,9 @@ pub(super) fn impl_exists_for<P: HirPhase>(
             )
         };
         match ty {
+            // Generic parameters are Copy only through an in-scope `T: Copy`
+            // assumption; structural facts know nothing about them.
+            Type::Generic(_) | Type::TypeVar(_) => return assumed(ty, trait_id, &[]),
             Type::Tuple(elements) => return elements.iter().all(element_is_copy),
             Type::Array(element, _) => return element_is_copy(element),
             Type::Struct { .. } | Type::Enum { .. } => {}
@@ -204,7 +207,9 @@ pub(super) fn callable_impl_substitution<P: HirPhase>(
     impls: &HashMap<DefId, HirImplFor<P>>,
 ) -> Option<HashMap<crate::types::GenericParamId, Type>> {
     if [builtin.fn_trait, builtin.fn_mut, builtin.fn_once].contains(&Some(trait_id)) {
-        if let Some(HirImplReceiverPattern::Exact(pattern)) = P::impl_receiver_pattern(&imp.receiver_pattern) {
+        if let Some(HirImplReceiverPattern::Exact(pattern)) =
+            P::impl_receiver_pattern(&imp.receiver_pattern)
+        {
             let mut subst = HashMap::new();
             return crate::selection::type_pattern_matches(pattern, ty, &mut subst)
                 .then_some(subst);
@@ -250,14 +255,13 @@ pub(super) fn impl_receiver_owner_matches<P: HirPhase>(
         // instantiated; compare their structure and nominal IDs instead.
         return crate::selection::type_pattern_matches(pattern, ty, &mut HashMap::new());
     }
-    if matches!(
-        pattern,
-        HirImplReceiverPattern::Exact(Type::Generic(_))
-    ) || matches!(
-        pattern,
-        HirImplReceiverPattern::Exact(Type::Apply { constructor, .. })
-            if matches!(constructor.as_ref(), Type::Generic(_))
-    ) {
+    if matches!(pattern, HirImplReceiverPattern::Exact(Type::Generic(_)))
+        || matches!(
+            pattern,
+            HirImplReceiverPattern::Exact(Type::Apply { constructor, .. })
+                if matches!(constructor.as_ref(), Type::Generic(_))
+        )
+    {
         return true;
     }
     if let Some(id) = constructor_owner_id(ty) {

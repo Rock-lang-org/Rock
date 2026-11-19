@@ -443,7 +443,12 @@ pub fn merge_language_item_providers_all<'a, D: Clone + 'a>(
         |items| items.owned.as_ref(),
         &mut conflicts,
     );
-    let copy = merge_protocol(&providers, "copy", |items| items.copy.as_ref(), &mut conflicts);
+    let copy = merge_protocol(
+        &providers,
+        "copy",
+        |items| items.copy.as_ref(),
+        &mut conflicts,
+    );
     let sync = merge_protocol(
         &providers,
         "sync",
@@ -474,8 +479,8 @@ pub fn merge_language_item_providers_all<'a, D: Clone + 'a>(
             fn_mut,
             fn_trait,
             send,
-        owned,
-        copy,
+            owned,
+            copy,
             sync,
             try_protocol,
             range,

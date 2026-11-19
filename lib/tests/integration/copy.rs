@@ -33,7 +33,45 @@ impl Copy for Label
 
 main = !-> ()
 "#,
-        "cannot implement Copy because a field is not Copy",
+        "cannot implement Copy because a field of type `String` is not Copy",
+    );
+}
+
+#[test]
+fn generic_copy_impl_is_proved_by_its_bound() {
+    let output = compile_and_run(
+        r#"
+> std::mem::Copy
+
+struct Cell T
+    < value: T
+
+impl Copy for Cell T where T: Copy
+
+main = !->
+    cell = Cell
+        value: 7
+    copied = cell
+    (cell.value + copied.value).println!
+"#,
+    );
+    assert_eq!(output.trim(), "14");
+}
+
+#[test]
+fn generic_copy_impl_without_bound_is_rejected() {
+    compile_should_fail(
+        r#"
+> std::mem::Copy
+
+struct Cell T
+    < value: T
+
+impl Copy for Cell T
+
+main = !-> ()
+"#,
+        "cannot implement Copy because a field of type",
     );
 }
 

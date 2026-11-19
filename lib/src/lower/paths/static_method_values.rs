@@ -7,6 +7,49 @@ use crate::types::{GenericParamId, Type};
 use std::collections::{HashMap, HashSet};
 
 impl Lowerer {
+    /// For a trait-qualified member value (`Trait::member`) whose impl is not
+    /// yet selected, returns its display path and declared parameter count.
+    /// Over-applying such a value would otherwise surface as a missing impl
+    /// for a function-typed trait argument.
+    pub(crate) fn trait_member_value_arity(&self, callee: &HirExpr) -> Option<(String, usize)> {
+        let HirExprKind::Lambda {
+            params,
+            body,
+            captures,
+        } = &callee.kind
+        else {
+            return None;
+        };
+        if !captures.is_empty() {
+            return None;
+        }
+        let [HirStmt::Expr(call)] = body.stmts.as_slice() else {
+            return None;
+        };
+        let method = match &call.kind {
+            HirExprKind::Call(_, _, Some(HirCallTarget::StaticMethod(target))) => &target.method,
+            HirExprKind::MethodCall(_, _, _, _, Some(target)) => target,
+            _ => return None,
+        };
+        if method.impl_id().is_some() {
+            return None;
+        }
+        let trait_def = self.trait_by_id(method.trait_id()?)?;
+        let method_id = method.method_id()?;
+        let member = trait_def
+            .signatures
+            .iter()
+            .find_map(|(name, sig)| (sig.id == method_id).then_some(name))
+            .or_else(|| {
+                trait_def
+                    .methods
+                    .iter()
+                    .find_map(|(name, method)| (method.id == method_id).then_some(name))
+            })?;
+        let trait_name = crate::type_services::display::short_item_name(&trait_def.name);
+        Some((format!("{trait_name}::{member}"), params.len()))
+    }
+
     pub(crate) fn infer_static_trait_argument_coercions(
         &mut self,
         callee: &HirExpr,
@@ -163,16 +206,25 @@ impl Lowerer {
             .or_else(|| {
                 let trait_def = self.trait_by_id(target.method.trait_id()?)?;
                 let id = target.method.method_id()?;
-                trait_def.signatures.iter().find_map(|(name, sig)| {
-                    (sig.id == id).then_some(sig.self_receiver).flatten()
-                        .map(|mode| (name.clone(), mode))
-                }).or_else(|| trait_def.methods.iter().find_map(|(name, method)| {
-                    (method.id == id).then_some(method.self_receiver).flatten()
-                        .map(|mode| (name.clone(), mode))
-                }))
+                trait_def
+                    .signatures
+                    .iter()
+                    .find_map(|(name, sig)| {
+                        (sig.id == id)
+                            .then_some(sig.self_receiver)
+                            .flatten()
+                            .map(|mode| (name.clone(), mode))
+                    })
+                    .or_else(|| {
+                        trait_def.methods.iter().find_map(|(name, method)| {
+                            (method.id == id)
+                                .then_some(method.self_receiver)
+                                .flatten()
+                                .map(|mode| (name.clone(), mode))
+                        })
+                    })
             });
-        let call = if let Some((method_name, mode)) = receiver_info
-        {
+        let call = if let Some((method_name, mode)) = receiver_info {
             let Some(receiver) = args.first().cloned() else {
                 self.diagnostics.push_with_span(
                     "selected receiver method value has no receiver parameter".to_string(),

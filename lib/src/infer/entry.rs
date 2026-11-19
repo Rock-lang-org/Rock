@@ -66,6 +66,21 @@ fn finalize_with_constant_methods(
     if !constant_errors.is_empty() {
         return Err(constant_errors);
     }
+    let copy_errors: Vec<_> = super::solve::validate_copy_impls(&program)
+        .into_iter()
+        .map(|(impl_id, message)| {
+            match source_map
+                .definition_declaration_span(impl_id)
+                .or_else(|| source_map.definition_span(impl_id))
+            {
+                Some(span) => ResolveError::with_span(message, span.clone()),
+                None => ResolveError::non_source(message),
+            }
+        })
+        .collect();
+    if !copy_errors.is_empty() {
+        return Err(copy_errors);
+    }
     let program = AcceptedHirProgram::try_from(program).map_err(|errors| {
         errors
             .into_iter()

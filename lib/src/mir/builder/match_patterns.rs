@@ -32,7 +32,7 @@ impl<'a> MirBuilder<'a> {
                 let binding_span = self.source_local_span(self.current_source_owner, *local_id);
                 let borrowed_payload =
                     enum_payload && scrutinee_mode == MatchScrutineeMode::Borrowed;
-        if enum_payload && !borrowed_payload && self.needs_move(source_ty) {
+                if enum_payload && !borrowed_payload && self.needs_move(source_ty) {
                     if guarded {
                         return;
                     }

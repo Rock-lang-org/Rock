@@ -88,7 +88,7 @@ impl<'a> MirBuilder<'a> {
                             projection: vec![],
                         };
                         if let Some(ty) = self.get_local_type(local) {
-                if self.needs_move(&ty) {
+                            if self.needs_move(&ty) {
                                 Operand::Move(src_place)
                             } else {
                                 Operand::Copy(src_place)
@@ -119,7 +119,7 @@ impl<'a> MirBuilder<'a> {
                             projection: vec![],
                         };
                         if let Some(ty) = self.get_local_type(local) {
-                if self.needs_move(&ty) {
+                            if self.needs_move(&ty) {
                                 Operand::Move(src_place)
                             } else {
                                 Operand::Copy(src_place)
@@ -225,7 +225,7 @@ impl<'a> MirBuilder<'a> {
                         self.emit_drop_for_place(&lhs.ty, lhs_place.clone(), None);
                     }
 
-                let operand = if self.needs_move(&rhs.ty) {
+                    let operand = if self.needs_move(&rhs.ty) {
                         Operand::Move(rhs_place)
                     } else {
                         Operand::Copy(rhs_place)
