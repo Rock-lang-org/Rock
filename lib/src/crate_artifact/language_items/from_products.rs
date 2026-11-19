@@ -3,8 +3,8 @@ use crate::crate_artifact::load::ProductIdentityRemap;
 use crate::hir::HirLanguageItems;
 use crate::language_items::{
     DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, FoldLanguageItems,
-    IndexLanguageItems, IndexMutLanguageItems, OwnedLanguageItems, RangeLanguageItems, SendLanguageItems,
-    SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
+    IndexLanguageItems, IndexMutLanguageItems, OwnedLanguageItems, RangeLanguageItems,
+    SendLanguageItems, SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
 };
 use crate::products::CompilerProducts;
 

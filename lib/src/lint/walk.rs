@@ -57,9 +57,11 @@ pub(crate) fn walk_pattern(visitor: &mut impl HirVisitor, pattern: &HirPattern) 
     visitor.visit_pattern(pattern);
     match pattern {
         HirPattern::Binding { name, local_id, .. } => visitor.bind_local(name, *local_id),
-        HirPattern::Tuple(patterns) | HirPattern::Or(patterns) | HirPattern::Enum(_, _, _, patterns) => {
-            patterns.iter().for_each(|pattern| walk_pattern(visitor, pattern))
-        }
+        HirPattern::Tuple(patterns)
+        | HirPattern::Or(patterns)
+        | HirPattern::Enum(_, _, _, patterns) => patterns
+            .iter()
+            .for_each(|pattern| walk_pattern(visitor, pattern)),
         HirPattern::Struct(_, _, _, fields) => fields
             .iter()
             .for_each(|field| walk_pattern(visitor, &field.pattern)),
@@ -90,7 +92,8 @@ pub(crate) fn walk_expr(visitor: &mut impl HirVisitor, expr: &AcceptedHirExpr) {
             walk_expr(visitor, left);
             walk_expr(visitor, right);
         }
-        HirExprKindFor::Call(callee, args, _) | HirExprKindFor::MethodCall(callee, _, args, _, _) => {
+        HirExprKindFor::Call(callee, args, _)
+        | HirExprKindFor::MethodCall(callee, _, args, _, _) => {
             walk_expr(visitor, callee);
             args.iter().for_each(|arg| walk_expr(visitor, arg));
         }

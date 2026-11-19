@@ -25,8 +25,11 @@ impl<'ctx> CodeGen<'ctx> {
                     fields,
                     generic_params,
                 } => {
-                    self.nominal_layouts
-                        .register_struct(*id, fields.clone(), generic_params.clone());
+                    self.nominal_layouts.register_struct(
+                        *id,
+                        fields.clone(),
+                        generic_params.clone(),
+                    );
                 }
                 MirNominalLayout::Enum {
                     id,
@@ -182,11 +185,16 @@ impl<'ctx> CodeGen<'ctx> {
             &declaration.signature,
         )?;
 
-        if matches!(declaration.key, MirCallableKey::RuntimeHelper(MirRuntimeHelper::ArrayTailDrop(_))) {
+        if matches!(
+            declaration.key,
+            MirCallableKey::RuntimeHelper(MirRuntimeHelper::ArrayTailDrop(_))
+        ) {
             // Preserve sharing even when the caller is optimized for speed.
-            function.add_attribute(AttributeLoc::Function, self.context.create_enum_attribute(
-                Attribute::get_named_enum_kind_id("noinline"), 0,
-            ));
+            function.add_attribute(
+                AttributeLoc::Function,
+                self.context
+                    .create_enum_attribute(Attribute::get_named_enum_kind_id("noinline"), 0),
+            );
         }
 
         if llvm_symbol != declaration.llvm_symbol {
@@ -213,7 +221,8 @@ impl<'ctx> CodeGen<'ctx> {
                 .signature
                 .params
                 .iter()
-                .map(|param| self.llvm_param_type(param)).collect::<Result<Vec<_>, _>>()?,
+                .map(|param| self.llvm_param_type(param))
+                .collect::<Result<Vec<_>, _>>()?,
         );
         let ret = declaration.signature.ret.abi_ty;
         let ret_ty = self.structural_type_for(ret);
@@ -271,7 +280,10 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(llvm_function)
     }
 
-    pub(crate) fn llvm_param_type(&self, param: &MirParamAbi) -> Result<BasicMetadataTypeEnum<'ctx>, CodegenError> {
+    pub(crate) fn llvm_param_type(
+        &self,
+        param: &MirParamAbi,
+    ) -> Result<BasicMetadataTypeEnum<'ctx>, CodegenError> {
         Ok(match param.pass_mode {
             MirPassMode::Direct | MirPassMode::FatDirect => {
                 self.llvm_type_id(param.semantic_ty)?.into()
@@ -281,7 +293,10 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     pub(crate) fn type_id_lowers_to_pointer(&self, ty: TypeId) -> Result<bool, CodegenError> {
-        Ok(matches!(self.llvm_type_id(ty)?, BasicTypeEnum::PointerType(_)))
+        Ok(matches!(
+            self.llvm_type_id(ty)?,
+            BasicTypeEnum::PointerType(_)
+        ))
     }
 
     fn declare_mir_function_with_signature(
@@ -310,7 +325,8 @@ impl<'ctx> CodeGen<'ctx> {
             .insert(lookup_symbol.to_string(), llvm_function);
         self.functions
             .insert(llvm_symbol.to_string(), llvm_function);
-        self.callables.bind_symbol_signature(lookup_symbol, signature);
+        self.callables
+            .bind_symbol_signature(lookup_symbol, signature);
         self.callables.bind_symbol_signature(llvm_symbol, signature);
         Ok(llvm_function)
     }

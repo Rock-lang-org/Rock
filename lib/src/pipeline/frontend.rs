@@ -159,7 +159,10 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         current_crate_name: config.current_crate_name.as_deref(),
     };
     let mut warnings = crate::lint::run_lints(
-        &lint_modules, &hir, &macro_context.import_usage(), &config.lint_levels,
+        &lint_modules,
+        &hir,
+        &macro_context.import_usage(),
+        &config.lint_levels,
     );
     timer.lap("lints");
     let reachability = crate::dead_code::Reachability::compute(
@@ -213,10 +216,7 @@ fn reject_modules_named_like_dependencies(
         if ctx.has_extern_crate(&name.name) {
             diagnostics.push(
                 diagnostic::Diagnostic::new(
-                    format!(
-                        "module `{0}` conflicts with dependency `{0}`",
-                        name.name
-                    ),
+                    format!("module `{0}` conflicts with dependency `{0}`", name.name),
                     name.span.clone(),
                 )
                 .with_code(diagnostic::DiagnosticCode::Resolve),
@@ -241,8 +241,10 @@ fn crate_relative_file_modules<'a>(
     // Its expanded AST is already supplied separately as SourceModules::root.
     source_graph
         .modules()
-        .filter(|loaded| loaded.path != source_graph.root_path()
-            && loaded.canonical_path != source_graph.root_path())
+        .filter(|loaded| {
+            loaded.path != source_graph.root_path()
+                && loaded.canonical_path != source_graph.root_path()
+        })
         .map(|loaded| {
             (
                 crate_relative_path(&loaded.qualified_name, current_crate_name),

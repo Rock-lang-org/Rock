@@ -8,7 +8,11 @@ fn id() -> DefId {
 }
 
 fn expr(kind: HirExprKind, ty: Type) -> HirExpr {
-    HirExpr { kind, ty, span: crate::lexer::Span::test() }
+    HirExpr {
+        kind,
+        ty,
+        span: crate::lexer::Span::test(),
+    }
 }
 
 fn unit() -> HirExpr {
@@ -33,80 +37,160 @@ fn function(body: HirBlock) -> HirFunction {
 
 fn invalid_body_cases(len: ArrayLen) -> Vec<HirBlock> {
     let array = Type::Array(Box::new(Type::I64), len);
-    let block = |stmt| HirBlock { stmts: vec![stmt], ty: Type::Unit };
+    let block = |stmt| HirBlock {
+        stmts: vec![stmt],
+        ty: Type::Unit,
+    };
     let mut cases = vec![
-        HirBlock { stmts: Vec::new(), ty: array.clone() },
+        HirBlock {
+            stmts: Vec::new(),
+            ty: array.clone(),
+        },
         block(HirStmt::Let {
-            name: "local".to_string(), local_id: HirLocalId(0),
-            ty: array.clone(), value: unit(), mutable: false,
+            name: "local".to_string(),
+            local_id: HirLocalId(0),
+            ty: array.clone(),
+            value: unit(),
+            mutable: false,
         }),
         block(HirStmt::Expr(expr(HirExprKind::Unit, array.clone()))),
-        block(HirStmt::Expr(expr(HirExprKind::Cast(Box::new(unit()), array.clone()), Type::Unit))),
-        block(HirStmt::Expr(expr(HirExprKind::ArrayRepeat(Box::new(unit()), len), Type::Unit))),
-        block(HirStmt::Expr(expr(HirExprKind::Lambda {
-            params: vec![crate::hir::HirParam {
-                name: "arg".to_string(), local_id: HirLocalId(1), ty: array.clone(),
-                mutable: false, is_ref: false,
-            }],
-            body: HirBlock { stmts: Vec::new(), ty: Type::Unit },
-            captures: Vec::new(),
-        }, Type::Unit))),
-        block(HirStmt::Expr(expr(HirExprKind::Lambda {
-            params: Vec::new(),
-            body: HirBlock { stmts: Vec::new(), ty: Type::Unit },
-            captures: vec![crate::hir::HirClosureCapture {
-                name: "capture".to_string(), local_id: HirLocalId(2),
-                kind: crate::hir::HirClosureCaptureKind::Move, mutable: false, ty: array.clone(),
-            }],
-        }, Type::Unit))),
-        block(HirStmt::Expr(expr(HirExprKind::Loop(HirBlock {
-            stmts: vec![HirStmt::Break(Some(expr(HirExprKind::Unit, Type::Struct {
-                id: id(), args: vec![Type::Tuple(vec![array.clone()])],
-            })))],
-            ty: Type::Unit,
-        }), Type::Unit))),
+        block(HirStmt::Expr(expr(
+            HirExprKind::Cast(Box::new(unit()), array.clone()),
+            Type::Unit,
+        ))),
+        block(HirStmt::Expr(expr(
+            HirExprKind::ArrayRepeat(Box::new(unit()), len),
+            Type::Unit,
+        ))),
+        block(HirStmt::Expr(expr(
+            HirExprKind::Lambda {
+                params: vec![crate::hir::HirParam {
+                    name: "arg".to_string(),
+                    local_id: HirLocalId(1),
+                    ty: array.clone(),
+                    mutable: false,
+                    is_ref: false,
+                }],
+                body: HirBlock {
+                    stmts: Vec::new(),
+                    ty: Type::Unit,
+                },
+                captures: Vec::new(),
+            },
+            Type::Unit,
+        ))),
+        block(HirStmt::Expr(expr(
+            HirExprKind::Lambda {
+                params: Vec::new(),
+                body: HirBlock {
+                    stmts: Vec::new(),
+                    ty: Type::Unit,
+                },
+                captures: vec![crate::hir::HirClosureCapture {
+                    name: "capture".to_string(),
+                    local_id: HirLocalId(2),
+                    kind: crate::hir::HirClosureCaptureKind::Move,
+                    mutable: false,
+                    ty: array.clone(),
+                }],
+            },
+            Type::Unit,
+        ))),
+        block(HirStmt::Expr(expr(
+            HirExprKind::Loop(HirBlock {
+                stmts: vec![HirStmt::Break(Some(expr(
+                    HirExprKind::Unit,
+                    Type::Struct {
+                        id: id(),
+                        args: vec![Type::Tuple(vec![array.clone()])],
+                    },
+                )))],
+                ty: Type::Unit,
+            }),
+            Type::Unit,
+        ))),
     ];
     for location in 0..4 {
         let mut target = crate::hir::HirMethodCallTarget::trait_method(
-            id(), id(), Vec::new(), crate::hir::HirTraitDispatchKind::TraitBound,
+            id(),
+            id(),
+            Vec::new(),
+            crate::hir::HirTraitDispatchKind::TraitBound,
         );
         let binding = crate::hir::HirTypeBinding {
-            param: GenericParamId { owner: id(), index: 0 }, ty: array.clone(),
+            param: GenericParamId {
+                owner: id(),
+                index: 0,
+            },
+            ty: array.clone(),
         };
         match location {
-            0 => { *target.trait_args_mut().unwrap() = vec![array.clone()]; }
+            0 => {
+                *target.trait_args_mut().unwrap() = vec![array.clone()];
+            }
             1 => target.owner_substitution.push(binding),
             2 => target.method_substitution.push(binding),
             _ => {}
         }
         if location < 3 {
-            cases.push(block(HirStmt::Expr(expr(HirExprKind::MethodCall(
-                Box::new(unit()), "method".to_string(), Vec::new(), None, target.clone(),
-            ), Type::Unit))));
+            cases.push(block(HirStmt::Expr(expr(
+                HirExprKind::MethodCall(
+                    Box::new(unit()),
+                    "method".to_string(),
+                    Vec::new(),
+                    None,
+                    target.clone(),
+                ),
+                Type::Unit,
+            ))));
         }
-        cases.push(block(HirStmt::Expr(expr(HirExprKind::Call(
-            Box::new(unit()), Vec::new(), Some(crate::hir::HirCallTarget::StaticMethod(
-                crate::hir::HirStaticMethodTarget {
-                    owner_ty: if location == 3 { array.clone() } else { Type::Unit }, method: target,
-                },
-            )),
-        ), Type::Unit))));
+        cases.push(block(HirStmt::Expr(expr(
+            HirExprKind::Call(
+                Box::new(unit()),
+                Vec::new(),
+                Some(crate::hir::HirCallTarget::StaticMethod(
+                    crate::hir::HirStaticMethodTarget {
+                        owner_ty: if location == 3 {
+                            array.clone()
+                        } else {
+                            Type::Unit
+                        },
+                        method: target,
+                    },
+                )),
+            ),
+            Type::Unit,
+        ))));
     }
-    cases.push(block(HirStmt::Expr(expr(HirExprKind::Match {
-        scrutinee: Box::new(unit()),
-        arms: vec![crate::hir::HirMatchArmFor {
-            pattern: crate::hir::HirPattern::Struct("Pattern".to_string(), Some(id()), vec![array], Vec::new()),
-            guard: None,
-            body: HirBlock { stmts: Vec::new(), ty: Type::Unit },
-        }],
-    }, Type::Unit))));
+    cases.push(block(HirStmt::Expr(expr(
+        HirExprKind::Match {
+            scrutinee: Box::new(unit()),
+            arms: vec![crate::hir::HirMatchArmFor {
+                pattern: crate::hir::HirPattern::Struct(
+                    "Pattern".to_string(),
+                    Some(id()),
+                    vec![array],
+                    Vec::new(),
+                ),
+                guard: None,
+                body: HirBlock {
+                    stmts: Vec::new(),
+                    ty: Type::Unit,
+                },
+            }],
+        },
+        Type::Unit,
+    ))));
     cases
 }
 
 #[test]
 fn rejects_all_symbolic_length_forms_in_body_only_types() {
     for len in [
-        ArrayLen::Param(GenericParamId { owner: id(), index: 0 }),
+        ArrayLen::Param(GenericParamId {
+            owner: id(),
+            index: 0,
+        }),
         ArrayLen::Var(TypeVarId(7)),
         ArrayLen::Bound { depth: 0, index: 0 },
         ArrayLen::Error,
@@ -115,7 +199,10 @@ fn rejects_all_symbolic_length_forms_in_body_only_types() {
             let mut mono = Monomorphizer::new();
             mono.register_function_instance("body_only", &function(body));
             mono.check_instance_array_lengths();
-            assert!(mono.diagnostics.return_if_err().is_err(), "{len:?}, case {case}");
+            assert!(
+                mono.diagnostics.return_if_err().is_err(),
+                "{len:?}, case {case}"
+            );
         }
     }
 }
@@ -134,22 +221,38 @@ fn permits_concrete_body_lengths_including_zero() {
 
 #[test]
 fn preserves_symbolic_generic_templates_outside_instance_registry() {
-    let param = GenericParamId { owner: id(), index: 0 };
+    let param = GenericParamId {
+        owner: id(),
+        index: 0,
+    };
     let mut template = function(invalid_body_cases(ArrayLen::Param(param)).remove(0));
-    template.generic_params.push(GenericParamDecl::new(param, "N", crate::type_services::kind::Kind::Usize));
+    template.generic_params.push(GenericParamDecl::new(
+        param,
+        "N",
+        crate::type_services::kind::Kind::Usize,
+    ));
     let mut mono = Monomorphizer::new();
     mono.register_generic_function("template".to_string(), template);
     mono.check_instance_array_lengths();
     assert!(mono.diagnostics.return_if_err().is_ok());
-    assert!(matches!(mono.generic_functions[&id()].body.ty, Type::Array(_, ArrayLen::Param(_))));
+    assert!(matches!(
+        mono.generic_functions[&id()].body.ty,
+        Type::Array(_, ArrayLen::Param(_))
+    ));
 }
 
 #[test]
 fn diagnoses_symbol_substitutions_before_using_recovery_identity() {
     let mut mono = Monomorphizer::new();
     let origin = crate::mono::InstanceOrigin::Function(id());
-    let a = mono.intern_type(&Type::Array(Box::new(Type::I64), ArrayLen::Var(TypeVarId(1))));
-    let b = mono.intern_type(&Type::Array(Box::new(Type::I64), ArrayLen::Var(TypeVarId(2))));
+    let a = mono.intern_type(&Type::Array(
+        Box::new(Type::I64),
+        ArrayLen::Var(TypeVarId(1)),
+    ));
+    let b = mono.intern_type(&Type::Array(
+        Box::new(Type::I64),
+        ArrayLen::Var(TypeVarId(2)),
+    ));
     let first = mono.backend_symbol_for_origin(&origin, &[a]);
     let second = mono.backend_symbol_for_origin(&origin, &[b]);
     assert_ne!(first, second);
@@ -160,13 +263,24 @@ fn diagnoses_symbol_substitutions_before_using_recovery_identity() {
 fn validates_substituted_nominal_fields_reached_only_from_body() {
     for args in [Vec::new(), vec![Type::ConstValue(3)]] {
         let mut mono = Monomorphizer::new();
-        mono.nominal_field_types.insert(id(), vec![Type::Array(
-            Box::new(Type::I64), ArrayLen::Param(GenericParamId { owner: id(), index: 0 }),
-        )]);
+        mono.nominal_field_types.insert(
+            id(),
+            vec![Type::Array(
+                Box::new(Type::I64),
+                ArrayLen::Param(GenericParamId {
+                    owner: id(),
+                    index: 0,
+                }),
+            )],
+        );
         let valid = !args.is_empty();
-        let body = HirBlock { stmts: vec![HirStmt::Expr(expr(
-            HirExprKind::Unit, Type::Struct { id: id(), args },
-        ))], ty: Type::Unit };
+        let body = HirBlock {
+            stmts: vec![HirStmt::Expr(expr(
+                HirExprKind::Unit,
+                Type::Struct { id: id(), args },
+            ))],
+            ty: Type::Unit,
+        };
         mono.register_function_instance("body_only", &function(body));
         mono.check_instance_array_lengths();
         assert_eq!(mono.diagnostics.return_if_err().is_ok(), valid);
@@ -177,17 +291,28 @@ fn validates_substituted_nominal_fields_reached_only_from_body() {
 fn constructor_binders_remain_symbolic_but_free_bound_lengths_are_rejected() {
     let array = Type::Array(Box::new(Type::I64), ArrayLen::Bound { depth: 0, index: 0 });
     assert!(unresolved_array_length(&array));
-    assert!(!unresolved_array_length(&Type::Lambda { params: vec![crate::type_services::kind::Kind::Usize], body: Box::new(array) }));
+    assert!(!unresolved_array_length(&Type::Lambda {
+        params: vec![crate::type_services::kind::Kind::Usize],
+        body: Box::new(array)
+    }));
 }
 
 #[test]
 fn distinct_bound_constructor_lengths_have_distinct_symbol_identities() {
     let mut mono = Monomorphizer::new();
-    let types = (0..2).map(|index| Type::Lambda {
-        params: vec![crate::type_services::kind::Kind::Usize; 2],
-        body: Box::new(Type::Array(Box::new(Type::I64), ArrayLen::Bound { depth: 0, index })),
-    }).collect::<Vec<_>>();
-    let ids = types.iter().map(|ty| mono.intern_type(ty)).collect::<Vec<_>>();
+    let types = (0..2)
+        .map(|index| Type::Lambda {
+            params: vec![crate::type_services::kind::Kind::Usize; 2],
+            body: Box::new(Type::Array(
+                Box::new(Type::I64),
+                ArrayLen::Bound { depth: 0, index },
+            )),
+        })
+        .collect::<Vec<_>>();
+    let ids = types
+        .iter()
+        .map(|ty| mono.intern_type(ty))
+        .collect::<Vec<_>>();
     let origin = crate::mono::InstanceOrigin::Function(id());
     let first = mono.backend_symbol_for_origin(&origin, &ids[..1]);
     let second = mono.backend_symbol_for_origin(&origin, &ids[1..]);
@@ -200,12 +325,20 @@ fn rejects_invalid_substitution_on_object_provided_instance_without_body() {
     let mut mono = Monomorphizer::new();
     let ty = mono.intern_type(&Type::Array(Box::new(Type::I64), ArrayLen::Error));
     let origin = crate::mono::InstanceOrigin::Function(id());
-    mono.instances.intern(crate::mono::InstanceKey::new(origin.clone(), vec![ty]), |instance| {
-        crate::mono::InstanceRecord::new(
-            instance, origin, vec![ty], crate::mono::InstanceSymbols::new("external", "external"),
-            None, true, false,
-        )
-    });
+    mono.instances.intern(
+        crate::mono::InstanceKey::new(origin.clone(), vec![ty]),
+        |instance| {
+            crate::mono::InstanceRecord::new(
+                instance,
+                origin,
+                vec![ty],
+                crate::mono::InstanceSymbols::new("external", "external"),
+                None,
+                true,
+                false,
+            )
+        },
+    );
     mono.check_instance_array_lengths();
     assert!(mono.diagnostics.return_if_err().is_err());
 }
@@ -215,57 +348,127 @@ fn h3_invalid_bodies_and_closures_never_receive_backend_symbols() {
     for body in invalid_body_cases(ArrayLen::Error) {
         let mut mono = Monomorphizer::new();
         let instance = mono.register_function_instance("body_only", &function(body));
-        assert!(mono.instances.record(instance).unwrap().symbols.backend_symbol.is_empty());
+        assert!(mono
+            .instances
+            .record(instance)
+            .unwrap()
+            .symbols
+            .backend_symbol
+            .is_empty());
         mono.finish_instance_symbols();
         assert!(mono.diagnostics.return_if_err().is_err());
-        assert!(mono.instances.record(instance).unwrap().symbols.backend_symbol.is_empty());
+        assert!(mono
+            .instances
+            .record(instance)
+            .unwrap()
+            .symbols
+            .backend_symbol
+            .is_empty());
     }
 }
 
 #[test]
 fn h3_valid_symbols_remain_identical_after_deferred_materialization() {
     let mut mono = Monomorphizer::new();
-    let function = function(HirBlock { stmts: vec![HirStmt::Expr(unit())], ty: Type::Unit });
+    let function = function(HirBlock {
+        stmts: vec![HirStmt::Expr(unit())],
+        ty: Type::Unit,
+    });
     let origin = crate::mono::InstanceOrigin::Function(function.id);
     let expected = mono.backend_symbol_for_function("body_only", &origin, &[]);
     let instance = mono.register_function_instance("body_only", &function);
-    assert!(mono.instances.record(instance).unwrap().symbols.backend_symbol.is_empty());
+    assert!(mono
+        .instances
+        .record(instance)
+        .unwrap()
+        .symbols
+        .backend_symbol
+        .is_empty());
     mono.finish_instance_symbols();
     assert!(mono.diagnostics.return_if_err().is_ok());
-    assert_eq!(mono.instances.record(instance).unwrap().symbols.backend_symbol, expected);
+    assert_eq!(
+        mono.instances
+            .record(instance)
+            .unwrap()
+            .symbols
+            .backend_symbol,
+        expected
+    );
 }
 
 #[test]
 fn h3_recursive_nominals_check_distinct_const_instantiations_and_exact_cycles() {
-    let param = GenericParamId { owner: id(), index: 0 };
+    let param = GenericParamId {
+        owner: id(),
+        index: 0,
+    };
     for next_arg in [Type::Error, Type::ConstValue(2)] {
         let mut mono = Monomorphizer::new();
-        mono.nominal_field_types.insert(id(), vec![
-            Type::Array(Box::new(Type::I64), ArrayLen::Param(param)),
-            Type::Pointer(Box::new(Type::Struct { id: id(), args: vec![next_arg.clone()] })),
-        ]);
-        let body = HirBlock { stmts: vec![HirStmt::Expr(expr(HirExprKind::Unit,
-            Type::Struct { id: id(), args: vec![Type::ConstValue(1)] },
-        ))], ty: Type::Unit };
+        mono.nominal_field_types.insert(
+            id(),
+            vec![
+                Type::Array(Box::new(Type::I64), ArrayLen::Param(param)),
+                Type::Pointer(Box::new(Type::Struct {
+                    id: id(),
+                    args: vec![next_arg.clone()],
+                })),
+            ],
+        );
+        let body = HirBlock {
+            stmts: vec![HirStmt::Expr(expr(
+                HirExprKind::Unit,
+                Type::Struct {
+                    id: id(),
+                    args: vec![Type::ConstValue(1)],
+                },
+            ))],
+            ty: Type::Unit,
+        };
         let instance = mono.register_function_instance("recursive", &function(body));
         mono.finish_instance_symbols();
-        assert_eq!(mono.diagnostics.return_if_err().is_ok(), next_arg != Type::Error);
-        assert_eq!(mono.instances.record(instance).unwrap().symbols.backend_symbol.is_empty(), next_arg == Type::Error);
+        assert_eq!(
+            mono.diagnostics.return_if_err().is_ok(),
+            next_arg != Type::Error
+        );
+        assert_eq!(
+            mono.instances
+                .record(instance)
+                .unwrap()
+                .symbols
+                .backend_symbol
+                .is_empty(),
+            next_arg == Type::Error
+        );
     }
 }
 
 #[test]
 fn h3_unbounded_distinct_nominal_expansion_fails_closed() {
-    let param = GenericParamId { owner: id(), index: 0 };
+    let param = GenericParamId {
+        owner: id(),
+        index: 0,
+    };
     let mut mono = Monomorphizer::new();
-    mono.nominal_field_types.insert(id(), vec![Type::Pointer(Box::new(Type::Struct {
-        id: id(), args: vec![Type::Tuple(vec![Type::Generic(param)])],
-    }))]);
-    let body = HirBlock { stmts: Vec::new(), ty: Type::Struct { id: id(), args: vec![Type::I64] } };
+    mono.nominal_field_types.insert(
+        id(),
+        vec![Type::Pointer(Box::new(Type::Struct {
+            id: id(),
+            args: vec![Type::Tuple(vec![Type::Generic(param)])],
+        }))],
+    );
+    let body = HirBlock {
+        stmts: Vec::new(),
+        ty: Type::Struct {
+            id: id(),
+            args: vec![Type::I64],
+        },
+    };
     mono.register_function_instance("growing", &function(body));
     mono.finish_instance_symbols();
     assert!(mono.diagnostics.return_if_err().is_err());
-    assert!(mono.diagnostics.contains("128 distinct nested nominal instantiations"));
+    assert!(mono
+        .diagnostics
+        .contains("128 distinct nested nominal instantiations"));
 }
 
 #[test]
@@ -273,20 +476,51 @@ fn h3_phantom_substitutions_and_declared_signatures_are_validated_before_symbols
     for declaration in [false, true] {
         let mut mono = Monomorphizer::new();
         let invalid = Type::Array(Box::new(Type::I64), ArrayLen::Error);
-        let mut declared = function(HirBlock { stmts: Vec::new(), ty: Type::Unit });
+        let mut declared = function(HirBlock {
+            stmts: Vec::new(),
+            ty: Type::Unit,
+        });
         declared.ret_type = invalid.clone();
         mono.nominal_field_types.insert(id(), vec![invalid]);
-        let argument = mono.intern_type(&Type::Struct { id: id(), args: Vec::new() });
-        let origin = crate::mono::InstanceOrigin::Function(id());
-        let substitution = if declaration { Vec::new() } else { vec![argument] };
-        let instance = mono.instances.intern(crate::mono::InstanceKey::new(origin.clone(), substitution.clone()), |instance| {
-            crate::mono::InstanceRecord::new(instance, origin, substitution,
-                crate::mono::InstanceSymbols::new("phantom", ""),
-                if declaration { Some(declared) } else { None }, false, true)
+        let argument = mono.intern_type(&Type::Struct {
+            id: id(),
+            args: Vec::new(),
         });
-        mono.instances.insert_pre_mir_body(instance, function(HirBlock { stmts: Vec::new(), ty: Type::Unit }));
+        let origin = crate::mono::InstanceOrigin::Function(id());
+        let substitution = if declaration {
+            Vec::new()
+        } else {
+            vec![argument]
+        };
+        let instance = mono.instances.intern(
+            crate::mono::InstanceKey::new(origin.clone(), substitution.clone()),
+            |instance| {
+                crate::mono::InstanceRecord::new(
+                    instance,
+                    origin,
+                    substitution,
+                    crate::mono::InstanceSymbols::new("phantom", ""),
+                    if declaration { Some(declared) } else { None },
+                    false,
+                    true,
+                )
+            },
+        );
+        mono.instances.insert_pre_mir_body(
+            instance,
+            function(HirBlock {
+                stmts: Vec::new(),
+                ty: Type::Unit,
+            }),
+        );
         mono.finish_instance_symbols();
         assert!(mono.diagnostics.return_if_err().is_err());
-        assert!(mono.instances.record(instance).unwrap().symbols.backend_symbol.is_empty());
+        assert!(mono
+            .instances
+            .record(instance)
+            .unwrap()
+            .symbols
+            .backend_symbol
+            .is_empty());
     }
 }

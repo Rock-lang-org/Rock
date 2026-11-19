@@ -435,10 +435,7 @@ fn agreement_rejects_non_concrete_array_length() {
     let unit = type_id(&mut type_context, Type::Unit);
     let symbolic = type_id(
         &mut type_context,
-        Type::Array(
-            Box::new(Type::I64),
-            crate::types::ArrayLen::Param(param),
-        ),
+        Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Param(param)),
     );
     let function_id = MirFunctionId::Function(DefId::new(CrateId(0), LocalDefId(61)));
     let function = MirFunction {

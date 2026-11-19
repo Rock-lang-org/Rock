@@ -14,20 +14,33 @@ fn regression_clears_cross_file_diagnostics_only_for_the_publishing_target() {
     let helper_path = PathBuf::from("/virtual/helpers.rk");
     let helper = Url::from_file_path(&helper_path).unwrap();
     let mut state = super::State::default();
-    state.documents.insert(helper.clone(), super::Document {
-        version: 7,
-        text: "helper = -> 1\n".into(),
-    });
+    state.documents.insert(
+        helper.clone(),
+        super::Document {
+            version: 7,
+            text: "helper = -> 1\n".into(),
+        },
+    );
     let mut warnings = rock_lib::diagnostic::Diagnostics::default();
-    warnings.push(RockDiagnostic::new("unused helper".into(), Span::new(helper_path, 0, 6)));
+    warnings.push(RockDiagnostic::new(
+        "unused helper".into(),
+        Span::new(helper_path, 0, 6),
+    ));
 
     let updates = state.diagnostic_updates(&entry, &trigger, &warnings);
     assert_eq!(updates.len(), 1);
     assert_eq!(updates[0].2.len(), 1);
     let empty = Default::default();
-    assert!(state.diagnostic_updates(&other_entry, &trigger, &empty).is_empty());
-    assert_eq!(state.diagnostic_updates(&entry, &trigger, &empty), vec![(helper, 7, vec![])]);
-    assert!(state.diagnostic_updates(&entry, &trigger, &empty).is_empty());
+    assert!(state
+        .diagnostic_updates(&other_entry, &trigger, &empty)
+        .is_empty());
+    assert_eq!(
+        state.diagnostic_updates(&entry, &trigger, &empty),
+        vec![(helper, 7, vec![])]
+    );
+    assert!(state
+        .diagnostic_updates(&entry, &trigger, &empty)
+        .is_empty());
 }
 
 #[test]

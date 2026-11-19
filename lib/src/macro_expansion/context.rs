@@ -12,8 +12,8 @@ use crate::{
     Config,
 };
 
-use super::{ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap};
 use super::imports::{MacroImportId, MacroImportScope, MacroImportUsage, MacroImportUses};
+use super::{ExpansionId, GeneratedSourceId, MacroExpansionRecord, MacroSourceMap};
 
 #[derive(Debug)]
 pub struct MacroExpansionContext<'a> {
@@ -119,10 +119,16 @@ impl<'a> MacroExpansionContext<'a> {
         path: &crate::ast::Path,
         segments: &[String],
     ) -> Option<MacroImportId> {
-        if self.config.lint_levels.is_allowed(crate::lint::Lint::UnusedImports) {
+        if self
+            .config
+            .lint_levels
+            .is_allowed(crate::lint::Lint::UnusedImports)
+        {
             return None;
         }
-        self.import_uses.borrow_mut().register(scope, path, segments.join("::"))
+        self.import_uses
+            .borrow_mut()
+            .register(scope, path, segments.join("::"))
     }
 
     pub(super) fn mark_import_used(&self, id: Option<MacroImportId>) {

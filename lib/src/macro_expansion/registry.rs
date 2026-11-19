@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
+use super::imports::MacroImportId;
 use crate::ast::{MacroDecl, Module, TopLevel};
 use crate::macro_expansion::declarative::DeclarativeMacro;
 use crate::macro_expansion::proc_macro::{ProcMacroArtifact, ProcMacroExport};
-use super::imports::MacroImportId;
 
 #[derive(Debug, Clone)]
 pub struct ProcMacroRegistryEntry {

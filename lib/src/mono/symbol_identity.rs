@@ -13,13 +13,24 @@ impl Monomorphizer {
         if self.diagnostics.return_if_err().is_err() {
             return;
         }
-        let pending = self.instances.records()
+        let pending = self
+            .instances
+            .records()
             .filter(|record| !record.provided_by_object && record.symbols.backend_symbol.is_empty())
-            .map(|record| (record.id, record.origin.clone(), record.substitution.clone(), record.symbols.source_name.clone()))
+            .map(|record| {
+                (
+                    record.id,
+                    record.origin.clone(),
+                    record.substitution.clone(),
+                    record.symbols.source_name.clone(),
+                )
+            })
             .collect::<Vec<_>>();
         for (id, origin, substitution, source_name) in pending {
             let symbol = match origin {
-                InstanceOrigin::Function(_) => self.backend_symbol_for_function(&source_name, &origin, &substitution),
+                InstanceOrigin::Function(_) => {
+                    self.backend_symbol_for_function(&source_name, &origin, &substitution)
+                }
                 _ => self.backend_symbol_for_origin(&origin, &substitution),
             };
             self.instances.set_backend_symbol(id, symbol);

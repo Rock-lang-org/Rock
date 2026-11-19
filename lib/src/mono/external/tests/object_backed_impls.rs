@@ -9,7 +9,8 @@ fn demand_objects(mono: &mut Monomorphizer) -> Vec<crate::mono::InstanceRecord> 
         | crate::mono::InstanceOrigin::TraitDefault { method, .. } => method,
     });
     for key in keys {
-        mono.demand_object(&key).expect("object method should be available");
+        mono.demand_object(&key)
+            .expect("object method should be available");
     }
     mono.instances.records().cloned().collect()
 }
@@ -64,7 +65,10 @@ fn process_with_crates_records_object_backed_instances_without_re_emitting() {
         &ctx,
     );
 
-    assert!(output.instances.is_empty(), "unused object methods must remain declarations");
+    assert!(
+        output.instances.is_empty(),
+        "unused object methods must remain declarations"
+    );
     let records = demand_objects(&mut mono);
     let record = records
         .iter()

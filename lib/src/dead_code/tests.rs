@@ -1,5 +1,5 @@
-use crate::{analyze, compile_with_products, Config, CrateKind, SourceProvider};
 use crate::lint::LintLevel;
+use crate::{analyze, compile_with_products, Config, CrateKind, SourceProvider};
 
 fn config(source: &str, kind: CrateKind) -> Config {
     let entry_file = std::path::PathBuf::from("/virtual/dead_code/main.rk");
@@ -18,9 +18,14 @@ fn config(source: &str, kind: CrateKind) -> Config {
 }
 
 fn messages(source: &str, kind: CrateKind) -> Vec<String> {
-    analyze(&config(source, kind)).unwrap().warnings.0.into_iter()
+    analyze(&config(source, kind))
+        .unwrap()
+        .warnings
+        .0
+        .into_iter()
         .filter(|diagnostic| diagnostic.message.contains("never used"))
-        .map(|diagnostic| diagnostic.message).collect()
+        .map(|diagnostic| diagnostic.message)
+        .collect()
 }
 
 #[test]
@@ -58,8 +63,13 @@ fn used_type_alias_is_not_reported_dead() {
     let analysis = analyze(&config(
         "type Count = I64\nanswer: () -> Count\nanswer = -> 1\nmain = -> answer!\n",
         CrateKind::Bin,
-    )).unwrap();
-    assert!(!analysis.warnings.contains("never used"), "{:?}", analysis.warnings);
+    ))
+    .unwrap();
+    assert!(
+        !analysis.warnings.contains("never used"),
+        "{:?}",
+        analysis.warnings
+    );
 }
 
 #[test]
@@ -87,14 +97,22 @@ fn private_module_export_is_dead_unless_reexported() {
             text: "< answer = -> 42\n".to_string(),
         });
         let analysis = analyze(&config).unwrap();
-        assert_eq!(analysis.warnings.contains("never used"), expected_dead,
-            "{declaration}: {:?}; {:?}", analysis.warnings, analysis.hir.resolver.export_aliases);
+        assert_eq!(
+            analysis.warnings.contains("never used"),
+            expected_dead,
+            "{declaration}: {:?}; {:?}",
+            analysis.warnings,
+            analysis.hir.resolver.export_aliases
+        );
     }
 }
 
 #[test]
 fn regression_pruned_variant_exports_do_not_break_library_products() {
-    let mut config = config("mod inner\n< Choice::Public\n< enum Choice\n    Public\n", CrateKind::Lib);
+    let mut config = config(
+        "mod inner\n< Choice::Public\n< enum Choice\n    Public\n",
+        CrateKind::Lib,
+    );
     config.current_crate_name = Some("review".into());
     config.source_providers.push(SourceProvider::Virtual {
         path: "/virtual/dead_code/inner.rk".into(),
@@ -107,7 +125,10 @@ fn regression_pruned_variant_exports_do_not_break_library_products() {
     std::fs::remove_dir_all(dir).unwrap();
     let products = result.unwrap().products.unwrap();
     let exports = &products.identity_table.variant_export_names;
-    assert!(exports.values().any(|(_, variant)| variant == "Public"), "{exports:?}");
+    assert!(
+        exports.values().any(|(_, variant)| variant == "Public"),
+        "{exports:?}"
+    );
     assert!(!exports.values().any(|(_, variant)| variant == "Hidden"));
 }
 
@@ -124,7 +145,10 @@ fn variant_patterns_do_not_count_as_construction() {
 #[test]
 fn denied_dead_code_stops_before_object_emission() {
     let mut config = config("unused = -> 1\nmain = !-> ()\n", CrateKind::Bin);
-    config.lint_levels.set("dead_code", LintLevel::Deny).unwrap();
+    config
+        .lint_levels
+        .set("dead_code", LintLevel::Deny)
+        .unwrap();
     let error = compile_with_products(&config).unwrap_err();
     assert!(error.has_errors());
     assert!(error.contains("function `unused` is never used"));
@@ -145,7 +169,8 @@ fn filtered_type_locations_match_full_recollection() {
     let reachable = super::Reachability::compute(&analysis.hir, &modules, &config, []);
     reachable.prune(&mut analysis.hir);
     let expected = crate::hir::collect_hir_type_ids(
-        analysis.hir.program.program(), &mut analysis.hir.type_context,
+        analysis.hir.program.program(),
+        &mut analysis.hir.type_context,
     );
     assert_eq!(analysis.hir.type_ids.len(), expected.len());
     for (location, id) in expected.iter() {
@@ -158,17 +183,31 @@ fn filtered_type_locations_match_full_recollection() {
     macro_rules! same {
         ($($field:ident),+ $(,)?) => { $(assert_eq!(actual.$field, expected.$field);)+ };
     }
-    same!(functions_by_id, structs_by_id, enums_by_id, traits_by_id, type_aliases_by_id,
-        impls_by_id, externs_by_id, impl_owner_ids_by_id, methods_by_id,
-        effective_trait_methods, fields_by_id, variants_by_id,
-        associated_type_decls_by_id, associated_type_defs_by_id);
+    same!(
+        functions_by_id,
+        structs_by_id,
+        enums_by_id,
+        traits_by_id,
+        type_aliases_by_id,
+        impls_by_id,
+        externs_by_id,
+        impl_owner_ids_by_id,
+        methods_by_id,
+        effective_trait_methods,
+        fields_by_id,
+        variants_by_id,
+        associated_type_decls_by_id,
+        associated_type_defs_by_id
+    );
 }
 
 #[test]
 fn dead_code_still_has_type_errors() {
     let error = analyze(&config(
-        "bad: () -> I64\nbad = -> true\nmain = !-> ()\n", CrateKind::Bin,
-    )).unwrap_err();
+        "bad: () -> I64\nbad = -> true\nmain = !-> ()\n",
+        CrateKind::Bin,
+    ))
+    .unwrap_err();
     assert!(error.has_errors());
 }
 
@@ -176,7 +215,10 @@ fn dead_code_still_has_type_errors() {
 fn suppression_does_not_prevent_pruning_and_analysis_keeps_source_items() {
     let source = "struct DeadType\n    < value: I64\nenum DeadEnum\n    First\n    Second\nunused = -> 1\n_helper = -> 2\nmain = !-> ()\n";
     let mut config = config(source, CrateKind::Bin);
-    config.lint_levels.set("dead_code", LintLevel::Allow).unwrap();
+    config
+        .lint_levels
+        .set("dead_code", LintLevel::Allow)
+        .unwrap();
     let analysis = analyze(&config).unwrap();
     assert_eq!(analysis.hir.program.functions.len(), 3);
     let dir = std::env::temp_dir().join(format!("rock_dead_code_{}", std::process::id()));
@@ -185,8 +227,16 @@ fn suppression_does_not_prevent_pruning_and_analysis_keeps_source_items() {
     config.emit_llvm = true;
     let output = compile_with_products(&config).unwrap();
     let products = output.products.unwrap();
-    assert!(products.identity_table.display_names.values().any(|name| name == "main"));
-    assert!(!products.identity_table.display_names.values().any(|name| name == "unused" || name == "_helper"));
+    assert!(products
+        .identity_table
+        .display_names
+        .values()
+        .any(|name| name == "main"));
+    assert!(!products
+        .identity_table
+        .display_names
+        .values()
+        .any(|name| name == "unused" || name == "_helper"));
     assert!(products.interface.structs.is_empty());
     assert!(products.interface.enums.is_empty());
     let ir = std::fs::read_to_string(dir.join("main.ll")).unwrap();

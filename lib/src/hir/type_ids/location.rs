@@ -6,8 +6,7 @@ impl HirTypeLocation {
             Self::FunctionReturn { function }
             | Self::FunctionParam { function, .. }
             | Self::FunctionBoundArg { function, .. } => *function,
-            Self::ExternReturn { extern_id }
-            | Self::ExternParam { extern_id, .. } => *extern_id,
+            Self::ExternReturn { extern_id } | Self::ExternParam { extern_id, .. } => *extern_id,
             Self::TraitSignatureReturn { trait_id, .. }
             | Self::TraitSignatureParam { trait_id, .. }
             | Self::TraitSignatureBoundArg { trait_id, .. } => *trait_id,

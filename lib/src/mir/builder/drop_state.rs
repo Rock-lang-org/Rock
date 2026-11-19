@@ -220,9 +220,7 @@ fn projection_component_matches(lhs: &Projection, rhs: &Projection) -> bool {
         (Projection::Deref, Projection::Deref) => true,
         (Projection::Downcast(lhs), Projection::Downcast(rhs)) => lhs == rhs,
         (Projection::Index(lhs), Projection::Index(rhs)) => lhs == rhs,
-        (Projection::Field { index: lhs, .. }, Projection::Field { index: rhs, .. }) => {
-            lhs == rhs
-        }
+        (Projection::Field { index: lhs, .. }, Projection::Field { index: rhs, .. }) => lhs == rhs,
         _ => false,
     }
 }

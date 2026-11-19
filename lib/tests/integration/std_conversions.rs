@@ -495,7 +495,10 @@ main = !->
 "#,
     );
 
-    assert_eq!(output, "[Some(2), Some(4)]\n[Some(10), Some(30)]\n[Some(0), Some(2)]\n");
+    assert_eq!(
+        output,
+        "[Some(2), Some(4)]\n[Some(10), Some(30)]\n[Some(0), Some(2)]\n"
+    );
 }
 
 #[test]
@@ -532,7 +535,11 @@ main = !->
     let diagnostic = diagnostics
         .0
         .iter()
-        .find(|diagnostic| diagnostic.message.contains("does not implement trait `FnMut"))
+        .find(|diagnostic| {
+            diagnostic
+                .message
+                .contains("does not implement trait `FnMut")
+        })
         .expect("expected an FnMut diagnostic");
     let rock_lib::diagnostic::DiagnosticLocation::Source(span) = &diagnostic.location else {
         panic!("diagnostic should have a source location");

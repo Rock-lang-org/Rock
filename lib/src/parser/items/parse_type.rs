@@ -1,5 +1,8 @@
 use crate::{
-    ast::{GenericParamDecl, ParseArrayLen, ParseType, ParseTypeInner, TypeApplication, TypeHole, TypeLambda},
+    ast::{
+        GenericParamDecl, ParseArrayLen, ParseType, ParseTypeInner, TypeApplication, TypeHole,
+        TypeLambda,
+    },
     lexer::{Span, TokenType},
     parser::engine::*,
 };
@@ -109,9 +112,19 @@ fn parse_type_atom(stream: Input) -> IResult<ParseType> {
         TokenType::Type(_) => parse_named_type(stream),
         TokenType::Number(_) if !stream.no_literal_type_args => {
             let (stream, token) = stream.consume()?;
-            let TokenType::Number(text) = &token.token_type else { unreachable!() };
-            let value = text.parse().map_err(|_| ParseError::UnexpectedToken("valid integer literal".to_string(), token.clone()))?;
-            Ok((stream, ParseType::ConstValue { value, span: token.span }))
+            let TokenType::Number(text) = &token.token_type else {
+                unreachable!()
+            };
+            let value = text.parse().map_err(|_| {
+                ParseError::UnexpectedToken("valid integer literal".to_string(), token.clone())
+            })?;
+            Ok((
+                stream,
+                ParseType::ConstValue {
+                    value,
+                    span: token.span,
+                },
+            ))
         }
         TokenType::Underscore => {
             let (stream, token) = stream.consume()?;

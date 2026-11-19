@@ -3,8 +3,8 @@ use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId};
 use super::{
     merge_language_item_providers, merge_language_item_providers_all, DropLanguageItems,
     FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, IndexLanguageItems,
-    IndexMutLanguageItems, LanguageItemProviderConflict, LanguageItems, OwnedLanguageItems, SendLanguageItems,
-    SizedLanguageItems, SyncLanguageItems,
+    IndexMutLanguageItems, LanguageItemProviderConflict, LanguageItems, OwnedLanguageItems,
+    SendLanguageItems, SizedLanguageItems, SyncLanguageItems,
 };
 
 fn def_id(crate_id: u32, local_id: u32) -> DefId {
@@ -223,7 +223,9 @@ fn merge_language_items_preserves_callable_and_marker_bundles() {
         send: Some(SendLanguageItems {
             trait_id: def_id(1, 7),
         }),
-        owned: Some(OwnedLanguageItems { trait_id: def_id(1, 9) }),
+        owned: Some(OwnedLanguageItems {
+            trait_id: def_id(1, 9),
+        }),
         sync: Some(SyncLanguageItems {
             trait_id: def_id(1, 8),
         }),

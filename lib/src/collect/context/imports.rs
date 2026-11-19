@@ -49,10 +49,14 @@ impl CollectContext {
             ast::IdentOrType::Ident(ident) => ident.span.clone(),
             ast::IdentOrType::Type(ty) => ty.span(),
         };
-        let span = path.segments().first().zip(path.segments().last()).map(|(first, last)| {
-            let first = segment_span(first);
-            crate::lexer::Span::new(first.file_path, first.start, segment_span(last).end)
-        });
+        let span = path
+            .segments()
+            .first()
+            .zip(path.segments().last())
+            .map(|(first, last)| {
+                let first = segment_span(first);
+                crate::lexer::Span::new(first.file_path, first.start, segment_span(last).end)
+            });
         if self.import_enum_variant(&names, canonical_prefix, span.clone(), true) {
             return true;
         }
@@ -67,7 +71,8 @@ impl CollectContext {
             canonical_prefix,
         );
         if resolved {
-            let key = canonical_prefix.filter(|prefix| !prefix.is_empty())
+            let key = canonical_prefix
+                .filter(|prefix| !prefix.is_empty())
                 .map(|prefix| format!("{prefix}::{short_name}"))
                 .unwrap_or(short_name);
             self.record_explicit_import(&key, None, span);
@@ -88,7 +93,10 @@ impl CollectContext {
         // Variant exports share the normal import paths, including globs and
         // artifact root exports, but must never be bound as their enum type.
         if self.resolve_variant_source(&qualified_name).is_some() {
-            let path = qualified_name.split("::").map(str::to_string).collect::<Vec<_>>();
+            let path = qualified_name
+                .split("::")
+                .map(str::to_string)
+                .collect::<Vec<_>>();
             return self.import_enum_variant(&path, canonical_prefix, None, is_explicit);
         }
         let Some(resolution) =

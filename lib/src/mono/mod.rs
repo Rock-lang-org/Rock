@@ -25,8 +25,8 @@ mod hir_types {
 mod array_lengths;
 mod body_edges;
 mod callable;
-mod diagnostic_context;
 mod demand;
+mod diagnostic_context;
 mod drop_fields;
 mod error;
 mod external;

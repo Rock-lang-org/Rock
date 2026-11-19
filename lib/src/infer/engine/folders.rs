@@ -59,7 +59,14 @@ impl TypeFolder for StrictFinalizer<'_> {
 /// environment never itself makes its invocation consuming.
 fn refresh_callable(ty: Type) -> Type {
     match ty {
-        Type::Function { params, ret, safety, callable_kind, mut captures, captures_known } => {
+        Type::Function {
+            params,
+            ret,
+            safety,
+            callable_kind,
+            mut captures,
+            captures_known,
+        } => {
             for capture in &mut captures {
                 if capture.kind == crate::types::CaptureKind::SharedBorrow
                     && crate::type_services::facts::TypeFacts::is_copy(&capture.ty)
@@ -67,10 +74,19 @@ fn refresh_callable(ty: Type) -> Type {
                     capture.kind = crate::types::CaptureKind::Move;
                 }
             }
-            let callable_kind = if captures.is_empty() { callable_kind } else {
+            let callable_kind = if captures.is_empty() {
+                callable_kind
+            } else {
                 crate::types::CallableKind::from_captures(&captures)
             };
-            Type::Function { params, ret, safety, callable_kind, captures, captures_known }
+            Type::Function {
+                params,
+                ret,
+                safety,
+                callable_kind,
+                captures,
+                captures_known,
+            }
         }
         other => other,
     }

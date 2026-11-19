@@ -14,13 +14,19 @@ impl Lowerer {
         if !args.is_empty() {
             return expr;
         }
-        let Type::Enum { args: type_args, .. } = &expr.ty else {
+        let Type::Enum {
+            args: type_args, ..
+        } = &expr.ty
+        else {
             return expr;
         };
         let Some(enumeration) = self.items.enumeration(location.owner) else {
             return expr;
         };
-        let Some(variant) = enumeration.variants.iter().find(|variant| variant.id == location.variant_id)
+        let Some(variant) = enumeration
+            .variants
+            .iter()
+            .find(|variant| variant.id == location.variant_id)
         else {
             return expr;
         };

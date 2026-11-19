@@ -87,7 +87,11 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 self.make_fat_slice_value(
                     data_ptr,
-                    self.context.i64_type().const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false),
+                    self.context.i64_type().const_int(
+                        len.concrete()
+                            .ok_or_else(|| CodegenError::non_concrete_array_len(len))?,
+                        false,
+                    ),
                 )
                 .map(Some)
             }
@@ -124,14 +128,28 @@ impl<'ctx> CodeGen<'ctx> {
                     Ok(Some(len))
                 }
                 Type::Array(_, len) => Ok(Some(
-                    self.context.i64_type().const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false).into(),
+                    self.context
+                        .i64_type()
+                        .const_int(
+                            len.concrete()
+                                .ok_or_else(|| CodegenError::non_concrete_array_len(len))?,
+                            false,
+                        )
+                        .into(),
                 )),
                 Type::Reference { inner, .. } if matches!(inner.as_ref(), Type::Array(_, _)) => {
                     let Type::Array(_, len) = inner.as_ref() else {
                         unreachable!();
                     };
                     Ok(Some(
-                        self.context.i64_type().const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false).into(),
+                        self.context
+                            .i64_type()
+                            .const_int(
+                                len.concrete()
+                                    .ok_or_else(|| CodegenError::non_concrete_array_len(len))?,
+                                false,
+                            )
+                            .into(),
                     ))
                 }
                 other => Err(CodegenError::from(format!(
@@ -309,7 +327,11 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 self.make_fat_slice_value(
                     data_ptr,
-                    self.context.i64_type().const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false),
+                    self.context.i64_type().const_int(
+                        len.concrete()
+                            .ok_or_else(|| CodegenError::non_concrete_array_len(len))?,
+                        false,
+                    ),
                 )
                 .map(Some)
             }
@@ -347,7 +369,14 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 Ty::Reference { inner, .. } => match self.type_view().ty(*inner) {
                     Ty::Array { len, .. } => Ok(Some(
-                        self.context.i64_type().const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false).into(),
+                        self.context
+                            .i64_type()
+                            .const_int(
+                                len.concrete()
+                                    .ok_or_else(|| CodegenError::non_concrete_array_len(len))?,
+                                false,
+                            )
+                            .into(),
                     )),
                     other => Err(CodegenError::layout(format!(
                         "ArrayLen expected slice/array, got {:?}",
@@ -355,7 +384,14 @@ impl<'ctx> CodeGen<'ctx> {
                     ))),
                 },
                 Ty::Array { len, .. } => Ok(Some(
-                    self.context.i64_type().const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false).into(),
+                    self.context
+                        .i64_type()
+                        .const_int(
+                            len.concrete()
+                                .ok_or_else(|| CodegenError::non_concrete_array_len(len))?,
+                            false,
+                        )
+                        .into(),
                 )),
                 other => Err(CodegenError::layout(format!(
                     "ArrayLen expected slice/array, got {:?}",

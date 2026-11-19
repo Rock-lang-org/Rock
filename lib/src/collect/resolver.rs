@@ -37,7 +37,10 @@ pub struct VariantAlias {
 
 /// The variant an export names when its id is an enum but its source path
 /// continues past the enum to one of its variants (`...::Option::Some`).
-pub(crate) fn exported_variant_name(source: &str, enumeration: &crate::hir::HirEnum) -> Option<String> {
+pub(crate) fn exported_variant_name(
+    source: &str,
+    enumeration: &crate::hir::HirEnum,
+) -> Option<String> {
     let (owner, variant) = source.rsplit_once("::")?;
     let owner_name = owner.rsplit("::").next().unwrap_or(owner);
     (owner_name == enumeration.name
@@ -51,7 +54,11 @@ pub(crate) fn exported_variant_name(source: &str, enumeration: &crate::hir::HirE
 impl ResolverTables {
     /// A variant imported under `name`, preferring an import made inside
     /// `module_path` over one made at the crate root.
-    pub fn resolve_variant_alias(&self, module_path: Option<&str>, name: &str) -> Option<&VariantAlias> {
+    pub fn resolve_variant_alias(
+        &self,
+        module_path: Option<&str>,
+        name: &str,
+    ) -> Option<&VariantAlias> {
         module_path
             .and_then(|module_path| self.variant_at_path(&format!("{module_path}::{name}")))
             .or_else(|| self.variant_at_path(name))
@@ -59,7 +66,8 @@ impl ResolverTables {
 
     fn variant_at_path(&self, name: &str) -> Option<&VariantAlias> {
         let imported = self.variant_aliases.get(name);
-        imported.filter(|alias| !alias.fallback)
+        imported
+            .filter(|alias| !alias.fallback)
             .or_else(|| self.variant_exports.get(name))
             .or(imported)
     }
@@ -132,9 +140,13 @@ impl ResolverTables {
                 .extend(aliases.clone());
         }
         self.module_aliases.extend(other.module_aliases.clone());
-        self.variant_exports.extend(other.variant_exports.iter()
-            .filter(|(name, _)| name.contains("::"))
-            .map(|(name, target)| (name.clone(), target.clone())));
+        self.variant_exports.extend(
+            other
+                .variant_exports
+                .iter()
+                .filter(|(name, _)| name.contains("::"))
+                .map(|(name, target)| (name.clone(), target.clone())),
+        );
     }
 }
 

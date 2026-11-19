@@ -52,7 +52,8 @@ impl CollectContext {
     ) {
         // Always record the alias by DefId, local items included, so the resolver
         // never depends on re-resolving a path string later.
-        self.names.record_canonical_alias(alias, export.id, overwrite);
+        self.names
+            .record_canonical_alias(alias, export.id, overwrite);
 
         // Local items register their own canonical name when declared; the import
         // path may not be canonical, so only foreign items take their name from here.

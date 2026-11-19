@@ -13,24 +13,45 @@ pub(super) fn roots(
 ) -> Vec<DefId> {
     let mut roots = Vec::new();
     if config.crate_kind == CrateKind::Bin {
-        roots.extend(hir.program.functions.values().filter(|function| {
-            function.id.crate_id == hir.root_crate_id
-                && hir.resolver.canonical_name(function.id) == Some("main")
-        }).map(|function| function.id));
+        roots.extend(
+            hir.program
+                .functions
+                .values()
+                .filter(|function| {
+                    function.id.crate_id == hir.root_crate_id
+                        && hir.resolver.canonical_name(function.id) == Some("main")
+                })
+                .map(|function| function.id),
+        );
     } else {
         let mut public_modules = HashSet::from([String::new()]);
         collect_public_modules("", modules.root, modules, &mut public_modules);
         let public = |path: &str| {
-            let path = config.current_crate_name.as_deref()
+            let path = config
+                .current_crate_name
+                .as_deref()
                 .and_then(|name| path.strip_prefix(name)?.strip_prefix("::"))
                 .unwrap_or(path);
-            let parent = path.rsplit_once("::").map(|(parent, _)| parent).unwrap_or("");
+            let parent = path
+                .rsplit_once("::")
+                .map(|(parent, _)| parent)
+                .unwrap_or("");
             public_modules.contains(parent)
         };
-        roots.extend(hir.resolver.export_aliases.iter()
-            .filter(|(path, _)| public(path)).map(|(_, id)| *id));
-        roots.extend(hir.resolver.variant_exports.iter()
-            .filter(|(path, _)| public(path)).map(|(_, variant)| variant.enum_id));
+        roots.extend(
+            hir.resolver
+                .export_aliases
+                .iter()
+                .filter(|(path, _)| public(path))
+                .map(|(_, id)| *id),
+        );
+        roots.extend(
+            hir.resolver
+                .variant_exports
+                .iter()
+                .filter(|(path, _)| public(path))
+                .map(|(_, variant)| variant.enum_id),
+        );
     }
     let lang = &hir.program.language_items;
     macro_rules! root {
@@ -51,8 +72,14 @@ pub(super) fn roots(
     root!(send, trait_id);
     root!(owned, trait_id);
     root!(sync, trait_id);
-    root!(try_protocol, try_trait_id, branch_method_id, from_residual_trait_id,
-        from_residual_method_id, control_flow_enum_id);
+    root!(
+        try_protocol,
+        try_trait_id,
+        branch_method_id,
+        from_residual_trait_id,
+        from_residual_method_id,
+        control_flow_enum_id
+    );
     root!(range, enum_id);
     roots
 }

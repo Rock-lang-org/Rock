@@ -50,7 +50,8 @@ impl<'a> MirBuilder<'a> {
                     key: key.clone(),
                     source_def_id: match function_id {
                         MirFunctionId::Function(id) | MirFunctionId::Extern(id) => Some(*id),
-                        MirFunctionId::Instance(_) | MirFunctionId::Closure(_)
+                        MirFunctionId::Instance(_)
+                        | MirFunctionId::Closure(_)
                         | MirFunctionId::ArrayTailDrop(_) => None,
                     },
                     kind: crate::mir::MirCallableKind::LocalBody {

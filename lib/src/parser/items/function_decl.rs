@@ -8,8 +8,8 @@ use crate::{
 };
 
 use super::{
-    block, consume_tokens_until_matching_close_paren, get_span, ident, operator_token, parenthesis, parse_type, pattern,
-    reset_inside_argument_list, seek,
+    block, consume_tokens_until_matching_close_paren, get_span, ident, operator_token, parenthesis,
+    parse_type, pattern, reset_inside_argument_list, seek,
 };
 
 pub fn function_decl(stream: Input<'_>) -> IResult<'_, FunctionDecl> {

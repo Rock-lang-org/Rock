@@ -292,14 +292,16 @@ fn test_build_function_exposes_closure_captures() {
 
     let type_context = test_type_context(&program);
     let mut builder = MirBuilder::new(&program, &type_context);
-    let mir_func = builder.build_function(
-        MirFunctionId::Function(func.id),
-        &func.name,
-        &func,
-        false,
-        Some(func.id),
-        None,
-    ).unwrap();
+    let mir_func = builder
+        .build_function(
+            MirFunctionId::Function(func.id),
+            &func.name,
+            &func,
+            false,
+            Some(func.id),
+            None,
+        )
+        .unwrap();
     assert!(mir_func.closure_captures.is_empty());
     assert_eq!(
         mir_func.local_decls[0].origin(),
@@ -339,14 +341,16 @@ fn test_build_function_with_lambda_still_builds() {
 
     let type_context = test_type_context(&program);
     let mut builder = MirBuilder::new(&program, &type_context);
-    let mir_func = builder.build_function(
-        MirFunctionId::Function(func.id),
-        &func.name,
-        &func,
-        false,
-        Some(func.id),
-        None,
-    ).unwrap();
+    let mir_func = builder
+        .build_function(
+            MirFunctionId::Function(func.id),
+            &func.name,
+            &func,
+            false,
+            Some(func.id),
+            None,
+        )
+        .unwrap();
     assert!(mir_func.closure_captures.is_empty());
 }
 

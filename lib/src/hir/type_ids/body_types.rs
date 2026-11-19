@@ -252,14 +252,33 @@ fn collect_expr<P: HirPhase>(
                 record_type(
                     context,
                     ids,
-                    HirTypeLocation::StaticCallOwner { owner, path: branch_path.clone() },
+                    HirTypeLocation::StaticCallOwner {
+                        owner,
+                        path: branch_path.clone(),
+                    },
                     &target.owner_ty,
                 );
                 collect_method_target_types(
-                    owner, &branch_path, &target.method, context, ids,
-                    |index| HirTypeLocation::StaticCallTraitArg { owner, path: branch_path.clone(), index },
-                    |index| HirTypeLocation::StaticCallOwnerSubstitution { owner, path: branch_path.clone(), index },
-                    |index| HirTypeLocation::StaticCallMethodSubstitution { owner, path: branch_path.clone(), index },
+                    owner,
+                    &branch_path,
+                    &target.method,
+                    context,
+                    ids,
+                    |index| HirTypeLocation::StaticCallTraitArg {
+                        owner,
+                        path: branch_path.clone(),
+                        index,
+                    },
+                    |index| HirTypeLocation::StaticCallOwnerSubstitution {
+                        owner,
+                        path: branch_path.clone(),
+                        index,
+                    },
+                    |index| HirTypeLocation::StaticCallMethodSubstitution {
+                        owner,
+                        path: branch_path.clone(),
+                        index,
+                    },
                 );
             }
             record_type(
@@ -439,7 +458,8 @@ fn collect_expr<P: HirPhase>(
             collect_expr(owner, lhs, child_path(&path, 0), context, ids);
             collect_expr(owner, rhs, child_path(&path, 1), context, ids);
         }
-        HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
+        HirExprKind::IntLiteral(_)
+        | HirExprKind::ConstParam(_)
         | HirExprKind::FloatLiteral(_)
         | HirExprKind::BoolLiteral(_)
         | HirExprKind::StringLiteral(_)

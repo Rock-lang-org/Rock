@@ -23,7 +23,10 @@ impl PhaseTimer {
             return;
         };
         let now = Instant::now();
-        eprintln!("[rock-time] {phase:<16} {:>10.3} ms", (now - last).as_secs_f64() * 1000.0);
+        eprintln!(
+            "[rock-time] {phase:<16} {:>10.3} ms",
+            (now - last).as_secs_f64() * 1000.0
+        );
         self.last = Some(now);
     }
 }

@@ -171,9 +171,7 @@ impl<'a> MirBuilder<'a> {
             self.current_block = Some(next_block);
         }
 
-        if matches!(ty, Type::Function { .. })
-            && !self.drops.has_moved_descendant(&place)
-        {
+        if matches!(ty, Type::Function { .. }) && !self.drops.has_moved_descendant(&place) {
             // The closure environment carries its own drop function; the
             // terminator is lowered to a call through that header.
             let next_block = self.new_block();
@@ -218,7 +216,9 @@ impl<'a> MirBuilder<'a> {
                     self.type_id_for(ty),
                     DropObligationKind::Structural,
                 );
-                let Some(len) = self.concrete_array_length(*len, None) else { return; };
+                let Some(len) = self.concrete_array_length(*len, None) else {
+                    return;
+                };
                 self.emit_array_drop_chain(elem, len as usize, place);
             }
             Type::Enum { id, args } => {

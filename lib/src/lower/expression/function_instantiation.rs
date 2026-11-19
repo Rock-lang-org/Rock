@@ -203,7 +203,10 @@ impl Lowerer {
                 subject.substitute_generics(&subst),
                 crate::types::TraitBound {
                     trait_id: *trait_id,
-                    type_args: args.iter().map(|arg| arg.substitute_generics(&subst)).collect(),
+                    type_args: args
+                        .iter()
+                        .map(|arg| arg.substitute_generics(&subst))
+                        .collect(),
                 },
                 span.clone(),
                 &context,
@@ -311,7 +314,10 @@ impl Lowerer {
         } else {
             resolved.ty.clone()
         };
-        if matches!(resolved.target, Some(HirVarTarget::Function(_) | HirVarTarget::Extern(_))) {
+        if matches!(
+            resolved.target,
+            Some(HirVarTarget::Function(_) | HirVarTarget::Extern(_))
+        ) {
             if let Type::Function { captures_known, .. } = &mut ty {
                 *captures_known = true;
             }

@@ -86,7 +86,9 @@ fn test_invocations_forward_lint_args_and_mark_libraries() {
     let root = args_as_strings(&build_root_invocation(executable, &package, &[]));
     assert!(!root.contains(&"--crate-type".to_string()));
     for args in [library, root] {
-        assert!(args.windows(2).any(|pair| pair[0] == "-D" && pair[1] == "unused"));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "-D" && pair[1] == "unused"));
     }
     let _ = std::fs::remove_dir_all(temp_dir);
 }

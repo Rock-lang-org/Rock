@@ -207,7 +207,12 @@ fn library_inherent_impl_on_foreign_type_survives_dead_code_pruning() {
     let extension_dir = temp_dir.join("extension");
     let extension_artifact = temp_dir.join("extension.rkca");
 
-    write_crate(&provider_dir, "provider", "", "< struct Foreign\n    < value: I64\n");
+    write_crate(
+        &provider_dir,
+        "provider",
+        "",
+        "< struct Foreign\n    < value: I64\n",
+    );
     build_product_artifact(&provider_dir, "provider", &provider_artifact, true, true);
 
     write_crate(

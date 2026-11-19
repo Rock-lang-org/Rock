@@ -46,7 +46,8 @@ impl Lowerer {
                         self.display_type(&callee_ty)
                     )
                 };
-                self.diagnostics.push_type_with_span(message, arg.span.clone());
+                self.diagnostics
+                    .push_type_with_span(message, arg.span.clone());
                 return self.error_expression_at(span);
             }
             let resolved_ret_ty = self.engine.resolve(&ret_ty);

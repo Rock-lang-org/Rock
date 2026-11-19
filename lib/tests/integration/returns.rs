@@ -43,8 +43,14 @@ main = !->
     assert_eq!(
         diagnostic_labels(source, "Return type mismatch: Type mismatch: () vs I64"),
         vec![
-            ("function `explicit` returns `I64`".to_string(), "explicit".to_string()),
-            ("this final value makes it `I64`".to_string(), "len".to_string()),
+            (
+                "function `explicit` returns `I64`".to_string(),
+                "explicit".to_string()
+            ),
+            (
+                "this final value makes it `I64`".to_string(),
+                "len".to_string()
+            ),
         ]
     );
 }

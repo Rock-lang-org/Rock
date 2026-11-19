@@ -23,7 +23,10 @@ main = !->
     (make 9).println!
 "#,
     );
-    assert_eq!(output, "Ok(42)\nSome(7)\nSome(c)\n[Some(1), Some(2)]\nNone\nSome(9)\n");
+    assert_eq!(
+        output,
+        "Ok(42)\nSome(7)\nSome(c)\n[Some(1), Some(2)]\nNone\nSome(9)\n"
+    );
 }
 
 #[test]
@@ -157,13 +160,16 @@ constructor = -> Package::Value
 < wrap
 < constructor
 "#,
-    ).unwrap();
+    )
+    .unwrap();
     let mut config = test_config(entry, dir.join("producer-build"));
     config.current_crate_name = Some("packages".to_string());
     config.crate_kind = rock_lib::CrateKind::Lib;
     config.no_link = true;
     let products = rock_lib::compile_with_products(&config)
-        .expect("producer should compile").products.expect("producer products");
+        .expect("producer should compile")
+        .products
+        .expect("producer products");
     let artifact = dir.join("packages.rkca");
     products.write_artifact_to_path(&artifact).unwrap();
     std::fs::remove_dir_all(dir.join("producer")).unwrap();
@@ -188,9 +194,12 @@ main = !->
     external_make = packages::constructor!
     (unwrap (external_make 9)).println!
 "#,
-    ).unwrap();
+    )
+    .unwrap();
     let mut consumer = test_config(entry, dir.clone());
-    consumer.extern_artifacts.push(("packages".to_string(), artifact));
+    consumer
+        .extern_artifacts
+        .push(("packages".to_string(), artifact));
     rock_lib::compile(&consumer).expect("source-free payload variants should be callable");
     let output = Command::new(dir.join("test")).output().unwrap();
     assert!(output.status.success());
@@ -742,7 +751,11 @@ fn test_variant_reexports_through_source_modules() {
     let dir = test_temp_dir(id);
     std::fs::create_dir_all(&dir).unwrap();
     let _cleanup = TestDirCleanup(dir.clone());
-    std::fs::write(dir.join("lamps.rk"), "enum Light\n    Off\n    On\n\n< Light::Off\n").unwrap();
+    std::fs::write(
+        dir.join("lamps.rk"),
+        "enum Light\n    Off\n    On\n\n< Light::Off\n",
+    )
+    .unwrap();
     std::fs::write(dir.join("facade.rk"), "> lamps::Off\n< Off\n").unwrap();
     std::fs::write(
         dir.join("test.rk"),
@@ -757,7 +770,8 @@ main = !->
         Off => 7.println!
         _ => 0.println!
 "#,
-    ).unwrap();
+    )
+    .unwrap();
     let config = test_config(dir.join("test.rk"), dir.clone());
     rock_lib::compile(&config).expect("variant re-exports should resolve through source facades");
     let output = Command::new(dir.join("test")).output().unwrap();
@@ -773,13 +787,19 @@ fn test_variant_reexports_survive_deleted_source_artifacts() {
     let _cleanup = TestDirCleanup(dir.clone());
     let entry = dir.join("producer/lib.rk");
     std::fs::write(&entry, "mod signals\n< signals::Off\n").unwrap();
-    std::fs::write(dir.join("producer/signals.rk"), "enum Light\n    Off\n    On\n\n< Light::Off\n").unwrap();
+    std::fs::write(
+        dir.join("producer/signals.rk"),
+        "enum Light\n    Off\n    On\n\n< Light::Off\n",
+    )
+    .unwrap();
     let mut config = test_config(entry, dir.join("producer-build"));
     config.current_crate_name = Some("lamps".to_string());
     config.crate_kind = rock_lib::CrateKind::Lib;
     config.no_link = true;
-    let products = rock_lib::compile_with_products(&config).expect("producer should compile")
-        .products.expect("producer products");
+    let products = rock_lib::compile_with_products(&config)
+        .expect("producer should compile")
+        .products
+        .expect("producer products");
     let artifact = dir.join("lamps.rkca");
     products.write_artifact_to_path(&artifact).unwrap();
     std::fs::remove_dir_all(dir.join("producer")).unwrap();
@@ -790,11 +810,17 @@ fn test_variant_reexports_survive_deleted_source_artifacts() {
     facade_config.current_crate_name = Some("facade".to_string());
     facade_config.crate_kind = rock_lib::CrateKind::Lib;
     facade_config.no_link = true;
-    facade_config.extern_artifacts.push(("lamps".to_string(), artifact.clone()));
+    facade_config
+        .extern_artifacts
+        .push(("lamps".to_string(), artifact.clone()));
     let facade_products = rock_lib::compile_with_products(&facade_config)
-        .expect("facade should re-export a dependency variant").products.expect("facade products");
+        .expect("facade should re-export a dependency variant")
+        .products
+        .expect("facade products");
     let facade_artifact = dir.join("facade.rkca");
-    facade_products.write_artifact_to_path(&facade_artifact).unwrap();
+    facade_products
+        .write_artifact_to_path(&facade_artifact)
+        .unwrap();
     std::fs::remove_file(facade_entry).unwrap();
 
     for (name, import) in [
@@ -808,8 +834,12 @@ fn test_variant_reexports_survive_deleted_source_artifacts() {
             "{import}\n\nmain = !->\n    light = Off\n    match light\n        Off => 7.println!\n        _ => 0.println!\n"
         )).unwrap();
         let mut consumer = test_config(entry, dir.clone());
-        consumer.extern_artifacts.push(("lamps".to_string(), artifact.clone()));
-        consumer.extern_artifacts.push(("facade".to_string(), facade_artifact.clone()));
+        consumer
+            .extern_artifacts
+            .push(("lamps".to_string(), artifact.clone()));
+        consumer
+            .extern_artifacts
+            .push(("facade".to_string(), facade_artifact.clone()));
         rock_lib::compile(&consumer).expect("source-free variant export should import");
         let output = Command::new(dir.join(name)).output().unwrap();
         assert!(output.status.success());
@@ -819,8 +849,12 @@ fn test_variant_reexports_survive_deleted_source_artifacts() {
     let qualified_entry = dir.join("qualified.rk");
     std::fs::write(&qualified_entry, "main = !->\n    light = facade::Off\n    match light\n        facade::Off => 7.println!\n        _ => 0.println!\n").unwrap();
     let mut qualified = test_config(qualified_entry, dir.clone());
-    qualified.extern_artifacts.push(("lamps".to_string(), artifact));
-    qualified.extern_artifacts.push(("facade".to_string(), facade_artifact));
+    qualified
+        .extern_artifacts
+        .push(("lamps".to_string(), artifact));
+    qualified
+        .extern_artifacts
+        .push(("facade".to_string(), facade_artifact));
     rock_lib::compile(&qualified).expect("variant exports should also resolve by qualified path");
     let output = Command::new(dir.join("qualified")).output().unwrap();
     assert!(output.status.success());

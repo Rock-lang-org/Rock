@@ -193,8 +193,13 @@ fn test_local_parameter_closure_and_pattern_names_do_not_use_value_imports() {
             &format!("mod helpers\n> helpers::answer\n{body}"),
             &[("helpers", "< answer = -> 42\n")],
             &[("dead_code", LintLevel::Allow)],
-        ).unwrap();
-        assert_eq!(messages(&warnings), ["unused import: `helpers::answer`"], "{body}");
+        )
+        .unwrap();
+        assert_eq!(
+            messages(&warnings),
+            ["unused import: `helpers::answer`"],
+            "{body}"
+        );
     }
 }
 
@@ -224,7 +229,8 @@ fn test_qualified_reference_to_the_same_function_does_not_use_its_short_import()
         "mod helpers\n> helpers::answer\nmain = !-> helpers::answer!.println!\n",
         &[("helpers", "< answer = -> 42\n")],
         &[],
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(messages(&warnings), ["unused import: `helpers::answer`"]);
 }
 
@@ -239,7 +245,8 @@ fn test_value_imports_used_as_callbacks_and_inside_dead_bodies_count_as_used() {
             &format!("mod helpers\n> helpers::answer\n{body}"),
             &[("helpers", "< answer = -> 42\n")],
             &[("dead_code", LintLevel::Allow)],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(warnings.0.is_empty(), "{:?}", messages(&warnings));
     }
 }
@@ -269,7 +276,8 @@ fn test_a_nearer_import_of_the_same_function_does_not_use_the_outer_import() {
             ("child", "> helpers::answer\n< run = -> answer!\n"),
         ],
         &[],
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(messages(&warnings), ["unused import: `helpers::answer`"]);
     assert_eq!(warnings.0[0].primary.as_ref().unwrap().span.start, 14);
 }
@@ -283,8 +291,12 @@ fn test_only_the_head_of_a_qualified_type_path_uses_an_import() {
             "shapes",
             "< struct Point\n    < x: I64\n< enum Color\n    Red\n    Blue\n",
         )],
-        &[("unused_variables", LintLevel::Allow), ("dead_code", LintLevel::Allow)],
-    ).unwrap();
+        &[
+            ("unused_variables", LintLevel::Allow),
+            ("dead_code", LintLevel::Allow),
+        ],
+    )
+    .unwrap();
     assert_eq!(messages(&warnings), ["unused import: `shapes::Point`"]);
 }
 
@@ -299,7 +311,8 @@ fn test_type_imports_used_by_static_calls_patterns_and_bounds_count_as_used() {
          main = !->\n    match Point::zero!\n        Point x: x => (same x).println!\n",
         &[("shapes", POINT_MODULE)],
         &[],
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(messages(&warnings), Vec::<String>::new());
 }
 
@@ -312,7 +325,8 @@ fn test_a_nearer_type_import_does_not_use_the_outer_import() {
             ("child", "> shapes::Point\n< run = -> Point::zero!.x\n"),
         ],
         &[],
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(messages(&warnings), ["unused import: `shapes::Point`"]);
     assert_eq!(warnings.0[0].primary.as_ref().unwrap().span.start, 13);
 }
@@ -324,7 +338,8 @@ fn test_glob_imports_are_used_by_resolved_members_only() {
         "mod helpers\n> helpers::*\nmain = !-> answer!.println!\n",
         &[("helpers", helpers)],
         &[("dead_code", LintLevel::Allow)],
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(messages(&used), Vec::<String>::new());
 
     let unused = lint_files(
@@ -343,7 +358,8 @@ fn test_explicit_import_shadows_a_glob_and_types_use_globs() {
          main = !-> (Point::zero!.x + answer!).println!\n",
         &[("helpers", "< answer = -> 42\n"), ("shapes", POINT_MODULE)],
         &[],
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(messages(&warnings), ["unused import: `helpers::*`"]);
 }
 
@@ -353,7 +369,8 @@ fn test_imported_infix_operator_counts_as_used() {
         "mod ops\n> ops::+++\nmain = -> 1 +++ 2\n",
         &[("ops", "infix 4 +++\n< +++ = x, _ -> x\n")],
         &[("unused_imports", LintLevel::Deny)],
-    ).unwrap();
+    )
+    .unwrap();
     assert!(warnings.0.is_empty(), "{warnings:?}");
 }
 
@@ -366,7 +383,8 @@ fn test_a_value_import_reexport_counts_as_used() {
             ("api", "> helpers::answer\n< answer\n"),
         ],
         &[],
-    ).unwrap();
+    )
+    .unwrap();
     assert!(warnings.0.is_empty(), "{:?}", messages(&warnings));
 }
 
@@ -376,11 +394,15 @@ fn test_named_crate_value_imports_use_the_correct_module_binding() {
         "mod helpers\n> helpers::answer\nmod child\nmain = !-> child::run!.println!\n",
         &[
             ("helpers", "< answer = -> 42\n"),
-            ("child", "> lint_tests::helpers::answer\n< run = -> answer!\n"),
+            (
+                "child",
+                "> lint_tests::helpers::answer\n< run = -> answer!\n",
+            ),
         ],
         &[],
         Some("lint_tests"),
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(messages(&warnings), ["unused import: `helpers::answer`"]);
     assert_eq!(warnings.0[0].primary.as_ref().unwrap().span.start, 14);
 }
@@ -390,21 +412,32 @@ fn test_extern_imports_distinguish_callbacks_from_shadowing_locals() {
     let warnings = lint(
         "> std::ffi::libc::malloc\nmain = !->\n    malloc = 7\n    malloc.println!\n",
         &[],
-    ).unwrap();
-    assert_eq!(messages(&warnings), ["unused import: `std::ffi::libc::malloc`"]);
+    )
+    .unwrap();
+    assert_eq!(
+        messages(&warnings),
+        ["unused import: `std::ffi::libc::malloc`"]
+    );
     let warnings = lint(
         "> std::ffi::libc::malloc\nmain = !->\n    _callback = malloc\n",
         &[],
-    ).unwrap();
+    )
+    .unwrap();
     assert!(warnings.0.is_empty(), "{:?}", messages(&warnings));
 }
 
 #[test]
 fn test_shadowed_value_import_respects_allow_and_deny() {
     let source = "> std::ffi::libc::malloc\nmain = !->\n    malloc = 7\n    malloc.println!\n";
-    assert!(lint(source, &[("unused_imports", LintLevel::Allow)]).unwrap().0.is_empty());
+    assert!(lint(source, &[("unused_imports", LintLevel::Allow)])
+        .unwrap()
+        .0
+        .is_empty());
     let errors = lint(source, &[("unused_imports", LintLevel::Deny)]).unwrap_err();
-    assert_eq!(messages(&errors), ["unused import: `std::ffi::libc::malloc`"]);
+    assert_eq!(
+        messages(&errors),
+        ["unused import: `std::ffi::libc::malloc`"]
+    );
     assert_eq!(errors.0[0].severity, DiagnosticSeverity::Error);
 }
 
@@ -426,7 +459,8 @@ fn test_expression_and_generated_macro_calls_use_the_imported_binding() {
         let warnings = lint(
             &format!("> std::fmt::format\n{body}"),
             &[("dead_code", LintLevel::Allow)],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(warnings.0.is_empty(), "{body}: {:?}", messages(&warnings));
     }
 }
@@ -439,7 +473,11 @@ fn test_local_macro_and_unexpanded_tokens_do_not_use_a_macro_import() {
         "main = !->\n    format = 7\n    format.println!\n",
     ] {
         let warnings = lint(&format!("> std::fmt::format\n{body}"), &[]).unwrap();
-        assert_eq!(messages(&warnings), ["unused import: `std::fmt::format`"], "{body}");
+        assert_eq!(
+            messages(&warnings),
+            ["unused import: `std::fmt::format`"],
+            "{body}"
+        );
     }
 }
 
@@ -451,7 +489,8 @@ fn test_top_level_macro_import_remains_used_across_expansion_rounds() {
         "mod defs\n> defs::make_main\nmacro finish\n    =>\n        main = !-> ()\n%make_main\n",
         &[("defs", "< macro make_main\n    =>\n        %finish\n")],
         &[],
-    ).unwrap();
+    )
+    .unwrap();
     assert!(warnings.0.is_empty(), "{:?}", messages(&warnings));
 }
 
@@ -463,29 +502,51 @@ fn test_macro_import_usage_is_module_local_and_keeps_file_spans() {
         &[],
     ).unwrap();
     assert_eq!(messages(&warnings), ["unused import: `std::fmt::format`"]);
-    assert!(warnings.0[0].primary.as_ref().unwrap().span.file_path.ends_with("helper.rk"));
+    assert!(warnings.0[0]
+        .primary
+        .as_ref()
+        .unwrap()
+        .span
+        .file_path
+        .ends_with("helper.rk"));
 
     let warnings = lint_files(
         "> std::fmt::format\nmod helper\nmain = !-> helper::run!\n",
         &[("helper", "< run = !-> (%format \"prelude\").println!\n")],
         &[],
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(messages(&warnings), ["unused import: `std::fmt::format`"]);
-    assert!(warnings.0[0].primary.as_ref().unwrap().span.file_path.ends_with("test.rk"));
+    assert!(warnings.0[0]
+        .primary
+        .as_ref()
+        .unwrap()
+        .span
+        .file_path
+        .ends_with("test.rk"));
 }
 
 #[test]
 fn test_macro_import_warn_allow_deny_and_mixed_finding_order() {
     let source = "> std::fmt::format\n> std::ffi::libc::malloc\nmain = !-> ()\n";
     let warnings = lint(source, &[]).unwrap();
-    assert_eq!(messages(&warnings), [
-        "unused import: `std::fmt::format`",
-        "unused import: `std::ffi::libc::malloc`",
-    ]);
-    assert!(lint(source, &[("unused", LintLevel::Allow)]).unwrap().0.is_empty());
+    assert_eq!(
+        messages(&warnings),
+        [
+            "unused import: `std::fmt::format`",
+            "unused import: `std::ffi::libc::malloc`",
+        ]
+    );
+    assert!(lint(source, &[("unused", LintLevel::Allow)])
+        .unwrap()
+        .0
+        .is_empty());
     let errors = lint(source, &[("unused_imports", LintLevel::Deny)]).unwrap_err();
     assert_eq!(messages(&errors), messages(&warnings));
-    assert!(errors.0.iter().all(|error| error.severity == DiagnosticSeverity::Error));
+    assert!(errors
+        .0
+        .iter()
+        .all(|error| error.severity == DiagnosticSeverity::Error));
 }
 
 #[test]
@@ -495,14 +556,18 @@ fn test_named_crate_unused_macro_import_is_reported_once() {
         &[("defs", "< macro unused\n    =>\n        1\n")],
         &[],
         Some("app"),
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(messages(&warnings), ["unused import: `app::defs::unused`"]);
 }
 
 #[test]
 fn test_allowed_lint_is_silent_and_denied_lint_fails_the_build() {
     let source = "main = !->\n    t = 5\n";
-    assert!(lint(source, &[("unused", LintLevel::Allow)]).unwrap().0.is_empty());
+    assert!(lint(source, &[("unused", LintLevel::Allow)])
+        .unwrap()
+        .0
+        .is_empty());
     let errors = lint(source, &[("unused_variables", LintLevel::Deny)]).unwrap_err();
     assert_eq!(messages(&errors), ["unused variable: `t`"]);
     assert_eq!(errors.0[0].severity, DiagnosticSeverity::Error);

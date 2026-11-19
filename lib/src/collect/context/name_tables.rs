@@ -93,7 +93,9 @@ impl NameTables {
     }
 
     pub(crate) fn export_sources(&self) -> impl Iterator<Item = (&String, &String)> {
-        self.export_aliases.iter().filter(|(name, _)| self.local_export_paths.contains(*name))
+        self.export_aliases
+            .iter()
+            .filter(|(name, _)| self.local_export_paths.contains(*name))
     }
 
     pub(crate) fn set_export_alias(&mut self, path: String, source: String) {

@@ -71,7 +71,12 @@ impl<'ctx> CodeGen<'ctx> {
             // closure owns nothing needing cleanup); captures follow.
             let ptr_ty = self.context.ptr_type(AddressSpace::default());
             let mut env_fields = vec![ptr_ty.into()];
-            env_fields.extend(capture_values.iter().map(|(_, ty)| self.llvm_type(ty)).collect::<Result<Vec<_>, _>>()?);
+            env_fields.extend(
+                capture_values
+                    .iter()
+                    .map(|(_, ty)| self.llvm_type(ty))
+                    .collect::<Result<Vec<_>, _>>()?,
+            );
             let env_ty = self.context.struct_type(&env_fields, false);
             let env_size = env_ty
                 .size_of()
@@ -117,9 +122,11 @@ impl<'ctx> CodeGen<'ctx> {
                 .map_err(|e| {
                     CodegenError::from(format!("Failed to access MIR closure env header: {}", e))
                 })?;
-            self.builder.build_store(header_ptr, drop_ptr).map_err(|e| {
-                CodegenError::from(format!("Failed to store MIR closure env header: {}", e))
-            })?;
+            self.builder
+                .build_store(header_ptr, drop_ptr)
+                .map_err(|e| {
+                    CodegenError::from(format!("Failed to store MIR closure env header: {}", e))
+                })?;
 
             for (index, (value, ty)) in capture_values.iter().enumerate() {
                 let field_ptr = self

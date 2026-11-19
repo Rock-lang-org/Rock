@@ -20,7 +20,11 @@ fn callable_kind(hir: &PartialHir, trait_id: DefId) -> Option<CallableKind> {
 
 /// A callable bound implied by a stronger one with the same arguments
 /// (`FnOnce A, R` next to `Fn A, R`) needs no separate check.
-fn subsumed_by_stronger_callable(hir: &PartialHir, bound: &TraitBound, bounds: &[TraitBound]) -> bool {
+fn subsumed_by_stronger_callable(
+    hir: &PartialHir,
+    bound: &TraitBound,
+    bounds: &[TraitBound],
+) -> bool {
     let Some(kind) = callable_kind(hir, bound.trait_id) else {
         return false;
     };

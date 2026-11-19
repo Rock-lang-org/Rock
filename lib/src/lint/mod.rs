@@ -141,10 +141,13 @@ impl<'a> LintSink<'a> {
     pub fn finish(mut self) -> Diagnostics {
         self.diagnostics.0.sort_by(|left, right| {
             let key = |diagnostic: &Diagnostic| {
-                diagnostic
-                    .primary
-                    .as_ref()
-                    .map(|label| (label.span.file_path.clone(), label.span.start, label.span.end))
+                diagnostic.primary.as_ref().map(|label| {
+                    (
+                        label.span.file_path.clone(),
+                        label.span.start,
+                        label.span.end,
+                    )
+                })
             };
             key(left).cmp(&key(right))
         });

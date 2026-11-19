@@ -19,28 +19,38 @@ fn run_with_shim(source: &str, feature: &str, opt_level: u8) -> Output {
     config.no_link = true;
     config.emit_object = Some(object.clone());
     config.opt_level = opt_level;
-    config.lint_levels.set("unused", rock_lib::lint::LintLevel::Deny).unwrap();
+    config
+        .lint_levels
+        .set("unused", rock_lib::lint::LintLevel::Deny)
+        .unwrap();
     rock_lib::compile_with_warnings(&config).unwrap();
 
     let artifact = std_artifact_path();
-    let products = rock_lib::products::CompilerProducts::read_artifact_from_path(&artifact).unwrap();
+    let products =
+        rock_lib::products::CompilerProducts::read_artifact_from_path(&artifact).unwrap();
     let std_object = products.link.object_path.as_ref().unwrap();
     let std_object = if std_object.is_absolute() {
         std_object.clone()
     } else {
         artifact.parent().unwrap().join(std_object)
     };
-    let linked = run_test_command(Command::new("cc")
-        .arg(&object)
-        .arg(std_object)
-        .arg(&shim)
-        .arg(format!("-D{feature}"))
-        .arg("-no-pie")
-        .arg("-lm")
-        .arg("-pthread")
-        .arg("-o")
-        .arg(&executable));
-    assert!(linked.status.success(), "{}", String::from_utf8_lossy(&linked.stderr));
+    let linked = run_test_command(
+        Command::new("cc")
+            .arg(&object)
+            .arg(std_object)
+            .arg(&shim)
+            .arg(format!("-D{feature}"))
+            .arg("-no-pie")
+            .arg("-lm")
+            .arg("-pthread")
+            .arg("-o")
+            .arg(&executable),
+    );
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
     run_test_command(Command::new(executable).current_dir(&dir))
 }
 
@@ -98,7 +108,10 @@ main = !->
     for opt in [0, 3] {
         let output = run_with_shim(source, "TEST_CLOSE", opt);
         assert!(output.status.success(), "{output:?}");
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "4\n1\n4\n2\n4\n3\nok\n1\nok\n2\nok\n3\n5\n1\n");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "4\n1\n4\n2\n4\n3\nok\n1\nok\n2\nok\n3\n5\n1\n"
+        );
     }
 }
 
@@ -145,7 +158,10 @@ main = !->
 "#;
     let output = run_with_shim(source, "TEST_CLOSE", 0);
     assert!(output.status.success(), "{output:?}");
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "1\n2\n3\n98\n1\n105\n1\n111\n1\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "1\n2\n3\n98\n1\n105\n1\n111\n1\n"
+    );
 }
 
 #[test]
@@ -175,21 +191,29 @@ main = !->
 #[test]
 fn test_unexpected_sleep_yield_and_detach_failures_do_not_continue() {
     for (feature, source) in [
-        ("TEST_SLEEP", r#"
+        (
+            "TEST_SLEEP",
+            r#"
 > std::concurrency::thread::sleep_ms
 extern mock_set_mode: I64 -> ()
 main = !->
     mock_set_mode 1
     sleep_ms 1
     "unreachable".println!
-"#),
-        ("TEST_YIELD", r#"
+"#,
+        ),
+        (
+            "TEST_YIELD",
+            r#"
 > std::concurrency::thread::yield_now
 main = !->
     yield_now!
     "unreachable".println!
-"#),
-        ("TEST_YIELD", r#"
+"#,
+        ),
+        (
+            "TEST_YIELD",
+            r#"
 > std::concurrency::mutex::Mutex
 main = !->
     mutex = Mutex::new 7
@@ -197,15 +221,19 @@ main = !->
     waiting = mutex.lock!
     waiting.get!.println!
     held.get!.println!
-"#),
-        ("TEST_DETACH", r#"
+"#,
+        ),
+        (
+            "TEST_DETACH",
+            r#"
 > std::concurrency::thread::spawn_detached
 main = !->
     match spawn_detached (-> ())
         Result::Ok _ => ()
         Result::Err _ => "spawn failed".println!
     "unreachable".println!
-"#),
+"#,
+        ),
     ] {
         let output = run_with_shim(source, feature, 0);
         assert_eq!(output.status.code(), Some(1), "{feature}: {output:?}");
@@ -229,6 +257,9 @@ main = !->
     "after".println!
 "#;
     for opt in [0, 3] {
-        assert_eq!(compile_and_run_at_opt(source, opt), "dropped\ndropped\nafter\n");
+        assert_eq!(
+            compile_and_run_at_opt(source, opt),
+            "dropped\ndropped\nafter\n"
+        );
     }
 }

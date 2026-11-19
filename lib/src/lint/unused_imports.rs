@@ -20,7 +20,6 @@ use crate::ast::visit::{
     walk_expression, walk_impl, walk_module, walk_parse_type_inner, walk_top_level,
     walk_trait_decl, Visitor,
 };
-use crate::walk_list;
 use crate::ast::{self, IdentOrType, ParseTypeInner, TopLevel};
 use crate::collect::path_names;
 use crate::diagnostic::Diagnostic;
@@ -28,6 +27,7 @@ use crate::ids::DefId;
 use crate::infer::ResolvedHirProgram;
 use crate::lexer::Span;
 use crate::source_map::SourceSymbol;
+use crate::walk_list;
 
 use super::{Lint, LintSink};
 
@@ -54,11 +54,21 @@ pub(crate) fn check_unused_imports(
     let mut imported_items = HashSet::new();
     let mut has_globs = false;
     let mut has_imports = collect_item_import_targets(
-        modules.root, "", hir, modules, &mut imported_items, &mut has_globs,
+        modules.root,
+        "",
+        hir,
+        modules,
+        &mut imported_items,
+        &mut has_globs,
     );
     for (path, module) in &modules.files {
         has_imports |= collect_item_import_targets(
-            module, path, hir, modules, &mut imported_items, &mut has_globs,
+            module,
+            path,
+            hir,
+            modules,
+            &mut imported_items,
+            &mut has_globs,
         );
     }
     if !has_imports {
@@ -71,8 +81,10 @@ pub(crate) fn check_unused_imports(
         for reference in hir.source_map.references() {
             if let SourceSymbol::Definition(id) = reference.target {
                 if has_globs || imported_items.contains(&id) {
-                    references.entry((reference.span.file_path.clone(), reference.span.start))
-                        .or_default().push((reference.span.end, id));
+                    references
+                        .entry((reference.span.file_path.clone(), reference.span.start))
+                        .or_default()
+                        .push((reference.span.end, id));
                 }
             }
         }
@@ -92,30 +104,40 @@ pub(crate) fn check_unused_imports(
     for (scope_index, scope) in scopes.iter().enumerate() {
         for (import_index, import) in scope.imports.iter().enumerate() {
             if let Some(id) = import.item_target {
-                item_bindings.entry((scope.path.as_str(), import.name.as_str()))
-                    .or_default().push((id, scope_index, import_index));
+                item_bindings
+                    .entry((scope.path.as_str(), import.name.as_str()))
+                    .or_default()
+                    .push((id, scope_index, import_index));
             }
         }
     }
-    let declared: HashMap<&str, &HashSet<String>> = scopes.iter()
+    let declared: HashMap<&str, &HashSet<String>> = scopes
+        .iter()
         .map(|scope| (scope.path.as_str(), &scope.declared))
         .collect();
-    let scope_by_path: HashMap<&str, usize> = scopes.iter().enumerate()
+    let scope_by_path: HashMap<&str, usize> = scopes
+        .iter()
+        .enumerate()
         .map(|(index, scope)| (scope.path.as_str(), index))
         .collect();
     // What `M::name` names, for a glob `> M::*` in a scope, by (scope, glob, name).
     let mut glob_members: HashMap<(usize, usize, String), Option<DefId>> = HashMap::new();
     let mut glob_member = |scope: usize, glob: usize, name: &str| {
-        *glob_members.entry((scope, glob, name.to_string())).or_insert_with(|| {
-            let scope = &scopes[scope];
-            let written = format!("{}::{name}", scope.globs[glob].module);
-            resolve_written(hir, modules, &scope.path, &written)
-        })
+        *glob_members
+            .entry((scope, glob, name.to_string()))
+            .or_insert_with(|| {
+                let scope = &scopes[scope];
+                let written = format!("{}::{name}", scope.globs[glob].module);
+                resolve_written(hir, modules, &scope.path, &written)
+            })
     };
     let mut used_globs = HashSet::new();
     let mut used_items = HashSet::new();
     for scope in &scopes {
-        let uses = scope.values.iter().map(|(name, id)| (name, Some(*id)))
+        let uses = scope
+            .values
+            .iter()
+            .map(|(name, id)| (name, Some(*id)))
             .chain(scope.reexports.iter().map(|name| (name, None)));
         for (name, id) in uses {
             let mut path = scope.path.as_str();
@@ -126,7 +148,9 @@ pub(crate) fn check_unused_imports(
                 }
                 if let Some(bindings) = item_bindings.get(&(path, name.as_str())) {
                     // A nearer import owns this name even if its target differs.
-                    if let Some((_, scope, import)) = bindings.iter().rev()
+                    if let Some((_, scope, import)) = bindings
+                        .iter()
+                        .rev()
                         .find(|(target, _, _)| id.is_none_or(|id| *target == id))
                     {
                         used_items.insert((*scope, *import));
@@ -164,13 +188,14 @@ pub(crate) fn check_unused_imports(
                 .iter()
                 .filter(|other| is_within(&other.path, &scope.path))
                 .flat_map(|other| &other.names)
-                .any(|name| {
-                    match glob_member(scope_index, glob_index, name) {
-                        Some(member) => !is_referenced_kind(hir, member),
-                        None => names_variant(
-                            hir, modules, &scope.path, &format!("{}::{name}", glob.module),
-                        ),
-                    }
+                .any(|name| match glob_member(scope_index, glob_index, name) {
+                    Some(member) => !is_referenced_kind(hir, member),
+                    None => names_variant(
+                        hir,
+                        modules,
+                        &scope.path,
+                        &format!("{}::{name}", glob.module),
+                    ),
                 });
             if !used {
                 emit_unused_import(&format!("{}::*", glob.module), &glob.span, sink);
@@ -184,9 +209,9 @@ pub(crate) fn check_unused_imports(
                 used_items.contains(&(scope_index, import_index))
             } else {
                 scopes
-                .iter()
-                .filter(|other| is_within(&other.path, &scope.path))
-                .any(|other| other.names.contains(&import.name))
+                    .iter()
+                    .filter(|other| is_within(&other.path, &scope.path))
+                    .any(|other| other.names.contains(&import.name))
             };
             if !used {
                 emit_unused_import(&import.written, &import.span, sink);
@@ -234,7 +259,12 @@ fn collect_item_import_targets(
                     }
                 });
                 has_imports |= collect_item_import_targets(
-                    &child.0, path.as_deref().unwrap_or(scope), hir, modules, targets, has_globs,
+                    &child.0,
+                    path.as_deref().unwrap_or(scope),
+                    hir,
+                    modules,
+                    targets,
+                    has_globs,
                 );
             }
             _ => {}
@@ -298,11 +328,20 @@ fn written_candidates(
     } else {
         format!("{scope}::{written}")
     };
-    let qualified = modules.current_crate_name.map(|name| format!("{name}::{relative}"));
-    let root_qualified = modules.current_crate_name.map(|name| format!("{name}::{written}"));
-    [Some(written.to_string()), Some(relative), qualified, root_qualified]
-        .into_iter()
-        .flatten()
+    let qualified = modules
+        .current_crate_name
+        .map(|name| format!("{name}::{relative}"));
+    let root_qualified = modules
+        .current_crate_name
+        .map(|name| format!("{name}::{written}"));
+    [
+        Some(written.to_string()),
+        Some(relative),
+        qualified,
+        root_qualified,
+    ]
+    .into_iter()
+    .flatten()
 }
 
 /// True when module `path` is `scope` or one of its submodules.

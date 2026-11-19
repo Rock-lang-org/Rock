@@ -13,7 +13,16 @@ fn test_lint_flags_are_forwarded_in_command_line_order() {
     use clap::CommandFactory;
 
     let matches = Config::command()
-        .try_get_matches_from(["rock", "build", "-D", "unused", "--allow", "dead_code", "-W", "x"])
+        .try_get_matches_from([
+            "rock",
+            "build",
+            "-D",
+            "unused",
+            "--allow",
+            "dead_code",
+            "-W",
+            "x",
+        ])
         .unwrap();
     let (_, build) = matches.subcommand().unwrap();
     assert_eq!(
@@ -109,7 +118,9 @@ fn test_run_selects_a_named_binary_and_preserves_trailing_arguments() {
     ])
     .unwrap();
     match config.command {
-        Command::Run { profile, bin, args, .. } => {
+        Command::Run {
+            profile, bin, args, ..
+        } => {
             assert_eq!(profile.selected(), BuildProfile::Release);
             assert_eq!(bin.as_deref(), Some("server"));
             assert_eq!(args, ["--bin", "client"]);

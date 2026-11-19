@@ -667,7 +667,11 @@ fn committing_pattern_match_leaves_substitution_untouched_on_rejection() {
         owner: def_id(900),
         index: 1,
     };
-    let pattern = Type::Tuple(vec![Type::Generic(first), Type::Generic(second), Type::Generic(first)]);
+    let pattern = Type::Tuple(vec![
+        Type::Generic(first),
+        Type::Generic(second),
+        Type::Generic(first),
+    ]);
     let mut subst = HashMap::new();
 
     // The first candidate binds `first` to I64 and `second` to Bool before failing on I32.
@@ -675,7 +679,10 @@ fn committing_pattern_match_leaves_substitution_untouched_on_rejection() {
     assert!(!SelectionService::type_pattern_matches_committing(
         &pattern, &rejected, &mut subst
     ));
-    assert!(subst.is_empty(), "rejected match leaked bindings: {subst:?}");
+    assert!(
+        subst.is_empty(),
+        "rejected match leaked bindings: {subst:?}"
+    );
 
     // A second candidate may then bind the same parameters differently.
     let accepted = Type::Tuple(vec![Type::I32, Type::Str, Type::I32]);

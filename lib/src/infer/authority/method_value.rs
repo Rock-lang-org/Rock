@@ -30,11 +30,11 @@ impl MethodAuthorityContext<'_> {
             }
         }
         let candidates = self.receiver_adjustment_candidates(receiver.clone());
-        let explained = self.service().explain_unsatisfied_method(
-            &candidates,
-            method_name,
-            |ty| self.resolved_type(ty),
-        )?;
+        let explained =
+            self.service()
+                .explain_unsatisfied_method(&candidates, method_name, |ty| {
+                    self.resolved_type(ty)
+                })?;
 
         let provider = explained
             .method_trait
@@ -47,10 +47,18 @@ impl MethodAuthorityContext<'_> {
         );
         for (index, (ty, trait_name)) in explained.chain.iter().enumerate() {
             let trait_name = trait_name.rsplit("::").next().unwrap_or(trait_name);
-            let lead = if index == 0 { ": requires" } else { ", which requires" };
+            let lead = if index == 0 {
+                ": requires"
+            } else {
+                ", which requires"
+            };
             let shown = self.display_type(ty);
             // `Result A, E: Show` would read as two bounds; group applied types.
-            let shown = if shown.contains(' ') { format!("({shown})") } else { shown };
+            let shown = if shown.contains(' ') {
+                format!("({shown})")
+            } else {
+                shown
+            };
             message.push_str(&format!("{lead} `{shown}: {trait_name}`"));
         }
         if let Some((ty, trait_name)) = explained.chain.last() {

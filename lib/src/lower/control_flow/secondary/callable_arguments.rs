@@ -48,7 +48,9 @@ impl Lowerer {
         let pending_bound = selected
             .pending_impl_bounds
             .iter()
-            .find(|(subject, bound)| self.engine.resolve(subject) == parameter_ty && is_callable_bound(bound))
+            .find(|(subject, bound)| {
+                self.engine.resolve(subject) == parameter_ty && is_callable_bound(bound)
+            })
             .map(|(_, bound)| bound.clone());
         let function_bound = match &parameter.ty {
             Type::Generic(parameter_id) => selected
@@ -270,17 +272,25 @@ impl Lowerer {
             captures,
         } = &arg.kind
         {
-            let (safety, previous_captures) = match self.resolve_projection_type(&self.engine.resolve(&arg.ty)) {
-                Type::Function { safety, captures, .. } => (safety, captures),
-                _ => (crate::types::FunctionSafety::Safe, Vec::new()),
-            };
+            let (safety, previous_captures) =
+                match self.resolve_projection_type(&self.engine.resolve(&arg.ty)) {
+                    Type::Function {
+                        safety, captures, ..
+                    } => (safety, captures),
+                    _ => (crate::types::FunctionSafety::Safe, Vec::new()),
+                };
             arg.ty = Self::lambda_function_type(
                 params.iter().map(|param| param.ty.clone()).collect(),
                 body.ty.clone(),
                 safety,
                 captures,
             );
-            if let Type::Function { callable_kind, captures, .. } = &mut arg.ty {
+            if let Type::Function {
+                callable_kind,
+                captures,
+                ..
+            } = &mut arg.ty
+            {
                 for (capture, previous) in captures.iter_mut().zip(previous_captures) {
                     capture.effect = previous.effect;
                 }

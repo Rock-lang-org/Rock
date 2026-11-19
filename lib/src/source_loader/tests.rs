@@ -523,7 +523,10 @@ fn re_recorded_module_drops_stale_path_aliases() {
 
     assert!(graph.module_for_path(&old_path).is_none());
     assert!(graph.module_for_path(&old_canonical).is_none());
-    assert_eq!(graph.module_for_path(&new_path).map(|m| m.id), Some(ModuleId(0)));
+    assert_eq!(
+        graph.module_for_path(&new_path).map(|m| m.id),
+        Some(ModuleId(0))
+    );
     assert_eq!(graph.modules.len(), 1);
 }
 
@@ -540,9 +543,27 @@ fn re_recorded_module_indexes_new_canonical_path() {
     let path = PathBuf::from("/virtual/app/util.rk");
     let canonical = PathBuf::from("/real/app/util.rk");
 
-    db.record_loaded_module(&mut graph, "util".to_string(), path.clone(), path.clone(), empty());
-    db.record_loaded_module(&mut graph, "util".to_string(), path.clone(), canonical.clone(), empty());
+    db.record_loaded_module(
+        &mut graph,
+        "util".to_string(),
+        path.clone(),
+        path.clone(),
+        empty(),
+    );
+    db.record_loaded_module(
+        &mut graph,
+        "util".to_string(),
+        path.clone(),
+        canonical.clone(),
+        empty(),
+    );
 
-    assert_eq!(graph.module_for_path(&canonical).map(|m| m.id), Some(ModuleId(0)));
-    assert_eq!(graph.module_for_path(&path).map(|m| m.id), Some(ModuleId(0)));
+    assert_eq!(
+        graph.module_for_path(&canonical).map(|m| m.id),
+        Some(ModuleId(0))
+    );
+    assert_eq!(
+        graph.module_for_path(&path).map(|m| m.id),
+        Some(ModuleId(0))
+    );
 }

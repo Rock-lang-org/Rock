@@ -128,10 +128,7 @@ main = !->
     "done".println!
 "#,
     ));
-    assert_eq!(
-        output,
-        "row\n1\n101\n2\n102\nrow\n3\n103\n4\n104\ndone\n"
-    );
+    assert_eq!(output, "row\n1\n101\n2\n102\nrow\n3\n103\n4\n104\ndone\n");
 }
 
 #[test]

@@ -63,9 +63,15 @@ impl InferenceEngine {
             // A join must retain every possible capture's ownership obligation.
             let mut captures = a_captures.clone();
             for capture in b_captures {
-                if !captures.contains(capture) { captures.push(capture.clone()); }
+                if !captures.contains(capture) {
+                    captures.push(capture.clone());
+                }
             }
-            (std::cmp::max(*a_kind, *b_kind), captures, *a_known && *b_known)
+            (
+                std::cmp::max(*a_kind, *b_kind),
+                captures,
+                *a_known && *b_known,
+            )
         } else if a_is_default && (!b_is_default || *b_known) {
             (*b_kind, b_captures.clone(), *a_known && *b_known)
         } else {

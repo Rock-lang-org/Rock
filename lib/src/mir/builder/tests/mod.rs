@@ -7,8 +7,8 @@ use crate::hir::{
 use crate::ids::{AssocTypeId, CrateId, DefId, FieldId, InstanceId, LocalDefId, TypeId, VariantId};
 use crate::lexer::Span;
 use crate::mir::{
-    AggregateKind, Constant, LocalSource, MirCallable, MirCallableKey, MirClosureId,
-    MirFunction, MirInstanceBodies, MirIntrinsicId, MirProgram, Mutability, Operand, Projection,
+    AggregateKind, Constant, LocalSource, MirCallable, MirCallableKey, MirClosureId, MirFunction,
+    MirInstanceBodies, MirIntrinsicId, MirProgram, Mutability, Operand, Projection,
     ReferenceOrigin, Rvalue, StatementData, StatementKind, Terminator,
 };
 use crate::type_services::projection::ProjectionProvider;

@@ -145,11 +145,13 @@ impl Lowerer {
                                 let path = match arg {
                                     ast::ParseType::Associated { base, member } => vec![
                                         ast::IdentOrType::Type(ast::ParseType::Type(base.clone())),
-                                        ast::IdentOrType::Type(ast::ParseType::Type(ast::ParseTypeInner {
-                                            name: member.name.clone(),
-                                            generics: Vec::new(),
-                                            span: member.span.clone(),
-                                        })),
+                                        ast::IdentOrType::Type(ast::ParseType::Type(
+                                            ast::ParseTypeInner {
+                                                name: member.name.clone(),
+                                                generics: Vec::new(),
+                                                span: member.span.clone(),
+                                            },
+                                        )),
                                     ],
                                     _ => vec![ast::IdentOrType::Type(arg.clone())],
                                 };
@@ -157,20 +159,28 @@ impl Lowerer {
                                     binding: None,
                                     kind: ast::PatternKind::Instance(ast::InstancePattern {
                                         name: ast::TypePath { path },
-                                        args: ast::FieldsPatternOrArgumentsPattern::Arguments(Vec::new()),
+                                        args: ast::FieldsPatternOrArgumentsPattern::Arguments(
+                                            Vec::new(),
+                                        ),
                                     }),
                                 });
                             }
-                            if let ast::FieldsPatternOrArgumentsPattern::Arguments(existing) = &inst_pat.args {
+                            if let ast::FieldsPatternOrArgumentsPattern::Arguments(existing) =
+                                &inst_pat.args
+                            {
                                 args.extend(existing.iter().cloned());
                                 return self.lower_pattern(
                                     &ast::Pattern {
                                         binding: pattern.binding.clone(),
                                         kind: ast::PatternKind::Instance(ast::InstancePattern {
                                             name: ast::TypePath {
-                                                path: vec![ast::IdentOrType::Type(ast::ParseType::Type(head.clone()))],
+                                                path: vec![ast::IdentOrType::Type(
+                                                    ast::ParseType::Type(head.clone()),
+                                                )],
                                             },
-                                            args: ast::FieldsPatternOrArgumentsPattern::Arguments(args),
+                                            args: ast::FieldsPatternOrArgumentsPattern::Arguments(
+                                                args,
+                                            ),
                                         }),
                                     },
                                     expected_ty,

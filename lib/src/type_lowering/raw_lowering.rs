@@ -52,8 +52,7 @@ impl TypeLowerer {
                 if matches!(constructor, Type::Error) {
                     return Type::Error;
                 }
-                let infer_holes =
-                    matches!(holes, Holes::Infer(_)) && expected == Some(&Kind::Type);
+                let infer_holes = matches!(holes, Holes::Infer(_)) && expected == Some(&Kind::Type);
                 let mut remaining_kind = TypeNormalizer::new(env).kind_of(&constructor).ok();
                 let mut hole_kinds = Vec::new();
                 let mut args = Vec::with_capacity(application.args.len());
@@ -209,10 +208,13 @@ impl TypeLowerer {
                     return Type::Unit;
                 }
                 if types.len() == 1 {
-                    return Self::lower_raw(context, &types[0], false, env, binders, expected, holes);
+                    return Self::lower_raw(
+                        context, &types[0], false, env, binders, expected, holes,
+                    );
                 }
                 if types.len() == 2 && matches!(&types[0], ast::ParseType::Unit(_)) {
-                    let ret = Self::lower_raw(context, &types[1], false, env, binders, value, holes);
+                    let ret =
+                        Self::lower_raw(context, &types[1], false, env, binders, value, holes);
                     return Type::function(Vec::new(), ret);
                 }
                 let params: Vec<Type> = types[..types.len() - 1]

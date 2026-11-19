@@ -26,16 +26,12 @@ impl<'ctx> CodeGen<'ctx> {
 
     pub(crate) fn resolve_mir_drop_glue_symbol(&self, ty: TypeId) -> Result<String, CodegenError> {
         if let Some(key) = self.drop_glue_callables_by_type.get(&ty) {
-            return self
-                .callables
-                .symbol_for_key(key)
-                .cloned()
-                .ok_or_else(|| {
-                    CodegenError::backend_contract(format!(
-                        "Drop glue for type {:?} references unknown MIR callable key {:?}",
-                        ty, key
-                    ))
-                });
+            return self.callables.symbol_for_key(key).cloned().ok_or_else(|| {
+                CodegenError::backend_contract(format!(
+                    "Drop glue for type {:?} references unknown MIR callable key {:?}",
+                    ty, key
+                ))
+            });
         }
 
         Err(CodegenError::backend_contract(format!(

@@ -17,9 +17,15 @@ pub(super) fn retain(indexes: &mut HirDefinitionIndexes, keep: &impl Fn(&DefId) 
     indexes.methods_by_id.retain(|id, _| keep(id));
     indexes.fields_by_id.retain(|(owner, _), _| keep(owner));
     indexes.variants_by_id.retain(|(owner, _), _| keep(owner));
-    indexes.associated_type_decls_by_id.retain(|(owner, _), _| keep(owner));
-    indexes.associated_type_defs_by_id.retain(|(owner, _), _| keep(owner));
-    indexes.effective_trait_methods.retain(|(owner, _), _| keep(owner));
+    indexes
+        .associated_type_decls_by_id
+        .retain(|(owner, _), _| keep(owner));
+    indexes
+        .associated_type_defs_by_id
+        .retain(|(owner, _), _| keep(owner));
+    indexes
+        .effective_trait_methods
+        .retain(|(owner, _), _| keep(owner));
 }
 
 /// These indexes contain dense positions in the original declaration order.

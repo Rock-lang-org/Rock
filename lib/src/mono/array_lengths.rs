@@ -20,34 +20,43 @@ impl Monomorphizer {
             let mut limit_exceeded = false;
             // Observation must not change canonical TypeId allocation or artifacts.
             let mut observed_types = crate::type_context::TypeContext::new();
-            let ids = [self.instances.pre_mir_body(record.id), record.declared.as_ref()]
-                .into_iter().flatten().map(|function| {
-                crate::hir::collect_function_type_ids(function, &mut observed_types)
-            }).collect::<Vec<_>>();
+            let ids = [
+                self.instances.pre_mir_body(record.id),
+                record.declared.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            .map(|function| crate::hir::collect_function_type_ids(function, &mut observed_types))
+            .collect::<Vec<_>>();
             if ids.iter().flat_map(|ids| ids.iter()).any(|(location, id)| {
                 let Ok(ty) = TypeNormalizer::new(&self.normalization_env)
-                    .normalize(&observed_types.type_for(id)) else {
+                    .normalize(&observed_types.type_for(id))
+                else {
                     return true;
                 };
-                if matches!(location, crate::hir::HirTypeLocation::ArrayRepeatLength { .. }) {
+                if matches!(
+                    location,
+                    crate::hir::HirTypeLocation::ArrayRepeatLength { .. }
+                ) {
                     return !matches!(ty, Type::ConstValue(_));
                 }
-                let mut validator = LengthValidator::new(&self.nominal_field_types, &self.normalization_env);
+                let mut validator =
+                    LengthValidator::new(&self.nominal_field_types, &self.normalization_env);
                 visit_type(&ty, &mut validator);
                 limit_exceeded |= validator.limit_exceeded;
                 validator.invalid
-            })
-                || record.substitution.iter().any(|id| {
-                    let Ok(ty) = TypeNormalizer::new(&self.normalization_env)
-                        .normalize(&self.type_context.type_for(*id)) else {
-                        return true;
-                    };
-                    let mut validator = LengthValidator::new(&self.nominal_field_types, &self.normalization_env);
-                    visit_type(&ty, &mut validator);
-                    limit_exceeded |= validator.limit_exceeded;
-                    validator.invalid
-                })
-            {
+            }) || record.substitution.iter().any(|id| {
+                let Ok(ty) = TypeNormalizer::new(&self.normalization_env)
+                    .normalize(&self.type_context.type_for(*id))
+                else {
+                    return true;
+                };
+                let mut validator =
+                    LengthValidator::new(&self.nominal_field_types, &self.normalization_env);
+                visit_type(&ty, &mut validator);
+                limit_exceeded |= validator.limit_exceeded;
+                validator.invalid
+            }) {
                 let id = match record.origin {
                     super::InstanceOrigin::Function(id) => id,
                     super::InstanceOrigin::ImplMethod { method, .. }
@@ -65,7 +74,10 @@ impl Monomorphizer {
             .with_code(DiagnosticCode::Mono)
             .with_help("add a type annotation that fixes the array length");
             if limit_exceeded {
-                diagnostic = diagnostic.with_note("array layout validation exceeded 128 distinct nested nominal instantiations".to_string());
+                diagnostic = diagnostic.with_note(
+                    "array layout validation exceeded 128 distinct nested nominal instantiations"
+                        .to_string(),
+                );
             }
             self.diagnostics.push(diagnostic);
         }
@@ -91,7 +103,14 @@ struct LengthValidator<'a> {
 
 impl<'a> LengthValidator<'a> {
     fn new(fields: &'a HashMap<DefId, Vec<Type>>, env: &'a TypeNormalizationEnv) -> Self {
-        Self { fields, env, nominal_stack: Default::default(), binders: Vec::new(), invalid: false, limit_exceeded: false }
+        Self {
+            fields,
+            env,
+            nominal_stack: Default::default(),
+            binders: Vec::new(),
+            invalid: false,
+            limit_exceeded: false,
+        }
     }
 }
 
@@ -107,9 +126,14 @@ impl TypeVisitor for LengthValidator<'_> {
     fn visit_type(&mut self, ty: &Type) {
         if let Type::Array(_, len) = ty {
             let bound_here = match len {
-                ArrayLen::Bound { depth, index } => self.binders
-                    .iter().rev().nth(*depth as usize)
-                    .and_then(|params| params.get(*index as usize)) == Some(&Kind::Usize),
+                ArrayLen::Bound { depth, index } => {
+                    self.binders
+                        .iter()
+                        .rev()
+                        .nth(*depth as usize)
+                        .and_then(|params| params.get(*index as usize))
+                        == Some(&Kind::Usize)
+                }
                 _ => false,
             };
             self.invalid |= !len.is_concrete() && !bound_here;
@@ -129,11 +153,23 @@ impl TypeVisitor for LengthValidator<'_> {
             }
             if self.nominal_stack.insert(ty.clone()) {
                 if let Some(fields) = self.fields.get(id) {
-                    let substitution = args.iter().enumerate().map(|(index, ty)| {
-                        (GenericParamId { owner: *id, index: index as u32 }, ty.clone())
-                    }).collect();
+                    let substitution = args
+                        .iter()
+                        .enumerate()
+                        .map(|(index, ty)| {
+                            (
+                                GenericParamId {
+                                    owner: *id,
+                                    index: index as u32,
+                                },
+                                ty.clone(),
+                            )
+                        })
+                        .collect();
                     for field in fields {
-                        match TypeNormalizer::new(self.env).normalize(&field.substitute_generics(&substitution)) {
+                        match TypeNormalizer::new(self.env)
+                            .normalize(&field.substitute_generics(&substitution))
+                        {
                             Ok(field) => self.visit_type(&field),
                             Err(_) => self.invalid = true,
                         }

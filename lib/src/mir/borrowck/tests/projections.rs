@@ -377,7 +377,10 @@ fn borrowck_rejects_array_element_move_from_projected_drop_array_output() {
         args: Vec::new(),
     };
     let drop_id = type_context.intern_type(&drop_ty);
-    let array_id = type_context.intern_type(&Type::Array(Box::new(drop_ty), crate::types::ArrayLen::Value(2)));
+    let array_id = type_context.intern_type(&Type::Array(
+        Box::new(drop_ty),
+        crate::types::ArrayLen::Value(2),
+    ));
     let projection_id = type_context.intern_type(&Type::Projection {
         ty: Box::new(Type::I64),
         trait_id,
@@ -520,7 +523,11 @@ fn borrowck_accepts_loop_owned_array_element_moves_from_drop_array() {
             terminator: Some(Terminator::Return),
         }],
         local_decls: vec![
-            local_decl(drop_id, "return_place", crate::mir::LocalSource::ReturnPlace),
+            local_decl(
+                drop_id,
+                "return_place",
+                crate::mir::LocalSource::ReturnPlace,
+            ),
             local_decl(array_id, "array", crate::mir::LocalSource::Argument),
             local_decl(drop_id, "element", crate::mir::LocalSource::Temporary),
             local_decl(i64_id, "index", crate::mir::LocalSource::Temporary),

@@ -185,7 +185,8 @@ fn propagate_expr(
         }
         HirExprKind::Var(_)
         | HirExprKind::ResolvedVar(_)
-        | HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
+        | HirExprKind::IntLiteral(_)
+        | HirExprKind::ConstParam(_)
         | HirExprKind::FloatLiteral(_)
         | HirExprKind::BoolLiteral(_)
         | HirExprKind::StringLiteral(_)
@@ -262,7 +263,8 @@ fn propagate_method_arguments(
         // learn `Self` from the receiver instead of committing the receiver to it.
         if let Some(param) = receiver_param {
             let receiver_ty = hir.engine.resolve(&receiver.ty);
-            if !crate::selection::type_pattern_matches(&param.ty, &receiver_ty, &mut substitutions) {
+            if !crate::selection::type_pattern_matches(&param.ty, &receiver_ty, &mut substitutions)
+            {
                 if let Type::Reference { inner, .. } = &param.ty {
                     crate::selection::type_pattern_matches(inner, &receiver_ty, &mut substitutions);
                 }

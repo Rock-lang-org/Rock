@@ -75,7 +75,10 @@ fn substitute_const_param(ty: Type) -> (crate::mono::hir_types::HirExprKind, sup
 fn const_param_substitutes_to_integer_literal() {
     let (kind, mono) = substitute_const_param(Type::ConstValue(7));
 
-    assert!(matches!(kind, crate::mono::hir_types::HirExprKind::IntLiteral(7)));
+    assert!(matches!(
+        kind,
+        crate::mono::hir_types::HirExprKind::IntLiteral(7)
+    ));
     assert!(mono.diagnostics.return_if_err().is_ok());
 }
 
@@ -97,7 +100,10 @@ fn const_param_substituted_by_non_const_type_is_diagnosed() {
     let (kind, mono) = substitute_const_param(Type::I64);
 
     assert!(mono.diagnostics.contains("non-const type"));
-    assert!(matches!(kind, crate::mono::hir_types::HirExprKind::ConstParam(_)));
+    assert!(matches!(
+        kind,
+        crate::mono::hir_types::HirExprKind::ConstParam(_)
+    ));
 }
 
 #[test]
@@ -108,6 +114,9 @@ fn const_param_substituted_by_generic_stays_symbolic_without_diagnostic() {
     };
     let (kind, mono) = substitute_const_param(Type::Generic(other));
 
-    assert!(matches!(kind, crate::mono::hir_types::HirExprKind::ConstParam(_)));
+    assert!(matches!(
+        kind,
+        crate::mono::hir_types::HirExprKind::ConstParam(_)
+    ));
     assert!(mono.diagnostics.return_if_err().is_ok());
 }

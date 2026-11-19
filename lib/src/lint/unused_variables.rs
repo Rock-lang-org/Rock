@@ -7,7 +7,9 @@
 use std::collections::{BTreeMap, HashSet};
 
 use crate::diagnostic::Diagnostic;
-use crate::hir::{AcceptedHirExpr, AcceptedHirFunction, HirCallTarget, HirExprKindFor, HirVarTarget};
+use crate::hir::{
+    AcceptedHirExpr, AcceptedHirFunction, HirCallTarget, HirExprKindFor, HirVarTarget,
+};
 use crate::ids::{DefId, HirLocalId};
 use crate::infer::ResolvedHirProgram;
 
@@ -31,7 +33,11 @@ pub(crate) fn check_unused_variables(hir: &ResolvedHirProgram, sink: &mut LintSi
     }
 }
 
-fn check_function(hir: &ResolvedHirProgram, function: &AcceptedHirFunction, sink: &mut LintSink<'_>) {
+fn check_function(
+    hir: &ResolvedHirProgram,
+    function: &AcceptedHirFunction,
+    sink: &mut LintSink<'_>,
+) {
     let mut locals = LocalUses::default();
     walk_function(&mut locals, function);
     for (local, name) in locals.declared {
@@ -72,7 +78,8 @@ impl HirVisitor for LocalUses {
                 self.read.insert(*local);
             }
             HirExprKindFor::Lambda { captures, .. } => {
-                self.read.extend(captures.iter().map(|capture| capture.local_id));
+                self.read
+                    .extend(captures.iter().map(|capture| capture.local_id));
             }
             // Writing a local is not reading it: only the assigned value is walked.
             HirExprKindFor::Assign(target, value) if is_local(target) => {

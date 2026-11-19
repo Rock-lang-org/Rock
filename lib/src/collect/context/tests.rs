@@ -163,9 +163,7 @@ fn load_module_with_prefix_prefers_current_crate_prefixed_graph_path() {
         .modules
         .add_path("test::math::io".to_string(), graph_io.clone());
     context.modules.cache_module(alias_io, alias_module);
-    context
-        .modules
-        .cache_module(graph_io.clone(), graph_module);
+    context.modules.cache_module(graph_io.clone(), graph_module);
 
     let module = context
         .load_module_with_prefix("io", Some("math"))
@@ -323,9 +321,7 @@ fn collect_context_lowers_associated_type_through_canonical_trait_import_id() {
     context
         .names
         .set_canonical_name(trait_id, "dep::Iterable".to_string());
-    context
-        .generics
-        .enter_trait("Iterable".to_string());
+    context.generics.enter_trait("Iterable".to_string());
     context
         .generics
         .enter(trait_id, vec!["Self".to_string()], Vec::new());

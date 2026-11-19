@@ -118,14 +118,17 @@ fn loop_owned_array_move_shape_requires_move_from_indexed_element() {
         local: Local(1),
         projection: vec![Projection::Index(Local(3))],
     };
-    let valid = StatementData::loop_owned_array_move(local(2), Operand::Move(element.clone()), None);
+    let valid =
+        StatementData::loop_owned_array_move(local(2), Operand::Move(element.clone()), None);
     assert!(valid.has_loop_owned_array_move_shape());
 
-    let mut flagged_copy = StatementData::assign(local(2), Rvalue::Use(Operand::Copy(element)), None);
+    let mut flagged_copy =
+        StatementData::assign(local(2), Rvalue::Use(Operand::Copy(element)), None);
     flagged_copy.loop_owned_array_move = true;
     assert!(!flagged_copy.has_loop_owned_array_move_shape());
 
-    let mut flagged_whole = StatementData::assign(local(2), Rvalue::Use(Operand::Move(local(1))), None);
+    let mut flagged_whole =
+        StatementData::assign(local(2), Rvalue::Use(Operand::Move(local(1))), None);
     flagged_whole.loop_owned_array_move = true;
     assert!(!flagged_whole.has_loop_owned_array_move_shape());
 

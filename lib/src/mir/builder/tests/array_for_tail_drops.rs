@@ -1,17 +1,22 @@
 use super::*;
 
 fn tail_helper_calls(builder: &MirBuilder<'_>) -> Vec<crate::ids::TypeId> {
-    builder.blocks.iter().filter_map(|block| match &block.terminator {
-        Some(Terminator::Call {
-            func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
-                MirCallableKey::RuntimeHelper(crate::mir::MirRuntimeHelper::ArrayTailDrop(ty)),
-            ))),
-            ..
-        }) => {
-            Some(*ty)
-        }
-        _ => None,
-    }).collect()
+    builder
+        .blocks
+        .iter()
+        .filter_map(|block| match &block.terminator {
+            Some(Terminator::Call {
+                func:
+                    Operand::Constant(Constant::Callable(MirCallable::Resolved(
+                        MirCallableKey::RuntimeHelper(crate::mir::MirRuntimeHelper::ArrayTailDrop(
+                            ty,
+                        )),
+                    ))),
+                ..
+            }) => Some(*ty),
+            _ => None,
+        })
+        .collect()
 }
 
 fn drops_of_array_elements(builder: &MirBuilder<'_>) -> usize {
@@ -31,19 +36,25 @@ fn drops_of_array_elements(builder: &MirBuilder<'_>) -> usize {
 /// The tail helper must start after the element already moved into the loop
 /// binding: its `start` argument is `counter + 1`.
 fn tail_helper_starts_after_current_element(builder: &MirBuilder<'_>) -> bool {
-    let starts = builder.blocks.iter().filter_map(|block| match &block.terminator {
-        Some(Terminator::Call {
-            func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
-                MirCallableKey::RuntimeHelper(crate::mir::MirRuntimeHelper::ArrayTailDrop(_)),
-            ))),
-            args,
-            ..
-        }) => match args.get(1) {
-            Some(Operand::Copy(start)) => Some((block, start.local)),
+    let starts = builder
+        .blocks
+        .iter()
+        .filter_map(|block| match &block.terminator {
+            Some(Terminator::Call {
+                func:
+                    Operand::Constant(Constant::Callable(MirCallable::Resolved(
+                        MirCallableKey::RuntimeHelper(crate::mir::MirRuntimeHelper::ArrayTailDrop(
+                            _,
+                        )),
+                    ))),
+                args,
+                ..
+            }) => match args.get(1) {
+                Some(Operand::Copy(start)) => Some((block, start.local)),
+                _ => None,
+            },
             _ => None,
-        },
-        _ => None,
-    });
+        });
     let mut any = false;
     for (block, start) in starts {
         any = true;
@@ -183,30 +194,54 @@ fn array_tail_helpers_share_by_element_type_and_elaborate_nested_cleanup() {
     let mut functions = std::collections::BTreeMap::new();
     // Multiple callers, with multiple exits each, reference a single helper.
     for index in 0..2 {
-        let builder = lower_array_for_with_exits(&program, &type_context, struct_ty(0), true, 3 + index as u64);
+        let builder = lower_array_for_with_exits(
+            &program,
+            &type_context,
+            struct_ty(0),
+            true,
+            3 + index as u64,
+        );
         let id = MirFunctionId::Function(DefId::new(CrateId(0), LocalDefId(100 + index)));
         let ret_type = builder.type_id_for(&Type::Unit);
-        functions.insert(id.clone(), MirFunction {
-            id,
-            name: format!("caller_{index}"),
-            basic_blocks: builder.blocks,
-            local_decls: builder.locals,
-            closure_captures: Vec::new(),
-            arg_count: 0,
-            ret_type,
-            ownership: builder.ownership,
-        });
+        functions.insert(
+            id.clone(),
+            MirFunction {
+                id,
+                name: format!("caller_{index}"),
+                basic_blocks: builder.blocks,
+                local_decls: builder.locals,
+                closure_captures: Vec::new(),
+                arg_count: 0,
+                ret_type,
+                ownership: builder.ownership,
+            },
+        );
     }
     let drops = std::collections::HashSet::from([struct_ty(0)]);
-    MirBuilder::populate_array_tail_helpers(&program, &type_context, &drops, &mut functions).unwrap();
-    assert_eq!(functions.values().filter(|f| matches!(f.id, MirFunctionId::ArrayTailDrop(_))).count(), 1);
+    MirBuilder::populate_array_tail_helpers(&program, &type_context, &drops, &mut functions)
+        .unwrap();
+    assert_eq!(
+        functions
+            .values()
+            .filter(|f| matches!(f.id, MirFunctionId::ArrayTailDrop(_)))
+            .count(),
+        1
+    );
     // Repeating collection must not create another helper identity.
-    MirBuilder::populate_array_tail_helpers(&program, &type_context, &drops, &mut functions).unwrap();
-    assert_eq!(functions.values().filter(|f| matches!(f.id, MirFunctionId::ArrayTailDrop(_))).count(), 1);
+    MirBuilder::populate_array_tail_helpers(&program, &type_context, &drops, &mut functions)
+        .unwrap();
+    assert_eq!(
+        functions
+            .values()
+            .filter(|f| matches!(f.id, MirFunctionId::ArrayTailDrop(_)))
+            .count(),
+        1
+    );
 
     let nested = Type::Tuple(vec![struct_ty(0), struct_ty(0)]);
     let elem = type_context.borrow_mut().intern_type(&nested);
-    let mut builder = MirBuilder::with_instance_metadata(&program, &type_context, Default::default(), drops);
+    let mut builder =
+        MirBuilder::with_instance_metadata(&program, &type_context, Default::default(), drops);
     let helper = builder.build_array_tail_helper(elem);
     let nested_drops = helper.basic_blocks.iter().filter(|block| matches!(
         &block.terminator,

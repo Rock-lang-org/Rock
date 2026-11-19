@@ -92,7 +92,9 @@ impl<'a> MirBuilder<'a> {
         })
     }
 
-    pub fn build_monomorphized(program: &crate::mono::MonomorphizedProgram) -> Result<MirProgram, crate::diagnostic::Diagnostics> {
+    pub fn build_monomorphized(
+        program: &crate::mono::MonomorphizedProgram,
+    ) -> Result<MirProgram, crate::diagnostic::Diagnostics> {
         let mut program = program.clone();
         let bodies = Self::take_mir_instance_bodies(&mut program)?;
         Self::build_monomorphized_with_instance_bodies(&program, &bodies)

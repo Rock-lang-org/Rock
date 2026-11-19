@@ -157,8 +157,7 @@ pub fn short_item_name(path: &str) -> &str {
     last_segment(path)
 }
 
-impl TypeDisplayContext {
-}
+impl TypeDisplayContext {}
 
 pub struct UserTypeDisplay<'a> {
     ty: &'a Type,
@@ -402,7 +401,9 @@ fn write_user_type(
             write!(
                 f,
                 "{}",
-                context.short_definition_name(*id).unwrap_or("<unknown type>")
+                context
+                    .short_definition_name(*id)
+                    .unwrap_or("<unknown type>")
             )?;
             write_user_type_args(args, context, f)
         }
@@ -458,7 +459,9 @@ fn write_user_type(
             write!(
                 f,
                 "{}",
-                context.short_definition_name(*id).unwrap_or("<unknown type>")
+                context
+                    .short_definition_name(*id)
+                    .unwrap_or("<unknown type>")
             )
         }
         // A constructor section applied to its arguments reads as the applied

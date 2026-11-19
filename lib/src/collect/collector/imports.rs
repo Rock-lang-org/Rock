@@ -124,9 +124,9 @@ impl LocalCollector {
 
     pub(super) fn handle_import(&mut self, path: &ast::Path) {
         let canonical_prefix = self.context.current_module_prefix();
-        let mut resolved =
-            self.context
-                .handle_import(path, true, canonical_prefix.as_deref());
+        let mut resolved = self
+            .context
+            .handle_import(path, true, canonical_prefix.as_deref());
         let names = path_names(path.segments());
         if let Some(short_name) = names.last().cloned() {
             resolved |= self.import_type_alias_local(
@@ -137,11 +137,9 @@ impl LocalCollector {
         }
 
         if let Some(qualified_path) = qualify_local_path(&self.context, path) {
-            resolved |= self.context.handle_import(
-                &qualified_path,
-                true,
-                canonical_prefix.as_deref(),
-            );
+            resolved |=
+                self.context
+                    .handle_import(&qualified_path, true, canonical_prefix.as_deref());
             let names = path_names(qualified_path.segments());
             if let Some(short_name) = names.last().cloned() {
                 resolved |= self.import_type_alias_local(

@@ -57,9 +57,19 @@ impl<'ctx> CodeGen<'ctx> {
                         self.display_type_for_diagnostic(expected_ty)
                     )));
                 };
-                self.validate_mir_aggregate_operand_count("array aggregate", len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))? as usize, operands.len())?;
+                self.validate_mir_aggregate_operand_count(
+                    "array aggregate",
+                    len.concrete()
+                        .ok_or_else(|| CodegenError::non_concrete_array_len(len))?
+                        as usize,
+                    operands.len(),
+                )?;
                 let element_llvm_ty = self.llvm_type(element_ty)?;
-                let array_ty = element_llvm_ty.array_type(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))? as u32);
+                let array_ty = element_llvm_ty.array_type(
+                    len.concrete()
+                        .ok_or_else(|| CodegenError::non_concrete_array_len(len))?
+                        as u32,
+                );
                 let mut value = array_ty.get_undef();
 
                 for (index, operand) in operands.iter().enumerate() {
@@ -232,9 +242,12 @@ impl<'ctx> CodeGen<'ctx> {
         variant_index: usize,
         display_name: &str,
     ) -> Result<usize, CodegenError> {
-        let variants = self.nominal_layouts.enum_variants(&enum_id).ok_or_else(|| {
-            CodegenError::layout(format!("Unknown MIR enum layout: {}", display_name))
-        })?;
+        let variants = self
+            .nominal_layouts
+            .enum_variants(&enum_id)
+            .ok_or_else(|| {
+                CodegenError::layout(format!("Unknown MIR enum layout: {}", display_name))
+            })?;
         let variant = variants.get(variant_index).ok_or_else(|| {
             CodegenError::from(format!(
                 "MIR enum variant index {} is out of bounds for {}",

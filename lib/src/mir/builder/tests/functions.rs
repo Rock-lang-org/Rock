@@ -63,14 +63,16 @@ fn build_function_uses_session_source_map_for_parameter_and_return_origins() {
 
     let type_context = test_type_context(&program);
     let mut builder = MirBuilder::new(&program, &type_context).with_source_map(&source_map);
-    let mir_func = builder.build_function(
-        MirFunctionId::Function(owner),
-        &function.name,
-        &function,
-        false,
-        Some(owner),
-        Some(operation_span.clone()),
-    ).unwrap();
+    let mir_func = builder
+        .build_function(
+            MirFunctionId::Function(owner),
+            &function.name,
+            &function,
+            false,
+            Some(owner),
+            Some(operation_span.clone()),
+        )
+        .unwrap();
 
     assert_eq!(mir_func.local_decls[0].span, Some(operation_span.clone()));
     assert_eq!(mir_func.local_decls[1].span, Some(parameter_span.clone()));
@@ -119,14 +121,16 @@ fn build_function_terminates_blocks_after_if_without_else() {
 
     let type_context = test_type_context(&program);
     let mut builder = MirBuilder::new(&program, &type_context);
-    let mir_func = builder.build_function(
-        MirFunctionId::Function(func.id),
-        &func.name,
-        &func,
-        false,
-        Some(func.id),
-        None,
-    ).unwrap();
+    let mir_func = builder
+        .build_function(
+            MirFunctionId::Function(func.id),
+            &func.name,
+            &func,
+            false,
+            Some(func.id),
+            None,
+        )
+        .unwrap();
 
     assert!(mir_func
         .basic_blocks

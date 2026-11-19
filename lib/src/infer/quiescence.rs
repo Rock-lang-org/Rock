@@ -316,11 +316,14 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
             .map(|param| &param.ty)
             .chain(std::iter::once(&function.ret_type))
         {
-            crate::type_services::visit::visit_type(&hir.engine.resolve(ty), &mut |nested: &Type| {
-                if let Type::TypeVar(id) = nested {
-                    generalizable.insert(*id);
-                }
-            });
+            crate::type_services::visit::visit_type(
+                &hir.engine.resolve(ty),
+                &mut |nested: &Type| {
+                    if let Type::TypeVar(id) = nested {
+                        generalizable.insert(*id);
+                    }
+                },
+            );
         }
     }
 
@@ -463,20 +466,21 @@ fn final_solve_errors(
             }) => {
                 // As in `reject_ungeneralized_predicates`: only signature
                 // variables of a generalized function can be abstracted.
-                let abstractable = deferred_predicate_owner(hir, id, root_entrypoint_id)
-                    .is_some()
+                let abstractable = deferred_predicate_owner(hir, id, root_entrypoint_id).is_some()
                     && std::iter::once(ty).chain(&bound.type_args).all(|ty| {
-                        !crate::type_services::visit::type_any(&hir.engine.resolve(ty), |ty| {
-                            matches!(ty, Type::TypeVar(var) if !generalizable.contains(var))
-                        })
+                        !crate::type_services::visit::type_any(
+                            &hir.engine.resolve(ty),
+                            |ty| matches!(ty, Type::TypeVar(var) if !generalizable.contains(var)),
+                        )
                     });
                 (!abstractable).then(|| deferred_predicate_error(hir, ty, bound, span, context))
             }
             _ => None,
         })
         .collect::<Vec<_>>();
-    let (ambiguous, failed): (Vec<_>, Vec<_>) =
-        errors.into_iter().partition(solve::SolveError::is_ambiguity);
+    let (ambiguous, failed): (Vec<_>, Vec<_>) = errors
+        .into_iter()
+        .partition(solve::SolveError::is_ambiguity);
     definite.extend(failed);
     let reported = if definite.is_empty() {
         ambiguous
@@ -555,9 +559,9 @@ fn reject_ungeneralized_predicates(
         };
         let unresolved = function.generic_bounds.predicates.iter().any(|predicate| {
             let crate::types::Predicate::Trait { subject, args, .. } = predicate;
-            std::iter::once(subject)
-                .chain(args)
-                .any(|ty| crate::type_services::visit::type_any(ty, |ty| matches!(ty, Type::TypeVar(_))))
+            std::iter::once(subject).chain(args).any(|ty| {
+                crate::type_services::visit::type_any(ty, |ty| matches!(ty, Type::TypeVar(_)))
+            })
         });
         if unresolved && reported.insert(item.function_id) {
             errors.push(type_error(hir, item.error));

@@ -38,7 +38,13 @@ fn local_collector_uses_source_records_before_current_id_repairs() {
     let source_module = Module {
         name: Some(ident("source")),
         top_levels: vec![
-            TopLevel::InfixOperator(7, crate::ast::Operator { value: "++".to_string(), span: crate::lexer::Span::new("test.rk".into(), 0, 0) }),
+            TopLevel::InfixOperator(
+                7,
+                crate::ast::Operator {
+                    value: "++".to_string(),
+                    span: crate::lexer::Span::new("test.rk".into(), 0, 0),
+                },
+            ),
             TopLevel::StructDecl(StructDecl {
                 name: type_inner("Same"),
                 generic_params: vec![],
@@ -52,7 +58,13 @@ fn local_collector_uses_source_records_before_current_id_repairs() {
     let module = Module {
         name: None,
         top_levels: vec![
-            TopLevel::InfixOperator(7, crate::ast::Operator { value: "++".to_string(), span: crate::lexer::Span::new("test.rk".into(), 0, 0) }),
+            TopLevel::InfixOperator(
+                7,
+                crate::ast::Operator {
+                    value: "++".to_string(),
+                    span: crate::lexer::Span::new("test.rk".into(), 0, 0),
+                },
+            ),
             TopLevel::StructDecl(StructDecl {
                 name: type_inner("Same"),
                 generic_params: vec![],

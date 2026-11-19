@@ -30,7 +30,10 @@ impl<'a> SelectionService<'a> {
     {
         for candidate in receiver_candidates {
             let receiver = normalize(&candidate.expr.ty);
-            for imp in self.impl_ids_in_order().filter_map(|id| self.impls.get(&id)) {
+            for imp in self
+                .impl_ids_in_order()
+                .filter_map(|id| self.impls.get(&id))
+            {
                 if !self
                     .impl_method(imp, method_name)
                     .is_some_and(|method| function_has_receiver(&method))

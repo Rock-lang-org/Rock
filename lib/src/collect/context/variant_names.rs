@@ -52,9 +52,14 @@ impl CollectContext {
             return self.resolve_variant_source_inner(&export.source, visited);
         }
         let (owner, variant) = source.rsplit_once("::")?;
-        let enum_id = self.enums.get(owner).map(|enumeration| enumeration.id)
+        let enum_id = self
+            .enums
+            .get(owner)
+            .map(|enumeration| enumeration.id)
             .or_else(|| {
-                let target = self.names.export_alias(owner)
+                let target = self
+                    .names
+                    .export_alias(owner)
                     .or_else(|| self.names.import_alias(owner))?;
                 self.enums.get(target).map(|enumeration| enumeration.id)
             })?;
@@ -66,7 +71,9 @@ impl CollectContext {
     }
 
     pub(super) fn variant_exports(&mut self) -> HashMap<String, VariantAlias> {
-        let exports = self.names.export_sources()
+        let exports = self
+            .names
+            .export_sources()
             .filter_map(|(name, source)| {
                 let alias = self.resolve_variant_source(source)?;
                 Some((name.clone(), alias))
@@ -74,15 +81,23 @@ impl CollectContext {
             .collect::<HashMap<_, _>>();
         for (name, alias) in &exports {
             let key = if !name.contains("::") {
-                self.current_crate_name.as_ref().map(|prefix| format!("{prefix}::{name}"))
+                self.current_crate_name
+                    .as_ref()
+                    .map(|prefix| format!("{prefix}::{name}"))
                     .unwrap_or_else(|| name.clone())
             } else {
                 name.clone()
             };
             self.record_explicit_import(&key, Some(alias.clone()), None);
-            let valid = self.enums.values().find(|enumeration| enumeration.id == alias.enum_id)
+            let valid = self
+                .enums
+                .values()
+                .find(|enumeration| enumeration.id == alias.enum_id)
                 .is_some_and(|enumeration| {
-                    enumeration.variants.iter().any(|variant| variant.name == alias.variant)
+                    enumeration
+                        .variants
+                        .iter()
+                        .any(|variant| variant.name == alias.variant)
                 });
             if !valid {
                 self.push_error(format!("unresolved variant export '{name}'"));

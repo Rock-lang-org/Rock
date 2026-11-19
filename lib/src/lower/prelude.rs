@@ -66,14 +66,13 @@ impl PreludeImports {
             if let Some(variant) = items.enumeration(export.id).and_then(|enumeration| {
                 crate::collect::resolver::exported_variant_name(&export.source, enumeration)
             }) {
-                resolver
-                    .variant_aliases
-                    .entry(short_name)
-                    .or_insert(crate::collect::resolver::VariantAlias {
+                resolver.variant_aliases.entry(short_name).or_insert(
+                    crate::collect::resolver::VariantAlias {
                         enum_id: export.id,
                         variant,
                         fallback: true,
-                    });
+                    },
+                );
                 continue;
             }
 

@@ -327,8 +327,10 @@ impl<'ctx> CodeGen<'ctx> {
                 let param_abi = signature
                     .as_ref()
                     .and_then(|signature| signature.params.get(param_index));
-                let coerced = if param_abi.is_some_and(|param| param.pass_mode == MirPassMode::Pointer)
-                    && !self.type_id_lowers_to_pointer(ty)? {
+                let coerced = if param_abi
+                    .is_some_and(|param| param.pass_mode == MirPassMode::Pointer)
+                    && !self.type_id_lowers_to_pointer(ty)?
+                {
                     self.builder
                         .build_load(
                             self.llvm_type_id(ty)?,
@@ -403,38 +405,77 @@ impl<'ctx> CodeGen<'ctx> {
             .into_pointer_value();
         if mir_function.ownership.consumes_closure_environment {
             let ptr_ty = self.context.ptr_type(AddressSpace::default());
-            let header = self.builder.build_load(ptr_ty, env_param, "closure_live_header")
-                .map_err(|error| CodegenError::from(format!("Failed to load closure header: {error}")))?;
+            let header = self
+                .builder
+                .build_load(ptr_ty, env_param, "closure_live_header")
+                .map_err(|error| {
+                    CodegenError::from(format!("Failed to load closure header: {error}"))
+                })?;
             let Some(load) = header.as_instruction_value() else {
-                return Err(CodegenError::internal("closure header load must be an instruction"));
+                return Err(CodegenError::internal(
+                    "closure header load must be an instruction",
+                ));
             };
             load.set_atomic_ordering(inkwell::AtomicOrdering::Acquire)
                 .map_err(CodegenError::internal)?;
             let header = header.into_pointer_value();
-            let claimed = self.builder.build_cmpxchg(
-                env_param, header, ptr_ty.const_null(),
-                inkwell::AtomicOrdering::AcquireRelease, inkwell::AtomicOrdering::Acquire,
-            ).map_err(|error| CodegenError::from(format!("Failed to claim closure environment: {error}")))?;
-            let claimed = self.builder.build_extract_value(claimed, 1, "closure_environment_claimed")
-                .map_err(|error| CodegenError::from(format!("Failed to check closure claim: {error}")))?
+            let claimed = self
+                .builder
+                .build_cmpxchg(
+                    env_param,
+                    header,
+                    ptr_ty.const_null(),
+                    inkwell::AtomicOrdering::AcquireRelease,
+                    inkwell::AtomicOrdering::Acquire,
+                )
+                .map_err(|error| {
+                    CodegenError::from(format!("Failed to claim closure environment: {error}"))
+                })?;
+            let claimed = self
+                .builder
+                .build_extract_value(claimed, 1, "closure_environment_claimed")
+                .map_err(|error| {
+                    CodegenError::from(format!("Failed to check closure claim: {error}"))
+                })?
                 .into_int_value();
-            let nonnull = self.builder.build_is_not_null(header, "closure_environment_live")
-                .map_err(|error| CodegenError::from(format!("Failed to check closure header: {error}")))?;
-            let live = self.builder.build_and(nonnull, claimed, "closure_environment_taken")
-                .map_err(|error| CodegenError::from(format!("Failed to guard closure claim: {error}")))?;
-            let take = self.context.append_basic_block(context.function, "closure_take_environment");
-            let consumed = self.context.append_basic_block(context.function, "closure_already_consumed");
-            self.builder.build_conditional_branch(live, take, consumed)
-                .map_err(|error| CodegenError::from(format!("Failed to guard consuming closure: {error}")))?;
+            let nonnull = self
+                .builder
+                .build_is_not_null(header, "closure_environment_live")
+                .map_err(|error| {
+                    CodegenError::from(format!("Failed to check closure header: {error}"))
+                })?;
+            let live = self
+                .builder
+                .build_and(nonnull, claimed, "closure_environment_taken")
+                .map_err(|error| {
+                    CodegenError::from(format!("Failed to guard closure claim: {error}"))
+                })?;
+            let take = self
+                .context
+                .append_basic_block(context.function, "closure_take_environment");
+            let consumed = self
+                .context
+                .append_basic_block(context.function, "closure_already_consumed");
+            self.builder
+                .build_conditional_branch(live, take, consumed)
+                .map_err(|error| {
+                    CodegenError::from(format!("Failed to guard consuming closure: {error}"))
+                })?;
             self.builder.position_at_end(consumed);
             let trap = match self.module.get_function("llvm.trap") {
                 Some(function) => function,
-                None => self.module.add_function("llvm.trap", self.context.void_type().fn_type(&[], false), None),
+                None => self.module.add_function(
+                    "llvm.trap",
+                    self.context.void_type().fn_type(&[], false),
+                    None,
+                ),
             };
-            self.builder.build_call(trap, &[], "")
-                .map_err(|error| CodegenError::from(format!("Failed to trap consumed closure: {error}")))?;
-            self.builder.build_unreachable()
-                .map_err(|error| CodegenError::from(format!("Failed to terminate consumed closure: {error}")))?;
+            self.builder.build_call(trap, &[], "").map_err(|error| {
+                CodegenError::from(format!("Failed to trap consumed closure: {error}"))
+            })?;
+            self.builder.build_unreachable().map_err(|error| {
+                CodegenError::from(format!("Failed to terminate consumed closure: {error}"))
+            })?;
             self.builder.position_at_end(take);
             context.blocks[0] = take;
         }
@@ -661,7 +702,11 @@ impl<'ctx> CodeGen<'ctx> {
         let crate::types::Type::Array(element_ty, len) = &array_ty else {
             return Ok(false);
         };
-        if len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))? as usize != operands.len() {
+        if len
+            .concrete()
+            .ok_or_else(|| CodegenError::non_concrete_array_len(len))? as usize
+            != operands.len()
+        {
             return Ok(false);
         }
 
@@ -740,7 +785,11 @@ impl<'ctx> CodeGen<'ctx> {
             .build_int_compare(
                 IntPredicate::ULT,
                 next_index,
-                index_ty.const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false),
+                index_ty.const_int(
+                    len.concrete()
+                        .ok_or_else(|| CodegenError::non_concrete_array_len(len))?,
+                    false,
+                ),
                 "array_repeat_should_continue",
             )
             .map_err(|error| {

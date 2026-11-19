@@ -231,9 +231,15 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| CodegenError::from(format!("Failed to extract closure env: {}", e)))?
             .into_pointer_value();
         let current_fn = ctx.function;
-        let has_env = self.context.append_basic_block(current_fn, "mir_drop_env_present");
-        let call_block = self.context.append_basic_block(current_fn, "mir_drop_env_call");
-        let free_block = self.context.append_basic_block(current_fn, "mir_drop_env_free");
+        let has_env = self
+            .context
+            .append_basic_block(current_fn, "mir_drop_env_present");
+        let call_block = self
+            .context
+            .append_basic_block(current_fn, "mir_drop_env_call");
+        let free_block = self
+            .context
+            .append_basic_block(current_fn, "mir_drop_env_free");
         let done = self.mir_target_block(ctx, target, "drop")?;
         let is_null = self
             .builder
@@ -258,18 +264,17 @@ impl<'ctx> CodeGen<'ctx> {
             .map_err(|e| CodegenError::from(format!("Failed to branch on env drop: {}", e)))?;
 
         self.builder.position_at_end(call_block);
-        let fn_ty = self
-            .context
-            .void_type()
-            .fn_type(&[ptr_ty.into()], false);
+        let fn_ty = self.context.void_type().fn_type(&[ptr_ty.into()], false);
         self.builder
             .build_indirect_call(fn_ty, drop_fn, &[env_ptr.into()], "mir_drop_env_call")
             .map_err(|e| CodegenError::from(format!("Failed to call closure env drop: {}", e)))?;
-        self.builder.build_unconditional_branch(free_block)
+        self.builder
+            .build_unconditional_branch(free_block)
             .map_err(|e| CodegenError::from(format!("Failed to build closure drop: {}", e)))?;
         self.builder.position_at_end(free_block);
         self.free_closure_environment(env_ptr)?;
-        self.builder.build_unconditional_branch(done)
+        self.builder
+            .build_unconditional_branch(done)
             .map(|_| ())
             .map_err(|e| CodegenError::from(format!("Failed to finish closure drop: {}", e)))
     }
@@ -282,13 +287,18 @@ impl<'ctx> CodeGen<'ctx> {
             Some(function) => function,
             None => self.module.add_function(
                 "free",
-                self.context.void_type().fn_type(&[environment.get_type().into()], false),
+                self.context
+                    .void_type()
+                    .fn_type(&[environment.get_type().into()], false),
                 None,
             ),
         };
-        self.builder.build_call(free, &[environment.into()], "")
+        self.builder
+            .build_call(free, &[environment.into()], "")
             .map(|_| ())
-            .map_err(|error| CodegenError::from(format!("Failed to free closure environment: {error}")))
+            .map_err(|error| {
+                CodegenError::from(format!("Failed to free closure environment: {error}"))
+            })
     }
 
     fn compile_mir_call_terminator(
@@ -422,7 +432,8 @@ impl<'ctx> CodeGen<'ctx> {
             let mut all_args = Vec::with_capacity(compiled_args.len() + 1);
             all_args.push(env_ptr.into());
             all_args.extend(compiled_args);
-            let call = self.builder
+            let call = self
+                .builder
                 .build_indirect_call(
                     self.callable_code_type(&param_types, &ret_ty)?,
                     code_ptr,
@@ -611,7 +622,11 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.make_fat_slice_value(
             data_ptr,
-            self.context.i64_type().const_int(len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?, false),
+            self.context.i64_type().const_int(
+                len.concrete()
+                    .ok_or_else(|| CodegenError::non_concrete_array_len(len))?,
+                false,
+            ),
         )
         .map(Some)
     }

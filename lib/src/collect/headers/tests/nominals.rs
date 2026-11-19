@@ -285,7 +285,10 @@ fn test_build_enum_mirrors_variant_header_construction() {
         HirVariantFields::Positional(types) => {
             assert_eq!(
                 types,
-                &vec![Type::I32, Type::Array(Box::new(Type::Bool), crate::types::ArrayLen::Value(2))]
+                &vec![
+                    Type::I32,
+                    Type::Array(Box::new(Type::Bool), crate::types::ArrayLen::Value(2))
+                ]
             );
         }
         other => panic!("expected positional fields, got {other:?}"),

@@ -24,10 +24,16 @@ main = !->
     fresh.as_slice!.println!
 "#,
     );
-    assert_eq!(output.trim().lines().collect::<Vec<_>>(), vec![
-        "0", "[9, 1, 2]", "12", "[9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2]",
-        "[3, 4, 5, 6, 7, 8, 9]",
-    ]);
+    assert_eq!(
+        output.trim().lines().collect::<Vec<_>>(),
+        vec![
+            "0",
+            "[9, 1, 2]",
+            "12",
+            "[9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2]",
+            "[3, 4, 5, 6, 7, 8, 9]",
+        ]
+    );
 }
 
 #[test]

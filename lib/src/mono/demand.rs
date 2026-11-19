@@ -41,11 +41,19 @@ impl Monomorphizer {
     }
 
     pub(super) fn seed_function_roots(&mut self) {
-        let mut roots = self.concrete_functions.keys().copied().filter(|id| {
-            id.crate_id == self.root_crate_id
-                && (self.crate_kind == CrateKind::Lib
-                    || self.function_names_by_id.get(id).is_some_and(|name| name == "main"))
-        }).collect::<Vec<_>>();
+        let mut roots = self
+            .concrete_functions
+            .keys()
+            .copied()
+            .filter(|id| {
+                id.crate_id == self.root_crate_id
+                    && (self.crate_kind == CrateKind::Lib
+                        || self
+                            .function_names_by_id
+                            .get(id)
+                            .is_some_and(|name| name == "main"))
+            })
+            .collect::<Vec<_>>();
         roots.sort();
         for id in roots {
             self.demand_function(id);
@@ -56,22 +64,37 @@ impl Monomorphizer {
         if self.crate_kind != CrateKind::Lib {
             return;
         }
-        let mut methods = program.impls.values()
-            .filter(|imp| imp.id.crate_id == self.root_crate_id
-                && imp.type_generics.is_empty()
-                && imp.trait_arg_types.iter().all(crate::type_services::facts::TypeFacts::is_codegen_concrete))
-            .flat_map(|imp| imp.methods.iter().filter_map(move |(name, method)| {
-                Self::should_register_method_instance(method).then_some((imp, name, method))
-            })).collect::<Vec<_>>();
+        let mut methods = program
+            .impls
+            .values()
+            .filter(|imp| {
+                imp.id.crate_id == self.root_crate_id
+                    && imp.type_generics.is_empty()
+                    && imp
+                        .trait_arg_types
+                        .iter()
+                        .all(crate::type_services::facts::TypeFacts::is_codegen_concrete)
+            })
+            .flat_map(|imp| {
+                imp.methods.iter().filter_map(move |(name, method)| {
+                    Self::should_register_method_instance(method).then_some((imp, name, method))
+                })
+            })
+            .collect::<Vec<_>>();
         methods.sort_by_key(|(imp, _, method)| (imp.id, method.id));
         for (imp, name, method) in methods {
             self.register_impl_method_instance(imp, name, method);
         }
-        let mut defaults = program.traits.values()
+        let mut defaults = program
+            .traits
+            .values()
             .filter(|tr| tr.id.crate_id == self.root_crate_id)
-            .flat_map(|tr| tr.methods.iter().filter_map(move |(name, method)| {
-                Self::should_register_method_instance(method).then_some((tr, name, method))
-            })).collect::<Vec<_>>();
+            .flat_map(|tr| {
+                tr.methods.iter().filter_map(move |(name, method)| {
+                    Self::should_register_method_instance(method).then_some((tr, name, method))
+                })
+            })
+            .collect::<Vec<_>>();
         defaults.sort_by_key(|(tr, _, method)| (tr.id, method.id));
         for (tr, name, method) in defaults {
             self.register_trait_default_instance(tr.id, &tr.name, name, method);
@@ -86,13 +109,18 @@ impl Monomorphizer {
             if record.provided_by_object || !record.substitution.is_empty() {
                 continue;
             }
-            let InstanceOrigin::Function(id) = record.origin else { continue };
+            let InstanceOrigin::Function(id) = record.origin else {
+                continue;
+            };
             if !self.concrete_functions.contains_key(&id) {
                 continue;
             }
             if let Some(body) = self.instances.pre_mir_body(record.id) {
                 program.functions.insert(id, body.clone());
-                program.names.functions_by_name.insert(record.symbols.source_name.clone(), id);
+                program
+                    .names
+                    .functions_by_name
+                    .insert(record.symbols.source_name.clone(), id);
             }
         }
     }

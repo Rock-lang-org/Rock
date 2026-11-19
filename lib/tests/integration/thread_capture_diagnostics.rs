@@ -2,7 +2,8 @@ use crate::support::*;
 
 #[test]
 fn test_spawn_generic_capture_uses_declared_marker_bounds() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 > std::concurrency::thread::spawn
 > std::concurrency::thread_safety::Send
 > std::concurrency::thread_safety::Owned
@@ -21,13 +22,15 @@ launch = handler ->
 main = !->
     text = String::from "owned"
     launch (-> text.len!) .println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "5");
 }
 
 #[test]
 fn test_spawn_generic_arc_capture_uses_conditional_impl_bounds() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 > std::concurrency::thread::spawn
 > std::concurrency::thread::spawn_detached
 > std::concurrency::thread_safety::Send
@@ -59,17 +62,17 @@ main = !->
     text = String::from "shared"
     launch (-> text.len!) .println!
     detach (-> return)
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "6");
 }
 
 #[test]
 fn test_spawn_generic_capture_rejects_missing_marker_bounds() {
-    for (bounds, marker) in [
-        ("F: Owned", "trait `Send`"),
-        ("F: Send", "trait `Owned`"),
-    ] {
-        compile_should_fail(&format!(r#"
+    for (bounds, marker) in [("F: Owned", "trait `Send`"), ("F: Send", "trait `Owned`")] {
+        compile_should_fail(
+            &format!(
+                r#"
 > std::concurrency::thread::spawn
 > std::concurrency::thread_safety::Send
 > std::concurrency::thread_safety::Owned
@@ -78,7 +81,10 @@ launch: F -> () where F: Fn (), (), {bounds}
 launch = handler !->
     result = spawn (-> handler.call ())
 main = !-> launch (-> return)
-"#), marker);
+"#
+            ),
+            marker,
+        );
     }
 }
 
@@ -89,7 +95,9 @@ fn test_spawn_generic_arc_capture_rejects_missing_marker_bounds() {
         ("F: Send, F: Owned", "trait `Send`"),
         ("F: Send, F: Sync", "trait `Owned`"),
     ] {
-        compile_should_fail(&format!(r#"
+        compile_should_fail(
+            &format!(
+                r#"
 > std::concurrency::thread::spawn
 > std::concurrency::thread_safety::Send
 > std::concurrency::thread_safety::Sync
@@ -101,7 +109,10 @@ launch = handler !->
     shared = Arc::new handler
     result = spawn (-> (&*shared).call ())
 main = !-> launch (-> return)
-"#), marker);
+"#
+            ),
+            marker,
+        );
     }
 }
 
@@ -165,14 +176,16 @@ main = !->
 fn test_spawn_rejects_capture_borrowed_for_later_source_use() {
     for later in ["filename.len!.println!", "spawn (-> filename.len!)"] {
         compile_should_fail(
-            &format!(r#"
+            &format!(
+                r#"
 > std::concurrency::thread::spawn
 
 main = !->
     filename = String::from "owned"
     spawn (-> filename.len!)
     {later}
-"#),
+"#
+            ),
             "shared borrow",
         );
     }
@@ -248,8 +261,8 @@ main = !->
     );
     assert_eq!(output.lines().collect::<Vec<_>>(), ["5", "6", "6", "6"]);
     for call in ["apply (-> owned.len!)", "runner.apply (-> owned.len!)"] {
-        compile_should_pass(
-            &format!(r#"
+        compile_should_pass(&format!(
+            r#"
 apply: F -> I64 where F: FnOnce (), I64
 apply = task -> task!
 struct Runner
@@ -261,8 +274,8 @@ main = !->
     owned = String::from "owned"
     {call}
     owned.len!.println!
-"#),
-        );
+"#
+        ));
     }
 }
 
@@ -328,14 +341,16 @@ main = !->
 fn test_unused_spawn_borrowed_filename_reports_closure_capture() {
     for signature in ["", "entry: &Str -> ()\n"] {
         compile_should_fail(
-            &format!(r#"
+            &format!(
+                r#"
 > std::concurrency::thread::spawn
 > std::io::fs::read_to_string
 
 {signature}entry = filename !->
     spawn (-> read_to_string filename)
 main = !-> ()
-"#),
+"#
+            ),
             "of `&Str`",
         );
     }
@@ -345,7 +360,8 @@ main = !-> ()
 fn test_spawn_borrowed_capture_is_independent_of_return_type() {
     for result in ["IoError::InvalidInput", "String::from filename"] {
         compile_should_fail(
-            &format!(r#"
+            &format!(
+                r#"
 > std::concurrency::thread::spawn
 > std::io::traits::IoError
 > std::io::fs::read_to_string
@@ -355,7 +371,8 @@ entry = filename !->
         read = read_to_string filename
         {result})
 main = !-> ()
-"#),
+"#
+            ),
             "of `&Str`",
         );
     }
@@ -375,28 +392,35 @@ main = !->
 
 #[test]
 fn test_spawn_borrowed_stack_capture_reports_owned_marker() {
-    compile_should_fail_with_source_diagnostic(r#"
+    compile_should_fail_with_source_diagnostic(
+        r#"
 > std::concurrency::thread::spawn
 main = !->
     text = String::from "local"
     spawn (-> text.len!)
     text.len!.println!
-"#, "trait `Owned`");
+"#,
+        "trait `Owned`",
+    );
 }
 
 #[test]
 fn test_spawn_copied_reference_to_literal_is_not_owned() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 > std::concurrency::thread::spawn
 main = !->
     text = "static literal"
     spawn (-> text.len!)
-"#, "trait `Owned`");
+"#,
+        "trait `Owned`",
+    );
 }
 
 #[test]
 fn test_owned_marker_rejects_structural_reference_payload() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 > std::concurrency::thread_safety::Owned
 struct Borrowed T
     < value: T
@@ -407,12 +431,15 @@ main = !->
     borrowed = Borrowed
         value: &number
     require_owned borrowed
-"#, "does not implement trait");
+"#,
+        "does not implement trait",
+    );
 }
 
 #[test]
 fn test_spawn_owned_string_and_vec_payloads_join_successfully() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 > std::concurrency::thread::spawn
 main = !->
     text = String::from "owned"
@@ -423,13 +450,15 @@ main = !->
                 Result::Ok size => size.println!
                 Result::Err _ => "join failed".println!
         Result::Err _ => "spawn failed".println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "8");
 }
 
 #[test]
 fn test_spawn_does_not_accept_erased_borrowing_environment() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 > std::concurrency::thread::spawn
 struct Holder
     < read: () -> I64
@@ -439,12 +468,15 @@ main = !->
         read: -> text.len!
     spawn (-> holder.read!)
     text.len!.println!
-"#, "trait `Owned`");
+"#,
+        "trait `Owned`",
+    );
 }
 
 #[test]
 fn test_selected_callable_parameter_types_follow_owner_substitution() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Runner T
     < seed: T
 impl Runner T
@@ -454,13 +486,15 @@ main = !->
     runner = Runner
         seed: 41
     (runner.apply (value -> value + 1)).println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "42");
 }
 
 #[test]
 fn test_spawn_owned_nested_closure_joins_successfully() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 > std::concurrency::thread::spawn
 main = !->
     text = String::from "nested"
@@ -471,24 +505,29 @@ main = !->
                 Result::Ok size => size.println!
                 Result::Err _ => "join failed".println!
         Result::Err _ => "spawn failed".println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "6");
 }
 
 #[test]
 fn test_spawn_rejects_owned_wrapper_around_borrowed_reference() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 > std::concurrency::thread::spawn
 main = !->
     number = 7
     wrapped = Box::new &number
     spawn (-> *wrapped)
-"#, "trait `Owned`");
+"#,
+        "trait `Owned`",
+    );
 }
 
 #[test]
 fn test_spawn_branch_join_keeps_borrowed_capture_obligation() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 > std::concurrency::thread::spawn
 main = !->
     text = String::from "borrowed"
@@ -499,12 +538,15 @@ main = !->
         -> text.len!
     text.len!.println!
     spawn read
-"#, "trait `Owned`");
+"#,
+        "trait `Owned`",
+    );
 }
 
 #[test]
 fn test_generic_join_cannot_restore_erased_capture_proof() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 > std::concurrency::thread::spawn
 struct Holder
     < read: () -> I64
@@ -521,14 +563,17 @@ main = !->
     text.len!.println!
     task = choose false, plain, holder.read
     spawn task
-"#, "trait `Owned`");
+"#,
+        "trait `Owned`",
+    );
 }
 
 #[test]
 fn test_signatureless_spawn_helper_exports_residual_send_bound() {
     // `Vec ?T: Send` in the helper is proved by assuming `?T: Send`; that
     // assumption becomes a where clause, so each caller still checks it.
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 > std::concurrency::thread::spawn
 
 run = values -> spawn (-> values.len!)
@@ -537,10 +582,12 @@ main = !->
     values: Vec _ = [1, 2].into!
     handle = run values
     "ok".println!
-"#);
+"#,
+    );
     assert_eq!(output, "ok\n");
 
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 > std::concurrency::thread::spawn
 
 struct Raw
@@ -551,7 +598,9 @@ run = values -> spawn (-> values.len!)
 main = !->
     values: Vec _ = [Raw ptr: 0 as *I64].into!
     handle = run values
-"#, "does not implement trait `Send`");
+"#,
+        "does not implement trait `Send`",
+    );
 }
 
 #[test]
@@ -577,7 +626,11 @@ main = !->
     let result = rock_lib::compile(&test_config(entry, dir.clone()));
     let _ = std::fs::remove_dir_all(&dir);
     let diagnostics = result.expect_err("a non-Send capture must be rejected");
-    let messages = diagnostics.0.iter().map(|d| d.message.as_str()).collect::<Vec<_>>();
+    let messages = diagnostics
+        .0
+        .iter()
+        .map(|d| d.message.as_str())
+        .collect::<Vec<_>>();
     assert_eq!(messages.len(), 1, "{messages:?}");
     assert!(
         messages[0].contains("type `Result Raw, _` does not implement trait `Send`"),
@@ -587,11 +640,14 @@ main = !->
 
 #[test]
 fn test_unresolved_send_subject_in_entrypoint_is_still_ambiguous() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 > std::concurrency::thread::spawn
 
 main = !->
     values = Vec::new!
     handle = spawn (-> values.len!)
-"#, "ambiguous type");
+"#,
+        "ambiguous type",
+    );
 }

@@ -118,7 +118,10 @@ impl<'a> MirBuilder<'a> {
                 function_scope_locals.push(local);
                 self.ensure_drop_flag(local);
                 self.mark_place_initialized(
-                    &Place { local, projection: vec![] },
+                    &Place {
+                        local,
+                        projection: vec![],
+                    },
                     capture_span.clone(),
                 );
             }

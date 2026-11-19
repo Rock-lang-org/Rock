@@ -69,7 +69,11 @@ impl MacroImportUses {
             return Some(*id);
         }
         let id = MacroImportId(self.sites.len());
-        self.sites.push(MacroImportUsage { written, span, used: false });
+        self.sites.push(MacroImportUsage {
+            written,
+            span,
+            used: false,
+        });
         self.by_site.insert(key, id);
         Some(id)
     }

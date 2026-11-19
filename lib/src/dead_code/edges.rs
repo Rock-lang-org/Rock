@@ -177,8 +177,12 @@ impl HirVisitor for Edges {
             }
             HirExprKindFor::StructLiteral(_, id, fields) => {
                 self.ids.extend(*id);
-                self.ids
-                    .extend(fields.iter().filter_map(|field| field.field.as_ref()).map(|f| f.owner));
+                self.ids.extend(
+                    fields
+                        .iter()
+                        .filter_map(|field| field.field.as_ref())
+                        .map(|f| f.owner),
+                );
             }
             HirExprKindFor::FieldAccess(_, _, Some(field)) => self.ids.push(field.owner),
             HirExprKindFor::EnumVariant(_, _, _, Some(variant)) => {
@@ -202,8 +206,12 @@ impl HirVisitor for Edges {
             HirPattern::Struct(_, id, args, fields) => {
                 self.ids.extend(*id);
                 args.iter().for_each(|ty| self.ty(ty));
-                self.ids
-                    .extend(fields.iter().filter_map(|field| field.field.as_ref()).map(|f| f.owner));
+                self.ids.extend(
+                    fields
+                        .iter()
+                        .filter_map(|field| field.field.as_ref())
+                        .map(|f| f.owner),
+                );
             }
             HirPattern::Enum(_, _, Some(variant), _) => self.ids.push(variant.owner),
             _ => {}

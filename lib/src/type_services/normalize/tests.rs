@@ -373,5 +373,8 @@ fn leading_hole_constructor_is_the_bare_constructor_when_every_argument_is_a_hol
         leading_hole_constructor(&applied, 1, |_| Some(Kind::Type)),
         Some(constructor(id, NominalTypeKind::Enum))
     );
-    assert_eq!(leading_hole_constructor(&applied, 2, |_| Some(Kind::Type)), None);
+    assert_eq!(
+        leading_hole_constructor(&applied, 2, |_| Some(Kind::Type)),
+        None
+    );
 }

@@ -252,18 +252,40 @@ where
                 .map(|element| folder.fold_type(element))
                 .collect(),
         ),
-        Type::Function { params, ret, safety, callable_kind, captures, captures_known } => {
-            let params = params.into_iter().map(|param| folder.fold_type(param)).collect();
+        Type::Function {
+            params,
+            ret,
+            safety,
+            callable_kind,
+            captures,
+            captures_known,
+        } => {
+            let params = params
+                .into_iter()
+                .map(|param| folder.fold_type(param))
+                .collect();
             let ret = Box::new(folder.fold_type(*ret));
-            let captures = captures.into_iter().map(|capture| FunctionCapture {
-                kind: capture.kind,
-                effect: capture.effect,
-                ty: folder.fold_type(capture.ty),
-            }).collect::<Vec<_>>();
-            let callable_kind = if captures.is_empty() { callable_kind } else {
+            let captures = captures
+                .into_iter()
+                .map(|capture| FunctionCapture {
+                    kind: capture.kind,
+                    effect: capture.effect,
+                    ty: folder.fold_type(capture.ty),
+                })
+                .collect::<Vec<_>>();
+            let callable_kind = if captures.is_empty() {
+                callable_kind
+            } else {
                 crate::types::CallableKind::from_captures(&captures)
             };
-            Type::Function { params, ret, safety, callable_kind, captures, captures_known }
+            Type::Function {
+                params,
+                ret,
+                safety,
+                callable_kind,
+                captures,
+                captures_known,
+            }
         }
         Type::Struct { id, args } => Type::Struct {
             id,

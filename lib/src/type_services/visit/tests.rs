@@ -239,7 +239,10 @@ fn visitor_sees_param_and_var_array_lengths_as_leaves() {
             Box::new(Type::I64),
             crate::types::ArrayLen::Param(generic(7, 1)),
         ),
-        Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Var(TypeVarId(9))),
+        Type::Array(
+            Box::new(Type::I64),
+            crate::types::ArrayLen::Var(TypeVarId(9)),
+        ),
     ]);
     let mut recorder = Recorder::default();
     visit_type(&ty, &mut recorder);
@@ -295,7 +298,10 @@ fn substitution_rechecks_consumed_capture_capability() {
 
     let param = generic(91, 0);
     let closure = Type::function_with_metadata(
-        Vec::new(), Type::I64, FunctionSafety::Safe, CallableKind::FnOnce,
+        Vec::new(),
+        Type::I64,
+        FunctionSafety::Safe,
+        CallableKind::FnOnce,
         vec![FunctionCapture {
             kind: CaptureKind::Move,
             effect: CaptureEffect::Consume,
@@ -303,5 +309,11 @@ fn substitution_rechecks_consumed_capture_capability() {
         }],
     );
     let substituted = closure.substitute_generics(&HashMap::from([(param, Type::I64)]));
-    assert!(matches!(substituted, Type::Function { callable_kind: CallableKind::Fn, .. }));
+    assert!(matches!(
+        substituted,
+        Type::Function {
+            callable_kind: CallableKind::Fn,
+            ..
+        }
+    ));
 }

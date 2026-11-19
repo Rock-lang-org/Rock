@@ -230,7 +230,14 @@ fn process_resolved_generic_function_argument_uses_def_id_not_reference_name() {
         .expect("instance is recorded");
     assert_eq!(record.origin, InstanceOrigin::Function(identity_id));
     assert_ne!(record.origin, InstanceOrigin::Function(wrong_id));
-    assert_eq!(args[0].ty, Type::function_item(vec![Type::I64], Type::I64, crate::types::FunctionSafety::Safe));
+    assert_eq!(
+        args[0].ty,
+        Type::function_item(
+            vec![Type::I64],
+            Type::I64,
+            crate::types::FunctionSafety::Safe
+        )
+    );
 }
 
 #[test]
@@ -281,8 +288,14 @@ fn process_targetless_generic_function_argument_does_not_specialize_by_name() {
         panic!("expression should remain a call");
     };
     assert!(matches!(&args[0].kind, HirExprKind::Var(name) if name == "identity"));
-    assert!(mono.instances.records().all(|record| record.origin != InstanceOrigin::Function(identity_id)));
-    assert!(mono.instances.records().any(|record| record.origin == InstanceOrigin::Function(apply_id)));
+    assert!(mono
+        .instances
+        .records()
+        .all(|record| record.origin != InstanceOrigin::Function(identity_id)));
+    assert!(mono
+        .instances
+        .records()
+        .any(|record| record.origin == InstanceOrigin::Function(apply_id)));
 }
 
 #[test]

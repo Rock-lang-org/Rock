@@ -99,7 +99,9 @@ impl BodyState {
     }
 
     pub(crate) fn requires_reusable_callable(&self, binding_scope: usize) -> bool {
-        self.reusable_call_scopes.iter().any(|scope| binding_scope < *scope)
+        self.reusable_call_scopes
+            .iter()
+            .any(|scope| binding_scope < *scope)
     }
 
     /// Hides the enclosing loops (a lambda body cannot break out of them).

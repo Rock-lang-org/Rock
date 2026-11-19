@@ -747,17 +747,35 @@ fn closure_body_effect_is_resolved_after_numeric_defaulting() {
 
     let mut engine = InferenceEngine::new();
     let literal = engine.fresh_type_var();
-    let Type::TypeVar(var) = literal else { panic!("expected type variable") };
+    let Type::TypeVar(var) = literal else {
+        panic!("expected type variable")
+    };
     let mut constraints = ConstraintStore::new();
     constraints.add_int_literal(var, crate::lexer::Span::test());
     let closure = Type::function_with_metadata(
-        Vec::new(), Type::I64, FunctionSafety::Safe, CallableKind::FnOnce,
-        vec![FunctionCapture { kind: CaptureKind::Move, effect: CaptureEffect::Consume, ty: literal }],
+        Vec::new(),
+        Type::I64,
+        FunctionSafety::Safe,
+        CallableKind::FnOnce,
+        vec![FunctionCapture {
+            kind: CaptureKind::Move,
+            effect: CaptureEffect::Consume,
+            ty: literal,
+        }],
     );
     engine.apply_numeric_defaults(&constraints);
     let mut errors = Vec::new();
-    for resolved in [engine.resolve(&closure), engine.finalize_strict(&closure, &mut errors)] {
-        assert!(matches!(resolved, Type::Function { callable_kind: CallableKind::Fn, .. }));
+    for resolved in [
+        engine.resolve(&closure),
+        engine.finalize_strict(&closure, &mut errors),
+    ] {
+        assert!(matches!(
+            resolved,
+            Type::Function {
+                callable_kind: CallableKind::Fn,
+                ..
+            }
+        ));
     }
     assert!(errors.is_empty());
 }

@@ -143,9 +143,16 @@ impl<'ctx> CodeGen<'ctx> {
         type_args: &[Type],
     ) -> Result<Vec<BasicTypeEnum<'ctx>>, CodegenError> {
         let mut field_types = vec![self.context.i32_type().into()];
-        let variants = self.nominal_layouts.enum_variants(&id).ok_or_else(|| CodegenError::layout(format!("unknown nominal enum DefId {id:?}")))?;
+        let variants = self
+            .nominal_layouts
+            .enum_variants(&id)
+            .ok_or_else(|| CodegenError::layout(format!("unknown nominal enum DefId {id:?}")))?;
         for variant_idx in 0..variants.len() {
-            let payload_ty = self.enum_variant_payload_type_by_id(id, type_args, variant_idx).ok_or_else(|| CodegenError::layout(format!("unknown enum payload {id:?}:{variant_idx}")))?;
+            let payload_ty = self
+                .enum_variant_payload_type_by_id(id, type_args, variant_idx)
+                .ok_or_else(|| {
+                    CodegenError::layout(format!("unknown enum payload {id:?}:{variant_idx}"))
+                })?;
             field_types.push(self.llvm_type(&payload_ty)?);
         }
         Ok(field_types)
@@ -177,9 +184,14 @@ impl<'ctx> CodeGen<'ctx> {
         })
     }
 
-    pub(crate) fn llvm_type_id(&self, ty: crate::ids::TypeId) -> Result<BasicTypeEnum<'ctx>, CodegenError> {
+    pub(crate) fn llvm_type_id(
+        &self,
+        ty: crate::ids::TypeId,
+    ) -> Result<BasicTypeEnum<'ctx>, CodegenError> {
         if self.type_view().kind(ty) != &crate::type_services::kind::Kind::Type {
-            return Err(CodegenError::internal("backend layout requested for non-runtime TypeId"));
+            return Err(CodegenError::internal(
+                "backend layout requested for non-runtime TypeId",
+            ));
         }
         let structural = self.structural_type_for(ty);
         self.llvm_type(&structural)
@@ -229,33 +241,42 @@ impl<'ctx> CodeGen<'ctx> {
             Type::Never => self.context.i64_type().into(),
             Type::Slice(_) => self.slice_layout_type().into(),
             Type::Array(inner, len) => {
-                let len = len.concrete().ok_or_else(|| CodegenError::non_concrete_array_len(len))?;
-                let len = u32::try_from(len).map_err(|_| CodegenError::layout("array length exceeds the LLVM array layout limit"))?;
+                let len = len
+                    .concrete()
+                    .ok_or_else(|| CodegenError::non_concrete_array_len(len))?;
+                let len = u32::try_from(len).map_err(|_| {
+                    CodegenError::layout("array length exceeds the LLVM array layout limit")
+                })?;
                 self.llvm_type(inner)?.array_type(len).into()
             }
             Type::Tuple(elems) => {
-                let field_types: Vec<BasicTypeEnum<'ctx>> =
-                    elems.iter().map(|t| self.llvm_type(t)).collect::<Result<_, _>>()?;
+                let field_types: Vec<BasicTypeEnum<'ctx>> = elems
+                    .iter()
+                    .map(|t| self.llvm_type(t))
+                    .collect::<Result<_, _>>()?;
                 self.context.struct_type(&field_types, false).into()
             }
             Type::Struct {
                 id,
                 args: type_args,
             } => {
-                let fields = self
-                    .nominal_layouts
-                    .struct_fields(id)
-                    .ok_or_else(|| CodegenError::layout(format!("unknown nominal struct DefId {id:?}")))?;
+                let fields = self.nominal_layouts.struct_fields(id).ok_or_else(|| {
+                    CodegenError::layout(format!("unknown nominal struct DefId {id:?}"))
+                })?;
                 let subst = self.struct_substitution_by_id(*id, type_args);
                 let field_types: Vec<BasicTypeEnum<'ctx>> = fields
                     .iter()
                     .map(|(_, t)| {
                         let t = self.structural_type_for(*t);
                         let concrete = t.substitute_generics(&subst);
-                        let concrete = self
-                            .type_context()
-                            .normalize_type(&concrete)
-                            .map_err(|error| CodegenError::layout(format!("invalid struct layout substitution: {error:?}")))?;
+                        let concrete =
+                            self.type_context()
+                                .normalize_type(&concrete)
+                                .map_err(|error| {
+                                    CodegenError::layout(format!(
+                                        "invalid struct layout substitution: {error:?}"
+                                    ))
+                                })?;
                         self.llvm_type(&concrete)
                     })
                     .collect::<Result<_, _>>()?;
@@ -265,8 +286,7 @@ impl<'ctx> CodeGen<'ctx> {
                 id,
                 args: type_args,
             } => {
-                let layout_types = self
-                    .enum_layout_types_by_id(*id, type_args)?;
+                let layout_types = self.enum_layout_types_by_id(*id, type_args)?;
                 self.context.struct_type(&layout_types, false).into()
             }
             Type::Function { .. } => self.callable_type().into(),
@@ -285,7 +305,9 @@ impl<'ctx> CodeGen<'ctx> {
             | Type::BoundVar { .. }
             | Type::ConstValue(_)
             | Type::Error => {
-                return Err(CodegenError::internal(format!("backend-forbidden type reached LLVM lowering: {ty}")));
+                return Err(CodegenError::internal(format!(
+                    "backend-forbidden type reached LLVM lowering: {ty}"
+                )));
             }
         })
     }

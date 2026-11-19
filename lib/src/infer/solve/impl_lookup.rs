@@ -94,13 +94,14 @@ pub(super) fn explicit_impl_exists_for<P: HirPhase>(
     builtin_traits: BuiltinTraitIds,
     assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) -> bool {
-    let marker_provider_crate =
-        if builtin_traits.send == Some(trait_id) || builtin_traits.sync == Some(trait_id)
-            || builtin_traits.owned == Some(trait_id) {
-            Some(trait_id.crate_id)
-        } else {
-            None
-        };
+    let marker_provider_crate = if builtin_traits.send == Some(trait_id)
+        || builtin_traits.sync == Some(trait_id)
+        || builtin_traits.owned == Some(trait_id)
+    {
+        Some(trait_id.crate_id)
+    } else {
+        None
+    };
     let mut impl_ids = impls.keys().copied().collect::<Vec<_>>();
     impl_ids.sort();
     impl_ids.into_iter().any(|id| {

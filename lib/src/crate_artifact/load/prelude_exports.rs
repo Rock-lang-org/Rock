@@ -42,9 +42,14 @@ pub(super) fn normalize_product_prelude_exports(
         })?;
         let def_id =
             product_def_id_to_prelude_export_def_id(products, remap, *id)?.ok_or_else(|| {
-                format!("Product artifact prelude variant export '{alias}' has no canonical enum ID")
+                format!(
+                    "Product artifact prelude variant export '{alias}' has no canonical enum ID"
+                )
             })?;
-        let source = format!("{}::{variant}", qualify_product_name(crate_name, &display_name));
+        let source = format!(
+            "{}::{variant}",
+            qualify_product_name(crate_name, &display_name)
+        );
         normalized_ids.insert(alias.clone(), ArtifactExport { source, id: def_id });
     }
 

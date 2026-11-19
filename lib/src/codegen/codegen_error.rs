@@ -66,7 +66,9 @@ impl CodegenError {
     /// An array length that is still symbolic at code generation. Monomorphization
     /// reports unresolved lengths as source diagnostics, so reaching this is a
     /// compiler bug that must not crash the process.
-    pub(super) fn non_concrete_array_len(len: impl std::borrow::Borrow<crate::types::ArrayLen>) -> Self {
+    pub(super) fn non_concrete_array_len(
+        len: impl std::borrow::Borrow<crate::types::ArrayLen>,
+    ) -> Self {
         Self::internal(format!(
             "array length {:?} is not concrete after monomorphization",
             len.borrow()

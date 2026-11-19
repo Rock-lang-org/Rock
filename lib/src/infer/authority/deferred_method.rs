@@ -86,13 +86,19 @@ impl MethodAuthorityContext<'_> {
         let Type::TypeVar(id) = self.resolved_type(&receiver.ty) else {
             return None;
         };
-        let mut members = inferred.iter().map(|candidate| match &candidate.target.target {
-            crate::hir::HirSelectedMethodTarget::ImplMethod {
-                selected_trait: Some(selected),
-                ..
-            } => Some((selected.trait_id, selected.member_id, selected.trait_args.clone())),
-            _ => None,
-        });
+        let mut members = inferred
+            .iter()
+            .map(|candidate| match &candidate.target.target {
+                crate::hir::HirSelectedMethodTarget::ImplMethod {
+                    selected_trait: Some(selected),
+                    ..
+                } => Some((
+                    selected.trait_id,
+                    selected.member_id,
+                    selected.trait_args.clone(),
+                )),
+                _ => None,
+            });
         let (trait_id, member_id, sample_args) = members.next()??;
         if !members.all(|member| {
             member.is_some_and(|(other_trait, other_member, other_args)| {
@@ -348,9 +354,13 @@ impl MethodAuthorityContext<'_> {
                     self.ambiguous = true;
                     return None;
                 }
-                if let Some(selected) =
-                    self.select_shared_trait_member(receiver, &receiver_candidates, &inferred, method_name, args)
-                {
+                if let Some(selected) = self.select_shared_trait_member(
+                    receiver,
+                    &receiver_candidates,
+                    &inferred,
+                    method_name,
+                    args,
+                ) {
                     return Some(selected);
                 }
                 if let Some(expected) = _expected_ty.map(|ty| self.resolved_type(ty)) {

@@ -214,7 +214,10 @@ pub enum ParseType {
     Lambda(TypeLambda),
     Hole(TypeHole),
     /// A literal `usize` type argument: the `3` in `Buf I64, 3`.
-    ConstValue { value: u64, span: Span },
+    ConstValue {
+        value: u64,
+        span: Span,
+    },
     Associated {
         base: ParseTypeInner,
         member: Ident,

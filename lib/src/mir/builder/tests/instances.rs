@@ -71,7 +71,8 @@ fn build_monomorphized_uses_explicit_instance_body_table() {
         ownership: Default::default(),
     });
 
-    let mir = MirBuilder::build_monomorphized_with_instance_bodies(&monomorphized, &bodies).unwrap();
+    let mir =
+        MirBuilder::build_monomorphized_with_instance_bodies(&monomorphized, &bodies).unwrap();
 
     let id = crate::mir::MirFunctionId::Instance(instance_id);
     let function = mir.function(id.clone()).expect("instance MIR body");

@@ -7,7 +7,15 @@ fn h3_layout_errors_propagate_for_symbolic_array_lengths() {
     use crate::types::ArrayLen;
     let context = Context::create();
     let mut codegen = CodeGen::new(&context, "h3_layout");
-    for len in [ArrayLen::Error, ArrayLen::Var(crate::ids::TypeVarId(7)), ArrayLen::Bound { depth: 0, index: 0 }, ArrayLen::Param(crate::types::GenericParamId { owner: DefId::new(CrateId(0), LocalDefId(1)), index: 0 })] {
+    for len in [
+        ArrayLen::Error,
+        ArrayLen::Var(crate::ids::TypeVarId(7)),
+        ArrayLen::Bound { depth: 0, index: 0 },
+        ArrayLen::Param(crate::types::GenericParamId {
+            owner: DefId::new(CrateId(0), LocalDefId(1)),
+            index: 0,
+        }),
+    ] {
         let array = Type::Array(Box::new(Type::I64), len);
         let mut types = crate::type_context::TypeContext::new();
         let id = types.intern_canonical_type(&array);
@@ -19,21 +27,48 @@ fn h3_layout_errors_propagate_for_symbolic_array_lengths() {
         ] {
             assert!(result.unwrap_err().message.contains("not concrete"));
         }
-        assert!(codegen.callable_code_type(&[array.clone()], &Type::Unit).is_err());
+        assert!(codegen
+            .callable_code_type(&[array.clone()], &Type::Unit)
+            .is_err());
         assert!(codegen.callable_code_type(&[], &array).is_err());
-        assert!(codegen.llvm_param_type(&crate::mir::MirParamAbi { semantic_ty: id, pass_mode: crate::mir::MirPassMode::Direct }).is_err());
+        assert!(codegen
+            .llvm_param_type(&crate::mir::MirParamAbi {
+                semantic_ty: id,
+                pass_mode: crate::mir::MirPassMode::Direct
+            })
+            .is_err());
         let owner = DefId::new(CrateId(0), LocalDefId(2));
-        codegen.nominal_layouts.register_struct(owner, vec![("items".to_string(), id)], Vec::new());
-        assert!(codegen.llvm_type(&Type::Struct { id: owner, args: Vec::new() }).is_err());
-        codegen.nominal_layouts.register_enum(owner, vec![crate::codegen::CodegenEnumVariantLayout {
-            fields: crate::codegen::CodegenEnumVariantFields::Positional(vec![id]),
-        }], Vec::new());
+        codegen
+            .nominal_layouts
+            .register_struct(owner, vec![("items".to_string(), id)], Vec::new());
+        assert!(codegen
+            .llvm_type(&Type::Struct {
+                id: owner,
+                args: Vec::new()
+            })
+            .is_err());
+        codegen.nominal_layouts.register_enum(
+            owner,
+            vec![crate::codegen::CodegenEnumVariantLayout {
+                fields: crate::codegen::CodegenEnumVariantFields::Positional(vec![id]),
+            }],
+            Vec::new(),
+        );
         assert!(codegen.enum_layout_types_by_id(owner, &[]).is_err());
     }
     for len in [0, 3] {
-        assert_eq!(codegen.llvm_type(&Type::Array(Box::new(Type::I64), ArrayLen::Value(len))).unwrap().into_array_type().len(), len as u32);
+        assert_eq!(
+            codegen
+                .llvm_type(&Type::Array(Box::new(Type::I64), ArrayLen::Value(len)))
+                .unwrap()
+                .into_array_type()
+                .len(),
+            len as u32
+        );
     }
-    assert!(codegen.llvm_type(&Type::Array(Box::new(Type::I64), ArrayLen::Value(u64::MAX))).is_err());
+    assert!(codegen
+        .llvm_type(&Type::Array(Box::new(Type::I64), ArrayLen::Value(u64::MAX)))
+        .is_err());
 }
 
 use crate::ids::{AssocTypeId, CrateId, DefId, LocalDefId};
@@ -231,10 +266,12 @@ fn test_unknown_nominal_struct_id_fails_explicitly() {
     let mut codegen = CodeGen::new(&context, "test");
     codegen.set_type_context(crate::type_context::TypeContext::new());
 
-    let error = codegen.llvm_type(&Type::Struct {
-        id: crate::ids::DefId::new(crate::ids::CrateId(99), crate::ids::LocalDefId(0)),
-        args: Vec::new(),
-    }).unwrap_err();
+    let error = codegen
+        .llvm_type(&Type::Struct {
+            id: crate::ids::DefId::new(crate::ids::CrateId(99), crate::ids::LocalDefId(0)),
+            args: Vec::new(),
+        })
+        .unwrap_err();
     assert!(error.message.contains("unknown nominal struct DefId"));
 }
 
@@ -281,7 +318,10 @@ fn resolve_projection_type_requires_contract_output_for_array_projection() {
     let assoc_type_id = AssocTypeId(0);
 
     let projection = Type::Projection {
-        ty: Box::new(Type::Array(Box::new(Type::I64), crate::types::ArrayLen::Value(3))),
+        ty: Box::new(Type::Array(
+            Box::new(Type::I64),
+            crate::types::ArrayLen::Value(3),
+        )),
         trait_id: local_trait_id,
         assoc_type: AssociatedTypeKey {
             owner: local_trait_id,

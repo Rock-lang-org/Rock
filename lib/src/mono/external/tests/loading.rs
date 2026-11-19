@@ -61,8 +61,13 @@ fn process_with_crates_uses_link_provider_for_object_backed_functions() {
     let mut mono = Monomorphizer::new();
     let output = wrapped_process_with_crates(&mut mono, program, &crate_ctx);
 
-    assert!(output.instances.is_empty(), "unused object symbols are not instances");
-    let instance = mono.demand_function(answer_id).expect("referenced function should be available");
+    assert!(
+        output.instances.is_empty(),
+        "unused object symbols are not instances"
+    );
+    let instance = mono
+        .demand_function(answer_id)
+        .expect("referenced function should be available");
     let record = mono.instances.record(instance).unwrap();
     assert_eq!(record.symbols.backend_symbol, "dep::answer");
     assert!(record.provided_by_object);
@@ -98,7 +103,9 @@ fn process_with_crates_uses_artifact_backend_symbols_for_object_backed_functions
     let output = wrapped_process_with_crates(&mut mono, program, &crate_ctx);
 
     assert!(output.instances.is_empty());
-    let instance = mono.demand_function(answer_id).expect("referenced function should be available");
+    let instance = mono
+        .demand_function(answer_id)
+        .expect("referenced function should be available");
     let record = mono.instances.record(instance).unwrap();
     assert_eq!(record.symbols.source_name, "dep::answer");
     assert_eq!(record.symbols.backend_symbol, "artifact_dep_answer");

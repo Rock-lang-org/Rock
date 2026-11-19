@@ -107,7 +107,10 @@ impl CollectContext {
             }
         }
         for (alias, target) in &metadata.resolver().variant_exports {
-            if let Some(owner) = interface.canonical_names.get(&target.enum_id).map(String::as_str)
+            if let Some(owner) = interface
+                .canonical_names
+                .get(&target.enum_id)
+                .map(String::as_str)
                 .or_else(|| self.names.canonical_name(target.enum_id))
             {
                 let qualified = if alias.starts_with(&format!("{crate_name}::")) {
@@ -115,7 +118,8 @@ impl CollectContext {
                 } else {
                     format!("{crate_name}::{alias}")
                 };
-                self.names.set_dependency_export_alias(qualified, format!("{owner}::{}", target.variant));
+                self.names
+                    .set_dependency_export_alias(qualified, format!("{owner}::{}", target.variant));
             }
         }
 

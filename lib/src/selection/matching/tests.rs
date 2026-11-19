@@ -225,7 +225,10 @@ fn higher_kinded_blanket_matches_constructor_sections_without_guessing() {
 #[test]
 fn selection_receiver_pattern_cover_nominal_array_slice_and_ref() {
     assert_eq!(
-        receiver_pattern(&Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(4))),
+        receiver_pattern(&Type::Array(
+            Box::new(Type::U8),
+            crate::types::ArrayLen::Value(4)
+        )),
         vec![Type::U8]
     );
     assert_eq!(
@@ -429,10 +432,7 @@ fn array_pattern_binds_const_param_to_other_const_param() {
         owner: def_id(81),
         index: 0,
     };
-    let actual = Type::Array(
-        Box::new(Type::U8),
-        crate::types::ArrayLen::Param(other),
-    );
+    let actual = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Param(other));
     let mut subst = HashMap::new();
 
     assert!(type_pattern_matches(&pattern, &actual, &mut subst));
@@ -479,7 +479,11 @@ fn array_pattern_keeps_concrete_length_mismatch_rejected() {
     let pattern = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(3));
     let actual = Type::Array(Box::new(Type::U8), crate::types::ArrayLen::Value(4));
 
-    assert!(!type_pattern_matches(&pattern, &actual, &mut HashMap::new()));
+    assert!(!type_pattern_matches(
+        &pattern,
+        &actual,
+        &mut HashMap::new()
+    ));
 }
 
 #[test]

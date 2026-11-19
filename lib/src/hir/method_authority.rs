@@ -548,7 +548,8 @@ fn validate_method_authorities_in_expr(
         | HirExprKindFor::UnsafeBlock(body) => {
             validate_method_authorities_in_block(program, body, errors)
         }
-        HirExprKindFor::IntLiteral(_) | HirExprKindFor::ConstParam(_)
+        HirExprKindFor::IntLiteral(_)
+        | HirExprKindFor::ConstParam(_)
         | HirExprKindFor::FloatLiteral(_)
         | HirExprKindFor::BoolLiteral(_)
         | HirExprKindFor::StringLiteral(_)

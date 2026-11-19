@@ -11,7 +11,14 @@ fn test_read_to_string_preserves_whole_file_bytes() {
     // Put a multibyte character across the read-buffer boundary.
     let large = format!("{}é\n{}", "x".repeat(8191), "tail\0🙂\n".repeat(3000));
     let partial = format!("{}end", "b".repeat(8192));
-    let cases = ["", "ordinary text\nsecond line\n", "héllo 世界🙂\n", "before\0after\n", &large, &partial];
+    let cases = [
+        "",
+        "ordinary text\nsecond line\n",
+        "héllo 世界🙂\n",
+        "before\0after\n",
+        &large,
+        &partial,
+    ];
     let mut source = String::from(
         r#"
 > std::io::fs::read_to_string
@@ -105,11 +112,19 @@ fn test_read_to_string_continues_after_short_reads() {
     fs::create_dir_all(&dir).unwrap();
     let _cleanup = TestDirCleanup(dir.clone());
     let fifo = dir.join("input.pipe");
-    assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+    assert!(std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .unwrap()
+        .success());
     let writer = std::thread::spawn(move || {
         let mut pipe = fs::OpenOptions::new().write(true).open(fifo).unwrap();
         // Separate short writes, including a UTF-8 character split across reads.
-        for chunk in [b"first\n\xc3".as_slice(), b"\xa9\0middle".as_slice(), b"\nlast\n".as_slice()] {
+        for chunk in [
+            b"first\n\xc3".as_slice(),
+            b"\xa9\0middle".as_slice(),
+            b"\nlast\n".as_slice(),
+        ] {
             pipe.write_all(chunk).unwrap();
             std::thread::sleep(std::time::Duration::from_millis(50));
         }

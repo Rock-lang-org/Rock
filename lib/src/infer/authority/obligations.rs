@@ -8,8 +8,7 @@ use super::propagate::propagate_block;
 use super::sites::{collect_authority_sites, materialize_authority_site};
 use super::status::{authority_counts, authority_pass_result, owner_selected};
 use super::type_vars::{
-    collect_block_type_vars, collect_type_vars, constrained_signature_vars,
-    receiver_signature_vars,
+    collect_block_type_vars, collect_type_vars, constrained_signature_vars, receiver_signature_vars,
 };
 use super::{
     AuthorityObligation, AuthorityObligationId, AuthorityObligationKind, AuthorityPassResult,

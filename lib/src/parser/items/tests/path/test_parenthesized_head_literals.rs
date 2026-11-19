@@ -45,7 +45,13 @@ fn test_parenthesized_path_head_keeps_numbers_as_expressions() {
 
 #[test]
 fn test_parenthesized_tuples_and_calls_with_numbers_are_unchanged() {
-    for source in ["(a, 3)", "(Foo, 3)", "(f a, 3)", "keep (f a, 3)", "keep (a, 3), 4"] {
+    for source in [
+        "(a, 3)",
+        "(Foo, 3)",
+        "(f a, 3)",
+        "keep (f a, 3)",
+        "keep (a, 3), 4",
+    ] {
         let rendered = parse_expression_debug(source);
         assert!(
             !rendered.contains("ConstValue"),

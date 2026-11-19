@@ -24,7 +24,8 @@ impl Monomorphizer {
             }
             let mut processed_body = self.process_function(body);
             processed_body.id = original_id;
-            self.instances.replace_pre_mir_body(instance_id, processed_body);
+            self.instances
+                .replace_pre_mir_body(instance_id, processed_body);
         }
     }
 
@@ -138,7 +139,8 @@ impl Monomorphizer {
                 while let crate::types::Type::Reference { inner, .. } = base_ty {
                     base_ty = inner;
                 }
-                if !matches!(base_ty, crate::types::Type::Struct { id, .. } if *id == location.owner) {
+                if !matches!(base_ty, crate::types::Type::Struct { id, .. } if *id == location.owner)
+                {
                     self.diagnostics.push(
                         crate::diagnostic::Diagnostic::new(
                             format!(

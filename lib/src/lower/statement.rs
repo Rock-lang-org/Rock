@@ -61,15 +61,16 @@ impl Lowerer {
         let mut body = self.lower_block(&lambda.body);
         // A literal returned from an inferred callable carries numeric evidence,
         // not a committed I64: callers may supply its expected integer type.
-        let inferred_return = self.current_body_return_type().is_some_and(|ty| {
-            matches!(self.engine.resolve(&ty), Type::TypeVar(_))
-        });
+        let inferred_return = self
+            .current_body_return_type()
+            .is_some_and(|ty| matches!(self.engine.resolve(&ty), Type::TypeVar(_)));
         if inferred_return && !matches!(lambda.arrow_kind, ast::LambdaArrowKind::Unit) {
             if let Some(HirStmt::Expr(value)) = body.stmts.last_mut() {
                 if matches!(value.kind, HirExprKind::IntLiteral(_)) {
                     let ty = self.engine.fresh_type_var_at(value.span.clone());
                     if let Type::TypeVar(var) = ty {
-                        self.constraint_store.add_int_literal(var, value.span.clone());
+                        self.constraint_store
+                            .add_int_literal(var, value.span.clone());
                     }
                     value.ty = ty.clone();
                     body.ty = ty;
@@ -228,8 +229,9 @@ impl Lowerer {
                 .constraint_store
                 .int_literal_vars()
                 .any(|var| self.engine.resolve(&Type::TypeVar(var)) == expected);
-            let concrete_non_integer = !matches!(value, Type::TypeVar(_) | Type::Never | Type::Error)
-                && !value.is_integer();
+            let concrete_non_integer =
+                !matches!(value, Type::TypeVar(_) | Type::Never | Type::Error)
+                    && !value.is_integer();
             if integer_literal && concrete_non_integer {
                 let message = format!(
                     "Return type mismatch: this body returns an integer, but this `return` gives `{}`",

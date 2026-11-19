@@ -390,20 +390,23 @@ fn test_borrow_shared_ref_blocks_move_rust_parity() {
 
 #[test]
 fn test_copy_capture_keeps_original_value_after_source_reassignment() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     mut x = 1
     f = -> x.println!
     x = 2
     f!
     x.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "1\n2");
 }
 
 #[test]
 fn test_copying_closure_preserves_copied_capture_snapshot() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     mut x = 1
     f = -> x.println!
@@ -411,13 +414,17 @@ main = !->
     x = 2
     g!
     x.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "1\n2");
 }
 
 #[test]
 fn test_borrowing_closure_cannot_consume_capture_needed_later() {
-    compile_example_should_fail("mir_tests/closure_move_capture_moves_value", "out of a reference");
+    compile_example_should_fail(
+        "mir_tests/closure_move_capture_moves_value",
+        "out of a reference",
+    );
 }
 
 #[test]

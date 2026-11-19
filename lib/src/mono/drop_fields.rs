@@ -126,5 +126,4 @@ impl Monomorphizer {
         self.drop_field_monomorphization_in_progress
             .remove(&type_key);
     }
-
 }

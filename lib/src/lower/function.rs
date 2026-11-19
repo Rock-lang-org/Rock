@@ -245,11 +245,17 @@ impl Lowerer {
             if param.owner == generic_owner {
                 if let Some(name) = generic_context_params.get(param.index as usize) {
                     if name != "Self" {
-                        public_signature_generic_params
-                            .push(GenericParamDecl::new(*param, name.clone(), param_kind(param)));
+                        public_signature_generic_params.push(GenericParamDecl::new(
+                            *param,
+                            name.clone(),
+                            param_kind(param),
+                        ));
                     } else {
-                        hidden_signature_generic_params
-                            .push(GenericParamDecl::new(*param, name.clone(), param_kind(param)));
+                        hidden_signature_generic_params.push(GenericParamDecl::new(
+                            *param,
+                            name.clone(),
+                            param_kind(param),
+                        ));
                     }
                 }
             }

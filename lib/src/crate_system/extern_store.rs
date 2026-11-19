@@ -207,7 +207,6 @@ impl ExternBodyProviders {
     pub(crate) fn generic_impls(&self) -> &BTreeMap<DefId, HirImpl> {
         &self.generic_impls_by_id
     }
-
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

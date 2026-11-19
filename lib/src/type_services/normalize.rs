@@ -715,8 +715,10 @@ fn contains_bound_group(ty: &Type, nested_depth: u32) -> bool {
     match ty {
         Type::BoundVar { depth, .. } => *depth == nested_depth,
         Type::Lambda { body, .. } => contains_bound_group(body, nested_depth + 1),
-        Type::Array(inner, len) => contains_bound_group(&len.to_const_type(), nested_depth)
-            || contains_bound_group(inner, nested_depth),
+        Type::Array(inner, len) => {
+            contains_bound_group(&len.to_const_type(), nested_depth)
+                || contains_bound_group(inner, nested_depth)
+        }
         other => type_children(other)
             .into_iter()
             .any(|child| contains_bound_group(child, nested_depth)),

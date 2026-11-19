@@ -233,7 +233,12 @@ fn test_product_artifact_imported_extern_call_links_by_def_id() {
     let dep_dir = temp_dir.join("dep");
     let artifact_path = temp_dir.join("dep.rkca");
 
-    write_crate(&dep_dir, "dep", "", "extern tolower: I32 -> I32\n< tolower\n");
+    write_crate(
+        &dep_dir,
+        "dep",
+        "",
+        "extern tolower: I32 -> I32\n< tolower\n",
+    );
     build_product_artifact(&dep_dir, "dep", &artifact_path, true, true);
 
     let exit_code = write_and_run_artifact_app(

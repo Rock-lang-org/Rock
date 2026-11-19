@@ -1,8 +1,6 @@
 use crate::types::Type;
 
-use crate::mir::{
-    BasicBlockId, MirClosureCaptureKind, Operand, Place, Rvalue, Terminator,
-};
+use crate::mir::{BasicBlockId, MirClosureCaptureKind, Operand, Place, Rvalue, Terminator};
 
 use super::*;
 

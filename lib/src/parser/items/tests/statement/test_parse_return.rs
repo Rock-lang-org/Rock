@@ -16,16 +16,17 @@ fn test_parse_return() {
 
     assert_formatted_eq(
         &statement,
-        &Statement::Return(Some(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(
-            PrimaryExpr {
+        &Statement::Return(
+            Some(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
                 operand: Operand::Literal(Literal {
                     kind: crate::ast::LiteralKind::Number(1),
                     span: Span::test(),
                 }),
                 secondaries: None,
                 type_annotation: None,
-            },
-        ))), Span::test()),
+            }))),
+            Span::test(),
+        ),
     );
 
     assert_eq!(rest.len(), 0);

@@ -6,7 +6,10 @@ fn drop_fixture() -> (Monomorphizer, Type) {
     let impl_id = DefId::new(CrateId(0), LocalDefId(2002));
     let method_id = DefId::new(CrateId(0), LocalDefId(2003));
     let owner = DefId::new(CrateId(0), LocalDefId(2004));
-    let ty = Type::Struct { id: owner, args: Vec::new() };
+    let ty = Type::Struct {
+        id: owner,
+        args: Vec::new(),
+    };
     let method = HirFunction {
         id: method_id,
         name: "drop".to_string(),
@@ -20,7 +23,10 @@ fn drop_fixture() -> (Monomorphizer, Type) {
             is_ref: true,
         }],
         ret_type: Type::Unit,
-        body: HirBlock { stmts: Vec::new(), ty: Type::Unit },
+        body: HirBlock {
+            stmts: Vec::new(),
+            ty: Type::Unit,
+        },
         is_curried: false,
         is_method: true,
         self_receiver: Some(crate::types::ReceiverMode::Mut),
@@ -44,7 +50,8 @@ fn drop_fixture() -> (Monomorphizer, Type) {
     mono.drop_trait_id = Some(trait_id);
     mono.drop_method_id = Some(member_id);
     mono.trait_impls.insert(trait_id, vec![imp]);
-    mono.effective_trait_methods.insert((impl_id, member_id), method_id);
+    mono.effective_trait_methods
+        .insert((impl_id, member_id), method_id);
     (mono, ty)
 }
 
@@ -60,7 +67,8 @@ fn structural_owners_demand_element_destructors() {
                 let mut closure = Type::function(Vec::new(), Type::Unit);
                 if let Type::Function { captures, .. } = &mut closure {
                     captures.push(crate::types::FunctionCapture::new(
-                        crate::types::CaptureKind::Move, element.clone(),
+                        crate::types::CaptureKind::Move,
+                        element.clone(),
                     ));
                 }
                 closure
@@ -69,7 +77,10 @@ fn structural_owners_demand_element_destructors() {
         mono.monomorphize_drop_for_type(&ty, None);
         assert!(mono.diagnostics.0.is_empty(), "{:?}", mono.diagnostics);
         let element_id = mono.intern_type(&element);
-        assert!(mono.generated_drop_instances.contains_key(&element_id), "shape {shape}");
+        assert!(
+            mono.generated_drop_instances.contains_key(&element_id),
+            "shape {shape}"
+        );
         assert_eq!(mono.instances.len(), 1);
     }
 }
@@ -81,7 +92,10 @@ fn empty_arrays_and_borrowed_pointees_do_not_demand_destructors() {
         let ty = if shape == 0 {
             Type::Array(Box::new(element), crate::types::ArrayLen::Value(0))
         } else {
-            Type::Reference { mutable: false, inner: Box::new(element) }
+            Type::Reference {
+                mutable: false,
+                inner: Box::new(element),
+            }
         };
         mono.monomorphize_drop_for_type(&ty, None);
         assert_eq!(mono.instances.len(), 0);

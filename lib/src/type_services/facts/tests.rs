@@ -149,7 +149,9 @@ fn type_facts_include_function_capture_types_and_modes() {
 #[test]
 fn owning_mutable_closure_environment_is_not_aliased_by_copy() {
     let closure = Type::function_with_metadata(
-        Vec::new(), Type::I64, crate::types::FunctionSafety::Safe,
+        Vec::new(),
+        Type::I64,
+        crate::types::FunctionSafety::Safe,
         crate::types::CallableKind::FnMut,
         vec![crate::types::FunctionCapture {
             kind: crate::types::CaptureKind::Move,

@@ -364,7 +364,8 @@ fn remap_expr_owned_type_ids<P: HirPhase>(
             remap_expr_owned_type_ids(inner, old_id, new_id);
             remap_type_owned_generic_owner(ty, old_id, new_id);
         }
-        crate::hir::HirExprKindFor::IntLiteral(_) | crate::hir::HirExprKindFor::ConstParam(_)
+        crate::hir::HirExprKindFor::IntLiteral(_)
+        | crate::hir::HirExprKindFor::ConstParam(_)
         | crate::hir::HirExprKindFor::FloatLiteral(_)
         | crate::hir::HirExprKindFor::BoolLiteral(_)
         | crate::hir::HirExprKindFor::StringLiteral(_)

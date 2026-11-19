@@ -563,8 +563,18 @@ fn const_param_array_impl_overlaps_concrete_length_impl() {
 fn distinct_concrete_array_lengths_do_not_overlap() {
     let trait_id = id(0, 1);
     let impls = vec![
-        array_impl(id(0, 2), trait_id, crate::types::ArrayLen::Value(3), Vec::new()),
-        array_impl(id(0, 3), trait_id, crate::types::ArrayLen::Value(4), Vec::new()),
+        array_impl(
+            id(0, 2),
+            trait_id,
+            crate::types::ArrayLen::Value(3),
+            Vec::new(),
+        ),
+        array_impl(
+            id(0, 3),
+            trait_id,
+            crate::types::ArrayLen::Value(4),
+            Vec::new(),
+        ),
     ];
 
     let errors = check(&[trait_def(trait_id, Kind::Type)], &impls, &[], &[]);

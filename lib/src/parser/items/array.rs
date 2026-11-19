@@ -1,6 +1,6 @@
 use crate::{
-    lexer::TokenType,
     ast::ParseArrayLen,
+    lexer::TokenType,
     parser::{engine::*, Array, Expression},
 };
 

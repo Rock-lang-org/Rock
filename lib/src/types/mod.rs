@@ -154,12 +154,16 @@ impl CallableKind {
     /// effects using the resolved capture types (numeric defaults may make a
     /// consumed value Copy).
     pub fn from_captures(captures: &[FunctionCapture]) -> Self {
-        captures.iter().map(|capture| match capture.effect {
-            CaptureEffect::Read => Self::Fn,
-            CaptureEffect::Mutate => Self::FnMut,
-            CaptureEffect::Consume if TypeFacts::is_copy(&capture.ty) => Self::Fn,
-            CaptureEffect::Consume => Self::FnOnce,
-        }).max().unwrap_or(Self::Fn)
+        captures
+            .iter()
+            .map(|capture| match capture.effect {
+                CaptureEffect::Read => Self::Fn,
+                CaptureEffect::Mutate => Self::FnMut,
+                CaptureEffect::Consume if TypeFacts::is_copy(&capture.ty) => Self::Fn,
+                CaptureEffect::Consume => Self::FnOnce,
+            })
+            .max()
+            .unwrap_or(Self::Fn)
     }
 
     pub fn is_default(self, captures: &[FunctionCapture]) -> bool {
@@ -439,7 +443,6 @@ impl TypeFolder for TypeVarSubstituter<'_> {
             other => fold_type_children(other, self),
         }
     }
-
 }
 
 struct GenericSubstituter<'a> {
@@ -465,7 +468,6 @@ impl TypeFolder for GenericSubstituter<'_> {
         self.visiting.pop();
         substituted
     }
-
 }
 
 struct ArrayLenParamCollector<'a> {
@@ -513,7 +515,6 @@ impl TypeFolder for TypeVarToGenericFolder<'_> {
             Type::TypeVar(id)
         }
     }
-
 }
 
 impl Type {

@@ -32,7 +32,10 @@ impl Lowerer {
         // arguments its positional payload is a first-class constructor.
         if use_kind == ExprUse::Value
             && !matches!(
-                primary.secondaries.as_ref().and_then(|secondaries| secondaries.first()),
+                primary
+                    .secondaries
+                    .as_ref()
+                    .and_then(|secondaries| secondaries.first()),
                 Some(ast::SecondaryExpr::Arguments(_))
             )
         {
@@ -181,9 +184,7 @@ impl Lowerer {
                         arg: ast::Expression::UnaryExpr(ast::UnaryExpr::PrimaryExpr(
                             ast::PrimaryExpr {
                                 operand: ast::Operand::Instance(ast::Instance {
-                                    name: ast::TypePath {
-                                        path,
-                                    },
+                                    name: ast::TypePath { path },
                                     fields: Default::default(),
                                 }),
                                 secondaries: None,
@@ -196,9 +197,7 @@ impl Lowerer {
             .collect::<Option<Vec<_>>>()?;
         let mut rewritten = primary.clone();
         rewritten.operand = ast::Operand::Instance(ast::Instance {
-            name: ast::TypePath {
-                path,
-            },
+            name: ast::TypePath { path },
             fields: Default::default(),
         });
         let mut secondaries = vec![ast::SecondaryExpr::Arguments(arguments)];

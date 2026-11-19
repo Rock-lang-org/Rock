@@ -32,8 +32,7 @@ pub fn run() -> Result<CliOutcome, String> {
             Ok(CliOutcome::Success)
         }
         Command::Build { profile, .. } => {
-            let products =
-                build_project(&current_project_root()?, profile.selected(), lint_args)?;
+            let products = build_project(&current_project_root()?, profile.selected(), lint_args)?;
             for path in products.paths() {
                 println!("{}", path.display());
             }
@@ -136,7 +135,11 @@ pub(crate) fn ordered_lint_args(matches: &clap::ArgMatches) -> Vec<String> {
         else {
             continue;
         };
-        ordered.extend(indices.zip(values).map(|(index, name)| (index, flag, name.clone())));
+        ordered.extend(
+            indices
+                .zip(values)
+                .map(|(index, name)| (index, flag, name.clone())),
+        );
     }
     ordered.sort_by_key(|(index, _, _)| *index);
     ordered

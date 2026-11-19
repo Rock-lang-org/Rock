@@ -273,8 +273,14 @@ main = ->
 #[test]
 fn test_structural_drop_demand_without_other_owners_of_the_element_type() {
     for (binding, expected) in [
-        ("values = [Tracked\n        value: 1, Tracked\n        value: 2]", vec!["1", "2", "done"]),
-        ("values = (Tracked\n        value: 1, Tracked\n        value: 2)", vec!["1", "2", "done"]),
+        (
+            "values = [Tracked\n        value: 1, Tracked\n        value: 2]",
+            vec!["1", "2", "done"],
+        ),
+        (
+            "values = (Tracked\n        value: 1, Tracked\n        value: 2)",
+            vec!["1", "2", "done"],
+        ),
         ("values: [Tracked; 0] = []", vec!["done"]),
     ] {
         let output = compile_and_run(&format!(

@@ -227,8 +227,8 @@ pub(crate) use receiver_shape::{
     function_has_receiver, validate_effective_trait_member_receiver_shape,
     validate_effective_trait_method_receiver_shape, validate_impl_receiver_pattern_bindings,
 };
-pub use type_ids::{collect_hir_type_ids, HirTypeIds, HirTypeLocation};
 pub(crate) use type_ids::collect_function_type_ids;
+pub use type_ids::{collect_hir_type_ids, HirTypeIds, HirTypeLocation};
 pub use typevar_substitution::substitute_typevars_in_function;
 
 /// Canonical target domain for an implementation.

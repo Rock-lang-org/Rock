@@ -20,8 +20,8 @@ mod correspondances;
 pub mod declarative;
 pub mod exports;
 mod expression;
-mod imports;
 pub mod generated_parser;
+mod imports;
 mod macro_arg_matcher;
 pub mod proc_macro;
 pub mod registry;
@@ -40,7 +40,10 @@ pub fn expand_macros_with_context(
     context: &MacroExpansionContext<'_>,
 ) -> Result<Program, Diagnostics> {
     let scope = imports::MacroImportScope {
-        file_path: program.module.filepath.clone()
+        file_path: program
+            .module
+            .filepath
+            .clone()
             .unwrap_or_else(|| context.config.entry_file.clone()),
         inline_modules: Vec::new(),
     };
@@ -139,10 +142,9 @@ fn module_registry(
     for top_level in &module.top_levels {
         if let TopLevel::Import(path) = top_level {
             let segments = exports::path_segments(path);
-            if let (Some(decl), Some(name)) = (
-                context.resolve_importable_macro(&segments),
-                segments.last(),
-            ) {
+            if let (Some(decl), Some(name)) =
+                (context.resolve_importable_macro(&segments), segments.last())
+            {
                 let import = context.register_import(scope, path, &segments);
                 registry.insert_imported_declaration(name.clone(), decl.clone(), import);
             }
@@ -171,9 +173,8 @@ fn expand_inline_modules(
             TopLevel::Module(ModuleDecl(inner)) => {
                 let mut child_scope = scope.clone();
                 child_scope.inline_modules.push(index);
-                let expanded = expand_macros_in_scope(
-                    Program { module: inner }, context, &child_scope,
-                )?;
+                let expanded =
+                    expand_macros_in_scope(Program { module: inner }, context, &child_scope)?;
                 Ok(TopLevel::Module(ModuleDecl(expanded.module)))
             }
             other => Ok(other),

@@ -322,16 +322,19 @@ impl CollectContext {
         target.fallback = !explicit;
         // The collector may try both the written and qualified path for one
         // import; validate that source occurrence only once.
-        if self.pending_variant_imports.iter().any(|pending| {
-            pending.key == key && pending.target == target && pending.span == span
-        }) {
+        if self
+            .pending_variant_imports
+            .iter()
+            .any(|pending| pending.key == key && pending.target == target && pending.span == span)
+        {
             return true;
         }
         if explicit {
             self.record_explicit_import(&key, Some(target.clone()), span.clone());
             self.variant_aliases.insert(key.clone(), target.clone());
         } else {
-            self.variant_aliases.entry(key.clone())
+            self.variant_aliases
+                .entry(key.clone())
                 .and_modify(|existing| {
                     if existing.fallback {
                         *existing = target.clone();

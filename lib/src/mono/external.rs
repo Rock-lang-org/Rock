@@ -218,13 +218,16 @@ impl Monomorphizer {
                 let mut declared = declared;
                 declared.name = name.clone();
 
-                self.object_instances.insert(instance_key, super::demand::ObjectInstance {
+                self.object_instances.insert(
+                    instance_key,
+                    super::demand::ObjectInstance {
                         symbols: crate::mono::InstanceSymbols::new(
                             name.clone(),
                             backend_symbol.clone(),
                         ),
                         declaration: declared,
-                    });
+                    },
+                );
             }
         }
     }
@@ -284,13 +287,16 @@ impl Monomorphizer {
             let mut declared = method.clone();
             declared.name = format!("{}::{}", crate_name, method_name);
 
-            self.object_instances.insert(instance_key, super::demand::ObjectInstance {
+            self.object_instances.insert(
+                instance_key,
+                super::demand::ObjectInstance {
                     symbols: crate::mono::InstanceSymbols::new(
                         declared.name.clone(),
                         backend_symbol.clone(),
                     ),
                     declaration: declared,
-                });
+                },
+            );
         }
     }
 

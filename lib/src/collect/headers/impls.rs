@@ -2,8 +2,8 @@ use super::functions::{
     build_function_header_with_id, build_function_header_with_sig, build_function_sig_with_id,
 };
 use super::generic_names::{
-    collect_declared_generic_kinds, collect_generic_names_from_parse_type, collect_usize_argument_names,
-    is_known_nominal_type_name,
+    collect_declared_generic_kinds, collect_generic_names_from_parse_type,
+    collect_usize_argument_names, is_known_nominal_type_name,
 };
 use super::where_clauses::lower_where_clauses;
 use crate::ast;
@@ -238,9 +238,8 @@ pub(crate) fn build_impl_with_id(
                 .and_then(|item| item.generic_params.get(index))
                 .map(|param| param.kind.clone())
                 .unwrap_or(crate::type_services::kind::Kind::Type);
-            let ty = crate::type_lowering::TypeLowerer::lower_type_argument(
-                context, generic, &expected,
-            );
+            let ty =
+                crate::type_lowering::TypeLowerer::lower_type_argument(context, generic, &expected);
             // A trait argument must have the kind its parameter declares.
             if trait_def.is_some() && !matches!(ty, Type::Error) {
                 if let Ok(actual) = crate::type_lowering::TypeLowerer::kind_of(context, &ty) {
@@ -331,9 +330,7 @@ pub(crate) fn build_impl_with_id(
             }
         }
         for (index, _) in type_generics.iter().enumerate() {
-            if context.generics.kind_at(index)
-                != Some(&crate::type_services::kind::Kind::Type)
-            {
+            if context.generics.kind_at(index) != Some(&crate::type_services::kind::Kind::Type) {
                 continue;
             }
             let type_param_id = GenericParamId {

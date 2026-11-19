@@ -362,7 +362,9 @@ impl<'a> MirBuilder<'a> {
                 self.emit_assign(dest, rvalue, span);
             }
             HirExprKind::ArrayRepeat(value, len) => {
-                let Some(len) = self.concrete_array_length(*len, Some(expr.span.clone())) else { return; };
+                let Some(len) = self.concrete_array_length(*len, Some(expr.span.clone())) else {
+                    return;
+                };
                 let value_temp = self.new_local_from_expr(value.ty.clone(), value);
                 let value_place = Place {
                     local: value_temp,
@@ -471,12 +473,21 @@ impl<'a> MirBuilder<'a> {
                     params.clone(),
                     body.clone(),
                     captures.clone(),
-                    !matches!(&expr.ty, Type::Function {
-                        callable_kind: crate::types::CallableKind::FnOnce, ..
-                    }),
+                    !matches!(
+                        &expr.ty,
+                        Type::Function {
+                            callable_kind: crate::types::CallableKind::FnOnce,
+                            ..
+                        }
+                    ),
                     expr.span.clone(),
                 );
-                self.push_closure_env_drop_function(&closure_id, &lambda_name, captures, &expr.span);
+                self.push_closure_env_drop_function(
+                    &closure_id,
+                    &lambda_name,
+                    captures,
+                    &expr.span,
+                );
                 let closure_captures = self.lower_closure_captures(captures);
                 self.emit_assign(
                     dest,

@@ -286,9 +286,8 @@ pub(crate) fn ensure_artifact(
                 ),
             )?;
             let stamp = lint_stamp_path(&artifact_path);
-            fs::write(&stamp, lint_stamp(&package)).map_err(|e| {
-                format!("Failed to write lint stamp {}: {}", stamp.display(), e)
-            })?;
+            fs::write(&stamp, lint_stamp(&package))
+                .map_err(|e| format!("Failed to write lint stamp {}: {}", stamp.display(), e))?;
         }
 
         state

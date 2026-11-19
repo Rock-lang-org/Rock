@@ -87,7 +87,8 @@ fn hir_expr_is_codegen_concrete<P: HirPhase>(expr: &HirExprFor<P>) -> bool {
     }
 
     match &expr.kind {
-        HirExprKindFor::IntLiteral(_) | HirExprKindFor::ConstParam(_)
+        HirExprKindFor::IntLiteral(_)
+        | HirExprKindFor::ConstParam(_)
         | HirExprKindFor::FloatLiteral(_)
         | HirExprKindFor::BoolLiteral(_)
         | HirExprKindFor::StringLiteral(_)

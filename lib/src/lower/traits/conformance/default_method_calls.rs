@@ -285,7 +285,8 @@ fn retarget_generated_default_trait_method_calls_in_expr(
         }
         HirExprKind::Var(_)
         | HirExprKind::ResolvedVar(_)
-        | HirExprKind::IntLiteral(_) | HirExprKind::ConstParam(_)
+        | HirExprKind::IntLiteral(_)
+        | HirExprKind::ConstParam(_)
         | HirExprKind::FloatLiteral(_)
         | HirExprKind::BoolLiteral(_)
         | HirExprKind::StringLiteral(_)

@@ -207,7 +207,11 @@ impl Config {
             else {
                 continue;
             };
-            overrides.extend(indices.zip(values).map(|(index, name)| (index, level, name.clone())));
+            overrides.extend(
+                indices
+                    .zip(values)
+                    .map(|(index, name)| (index, level, name.clone())),
+            );
         }
         overrides.sort_by_key(|(index, _, _)| *index);
         config.lint_overrides = overrides

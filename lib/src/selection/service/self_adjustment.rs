@@ -102,10 +102,7 @@ impl<'a> SelectionService<'a> {
         subst: &mut HashMap<GenericParamId, Type>,
     ) -> bool {
         matches!(declared_self, Type::Generic(_))
-            && matches!(
-                self_receiver,
-                Some(crate::types::ReceiverMode::Move) | None
-            )
+            && matches!(self_receiver, Some(crate::types::ReceiverMode::Move) | None)
             && Self::type_pattern_matches_committing(declared_self, receiver_ty, subst)
     }
 

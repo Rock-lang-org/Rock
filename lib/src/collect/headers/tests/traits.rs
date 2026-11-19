@@ -19,9 +19,7 @@ fn trait_member_ids(
 #[test]
 fn test_build_trait_uses_temporary_trait_context_and_restores_it() {
     let mut lowerer = CollectContext::new();
-    lowerer
-        .generics
-        .enter_trait("Outer".to_string());
+    lowerer.generics.enter_trait("Outer".to_string());
 
     let decl = TraitDecl {
         where_clauses: Vec::new(),

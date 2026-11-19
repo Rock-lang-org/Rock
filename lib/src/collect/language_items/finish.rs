@@ -3,8 +3,8 @@ use super::BindingState;
 use crate::ids::DefId;
 use crate::language_items::{
     DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, FoldLanguageItems,
-    IndexLanguageItems, IndexMutLanguageItems, LanguageItemRole, LanguageItems, RangeLanguageItems,
-    OwnedLanguageItems, SendLanguageItems, SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
+    IndexLanguageItems, IndexMutLanguageItems, LanguageItemRole, LanguageItems, OwnedLanguageItems,
+    RangeLanguageItems, SendLanguageItems, SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
 };
 use crate::lower::ResolveError;
 

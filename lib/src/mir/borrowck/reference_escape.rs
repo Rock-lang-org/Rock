@@ -638,18 +638,18 @@ impl Analysis for ReferenceEscapeAnalysis<'_> {
                     let place = capture.place();
                     let captured = match capture.kind {
                         crate::mir::MirClosureCaptureKind::ByRef
-                        | crate::mir::MirClosureCaptureKind::ByMutRef =>
-                            self.origins_for_borrowed_place(state, &place),
-                        crate::mir::MirClosureCaptureKind::ByValue =>
-                            self.origins_for_place(state, &place),
+                        | crate::mir::MirClosureCaptureKind::ByMutRef => {
+                            self.origins_for_borrowed_place(state, &place)
+                        }
+                        crate::mir::MirClosureCaptureKind::ByValue => {
+                            self.origins_for_place(state, &place)
+                        }
                     };
                     origins.extend(captured);
                 }
                 self.assign_origins(state, dest, origins);
             }
-            Rvalue::BinaryOp(_, _, _)
-            | Rvalue::UnaryOp(_, _)
-            | Rvalue::Discriminant(_) => {
+            Rvalue::BinaryOp(_, _, _) | Rvalue::UnaryOp(_, _) | Rvalue::Discriminant(_) => {
                 self.assign_origins(state, dest, OriginSet::new());
             }
         }

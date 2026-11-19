@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use crate::ids::DefId;
-use crate::mir::{MirCallableDecl, MirCallableKey, MirCallableKind, MirCallableSignature, MirFunctionId};
+use crate::mir::{
+    MirCallableDecl, MirCallableKey, MirCallableKind, MirCallableSignature, MirFunctionId,
+};
 
 /// Symbol and signature bookkeeping for MIR callables: which LLVM symbol each callable key
 /// and MIR function was declared under, and the ABI signature behind each symbol.
@@ -89,7 +91,10 @@ impl CallableSymbols {
         self.function_symbols.get(id)
     }
 
-    pub(super) fn signature_for_function(&self, id: &MirFunctionId) -> Option<&MirCallableSignature> {
+    pub(super) fn signature_for_function(
+        &self,
+        id: &MirFunctionId,
+    ) -> Option<&MirCallableSignature> {
         self.function_symbol(id)
             .and_then(|symbol| self.signatures_by_symbol.get(symbol))
     }

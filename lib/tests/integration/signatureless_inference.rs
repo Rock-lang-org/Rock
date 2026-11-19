@@ -4,7 +4,8 @@ use crate::support::*;
 
 #[test]
 fn test_nested_bind_callback_can_pipe_to_result_constructor() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 > std::concurrency::thread::spawn
 
 infix 9 >|
@@ -16,7 +17,8 @@ main = !->
         spawn (-> 2)
     ].into!
     values >| (.join!) >| (+ 1 |> Result::Ok) .println!
-"#);
+"#,
+    );
     assert_eq!(output, "[Ok(2), Ok(3)]\n");
 }
 
@@ -42,22 +44,31 @@ main = !-> run!
     let result = rock_lib::compile(&test_config(entry, dir.clone()));
     let _ = std::fs::remove_dir_all(&dir);
     let diagnostics = result.expect_err("plain integer callback must not satisfy nested bind");
-    let messages = diagnostics.0.iter().map(|d| d.message.as_str()).collect::<Vec<_>>();
+    let messages = diagnostics
+        .0
+        .iter()
+        .map(|d| d.message.as_str())
+        .collect::<Vec<_>>();
     assert_eq!(messages.len(), 1, "{messages:?}");
-    assert!(messages[0].contains("FnMut I64, (Option _)"), "{messages:?}");
+    assert!(
+        messages[0].contains("FnMut I64, (Option _)"),
+        "{messages:?}"
+    );
     assert!(!messages[0].contains("quiescence"), "{messages:?}");
 }
 
 #[test]
 fn test_receiver_helper_with_unresolved_chained_caller_stays_polymorphic() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 show = value !-> value.println!
 identity = value -> value
 
 main = !->
     show 42
     show (identity 'c')
-"#);
+"#,
+    );
     assert_eq!(output, "42\nc\n");
 }
 

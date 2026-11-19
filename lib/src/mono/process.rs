@@ -42,7 +42,10 @@ impl Monomorphizer {
         imp.methods.values().find(|method| method.id == method_id)
     }
 
-    fn zero_substitution_callable_instance(&mut self, id: DefId) -> Option<crate::mono::InstanceId> {
+    fn zero_substitution_callable_instance(
+        &mut self,
+        id: DefId,
+    ) -> Option<crate::mono::InstanceId> {
         self.demand_function(id)
     }
 
@@ -200,7 +203,8 @@ impl Monomorphizer {
                 };
 
                 if generic_target.is_none() {
-                    if let HirVarTarget::Function(id) | HirVarTarget::Extern(id) = reference.target {
+                    if let HirVarTarget::Function(id) | HirVarTarget::Extern(id) = reference.target
+                    {
                         if let Some(instance) = self.demand_function(id) {
                             reference.target = HirVarTarget::Instance(instance);
                         }

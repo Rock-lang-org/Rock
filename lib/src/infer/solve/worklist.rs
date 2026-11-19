@@ -82,8 +82,12 @@ fn auto_trait_residual_bounds(
     builtin_traits: BuiltinTraitIds,
     assumed: &dyn Fn(&Type, DefId, &[Type]) -> bool,
 ) -> AutoTraitResidual {
-    let auto_trait = [builtin_traits.send, builtin_traits.sync, builtin_traits.owned]
-        .contains(&Some(bound.trait_id));
+    let auto_trait = [
+        builtin_traits.send,
+        builtin_traits.sync,
+        builtin_traits.owned,
+    ]
+    .contains(&Some(bound.trait_id));
     if !auto_trait
         || !bound.type_args.is_empty()
         || matches!(subject, Type::TypeVar(_))
@@ -122,9 +126,10 @@ fn auto_trait_residual_bounds(
     if satisfied {
         return AutoTraitResidual::Holds(residual.into_inner());
     }
-    let unsolved_head = crate::type_services::visit::type_any(subject, |ty| {
-        matches!(ty, Type::Apply { constructor, .. } if matches!(constructor.as_ref(), Type::TypeVar(_)))
-    });
+    let unsolved_head = crate::type_services::visit::type_any(
+        subject,
+        |ty| matches!(ty, Type::Apply { constructor, .. } if matches!(constructor.as_ref(), Type::TypeVar(_))),
+    );
     if unsolved_head {
         AutoTraitResidual::NotApplicable
     } else {
@@ -170,9 +175,9 @@ pub(super) fn solve_constraints_in_place_mode(
             type_args: args.to_vec(),
         };
         assumptions.get(param).is_some_and(|bounds| {
-            bounds.iter().any(|bound| {
-                trait_bounds_with_supertraits(ty, bound, traits).contains(&required)
-            })
+            bounds
+                .iter()
+                .any(|bound| trait_bounds_with_supertraits(ty, bound, traits).contains(&required))
         })
     };
     let mut warnings = Vec::new();
@@ -298,12 +303,8 @@ pub(super) fn solve_constraints_in_place_mode(
                 let resolved = TypeNormalizer::new(&normalization_env)
                     .normalize(&resolved_ty)
                     .unwrap_or(resolved_ty);
-                let (resolved, bound) = borrowed_free_callable_subject(
-                    engine,
-                    resolved,
-                    bound,
-                    &builtin_traits,
-                );
+                let (resolved, bound) =
+                    borrowed_free_callable_subject(engine, resolved, bound, &builtin_traits);
                 if finalize_pending {
                     match auto_trait_residual_bounds(
                         &resolved,
@@ -423,7 +424,10 @@ pub(super) fn solve_constraints_in_place_mode(
                         // it may become a where clause of the owning function when the
                         // function is generalized.
                         if !impl_found
-                            && resolved_bound.type_args.iter().any(contains_unresolved_type)
+                            && resolved_bound
+                                .type_args
+                                .iter()
+                                .any(contains_unresolved_type)
                         {
                             if finalize_pending {
                                 deferred_predicates.push(id);

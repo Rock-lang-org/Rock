@@ -193,7 +193,9 @@ pub(super) fn parse_type_name_span(ty: &ast::ParseType, name: &str) -> Option<cr
         | ast::ParseType::Array { inner, .. }
         | ast::ParseType::Reference { pointee: inner, .. }
         | ast::ParseType::Pointer(inner) => parse_type_name_span(inner, name),
-        ast::ParseType::Hole(_) | ast::ParseType::Unit(_) | ast::ParseType::ConstValue { .. } => None,
+        ast::ParseType::Hole(_) | ast::ParseType::Unit(_) | ast::ParseType::ConstValue { .. } => {
+            None
+        }
     }
 }
 
@@ -301,8 +303,6 @@ pub(super) fn collect_declared_generic_kinds<F>(
     }
 }
 
-
-
 /// Names written as plain type arguments in a position the nominal declares as `usize`
 /// (`N` in `impl Buf T, N` for `struct Buf T, N: usize`). Such names are implicit const
 /// generics of the impl, not type generics.
@@ -321,7 +321,12 @@ pub(super) fn collect_usize_argument_names(
             .structs
             .get(head)
             .map(|structure| &structure.generic_params)
-            .or_else(|| context.enums.get(head).map(|enum_def| &enum_def.generic_params));
+            .or_else(|| {
+                context
+                    .enums
+                    .get(head)
+                    .map(|enum_def| &enum_def.generic_params)
+            });
         if let Some(params) = params {
             for (arg, param) in args.iter().zip(params) {
                 if let ast::ParseType::Type(inner) = arg {

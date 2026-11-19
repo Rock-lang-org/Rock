@@ -33,7 +33,14 @@ pub(super) fn auto_trait_satisfied<P: HirPhase>(
     let nested = |nested: &Type, visiting: &mut std::collections::HashSet<Type>| {
         assumed(nested, trait_id, &[])
             || explicit_impl_exists_for(
-                nested, trait_id, &[], impls, structs, enums, builtin_traits, assumed,
+                nested,
+                trait_id,
+                &[],
+                impls,
+                structs,
+                enums,
+                builtin_traits,
+                assumed,
             )
             || auto_trait_satisfied(
                 nested,
@@ -68,7 +75,11 @@ pub(super) fn auto_trait_satisfied<P: HirPhase>(
         Type::Tuple(elements) => elements.iter().all(|element| nested(element, visiting)),
         Type::Reference { .. } if is_owned => false,
         Type::Reference { inner, mutable } => {
-            let required = if is_send && *mutable { builtin_traits.send } else { builtin_traits.sync };
+            let required = if is_send && *mutable {
+                builtin_traits.send
+            } else {
+                builtin_traits.sync
+            };
             required.is_some_and(|required| {
                 explicit_impl_exists_for(
                     inner,
@@ -94,7 +105,10 @@ pub(super) fn auto_trait_satisfied<P: HirPhase>(
         Type::Pointer(_) => false,
         // An erased signature is not a known-empty environment. None of the
         // structural environment markers can be proved without its captures.
-        Type::Function { captures_known: false, .. } => false,
+        Type::Function {
+            captures_known: false,
+            ..
+        } => false,
         Type::Function { captures, .. } if is_owned => captures
             .iter()
             .all(|capture| capture.kind == CaptureKind::Move && nested(&capture.ty, visiting)),

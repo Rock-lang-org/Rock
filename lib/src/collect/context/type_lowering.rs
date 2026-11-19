@@ -127,7 +127,8 @@ impl TypeLoweringContext for CollectContext {
         let owner = self.generics.owner()?;
         let index = match self.generics.position(name) {
             Some(index) => {
-                if self.generics.kinds().get(index) != Some(&crate::type_services::kind::Kind::Usize)
+                if self.generics.kinds().get(index)
+                    != Some(&crate::type_services::kind::Kind::Usize)
                 {
                     return None;
                 }
@@ -246,22 +247,19 @@ impl CollectContext {
             return Type::Error;
         };
 
-        let Some(index) = self
-            .generics
-            .position(name)
-            .or_else(|| {
-                let mut chars = name.chars();
-                let is_implicit_generic = matches!(chars.next(), Some(ch) if ch.is_ascii_uppercase())
-                    && chars.next().is_none();
-                if is_implicit_generic && !self.generics.is_closed() {
-                    Some(
-                        self.generics
-                            .declare(name.to_string(), crate::type_services::kind::Kind::Type),
-                    )
-                } else {
-                    None
-                }
-            }) else {
+        let Some(index) = self.generics.position(name).or_else(|| {
+            let mut chars = name.chars();
+            let is_implicit_generic = matches!(chars.next(), Some(ch) if ch.is_ascii_uppercase())
+                && chars.next().is_none();
+            if is_implicit_generic && !self.generics.is_closed() {
+                Some(
+                    self.generics
+                        .declare(name.to_string(), crate::type_services::kind::Kind::Type),
+                )
+            } else {
+                None
+            }
+        }) else {
             self.push_error_with_span(format!("unknown type '{}'", name), span);
             return Type::Error;
         };

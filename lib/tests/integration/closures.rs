@@ -170,7 +170,10 @@ main = !->
 "#,
     );
 
-    assert_eq!(output.trim().lines().collect::<Vec<_>>(), ["15", "16", "11"]);
+    assert_eq!(
+        output.trim().lines().collect::<Vec<_>>(),
+        ["15", "16", "11"]
+    );
 }
 
 #[test]
@@ -478,7 +481,8 @@ main = !->
 
 #[test]
 fn test_last_use_owned_capture_is_reusable_and_dropped_with_environment() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Tracked
     < text: String
 impl Drop for Tracked
@@ -492,13 +496,15 @@ main = !->
     f!.println!
     f!.println!
     "end".println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "5\n5\nend\ndrop");
 }
 
 #[test]
 fn test_match_guard_capture_borrows_value_needed_by_later_arms() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 check = f -> f! == 0
 run = input ->
     text = String::from input
@@ -509,26 +515,30 @@ run = input ->
 main = !->
     run "hello"
     run ""
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "5\nmatched");
 }
 
 #[test]
 fn test_later_use_keeps_capture_borrowed() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     text = String::from "hello"
     f = -> text.len!
     f!.println!
     text.len!.println!
     f!.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "5\n5\n5");
 }
 
 #[test]
 fn test_owned_closures_returned_from_branches_and_nested_lambdas() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 choose = flag ->
     text = String::from "hello"
     if flag
@@ -553,13 +563,15 @@ main = !->
     inner = outer!
     inner!.println!
     inner!.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "5\n5\n5\n5\n5");
 }
 
 #[test]
 fn test_capture_liveness_respects_shadowing_and_loop_backedges() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     text = String::from "old"
     f = -> text.len!
@@ -569,13 +581,15 @@ main = !->
     for i in [1, 2]
         g = -> text.len!
         g!.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "5\n3\n5\n5");
 }
 
 #[test]
 fn test_returned_borrowing_closure_is_rejected() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 make = ->
     text = String::from "hello"
     f = -> text.len!
@@ -584,12 +598,15 @@ make = ->
 main = !->
     f = make!
     f!.println!
-"#, "does not live long enough");
+"#,
+        "does not live long enough",
+    );
 }
 
 #[test]
 fn test_capture_liveness_distinguishes_inner_shadow_and_reassignment() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     text = String::from "old"
     first = -> text.len!
@@ -606,13 +623,15 @@ main = !->
         inner = -> outer.len!
         inner!.println!
     outer.len!.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "3\n11\n11\n6\n5\n5");
 }
 
 #[test]
 fn test_curried_and_nested_closures_borrow_sources_still_used_by_parent() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     text = String::from "hello"
     curried = a, b ~> text.len! + a + b
@@ -623,26 +642,30 @@ main = !->
     inner = nested!
     inner!.println!
     inner!.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "5\n8\n5\n5");
 }
 
 #[test]
 fn test_loop_local_last_use_capture_owns_each_iteration_value() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     for i in [1, 2]
         text = String::from "hello"
         read = -> text.len!
         read!.println!
         read!.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "5\n5\n5\n5");
 }
 
 #[test]
 fn test_owned_mutable_capture_persists_between_calls() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 make = ->
     mut count = 0
     ->
@@ -652,13 +675,15 @@ main = !->
     mut next = make!
     next!.println!
     next!.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "1\n2");
 }
 
 #[test]
 fn test_body_consuming_owned_capture_remains_once_callable() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 make = ->
     text = String::from "hello"
     -> text
@@ -666,12 +691,15 @@ main = !->
     once = make!
     once!.println!
     once!.println!
-"#, "moved");
+"#,
+        "moved",
+    );
 }
 
 #[test]
 fn test_borrowing_closure_in_returned_struct_is_rejected() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 struct Holder F
     < run: F
 make = ->
@@ -683,12 +711,15 @@ make = ->
 main = !->
     holder = make!
     holder.run!.println!
-"#, "does not live long enough");
+"#,
+        "does not live long enough",
+    );
 }
 
 #[test]
 fn test_borrowing_closure_cannot_outlive_inner_scope() {
-    compile_should_fail(r#"
+    compile_should_fail(
+        r#"
 main = !->
     f = if true
         text = String::from "hello"
@@ -698,25 +729,30 @@ main = !->
     else
         -> 0
     f!.println!
-"#, "borrow");
+"#,
+        "borrow",
+    );
 }
 
 #[test]
 fn test_range_end_is_a_later_use_than_closure_in_start() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     text = String::from "hello"
     range = (-> text.len!)! .. text.len!
     for i in range
         i.println!
     "done".println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "done");
 }
 
 #[test]
 fn test_inner_shadow_does_not_hide_later_outer_capture_use() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 main = !->
     text = String::from "outer"
     read = -> text.len!
@@ -725,7 +761,8 @@ main = !->
         text.len!.println!
     text.len!.println!
     read!.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "12\n5\n5");
 }
 
@@ -742,7 +779,8 @@ make = number ->
 
 #[test]
 fn test_arrow_typed_struct_field_owns_environment_and_allows_repeated_calls() {
-    let output = compile_and_run(&format!(r#"{ERASED_CAPTURE}
+    let output = compile_and_run(&format!(
+        r#"{ERASED_CAPTURE}
 struct Holder
     < run: I64 -> I64
 main = !->
@@ -751,13 +789,15 @@ main = !->
     (holder.run 1).println!
     (holder.run 2).println!
     "end".println!
-"#));
+"#
+    ));
     assert_eq!(output.trim(), "11\n12\nend\n10");
 }
 
 #[test]
 fn test_vec_of_arrow_typed_values_drops_each_environment_once() {
-    let output = compile_and_run(&format!(r#"{ERASED_CAPTURE}
+    let output = compile_and_run(&format!(
+        r#"{ERASED_CAPTURE}
 main = !->
     mut callbacks: Vec (I64 -> I64) = Vec::new!
     callbacks.push (make 10)
@@ -765,13 +805,15 @@ main = !->
     (callbacks[0] 1).println!
     (callbacks[0] 2).println!
     "end".println!
-"#));
+"#
+    ));
     assert_eq!(output.trim(), "11\n12\nend\n20\n10");
 }
 
 #[test]
 fn test_arrow_typed_parameter_and_option_own_environment() {
-    let output = compile_and_run(&format!(r#"{ERASED_CAPTURE}
+    let output = compile_and_run(&format!(
+        r#"{ERASED_CAPTURE}
 apply: (I64 -> I64) -> ()
 apply = callback !->
     (callback 1).println!
@@ -780,24 +822,31 @@ main = !->
     apply (make 10)
     stored: Option (I64 -> I64) = Option::Some (make 20)
     "end".println!
-"#));
+"#
+    ));
     assert_eq!(output.trim(), "11\n12\n10\nend\n20");
 }
 
 #[test]
 fn test_arrow_typed_environment_value_moves_instead_of_copying() {
-    compile_should_fail(&format!(r#"{ERASED_CAPTURE}
+    compile_should_fail(
+        &format!(
+            r#"{ERASED_CAPTURE}
 main = !->
     original: I64 -> I64 = make 10
     moved = original
     (moved 1).println!
     (original 2).println!
-"#), "moved");
+"#
+        ),
+        "moved",
+    );
 }
 
 #[test]
 fn test_plain_function_items_can_be_reused_and_passed_as_arrow_values() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 inc = value -> value + 1
 apply: (I64 -> I64) -> I64
 apply = callback -> callback 10
@@ -805,13 +854,15 @@ main = !->
     (apply inc).println!
     (apply inc).println!
     (inc 20).println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "11\n11\n21");
 }
 
 #[test]
 fn test_arrow_typed_parameter_does_not_drop_consumed_capture_again() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Tracked
     < number: I64
 impl Drop for Tracked
@@ -823,13 +874,15 @@ main = !->
     tracked = Tracked
         number: 10
     run (-> take tracked)
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "drop\n10");
 }
 
 #[test]
 fn test_erased_consuming_callable_cannot_reenter_consumed_environment() {
-    let (_, success) = compile_and_run_with_status(r#"
+    let (_, success) = compile_and_run_with_status(
+        r#"
 struct Tracked
     < number: I64
 impl Drop for Tracked
@@ -843,26 +896,33 @@ main = !->
     tracked = Tracked
         number: 10
     repeat (-> take tracked)
-"#);
-    assert!(!success, "an erased FnOnce must not enter its consumed body again");
+"#,
+    );
+    assert!(
+        !success,
+        "an erased FnOnce must not enter its consumed body again"
+    );
 }
 
 #[test]
 fn test_owned_function_capture_can_be_called_repeatedly_without_copying() {
-    let output = compile_and_run(&format!(r#"{ERASED_CAPTURE}
+    let output = compile_and_run(&format!(
+        r#"{ERASED_CAPTURE}
 wrap = callback -> value -> callback value
 main = !->
     callback = wrap (make 10)
     (callback 1).println!
     (callback 2).println!
     "end".println!
-"#));
+"#
+    ));
     assert_eq!(output.trim(), "11\n12\nend\n10");
 }
 
 #[test]
 fn test_explicit_consuming_callable_bound_remains_usable_in_nested_closure() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Tracked
     < number: I64
 impl Drop for Tracked
@@ -875,13 +935,15 @@ main = !->
         number: 10
     once = wrap_once (-> take tracked)
     once!.println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "drop\n10");
 }
 
 #[test]
 fn test_branch_local_call_can_still_consume_inferred_callback() {
-    let output = compile_and_run(r#"
+    let output = compile_and_run(
+        r#"
 struct Tracked
     < number: I64
 impl Drop for Tracked
@@ -896,6 +958,7 @@ main = !->
     tracked = Tracked
         number: 10
     (apply (-> take tracked)).println!
-"#);
+"#,
+    );
     assert_eq!(output.trim(), "drop\n10");
 }

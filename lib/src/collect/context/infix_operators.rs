@@ -77,7 +77,8 @@ impl CollectContext {
             return;
         }
 
-        self.infix_precedence.insert(name.to_string(), operator.precedence);
+        self.infix_precedence
+            .insert(name.to_string(), operator.precedence);
         self.infix_origins.insert(
             name.to_string(),
             InfixOrigin::Dependency(declaring_crate.clone()),

@@ -1,7 +1,7 @@
 //! Path, instance, lambda, and tuple lowering
 
-mod constructor_members;
 mod capture_liveness;
+mod constructor_members;
 mod enum_constructor_values;
 mod identifier_path;
 mod instance;

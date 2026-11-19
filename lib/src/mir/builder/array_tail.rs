@@ -14,7 +14,10 @@ use super::drop_state::LoopOwnedArray;
 use super::{HirProgram, MirBuilder};
 
 fn place(local: Local) -> Place {
-    Place { local, projection: Vec::new() }
+    Place {
+        local,
+        projection: Vec::new(),
+    }
 }
 
 // Everything built here is drop glue (an early-exit scope cleanup or the tail
@@ -56,12 +59,16 @@ impl<'a> MirBuilder<'a> {
                 statements.push(StatementData::storage_live(local, None));
             }
             statements.push(StatementData::cleanup_assign(
-                place(reference), Rvalue::Ref(Mutability::Not, place(temp)), None,
+                place(reference),
+                Rvalue::Ref(Mutability::Not, place(temp)),
+                None,
             ));
             // An array and its first element have the same address, including
             // empty arrays. No element is accessed until start < len.
             statements.push(StatementData::cleanup_assign(
-                place(pointer), Rvalue::Cast(Operand::Copy(place(reference)), ptr_id), None,
+                place(pointer),
+                Rvalue::Cast(Operand::Copy(place(reference)), ptr_id),
+                None,
             ));
             statements.push(StatementData::cleanup_assign(
                 place(start),
@@ -89,7 +96,9 @@ impl<'a> MirBuilder<'a> {
         }
         self.current_block = Some(next);
         for local in [result, start, pointer] {
-            self.blocks[next.0].statements.push(StatementData::storage_dead(local, None));
+            self.blocks[next.0]
+                .statements
+                .push(StatementData::storage_dead(local, None));
         }
         if end_storage {
             self.end_loop_owned_array_storage(temp);
@@ -105,20 +114,32 @@ impl<'a> MirBuilder<'a> {
         direct_drop_types: &HashSet<Type>,
         functions: &mut BTreeMap<MirFunctionId, MirFunction>,
     ) -> Result<(), crate::diagnostic::Diagnostics> {
-        let elements = functions.values().flat_map(|function| {
-            function.basic_blocks.iter().filter_map(|block| match &block.terminator {
-                Some(Terminator::Call {
-                    func: Operand::Constant(Constant::Callable(MirCallable::Resolved(
-                        MirCallableKey::RuntimeHelper(MirRuntimeHelper::ArrayTailDrop(ty)),
-                    ))),
-                    ..
-                }) => Some(*ty),
-                _ => None,
+        let elements = functions
+            .values()
+            .flat_map(|function| {
+                function
+                    .basic_blocks
+                    .iter()
+                    .filter_map(|block| match &block.terminator {
+                        Some(Terminator::Call {
+                            func:
+                                Operand::Constant(Constant::Callable(MirCallable::Resolved(
+                                    MirCallableKey::RuntimeHelper(MirRuntimeHelper::ArrayTailDrop(
+                                        ty,
+                                    )),
+                                ))),
+                            ..
+                        }) => Some(*ty),
+                        _ => None,
+                    })
             })
-        }).collect::<BTreeSet<_>>();
+            .collect::<BTreeSet<_>>();
         for elem in elements {
             let mut builder = MirBuilder::with_instance_metadata(
-                program, types, Default::default(), direct_drop_types.clone(),
+                program,
+                types,
+                Default::default(),
+                direct_drop_types.clone(),
             );
             let helper = builder.build_array_tail_helper(elem);
             builder.diagnostics.return_if_err()?;
@@ -135,9 +156,12 @@ impl<'a> MirBuilder<'a> {
         let int = self.type_id_for(&Type::I64);
         let pointer = self.type_id_for(&Type::Pointer(Box::new(elem_ty.clone())));
         self.new_local_with_source(unit, Mutability::Mut, None, LocalSource::ReturnPlace, None);
-        let data = self.new_local_with_source(pointer, Mutability::Not, None, LocalSource::Argument, None);
-        let index = self.new_local_with_source(int, Mutability::Mut, None, LocalSource::Argument, None);
-        let len = self.new_local_with_source(int, Mutability::Not, None, LocalSource::Argument, None);
+        let data =
+            self.new_local_with_source(pointer, Mutability::Not, None, LocalSource::Argument, None);
+        let index =
+            self.new_local_with_source(int, Mutability::Mut, None, LocalSource::Argument, None);
+        let len =
+            self.new_local_with_source(int, Mutability::Not, None, LocalSource::Argument, None);
         let condition = self.new_local(self.type_id_for(&Type::Bool), Mutability::Not, None);
         let entry = self.new_block();
         let head = self.new_block();
@@ -145,37 +169,64 @@ impl<'a> MirBuilder<'a> {
         let done = self.new_block();
         self.current_block = Some(entry);
         let origin = MirOrigin::synthetic(MirSyntheticOrigin::Cleanup, None);
-        self.blocks[entry.0].statements.push(StatementData::storage_live(condition, None));
+        self.blocks[entry.0]
+            .statements
+            .push(StatementData::storage_live(condition, None));
         self.blocks[entry.0].terminator = Some(Terminator::goto(head, origin.clone()));
-        self.blocks[head.0].statements.push(StatementData::cleanup_assign(
-            place(condition),
-            Rvalue::BinaryOp(MirBinOp::Lt, Operand::Copy(place(index)), Operand::Copy(place(len))),
-            None,
-        ));
+        self.blocks[head.0]
+            .statements
+            .push(StatementData::cleanup_assign(
+                place(condition),
+                Rvalue::BinaryOp(
+                    MirBinOp::Lt,
+                    Operand::Copy(place(index)),
+                    Operand::Copy(place(len)),
+                ),
+                None,
+            ));
         self.blocks[head.0].terminator = Some(Terminator::switch_int(
-            Operand::Copy(place(condition)), vec![(1, body)], done, origin.clone(),
+            Operand::Copy(place(condition)),
+            vec![(1, body)],
+            done,
+            origin.clone(),
         ));
         self.current_block = Some(body);
         let previous_cleanup = self.drops.enter_cleanup();
         // Reuse the complete drop elaborator: direct Drop first, then fields,
         // tuple/array elements, enum payloads and closure cleanup as usual.
-        self.emit_drop_for_place(&elem_ty, Place {
-            local: data,
-            projection: vec![Projection::Index(index)],
-        }, None);
+        self.emit_drop_for_place(
+            &elem_ty,
+            Place {
+                local: data,
+                projection: vec![Projection::Index(index)],
+            },
+            None,
+        );
         self.drops.leave_cleanup(previous_cleanup);
         if let Some(current) = self.current_block {
-            self.blocks[current.0].statements.push(StatementData::cleanup_assign(
-                place(index),
-                Rvalue::BinaryOp(MirBinOp::Add, Operand::Copy(place(index)), Operand::Constant(Constant::Int(1))),
-                None,
-            ));
+            self.blocks[current.0]
+                .statements
+                .push(StatementData::cleanup_assign(
+                    place(index),
+                    Rvalue::BinaryOp(
+                        MirBinOp::Add,
+                        Operand::Copy(place(index)),
+                        Operand::Constant(Constant::Int(1)),
+                    ),
+                    None,
+                ));
             self.blocks[current.0].terminator = Some(Terminator::goto(head, origin));
         }
-        self.blocks[done.0].statements.push(StatementData::storage_dead(condition, None));
-        self.blocks[done.0].statements.push(StatementData::cleanup_assign(
-            place(Local(0)), Rvalue::Use(Operand::Constant(Constant::Unit)), None,
-        ));
+        self.blocks[done.0]
+            .statements
+            .push(StatementData::storage_dead(condition, None));
+        self.blocks[done.0]
+            .statements
+            .push(StatementData::cleanup_assign(
+                place(Local(0)),
+                Rvalue::Use(Operand::Constant(Constant::Unit)),
+                None,
+            ));
         self.blocks[done.0].terminator = Some(Terminator::Return);
         MirFunction {
             id,

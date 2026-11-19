@@ -16,7 +16,10 @@ impl SemanticSourceMap {
         resolver: &crate::collect::resolver::ResolverTables,
         module: Option<&str>,
     ) {
-        let resolver = &ScopedResolver { tables: resolver, module };
+        let resolver = &ScopedResolver {
+            tables: resolver,
+            module,
+        };
         let generic_params = match top_level {
             ast::TopLevel::StructDecl(_) => items
                 .structure(owner)

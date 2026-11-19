@@ -767,18 +767,25 @@ fn owned_auto_trait_checks_storage_modes_and_nested_payloads_by_id() {
         assert!(satisfies(&ty, owned), "{ty:?}");
     }
     for ty in [
-        reference.clone(), Type::Tuple(vec![reference.clone()]),
+        reference.clone(),
+        Type::Tuple(vec![reference.clone()]),
         Type::Array(Box::new(reference.clone()), 2u64.into()),
         closure(CaptureKind::SharedBorrow, Type::I64),
         closure(CaptureKind::MutableBorrow, Type::I64),
         closure(CaptureKind::Move, reference.clone()),
-        closure(CaptureKind::Move, closure(CaptureKind::SharedBorrow, Type::I64)),
+        closure(
+            CaptureKind::Move,
+            closure(CaptureKind::SharedBorrow, Type::I64),
+        ),
         Type::function(Vec::new(), Type::I64),
     ] {
         assert!(!satisfies(&ty, owned), "{ty:?}");
     }
     assert!(satisfies(&reference, send));
-    assert!(satisfies(&closure(CaptureKind::SharedBorrow, Type::I64), send));
+    assert!(satisfies(
+        &closure(CaptureKind::SharedBorrow, Type::I64),
+        send
+    ));
     let item = Type::function_item(Vec::new(), Type::I64, FunctionSafety::Safe);
     assert!(satisfies(&item, owned));
     let erased = Type::function(Vec::new(), Type::I64);

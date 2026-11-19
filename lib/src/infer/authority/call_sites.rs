@@ -14,7 +14,9 @@ use crate::infer::{InferenceEngine, PartialHir};
 use crate::types::Type;
 
 /// Argument types of every direct call, keyed by callee.
-fn collect_call_arguments(hir: &PartialHir) -> HashMap<DefId, Vec<Vec<(Type, crate::lexer::Span)>>> {
+fn collect_call_arguments(
+    hir: &PartialHir,
+) -> HashMap<DefId, Vec<Vec<(Type, crate::lexer::Span)>>> {
     let mut calls = HashMap::<DefId, Vec<Vec<(Type, crate::lexer::Span)>>>::new();
     for function in all_functions(hir) {
         block(&function.body, &mut |node| {
@@ -24,10 +26,11 @@ fn collect_call_arguments(hir: &PartialHir) -> HashMap<DefId, Vec<Vec<(Type, cra
                     ..
                 }) = &callee.kind
                 {
-                    calls
-                        .entry(*function_id)
-                        .or_default()
-                        .push(args.iter().map(|arg| (arg.ty.clone(), arg.span.clone())).collect());
+                    calls.entry(*function_id).or_default().push(
+                        args.iter()
+                            .map(|arg| (arg.ty.clone(), arg.span.clone()))
+                            .collect(),
+                    );
                 }
             }
         });
@@ -149,7 +152,12 @@ fn match_instance(
     let instance = engine.resolve(instance);
     match (&source, &instance) {
         (Type::TypeVar(id), _) => out.entry(*id).or_default().push(instance),
-        (Type::Reference { inner: source, .. }, Type::Reference { inner: instance, .. })
+        (
+            Type::Reference { inner: source, .. },
+            Type::Reference {
+                inner: instance, ..
+            },
+        )
         | (Type::Pointer(source), Type::Pointer(instance))
         | (Type::Slice(source), Type::Slice(instance))
         | (Type::Array(source, _), Type::Array(instance, _)) => {
@@ -158,9 +166,16 @@ fn match_instance(
         (Type::Tuple(sources), Type::Tuple(instances))
         | (
             Type::Struct { args: sources, .. },
-            Type::Struct { args: instances, .. },
+            Type::Struct {
+                args: instances, ..
+            },
         )
-        | (Type::Enum { args: sources, .. }, Type::Enum { args: instances, .. }) => {
+        | (
+            Type::Enum { args: sources, .. },
+            Type::Enum {
+                args: instances, ..
+            },
+        ) => {
             for (source, instance) in sources.iter().zip(instances) {
                 match_instance(engine, source, instance, out);
             }
@@ -197,13 +212,11 @@ fn match_instance(
                 args: instances, ..
             },
         ) => {
-            let Some(head) =
-                crate::type_services::normalize::leading_hole_constructor(
-                    &instance,
-                    sources.len(),
-                    |ty| engine.kind_of(ty).ok(),
-                )
-            else {
+            let Some(head) = crate::type_services::normalize::leading_hole_constructor(
+                &instance,
+                sources.len(),
+                |ty| engine.kind_of(ty).ok(),
+            ) else {
                 return;
             };
             match_instance(engine, constructor, &head, out);
@@ -292,11 +305,13 @@ pub(super) fn conflicting_caller_vars(hir: &PartialHir) -> HashSet<TypeVarId> {
             let every_call_binds = binding_calls
                 .get(&var)
                 .is_some_and(|calls| calls.len() == call_args.len());
-            if !every_call_binds || types.iter().any(|ty| {
-                crate::type_services::visit::type_any(ty, |nested| {
-                    matches!(nested, Type::TypeVar(_) | Type::Projection { .. })
+            if !every_call_binds
+                || types.iter().any(|ty| {
+                    crate::type_services::visit::type_any(ty, |nested| {
+                        matches!(nested, Type::TypeVar(_) | Type::Projection { .. })
+                    })
                 })
-            }) {
+            {
                 conflicting.insert(var);
                 continue;
             }

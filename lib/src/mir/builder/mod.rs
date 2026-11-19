@@ -1,3 +1,4 @@
+mod array_tail;
 mod backend_contract;
 mod blocks;
 mod callables;
@@ -17,7 +18,6 @@ mod move_tracking;
 mod places;
 mod projection_provider;
 mod reference_origins;
-mod array_tail;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -84,7 +84,11 @@ enum MatchScrutineeMode {
 }
 
 impl<'a> MirBuilder<'a> {
-    fn concrete_array_length(&mut self, len: crate::types::ArrayLen, span: Option<crate::lexer::Span>) -> Option<u64> {
+    fn concrete_array_length(
+        &mut self,
+        len: crate::types::ArrayLen,
+        span: Option<crate::lexer::Span>,
+    ) -> Option<u64> {
         if let Some(value) = len.concrete() {
             return Some(value);
         }
@@ -92,7 +96,8 @@ impl<'a> MirBuilder<'a> {
         let diagnostic = match span {
             Some(span) => crate::diagnostic::Diagnostic::new(message, span),
             None => crate::diagnostic::Diagnostic::for_internal(message),
-        }.with_code(crate::diagnostic::DiagnosticCode::Mono);
+        }
+        .with_code(crate::diagnostic::DiagnosticCode::Mono);
         self.diagnostics.push(diagnostic);
         self.current_block = None;
         None

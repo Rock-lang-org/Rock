@@ -184,5 +184,4 @@ impl Monomorphizer {
         self.instances.insert_pre_mir_body(instance_id, body);
         instance_id
     }
-
 }

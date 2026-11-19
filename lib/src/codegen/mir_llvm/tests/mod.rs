@@ -50,7 +50,9 @@ fn local_body_callable_key(function_id: &MirFunctionId) -> MirCallableKey {
         MirFunctionId::Extern(id) => MirCallableKey::Extern(*id),
         MirFunctionId::Instance(id) => MirCallableKey::Instance(*id),
         MirFunctionId::Closure(id) => MirCallableKey::Closure(MirFunctionId::Closure(id.clone())),
-        MirFunctionId::ArrayTailDrop(ty) => MirCallableKey::RuntimeHelper(crate::mir::MirRuntimeHelper::ArrayTailDrop(*ty)),
+        MirFunctionId::ArrayTailDrop(ty) => {
+            MirCallableKey::RuntimeHelper(crate::mir::MirRuntimeHelper::ArrayTailDrop(*ty))
+        }
     }
 }
 

@@ -232,14 +232,13 @@ impl Monomorphizer {
             ),
             HirExprKind::ArrayRepeat(value, len) => {
                 let len = match len {
-                    ArrayLen::Param(param) => match substitution
-                        .get(param)
-                        .map(|id| self.type_for(*id))
-                    {
-                        Some(Type::ConstValue(n)) => ArrayLen::Value(n),
-                        // Still symbolic or unresolved: post-mono validation reports it.
-                        _ => *len,
-                    },
+                    ArrayLen::Param(param) => {
+                        match substitution.get(param).map(|id| self.type_for(*id)) {
+                            Some(Type::ConstValue(n)) => ArrayLen::Value(n),
+                            // Still symbolic or unresolved: post-mono validation reports it.
+                            _ => *len,
+                        }
+                    }
                     other => *other,
                 };
                 HirExprKind::ArrayRepeat(Box::new(self.substitute_expr(value, substitution)), len)

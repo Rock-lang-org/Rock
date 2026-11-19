@@ -8,8 +8,8 @@ use crate::ids::DefId;
 use crate::infer::ResolvedHirProgram;
 use crate::language_items::{
     DropLanguageItems, FnLanguageItems, FnMutLanguageItems, FnOnceLanguageItems, FoldLanguageItems,
-    IndexLanguageItems, IndexMutLanguageItems, OwnedLanguageItems, RangeLanguageItems, SendLanguageItems,
-    SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
+    IndexLanguageItems, IndexMutLanguageItems, OwnedLanguageItems, RangeLanguageItems,
+    SendLanguageItems, SizedLanguageItems, SyncLanguageItems, TryLanguageItems,
 };
 
 pub(super) fn is_current_crate_def(hir: &ResolvedHirProgram, id: DefId) -> bool {

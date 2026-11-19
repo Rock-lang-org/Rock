@@ -375,7 +375,10 @@ fn selection_service_selects_generic_fixed_array_builtin_slice_impl() {
     };
     let mut method = method(method_id, impl_id);
     method.name = "echo".to_string();
-    method.params[0].ty = Type::Array(Box::new(Type::Generic(generic_t)), crate::types::ArrayLen::Value(3));
+    method.params[0].ty = Type::Array(
+        Box::new(Type::Generic(generic_t)),
+        crate::types::ArrayLen::Value(3),
+    );
     method.params.push(HirParam {
         name: "value".to_string(),
         local_id: crate::ids::HirLocalId(1),

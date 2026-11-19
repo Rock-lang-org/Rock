@@ -2,8 +2,8 @@
 
 pub mod bodies;
 pub(crate) mod body_context;
-pub(crate) mod body_state;
 pub(crate) mod body_lowerer;
+pub(crate) mod body_state;
 pub mod collect;
 pub mod control_flow;
 pub mod crates;
@@ -153,7 +153,8 @@ impl Lowerer {
     }
 
     pub(crate) fn fresh_local_id(&mut self) -> HirLocalId {
-        self.body.context_mut()
+        self.body
+            .context_mut()
             .expect("local IDs can only be allocated while lowering a body")
             .fresh_local_id()
     }
@@ -213,8 +214,7 @@ impl Lowerer {
     }
 
     pub(crate) fn current_body_owner(&self) -> Option<BodyOwner> {
-        self.body.context()
-            .map(|context| context.owner().clone())
+        self.body.context().map(|context| context.owner().clone())
     }
 
     pub(crate) fn current_body_def_id(&self) -> Option<DefId> {
@@ -269,7 +269,9 @@ impl Lowerer {
     }
 
     pub(crate) fn current_body_return_type(&mut self) -> Option<Type> {
-        if let Some(return_type) = self.body.context()
+        if let Some(return_type) = self
+            .body
+            .context()
             .and_then(BodyLoweringContext::return_type_override)
         {
             return Some(return_type.clone());
@@ -348,10 +350,13 @@ impl Lowerer {
     }
 
     pub(crate) fn current_generic_owner(&self) -> Option<DefId> {
-        self.body.context()
+        self.body
+            .context()
             .and_then(BodyLoweringContext::generic_owner)
             .or_else(|| {
-                self.item_scope.generics().map(GenericLoweringContext::owner)
+                self.item_scope
+                    .generics()
+                    .map(GenericLoweringContext::owner)
             })
     }
 
@@ -366,13 +371,15 @@ impl Lowerer {
     }
 
     pub(crate) fn current_impl_bounds(&self) -> &HirGenericBounds {
-        self.body.context()
+        self.body
+            .context()
             .map(BodyLoweringContext::impl_bounds)
             .unwrap_or(&self.empty_impl_bounds)
     }
 
     pub(crate) fn is_in_unsafe(&self) -> bool {
-        self.body.context()
+        self.body
+            .context()
             .is_some_and(BodyLoweringContext::in_unsafe)
     }
 
@@ -434,7 +441,9 @@ impl Lowerer {
         name: &str,
         _span: crate::lexer::Span,
     ) -> Option<Type> {
-        if let Some(param) = self.body.context()
+        if let Some(param) = self
+            .body
+            .context()
             .and_then(|context| context.generic_param_id(name))
         {
             return Some(Type::Generic(param));
@@ -468,7 +477,9 @@ impl Lowerer {
         if let Some(context) = self.body.context_mut() {
             let previous = context.replace_generic_context(Some(owner), params);
             let result = f(self);
-            let context = self.body.context_mut()
+            let context = self
+                .body
+                .context_mut()
                 .expect("body context should remain active");
             let (previous_owner, previous_params) = previous;
             let (_, params) = context.replace_generic_context(previous_owner, previous_params);
@@ -509,7 +520,8 @@ impl Lowerer {
         };
         let previous = context.replace_in_unsafe(true);
         let result = f(self);
-        self.body.context_mut()
+        self.body
+            .context_mut()
             .expect("body context should remain active")
             .replace_in_unsafe(previous);
         result

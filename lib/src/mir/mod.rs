@@ -79,7 +79,6 @@ impl MirInstanceBodies {
     pub fn nested_functions(&self) -> &[MirFunction] {
         &self.nested_functions
     }
-
 }
 
 #[derive(Debug, Clone)]
