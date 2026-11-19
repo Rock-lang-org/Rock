@@ -516,3 +516,37 @@ fn test_reference_lifetime_cleanup() {
 fn test_borrow_disjoint_fields() {
     compile_example_should_pass("mir_tests/field_borrowing");
 }
+
+#[test]
+fn test_reborrows_of_disjoint_fields_through_one_reference() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    mut pair = (1, 2)
+    r = &mut pair
+    a = &mut (*r).0
+    b = &mut (*r).1
+    *a = *a + 10
+    *b = *b + 20
+    pair.0.println!
+    pair.1.println!
+"#,
+    );
+    assert_eq!(output.trim(), "11\n22");
+}
+
+#[test]
+fn test_reborrows_of_the_same_field_through_one_reference_conflict() {
+    compile_should_fail(
+        r#"
+main = !->
+    mut pair = (1, 2)
+    r = &mut pair
+    a = &mut (*r).0
+    b = &mut (*r).0
+    *a = 10
+    *b = 20
+"#,
+        "borrow conflict on this value",
+    );
+}

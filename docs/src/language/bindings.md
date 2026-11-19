@@ -111,6 +111,19 @@ main = !->
 
 The output is `3`, while `right` remains `2`. The matching chapter shows how an enum pattern can both check a variant and bind its payloads.
 
+Destructuring a reference to a tuple binds each element by reference instead of moving it out. A shared reference gives shared element references, and a mutable reference gives mutable ones:
+
+```rock
+main = !->
+    mut pair = (1, 2)
+    (left, right) = &mut pair
+    *left = *left + 10
+    *right = *right + 20
+    %println pair.0, " ", pair.1
+```
+
+Here `left` has type `&mut I64` and points into `pair`, so writing through it changes the tuple, and the program prints `11 22`. While `left` or `right` is still used, `pair` stays borrowed, just as it would with an explicit `&mut pair.0`.
+
 ## Updating a field
 
 A field path is also an assignment target. Declare the struct in the same module as the use:

@@ -45,6 +45,7 @@ mod returns;
 mod signatureless_inference;
 mod std_cache;
 mod std_conversions;
+mod tuple_destructuring;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod std_discard_errors;
 mod std_iteration;

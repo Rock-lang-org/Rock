@@ -442,11 +442,23 @@ impl Lowerer {
                 .map(|_| self.engine.fresh_type_var_at(rhs_span.clone()))
                 .collect(),
         );
-        if let Err(error) = self.engine.unify(&rhs_expr.ty, &tuple_ty) {
+        // Destructuring through references binds each element by reference
+        // (`(a, b) = &pair` gives `a: &A`, `b: &B`); `&mut` binds `&mut`.
+        // Nested references collapse to the innermost one's mutability.
+        let mut borrow = None;
+        let mut deref_types = Vec::new();
+        let mut target_ty = self.engine.resolve(&rhs_expr.ty);
+        while let Type::Reference { mutable, inner } = target_ty {
+            borrow = Some(borrow.map_or(mutable, |outer: bool| outer && mutable));
+            target_ty = self.engine.resolve(&inner);
+            deref_types.push(target_ty.clone());
+        }
+        if let Err(error) = self.engine.unify(&target_ty, &tuple_ty) {
             self.diagnostics
                 .push_type_with_span(error.render(&self.engine), rhs_span.clone());
         }
-        let tmp_ty = self.engine.resolve(&tuple_ty);
+        let tuple_ty = self.engine.resolve(&tuple_ty);
+        let tmp_ty = self.engine.resolve(&rhs_expr.ty);
         let tmp_local_id = self.fresh_local_id();
         self.scope
             .define_local(tmp_name.clone(), tmp_ty.clone(), false, tmp_local_id);
@@ -466,25 +478,45 @@ impl Lowerer {
             }
 
             // Determine the element type from the tuple type
-            let elem_ty = match &tmp_ty {
+            let elem_ty = match &tuple_ty {
                 Type::Tuple(types) if idx < types.len() => types[idx].clone(),
                 _ => self.engine.fresh_type_var_at(rhs_span.clone()),
             };
 
-            let index_expr = HirExpr {
-                ty: elem_ty.clone(),
-                kind: HirExprKind::TupleIndex(
-                    Box::new(HirExpr {
-                        ty: tmp_ty.clone(),
-                        kind: HirExprKind::ResolvedVar(HirVarRef {
-                            name: tmp_name.clone(),
-                            target: HirVarTarget::Local(tmp_local_id),
-                        }),
-                        span: rhs_span.clone(),
-                    }),
-                    idx as u32,
-                ),
+            let mut tuple_expr = HirExpr {
+                ty: tmp_ty.clone(),
+                kind: HirExprKind::ResolvedVar(HirVarRef {
+                    name: tmp_name.clone(),
+                    target: HirVarTarget::Local(tmp_local_id),
+                }),
                 span: rhs_span.clone(),
+            };
+            for ty in &deref_types {
+                tuple_expr = HirExpr {
+                    ty: ty.clone(),
+                    kind: HirExprKind::Deref(Box::new(tuple_expr)),
+                    span: rhs_span.clone(),
+                };
+            }
+            let mut index_expr = HirExpr {
+                ty: elem_ty.clone(),
+                kind: HirExprKind::TupleIndex(Box::new(tuple_expr), idx as u32),
+                span: rhs_span.clone(),
+            };
+            let elem_ty = match borrow {
+                Some(mutable) => {
+                    let ty = Type::Reference {
+                        mutable,
+                        inner: Box::new(elem_ty),
+                    };
+                    index_expr = HirExpr {
+                        ty: ty.clone(),
+                        kind: HirExprKind::Ref(mutable, Box::new(index_expr)),
+                        span: rhs_span.clone(),
+                    };
+                    ty
+                }
+                None => elem_ty,
             };
 
             let local_id = self.fresh_local_id();
