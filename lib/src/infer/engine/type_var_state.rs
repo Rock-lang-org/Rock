@@ -87,7 +87,7 @@ impl InferenceEngine {
     }
 
     pub(crate) fn set_normalization_env(&mut self, mut env: TypeNormalizationEnv) {
-        for (id, kind) in &self.var_kinds {
+        for (id, kind) in self.var_kinds.iter() {
             env.register_inference_kind(*id, kind.clone());
         }
         self.normalization_env = env.into();
