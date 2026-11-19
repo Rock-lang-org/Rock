@@ -161,6 +161,33 @@ impl ConstraintStore {
         }
     }
 
+    /// Replaces the context of the `trait_id` obligations recorded at `span`,
+    /// so a failure explains the call that produced them. Returns whether any
+    /// obligation matched.
+    pub fn set_trait_context(
+        &mut self,
+        trait_id: crate::ids::DefId,
+        span: &Span,
+        new_context: &str,
+    ) -> bool {
+        let mut matched = false;
+        for constraint in &mut self.constraints {
+            if let Constraint::Trait {
+                bound,
+                span: constraint_span,
+                context,
+                ..
+            } = constraint
+            {
+                if bound.trait_id == trait_id && constraint_span == span {
+                    *context = new_context.to_string();
+                    matched = true;
+                }
+            }
+        }
+        matched
+    }
+
     pub fn add_int_literal(&mut self, var: TypeVarId, span: Span) -> ObligationId {
         self.constraints.push(Constraint::IntLiteral { var, span });
         self.push_obligation()

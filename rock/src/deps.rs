@@ -83,7 +83,12 @@ fn fetch_git_dependency(root: &Path, url: &str, rev: &str) -> Result<PathBuf, St
 
 fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, String> {
     if cache.join("rock.toml").is_file() {
-        return cache.canonicalize().map_err(|error| error.to_string());
+        // Reuse a checkout only while it still sits on the pinned commit with
+        // pristine sources; otherwise drop it and fetch a fresh copy.
+        if cached_checkout_matches(cache, rev) {
+            return cache.canonicalize().map_err(|error| error.to_string());
+        }
+        std::fs::remove_dir_all(cache).map_err(|error| error.to_string())?;
     }
     let parent = cache.parent().ok_or("Missing Git cache parent")?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -140,6 +145,22 @@ fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, Strin
         let _ = std::fs::remove_dir_all(&stage);
     }
     result
+}
+
+fn cached_checkout_matches(cache: &Path, rev: &str) -> bool {
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .current_dir(cache)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    };
+    git(&["rev-parse", "HEAD"]).is_some_and(|head| head.eq_ignore_ascii_case(rev))
+        && git(&["status", "--porcelain", "--untracked-files=all"])
+            .is_some_and(|status| status.is_empty())
 }
 
 #[cfg(test)]

@@ -10,8 +10,11 @@ impl Lowerer {
     /// For a trait-qualified member value (`Trait::member`) whose impl is not
     /// yet selected, returns its display path and declared parameter count.
     /// Over-applying such a value would otherwise surface as a missing impl
-    /// for a function-typed trait argument.
-    pub(crate) fn trait_member_value_arity(&self, callee: &HirExpr) -> Option<(String, usize)> {
+    /// for a function-typed trait argument. Also returns the member's trait.
+    pub(crate) fn trait_member_value_arity(
+        &self,
+        callee: &HirExpr,
+    ) -> Option<(String, usize, crate::ids::DefId)> {
         let HirExprKind::Lambda {
             params,
             body,
@@ -47,7 +50,11 @@ impl Lowerer {
                     .find_map(|(name, method)| (method.id == method_id).then_some(name))
             })?;
         let trait_name = crate::type_services::display::short_item_name(&trait_def.name);
-        Some((format!("{trait_name}::{member}"), params.len()))
+        Some((
+            format!("{trait_name}::{member}"),
+            params.len(),
+            trait_def.id,
+        ))
     }
 
     pub(crate) fn infer_static_trait_argument_coercions(

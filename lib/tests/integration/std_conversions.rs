@@ -577,3 +577,21 @@ main = !->
         "`Into::into` takes 1 argument but 2 arguments were supplied",
     );
 }
+
+#[test]
+fn trait_qualified_member_returning_a_function_absorbs_extra_arguments() {
+    let output = crate::support::compile_and_run(
+        r#"
+trait Curry T
+    ~@curry: T
+
+impl Curry (I64 -> I64) for I64
+    ~@curry = -> x -> x + self
+
+main = !->
+    sum: I64 = Curry::curry 40, 2
+    sum.println!
+"#,
+    );
+    assert_eq!(output.trim(), "42");
+}

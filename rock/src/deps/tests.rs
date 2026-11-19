@@ -44,6 +44,13 @@ fn pinned_dependency_fetches_exact_commit_and_reuses_checkout() {
         fetch_into_cache(&cache, "unavailable", &rev).unwrap(),
         checkout
     );
+    // An edited cache no longer matches the pin and is fetched again.
+    std::fs::write(checkout.join("rock.toml"), "tampered").unwrap();
+    let refetched = fetch_into_cache(&cache, &url, &rev).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(refetched.join("rock.toml")).unwrap(),
+        "pinned"
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 
@@ -118,10 +125,38 @@ fn git_checkout_path_dependencies_cannot_escape_the_checkout() {
 #[test]
 fn pinned_dependency_uses_project_cache_without_network() {
     let root = std::env::temp_dir().join(format!("rock-git-cache-test-{}", std::process::id()));
-    let rev = "0123456789abcdef0123456789abcdef01234567";
+    let scratch = root.join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let git = |dir: &Path, args: &[&str]| {
+        let output = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    git(&scratch, &["init", "--quiet"]);
+    std::fs::write(scratch.join("rock.toml"), "").unwrap();
+    git(&scratch, &["add", "rock.toml"]);
+    git(
+        &scratch,
+        &[
+            "-c",
+            "user.name=Rock",
+            "-c",
+            "user.email=rock@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "pin",
+        ],
+    );
+    let rev = git(&scratch, &["rev-parse", "HEAD"]);
+    let rev = rev.as_str();
     let cached = root.join("build/git/owner/repo").join(rev);
-    std::fs::create_dir_all(&cached).unwrap();
-    std::fs::write(cached.join("rock.toml"), "").unwrap();
+    std::fs::create_dir_all(cached.parent().unwrap()).unwrap();
+    std::fs::rename(&scratch, &cached).unwrap();
     let dependency = Dependency {
         git: Some("https://github.com/owner/repo".into()),
         rev: Some(rev.into()),

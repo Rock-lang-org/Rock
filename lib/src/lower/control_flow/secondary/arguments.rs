@@ -183,22 +183,40 @@ impl Lowerer {
 
         // A trait member returning a non-function cannot absorb extra
         // arguments; report the arity instead of a function-typed trait arg.
-        if let (Some((member, arity)), Type::Function { ret, .. }) = (
+        if let (Some((member, arity, trait_id)), Type::Function { ret, .. }) = (
             self.trait_member_value_arity(&expr),
             self.engine.resolve(&expr.ty),
         ) {
-            if args.len() > arity && !matches!(self.engine.resolve(&ret), Type::Function { .. }) {
+            if args.len() > arity {
                 let plural = |count: usize| if count == 1 { "" } else { "s" };
-                self.diagnostics.push_type_with_span(
-                    format!(
-                        "`{member}` takes {arity} argument{} but {} argument{} were supplied",
-                        plural(arity),
-                        args.len(),
-                        plural(args.len()),
-                    ),
-                    span.clone(),
+                let message = format!(
+                    "`{member}` takes {arity} argument{} but {} argument{} were supplied",
+                    plural(arity),
+                    args.len(),
+                    plural(args.len()),
                 );
-                return self.error_expression_at(span.clone());
+                let ret = self.engine.resolve(&ret);
+                let ret_is_open = matches!(
+                    ret,
+                    Type::TypeVar(_)
+                        | Type::Generic(_)
+                        | Type::Projection { .. }
+                        | Type::Constructor { .. }
+                );
+                if !ret_is_open && !matches!(ret, Type::Function { .. }) {
+                    self.diagnostics.push_type_with_span(message, span.clone());
+                    return self.error_expression_at(span.clone());
+                }
+                // An open return may still become a function once the impl
+                // is selected: let inference decide, and if no impl fits,
+                // name the over-application as the cause.
+                if ret_is_open {
+                    self.constraint_store.set_trait_context(
+                        trait_id,
+                        &expr.span,
+                        &format!("{message}; extra arguments need a function result"),
+                    );
+                }
             }
         }
 
