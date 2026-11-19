@@ -203,12 +203,12 @@ pub(super) fn solve_constraints_in_place_mode(
     // quiescence, so temporarily unresolved constructor equations can settle.
     for (id, constraint) in store
         .iter()
+        .filter(|(id, value)| {
+            matches!(value, Constraint::Equality { .. }) && store.includes_owner(*id, owners)
+        })
         .map(|(id, value)| (id, value.clone()))
         .collect::<Vec<_>>()
     {
-        if !store.includes_owner(id, owners) {
-            continue;
-        }
         let Constraint::Equality {
             left,
             right,
@@ -247,12 +247,12 @@ pub(super) fn solve_constraints_in_place_mode(
 
     for (id, constraint) in store
         .iter()
+        .filter(|(id, value)| {
+            matches!(value, Constraint::Coercion { .. }) && store.includes_owner(*id, owners)
+        })
         .map(|(id, value)| (id, value.clone()))
         .collect::<Vec<_>>()
     {
-        if !store.includes_owner(id, owners) {
-            continue;
-        }
         let Constraint::Coercion {
             actual,
             expected,
@@ -285,12 +285,17 @@ pub(super) fn solve_constraints_in_place_mode(
 
     for (id, constraint) in store
         .iter()
+        .filter(|(id, value)| {
+            matches!(
+                value,
+                Constraint::Trait { .. }
+                    | Constraint::IntLiteral { .. }
+                    | Constraint::FloatLiteral { .. }
+            ) && store.includes_owner(*id, owners)
+        })
         .map(|(id, value)| (id, value.clone()))
         .collect::<Vec<_>>()
     {
-        if !store.includes_owner(id, owners) {
-            continue;
-        }
         match constraint {
             Constraint::Trait {
                 ty,
