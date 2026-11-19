@@ -234,8 +234,9 @@ fn cached_checkout_matches(cache: &Path, rev: &str) -> Result<bool, String> {
     };
     Ok(
         git(&["rev-parse", "HEAD"])?.is_some_and(|head| head.eq_ignore_ascii_case(rev))
-            && git(&["status", "--porcelain", "--untracked-files=all"])?
-                .is_some_and(|status| status.is_empty()),
+            && git(&["status", "--porcelain", "--untracked-files=all", "--ignored"])?
+                .is_some_and(|status| status.is_empty())
+            && escaping_symlink(cache)?.is_none(),
     )
 }
 

@@ -44,6 +44,11 @@ fn pinned_dependency_fetches_exact_commit_and_reuses_checkout() {
         fetch_into_cache(&cache, "unavailable", &rev).unwrap(),
         checkout
     );
+    std::fs::write(checkout.join(".git/info/exclude"), "extra.rk\n").unwrap();
+    std::fs::write(checkout.join("extra.rk"), "ignored").unwrap();
+    assert!(!cached_checkout_matches(&cache, &rev).unwrap());
+    std::fs::remove_file(checkout.join("extra.rk")).unwrap();
+
     // An edited cache no longer matches the pin and is fetched again; it
     // survives a failed refetch instead of being deleted up front.
     std::fs::write(checkout.join("rock.toml"), "tampered").unwrap();
