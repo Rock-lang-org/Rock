@@ -204,6 +204,20 @@ impl Lowerer {
             Some(ArrayLen::Value(length)) => Some(length),
             _ => None,
         };
+        if length.is_some()
+            && known_length.is_none()
+            && rest.is_some_and(|index| {
+                matches!(&elements[index], ast::ArrayPattern::Rest(ident) if ident.name.name != "_")
+            })
+        {
+            if let Some(span) = span {
+                self.diagnostics.push_type_with_span(
+                    "a named array rest requires a concrete array length".to_string(),
+                    span,
+                );
+            }
+            return HirPattern::Wildcard;
+        }
         let irrefutable = known_length.is_some_and(|length| {
             if rest.is_some() {
                 length >= required as u64
