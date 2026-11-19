@@ -714,6 +714,7 @@ main = !->
         "Type mismatch",
     );
 }
+
 #[test]
 fn const_parameter_defaults_fill_omitted_lengths() {
     let output = crate::support::compile_and_run(

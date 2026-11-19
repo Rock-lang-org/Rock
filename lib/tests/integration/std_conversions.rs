@@ -552,6 +552,7 @@ main = !->
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
 #[test]
 fn trait_qualified_from_infers_implementation() {
     let output = crate::support::compile_and_run(

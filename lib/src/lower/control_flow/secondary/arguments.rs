@@ -211,7 +211,7 @@ impl Lowerer {
                 // is selected: let inference decide, and if no impl fits,
                 // name the over-application as the cause.
                 if ret_is_open {
-                    self.constraint_store.set_trait_context(
+                    self.constraint_store.set_static_trait_member_context(
                         trait_id,
                         &expr.span,
                         &format!("{message}; extra arguments need a function result"),

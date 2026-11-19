@@ -70,36 +70,45 @@ fn git_checkout_root(project_root: &Path, package_root: &Path) -> Option<PathBuf
 }
 
 fn fetch_git_dependency(root: &Path, url: &str, rev: &str) -> Result<PathBuf, String> {
+    fetch_into_cache(&git_cache_dir(root, url, rev)?, url, rev)
+}
+
+/// `build/git/<owner>/<repo>/<rev>`, normalized the way GitHub resolves
+/// repositories: owner and repository names are case-insensitive and an
+/// optional `.git` suffix names the same repository.
+fn git_cache_dir(root: &Path, url: &str, rev: &str) -> Result<PathBuf, String> {
     let repo = url
         .strip_prefix("https://github.com/")
-        .ok_or("Invalid GitHub repository")?;
-    let cache = root
+        .ok_or("Invalid GitHub repository")?
+        .to_ascii_lowercase();
+    let repo = repo.strip_suffix(".git").unwrap_or(&repo);
+    Ok(root
         .join("build")
         .join("git")
         .join(repo)
-        .join(rev.to_ascii_lowercase());
-    fetch_into_cache(&cache, url, rev)
+        .join(rev.to_ascii_lowercase()))
+}
+
+/// A unique sibling path of `dir` for staging or retiring a checkout.
+fn sibling_scratch_dir(dir: &Path, purpose: &str) -> Result<PathBuf, String> {
+    let parent = dir.parent().ok_or("Missing Git cache parent")?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    Ok(parent.join(format!(".{purpose}-{}-{nanos}", std::process::id())))
 }
 
 fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, String> {
-    if cache.join("rock.toml").is_file() {
-        // Reuse a checkout only while it still sits on the pinned commit with
-        // pristine sources; otherwise drop it and fetch a fresh copy.
-        if cached_checkout_matches(cache, rev) {
-            return cache.canonicalize().map_err(|error| error.to_string());
-        }
-        std::fs::remove_dir_all(cache).map_err(|error| error.to_string())?;
+    // Reuse a checkout only while it still sits on the pinned commit with
+    // pristine sources. A stale one stays in place until a fresh fetch
+    // succeeds, so concurrent builds and offline runs never lose it early.
+    if cache.join("rock.toml").is_file() && cached_checkout_matches(cache, rev)? {
+        return cache.canonicalize().map_err(|error| error.to_string());
     }
     let parent = cache.parent().ok_or("Missing Git cache parent")?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let stage = parent.join(format!(
-        ".fetch-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos()
-    ));
+    let stage = sibling_scratch_dir(cache, "fetch")?;
     std::fs::create_dir(&stage).map_err(|error| error.to_string())?;
     let git = |args: &[&str]| -> Result<(), String> {
         let output = Command::new("git")
@@ -130,15 +139,15 @@ fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, Strin
         if !stage.join("rock.toml").is_file() {
             return Err(format!("Git dependency {url} has no root rock.toml"));
         }
-        // Clear a leftover from an interrupted run so the rename can land.
-        if cache.exists() && !cache.join("rock.toml").is_file() {
-            std::fs::remove_dir_all(cache).map_err(|error| error.to_string())?;
+        // Sources are read at build time; a link out of the checkout would
+        // let a dependency pull arbitrary local files into the build.
+        if let Some(link) = escaping_symlink(&stage)? {
+            return Err(format!(
+                "Git dependency {url} contains a symbolic link leaving its checkout: {}",
+                link.strip_prefix(&stage).unwrap_or(&link).display()
+            ));
         }
-        match std::fs::rename(&stage, cache) {
-            Ok(()) => {}
-            Err(_) if cache.join("rock.toml").is_file() => {}
-            Err(error) => return Err(error.to_string()),
-        }
+        install_checkout(&stage, cache)?;
         cache.canonicalize().map_err(|error| error.to_string())
     })();
     if stage.is_dir() {
@@ -147,20 +156,87 @@ fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, Strin
     result
 }
 
-fn cached_checkout_matches(cache: &Path, rev: &str) -> bool {
-    let git = |args: &[&str]| {
-        Command::new("git")
-            .current_dir(cache)
+/// Moves a verified `stage` to `cache`. An existing stale or partial
+/// checkout is first renamed aside, never deleted in place, so a concurrent
+/// reader keeps a consistent tree; losing the race to another process that
+/// installed the same pin is fine.
+fn install_checkout(stage: &Path, cache: &Path) -> Result<(), String> {
+    let retired = if cache.exists() {
+        let retired = sibling_scratch_dir(cache, "stale")?;
+        match std::fs::rename(cache, &retired) {
+            Ok(()) => Some(retired),
+            Err(_) if !cache.exists() => None,
+            Err(error) => return Err(error.to_string()),
+        }
+    } else {
+        None
+    };
+    let installed = match std::fs::rename(stage, cache) {
+        Ok(()) => Ok(()),
+        Err(_) if cache.join("rock.toml").is_file() => Ok(()),
+        Err(error) => Err(error.to_string()),
+    };
+    if let Some(retired) = retired {
+        let _ = std::fs::remove_dir_all(retired);
+    }
+    installed
+}
+
+/// Finds a symbolic link under `root` (outside `.git`) whose target is
+/// missing or lies outside `root`.
+fn escaping_symlink(root: &Path) -> Result<Option<PathBuf>, String> {
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    let mut pending = vec![root.clone()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            let kind = entry.file_type().map_err(|error| error.to_string())?;
+            if kind.is_symlink() {
+                let inside = path
+                    .canonicalize()
+                    .is_ok_and(|target| target.starts_with(&root));
+                if !inside {
+                    return Ok(Some(path));
+                }
+            } else if kind.is_dir() && !(dir == root && entry.file_name() == ".git") {
+                pending.push(path);
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Whether `cache` is a Git checkout of exactly `rev` without local edits.
+/// Failing to run Git is an error rather than a mismatch, so a missing Git
+/// never discards a valid checkout.
+fn cached_checkout_matches(cache: &Path, rev: &str) -> Result<bool, String> {
+    let git_dir = cache.join(".git");
+    if !git_dir.is_dir() {
+        return Ok(false);
+    }
+    // Explicit repository paths keep Git from walking up into an enclosing
+    // project repository.
+    let git = |args: &[&str]| -> Result<Option<String>, String> {
+        let output = Command::new("git")
+            .arg("--git-dir")
+            .arg(&git_dir)
+            .arg("--work-tree")
+            .arg(cache)
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(args)
             .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .map_err(|error| format!("Could not run git to verify {}: {error}", cache.display()))?;
+        Ok(output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string()))
     };
-    git(&["rev-parse", "HEAD"]).is_some_and(|head| head.eq_ignore_ascii_case(rev))
-        && git(&["status", "--porcelain", "--untracked-files=all"])
-            .is_some_and(|status| status.is_empty())
+    Ok(
+        git(&["rev-parse", "HEAD"])?.is_some_and(|head| head.eq_ignore_ascii_case(rev))
+            && git(&["status", "--porcelain", "--untracked-files=all"])?
+                .is_some_and(|status| status.is_empty()),
+    )
 }
 
 #[cfg(test)]

@@ -21,12 +21,14 @@ mod reference_origins;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use closure_state::ClosureState;
 use drop_state::DropState;
 
 use crate::hir::AcceptedHir;
 use crate::ids::{DefId, InstanceId};
+use crate::infer::solve::CopyOracle;
 use crate::source_map::SemanticSourceMap;
 use crate::type_context::TypeContext;
 use crate::types::Type;
@@ -64,8 +66,8 @@ pub struct MirBuilder<'a> {
     ownership: MirOwnershipMetadata,
     source_map: SemanticSourceMap,
     current_source_owner: Option<DefId>,
-    /// Memoized Copy answers for nominal-bearing types; see `needs_move`.
-    copy_cache: RefCell<HashMap<Type, bool>>,
+    /// Copy answers shared by every builder of one program; see `needs_move`.
+    copy_oracle: Rc<CopyOracle<'a, AcceptedHir>>,
 }
 
 #[derive(Debug, Clone, Copy)]

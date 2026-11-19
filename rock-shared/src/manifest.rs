@@ -194,7 +194,10 @@ pub fn parse_rock_toml(content: &str) -> Result<CrateManifest, String> {
                         rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit())
                     })
                 {
-                    return Err(format!("Dependency '{dep_name}' requires a GitHub HTTPS repository and a full commit SHA, without path or version"));
+                    return Err(format!(
+                        "Dependency '{dep_name}' requires a GitHub HTTPS repository \
+                         and a full commit SHA, without path or version"
+                    ));
                 }
             } else if rev.is_some() || (path.is_none() && version.is_none()) {
                 return Err(format!(

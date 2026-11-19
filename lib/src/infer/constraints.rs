@@ -10,6 +10,10 @@ use crate::ids::TypeVarId;
 use crate::lexer::Span;
 use crate::types::{TraitBound, Type};
 
+/// Context of the owner obligation a `Trait::member` path records before its
+/// implementation is selected.
+pub(crate) const STATIC_TRAIT_MEMBER_CONTEXT: &str = "static trait member";
+
 /// Owner used to keep obligations from unrelated inference bodies isolated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ConstraintOwner {
@@ -161,16 +165,15 @@ impl ConstraintStore {
         }
     }
 
-    /// Replaces the context of the `trait_id` obligations recorded at `span`,
-    /// so a failure explains the call that produced them. Returns whether any
-    /// obligation matched.
-    pub fn set_trait_context(
+    /// Replaces the context of the `trait_id` obligations that a static trait
+    /// member path recorded at `span`, so a failure explains the call that
+    /// produced them. Other obligations sharing the span keep their context.
+    pub fn set_static_trait_member_context(
         &mut self,
         trait_id: crate::ids::DefId,
         span: &Span,
         new_context: &str,
-    ) -> bool {
-        let mut matched = false;
+    ) {
         for constraint in &mut self.constraints {
             if let Constraint::Trait {
                 bound,
@@ -179,13 +182,14 @@ impl ConstraintStore {
                 ..
             } = constraint
             {
-                if bound.trait_id == trait_id && constraint_span == span {
+                if bound.trait_id == trait_id
+                    && constraint_span == span
+                    && context == STATIC_TRAIT_MEMBER_CONTEXT
+                {
                     *context = new_context.to_string();
-                    matched = true;
                 }
             }
         }
-        matched
     }
 
     pub fn add_int_literal(&mut self, var: TypeVarId, span: Span) -> ObligationId {

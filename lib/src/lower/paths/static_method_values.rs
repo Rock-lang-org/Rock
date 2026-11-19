@@ -6,29 +6,71 @@ use crate::lower::Lowerer;
 use crate::types::{GenericParamId, Type};
 use std::collections::{HashMap, HashSet};
 
+/// Recognizes the forwarding lambda built by `Lowerer::static_method_value_lambda`
+/// and returns its parameters and forwarding call. Any other lambda, even one
+/// with the same shape written by hand, is rejected because its body must
+/// forward exactly its own parameters. Keep in sync with that builder.
+fn static_method_value_forwarding(callee: &HirExpr) -> Option<(&[HirParam], &HirExpr)> {
+    let HirExprKind::Lambda {
+        params,
+        body,
+        captures,
+    } = &callee.kind
+    else {
+        return None;
+    };
+    let [HirStmt::Expr(call)] = body.stmts.as_slice() else {
+        return None;
+    };
+    let forwarded: Vec<&HirExpr> = match &call.kind {
+        HirExprKind::Call(_, args, Some(HirCallTarget::StaticMethod(_))) => args.iter().collect(),
+        HirExprKind::MethodCall(receiver, _, args, _, Some(_)) => {
+            std::iter::once(receiver.as_ref()).chain(args).collect()
+        }
+        _ => return None,
+    };
+    let forwards_params = forwarded.len() == params.len()
+        && forwarded.iter().zip(params).all(|(arg, param)| {
+            matches!(
+                &arg.kind,
+                HirExprKind::ResolvedVar(reference)
+                    if reference.target == HirVarTarget::Local(param.local_id)
+            )
+        });
+    (captures.is_empty() && forwards_params).then_some((params.as_slice(), call))
+}
+
 impl Lowerer {
+    /// Finds a trait member by ID among the trait's signatures and default
+    /// methods, returning its name and receiver mode.
+    fn trait_member_by_id(
+        &self,
+        trait_id: crate::ids::DefId,
+        member_id: crate::ids::DefId,
+    ) -> Option<(String, Option<crate::types::ReceiverMode>)> {
+        let trait_def = self.trait_by_id(trait_id)?;
+        trait_def
+            .signatures
+            .iter()
+            .find_map(|(name, sig)| {
+                (sig.id == member_id).then(|| (name.clone(), sig.self_receiver))
+            })
+            .or_else(|| {
+                trait_def.methods.iter().find_map(|(name, method)| {
+                    (method.id == member_id).then(|| (name.clone(), method.self_receiver))
+                })
+            })
+    }
+
     /// For a trait-qualified member value (`Trait::member`) whose impl is not
-    /// yet selected, returns its display path and declared parameter count.
-    /// Over-applying such a value would otherwise surface as a missing impl
-    /// for a function-typed trait argument. Also returns the member's trait.
+    /// yet selected, returns its display path, declared parameter count and
+    /// trait. Over-applying such a value would otherwise surface as a missing
+    /// impl for a function-typed trait argument.
     pub(crate) fn trait_member_value_arity(
         &self,
         callee: &HirExpr,
     ) -> Option<(String, usize, crate::ids::DefId)> {
-        let HirExprKind::Lambda {
-            params,
-            body,
-            captures,
-        } = &callee.kind
-        else {
-            return None;
-        };
-        if !captures.is_empty() {
-            return None;
-        }
-        let [HirStmt::Expr(call)] = body.stmts.as_slice() else {
-            return None;
-        };
+        let (params, call) = static_method_value_forwarding(callee)?;
         let method = match &call.kind {
             HirExprKind::Call(_, _, Some(HirCallTarget::StaticMethod(target))) => &target.method,
             HirExprKind::MethodCall(_, _, _, _, Some(target)) => target,
@@ -37,24 +79,11 @@ impl Lowerer {
         if method.impl_id().is_some() {
             return None;
         }
-        let trait_def = self.trait_by_id(method.trait_id()?)?;
-        let method_id = method.method_id()?;
-        let member = trait_def
-            .signatures
-            .iter()
-            .find_map(|(name, sig)| (sig.id == method_id).then_some(name))
-            .or_else(|| {
-                trait_def
-                    .methods
-                    .iter()
-                    .find_map(|(name, method)| (method.id == method_id).then_some(name))
-            })?;
+        let trait_id = method.trait_id()?;
+        let (member, _) = self.trait_member_by_id(trait_id, method.method_id()?)?;
+        let trait_def = self.trait_by_id(trait_id)?;
         let trait_name = crate::type_services::display::short_item_name(&trait_def.name);
-        Some((
-            format!("{trait_name}::{member}"),
-            params.len(),
-            trait_def.id,
-        ))
+        Some((format!("{trait_name}::{member}"), params.len(), trait_id))
     }
 
     pub(crate) fn infer_static_trait_argument_coercions(
@@ -62,25 +91,17 @@ impl Lowerer {
         callee: &HirExpr,
         args: &[HirExpr],
     ) {
-        let HirExprKind::Lambda {
+        let Some((
             params,
-            body,
-            captures,
-        } = &callee.kind
+            HirExpr {
+                kind: HirExprKind::Call(_, _, Some(HirCallTarget::StaticMethod(target))),
+                ..
+            },
+        )) = static_method_value_forwarding(callee)
         else {
             return;
         };
-        let [HirStmt::Expr(HirExpr {
-            kind: HirExprKind::Call(_, forwarded, Some(HirCallTarget::StaticMethod(target))),
-            ..
-        })] = body.stmts.as_slice()
-        else {
-            return;
-        };
-        if !captures.is_empty() || params.len() != args.len() || forwarded.len() != params.len()
-            || !forwarded.iter().zip(params).all(|(arg, param)| matches!(&arg.kind,
-                HirExprKind::ResolvedVar(reference) if reference.target == HirVarTarget::Local(param.local_id)))
-        {
+        if params.len() != args.len() {
             return;
         }
         let Some(trait_id) = target.method.trait_id() else {
@@ -211,25 +232,9 @@ impl Lowerer {
         let receiver_info = method_info
             .and_then(|(name, method)| method.self_receiver.map(|mode| (name, mode)))
             .or_else(|| {
-                let trait_def = self.trait_by_id(target.method.trait_id()?)?;
-                let id = target.method.method_id()?;
-                trait_def
-                    .signatures
-                    .iter()
-                    .find_map(|(name, sig)| {
-                        (sig.id == id)
-                            .then_some(sig.self_receiver)
-                            .flatten()
-                            .map(|mode| (name.clone(), mode))
-                    })
-                    .or_else(|| {
-                        trait_def.methods.iter().find_map(|(name, method)| {
-                            (method.id == id)
-                                .then_some(method.self_receiver)
-                                .flatten()
-                                .map(|mode| (name.clone(), mode))
-                        })
-                    })
+                let (name, mode) =
+                    self.trait_member_by_id(target.method.trait_id()?, target.method.method_id()?)?;
+                Some((name, mode?))
             });
         let call = if let Some((method_name, mode)) = receiver_info {
             let Some(receiver) = args.first().cloned() else {

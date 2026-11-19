@@ -272,11 +272,12 @@ impl<'a> MirBuilder<'a> {
         if program.language_items.copy.is_none() {
             return;
         }
+        let oracle = crate::infer::solve::CopyOracle::new(program);
         contract
             .copy_types
             .extend(type_context.type_ids().filter(|&id| {
                 let ty = type_context.type_for(id);
-                !ty.is_copy() && crate::infer::solve::program_type_is_copy(program, &ty)
+                !ty.is_copy() && oracle.is_copy(&ty)
             }));
     }
 

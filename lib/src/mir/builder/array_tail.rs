@@ -134,13 +134,15 @@ impl<'a> MirBuilder<'a> {
                     })
             })
             .collect::<BTreeSet<_>>();
+        let copy_oracle = std::rc::Rc::new(crate::infer::solve::CopyOracle::new(program));
         for elem in elements {
             let mut builder = MirBuilder::with_instance_metadata(
                 program,
                 types,
                 Default::default(),
                 direct_drop_types.clone(),
-            );
+            )
+            .with_copy_oracle(&copy_oracle);
             let helper = builder.build_array_tail_helper(elem);
             builder.diagnostics.return_if_err()?;
             functions.insert(helper.id.clone(), helper);

@@ -47,6 +47,27 @@ impl Lowerer {
         self.resolve_static_bound_member_path(owner_name, Some(trait_id), method_name, span)
     }
 
+    /// The trait named by `owner_name` in an unqualified `Trait::member` path.
+    /// A nominal type in scope keeps precedence over a same-named trait, and a
+    /// path that already names its trait (`Owner::Trait::member`) never
+    /// treats the owner as a trait.
+    fn bare_trait_owner(
+        &self,
+        owner_name: &str,
+        required_trait_id: Option<crate::ids::DefId>,
+    ) -> Option<crate::hir::HirTrait> {
+        if required_trait_id.is_some() {
+            return None;
+        }
+        let shadowed_by_type = crate::lower::resolution::LowerResolutionContext::new(self)
+            .resolve_nominal_type(owner_name)
+            .is_some();
+        if shadowed_by_type {
+            return None;
+        }
+        self.trait_by_name(owner_name).cloned()
+    }
+
     fn resolve_static_bound_member_path(
         &mut self,
         owner_name: &str,
@@ -64,18 +85,7 @@ impl Lowerer {
                     .selection_service()
                     .trait_bounds_with_supertraits(&owner_ty, bounds);
                 (owner_ty, bounds)
-            } else if let Some(trait_def) = required_trait_id
-                .is_none()
-                // A nominal type in scope keeps precedence over a same-named trait.
-                .then(|| {
-                    crate::lower::resolution::LowerResolutionContext::new(self)
-                        .resolve_nominal_type(owner_name)
-                        .is_none()
-                })
-                .unwrap_or(false)
-                .then(|| self.trait_by_name(owner_name).cloned())
-                .flatten()
-            {
+            } else if let Some(trait_def) = self.bare_trait_owner(owner_name, required_trait_id) {
                 let kind = trait_def
                     .target
                     .as_ref()
@@ -106,7 +116,7 @@ impl Lowerer {
                     owner_ty.clone(),
                     bound.clone(),
                     operation_span.clone(),
-                    "static trait member",
+                    crate::infer::constraints::STATIC_TRAIT_MEMBER_CONTEXT,
                 );
                 (owner_ty, vec![bound])
             } else {
@@ -180,7 +190,7 @@ impl Lowerer {
                     owner_ty.clone(),
                     bound.clone(),
                     operation_span.clone(),
-                    "static trait member",
+                    crate::infer::constraints::STATIC_TRAIT_MEMBER_CONTEXT,
                 );
                 (owner_ty, vec![bound])
             };

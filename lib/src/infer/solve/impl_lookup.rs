@@ -289,7 +289,7 @@ fn constructor_owner_id(ty: &Type) -> Option<DefId> {
     }
 }
 
-fn receiver_owner_id<P: HirPhase>(imp: &HirImplFor<P>) -> Option<DefId> {
+pub(super) fn receiver_owner_id<P: HirPhase>(imp: &HirImplFor<P>) -> Option<DefId> {
     match P::impl_receiver_pattern(&imp.receiver_pattern)? {
         crate::hir::HirImplReceiverPattern::Exact(Type::Struct { id, .. })
         | crate::hir::HirImplReceiverPattern::Exact(Type::Enum { id, .. }) => Some(*id),

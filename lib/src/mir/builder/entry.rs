@@ -35,8 +35,15 @@ impl<'a> MirBuilder<'a> {
             ownership: MirOwnershipMetadata::default(),
             source_map: SemanticSourceMap::default(),
             current_source_owner: None,
-            copy_cache: RefCell::default(),
+            copy_oracle: Rc::new(CopyOracle::new(program)),
         }
+    }
+
+    /// Shares one program's Copy answers across builders instead of
+    /// recomputing them per function.
+    pub(super) fn with_copy_oracle(mut self, oracle: &Rc<CopyOracle<'a, AcceptedHir>>) -> Self {
+        self.copy_oracle = Rc::clone(oracle);
+        self
     }
 
     pub(super) fn with_instance_metadata(
@@ -119,6 +126,7 @@ impl<'a> MirBuilder<'a> {
             &program.pre_mir_instance_bodies,
         );
         let direct_drop_types = Self::direct_drop_types_for_program(program);
+        let copy_oracle = Rc::new(CopyOracle::new(&program.program));
         let mut bodies = MirInstanceBodies::new();
         for record in program.instances.values() {
             if record.provided_by_object {
@@ -134,7 +142,8 @@ impl<'a> MirBuilder<'a> {
                 method_instance_receiver_modes.clone(),
                 direct_drop_types.clone(),
             )
-            .with_source_map(&program.source_map);
+            .with_source_map(&program.source_map)
+            .with_copy_oracle(&copy_oracle);
             builder.callable_instances_by_def_id = callable_instances_by_def_id.clone();
             builder
                 .method_def_ids
