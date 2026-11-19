@@ -62,7 +62,7 @@ impl InferenceEngine {
     pub fn fresh_type_var_of_kind(&mut self, kind: Kind) -> Type {
         let id = self.next_var.fresh();
         self.var_kinds.insert(id, kind.clone());
-        self.normalization_env.register_inference_kind(id, kind);
+        std::sync::Arc::make_mut(&mut self.normalization_env).register_inference_kind(id, kind);
         Type::TypeVar(id)
     }
 
@@ -75,7 +75,7 @@ impl InferenceEngine {
         let id = self.next_var.fresh();
         self.var_spans.insert(id, span);
         self.var_kinds.insert(id, kind.clone());
-        self.normalization_env.register_inference_kind(id, kind);
+        std::sync::Arc::make_mut(&mut self.normalization_env).register_inference_kind(id, kind);
         Type::TypeVar(id)
     }
 
@@ -83,7 +83,7 @@ impl InferenceEngine {
         for (id, span) in spans {
             self.var_spans.insert(id, span);
             self.var_kinds.insert(id, Kind::Type);
-            self.normalization_env
+            std::sync::Arc::make_mut(&mut self.normalization_env)
                 .register_inference_kind(id, Kind::Type);
         }
     }

@@ -18,7 +18,7 @@ impl InferenceEngine {
             trait_bounds: HashMap::new(),
             var_spans: HashMap::new(),
             var_kinds: HashMap::new(),
-            normalization_env: TypeNormalizationEnv::new(),
+            normalization_env: Default::default(),
             type_display_context: Default::default(),
             generic_defaults: Vec::new(),
         }
@@ -41,7 +41,7 @@ impl InferenceEngine {
             trait_bounds: HashMap::new(),
             var_spans: HashMap::new(),
             var_kinds,
-            normalization_env,
+            normalization_env: normalization_env.into(),
             type_display_context: Default::default(),
             generic_defaults: Vec::new(),
         }

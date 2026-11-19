@@ -14,6 +14,7 @@ pub(crate) use errors::non_constructor_type_description;
 pub use errors::{InferenceError, UnifyError};
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::ids::{IdGen, TypeVarId};
 use crate::lexer::Span;
@@ -33,7 +34,9 @@ pub struct InferenceEngine {
     /// Origin span for each fresh type variable (for error messages)
     pub var_spans: HashMap<TypeVarId, Span>,
     var_kinds: HashMap<TypeVarId, Kind>,
-    normalization_env: TypeNormalizationEnv,
+    // Most probes only read normalization data. Fresh variables in a probe
+    // update a private copy rather than changing the parent engine.
+    normalization_env: Arc<TypeNormalizationEnv>,
     type_display_context: crate::type_services::display::TypeDisplayContext,
     generic_defaults: Vec<(Type, Type)>,
 }

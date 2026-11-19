@@ -90,7 +90,7 @@ impl InferenceEngine {
         for (id, kind) in &self.var_kinds {
             env.register_inference_kind(*id, kind.clone());
         }
-        self.normalization_env = env;
+        self.normalization_env = env.into();
     }
 
     pub fn kind_of_type_var(&self, id: TypeVarId) -> Kind {
@@ -116,6 +116,6 @@ impl InferenceEngine {
     }
 
     pub(crate) fn normalization_env(&self) -> TypeNormalizationEnv {
-        self.normalization_env.clone()
+        (*self.normalization_env).clone()
     }
 }
