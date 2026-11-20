@@ -391,6 +391,9 @@ impl Lowerer {
                         span,
                         self.body.current_source_scope(),
                     );
+                    if type_annotation.is_none() {
+                        self.source_map.mark_inferred_binding(owner, local_id);
+                    }
                 }
                 self.scope
                     .define_local(name.clone(), ty.clone(), mutable, local_id);

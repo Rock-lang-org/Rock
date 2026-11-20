@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use clap::Parser;
@@ -51,7 +52,7 @@ struct Document {
 #[derive(Default)]
 struct State {
     documents: HashMap<Url, Document>,
-    analyses: HashMap<Url, Arc<Analysis>>,
+    analyses: HashMap<Url, (i32, Arc<Analysis>)>,
     projects: HashMap<(PathBuf, PathBuf), rock::project::AnalysisProject>,
     diagnostic_entries: HashMap<Url, PathBuf>,
 }
@@ -91,6 +92,7 @@ struct Backend {
     client: Client,
     settings: Settings,
     state: Arc<RwLock<State>>,
+    inlay_hint_refresh: AtomicBool,
 }
 
 impl Backend {
@@ -99,6 +101,7 @@ impl Backend {
             client,
             settings,
             state: Arc::new(RwLock::new(State::default())),
+            inlay_hint_refresh: AtomicBool::new(false),
         }
     }
 
@@ -180,14 +183,12 @@ impl Backend {
             }
         };
 
-        let current = self
-            .state
-            .read()
-            .await
+        let mut state = self.state.write().await;
+        if !state
             .documents
             .get(&uri)
-            .is_some_and(|current| current.version == document.version);
-        if !current {
+            .is_some_and(|current| current.version == document.version)
+        {
             return;
         }
 
@@ -196,17 +197,15 @@ impl Backend {
             .map(|project| project.entry_file.clone())
             .or_else(|| uri.to_file_path().ok());
         if let (Some(key), Some(project)) = (project_key, resolved_project) {
-            self.state.write().await.projects.insert(key, project);
+            state.projects.insert(key, project);
         }
 
         let diagnostics = match analysis {
             Ok(analysis) => {
                 let analysis = Arc::new(analysis);
-                self.state
-                    .write()
-                    .await
+                state
                     .analyses
-                    .insert(uri.clone(), Arc::clone(&analysis));
+                    .insert(uri.clone(), (document.version, Arc::clone(&analysis)));
                 analysis.warnings.clone()
             }
             Err(diagnostics) => {
@@ -218,28 +217,38 @@ impl Backend {
         let Some(entry) = entry else {
             return;
         };
-        let updates = self
-            .state
-            .write()
-            .await
-            .diagnostic_updates(&entry, &uri, &diagnostics);
+        let updates = state.diagnostic_updates(&entry, &uri, &diagnostics);
+        drop(state);
         for (uri, version, diagnostics) in updates {
             self.client
                 .publish_diagnostics(uri, diagnostics, Some(version))
                 .await;
+        }
+        if self.inlay_hint_refresh.load(Ordering::Relaxed) {
+            let _ = self.client.inlay_hint_refresh().await;
         }
     }
 }
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        self.inlay_hint_refresh.store(
+            params
+                .capabilities
+                .workspace
+                .and_then(|workspace| workspace.inlay_hint)
+                .and_then(|hints| hints.refresh_support)
+                .unwrap_or(false),
+            Ordering::Relaxed,
+        );
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 signature_help_provider: Some(SignatureHelpOptions {
                     trigger_characters: Some(vec![",".to_string()]),
                     retrigger_characters: None,
@@ -322,7 +331,7 @@ impl LanguageServer for Backend {
         let Some(document) = state.documents.get(&uri) else {
             return Ok(None);
         };
-        let Some(analysis) = state.analyses.get(&uri) else {
+        let Some((_, analysis)) = state.analyses.get(&uri) else {
             return Ok(None);
         };
         let Ok(path) = uri.to_file_path() else {
@@ -344,6 +353,27 @@ impl LanguageServer for Backend {
         }))
     }
 
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri;
+        let state = self.state.read().await;
+        let (Some(document), Some((version, analysis)), Ok(path)) = (
+            state.documents.get(&uri),
+            state.analyses.get(&uri),
+            uri.to_file_path(),
+        ) else {
+            return Ok(None);
+        };
+        if *version != document.version {
+            return Ok(None);
+        }
+        Ok(Some(type_hints_to_lsp(
+            analysis,
+            &path,
+            &document.text,
+            params.range,
+        )))
+    }
+
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         let position = params.text_document_position_params.position;
         let uri = params.text_document_position_params.text_document.uri;
@@ -351,7 +381,7 @@ impl LanguageServer for Backend {
         let Some(document) = state.documents.get(&uri) else {
             return Ok(None);
         };
-        let Some(analysis) = state.analyses.get(&uri) else {
+        let Some((_, analysis)) = state.analyses.get(&uri) else {
             return Ok(None);
         };
         let Ok(path) = uri.to_file_path() else {
@@ -504,6 +534,27 @@ fn diagnostic_to_lsp(diagnostic: &RockDiagnostic, uri: &Url, text: &str) -> Opti
         tags: None,
         data: None,
     })
+}
+
+fn type_hints_to_lsp(analysis: &Analysis, path: &Path, text: &str, range: Range) -> Vec<InlayHint> {
+    let (Some(start), Some(end)) = (byte_offset(text, range.start), byte_offset(text, range.end))
+    else {
+        return Vec::new();
+    };
+    analysis
+        .type_hints(path, start..=end)
+        .into_iter()
+        .map(|hint| InlayHint {
+            position: position_at(text, hint.offset),
+            label: InlayHintLabel::String(format!(": {}", hint.ty)),
+            kind: Some(InlayHintKind::TYPE),
+            text_edits: None,
+            tooltip: None,
+            padding_left: None,
+            padding_right: None,
+            data: None,
+        })
+        .collect()
 }
 
 fn span_range(span: &Span, text: &str) -> Range {

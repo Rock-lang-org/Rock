@@ -36,6 +36,7 @@ pub struct SourceSymbolInfo {
     pub declaration_span: Option<Span>,
     pub lexical_owner: Option<DefId>,
     pub scope_id: Option<u32>,
+    inferred_binding: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +105,7 @@ impl SemanticSourceMap {
                 declaration_span,
                 lexical_owner,
                 scope_id: None,
+                inferred_binding: false,
             });
     }
 
@@ -160,6 +162,21 @@ impl SemanticSourceMap {
     pub fn local_span(&self, owner: DefId, local: HirLocalId) -> Option<&Span> {
         self.symbol(&SourceSymbol::Local { owner, local })
             .map(|info| &info.name_span)
+    }
+
+    pub(crate) fn mark_inferred_binding(&mut self, owner: DefId, local: HirLocalId) {
+        if let Some(info) = self.symbols.get_mut(&SourceSymbol::Local { owner, local }) {
+            info.inferred_binding = true;
+        }
+    }
+
+    pub(crate) fn inferred_bindings(&self) -> impl Iterator<Item = (DefId, HirLocalId, &Span)> {
+        self.symbols.iter().filter_map(|(symbol, info)| match symbol {
+            SourceSymbol::Local { owner, local } if info.inferred_binding => {
+                Some((*owner, *local, &info.name_span))
+            }
+            _ => None,
+        })
     }
 
     pub fn insert_field(&mut self, owner: DefId, field: FieldId, span: Span) {
@@ -304,6 +321,8 @@ impl SemanticSourceMap {
             })
             .collect::<Vec<_>>();
         for (symbol, mut info) in aliases {
+            // The original declaration owns the hint, not a generated method.
+            info.inferred_binding = false;
             if info.lexical_owner == Some(from) {
                 info.lexical_owner = Some(to);
             }

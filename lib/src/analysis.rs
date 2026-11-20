@@ -1,3 +1,4 @@
+use std::ops::RangeInclusive;
 use std::path::Path;
 
 use crate::ast::Program;
@@ -43,6 +44,12 @@ pub struct SignatureInfo {
     pub active_parameter: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeHint {
+    pub offset: usize,
+    pub ty: String,
+}
+
 #[derive(Debug, Clone)]
 struct FunctionSignature {
     label: String,
@@ -50,6 +57,26 @@ struct FunctionSignature {
 }
 
 impl Analysis {
+    /// Return inferred local declaration types at insertion points in the byte range.
+    pub fn type_hints(&self, path: &Path, range: RangeInclusive<usize>) -> Vec<TypeHint> {
+        let mut hints = self
+            .hir
+            .source_map
+            .inferred_bindings()
+            .filter(|(_, _, span)| span.file_path == path && range.contains(&span.end))
+            .filter_map(|(owner, local, span)| {
+                let (_, ty) = self.local_binding(owner, local)?;
+                Some(TypeHint {
+                    offset: span.end,
+                    ty: self.hir.display_type(&ty),
+                })
+            })
+            .collect::<Vec<_>>();
+        hints.sort_unstable_by(|a, b| (a.offset, &a.ty).cmp(&(b.offset, &b.ty)));
+        hints.dedup();
+        hints
+    }
+
     pub fn hover(&self, path: &Path, offset: usize) -> Option<HoverInfo> {
         if let Some((symbol, span)) = self.hir.source_map.symbol_at(path, offset) {
             let hover = match symbol {

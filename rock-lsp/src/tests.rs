@@ -2,9 +2,11 @@ use std::path::PathBuf;
 
 use rock_lib::diagnostic::Diagnostic as RockDiagnostic;
 use rock_lib::Span;
-use tower_lsp::lsp_types::{DiagnosticSeverity, Position, Url};
+use tower_lsp::lsp_types::{DiagnosticSeverity, InlayHintKind, InlayHintLabel, Position, Range, Url};
 
-use super::{analysis_config, byte_offset, diagnostic_to_lsp, position_at, Settings};
+use super::{
+    analysis_config, byte_offset, diagnostic_to_lsp, position_at, type_hints_to_lsp, Settings,
+};
 
 #[test]
 fn regression_clears_cross_file_diagnostics_only_for_the_publishing_target() {
@@ -114,6 +116,33 @@ fn positions_use_utf16_code_units() {
     assert_eq!(byte_offset(text, Position::new(0, 3)), Some(5));
     assert_eq!(position_at(text, 5), Position::new(0, 3));
     assert_eq!(byte_offset(text, Position::new(1, 2)), Some(9));
+}
+
+#[test]
+fn inlay_type_hints_only_label_unannotated_bindings_in_range() {
+    let path = PathBuf::from("/virtual/main.rk");
+    let text = "main = ->\n    first = 1\n    typed: I64 = first\n    last = typed\n    last\n";
+    let config = analysis_config(
+        path.clone(),
+        vec![rock_lib::SourceProvider::Virtual {
+            path: path.clone(),
+            text: text.to_string(),
+        }],
+        &Settings {
+            extern_artifacts: Vec::new(),
+            no_prelude: true,
+        },
+        None,
+    );
+    let analysis = rock_lib::analyze(&config).unwrap();
+    let range = Range::new(Position::new(2, 0), Position::new(4, 8));
+    let hints = type_hints_to_lsp(&analysis, &path, text, range);
+
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].position, Position::new(3, 8));
+    assert!(matches!(&hints[0].label, InlayHintLabel::String(label) if label == ": I64"));
+    assert_eq!(hints[0].kind, Some(InlayHintKind::TYPE));
+    assert!(type_hints_to_lsp(&analysis, &path.with_file_name("other.rk"), text, range).is_empty());
 }
 
 #[test]

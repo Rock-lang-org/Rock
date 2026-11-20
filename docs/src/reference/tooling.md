@@ -155,6 +155,7 @@ The first installed toolchain becomes the default automatically; `rockup default
 | Diagnostics | Refresh on open, change, and save using source frontend analysis; messages include available codes, notes, help, and related locations. |
 | Hover | Inferred variable and expression types, function signatures, and supported type, field, variant, and generic symbols. |
 | Signature help | Call signature and active parameter information; a comma is the automatic trigger. Clients can also request it explicitly. |
+| Inlay type hints | Inferred types after unannotated local binding names in the requested range; requires successful analysis of the current buffer version. |
 | Project discovery | Nearest ancestor `rock.toml`; uses its entry graph, path dependency artifacts, and toolchain standard library. |
 | Unsaved source | Open buffers overlay files in the entry graph; unopened files come from disk. |
 
