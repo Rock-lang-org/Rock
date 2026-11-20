@@ -838,12 +838,9 @@ Questions, small reproductions, and contributions are welcome through [GitHub is
 
 A few of the remaining important features which are planned but still missing:
 
-- Dependencies download
 - Better trait resolution
 - More complete std
 - Multiline imports like in rust
-- bin/lib compilation distinction
-- String interpolation
 - Test suite
 - RockDoc
 - Windows/Macos support
@@ -853,7 +850,5 @@ A few of the remaining important features which are planned but still missing:
 - Proc macro
 - Tail recursion
 - Dynamic dispatch and vtables
-- Allow to import enum variant in scope
-- Split unit tests in their own modules
 
 - Self-host the compiler

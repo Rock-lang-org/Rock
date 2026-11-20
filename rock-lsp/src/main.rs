@@ -52,12 +52,18 @@ struct Document {
 #[derive(Default)]
 struct State {
     documents: HashMap<Url, Document>,
-    analyses: HashMap<Url, (i32, Arc<Analysis>)>,
+    analyses: HashMap<Url, (u64, Arc<Analysis>)>,
+    overlay_revision: u64,
     projects: HashMap<(PathBuf, PathBuf), rock::project::AnalysisProject>,
     diagnostic_entries: HashMap<Url, PathBuf>,
 }
 
 impl State {
+    fn invalidate_analyses(&mut self) -> u64 {
+        self.overlay_revision += 1;
+        self.overlay_revision
+    }
+
     fn diagnostic_updates(
         &mut self,
         entry: &Path,
@@ -105,13 +111,38 @@ impl Backend {
         }
     }
 
-    async fn refresh(&self, uri: Url) {
-        let (document, providers) = {
+    async fn refresh(&self, trigger: Url, revision: u64) {
+        tokio::time::sleep(std::time::Duration::from_millis(75)).await;
+        let uris = {
             let state = self.state.read().await;
-            let Some(document) = state.documents.get(&uri).cloned() else {
+            if state.overlay_revision != revision {
                 return;
-            };
-            let providers = state
+            }
+            state
+                .documents
+                .keys()
+                .filter(|uri| **uri != trigger)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        // Any open buffer can supply a source module to another entry point.
+        for uri in std::iter::once(trigger).chain(uris) {
+            self.refresh_document(uri, revision).await;
+        }
+        if self.inlay_hint_refresh.load(Ordering::Relaxed)
+            && self.state.read().await.overlay_revision == revision
+        {
+            let _ = self.client.inlay_hint_refresh().await;
+        }
+    }
+
+    async fn refresh_document(&self, uri: Url, revision: u64) {
+        let providers = {
+            let state = self.state.read().await;
+            if state.overlay_revision != revision || !state.documents.contains_key(&uri) {
+                return;
+            }
+            state
                 .documents
                 .iter()
                 .filter_map(|(uri, document)| {
@@ -120,8 +151,7 @@ impl Backend {
                         text: document.text.clone(),
                     })
                 })
-                .collect::<Vec<_>>();
-            (document, providers)
+                .collect::<Vec<_>>()
         };
         let Ok(path) = uri.to_file_path() else {
             return;
@@ -130,18 +160,6 @@ impl Backend {
         let project_key = project_root
             .as_ref()
             .map(|root| (root.clone(), path.clone()));
-        tokio::time::sleep(std::time::Duration::from_millis(75)).await;
-        let current = self
-            .state
-            .read()
-            .await
-            .documents
-            .get(&uri)
-            .is_some_and(|current| current.version == document.version);
-        if !current {
-            return;
-        }
-
         let settings = self.settings.clone();
         let cached_project = {
             let state = self.state.read().await;
@@ -184,11 +202,7 @@ impl Backend {
         };
 
         let mut state = self.state.write().await;
-        if !state
-            .documents
-            .get(&uri)
-            .is_some_and(|current| current.version == document.version)
-        {
+        if state.overlay_revision != revision {
             return;
         }
 
@@ -205,7 +219,7 @@ impl Backend {
                 let analysis = Arc::new(analysis);
                 state
                     .analyses
-                    .insert(uri.clone(), (document.version, Arc::clone(&analysis)));
+                    .insert(uri.clone(), (revision, Arc::clone(&analysis)));
                 analysis.warnings.clone()
             }
             Err(diagnostics) => {
@@ -223,9 +237,6 @@ impl Backend {
             self.client
                 .publish_diagnostics(uri, diagnostics, Some(version))
                 .await;
-        }
-        if self.inlay_hint_refresh.load(Ordering::Relaxed) {
-            let _ = self.client.inlay_hint_refresh().await;
         }
     }
 }
@@ -275,14 +286,17 @@ impl LanguageServer for Backend {
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let document = params.text_document;
-        self.state.write().await.documents.insert(
+        let mut state = self.state.write().await;
+        state.documents.insert(
             document.uri.clone(),
             Document {
                 version: document.version,
                 text: document.text,
             },
         );
-        self.refresh(document.uri).await;
+        let revision = state.invalidate_analyses();
+        drop(state);
+        self.refresh(document.uri, revision).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -290,28 +304,34 @@ impl LanguageServer for Backend {
             return;
         };
         let uri = params.text_document.uri;
-        self.state.write().await.documents.insert(
+        let mut state = self.state.write().await;
+        state.documents.insert(
             uri.clone(),
             Document {
                 version: params.text_document.version,
                 text: change.text,
             },
         );
-        self.refresh(uri).await;
+        let revision = state.invalidate_analyses();
+        drop(state);
+        self.refresh(uri, revision).await;
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = params.text_document.uri;
-        if let Ok(path) = uri.to_file_path() {
-            if let Some(root) = rock::project::find_project_root(&path) {
-                self.state
-                    .write()
-                    .await
-                    .projects
-                    .retain(|(project_root, _), _| project_root != &root);
-            }
+        let root = uri
+            .to_file_path()
+            .ok()
+            .and_then(|path| rock::project::find_project_root(&path));
+        let mut state = self.state.write().await;
+        if let Some(root) = root {
+            state
+                .projects
+                .retain(|(project_root, _), _| project_root != &root);
         }
-        self.refresh(uri).await;
+        let revision = state.invalidate_analyses();
+        drop(state);
+        self.refresh(uri, revision).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -320,8 +340,12 @@ impl LanguageServer for Backend {
         state.documents.remove(&uri);
         state.analyses.remove(&uri);
         state.diagnostic_entries.remove(&uri);
+        let revision = state.invalidate_analyses();
         drop(state);
-        self.client.publish_diagnostics(uri, Vec::new(), None).await;
+        self.client
+            .publish_diagnostics(uri.clone(), Vec::new(), None)
+            .await;
+        self.refresh(uri, revision).await;
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -356,14 +380,14 @@ impl LanguageServer for Backend {
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
         let state = self.state.read().await;
-        let (Some(document), Some((version, analysis)), Ok(path)) = (
+        let (Some(document), Some((revision, analysis)), Ok(path)) = (
             state.documents.get(&uri),
             state.analyses.get(&uri),
             uri.to_file_path(),
         ) else {
             return Ok(None);
         };
-        if *version != document.version {
+        if *revision != state.overlay_revision {
             return Ok(None);
         }
         Ok(Some(type_hints_to_lsp(
@@ -542,7 +566,7 @@ fn type_hints_to_lsp(analysis: &Analysis, path: &Path, text: &str, range: Range)
         return Vec::new();
     };
     analysis
-        .type_hints(path, start..=end)
+        .type_hints(path, start..end)
         .into_iter()
         .map(|hint| InlayHint {
             position: position_at(text, hint.offset),

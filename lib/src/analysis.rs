@@ -1,4 +1,4 @@
-use std::ops::RangeInclusive;
+use std::ops::Range;
 use std::path::Path;
 
 use crate::ast::Program;
@@ -58,7 +58,7 @@ struct FunctionSignature {
 
 impl Analysis {
     /// Return inferred local declaration types at insertion points in the byte range.
-    pub fn type_hints(&self, path: &Path, range: RangeInclusive<usize>) -> Vec<TypeHint> {
+    pub fn type_hints(&self, path: &Path, range: Range<usize>) -> Vec<TypeHint> {
         let mut hints = self
             .hir
             .source_map

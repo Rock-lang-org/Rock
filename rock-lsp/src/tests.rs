@@ -143,6 +143,68 @@ fn inlay_type_hints_only_label_unannotated_bindings_in_range() {
     assert!(matches!(&hints[0].label, InlayHintLabel::String(label) if label == ": I64"));
     assert_eq!(hints[0].kind, Some(InlayHintKind::TYPE));
     assert!(type_hints_to_lsp(&analysis, &path.with_file_name("other.rk"), text, range).is_empty());
+    let before_hint = Range::new(Position::new(3, 0), Position::new(3, 8));
+    assert!(type_hints_to_lsp(&analysis, &path, text, before_hint).is_empty());
+    let after_hint = Range::new(Position::new(3, 8), Position::new(4, 0));
+    assert_eq!(type_hints_to_lsp(&analysis, &path, text, after_hint).len(), 1);
+}
+
+#[test]
+fn editing_an_open_module_updates_hints_in_an_unchanged_buffer() {
+    use tower_lsp::lsp_types::{
+        DidChangeTextDocumentParams, DidOpenTextDocumentParams, InlayHintParams,
+        TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+        VersionedTextDocumentIdentifier,
+    };
+    use tower_lsp::{LanguageServer, LspService};
+
+    super::runtime().unwrap().block_on(async {
+        let (service, _socket) = LspService::new(|client| {
+            super::Backend::new(
+                client,
+                Settings {
+                    extern_artifacts: Vec::new(),
+                    no_prelude: true,
+                },
+            )
+        });
+        let backend = service.inner();
+        let main = Url::parse("file:///virtual/main.rk").unwrap();
+        let module = Url::parse("file:///virtual/values.rk").unwrap();
+        for (uri, text) in [
+            (module.clone(), "< answer = -> 42\n"),
+            (
+                main.clone(),
+                "mod values\n> values::answer\nmain = !->\n    value = answer!\n",
+            ),
+        ] {
+            backend
+                .did_open(DidOpenTextDocumentParams {
+                    text_document: TextDocumentItem::new(uri, "rock".into(), 1, text.into()),
+                })
+                .await;
+        }
+        let request = || InlayHintParams {
+            work_done_progress_params: Default::default(),
+            text_document: TextDocumentIdentifier::new(main.clone()),
+            range: Range::new(Position::new(3, 0), Position::new(3, 18)),
+        };
+        let hints = backend.inlay_hint(request()).await.unwrap().unwrap();
+        assert!(matches!(&hints[0].label, InlayHintLabel::String(label) if label == ": I64"));
+
+        backend
+            .did_change(DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier::new(module, 2),
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: "< answer = -> true\n".into(),
+                }],
+            })
+            .await;
+        let hints = backend.inlay_hint(request()).await.unwrap().unwrap();
+        assert!(matches!(&hints[0].label, InlayHintLabel::String(label) if label == ": Bool"));
+    });
 }
 
 #[test]
