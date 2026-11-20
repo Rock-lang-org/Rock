@@ -32,9 +32,7 @@ impl InferenceEngine {
             return Err(UnifyError::InfiniteType { variable: id, ty });
         }
         if let (Type::TypeVar(target_id), Some(span)) = (&ty, self.var_spans.get(&id).cloned()) {
-            if !self.var_spans.contains_key(target_id) {
-                std::sync::Arc::make_mut(&mut self.var_spans).insert(*target_id, span);
-            }
+            self.var_spans.entry(*target_id).or_insert(span);
         }
         std::sync::Arc::make_mut(&mut self.substitutions).insert(id, ty);
         self.substitution_generation = self.substitution_generation.wrapping_add(1);

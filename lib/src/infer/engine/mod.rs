@@ -32,7 +32,7 @@ pub struct InferenceEngine {
     /// Trait bounds for type variables (var_id -> list of bounds)
     trait_bounds: HashMap<TypeVarId, Vec<TraitBound>>,
     /// Origin span for each fresh type variable (for error messages)
-    pub var_spans: Arc<HashMap<TypeVarId, Span>>,
+    pub var_spans: HashMap<TypeVarId, Span>,
     var_kinds: Arc<HashMap<TypeVarId, Kind>>,
     // Most probes only read normalization data. Fresh variables in a probe
     // update a private copy rather than changing the parent engine.
