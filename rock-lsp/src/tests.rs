@@ -171,7 +171,9 @@ fn editing_an_open_module_updates_hints_in_an_unchanged_buffer() {
         let backend = service.inner();
         let main = Url::parse("file:///virtual/main.rk").unwrap();
         let module = Url::parse("file:///virtual/values.rk").unwrap();
+        let unrelated = Url::parse("file:///other/main.rk").unwrap();
         for (uri, text) in [
+            (unrelated.clone(), "main = -> 0\n"),
             (module.clone(), "< answer = -> 42\n"),
             (
                 main.clone(),
@@ -191,6 +193,7 @@ fn editing_an_open_module_updates_hints_in_an_unchanged_buffer() {
         };
         let hints = backend.inlay_hint(request()).await.unwrap().unwrap();
         assert!(matches!(&hints[0].label, InlayHintLabel::String(label) if label == ": I64"));
+        let unrelated_analysis = backend.state.read().await.analyses[&unrelated].1.clone();
 
         backend
             .did_change(DidChangeTextDocumentParams {
@@ -204,7 +207,59 @@ fn editing_an_open_module_updates_hints_in_an_unchanged_buffer() {
             .await;
         let hints = backend.inlay_hint(request()).await.unwrap().unwrap();
         assert!(matches!(&hints[0].label, InlayHintLabel::String(label) if label == ": Bool"));
+        let state = backend.state.read().await;
+        let (current, analysis) = &state.analyses[&unrelated];
+        assert!(*current);
+        assert!(std::sync::Arc::ptr_eq(analysis, &unrelated_analysis));
     });
+}
+
+#[test]
+fn open_buffers_for_the_same_target_share_analysis() {
+    use tower_lsp::lsp_types::{DidOpenTextDocumentParams, TextDocumentItem};
+    use tower_lsp::{LanguageServer, LspService};
+
+    let root = std::env::temp_dir().join(format!("rock_lsp_shared_target_{}", std::process::id()));
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        root.join("rock.toml"),
+        "[crate]\nname = \"shared\"\nversion = \"0.1.0\"\nno_std = true\n\n[[bin]]\n",
+    )
+    .unwrap();
+    let main = Url::from_file_path(src.join("main.rk")).unwrap();
+    let helper = Url::from_file_path(src.join("helper.rk")).unwrap();
+
+    super::runtime().unwrap().block_on(async {
+        let (service, _socket) = LspService::new(|client| {
+            super::Backend::new(
+                client,
+                Settings {
+                    extern_artifacts: Vec::new(),
+                    no_prelude: true,
+                },
+            )
+        });
+        let backend = service.inner();
+        let open = |uri, text: &str| DidOpenTextDocumentParams {
+            text_document: TextDocumentItem::new(uri, "rock".into(), 1, text.into()),
+        };
+        backend
+            .did_open(open(
+                main.clone(),
+                "mod helper\n> helper::value\nmain = -> value!\n",
+            ))
+            .await;
+        backend
+            .did_open(open(helper.clone(), "< value = -> 42\n"))
+            .await;
+        let state = backend.state.read().await;
+        let (main_current, main_analysis) = &state.analyses[&main];
+        let (helper_current, helper_analysis) = &state.analyses[&helper];
+        assert!(*main_current && *helper_current);
+        assert!(std::sync::Arc::ptr_eq(main_analysis, helper_analysis));
+    });
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

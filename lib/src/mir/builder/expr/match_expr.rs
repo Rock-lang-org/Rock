@@ -125,10 +125,9 @@ impl<'a> MirBuilder<'a> {
             let check_block = check_blocks[index];
             let next_block = check_blocks.get(index + 1).copied().unwrap_or(merge_block);
             let matched_block = self.new_block();
-            let body_block = self.new_block();
 
             self.current_block = Some(check_block);
-            if let Some(variant_id) = self.match_arm_variant_id(&arm.pattern) {
+            let possible = if let Some(variant_id) = self.match_arm_variant_id(&arm.pattern) {
                 let variant_success = if Self::enum_payload_patterns_irrefutable(&arm.pattern) {
                     matched_block
                 } else {
@@ -162,7 +161,9 @@ impl<'a> MirBuilder<'a> {
                         matched_block,
                         next_block,
                         Some(scrutinee.span.clone()),
-                    );
+                    )
+                } else {
+                    true
                 }
             } else if self.match_arm_is_catch_all(&arm.pattern)
                 || (bool_patterns_exhaustive && index + 1 == arms.len() && arm.guard.is_none())
@@ -176,6 +177,7 @@ impl<'a> MirBuilder<'a> {
                         ),
                     ));
                 }
+                true
             } else {
                 self.lower_match_pattern_check(
                     &arm.pattern,
@@ -184,9 +186,17 @@ impl<'a> MirBuilder<'a> {
                     matched_block,
                     next_block,
                     Some(scrutinee.span.clone()),
+                )
+            };
+            if !possible {
+                self.set_terminator(
+                    matched_block,
+                    Terminator::goto(next_block, self.source_origin(span.clone())),
                 );
+                continue;
             }
 
+            let body_block = self.new_block();
             self.current_block = Some(matched_block);
             self.scope_locals.push(Vec::new());
             let mut restored_bindings = Vec::new();

@@ -321,7 +321,8 @@ impl<'a> MirBuilder<'a> {
         success: BasicBlockId,
         failure: BasicBlockId,
         origin_span: Option<Span>,
-    ) {
+    ) -> bool {
+        // False means a fixed array length makes this pattern impossible.
         match pattern {
             HirPattern::Wildcard | HirPattern::Binding { .. } => {
                 if let Some(current) = self.current_block {
@@ -354,7 +355,7 @@ impl<'a> MirBuilder<'a> {
                     ));
                 }
                 self.current_block = Some(payload_block);
-                self.lower_enum_payload_pattern_checks(
+                return self.lower_enum_payload_pattern_checks(
                     pattern,
                     source_place,
                     source_ty,
@@ -414,7 +415,7 @@ impl<'a> MirBuilder<'a> {
                 };
                 let mut target_place = source_place;
                 target_place.projection.push(Projection::Deref);
-                self.lower_match_pattern_check(
+                return self.lower_match_pattern_check(
                     inner,
                     target_place,
                     &target,
@@ -438,7 +439,7 @@ impl<'a> MirBuilder<'a> {
             }
             HirPattern::Tuple(patterns) => {
                 let Type::Tuple(types) = source_ty else {
-                    return;
+                    return true;
                 };
                 let children = patterns
                     .iter()
@@ -453,11 +454,23 @@ impl<'a> MirBuilder<'a> {
                         (pattern, place, ty.clone())
                     })
                     .collect();
-                self.check_pattern_children(children, success, failure, origin_span);
+                return self.check_pattern_children(children, success, failure, origin_span);
             }
             HirPattern::Array { patterns, rest, .. } => {
-                let length = self.array_pattern_length(&source_place, source_ty);
                 let required = patterns.len() - usize::from(rest.is_some());
+                if let Type::Array(_, crate::types::ArrayLen::Value(length)) = source_ty {
+                    let required = required as u64;
+                    if *length < required || (rest.is_none() && *length != required) {
+                        if let Some(current) = self.current_block {
+                            self.blocks[current.0].terminator = Some(crate::mir::Terminator::goto(
+                                failure,
+                                self.source_origin(origin_span),
+                            ));
+                        }
+                        return false;
+                    }
+                }
+                let length = self.array_pattern_length(&source_place, source_ty);
                 let local = self.new_local(self.type_id_for(&Type::Bool), Mutability::Not, None);
                 self.emit_storage_live(local, origin_span.clone());
                 let condition = Place {
@@ -505,11 +518,11 @@ impl<'a> MirBuilder<'a> {
                     .iter()
                     .map(|(pattern, place, ty)| (pattern, place.clone(), ty.clone()))
                     .collect();
-                self.check_pattern_children(children, success, failure, origin_span);
+                return self.check_pattern_children(children, success, failure, origin_span);
             }
             HirPattern::Struct(_, Some(id), args, fields) => {
                 let Some((_, structure)) = self.program.struct_by_id(*id) else {
-                    return;
+                    return true;
                 };
                 let substitution = args
                     .iter()
@@ -545,7 +558,7 @@ impl<'a> MirBuilder<'a> {
                         ))
                     })
                     .collect();
-                self.check_pattern_children(children, success, failure, origin_span);
+                return self.check_pattern_children(children, success, failure, origin_span);
             }
             HirPattern::Or(_)
             | HirPattern::Struct(_, None, _, _)
@@ -553,6 +566,7 @@ impl<'a> MirBuilder<'a> {
                 panic!("unsupported refutable MIR match pattern: {pattern:?}");
             }
         }
+        true
     }
 
     fn check_pattern_children(
@@ -561,7 +575,7 @@ impl<'a> MirBuilder<'a> {
         success: BasicBlockId,
         failure: BasicBlockId,
         origin: Option<Span>,
-    ) {
+    ) -> bool {
         let count = children.len();
         if count == 0 {
             if let Some(current) = self.current_block {
@@ -570,19 +584,22 @@ impl<'a> MirBuilder<'a> {
                     self.source_origin(origin),
                 ));
             }
-            return;
+            return true;
         }
+        let mut possible = true;
         for (index, (pattern, place, ty)) in children.into_iter().enumerate() {
             let next = if index + 1 == count {
                 success
             } else {
                 self.new_block()
             };
-            self.lower_match_pattern_check(pattern, place, &ty, next, failure, origin.clone());
+            possible &=
+                self.lower_match_pattern_check(pattern, place, &ty, next, failure, origin.clone());
             if index + 1 != count {
                 self.current_block = Some(next);
             }
         }
+        possible
     }
 
     pub(super) fn lower_enum_payload_pattern_checks(
@@ -593,7 +610,7 @@ impl<'a> MirBuilder<'a> {
         success: BasicBlockId,
         failure: BasicBlockId,
         origin_span: Option<Span>,
-    ) {
+    ) -> bool {
         let HirPattern::Enum(_, _, Some(location), subpatterns) = pattern else {
             if let Some(current) = self.current_block {
                 self.blocks[current.0].terminator = Some(crate::mir::Terminator::goto(
@@ -601,7 +618,7 @@ impl<'a> MirBuilder<'a> {
                     self.source_origin(origin_span.clone()),
                 ));
             }
-            return;
+            return true;
         };
 
         if subpatterns.is_empty() {
@@ -611,7 +628,7 @@ impl<'a> MirBuilder<'a> {
                     self.source_origin(origin_span.clone()),
                 ));
             }
-            return;
+            return true;
         }
 
         let field_types = self.enum_variant_field_types(location.owner, location.variant_id);
@@ -633,6 +650,7 @@ impl<'a> MirBuilder<'a> {
             _ => HashMap::new(),
         };
 
+        let mut possible = true;
         for (index, subpattern) in subpatterns.iter().enumerate() {
             let next_success = if index + 1 == subpatterns.len() {
                 success
@@ -651,7 +669,7 @@ impl<'a> MirBuilder<'a> {
                 .get(index)
                 .map(|ty| ty.substitute_generics(&generic_subst))
                 .unwrap_or(Type::Unit);
-            self.lower_match_pattern_check(
+            possible &= self.lower_match_pattern_check(
                 subpattern,
                 field_place,
                 &field_ty,
@@ -663,6 +681,7 @@ impl<'a> MirBuilder<'a> {
                 self.current_block = Some(next_success);
             }
         }
+        possible
     }
 
     pub(super) fn restore_match_bindings(

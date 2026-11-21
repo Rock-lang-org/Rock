@@ -10,7 +10,7 @@ use rock_lib::diagnostic::{
     Diagnostics,
 };
 use rock_lib::{Config, SourceProvider, Span};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -52,15 +52,43 @@ struct Document {
 #[derive(Default)]
 struct State {
     documents: HashMap<Url, Document>,
-    analyses: HashMap<Url, (u64, Arc<Analysis>)>,
+    analyses: HashMap<Url, (bool, Arc<Analysis>)>,
+    pending: HashMap<Url, u64>,
     overlay_revision: u64,
     projects: HashMap<(PathBuf, PathBuf), rock::project::AnalysisProject>,
     diagnostic_entries: HashMap<Url, PathBuf>,
 }
 
 impl State {
-    fn invalidate_analyses(&mut self) -> u64 {
+    fn invalidate_analyses(&mut self, changed: &Url, saved_root: Option<&Path>) -> u64 {
         self.overlay_revision += 1;
+        let Ok(changed) = changed.to_file_path() else {
+            return self.overlay_revision;
+        };
+        for uri in self.documents.keys() {
+            let Ok(path) = uri.to_file_path() else {
+                continue;
+            };
+            let root = rock::project::find_project_root(&path);
+            let project = root
+                .as_ref()
+                .and_then(|root| self.projects.get(&(root.clone(), path.clone())));
+            // Modules resolve beside the entry file or in its descendants.
+            // Until target resolution succeeds, conservatively use the project root.
+            let source_root = project
+                .and_then(|project| project.entry_file.parent())
+                .or(root.as_deref())
+                .or_else(|| path.parent());
+            if changed == path
+                || source_root.is_some_and(|root| source_in_scope(&changed, root))
+                || saved_root.is_some_and(|saved| root.as_deref() == Some(saved))
+            {
+                self.pending.insert(uri.clone(), self.overlay_revision);
+                if let Some((current, _)) = self.analyses.get_mut(uri) {
+                    *current = false;
+                }
+            }
+        }
         self.overlay_revision
     }
 
@@ -98,6 +126,7 @@ struct Backend {
     client: Client,
     settings: Settings,
     state: Arc<RwLock<State>>,
+    refresh_lock: Mutex<()>,
     inlay_hint_refresh: AtomicBool,
 }
 
@@ -107,42 +136,20 @@ impl Backend {
             client,
             settings,
             state: Arc::new(RwLock::new(State::default())),
+            refresh_lock: Mutex::new(()),
             inlay_hint_refresh: AtomicBool::new(false),
         }
     }
 
-    async fn refresh(&self, trigger: Url, revision: u64) {
+    async fn refresh(&self, revision: u64) {
         tokio::time::sleep(std::time::Duration::from_millis(75)).await;
-        let uris = {
+        let lock = self.refresh_lock.lock().await;
+        let (pending, providers) = {
             let state = self.state.read().await;
             if state.overlay_revision != revision {
                 return;
             }
-            state
-                .documents
-                .keys()
-                .filter(|uri| **uri != trigger)
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        // Any open buffer can supply a source module to another entry point.
-        for uri in std::iter::once(trigger).chain(uris) {
-            self.refresh_document(uri, revision).await;
-        }
-        if self.inlay_hint_refresh.load(Ordering::Relaxed)
-            && self.state.read().await.overlay_revision == revision
-        {
-            let _ = self.client.inlay_hint_refresh().await;
-        }
-    }
-
-    async fn refresh_document(&self, uri: Url, revision: u64) {
-        let providers = {
-            let state = self.state.read().await;
-            if state.overlay_revision != revision || !state.documents.contains_key(&uri) {
-                return;
-            }
-            state
+            let providers = state
                 .documents
                 .iter()
                 .filter_map(|(uri, document)| {
@@ -151,8 +158,32 @@ impl Backend {
                         text: document.text.clone(),
                     })
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (state.pending.clone(), providers)
         };
+        let mut analyses = Vec::new();
+        for (uri, dirty_revision) in pending {
+            if self.state.read().await.overlay_revision != revision {
+                break;
+            }
+            self.refresh_document(uri, dirty_revision, &providers, &mut analyses)
+                .await;
+        }
+        drop(lock);
+        if self.inlay_hint_refresh.load(Ordering::Relaxed)
+            && self.state.read().await.overlay_revision == revision
+        {
+            let _ = self.client.inlay_hint_refresh().await;
+        }
+    }
+
+    async fn refresh_document(
+        &self,
+        uri: Url,
+        revision: u64,
+        providers: &[SourceProvider],
+        analyses: &mut Vec<(rock::project::AnalysisProject, AnalysisResult)>,
+    ) {
         let Ok(path) = uri.to_file_path() else {
             return;
         };
@@ -160,51 +191,42 @@ impl Backend {
         let project_key = project_root
             .as_ref()
             .map(|root| (root.clone(), path.clone()));
-        let settings = self.settings.clone();
         let cached_project = {
             let state = self.state.read().await;
+            if state.pending.get(&uri) != Some(&revision) {
+                return;
+            }
             project_key
                 .as_ref()
                 .and_then(|key| state.projects.get(key))
                 .cloned()
         };
-        let task_project_root = project_root.clone();
-        let task = tokio::task::spawn_blocking(move || {
-            let project = match (cached_project, task_project_root.as_deref()) {
-                (Some(project), _) => Some(project),
-                (None, Some(root)) => {
-                    match rock::project::resolve_analysis_project_for_source(root, &path) {
-                        Ok(project) => Some(project),
-                        Err(error) => {
-                            let mut diagnostics = Diagnostics::default();
-                            diagnostics
-                                .push(RockDiagnostic::for_project(error, root.to_path_buf()));
-                            return (Err(diagnostics), None);
-                        }
-                    }
-                }
-                (None, None) => None,
-            };
-            let config = analysis_config(path, providers, &settings, project.as_ref());
-            (rock_lib::analyze(&config), project)
-        })
-        .await;
-
-        let (analysis, resolved_project) = match task {
-            Ok(result) => result,
-            Err(error) => {
-                let mut diagnostics = Diagnostics::default();
-                diagnostics.push(RockDiagnostic::for_internal(format!(
-                    "language analysis task failed: {error}"
-                )));
-                (Err(diagnostics), None)
+        let project = match (cached_project, project_root) {
+            (Some(project), _) => Ok(Some(project)),
+            (None, Some(root)) => {
+                let path = path.clone();
+                blocking(move || {
+                    rock::project::resolve_analysis_project_for_source(&root, &path)
+                        .map(Some)
+                        .map_err(|error| Diagnostics(vec![RockDiagnostic::for_project(error, root)]))
+                })
+                .await
             }
+            (None, None) => Ok(None),
+        };
+        let (analysis, resolved_project) = match project {
+            Ok(project) => (
+                analyze_target(path, providers, &self.settings, project.as_ref(), analyses).await,
+                project,
+            ),
+            Err(diagnostics) => (Err(diagnostics), None),
         };
 
         let mut state = self.state.write().await;
-        if state.overlay_revision != revision {
+        if state.pending.get(&uri) != Some(&revision) {
             return;
         }
+        state.pending.remove(&uri);
 
         let entry = resolved_project
             .as_ref()
@@ -216,10 +238,9 @@ impl Backend {
 
         let diagnostics = match analysis {
             Ok(analysis) => {
-                let analysis = Arc::new(analysis);
                 state
                     .analyses
-                    .insert(uri.clone(), (revision, Arc::clone(&analysis)));
+                    .insert(uri.clone(), (true, Arc::clone(&analysis)));
                 analysis.warnings.clone()
             }
             Err(diagnostics) => {
@@ -239,6 +260,58 @@ impl Backend {
                 .await;
         }
     }
+}
+
+type AnalysisResult = std::result::Result<Arc<Analysis>, Diagnostics>;
+
+fn source_in_scope(path: &Path, source_root: &Path) -> bool {
+    path.starts_with(source_root)
+        || path
+            .canonicalize()
+            .is_ok_and(|path| path.starts_with(source_root))
+}
+
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> std::result::Result<T, Diagnostics> + Send + 'static,
+) -> std::result::Result<T, Diagnostics> {
+    tokio::task::spawn_blocking(work).await.map_err(|error| {
+        Diagnostics(vec![RockDiagnostic::for_internal(format!(
+            "language analysis task failed: {error}"
+        ))])
+    })?
+}
+
+async fn analyze_target(
+    path: PathBuf,
+    providers: &[SourceProvider],
+    settings: &Settings,
+    project: Option<&rock::project::AnalysisProject>,
+    analyses: &mut Vec<(rock::project::AnalysisProject, AnalysisResult)>,
+) -> AnalysisResult {
+    if let Some(project) = project {
+        if let Some((_, analysis)) = analyses.iter().find(|(target, _)| target == project) {
+            return analysis.clone();
+        }
+    }
+    let source_root = project
+        .map_or(path.as_path(), |project| &project.entry_file)
+        .parent();
+    let providers = providers
+        .iter()
+        .filter(|provider| match provider {
+            SourceProvider::Virtual { path, .. } => {
+                source_root.is_none_or(|root| source_in_scope(path, root))
+            }
+            SourceProvider::Artifact { .. } => true,
+        })
+        .cloned()
+        .collect();
+    let config = analysis_config(path, providers, settings, project);
+    let analysis = blocking(move || rock_lib::analyze(&config).map(Arc::new)).await;
+    if let Some(project) = project {
+        analyses.push((project.clone(), analysis.clone()));
+    }
+    analysis
 }
 
 #[tower_lsp::async_trait]
@@ -294,9 +367,9 @@ impl LanguageServer for Backend {
                 text: document.text,
             },
         );
-        let revision = state.invalidate_analyses();
+        let revision = state.invalidate_analyses(&document.uri, None);
         drop(state);
-        self.refresh(document.uri, revision).await;
+        self.refresh(revision).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -312,9 +385,9 @@ impl LanguageServer for Backend {
                 text: change.text,
             },
         );
-        let revision = state.invalidate_analyses();
+        let revision = state.invalidate_analyses(&uri, None);
         drop(state);
-        self.refresh(uri, revision).await;
+        self.refresh(revision).await;
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
@@ -324,14 +397,14 @@ impl LanguageServer for Backend {
             .ok()
             .and_then(|path| rock::project::find_project_root(&path));
         let mut state = self.state.write().await;
+        let revision = state.invalidate_analyses(&uri, root.as_deref());
         if let Some(root) = root {
             state
                 .projects
                 .retain(|(project_root, _), _| project_root != &root);
         }
-        let revision = state.invalidate_analyses();
         drop(state);
-        self.refresh(uri, revision).await;
+        self.refresh(revision).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -339,13 +412,14 @@ impl LanguageServer for Backend {
         let mut state = self.state.write().await;
         state.documents.remove(&uri);
         state.analyses.remove(&uri);
+        state.pending.remove(&uri);
         state.diagnostic_entries.remove(&uri);
-        let revision = state.invalidate_analyses();
+        let revision = state.invalidate_analyses(&uri, None);
         drop(state);
         self.client
             .publish_diagnostics(uri.clone(), Vec::new(), None)
             .await;
-        self.refresh(uri, revision).await;
+        self.refresh(revision).await;
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -380,16 +454,13 @@ impl LanguageServer for Backend {
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let uri = params.text_document.uri;
         let state = self.state.read().await;
-        let (Some(document), Some((revision, analysis)), Ok(path)) = (
+        let (Some(document), Some((true, analysis)), Ok(path)) = (
             state.documents.get(&uri),
             state.analyses.get(&uri),
             uri.to_file_path(),
         ) else {
             return Ok(None);
         };
-        if *revision != state.overlay_revision {
-            return Ok(None);
-        }
         Ok(Some(type_hints_to_lsp(
             analysis,
             &path,

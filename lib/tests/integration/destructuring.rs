@@ -1,6 +1,25 @@
 use crate::support::*;
 
 #[test]
+fn impossible_owned_array_patterns_fall_through() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    words = [(String::from "a")]
+    n = match words
+        [first, second] => first.len! + second.len!
+        _ => 1
+    nested = ([(String::from "b")], 2)
+    m = match nested
+        ([..rest, first, second], x) => first.len! + second.len! + x
+        (_, x) => x
+    (n + m).println!
+"#,
+    );
+    assert_eq!(output.trim(), "3");
+}
+
+#[test]
 fn array_patterns_bind_elements_and_owned_rest() {
     let output = compile_and_run(
         r#"
