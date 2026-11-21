@@ -523,6 +523,70 @@ fn lowers_named_enum_variant_fields_in_variant_definition_order() {
     }
 }
 
+fn lower_point_literal(fields: &[&str]) -> Vec<String> {
+    let mut lowerer = Lowerer::new_for_test();
+    lowerer.items.insert_structure(point_struct());
+    register_item_path(&mut lowerer, "Point", def_id(10));
+    lowerer.lower_instance(&ast::Instance {
+        name: ast::TypePath {
+            path: vec![IdentOrType::Ident(ident("Point"))],
+        },
+        fields: fields
+            .iter()
+            .map(|name| (ident(name), int_expr("1")))
+            .collect(),
+    });
+    lowerer
+        .errors()
+        .iter()
+        .map(|error| error.message.clone())
+        .collect()
+}
+
+#[test]
+fn struct_literal_reports_missing_fields() {
+    assert_eq!(
+        lower_point_literal(&[]),
+        vec!["missing fields 'x', 'y' in construction of struct 'Point'".to_string()]
+    );
+    assert_eq!(
+        lower_point_literal(&["x"]),
+        vec!["missing field 'y' in construction of struct 'Point'".to_string()]
+    );
+    assert!(lower_point_literal(&["x", "y"]).is_empty());
+}
+
+#[test]
+fn bare_struct_name_without_fields_reports_missing_field() {
+    let source = r#"
+struct MyStruct
+    < my_field: U16
+
+main = ->
+    s = MyStruct
+    s
+"#;
+
+    let Err(errors) = lower_source_for_test(source) else {
+        panic!("missing field must be rejected");
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message
+                == "missing field 'my_field' in construction of struct 'MyStruct'"),
+        "expected missing field diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn struct_literal_reports_unknown_fields() {
+    assert_eq!(
+        lower_point_literal(&["x", "y", "z"]),
+        vec!["struct 'Point' has no field 'z'".to_string()]
+    );
+}
+
 #[test]
 fn leaves_unknown_struct_literal_fields_unresolved() {
     let mut lowerer = Lowerer::new_for_test();

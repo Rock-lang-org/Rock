@@ -195,6 +195,16 @@ impl Lowerer {
                         field_id: f.id,
                         name: ident.name.clone(),
                     });
+                if field.is_none() {
+                    self.diagnostics.push_with_span(
+                        format!(
+                            "struct '{}' has no field '{}'",
+                            crate::type_services::display::short_item_name(&type_name),
+                            ident.name
+                        ),
+                        ident.span.clone(),
+                    );
+                }
                 if let Some(field) = field.as_ref() {
                     self.record_source_reference(
                         ident.span.clone(),
@@ -209,6 +219,28 @@ impl Lowerer {
                     value: hir_expr,
                     field,
                 });
+            }
+
+            let missing: Vec<&str> = hir_struct
+                .fields
+                .iter()
+                .filter(|f| !inst.fields.iter().any(|(ident, _)| ident.name == f.name))
+                .map(|f| f.name.as_str())
+                .collect();
+            if !missing.is_empty() {
+                let plural = if missing.len() == 1 { "" } else { "s" };
+                self.diagnostics.push_with_span(
+                    format!(
+                        "missing field{plural} {} in construction of struct '{}'",
+                        missing
+                            .iter()
+                            .map(|name| format!("'{name}'"))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        crate::type_services::display::short_item_name(&type_name)
+                    ),
+                    span.clone(),
+                );
             }
 
             // Resolve the type variables to get actual type arguments
