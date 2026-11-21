@@ -26,6 +26,13 @@ mod struct_literals;
 static LOWER_PATH_TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn compile_source_to_resolved_hir_for_test(source: &str) -> ResolvedHirProgram {
+    let partial = lower_source_for_test(source).expect("test source lowers");
+    infer::finalize(partial).expect("test HIR finalizes")
+}
+
+fn lower_source_for_test(
+    source: &str,
+) -> Result<crate::infer::PartialHir, Vec<crate::lower::error::ResolveError>> {
     let id = LOWER_PATH_TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = std::env::temp_dir().join(format!(
         "rock_lower_path_hir_ref_test_{}_{}",
@@ -63,9 +70,7 @@ fn compile_source_to_resolved_hir_for_test(source: &str) -> ResolvedHirProgram {
     let crate_ctx = CrateContext::new();
     let decls =
         collect::collect(&ast, &crate_ctx, false, Some("test")).expect("test declarations collect");
-    let partial = lower::program::lower_from_declarations(&ast, decls, &crate_ctx, Some("test"))
-        .expect("test source lowers");
-    infer::finalize(partial).expect("test HIR finalizes")
+    lower::program::lower_from_declarations(&ast, decls, &crate_ctx, Some("test"))
 }
 
 fn def_id(index: u32) -> DefId {
