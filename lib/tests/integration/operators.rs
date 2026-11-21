@@ -301,3 +301,71 @@ main = ->
 
     assert_eq!(output.trim(), "43");
 }
+
+/// Every std operator that makes sense is available on every primitive.
+#[test]
+fn test_std_operators_cover_all_primitives() {
+    let mut source = String::from("main = !->\n");
+    let mut expected = String::new();
+    for ty in ["I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64"] {
+        source.push_str(&format!("    a{ty} = 6 as {ty}\n    b{ty} = 3 as {ty}\n"));
+        for op in [
+            "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "<", "<=", ">", ">=", "==", "!=",
+        ] {
+            source.push_str(&format!("    (a{ty} {op} b{ty}).println!\n"));
+        }
+        source.push_str(&format!("    (!a{ty}).println!\n"));
+        expected
+            .push_str("9\n3\n18\n2\n0\n2\n7\n5\n48\n0\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\n");
+        expected.push_str(match ty {
+            "U8" => "249\n",
+            "U16" => "65529\n",
+            "U32" => "4294967289\n",
+            "U64" => "18446744073709551609\n",
+            _ => "-7\n",
+        });
+    }
+    for ty in ["F32", "F64"] {
+        source.push_str(&format!(
+            "    a{ty} = 6.0 as {ty}\n    b{ty} = 3.0 as {ty}\n"
+        ));
+        for op in ["+", "-", "*", "/", "%", "<", "<=", ">", ">=", "==", "!="] {
+            source.push_str(&format!("    (a{ty} {op} b{ty}).println!\n"));
+        }
+        source.push_str(&format!("    (-a{ty}).println!\n"));
+        expected.push_str("9\n3\n18\n2\n0\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\n-6\n");
+    }
+    for op in ["<", "<=", ">", ">=", "==", "!=", "&", "|", "^"] {
+        source.push_str(&format!("    (true {op} false).println!\n"));
+    }
+    expected.push_str("false\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\n");
+    for op in ["<", "<=", ">", ">=", "==", "!="] {
+        source.push_str(&format!("    ('a' {op} 'b').println!\n"));
+    }
+    expected.push_str("true\ntrue\nfalse\nfalse\nfalse\ntrue\n");
+    assert_eq!(compile_and_run(&source), expected);
+}
+
+/// An unsuffixed literal operand takes the other operand's primitive type.
+#[test]
+fn test_numeric_literal_operands_take_the_other_operand_type() {
+    let mut source = String::from("main = !->\n");
+    let mut expected = String::new();
+    for ty in ["I8", "I16", "I32", "U8", "U16", "U32", "U64"] {
+        source.push_str(&format!(
+            "    x{ty}: {ty} = 5\n    x{ty}.println!\n    (x{ty} < 7).println!\n    (7 <= x{ty}).println!\n    (x{ty} + 7).println!\n    (7 - x{ty}).println!\n    (x{ty} == 5).println!\n    (x{ty} & 4).println!\n    (x{ty} << 1).println!\n"
+        ));
+        expected.push_str("5\ntrue\nfalse\n12\n2\ntrue\n4\n10\n");
+    }
+    source.push_str("    y: F32 = 1.5\n    (y < 2.0).println!\n    (y * 2.0).println!\n");
+    expected.push_str("true\n3\n");
+    assert_eq!(compile_and_run(&source), expected);
+}
+
+#[test]
+fn test_out_of_range_literal_operand_is_rejected() {
+    compile_should_fail(
+        "main = !->\n    x = 5 as U8\n    (x < 300).println!\n",
+        "No implementation found for operator '<' on type U8",
+    );
+}

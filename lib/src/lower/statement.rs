@@ -366,6 +366,10 @@ impl Lowerer {
                 if let Some(ann) = type_annotation {
                     self.source_map.record_type_annotation(ann.span());
                     let ann_ty = self.lower_annotation_type(ann);
+                    // An unsuffixed literal takes an annotated numeric type.
+                    let resolved_ann_ty = self.engine.resolve(&ann_ty);
+                    self.coerce_numeric_literal(&mut rhs, &resolved_ann_ty);
+                    ty = rhs.ty.clone();
                     if let Err(e) = self.engine.unify(&ty, &ann_ty) {
                         self.diagnostics.push_type_with_span(
                             format!(
