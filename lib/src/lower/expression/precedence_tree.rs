@@ -98,11 +98,19 @@ impl Lowerer {
 
     fn lower_binary_operator(
         &mut self,
-        left: HirExpr,
-        right: HirExpr,
+        mut left: HirExpr,
+        mut right: HirExpr,
         op_str: &str,
         operator_span: Option<&crate::Span>,
     ) -> HirExpr {
+        if op_str != "=" && op_str != "&&" && op_str != "||" {
+            // An unsuffixed literal takes the other operand's primitive type
+            // (`x < 7` with `x: U16` compares two `U16`s).
+            let left_ty = self.engine.resolve(&left.ty);
+            self.coerce_numeric_literal(&mut right, &left_ty);
+            let right_ty = self.engine.resolve(&right.ty);
+            self.coerce_numeric_literal(&mut left, &right_ty);
+        }
         // Assignment operator: special handling
         if op_str == "=" {
             if let Err(error) = self.engine.unify(&right.ty, &left.ty) {

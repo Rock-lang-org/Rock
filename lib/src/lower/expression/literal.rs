@@ -116,6 +116,49 @@ impl Lowerer {
         }
     }
 
+    /// Retypes an unsuffixed numeric literal to the numeric primitive
+    /// `target` through an implicit cast. An integer literal out of the
+    /// target's range, or a target of another kind, leaves it unchanged.
+    pub(crate) fn coerce_numeric_literal(&mut self, literal: &mut HirExpr, target: &Type) {
+        let literal_ty = self.engine.resolve(&literal.ty);
+        let coerces = match (&literal.kind, &literal_ty) {
+            (HirExprKind::IntLiteral(value), Type::I64) => {
+                *target != Type::I64 && Self::int_literal_fits(*value, target)
+            }
+            (HirExprKind::FloatLiteral(_), Type::F64) => *target == Type::F32,
+            _ => false,
+        };
+        if !coerces {
+            return;
+        }
+        let span = literal.span.clone();
+        let placeholder = HirExpr {
+            ty: Type::Unit,
+            kind: HirExprKind::Unit,
+            span: span.clone(),
+        };
+        let inner = std::mem::replace(literal, placeholder);
+        *literal = HirExpr {
+            ty: target.clone(),
+            kind: HirExprKind::Cast(Box::new(inner), target.clone()),
+            span,
+        };
+    }
+
+    fn int_literal_fits(value: i64, ty: &Type) -> bool {
+        let (min, max): (i128, i128) = match ty {
+            Type::I8 => (i8::MIN.into(), i8::MAX.into()),
+            Type::I16 => (i16::MIN.into(), i16::MAX.into()),
+            Type::I32 => (i32::MIN.into(), i32::MAX.into()),
+            Type::U8 => (0, u8::MAX.into()),
+            Type::U16 => (0, u16::MAX.into()),
+            Type::U32 => (0, u32::MAX.into()),
+            Type::U64 => (0, u64::MAX.into()),
+            _ => return false,
+        };
+        (min..=max).contains(&i128::from(value))
+    }
+
     /// Resolves the length of `[value; len]`: a literal, or a name that must
     /// be a `usize` const generic parameter in scope.
     fn lower_array_repeat_len(&mut self, len: &ast::ParseArrayLen, span: &Span) -> ArrayLen {
