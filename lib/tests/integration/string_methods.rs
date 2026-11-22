@@ -173,6 +173,33 @@ main = !->
 }
 
 #[test]
+fn test_str_try_into_i64() {
+    let output = compile_and_run(
+        r#"
+> std::num::parse::ParseIntError
+
+main = !->
+    ok: Result I64, _ = "42".try_into!
+    ok.println!
+    negative: Result I64, _ = "-7".try_into!
+    negative.println!
+    empty: Result I64, _ = "".try_into!
+    empty.println!
+    bad: Result I64, _ = "4x".try_into!
+    bad.println!
+    big: Result I64, _ = "99999999999999999999".try_into!
+    big.println!
+    direct: Result I64, ParseIntError = TryFrom::try_from "12"
+    direct.println!
+"#,
+    );
+    assert_eq!(
+        output,
+        "Ok(42)\nOk(-7)\nErr(Empty)\nErr(InvalidDigit)\nErr(Overflow)\nOk(12)\n"
+    );
+}
+
+#[test]
 fn test_char_helpers() {
     let output = compile_and_run(
         r#"

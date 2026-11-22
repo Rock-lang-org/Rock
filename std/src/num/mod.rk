@@ -3,6 +3,7 @@
 < mod integer
 < std::num::integer::*
 < mod utils
+< mod parse
 
 < arithmetic::*
 < utils::*

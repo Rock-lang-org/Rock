@@ -1,0 +1,68 @@
+// Parsing integers from text.
+
+> std::convert::TryFrom
+> std::control::result::Result
+> std::cmp::eq::PartialEq
+> std::cmp::eq::Eq
+> std::show::Show
+> std::string::owned::String
+
+// Why text is not a valid integer.
+< enum ParseIntError
+    Empty
+    InvalidDigit
+    Overflow
+
+impl ParseIntError
+    @rank: I64
+    @rank = ->
+        match *self
+            ParseIntError::Empty => 0
+            ParseIntError::InvalidDigit => 1
+            ParseIntError::Overflow => 2
+
+impl PartialEq ParseIntError for ParseIntError
+    @== = other -> self.rank! == other.rank!
+
+impl Eq for ParseIntError
+
+impl Show for ParseIntError
+    @show = ->
+        match *self
+            ParseIntError::Empty => "Empty".into!
+            ParseIntError::InvalidDigit => "InvalidDigit".into!
+            ParseIntError::Overflow => "Overflow".into!
+
+// Optional sign followed by decimal digits.
+parse_i64: &Str -> Result I64, ParseIntError
+< parse_i64 = text ->
+    bytes = text.as_bytes!
+    len = bytes.len!
+    i = 0
+    negative = false
+    if len > 0 && ((bytes[0] as I64) == 45 || (bytes[0] as I64) == 43)
+        negative = (bytes[0] as I64) == 45
+        i = 1
+    if len == 0
+        return Result::Err ParseIntError::Empty
+    if i == len
+        return Result::Err ParseIntError::InvalidDigit
+    // Accumulate negatively so the minimum value parses without overflow.
+    value = 0
+    while i < len
+        d = (bytes[i] as I64) - 48
+        if d < 0 || d > 9
+            return Result::Err ParseIntError::InvalidDigit
+        if value < -922337203685477580 || (value == -922337203685477580 && d > 8)
+            return Result::Err ParseIntError::Overflow
+        value = value * 10 - d
+        i = i + 1
+    if negative
+        Result::Ok value
+    else if value == -9223372036854775807 - 1
+        Result::Err ParseIntError::Overflow
+    else
+        Result::Ok (0 - value)
+
+impl TryFrom &Str, ParseIntError for I64
+    try_from = text -> parse_i64 text

@@ -6,6 +6,7 @@
 > std::ffi::libc::atof
 > std::string::owned::String
 > std::string::owned::format_i64
+> std::control::result::Result
 
 < trait From T
     from: T -> Self
@@ -18,6 +19,17 @@ impl From T for T
 
 impl Into U for T where U: From T
     ~@into = -> U::from self
+
+// Fallible conversions. Unlike Rust's associated `Error` type, the error is a
+// trait parameter: the blanket `TryInto` impl cannot project `U::Error` yet.
+< trait TryFrom T, E
+    try_from: T -> Result Self, E
+
+< trait TryInto T, E
+    ~@try_into: Result T, E
+
+impl TryInto U, E for T where U: TryFrom T, E
+    ~@try_into = -> U::try_from self
 
 // Convert integer to float (uses LLVM sitofp intrinsic)
 to_float: I64 -> F64

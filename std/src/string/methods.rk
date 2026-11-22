@@ -12,6 +12,8 @@
 > std::collections::slice::slice_from_raw_parts
 > std::control::option::Option
 > std::ffi::libc::atof
+> std::control::result::Result
+> std::num::parse::parse_i64
 
 // The caller supplies in-bounds UTF-8 boundaries.
 str_bytes_range: &Str -> I64 -> I64 -> &Str
@@ -304,33 +306,12 @@ impl &Str
         count
 
     // Optional sign followed by decimal digits; None on overflow or bad input.
+    // `try_into` gives the reason instead.
     @parse_i64: Option I64
     @parse_i64 = ->
-        bytes = (*self).as_bytes!
-        len = bytes.len!
-        i = 0
-        negative = false
-        if len > 0 && ((bytes[0] as I64) == 45 || (bytes[0] as I64) == 43)
-            negative = (bytes[0] as I64) == 45
-            i = 1
-        if i == len
-            return Option::None
-        // Accumulate negatively so the minimum value parses without overflow.
-        value = 0
-        while i < len
-            d = (bytes[i] as I64) - 48
-            if d < 0 || d > 9
-                return Option::None
-            if value < -922337203685477580 || (value == -922337203685477580 && d > 8)
-                return Option::None
-            value = value * 10 - d
-            i = i + 1
-        if negative
-            Option::Some value
-        else if value == -9223372036854775807 - 1
-            Option::None
-        else
-            Option::Some (0 - value)
+        match parse_i64 *self
+            Result::Ok value => Option::Some value
+            Result::Err _ => Option::None
 
     // Decimal floats: optional sign, digits with an optional fraction, optional exponent.
     @parse_f64: Option F64
