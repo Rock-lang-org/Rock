@@ -55,7 +55,7 @@ pub(crate) fn resolve_dependency_root(
     ))
 }
 
-/// Returns `build/git/<owner>/<repo>/<rev>` when `package_root` lies inside a
+/// Returns the pinned checkout directory when `package_root` lies inside a
 /// fetched Git dependency of this project.
 fn git_checkout_root(project_root: &Path, package_root: &Path) -> Option<PathBuf> {
     let git_root = project_root.join("build").join("git").canonicalize().ok()?;
@@ -73,7 +73,7 @@ fn fetch_git_dependency(root: &Path, url: &str, rev: &str) -> Result<PathBuf, St
     fetch_into_cache(&git_cache_dir(root, url, rev)?, url, rev)
 }
 
-/// `build/git/<owner>/<repo>/<rev>`, normalized the way GitHub resolves
+/// Base cache path `build/git/<owner>/<repo>/<rev>`, normalized like GitHub:
 /// repositories: owner and repository names are case-insensitive and an
 /// optional `.git` suffix names the same repository.
 fn git_cache_dir(root: &Path, url: &str, rev: &str) -> Result<PathBuf, String> {
@@ -89,7 +89,7 @@ fn git_cache_dir(root: &Path, url: &str, rev: &str) -> Result<PathBuf, String> {
         .join(rev.to_ascii_lowercase()))
 }
 
-/// A unique sibling path of `dir` for staging or retiring a checkout.
+/// A unique sibling path of `dir` for staging or publishing a checkout.
 fn sibling_scratch_dir(dir: &Path, purpose: &str) -> Result<PathBuf, String> {
     let parent = dir.parent().ok_or("Missing Git cache parent")?;
     let nanos = std::time::SystemTime::now()
@@ -100,14 +100,34 @@ fn sibling_scratch_dir(dir: &Path, purpose: &str) -> Result<PathBuf, String> {
 }
 
 fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, String> {
-    // Reuse a checkout only while it still sits on the pinned commit with
-    // pristine sources. A stale one stays in place until a fresh fetch
-    // succeeds, so concurrent builds and offline runs never lose it early.
+    // Also accept an existing checkout at the base cache path.
     if cache.join("rock.toml").is_file() && cached_checkout_matches(cache, rev)? {
         return cache.canonicalize().map_err(|error| error.to_string());
     }
     let parent = cache.parent().ok_or("Missing Git cache parent")?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let base = cache
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Missing Git cache name")?;
+    let generation = format!("{base}-checkout");
+    let prefix = format!(".{generation}-");
+    let mut checkouts = std::fs::read_dir(parent)
+        .map_err(|error| error.to_string())?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    checkouts.sort_unstable();
+    for checkout in checkouts {
+        if checkout
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+            && checkout.join("rock.toml").is_file()
+            && cached_checkout_matches(&checkout, rev)?
+        {
+            return checkout.canonicalize().map_err(|error| error.to_string());
+        }
+    }
     let stage = sibling_scratch_dir(cache, "fetch")?;
     std::fs::create_dir(&stage).map_err(|error| error.to_string())?;
     let git = |args: &[&str]| -> Result<(), String> {
@@ -147,39 +167,16 @@ fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, Strin
                 link.strip_prefix(&stage).unwrap_or(&link).display()
             ));
         }
-        install_checkout(&stage, cache)?;
-        cache.canonicalize().map_err(|error| error.to_string())
+        // Publish at a new path. Builds that already resolved a checkout
+        // keep their path, even if a later build needs a fresh copy.
+        let checkout = sibling_scratch_dir(cache, &generation)?;
+        std::fs::rename(&stage, &checkout).map_err(|error| error.to_string())?;
+        checkout.canonicalize().map_err(|error| error.to_string())
     })();
     if stage.is_dir() {
         let _ = std::fs::remove_dir_all(&stage);
     }
     result
-}
-
-/// Moves a verified `stage` to `cache`. An existing stale or partial
-/// checkout is first renamed aside, never deleted in place, so a concurrent
-/// reader keeps a consistent tree; losing the race to another process that
-/// installed the same pin is fine.
-fn install_checkout(stage: &Path, cache: &Path) -> Result<(), String> {
-    let retired = if cache.exists() {
-        let retired = sibling_scratch_dir(cache, "stale")?;
-        match std::fs::rename(cache, &retired) {
-            Ok(()) => Some(retired),
-            Err(_) if !cache.exists() => None,
-            Err(error) => return Err(error.to_string()),
-        }
-    } else {
-        None
-    };
-    let installed = match std::fs::rename(stage, cache) {
-        Ok(()) => Ok(()),
-        Err(_) if cache.join("rock.toml").is_file() => Ok(()),
-        Err(error) => Err(error.to_string()),
-    };
-    if let Some(retired) = retired {
-        let _ = std::fs::remove_dir_all(retired);
-    }
-    installed
 }
 
 /// Finds a symbolic link under `root` (outside `.git`) whose target is
