@@ -2,17 +2,24 @@ use std::collections::{HashMap, HashSet};
 
 use crate::hir::{HirExpr, HirExprKind, HirVarRef, HirVarTarget};
 use crate::selection::{ReceiverAdjustment, ReceiverCandidate};
+use crate::type_services::projection::ProjectionNormalizer;
 use crate::types::Type;
 
 use super::type_predicates::contains_recovery_type;
 use super::MethodAuthorityContext;
 
 impl MethodAuthorityContext<'_> {
+    /// The resolved type with aliases expanded and impl projections reduced:
+    /// a receiver inferred late (`<String as Index Range>::Output`) must reach
+    /// the same type an annotated one gets during lowering (`Str`).
     pub(super) fn resolved_type(&self, ty: &Type) -> Type {
-        let engine = self.engine.borrow();
-        engine
-            .normalize_resolved_type(ty)
-            .unwrap_or_else(|_| engine.resolve(ty))
+        let resolved = {
+            let engine = self.engine.borrow();
+            engine
+                .normalize_resolved_type(ty)
+                .unwrap_or_else(|_| engine.resolve(ty))
+        };
+        ProjectionNormalizer::normalize(&self.service(), &resolved)
     }
 
     fn expr_can_autoref_mut_receiver(&self, expr: &HirExpr) -> bool {

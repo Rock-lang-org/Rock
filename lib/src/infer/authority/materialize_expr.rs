@@ -7,7 +7,28 @@ use super::type_predicates::{contains_inference_type, contains_recovery_type};
 use super::{binding_sort_key, native_call_type, AuthorityObligationKind, MethodAuthorityContext};
 
 impl MethodAuthorityContext<'_> {
+    /// Rewrites `ty` when every projection in it reduces; partial results stay
+    /// untouched so later passes still see the inference variables.
+    fn reduce_late_projection(&self, ty: &mut Type) {
+        let has_projection = |ty: &Type| {
+            crate::type_services::visit::type_any(ty, |ty| matches!(ty, Type::Projection { .. }))
+        };
+        if has_projection(ty) {
+            let reduced = self.resolved_type(ty);
+            if !has_projection(&reduced) {
+                *ty = reduced;
+            }
+        }
+    }
+
     pub(super) fn materialize_expr(&mut self, expr: &mut HirExpr, errors: &mut Vec<ResolveError>) {
+        // A projection built while its base was still inferred
+        // (`<?a as Index Range>::Output`) is reduced once the base is known,
+        // as lowering does for annotated code; later phases expect it reduced.
+        self.reduce_late_projection(&mut expr.ty);
+        if let HirExprKind::MethodCall(_, _, _, _, Some(target)) = &mut expr.kind {
+            target.for_each_type_mut(|ty| self.reduce_late_projection(ty));
+        }
         if matches!(&expr.kind, HirExprKind::Call(callee, _, _) if !native_call_type(&callee.ty) && !matches!(callee.kind, HirExprKind::FieldAccess(_, _, None)))
             && (self.visit_authority_slot(AuthorityObligationKind::CallableCall, &expr.span)
                 || self.visit_authority_slot(AuthorityObligationKind::DeferredCall, &expr.span))

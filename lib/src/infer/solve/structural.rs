@@ -5,13 +5,14 @@ use crate::ids::DefId;
 use crate::ids::TypeVarId;
 use crate::infer::constraints::{Constraint, ConstraintOwner, ConstraintStore, ObligationState};
 use crate::infer::{InferenceEngine, UnifyError};
-use crate::types::Type;
+use crate::type_services::projection::ProjectionNormalizer;
+use crate::types::{TraitBound, Type};
 
 use super::constructor_obligations::{
     infer_constructor_trait_obligation, infer_explicit_impl_trait_args,
     infer_partially_known_self_obligation,
 };
-use super::impl_lookup::callable_trait_satisfied;
+use super::impl_lookup::{callable_trait_satisfied, ImplTableProjections};
 use super::type_predicates::{contains_unresolved_type, try_head_is_pending};
 use super::BuiltinTraitIds;
 
@@ -208,6 +209,19 @@ pub(super) fn solve_structural_constraints_to_fixed_point(
             Constraint::Trait {
                 ty, bound, span, ..
             } => {
+                // Impl arguments are matched by unification, which cannot see
+                // through `&<String as Index Range>::Output` to `&Str`.
+                let projections = ImplTableProjections(impls);
+                let bound = TraitBound {
+                    trait_id: bound.trait_id,
+                    type_args: bound
+                        .type_args
+                        .iter()
+                        .map(|arg| {
+                            ProjectionNormalizer::normalize(&projections, &engine.resolve(arg))
+                        })
+                        .collect(),
+                };
                 if contains_unresolved_type(&engine.resolve(&ty)) {
                     infer_partially_known_self_obligation(
                         engine,

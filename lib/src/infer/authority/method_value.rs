@@ -1,5 +1,6 @@
 use crate::hir::{HirExpr, HirExprKind, HirFieldLocation};
 use crate::lower::ResolveError;
+use crate::type_services::projection::ProjectionNormalizer;
 use crate::types::Type;
 
 use super::type_predicates::contains_inference_type;
@@ -84,8 +85,9 @@ impl MethodAuthorityContext<'_> {
             return;
         };
         self.materialize_expr(receiver, errors);
-        receiver.ty = match self.engine.borrow().normalize_resolved_type(&receiver.ty) {
-            Ok(ty) => ty,
+        let normalized = self.engine.borrow().normalize_resolved_type(&receiver.ty);
+        receiver.ty = match normalized {
+            Ok(ty) => ProjectionNormalizer::normalize(&self.service(), &ty),
             Err(message) => {
                 errors.push(ResolveError::with_span(message, receiver.span.clone()));
                 return;

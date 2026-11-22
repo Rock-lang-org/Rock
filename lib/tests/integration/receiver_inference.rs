@@ -105,6 +105,45 @@ main = !->
 }
 
 #[test]
+fn test_slice_of_caller_fixed_receiver_reduces_to_str() {
+    let output = compile_and_run(
+        r#"
+tail_len = s -> (&s[1..]).len!
+
+tail_number = s ->
+    rest = &s[1..]
+    rest.parse_i64!.unwrap_or 0
+
+main = !->
+    (tail_len (String::from "abc")).println!
+    (tail_number (String::from "R42")).println!
+"#,
+    );
+    assert_eq!(output, "2\n42\n");
+}
+
+#[test]
+fn test_slice_of_caller_fixed_receiver_satisfies_trait_bounds() {
+    let output = compile_and_run(
+        r#"
+parse = content ->
+    mut out = Vec::new!
+    for item in content.split "\n"
+        rest = &item[1..]
+        value = match rest.try_into!
+            Ok n => n
+            Err _ => 0
+        out.push value
+    out
+
+main = !->
+    (parse (String::from "R12\nL3")).println!
+"#,
+    );
+    assert_eq!(output, "[12, 3]\n");
+}
+
+#[test]
 fn test_bind_callback_returning_wrong_carrier_is_the_reported_cause() {
     let messages = compile_messages(
         r#"

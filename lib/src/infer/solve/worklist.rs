@@ -8,6 +8,7 @@ use crate::infer::InferenceEngine;
 use crate::language_items::LanguageItems;
 use crate::type_services::facts::TypeFacts;
 use crate::type_services::normalize::TypeNormalizer;
+use crate::type_services::projection::ProjectionNormalizer;
 use crate::types::{TraitBound, Type};
 
 use super::impl_lookup::{callable_trait_impossible, impl_exists_for};
@@ -298,10 +299,23 @@ pub(super) fn solve_constraints_in_place_mode(
                 context,
             } => {
                 let normalization_env = engine.normalization_env();
-                let resolved_ty = engine.resolve(&ty);
-                let resolved = TypeNormalizer::new(&normalization_env)
-                    .normalize(&resolved_ty)
-                    .unwrap_or(resolved_ty);
+                // Impl projections whose base was inferred late
+                // (`&<String as Index Range>::Output`) reduce here as well.
+                let projections = crate::selection::SelectionService::new(
+                    traits,
+                    impls,
+                    builtin_traits.sized,
+                    None,
+                    assumptions,
+                );
+                let normalize = |ty: &Type| {
+                    let resolved = engine.resolve(ty);
+                    let normalized = TypeNormalizer::new(&normalization_env)
+                        .normalize(&resolved)
+                        .unwrap_or(resolved);
+                    ProjectionNormalizer::normalize(&projections, &normalized)
+                };
+                let resolved = normalize(&ty);
                 let (resolved, bound) =
                     borrowed_free_callable_subject(engine, resolved, bound, &builtin_traits);
                 if finalize_pending {
@@ -349,12 +363,7 @@ pub(super) fn solve_constraints_in_place_mode(
                     type_args: bound
                         .type_args
                         .iter()
-                        .map(|arg| {
-                            let resolved = engine.resolve(&arg);
-                            TypeNormalizer::new(&normalization_env)
-                                .normalize(&resolved)
-                                .unwrap_or(resolved)
-                        })
+                        .map(|arg| normalize(&arg))
                         .collect(),
                 };
                 if !matches!(resolved, Type::TypeVar(_) | Type::Generic(_))

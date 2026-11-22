@@ -23,6 +23,7 @@ mod bounds;
 mod concrete_methods;
 mod impl_matching;
 mod instantiation;
+mod projections;
 mod self_adjustment;
 mod trait_selection;
 mod unresolved_methods;

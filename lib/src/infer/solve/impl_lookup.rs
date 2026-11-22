@@ -200,6 +200,62 @@ pub(super) fn callable_trait_satisfied(
     Some(args_match && trait_args[1] == **ret)
 }
 
+/// Reduces impl projections using only the impl table: the unique impl of the
+/// projection's trait whose receiver and trait arguments match its base.
+pub(super) struct ImplTableProjections<'a, P: HirPhase>(
+    pub(super) &'a HashMap<DefId, HirImplFor<P>>,
+);
+
+impl<P: HirPhase> crate::type_services::projection::ProjectionProvider
+    for ImplTableProjections<'_, P>
+{
+    fn find_projection_impl(
+        &self,
+        base_ty: &Type,
+        trait_id: DefId,
+        trait_args: &[Type],
+    ) -> Option<crate::type_services::projection::ProjectionImpl> {
+        let mut found = None;
+        let mut impl_ids = self.0.keys().copied().collect::<Vec<_>>();
+        impl_ids.sort();
+        for id in impl_ids {
+            let imp = &self.0[&id];
+            if imp.trait_id != Some(trait_id) {
+                continue;
+            }
+            let Some(receiver_pattern) = P::impl_receiver_pattern(&imp.receiver_pattern) else {
+                continue;
+            };
+            let candidate = crate::type_services::projection::ProjectionImpl {
+                impl_id: imp.id,
+                receiver_pattern: receiver_pattern.clone(),
+                trait_arg_types: imp.trait_arg_types.clone(),
+                associated_types: imp
+                    .associated_types
+                    .iter()
+                    .map(
+                        |assoc| crate::type_services::projection::ProjectionAssociatedType {
+                            id: assoc.id,
+                            name: assoc.name.clone(),
+                            ty: assoc.ty.clone(),
+                        },
+                    )
+                    .collect(),
+            };
+            if candidate
+                .projection_substitution(base_ty, trait_args)
+                .is_some()
+            {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(candidate);
+            }
+        }
+        found
+    }
+}
+
 /// A concrete callable that can satisfy a callable bound for no choice of the
 /// bound's free variables (`(String) -> Vec I64: FnMut String, (Result ?b, E)`).
 pub(super) fn callable_trait_impossible(
