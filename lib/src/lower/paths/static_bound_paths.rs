@@ -24,6 +24,19 @@ impl Lowerer {
         })
     }
 
+    /// A primitive type named as a static path owner, unless a nominal type
+    /// in scope shadows the name.
+    fn primitive_static_owner(&self, owner_name: &str) -> Option<Type> {
+        let shadowed = crate::lower::resolution::LowerResolutionContext::new(self)
+            .resolve_nominal_type(owner_name)
+            .is_some();
+        if shadowed {
+            None
+        } else {
+            crate::type_lowering::primitive_type_by_name(owner_name)
+        }
+    }
+
     pub(crate) fn resolve_static_bound_method_path(
         &mut self,
         owner_name: &str,
@@ -112,6 +125,54 @@ impl Lowerer {
                         "trait `{owner_name}` has no member `{method_name}`"
                     ));
                 }
+                self.constraint_store.add_trait(
+                    owner_ty.clone(),
+                    bound.clone(),
+                    operation_span.clone(),
+                    crate::infer::constraints::STATIC_TRAIT_MEMBER_CONTEXT,
+                );
+                (owner_ty, vec![bound])
+            } else if let Some(owner_ty) = self.primitive_static_owner(owner_name) {
+                // `I64::from 3`: primitives have no inherent impls, so the member
+                // comes from the one trait whose impls (blanket ones included)
+                // can apply to the primitive; arguments then choose the impl.
+                let mut trait_ids = self
+                    .items
+                    .impl_defs_in_order()
+                    .map(|(_, imp)| imp)
+                    .filter(|imp| {
+                        imp.methods
+                            .get(method_name)
+                            .is_some_and(|method| !method.is_method)
+                            && crate::selection::receiver_pattern_substitution(
+                                &imp.receiver_pattern,
+                                &owner_ty,
+                            )
+                            .is_some()
+                    })
+                    .filter_map(|imp| imp.trait_id)
+                    .filter(|id| required_trait_id.is_none_or(|required| required == *id))
+                    .collect::<Vec<_>>();
+                trait_ids.sort();
+                trait_ids.dedup();
+                let [trait_id] = trait_ids.as_slice() else {
+                    return Ok(None);
+                };
+                let trait_def = self
+                    .trait_by_id(*trait_id)
+                    .cloned()
+                    .ok_or_else(|| "static method has unknown trait authority".to_string())?;
+                let bound = crate::types::TraitBound {
+                    trait_id: *trait_id,
+                    type_args: trait_def
+                        .generic_params
+                        .iter()
+                        .map(|param| {
+                            self.engine
+                                .fresh_type_var_at_kind(operation_span.clone(), param.kind.clone())
+                        })
+                        .collect(),
+                };
                 self.constraint_store.add_trait(
                     owner_ty.clone(),
                     bound.clone(),

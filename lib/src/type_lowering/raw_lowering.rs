@@ -324,18 +324,9 @@ impl TypeLowerer {
             .collect();
 
         let base = match inner.name.as_str() {
-            "I8" => Type::I8,
-            "I16" => Type::I16,
-            "I32" | "Int" => Type::I32,
-            "I64" => Type::I64,
-            "U8" => Type::U8,
-            "U16" => Type::U16,
-            "U32" => Type::U32,
-            "U64" => Type::U64,
-            "F32" => Type::F32,
-            "F64" | "Float" => Type::F64,
-            "Bool" => Type::Bool,
-            "Char" => Type::Char,
+            name if super::primitive_type_by_name(name).is_some() => {
+                super::primitive_type_by_name(name).expect("checked primitive name")
+            }
             "Str" => {
                 if !allow_bare_slice {
                     context.push_type_error(

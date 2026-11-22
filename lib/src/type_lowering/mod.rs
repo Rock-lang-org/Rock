@@ -72,6 +72,25 @@ pub(crate) trait TypeLoweringContext {
     }
 }
 
+/// The sized primitive type a source name denotes (`Str` is unsized and excluded).
+pub(crate) fn primitive_type_by_name(name: &str) -> Option<Type> {
+    Some(match name {
+        "I8" => Type::I8,
+        "I16" => Type::I16,
+        "I32" | "Int" => Type::I32,
+        "I64" => Type::I64,
+        "U8" => Type::U8,
+        "U16" => Type::U16,
+        "U32" => Type::U32,
+        "U64" => Type::U64,
+        "F32" => Type::F32,
+        "F64" | "Float" => Type::F64,
+        "Bool" => Type::Bool,
+        "Char" => Type::Char,
+        _ => return None,
+    })
+}
+
 pub(crate) struct TypeLowerer;
 
 impl TypeLowerer {

@@ -593,3 +593,21 @@ main = !->
     );
     assert_eq!(output.trim(), "42");
 }
+
+#[test]
+fn test_trait_static_functions_through_primitive_type_paths() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    n: I64 = I64::from 3
+    n.println!
+    f: F64 = F64::from 2.5
+    f.println!
+    parsed = I64::try_from "12"
+    parsed.println!
+    bad = I64::try_from "4x"
+    bad.println!
+"#,
+    );
+    assert_eq!(output, "3\n2.5\nOk(12)\nErr(InvalidDigit)\n");
+}
