@@ -414,8 +414,7 @@ pub fn secondary(stream: Input) -> IResult<SecondaryExpr> {
 
     let (mut stream, secondary) = result;
 
-    // Clear one-shot parser context flags after consuming a non-dot secondary.
-    stream.after_closing_paren = false;
+    // Clear the multiline-dot flag after consuming a non-dot secondary.
     if !matches!(secondary, SecondaryExpr::Dot(_)) {
         stream.after_multiline_dot = false;
     }
@@ -717,15 +716,6 @@ pub fn arguments_list_short_circuit(stream: Input) -> IResult<()> {
 }
 
 pub fn dot(stream: Input) -> IResult<IdentOrNumber> {
-    // Short-circuit inline dots after closing paren in argument context (e.g., foo(x).method)
-    // This prevents .method from being parsed as part of the argument
-    if stream.after_closing_paren && stream.inside_argument_list {
-        if let Ok(_) = TokenType::Dot.process(stream) {
-            return arguments_list_short_circuit(stream)
-                .and_then(|_| Err(ParseError::ShortCircuit));
-        }
-    }
-
     // For multiline dots, update the indent level to match the dot's indent
     // This is needed so that lambda arguments after the dot have the correct indent context
     // But don't do this inside argument lists, as it would break multiline argument parsing

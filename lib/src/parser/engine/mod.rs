@@ -90,7 +90,6 @@ pub struct ParseCtx<'a> {
     pub disallowed_multiline_fn_call: bool,
     pub inside_argument_list: bool,
     pub inside_inline_argument_list: bool, // For comma-separated args, not multiline
-    pub after_closing_paren: bool, // Set after parsing a closing paren in an argument context
     pub after_multiline_dot: bool,
     pub is_inside_fn_type_decl: bool,
     pub disallow_multiline_operators: bool, // Disallow multiline operator continuations (e.g., in single-line function bodies)
@@ -211,7 +210,6 @@ impl ParseCtx<'_> {
             disallowed_multiline_fn_call: false,
             inside_argument_list: false,
             inside_inline_argument_list: false,
-            after_closing_paren: false,
             after_multiline_dot: false,
             is_inside_fn_type_decl: false,
             disallow_multiline_operators: false,

@@ -3,6 +3,20 @@ use std::sync::atomic::Ordering;
 use crate::support::*;
 
 #[test]
+fn test_attached_postfix_call_applies_to_parenthesized_argument() {
+    let output = compile_and_run(
+        r#"
+double = n -> n + n
+
+main = !->
+    n = double (Option::Some 21).unwrap_or 0
+    n.println!
+"#,
+    );
+    assert_eq!(output, "42\n");
+}
+
+#[test]
 fn test_bind_callback_retries_outer_method_after_inner_method_resolves() {
     let output = compile_and_run(
         r#"

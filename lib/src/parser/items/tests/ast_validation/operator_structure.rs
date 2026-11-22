@@ -186,6 +186,22 @@ fn multiple_arguments_bind_together() {
 }
 
 #[test]
+fn attached_dot_binds_to_parenthesized_argument() {
+    let p = parse("main = -> f (x).method!\n");
+    let f = first_fn(&p);
+    let expr = as_expr(&f.lambda.body.statements[0]);
+    let [SecondaryExpr::Arguments(args)] = get_secondaries(expr) else {
+        panic!("expected one outer call");
+    };
+    assert_eq!(args.len(), 1);
+    assert!(matches!(
+        get_secondaries(&args[0].arg),
+        [SecondaryExpr::Dot(IdentOrNumber::Ident(name)), SecondaryExpr::Arguments(args)]
+            if name.name == "method" && args.is_empty()
+    ));
+}
+
+#[test]
 fn function_call_then_dot_structure() {
     // `foo.bar` → foo with Dot(bar)
     let p = parse("main = -> foo.bar\n");
