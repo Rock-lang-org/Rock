@@ -80,6 +80,7 @@ pub fn reset_best_error() {
 #[derive(Clone, Debug)]
 pub struct ParseCtx<'a> {
     pub tokens: &'a [Token],
+    pub previous_token_end: Option<usize>,
     pub eof_location: Option<(&'a std::path::PathBuf, usize)>,
     pub indent_level: usize,
     pub config: &'a Config,
@@ -128,6 +129,7 @@ impl ParseCtx<'_> {
         Ok((
             ParseCtx {
                 tokens: &self.tokens[1..],
+                previous_token_end: Some(self.tokens[0].span.end),
                 ..*self
             },
             self.tokens[0].clone(),
@@ -200,6 +202,7 @@ impl ParseCtx<'_> {
 
         ParseCtx {
             tokens,
+            previous_token_end: None,
             eof_location: tokens
                 .last()
                 .map(|token| (&token.span.file_path, token.span.end)),

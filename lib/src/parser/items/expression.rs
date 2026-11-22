@@ -426,6 +426,7 @@ pub fn arguments(stream: Input) -> IResult<Vec<Argument>> {
     TokenType::StuckOperator("!".to_string())
         .map(|_| vec![])
         .or(TokenType::Operator("!".to_string()).map(|_| vec![]))
+        .or(tight_argument_before_dot)
         .or(preceded(
             not_inline_call_operator,
             inside_inline_argument_list(separated1(
@@ -445,6 +446,36 @@ pub fn arguments(stream: Input) -> IResult<Vec<Argument>> {
             ),
         ))
         .process(stream)
+}
+
+fn tight_argument_before_dot(stream: Input) -> IResult<Vec<Argument>> {
+    // `f(x).field` projects from the call, while `f (x).field`
+    // passes the projection as an argument.
+    if !stream.tokens.first().is_some_and(|token| {
+        token.token_type == TokenType::OpenParen
+            && stream.previous_token_end == Some(token.span.start)
+    }) {
+        return Err(ParseError::Fail);
+    }
+    let (stream, operand) = operand(stream)?;
+    if !matches!(operand, Operand::Expression(_) | Operand::Tuple(_))
+        || !matches!(
+            stream.tokens.first().map(|token| &token.token_type),
+            Some(TokenType::Dot)
+        )
+    {
+        return Err(ParseError::Fail);
+    }
+    Ok((
+        stream,
+        vec![Argument {
+            arg: Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
+                operand,
+                secondaries: None,
+                type_annotation: None,
+            })),
+        }],
+    ))
 }
 
 fn not_inline_call_operator(stream: Input) -> IResult<()> {

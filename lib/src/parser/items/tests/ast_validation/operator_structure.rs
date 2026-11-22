@@ -202,6 +202,21 @@ fn attached_dot_binds_to_parenthesized_argument() {
 }
 
 #[test]
+fn attached_dot_after_tight_call_binds_to_call_result() {
+    let p = parse("main = -> wrap(42).0.println!\n");
+    let f = first_fn(&p);
+    let expr = as_expr(&f.lambda.body.statements[0]);
+    let [SecondaryExpr::Arguments(args), SecondaryExpr::Dot(_), SecondaryExpr::Dot(_), SecondaryExpr::Arguments(no_args)] =
+        get_secondaries(expr)
+    else {
+        panic!("expected a call followed by projection and method call");
+    };
+    assert_eq!(args.len(), 1);
+    assert!(get_secondaries(&args[0].arg).is_empty());
+    assert!(no_args.is_empty());
+}
+
+#[test]
 fn function_call_then_dot_structure() {
     // `foo.bar` → foo with Dot(bar)
     let p = parse("main = -> foo.bar\n");
