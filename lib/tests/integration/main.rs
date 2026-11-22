@@ -25,6 +25,7 @@ mod drops;
 mod enums;
 mod files;
 mod fold_loops;
+mod generic_associated_types;
 mod generics_codegen;
 mod hash_map;
 mod hkt;

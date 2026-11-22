@@ -61,6 +61,15 @@ pub(crate) trait TypeLoweringContext {
     fn fresh_type_hole(&mut self, _span: crate::lexer::Span, _kind: Kind) -> Option<Type> {
         None
     }
+    /// Trait bounds declared on a generic parameter of the item being lowered,
+    /// with their traits, for `T::Assoc` projections. Contexts that do not
+    /// track bounds return none.
+    fn generic_param_bounds(
+        &self,
+        _param: crate::types::GenericParamId,
+    ) -> Vec<(crate::types::TraitBound, HirTrait)> {
+        Vec::new()
+    }
 }
 
 pub(crate) struct TypeLowerer;

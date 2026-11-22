@@ -160,6 +160,27 @@ impl TypeLoweringContext for Lowerer {
             }
         }
         for (_, imp) in self.items.impl_defs() {
+            if let (Some(trait_id), false) = (imp.trait_id, imp.associated_types.is_empty()) {
+                env.register_projection_impl(
+                    trait_id,
+                    crate::type_services::projection::ProjectionImpl {
+                        impl_id: imp.id,
+                        receiver_pattern: imp.receiver_pattern.clone(),
+                        trait_arg_types: imp.trait_arg_types.clone(),
+                        associated_types: imp
+                            .associated_types
+                            .iter()
+                            .map(|assoc| {
+                                crate::type_services::projection::ProjectionAssociatedType {
+                                    id: assoc.id,
+                                    name: assoc.name.clone(),
+                                    ty: assoc.ty.clone(),
+                                }
+                            })
+                            .collect(),
+                    },
+                );
+            }
             for param in imp.type_generics.iter().chain(&imp.trait_generics) {
                 env.register_generic_kind(param.id, param.kind.clone());
             }

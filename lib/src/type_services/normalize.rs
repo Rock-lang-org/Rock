@@ -95,6 +95,9 @@ pub struct TypeNormalizationEnv {
     generic_kinds: HashMap<crate::types::GenericParamId, Kind>,
     inference_kinds: HashMap<crate::ids::TypeVarId, Kind>,
     projection_kinds: HashMap<AssociatedTypeKey, Kind>,
+    /// Trait impls that define associated types, keyed by trait. Used to reduce
+    /// fully concrete projections such as `<&Str as TryInto I64>::Error`.
+    projection_impls: HashMap<DefId, Vec<crate::type_services::projection::ProjectionImpl>>,
 }
 
 impl TypeNormalizationEnv {
@@ -136,6 +139,52 @@ impl TypeNormalizationEnv {
 
     pub fn register_projection_kind(&mut self, key: AssociatedTypeKey, kind: Kind) {
         self.projection_kinds.insert(key, kind);
+    }
+
+    pub fn register_projection_impl(
+        &mut self,
+        trait_id: DefId,
+        imp: crate::type_services::projection::ProjectionImpl,
+    ) {
+        self.projection_impls.entry(trait_id).or_default().push(imp);
+    }
+
+    /// The associated type a unique impl gives a fully concrete projection.
+    /// Projections mentioning inference variables or generic parameters stay
+    /// unreduced: a later binding or an in-scope where clause may decide them.
+    fn reduce_projection(
+        &self,
+        base: &Type,
+        trait_id: DefId,
+        assoc_type: &AssociatedTypeKey,
+        trait_args: &[Type],
+    ) -> Option<Type> {
+        let open = |ty: &Type| {
+            crate::type_services::visit::type_any(ty, |ty| {
+                matches!(
+                    ty,
+                    Type::TypeVar(_) | Type::Generic(_) | Type::Projection { .. } | Type::Error
+                )
+            })
+        };
+        if assoc_type.owner != trait_id || open(base) || trait_args.iter().any(open) {
+            return None;
+        }
+        let mut found = None;
+        for imp in self.projection_impls.get(&trait_id)? {
+            let Some(subst) = imp.projection_substitution(base, trait_args) else {
+                continue;
+            };
+            if found.is_some() {
+                return None;
+            }
+            let assoc = imp
+                .associated_types
+                .iter()
+                .find(|assoc| assoc.id == assoc_type.assoc_type_id)?;
+            found = Some(assoc.ty.substitute_generics(&subst));
+        }
+        found
     }
 
     fn constructor(&self, id: DefId) -> Option<&ConstructorInfo> {
@@ -305,15 +354,25 @@ impl<'a> TypeNormalizer<'a> {
                 trait_id,
                 assoc_type,
                 trait_args,
-            } => Ok(Type::Projection {
-                ty: Box::new(self.normalize_inner(*ty, depth + 1)?),
-                trait_id,
-                assoc_type,
-                trait_args: trait_args
+            } => {
+                let ty = self.normalize_inner(*ty, depth + 1)?;
+                let trait_args = trait_args
                     .into_iter()
                     .map(|ty| self.normalize_inner(ty, depth + 1))
-                    .collect::<Result<_, _>>()?,
-            }),
+                    .collect::<Result<Vec<_>, _>>()?;
+                if let Some(output) =
+                    self.env
+                        .reduce_projection(&ty, trait_id, &assoc_type, &trait_args)
+                {
+                    return self.normalize_inner(output, depth + 1);
+                }
+                Ok(Type::Projection {
+                    ty: Box::new(ty),
+                    trait_id,
+                    assoc_type,
+                    trait_args,
+                })
+            }
             leaf => Ok(leaf),
         }
     }

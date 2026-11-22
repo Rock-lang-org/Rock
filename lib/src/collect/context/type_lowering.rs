@@ -9,6 +9,24 @@ use crate::types::{GenericParamId, Type};
 use std::collections::HashSet;
 
 impl TypeLoweringContext for CollectContext {
+    fn generic_param_bounds(
+        &self,
+        param: GenericParamId,
+    ) -> Vec<(crate::types::TraitBound, HirTrait)> {
+        let Some(bounds) = self.projection_bounds.get(&param) else {
+            return Vec::new();
+        };
+        bounds
+            .iter()
+            .filter_map(|bound| {
+                self.traits
+                    .values()
+                    .find(|trait_def| trait_def.id == bound.trait_id)
+                    .map(|trait_def| (bound.clone(), trait_def.clone()))
+            })
+            .collect()
+    }
+
     fn constructor_params(&self, id: DefId) -> Option<Vec<crate::types::GenericParamDecl>> {
         self.structs
             .values()

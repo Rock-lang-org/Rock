@@ -182,7 +182,7 @@ This prints `name = Rock`, `true`, `Some(5)`, `name`, `ROCK`, `red, green, blue`
 | Borrowed pieces | `trim`, `trim_start`, `trim_end`, `strip_prefix`, `strip_suffix`, `substr` |
 | New strings | `replace`, `replacen`, `repeat`, `to_uppercase`, `to_lowercase`, `to_string` |
 | Counting and comparing | `char_count`, `eq_ignore_ascii_case`, `<` and the other comparisons on `String` |
-| Parsing | `parse_i64`, `parse_f64`, `parse_bool`, each returning an `Option` |
+| Parsing | `parse_i64`, `parse_f64`, `parse_bool`, each returning an `Option`; `try_into` returns a `Result` with the reason, such as `"4x".try_into!` giving `Err(InvalidDigit)` for an `I64` |
 
 `find` and `rfind` return a byte offset. `split` keeps empty pieces, and an empty separator yields the whole text as a single piece. `substr start, len` returns `None` when the range is out of bounds or cuts a character in half. `to_uppercase` and `to_lowercase` only change ASCII letters for now.
 

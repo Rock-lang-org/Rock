@@ -189,8 +189,8 @@ main = !->
     bad.println!
     big: Result I64, _ = "99999999999999999999".try_into!
     big.println!
-    direct: Result I64, ParseIntError = TryFrom::try_from "12"
-    direct.println!
+    typed: Result I64, ParseIntError = "12".try_into!
+    typed.println!
 "#,
     );
     assert_eq!(

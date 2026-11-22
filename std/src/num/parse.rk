@@ -64,5 +64,6 @@ parse_i64: &Str -> Result I64, ParseIntError
     else
         Result::Ok (0 - value)
 
-impl TryFrom &Str, ParseIntError for I64
+impl TryFrom &Str for I64
+    type Error = ParseIntError
     try_from = text -> parse_i64 text

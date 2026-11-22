@@ -137,6 +137,11 @@ impl TypeLowerer {
             },
             ast::ParseType::Associated { base, member } => {
                 let base_ty = Self::lower_inner_raw(context, base, false, env, binders, holes);
+                if base.name != "Self" {
+                    if let Type::Generic(param) = base_ty {
+                        return Self::lower_bound_projection(context, param, base, member);
+                    }
+                }
                 let trait_name = if base.name == "Self" {
                     context
                         .current_trait_name()
@@ -435,6 +440,80 @@ impl TypeLowerer {
             Type::Apply {
                 constructor: Box::new(base),
                 args: generics,
+            }
+        }
+    }
+
+    /// `T::Member` for a generic parameter `T`: the associated type `Member`
+    /// of the one trait in `T`'s bounds that declares it, applied to that
+    /// bound's arguments (`U::Error` under `U: TryFrom T` is
+    /// `<U as TryFrom T>::Error`).
+    fn lower_bound_projection<C: TypeLoweringContext + ?Sized>(
+        context: &mut C,
+        param: GenericParamId,
+        base: &ast::ParseTypeInner,
+        member: &ast::Ident,
+    ) -> Type {
+        let span = crate::lexer::Span::new(
+            base.span.file_path.clone(),
+            base.span.start,
+            member.span.end,
+        );
+        let mut candidates = context
+            .generic_param_bounds(param)
+            .into_iter()
+            .filter_map(|(bound, trait_def)| {
+                trait_def
+                    .associated_types
+                    .iter()
+                    .find(|assoc| assoc.name == member.name)
+                    .map(|assoc| (bound, trait_def.name.clone(), assoc.id))
+            })
+            .collect::<Vec<_>>();
+        candidates.dedup_by(|left, right| left.0 == right.0);
+        match candidates.as_slice() {
+            [(bound, _, assoc_type_id)] => {
+                context.record_type_reference(
+                    member.span.clone(),
+                    crate::source_map::SourceSymbol::AssociatedType {
+                        owner: bound.trait_id,
+                        associated: *assoc_type_id,
+                    },
+                );
+                Type::Projection {
+                    ty: Box::new(Type::Generic(param)),
+                    trait_id: bound.trait_id,
+                    assoc_type: AssociatedTypeKey {
+                        owner: bound.trait_id,
+                        assoc_type_id: *assoc_type_id,
+                    },
+                    trait_args: bound.type_args.clone(),
+                }
+            }
+            [] => {
+                context.push_type_error(
+                    format!(
+                        "no bound on '{}' declares an associated type '{}'; associated types of a generic parameter are only available in impl headers with a where clause",
+                        base.name, member.name
+                    ),
+                    span,
+                );
+                Type::Error
+            }
+            several => {
+                let traits = several
+                    .iter()
+                    .map(|(_, name, _)| format!("'{name}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                context.push_type_error(
+                    format!(
+                        "associated type '{}' of '{}' is ambiguous: declared by {traits}",
+                        member.name, base.name
+                    ),
+                    span,
+                );
+                Type::Error
             }
         }
     }

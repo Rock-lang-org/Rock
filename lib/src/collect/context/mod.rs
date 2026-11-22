@@ -64,6 +64,8 @@ pub(crate) struct CollectContext {
     pub(crate) variant_aliases: HashMap<String, VariantAlias>,
     pending_variant_imports: Vec<PendingVariantImport>,
     explicit_imports: HashMap<String, Option<VariantAlias>>,
+    /// Where-clause bounds of the header being lowered, for `T::Assoc`.
+    pub(crate) projection_bounds: crate::hir::HirGenericBounds,
 }
 
 /// A variant import whose variant name is checked after collection.
@@ -125,6 +127,7 @@ impl CollectContext {
             variant_aliases: HashMap::new(),
             pending_variant_imports: Vec::new(),
             explicit_imports: HashMap::new(),
+            projection_bounds: crate::hir::HirGenericBounds::new(),
         }
     }
 
@@ -198,6 +201,7 @@ impl CollectContext {
             variant_aliases,
             pending_variant_imports: _,
             explicit_imports: _,
+            projection_bounds: _,
         } = self;
         let (loaded_module_paths, module_file_cache) = modules.into_registry_and_cache();
         let ResolverNameTables {

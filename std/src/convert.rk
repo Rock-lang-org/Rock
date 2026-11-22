@@ -20,15 +20,17 @@ impl From T for T
 impl Into U for T where U: From T
     ~@into = -> U::from self
 
-// Fallible conversions. Unlike Rust's associated `Error` type, the error is a
-// trait parameter: the blanket `TryInto` impl cannot project `U::Error` yet.
-< trait TryFrom T, E
-    try_from: T -> Result Self, E
+// Fallible conversions; each impl chooses its error type.
+< trait TryFrom T
+    type Error
+    try_from: T -> Result Self, Self::Error
 
-< trait TryInto T, E
-    ~@try_into: Result T, E
+< trait TryInto T
+    type Error
+    ~@try_into: Result T, Self::Error
 
-impl TryInto U, E for T where U: TryFrom T, E
+impl TryInto U for T where U: TryFrom T
+    type Error = U::Error
     ~@try_into = -> U::try_from self
 
 // Convert integer to float (uses LLVM sitofp intrinsic)

@@ -239,6 +239,40 @@ main = !->
 
 The implementation fixes `Identity::Output` to `I64`, so the argument and result of `project` are both `I64`. The output is `13`. An implementation must define every associated type required by its trait.
 
+### Associated Types of a Generic Parameter
+
+Inside an impl header, `T::Name` names the associated type `Name` of a generic parameter `T`. The compiler looks for it in the traits that the `where` clause requires of `T`. This lets a blanket implementation forward another trait's associated type instead of inventing its own.
+
+```rock
+trait Measure
+    type Unit
+    @describe: Self::Unit
+
+trait Report
+    type Unit
+    @report: Self::Unit
+
+struct Distance
+    < meters: I64
+
+impl Measure for Distance
+    type Unit = I64
+    @describe = -> self.meters
+
+impl Report for T where T: Measure
+    type Unit = T::Unit
+    @report = -> self.describe!
+
+main = !->
+    distance = Distance
+        meters: 1500
+    distance.report!.println!
+```
+
+`T::Unit` means "the `Unit` that `Measure` gives `T`". For `Distance` that is `I64`, so `report` returns `1500`, which the program prints. The standard library uses the same pattern for `TryInto`, whose `Error` is the `Error` of the matching `TryFrom` implementation.
+
+Exactly one trait required of `T` must declare the name. If none does, or if two bounds both declare it, the compiler reports an error. This form is currently accepted only in impl headers; function signatures still use concrete types or `Self::Name` inside traits.
+
 ## Constructor Parameters
 
 Ordinary generics abstract over complete types such as `I64` or `Option I64`. Higher-kinded generics abstract over constructors such as `Option` or `Result _, I64`; the exact tested syntax is `F _` in a `where` bound. [Higher-Kinded Types](../functional/higher-kinded-types.md) begins with complete `Option`, `Result`, and `Vec` programs using that syntax. This chapter intentionally does not introduce a second spelling before those examples.
