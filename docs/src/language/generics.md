@@ -241,7 +241,7 @@ The implementation fixes `Identity::Output` to `I64`, so the argument and result
 
 ### Associated Types of a Generic Parameter
 
-Inside an impl header, `T::Name` names the associated type `Name` of a generic parameter `T`. The compiler looks for it in the traits that the `where` clause requires of `T`. This lets a blanket implementation forward another trait's associated type instead of inventing its own.
+In an associated type definition or a function signature, `T::Name` names the associated type `Name` of a generic parameter `T`. The compiler looks for it in the traits that the `where` clause requires of `T`. This lets a blanket implementation forward another trait's associated type instead of inventing its own.
 
 ```rock
 trait Measure
@@ -263,15 +263,18 @@ impl Report for T where T: Measure
     type Unit = T::Unit
     @report = -> self.describe!
 
+read: T -> T::Unit where T: Measure
+read = value -> value.describe!
+
 main = !->
     distance = Distance
         meters: 1500
-    distance.report!.println!
+    read distance .println!
 ```
 
 `T::Unit` means "the `Unit` that `Measure` gives `T`". For `Distance` that is `I64`, so `report` returns `1500`, which the program prints. The standard library uses the same pattern for `TryInto`, whose `Error` is the `Error` of the matching `TryFrom` implementation.
 
-Exactly one trait required of `T` must declare the name. If none does, or if two bounds both declare it, the compiler reports an error. This form is currently accepted only in impl headers; function signatures still use concrete types or `Self::Name` inside traits.
+The signature of `read` ties its return type to the `Measure` implementation for its argument, so callers get that implementation's `Unit` type. Exactly one bound on `T` must supply the associated type; if none does or multiple bounds supply it, the compiler reports an error.
 
 ## Constructor Parameters
 

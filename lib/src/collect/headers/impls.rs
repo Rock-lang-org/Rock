@@ -353,6 +353,9 @@ pub(crate) fn build_impl_with_id(
         }
     }
 
+    // Method signatures and associated type definitions inherit the impl bounds.
+    let previous_projection_bounds =
+        std::mem::replace(&mut context.projection_bounds, bounds.clone());
     let mut methods = HashMap::new();
     for (ident, fd) in &imp.methods {
         let method_id = *method_ids
@@ -415,9 +418,6 @@ pub(crate) fn build_impl_with_id(
     let all_type_generic_kinds = context.generics.kinds().to_vec();
 
     let mut associated_types = Vec::new();
-    // `U::Error` in an associated type resolves through the where clause.
-    let previous_projection_bounds =
-        std::mem::replace(&mut context.projection_bounds, bounds.clone());
     for (index, assoc) in imp.associated_types.iter().enumerate() {
         let declaration = trait_associated_types
             .iter()

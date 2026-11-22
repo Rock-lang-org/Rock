@@ -1,5 +1,48 @@
 use crate::support::*;
 
+#[test]
+fn test_function_signature_projection_requires_unambiguous_bound() {
+    compile_should_fail(
+        r#"
+trait Left
+    type Value
+
+trait Right
+    type Value
+
+read: T -> T::Value where T: Left, T: Right
+read = value -> value
+
+main = !-> ()
+"#,
+        "associated type 'Value' of 'T' is ambiguous",
+    );
+}
+
+#[test]
+fn test_associated_type_in_function_signature() {
+    let output = compile_and_run(
+        r#"
+trait Measure
+    type Value
+    @measure: Self::Value
+
+struct Distance
+
+impl Measure for Distance
+    type Value = I64
+    @measure = -> 42
+
+read: T -> T::Value where T: Measure
+read = value -> value.measure!
+
+main = !->
+    read Distance .println!
+"#,
+    );
+    assert_eq!(output, "42\n");
+}
+
 const CONVERT: &str = r#"
 trait Convert T
     type Out

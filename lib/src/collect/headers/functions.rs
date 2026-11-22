@@ -105,11 +105,20 @@ pub(crate) fn build_function_sig_with_id(
         }
     }
 
+    let lowered_generic_bounds = lower_where_clauses(context, &sig.where_clauses);
+    let previous_projection_bounds = context.projection_bounds.clone();
+    for (param, bounds) in &lowered_generic_bounds {
+        context
+            .projection_bounds
+            .entry(*param)
+            .or_default()
+            .extend(bounds.iter().cloned());
+    }
     let mut lowered_type = context.lower_parse_type(&sig.sig);
+    context.projection_bounds = previous_projection_bounds;
     let mut receiver_ty = sig
         .self_receiver
         .map(|self_receiver| context.receiver_ty_for_self(self_receiver, sig.name.span.clone()));
-    let lowered_generic_bounds = lower_where_clauses(context, &sig.where_clauses);
     let mut generic_param_ids = Vec::new();
     collect_generic_ids_from_type(&lowered_type, &mut generic_param_ids);
     if let Some(receiver_ty) = &receiver_ty {

@@ -484,7 +484,7 @@ impl TypeLowerer {
             [] => {
                 context.push_type_error(
                     format!(
-                        "no bound on '{}' declares an associated type '{}'; associated types of a generic parameter are only available in impl headers with a where clause",
+                        "no bound on '{}' declares an associated type '{}'",
                         base.name, member.name
                     ),
                     span,
