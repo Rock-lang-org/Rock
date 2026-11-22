@@ -160,7 +160,16 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
                         let propagation_edge = result.progress
                             && obligation.owner == completed_owner
                             && obligation.kind == authority::AuthorityObligationKind::Propagation;
-                        if propagation_edge || obligation.depends_on_any(&changed) {
+                        // Materializing a nested site can change the receiver
+                        // of an outer site without a tracked variable change.
+                        let strict_body_progress = strict
+                            && result.progress
+                            && obligation.owner == completed_owner
+                            && obligation.state != ObligationState::Solved;
+                        if propagation_edge
+                            || strict_body_progress
+                            || obligation.depends_on_any(&changed)
+                        {
                             obligation.wake();
                             if authority_queued.insert(obligation.id) {
                                 queue.push_back(WorkItem::Authority(obligation.id));

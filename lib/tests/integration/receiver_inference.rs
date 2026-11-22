@@ -2,6 +2,38 @@ use std::sync::atomic::Ordering;
 
 use crate::support::*;
 
+#[test]
+fn test_bind_callback_retries_outer_method_after_inner_method_resolves() {
+    let output = compile_and_run(
+        r#"
+> std::io::fs::read_to_string
+
+struct Turn
+    < dir: I64
+
+impl Turn
+    new = letter ->
+        Turn
+            dir: if letter == 'R' then 1 else 0
+
+parse = text ->
+    mut turns = Vec::new!
+    for item in text.split "\n"
+        letter = item.char_at 0 .unwrap_or 'a'
+        turns.push (Turn::new letter)
+    Ok turns
+
+load = -> read_to_string "" >>= parse
+
+main = !->
+    match load!
+        Ok turns => turns.len!.println!
+        Err _ => "read failed".println!
+"#,
+    );
+    assert_eq!(output, "read failed\n");
+}
+
 const SHAPES: &str = r#"
 struct Circle
     < r: I64
