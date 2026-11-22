@@ -13,6 +13,7 @@ fn regression_clears_cross_file_diagnostics_only_for_the_publishing_target() {
     let entry = PathBuf::from("/virtual/main.rk");
     let other_entry = PathBuf::from("/virtual/other.rk");
     let trigger = Url::from_file_path(&entry).unwrap();
+    let other_trigger = Url::from_file_path(&other_entry).unwrap();
     let helper_path = PathBuf::from("/virtual/helpers.rk");
     let helper = Url::from_file_path(&helper_path).unwrap();
     let mut state = super::State::default();
@@ -34,7 +35,7 @@ fn regression_clears_cross_file_diagnostics_only_for_the_publishing_target() {
     assert_eq!(updates[0].2.len(), 1);
     let empty = Default::default();
     assert!(state
-        .diagnostic_updates(&other_entry, &trigger, &empty)
+        .diagnostic_updates(&other_entry, &other_trigger, &empty)
         .is_empty());
     assert_eq!(
         state.diagnostic_updates(&other_entry, &helper, &empty),
@@ -47,6 +48,65 @@ fn regression_clears_cross_file_diagnostics_only_for_the_publishing_target() {
     assert!(state
         .diagnostic_updates(&entry, &trigger, &empty)
         .is_empty());
+}
+
+#[test]
+fn regression_retires_diagnostics_when_the_last_document_leaves_a_target() {
+    let a = PathBuf::from("/virtual/a.rk");
+    let b = PathBuf::from("/virtual/b.rk");
+    let a_uri = Url::from_file_path(&a).unwrap();
+    let b_uri = Url::from_file_path(&b).unwrap();
+    let another_a = Url::from_file_path("/virtual/a_module.rk").unwrap();
+    let shared_path = PathBuf::from("/virtual/shared.rk");
+    let shared = Url::from_file_path(&shared_path).unwrap();
+    let mut state = super::State::default();
+    for uri in [&a_uri, &b_uri, &another_a, &shared] {
+        state.documents.insert(
+            uri.clone(),
+            super::Document {
+                version: 7,
+                text: "helper = -> 1\n".into(),
+            },
+        );
+    }
+    let warning = |message: &str| {
+        let mut diagnostics = rock_lib::diagnostic::Diagnostics::default();
+        diagnostics.push(RockDiagnostic::new(
+            message.into(),
+            Span::new(shared_path.clone(), 0, 6),
+        ));
+        diagnostics
+    };
+    let a_warning = warning("from A");
+    let b_warning = warning("from B");
+    let b_only = state.diagnostic_updates(&b, &b_uri, &b_warning);
+    let merged = state.diagnostic_updates(&a, &a_uri, &a_warning);
+    assert_eq!(
+        merged
+            .iter()
+            .find(|update| update.0 == shared)
+            .unwrap()
+            .2
+            .len(),
+        2
+    );
+
+    state.diagnostic_updates(&a, &another_a, &a_warning);
+    state.documents.remove(&a_uri);
+    assert!(state.close_diagnostic_document(&a_uri).is_empty());
+    let switched = state.diagnostic_updates(&b, &another_a, &b_warning);
+    assert_eq!(
+        switched.iter().find(|update| update.0 == shared),
+        b_only.iter().find(|update| update.0 == shared)
+    );
+
+    state.documents.remove(&b_uri);
+    assert!(state.close_diagnostic_document(&b_uri).is_empty());
+    state.documents.remove(&another_a);
+    assert_eq!(
+        state.close_diagnostic_document(&another_a),
+        vec![(shared, 7, vec![])]
+    );
 }
 
 #[test]

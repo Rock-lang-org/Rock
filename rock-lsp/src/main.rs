@@ -57,6 +57,7 @@ struct State {
     overlay_revision: u64,
     projects: HashMap<(PathBuf, PathBuf), rock::project::AnalysisProject>,
     diagnostic_entries: HashMap<Url, std::collections::BTreeMap<PathBuf, Vec<Diagnostic>>>,
+    diagnostic_targets: HashMap<Url, PathBuf>,
 }
 
 impl State {
@@ -98,6 +99,69 @@ impl State {
         trigger: &Url,
         diagnostics: &Diagnostics,
     ) -> Vec<(Url, i32, Vec<Diagnostic>)> {
+        let previous = self
+            .diagnostic_targets
+            .insert(trigger.clone(), entry.to_path_buf());
+        if let Some(previous) = previous.filter(|previous| previous != entry) {
+            let retired = self.retire_diagnostic_target(&previous);
+            let mut updates = self.update_target_diagnostics(entry, trigger, diagnostics);
+            for update in retired {
+                if !updates.iter().any(|current| current.0 == update.0) {
+                    updates.push(update);
+                }
+            }
+            return updates;
+        }
+        self.update_target_diagnostics(entry, trigger, diagnostics)
+    }
+
+    fn close_diagnostic_document(&mut self, uri: &Url) -> Vec<(Url, i32, Vec<Diagnostic>)> {
+        self.diagnostic_entries.remove(uri);
+        self.diagnostic_targets
+            .remove(uri)
+            .map_or_else(Vec::new, |entry| self.retire_diagnostic_target(&entry))
+    }
+
+    fn retire_diagnostic_target(&mut self, entry: &Path) -> Vec<(Url, i32, Vec<Diagnostic>)> {
+        if self
+            .diagnostic_targets
+            .values()
+            .any(|active| active == entry)
+        {
+            return Vec::new();
+        }
+        self.diagnostic_entries
+            .iter_mut()
+            .filter_map(|(uri, by_target)| {
+                by_target.remove(entry)?;
+                let document = self.documents.get(uri)?;
+                Some((
+                    uri.clone(),
+                    document.version,
+                    Self::merge_diagnostics(by_target),
+                ))
+            })
+            .collect()
+    }
+
+    fn merge_diagnostics(
+        by_target: &std::collections::BTreeMap<PathBuf, Vec<Diagnostic>>,
+    ) -> Vec<Diagnostic> {
+        let mut merged = Vec::new();
+        for diagnostic in by_target.values().flatten() {
+            if !merged.contains(diagnostic) {
+                merged.push(diagnostic.clone());
+            }
+        }
+        merged
+    }
+
+    fn update_target_diagnostics(
+        &mut self,
+        entry: &Path,
+        trigger: &Url,
+        diagnostics: &Diagnostics,
+    ) -> Vec<(Url, i32, Vec<Diagnostic>)> {
         let mut updates = Vec::new();
         for (uri, document) in &self.documents {
             let converted = diagnostics
@@ -113,13 +177,11 @@ impl State {
             } else {
                 by_target.insert(entry.to_path_buf(), converted);
             }
-            let mut merged = Vec::new();
-            for diagnostic in by_target.values().flatten() {
-                if !merged.contains(diagnostic) {
-                    merged.push(diagnostic.clone());
-                }
-            }
-            updates.push((uri.clone(), document.version, merged));
+            updates.push((
+                uri.clone(),
+                document.version,
+                Self::merge_diagnostics(by_target),
+            ));
         }
         updates
     }
@@ -412,16 +474,23 @@ impl LanguageServer for Backend {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
+        let lock = self.refresh_lock.lock().await;
         let mut state = self.state.write().await;
         state.documents.remove(&uri);
         state.analyses.remove(&uri);
         state.pending.remove(&uri);
-        state.diagnostic_entries.remove(&uri);
+        let updates = state.close_diagnostic_document(&uri);
         let revision = state.invalidate_analyses(&uri, None);
         drop(state);
         self.client
             .publish_diagnostics(uri.clone(), Vec::new(), None)
             .await;
+        for (uri, version, diagnostics) in updates {
+            self.client
+                .publish_diagnostics(uri, diagnostics, Some(version))
+                .await;
+        }
+        drop(lock);
         self.refresh(revision).await;
     }
 
