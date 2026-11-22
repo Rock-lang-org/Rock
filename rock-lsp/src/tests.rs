@@ -37,6 +37,10 @@ fn regression_clears_cross_file_diagnostics_only_for_the_publishing_target() {
         .diagnostic_updates(&other_entry, &trigger, &empty)
         .is_empty());
     assert_eq!(
+        state.diagnostic_updates(&other_entry, &helper, &empty),
+        updates
+    );
+    assert_eq!(
         state.diagnostic_updates(&entry, &trigger, &empty),
         vec![(helper, 7, vec![])]
     );

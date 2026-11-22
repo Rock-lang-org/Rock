@@ -56,7 +56,7 @@ struct State {
     pending: HashMap<Url, u64>,
     overlay_revision: u64,
     projects: HashMap<(PathBuf, PathBuf), rock::project::AnalysisProject>,
-    diagnostic_entries: HashMap<Url, PathBuf>,
+    diagnostic_entries: HashMap<Url, std::collections::BTreeMap<PathBuf, Vec<Diagnostic>>>,
 }
 
 impl State {
@@ -105,18 +105,21 @@ impl State {
                 .iter()
                 .filter_map(|diagnostic| diagnostic_to_lsp(diagnostic, uri, &document.text))
                 .collect::<Vec<_>>();
+            let by_target = self.diagnostic_entries.entry(uri.clone()).or_default();
             if converted.is_empty() {
-                if uri != trigger
-                    && self.diagnostic_entries.get(uri).map(PathBuf::as_path) != Some(entry)
-                {
+                if by_target.remove(entry).is_none() && uri != trigger {
                     continue;
                 }
-                self.diagnostic_entries.remove(uri);
             } else {
-                self.diagnostic_entries
-                    .insert(uri.clone(), entry.to_path_buf());
+                by_target.insert(entry.to_path_buf(), converted);
             }
-            updates.push((uri.clone(), document.version, converted));
+            let mut merged = Vec::new();
+            for diagnostic in by_target.values().flatten() {
+                if !merged.contains(diagnostic) {
+                    merged.push(diagnostic.clone());
+                }
+            }
+            updates.push((uri.clone(), document.version, merged));
         }
         updates
     }
