@@ -325,31 +325,9 @@ impl MethodAuthorityContext<'_> {
             inferred.dedup_by_key(|candidate| {
                 (candidate.target.impl_id(), candidate.target.method_id())
             });
-            if inferred.len() == 1 {
-                let mut selected = inferred.into_iter().next();
-                if let Some(selected) = selected.as_mut() {
-                    let target_key = (selected.target.impl_id(), selected.target.method_id());
-                    for candidate in &receiver_candidates {
-                        let concrete = self.service().select_concrete_method_candidates(
-                            std::slice::from_ref(candidate),
-                            method_name,
-                            |ty| self.resolved_type(ty),
-                        );
-                        if concrete.iter().any(|candidate| {
-                            (candidate.target.impl_id(), candidate.target.method_id()) == target_key
-                        }) {
-                            if candidate.adjustment != ReceiverAdjustment::None {
-                                selected.receiver_adjustment = candidate.adjustment;
-                            }
-                            break;
-                        }
-                    }
-                    selected.receiver.kind = receiver.kind.clone();
-                    selected.receiver.span = receiver.span.clone();
-                }
-                return selected;
-            }
-            if inferred.len() > 1 {
+            // A free receiver is never fixed by searching impls for a method
+            // name: callers fix it, or a shared trait member bounds it.
+            if !inferred.is_empty() {
                 if !self.strict && unresolved_inputs {
                     self.ambiguous = true;
                     return None;
@@ -381,14 +359,25 @@ impl MethodAuthorityContext<'_> {
                         }
                     }
                 }
-                errors.push(ResolveError::with_span(
-                    format!(
-                        "Ambiguous selection for '{}' on type {}",
-                        method_name,
-                        self.display_type(&receiver.ty)
-                    ),
-                    receiver.span.clone(),
-                ));
+                if matches!(self.resolved_type(&receiver.ty), Type::TypeVar(_)) {
+                    errors.push(ResolveError::undetermined_receiver(
+                        format!(
+                            "cannot infer the receiver type of '{}': no caller fixes it; \
+                             add a type annotation",
+                            method_name
+                        ),
+                        receiver.span.clone(),
+                    ));
+                } else {
+                    errors.push(ResolveError::with_span(
+                        format!(
+                            "Ambiguous selection for '{}' on type {}",
+                            method_name,
+                            self.display_type(&receiver.ty)
+                        ),
+                        receiver.span.clone(),
+                    ));
+                }
                 return None;
             }
         }

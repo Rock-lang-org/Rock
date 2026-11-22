@@ -10,7 +10,7 @@ use crate::type_services::facts::TypeFacts;
 use crate::type_services::normalize::TypeNormalizer;
 use crate::types::{TraitBound, Type};
 
-use super::impl_lookup::impl_exists_for;
+use super::impl_lookup::{callable_trait_impossible, impl_exists_for};
 use super::structural::{solve_structural_constraints_to_fixed_point, unify_argument_coercion};
 use super::trait_bounds::trait_bounds_with_supertraits;
 use super::type_predicates::{contains_inference_pending_type, contains_unresolved_type};
@@ -344,11 +344,6 @@ pub(super) fn solve_constraints_in_place_mode(
                         AutoTraitResidual::NotApplicable => {}
                     }
                 }
-                if !matches!(resolved, Type::TypeVar(_) | Type::Generic(_))
-                    && contains_inference_pending_type(&resolved)
-                {
-                    continue;
-                }
                 let resolved_bound = TraitBound {
                     trait_id: bound.trait_id,
                     type_args: bound
@@ -362,6 +357,35 @@ pub(super) fn solve_constraints_in_place_mode(
                         })
                         .collect(),
                 };
+                if !matches!(resolved, Type::TypeVar(_) | Type::Generic(_))
+                    && contains_inference_pending_type(&resolved)
+                {
+                    // A partly inferred callable can already be impossible:
+                    // `(?a) -> Vec ?t` never returns `Result ?b, E`.
+                    if finalize_pending
+                        && callable_trait_impossible(
+                            &resolved,
+                            resolved_bound.trait_id,
+                            &resolved_bound.type_args,
+                            builtin_traits,
+                        )
+                    {
+                        errors.push(SolveError {
+                            kind: SolveErrorKind::TraitNotImplemented {
+                                ty: resolved.clone(),
+                                trait_name: traits
+                                    .get(&bound.trait_id)
+                                    .map(|trait_def| trait_def.name.clone())
+                                    .unwrap_or_else(|| "<unknown trait>".to_string()),
+                                trait_args: resolved_bound.type_args.clone(),
+                                context: context.clone(),
+                            },
+                            span,
+                        });
+                        store.set_state(id, ObligationState::Failed);
+                    }
+                    continue;
+                }
                 match &resolved {
                     Type::TypeVar(type_var) => {
                         // Still a free variable — will become a Generic param.
@@ -422,11 +446,20 @@ pub(super) fn solve_constraints_in_place_mode(
                         // `String: From ?x` with `?x` still free is not a violation yet:
                         // it may become a where clause of the owning function when the
                         // function is generalized.
+                        // A callable whose signature cannot fit the bound for any
+                        // choice of those variables is a definite failure, not a
+                        // where clause.
                         if !impl_found
                             && resolved_bound
                                 .type_args
                                 .iter()
                                 .any(contains_unresolved_type)
+                            && !callable_trait_impossible(
+                                concrete_ty,
+                                resolved_bound.trait_id,
+                                &resolved_bound.type_args,
+                                builtin_traits,
+                            )
                         {
                             if finalize_pending {
                                 deferred_predicates.push(id);

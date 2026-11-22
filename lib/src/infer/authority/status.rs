@@ -44,6 +44,7 @@ pub(in crate::infer) fn pending_authority_error(
         .and_then(|obligation| obligation.span.clone())
         .expect("pending source authority obligation must carry its expression span");
     ResolveError::with_span_code(message, span, crate::diagnostic::DiagnosticCode::Selection)
+        .into_undetermined_receiver()
 }
 
 pub(in crate::infer) fn pending_authority_context(

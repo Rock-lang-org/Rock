@@ -289,8 +289,18 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
                 crate::diagnostic::DiagnosticCode::Type,
             )]
         })?;
+    // An undetermined receiver is usually a consequence: its only caller failed
+    // to type-check, so nothing fixed it. Keep checking later components and
+    // report their definite errors first.
+    let mut undetermined_receivers = Vec::new();
     for (_, owners, authority_obligations) in &mut component_work {
-        solve_component_worklist(hir, &owners, authority_obligations, true)?;
+        match solve_component_worklist(hir, owners, authority_obligations, true) {
+            Err(errors) if errors.iter().all(ResolveError::is_undetermined_receiver) => {
+                undetermined_receivers.extend(errors);
+                continue;
+            }
+            result => result?,
+        }
         if authority_obligations.iter().any(|obligation| {
             obligation.kind != authority::AuthorityObligationKind::Propagation
                 && obligation.state != ObligationState::Solved
@@ -300,7 +310,7 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
             if let Some(context) = authority::pending_authority_context(&authority_obligations) {
                 error.message = format!("{} ({context})", error.message);
             }
-            return Err(vec![error]);
+            undetermined_receivers.push(error);
         }
     }
 
@@ -328,6 +338,8 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
     }
 
     let mut deferred_predicates = Vec::new();
+    let mut held_errors = Vec::new();
+    let mut held_deferred = Vec::new();
     for (_, owners, _) in &component_work {
         let assumptions = declaration_bounds(hir);
         let solved = solve::solve_constraints_in_place_for_owners(
@@ -344,15 +356,34 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
             &generalizable,
         );
         if !solved.errors.is_empty() {
+            if undetermined_receivers.is_empty() {
+                return Err(final_solve_errors(
+                    hir,
+                    solved.errors,
+                    &solved.deferred_predicates,
+                    root_entrypoint_id,
+                    &generalizable,
+                ));
+            }
+            held_errors.extend(solved.errors);
+            held_deferred.extend(solved.deferred_predicates);
+            continue;
+        }
+        deferred_predicates.extend(solved.deferred_predicates);
+    }
+    if !undetermined_receivers.is_empty() {
+        // Ambiguities left by the unfixed receiver are consequences too; only a
+        // definite failure elsewhere outranks the receiver error.
+        if held_errors.iter().any(|error| !error.is_ambiguity()) {
             return Err(final_solve_errors(
                 hir,
-                solved.errors,
-                &solved.deferred_predicates,
+                held_errors,
+                &held_deferred,
                 root_entrypoint_id,
                 &generalizable,
             ));
         }
-        deferred_predicates.extend(solved.deferred_predicates);
+        return Err(undetermined_receivers);
     }
 
     let attached = attach_deferred_predicates(hir, &deferred_predicates, root_entrypoint_id)?;

@@ -374,7 +374,7 @@ main = !->
         Result::Ok x
     result.println!
 "#,
-        "ambiguous constraint at quiescence: call to generic function 'bind'",
+        "does not implement trait `FnMut I64, (Option _)` (required by call to generic function 'bind')",
     );
 }
 

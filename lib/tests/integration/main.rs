@@ -41,6 +41,7 @@ mod option_result;
 mod partial_type_annotations;
 mod programs;
 mod raw_pointers;
+mod receiver_inference;
 mod return_loans;
 mod returns;
 mod signatureless_inference;

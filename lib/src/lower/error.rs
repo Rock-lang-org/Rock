@@ -17,6 +17,8 @@ pub struct ResolveError {
     origin: ResolveErrorOrigin,
     pub code: DiagnosticCode,
     pub labels: Vec<DiagnosticLabel>,
+    /// A method receiver no caller fixed; usually a consequence of another error.
+    undetermined_receiver: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -37,6 +39,7 @@ impl ResolveError {
             origin: ResolveErrorOrigin::Source(span),
             code,
             labels: Vec::new(),
+            undetermined_receiver: false,
         }
     }
 
@@ -46,7 +49,26 @@ impl ResolveError {
             origin: ResolveErrorOrigin::Source(span),
             code: DiagnosticCode::Resolve,
             labels,
+            undetermined_receiver: false,
         }
+    }
+
+    /// A method call whose receiver type nothing fixed.
+    pub fn undetermined_receiver(message: String, span: Span) -> Self {
+        Self {
+            undetermined_receiver: true,
+            ..Self::with_span_code(message, span, DiagnosticCode::Type)
+        }
+    }
+
+    /// Marks an error as caused by a receiver type nothing fixed.
+    pub fn into_undetermined_receiver(mut self) -> Self {
+        self.undetermined_receiver = true;
+        self
+    }
+
+    pub fn is_undetermined_receiver(&self) -> bool {
+        self.undetermined_receiver
     }
 
     /// Create an error that is not attributable to a source range.
@@ -60,6 +82,7 @@ impl ResolveError {
             origin: ResolveErrorOrigin::NonSource,
             code,
             labels: Vec::new(),
+            undetermined_receiver: false,
         }
     }
 

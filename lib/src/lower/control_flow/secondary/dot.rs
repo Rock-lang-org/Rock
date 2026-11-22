@@ -24,7 +24,7 @@ impl Lowerer {
                     None
                 };
 
-                let mut found_method = found_method.or_else(|| {
+                let found_method = found_method.or_else(|| {
                     if let Type::TypeVar(var_id) = &recv_ty {
                         let bounds = self.engine.get_bounds(*var_id);
                         if bounds.is_empty() {
@@ -100,9 +100,8 @@ impl Lowerer {
                         &ident.name,
                         |ty| self.resolve_projection_type(&self.engine.resolve(ty)),
                     );
-                    if inferred.len() == 1 {
-                        found_method = inferred.into_iter().next();
-                    } else if inferred.len() > 1
+                    // Never fix a receiver by searching impls for a method name.
+                    if inferred.len() > 1
                         && !crate::type_services::visit::type_any(&recv_ty, |ty| {
                             matches!(ty, Type::TypeVar(_))
                         })

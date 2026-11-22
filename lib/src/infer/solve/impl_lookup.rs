@@ -200,6 +200,72 @@ pub(super) fn callable_trait_satisfied(
     Some(args_match && trait_args[1] == **ret)
 }
 
+/// A concrete callable that can satisfy a callable bound for no choice of the
+/// bound's free variables (`(String) -> Vec I64: FnMut String, (Result ?b, E)`).
+pub(super) fn callable_trait_impossible(
+    ty: &Type,
+    trait_id: DefId,
+    trait_args: &[Type],
+    builtin_traits: BuiltinTraitIds,
+) -> bool {
+    let callable_traits = [
+        builtin_traits.fn_trait,
+        builtin_traits.fn_mut,
+        builtin_traits.fn_once,
+    ];
+    if !callable_traits.contains(&Some(trait_id)) {
+        return false;
+    }
+    let Type::Function { params, ret, .. } = ty else {
+        return false;
+    };
+    // Only the signature shape is decided here: callable kind and captures may
+    // still be inferred and are left to the exact check.
+    if trait_args.len() != 2 {
+        return true;
+    }
+    let args = match params.as_slice() {
+        [] => Type::Unit,
+        [param] => param.clone(),
+        params => Type::Tuple(params.to_vec()),
+    };
+    let args_compatible = shapes_compatible(&trait_args[0], &args)
+        || matches!((&trait_args[0], &args), (Type::Tuple(elements), Type::Unit) if elements.is_empty());
+    !(args_compatible && shapes_compatible(&trait_args[1], ret))
+}
+
+/// Whether two types could become equal once their inference variables are
+/// solved. Anything not decomposed here is conservatively compatible.
+fn shapes_compatible(left: &Type, right: &Type) -> bool {
+    let all = |left: &[Type], right: &[Type]| {
+        left.len() == right.len()
+            && left
+                .iter()
+                .zip(right)
+                .all(|(left, right)| shapes_compatible(left, right))
+    };
+    match (left, right) {
+        (Type::TypeVar(_) | Type::Generic(_) | Type::Projection { .. } | Type::Error, _)
+        | (_, Type::TypeVar(_) | Type::Generic(_) | Type::Projection { .. } | Type::Error) => true,
+        (Type::Struct { id: a, args: x }, Type::Struct { id: b, args: y })
+        | (Type::Enum { id: a, args: x }, Type::Enum { id: b, args: y }) => a == b && all(x, y),
+        (Type::Tuple(x), Type::Tuple(y)) => all(x, y),
+        (
+            Type::Reference {
+                mutable: a,
+                inner: x,
+            },
+            Type::Reference {
+                mutable: b,
+                inner: y,
+            },
+        ) => a == b && shapes_compatible(x, y),
+        (Type::Struct { .. } | Type::Enum { .. } | Type::Tuple(_), _)
+        | (_, Type::Struct { .. } | Type::Enum { .. } | Type::Tuple(_)) => false,
+        _ => true,
+    }
+}
+
 pub(super) fn callable_impl_substitution<P: HirPhase>(
     imp: &HirImplFor<P>,
     ty: &Type,
