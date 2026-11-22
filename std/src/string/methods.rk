@@ -1,0 +1,477 @@
+// Searching, splitting, trimming and conversion methods on borrowed strings.
+//
+// Offsets and lengths are in bytes. Methods returning `&Str` borrow from the
+// receiver; methods returning `String` or `Vec String` allocate. `String` forwards
+// to the `&Str` implementation.
+
+> std::string::owned::String
+> std::string::operations::str_from_utf8_unchecked
+> std::string::operations::str_is_char_boundary
+> std::string::operations::str_char_at_byte
+> std::collections::vec::Vec
+> std::collections::slice::slice_from_raw_parts
+> std::control::option::Option
+> std::ffi::libc::atof
+
+// The caller supplies in-bounds UTF-8 boundaries.
+str_bytes_range: &Str -> I64 -> I64 -> &Str
+str_bytes_range = text, start, end ->
+    base: *U8 = text.as_ptr!
+    ptr: *U8 = unsafe base + start
+    bytes = unsafe slice_from_raw_parts ptr, (end - start)
+    unsafe str_from_utf8_unchecked bytes
+
+str_matches_at: &Str -> &Str -> I64 -> Bool
+str_matches_at = text, needle, offset ->
+    n_len = needle.len!
+    if offset < 0 || offset + n_len > text.len!
+        return false
+    t = text.as_bytes!
+    n = needle.as_bytes!
+    j = 0
+    while j < n_len
+        if (t[offset + j] as I64) != (n[j] as I64)
+            return false
+        j = j + 1
+    true
+
+// First match at or after `from`, or -1.
+str_find_from: &Str -> &Str -> I64 -> I64
+str_find_from = text, needle, from ->
+    last = text.len! - needle.len!
+    i = from
+    while i <= last
+        if str_matches_at text, needle, i
+            return i
+        i = i + 1
+    0 - 1
+
+str_last_char_start: &Str -> I64 -> I64
+str_last_char_start = text, end ->
+    start = end - 1
+    while start > 0 && !(str_is_char_boundary text, start)
+        start = start - 1
+    start
+
+str_ascii_case: &Str -> Bool -> String
+str_ascii_case = text, upper ->
+    mut bytes: Vec U8 = Vec::new!
+    source = text.as_bytes!
+    i = 0
+    while i < source.len!
+        b = source[i] as I64
+        mapped = if upper && b >= 97 && b <= 122 then b - 32 else if !upper && b >= 65 && b <= 90 then b + 32 else b
+        bytes.push (mapped as U8)
+        i = i + 1
+    String::from bytes.as_slice!
+
+str_ascii_lower_byte: I64 -> I64
+str_ascii_lower_byte = b -> if b >= 65 && b <= 90 then b + 32 else b
+
+impl &Str
+    @contains: &Str -> Bool
+    @contains = needle -> (str_find_from *self, needle, 0) >= 0
+
+    @find: &Str -> Option I64
+    @find = needle ->
+        idx = str_find_from *self, needle, 0
+        if idx >= 0 then Option::Some idx else Option::None
+
+    @rfind: &Str -> Option I64
+    @rfind = needle ->
+        text = *self
+        i = text.len! - needle.len!
+        while i >= 0
+            if str_matches_at text, needle, i
+                return Option::Some i
+            i = i - 1
+        Option::None
+
+    @starts_with: &Str -> Bool
+    @starts_with = prefix -> str_matches_at *self, prefix, 0
+
+    @ends_with: &Str -> Bool
+    @ends_with = suffix -> str_matches_at *self, suffix, (self.len! - suffix.len!)
+
+    // Non-overlapping occurrences; an empty needle matches nothing.
+    @matches_count: &Str -> I64
+    @matches_count = needle ->
+        text = *self
+        if needle.is_empty!
+            return 0
+        count = 0
+        idx = str_find_from text, needle, 0
+        while idx >= 0
+            count = count + 1
+            idx = str_find_from text, needle, (idx + needle.len!)
+        count
+
+    // Pieces between separators, keeping empty pieces. An empty separator
+    // yields the whole string as one piece.
+    @split: &Str -> Vec String
+    @split = separator -> self.splitn (0 - 1), separator
+
+    // Like `split`, with at most `limit` pieces (the last holds the rest).
+    // A negative limit means no limit; zero yields no pieces.
+    @splitn: I64 -> &Str -> Vec String
+    @splitn = limit, separator ->
+        text = *self
+        mut pieces: Vec String = Vec::new!
+        if limit == 0
+            return pieces
+        start = 0
+        if !separator.is_empty!
+            idx = str_find_from text, separator, 0
+            while idx >= 0 && (limit < 0 || pieces.len! + 1 < limit)
+                pieces.push (String::from (str_bytes_range text, start, idx))
+                start = idx + separator.len!
+                idx = str_find_from text, separator, start
+        pieces.push (String::from (str_bytes_range text, start, text.len!))
+        pieces
+
+    @split_once: &Str -> Option (String, String)
+    @split_once = separator ->
+        text = *self
+        match text.find separator
+            Option::Some idx =>
+                head = String::from (str_bytes_range text, 0, idx)
+                tail_start = idx + separator.len!
+                tail = String::from (str_bytes_range text, tail_start, text.len!)
+                Option::Some (head, tail)
+            Option::None => Option::None
+
+    @rsplit_once: &Str -> Option (String, String)
+    @rsplit_once = separator ->
+        text = *self
+        match text.rfind separator
+            Option::Some idx =>
+                head = String::from (str_bytes_range text, 0, idx)
+                tail_start = idx + separator.len!
+                tail = String::from (str_bytes_range text, tail_start, text.len!)
+                Option::Some (head, tail)
+            Option::None => Option::None
+
+    // Lines split on `\n` with a trailing `\r` removed; a final empty line is dropped.
+    @lines: Vec String
+    @lines = ->
+        text = *self
+        mut lines: Vec String = Vec::new!
+        start = 0
+        len = text.len!
+        while start < len
+            idx = str_find_from text, "\n", start
+            end = if idx >= 0 then idx else len
+            line_end = if end > start && str_matches_at text, "\r", (end - 1) then end - 1 else end
+            lines.push (String::from (str_bytes_range text, start, line_end))
+            start = end + 1
+        lines
+
+    // Non-empty runs separated by Unicode whitespace.
+    @split_whitespace: Vec String
+    @split_whitespace = ->
+        text = *self
+        mut words: Vec String = Vec::new!
+        len = text.len!
+        i = 0
+        start = 0 - 1
+        while i < len
+            ch = str_char_at_byte text, i
+            if ch.is_whitespace!
+                if start >= 0
+                    words.push (String::from (str_bytes_range text, start, i))
+                    start = 0 - 1
+            else if start < 0
+                start = i
+            i = i + ch.len_utf8!
+        if start >= 0
+            words.push (String::from (str_bytes_range text, start, len))
+        words
+
+    @trim_start: &Str
+    @trim_start = ->
+        text = *self
+        len = text.len!
+        i = 0
+        while i < len && (str_char_at_byte text, i).is_whitespace!
+            i = i + (str_char_at_byte text, i).len_utf8!
+        str_bytes_range text, i, len
+
+    @trim_end: &Str
+    @trim_end = ->
+        text = *self
+        end = text.len!
+        while end > 0 && (str_char_at_byte text, (str_last_char_start text, end)).is_whitespace!
+            end = str_last_char_start text, end
+        str_bytes_range text, 0, end
+
+    @trim: &Str
+    @trim = -> self.trim_start!.trim_end!
+
+    @strip_prefix: &Str -> Option &Str
+    @strip_prefix = prefix ->
+        text = *self
+        if str_matches_at text, prefix, 0
+            Option::Some (str_bytes_range text, prefix.len!, text.len!)
+        else
+            Option::None
+
+    @strip_suffix: &Str -> Option &Str
+    @strip_suffix = suffix ->
+        text = *self
+        start = text.len! - suffix.len!
+        if str_matches_at text, suffix, start
+            Option::Some (str_bytes_range text, 0, start)
+        else
+            Option::None
+
+    // `len` bytes from `start`; None when out of range or not on UTF-8 boundaries.
+    @substr: I64 -> I64 -> Option &Str
+    @substr = start, len ->
+        text = *self
+        end = start + len
+        if start < 0 || len < 0 || end > text.len!
+            return Option::None
+        if !(str_is_char_boundary text, start) || !(str_is_char_boundary text, end)
+            return Option::None
+        Option::Some (str_bytes_range text, start, end)
+
+    // Replaces every non-overlapping match. An empty `from` leaves the text unchanged.
+    @replace: &Str -> &Str -> String
+    @replace = from, to -> self.replacen from, to, (0 - 1)
+
+    // Replaces at most `count` matches; a negative count replaces all.
+    @replacen: &Str -> &Str -> I64 -> String
+    @replacen = from, to, count ->
+        text = *self
+        mut out = String::with_capacity text.len!
+        start = 0
+        replaced = 0
+        if !from.is_empty!
+            idx = str_find_from text, from, 0
+            while idx >= 0 && (count < 0 || replaced < count)
+                out.push_str (str_bytes_range text, start, idx)
+                out.push_str to
+                replaced = replaced + 1
+                start = idx + from.len!
+                idx = str_find_from text, from, start
+        out.push_str (str_bytes_range text, start, text.len!)
+        out
+
+    @repeat: I64 -> String
+    @repeat = times ->
+        text = *self
+        mut out = String::new!
+        i = 0
+        while i < times
+            out.push_str text
+            i = i + 1
+        out
+
+    // ASCII-only case conversion; other characters are copied unchanged.
+    @to_uppercase: String
+    @to_uppercase = -> str_ascii_case *self, true
+
+    @to_lowercase: String
+    @to_lowercase = -> str_ascii_case *self, false
+
+    @eq_ignore_ascii_case: &Str -> Bool
+    @eq_ignore_ascii_case = other ->
+        left = (*self).as_bytes!
+        right = other.as_bytes!
+        if left.len! != right.len!
+            return false
+        i = 0
+        while i < left.len!
+            if (str_ascii_lower_byte (left[i] as I64)) != (str_ascii_lower_byte (right[i] as I64))
+                return false
+            i = i + 1
+        true
+
+    @to_string: String
+    @to_string = -> String::from *self
+
+    // Number of Unicode scalars (`len` counts bytes).
+    @char_count: I64
+    @char_count = ->
+        bytes = (*self).as_bytes!
+        count = 0
+        i = 0
+        while i < bytes.len!
+            b = bytes[i] as I64
+            if b < 128 || b >= 192
+                count = count + 1
+            i = i + 1
+        count
+
+    // Optional sign followed by decimal digits; None on overflow or bad input.
+    @parse_i64: Option I64
+    @parse_i64 = ->
+        bytes = (*self).as_bytes!
+        len = bytes.len!
+        i = 0
+        negative = false
+        if len > 0 && ((bytes[0] as I64) == 45 || (bytes[0] as I64) == 43)
+            negative = (bytes[0] as I64) == 45
+            i = 1
+        if i == len
+            return Option::None
+        // Accumulate negatively so the minimum value parses without overflow.
+        value = 0
+        while i < len
+            d = (bytes[i] as I64) - 48
+            if d < 0 || d > 9
+                return Option::None
+            if value < -922337203685477580 || (value == -922337203685477580 && d > 8)
+                return Option::None
+            value = value * 10 - d
+            i = i + 1
+        if negative
+            Option::Some value
+        else if value == -9223372036854775807 - 1
+            Option::None
+        else
+            Option::Some (0 - value)
+
+    // Decimal floats: optional sign, digits with an optional fraction, optional exponent.
+    @parse_f64: Option F64
+    @parse_f64 = ->
+        text = *self
+        bytes = text.as_bytes!
+        len = bytes.len!
+        i = 0
+        if i < len && ((bytes[i] as I64) == 45 || (bytes[i] as I64) == 43)
+            i = i + 1
+        digits = 0
+        while i < len && (bytes[i] as I64) >= 48 && (bytes[i] as I64) <= 57
+            digits = digits + 1
+            i = i + 1
+        if i < len && (bytes[i] as I64) == 46
+            i = i + 1
+            while i < len && (bytes[i] as I64) >= 48 && (bytes[i] as I64) <= 57
+                digits = digits + 1
+                i = i + 1
+        if digits == 0
+            return Option::None
+        if i < len && ((bytes[i] as I64) == 101 || (bytes[i] as I64) == 69)
+            i = i + 1
+            if i < len && ((bytes[i] as I64) == 45 || (bytes[i] as I64) == 43)
+                i = i + 1
+            exponent_digits = 0
+            while i < len && (bytes[i] as I64) >= 48 && (bytes[i] as I64) <= 57
+                exponent_digits = exponent_digits + 1
+                i = i + 1
+            if exponent_digits == 0
+                return Option::None
+        if i != len
+            return Option::None
+        // `String` keeps a NUL terminator, so its buffer is a valid C string.
+        owned = String::from text
+        Option::Some (atof owned.as_ptr!)
+
+    @parse_bool: Option Bool
+    @parse_bool = ->
+        text = *self
+        if text == "true"
+            Option::Some true
+        else if text == "false"
+            Option::Some false
+        else
+            Option::None
+
+impl String
+    @contains: &Str -> Bool
+    @contains = needle -> self.as_str!.contains needle
+
+    @find: &Str -> Option I64
+    @find = needle -> self.as_str!.find needle
+
+    @rfind: &Str -> Option I64
+    @rfind = needle -> self.as_str!.rfind needle
+
+    @starts_with: &Str -> Bool
+    @starts_with = prefix -> self.as_str!.starts_with prefix
+
+    @ends_with: &Str -> Bool
+    @ends_with = suffix -> self.as_str!.ends_with suffix
+
+    @matches_count: &Str -> I64
+    @matches_count = needle -> self.as_str!.matches_count needle
+
+    @split: &Str -> Vec String
+    @split = separator -> self.as_str!.split separator
+
+    @splitn: I64 -> &Str -> Vec String
+    @splitn = limit, separator -> self.as_str!.splitn limit, separator
+
+    @split_once: &Str -> Option (String, String)
+    @split_once = separator -> self.as_str!.split_once separator
+
+    @rsplit_once: &Str -> Option (String, String)
+    @rsplit_once = separator -> self.as_str!.rsplit_once separator
+
+    @lines: Vec String
+    @lines = -> self.as_str!.lines!
+
+    @split_whitespace: Vec String
+    @split_whitespace = -> self.as_str!.split_whitespace!
+
+    @trim: &Str
+    @trim = -> self.as_str!.trim!
+
+    @trim_start: &Str
+    @trim_start = -> self.as_str!.trim_start!
+
+    @trim_end: &Str
+    @trim_end = -> self.as_str!.trim_end!
+
+    @strip_prefix: &Str -> Option &Str
+    @strip_prefix = prefix -> self.as_str!.strip_prefix prefix
+
+    @strip_suffix: &Str -> Option &Str
+    @strip_suffix = suffix -> self.as_str!.strip_suffix suffix
+
+    @substr: I64 -> I64 -> Option &Str
+    @substr = start, len -> self.as_str!.substr start, len
+
+    @replace: &Str -> &Str -> String
+    @replace = from, to -> self.as_str!.replace from, to
+
+    @replacen: &Str -> &Str -> I64 -> String
+    @replacen = from, to, count -> self.as_str!.replacen from, to, count
+
+    @repeat: I64 -> String
+    @repeat = times -> self.as_str!.repeat times
+
+    @to_uppercase: String
+    @to_uppercase = -> self.as_str!.to_uppercase!
+
+    @to_lowercase: String
+    @to_lowercase = -> self.as_str!.to_lowercase!
+
+    @eq_ignore_ascii_case: &Str -> Bool
+    @eq_ignore_ascii_case = other -> self.as_str!.eq_ignore_ascii_case other
+
+    @char_count: I64
+    @char_count = -> self.as_str!.char_count!
+
+    @parse_i64: Option I64
+    @parse_i64 = -> self.as_str!.parse_i64!
+
+    @parse_f64: Option F64
+    @parse_f64 = -> self.as_str!.parse_f64!
+
+    @parse_bool: Option Bool
+    @parse_bool = -> self.as_str!.parse_bool!
+
+impl Vec String
+    // Concatenates the strings with `separator` between them.
+    @join: &Str -> String
+    @join = separator ->
+        mut out = String::new!
+        i = 0
+        while i < self.len!
+            if i > 0
+                out.push_str separator
+            out.push_str self[i].as_str!
+            i = i + 1
+        out

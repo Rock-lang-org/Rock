@@ -522,10 +522,10 @@ extern malloc: I64 -> *U8
 main = ->
     s = "Hello, World!"
     s.len!.println!
-    string_find s, "World" .println!
-    string_find s, "xyz" .println!
-    string_contains s, "Hello" .println!
-    string_contains s, "xyz" .println!
+    (s.find "World").println!
+    (s.find "xyz").println!
+    (s.contains "Hello").println!
+    (s.contains "xyz").println!
     buf = malloc 8
     unsafe
         *buf = 97
@@ -537,17 +537,17 @@ main = ->
         *(~PtrOffset buf, 6) = 102
         *(~PtrOffset buf, 7) = 0
     bounded = unsafe str_from_utf8_unchecked (slice_from_raw_parts buf, 7)
-    string_find bounded, "def" .println!
+    (bounded.find "def").println!
     0
 "#,
     );
     let lines: Vec<&str> = output.trim().lines().collect();
     assert_eq!(lines[0], "13");
-    assert_eq!(lines[1], "7");
-    assert_eq!(lines[2], "-1");
-    assert_eq!(lines[3], "1");
-    assert_eq!(lines[4], "0");
-    assert_eq!(lines[5], "4");
+    assert_eq!(lines[1], "Some(7)");
+    assert_eq!(lines[2], "None");
+    assert_eq!(lines[3], "true");
+    assert_eq!(lines[4], "false");
+    assert_eq!(lines[5], "Some(4)");
 }
 
 #[test]

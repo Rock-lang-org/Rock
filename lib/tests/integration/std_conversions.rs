@@ -331,19 +331,16 @@ main = ->
     joined.println!
     joined.len!.println!
 
-    bytes = [82 as U8, 111 as U8, 99 as U8, 107 as U8]
-    slice_in = &bytes
-    sub: Vec U8 = byte_substr slice_in, 1, 2
-    sub.len!.println!
-    slice = sub.as_slice!
-    slice[0] as I64 .println!
-    slice[1] as I64 .println!
+    upper: String = joined.to_uppercase!
+    upper.println!
+    pieces: Vec String = "R,o".split ","
+    pieces.len!.println!
     0
 "#,
     );
     assert!(success, "program failed with stdout: {output:?}");
     let lines: Vec<&str> = output.trim().lines().collect();
-    assert_eq!(lines, vec!["RockLang", "8", "2", "111", "99"]);
+    assert_eq!(lines, vec!["RockLang", "8", "ROCKLANG", "2"]);
 }
 
 #[test]

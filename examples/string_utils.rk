@@ -83,13 +83,7 @@ main = ->
     result = prefix + suffix
     result.println!
     result_slice = "Rock is a compiled language"
-    string_contains result_slice, "compiled" .println!
-    string_find result_slice, "language" .println!
-
-    bytes = as_bytes result_slice
-    slice = bytes.as_slice!
-    start = 10
-    count = 8
-    sub = byte_substr slice, start, count
-    sub.as_slice!.println!
+    (result_slice.contains "compiled").println!
+    (result_slice.find "language").println!
+    (result_slice.substr 10, 8).println!
     0

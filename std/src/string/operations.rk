@@ -5,7 +5,6 @@
 // Note: Use curried form for externs (A -> B -> C)
 
 > std::string::owned::String
-> std::collections::vec::Vec
 > std::control::option::Option
 > std::ops::index::Index
 > std::ops::index::range_bounds_check
@@ -90,6 +89,10 @@ decode_scalar = text, offset ->
         value = value * 64 + (bytes[offset + j] as I64) - 128
         j = j + 1
     (value as Char, width)
+
+// Decodes the scalar starting at a byte offset; the caller supplies a valid boundary.
+str_char_at_byte: &Str -> I64 -> Char
+< str_char_at_byte = text, offset -> (decode_scalar text, offset).0
 
 impl Chars
     new: &Str -> Chars
@@ -242,55 +245,3 @@ byte_at: &[U8] -> I64 -> U8
 // Concatenate two string slices. Concatenating valid UTF-8 preserves UTF-8 validity.
 string_concat: &Str -> &Str -> String
 < string_concat = a, b -> a + b
-
-// Extract byte substring starting at `start` with length `len`
-byte_substr: &[U8] -> I64 -> I64 -> Vec U8
-< byte_substr = s, start, len ->
-    if start < 0 || start > s.len! || len < 0 || len > s.len! - start
-        puts "range out of bounds".as_ptr!
-        exit (1 as I32)
-    mut out = Vec::new!
-    i = 0
-    ptr = s.as_ptr!
-    while i < len
-        out.push (unsafe ptr[start + i])
-        i = i + 1
-    out
-
-// Find needle in haystack; returns byte offset or -1 if not found
-string_find: &Str -> &Str -> I64
-< string_find = haystack, needle ->
-    h_ptr = haystack.as_ptr!
-    h_len = haystack.len!
-    n_ptr = needle.as_ptr!
-    n_len = needle.len!
-    if n_len == 0
-        0
-    else if n_len > h_len
-        0 - 1
-    else
-        max_start = h_len - n_len
-        i = 0
-        found = 0 - 1
-        while found < 0 && i <= max_start
-            j = 0
-            matches = true
-            while matches && j < n_len
-                h_byte = (unsafe h_ptr[i + j]) as I64
-                n_byte = (unsafe n_ptr[j]) as I64
-                if h_byte != n_byte
-                    matches = false
-                j = j + 1
-            if matches
-                found = i
-            i = i + 1
-        found
-
-// Return 1 if haystack contains needle, 0 otherwise
-string_contains: &Str -> &Str -> I64
-< string_contains = haystack, needle ->
-    idx = string_find haystack, needle
-    if idx >= 0
-        1
-    else
-        0

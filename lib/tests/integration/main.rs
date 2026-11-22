@@ -49,6 +49,7 @@ mod std_conversions;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
 mod std_discard_errors;
 mod std_iteration;
+mod string_methods;
 mod structs;
 mod thread_capture_diagnostics;
 mod threads_sync;

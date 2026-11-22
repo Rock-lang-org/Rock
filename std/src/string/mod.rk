@@ -1,6 +1,8 @@
 // Owned strings and borrowed UTF-8 operations.
 < mod owned
 < mod operations
+< mod character
+< mod methods
 
 < owned::String
 < operations::*

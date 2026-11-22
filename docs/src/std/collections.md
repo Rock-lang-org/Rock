@@ -149,30 +149,64 @@ main = !->
 
 This prints `Some(é)`, `None`, and `false`. `is_utf8` validates without allocating. `String::from` also accepts byte slices but terminates with `invalid UTF-8` when validation fails; prefer `from_utf8` for recoverable input errors. The unsafe `String::from_c_str` requires a readable null-terminated allocation and also validates its bytes. Raw borrowed-string construction in unsafe code must uphold UTF-8 validity and the lifetime of its backing allocation.
 
-## Byte and search helpers
+## String methods
 
-The search helpers live in `std::string` and are re-exported by the prelude. Explicit imports also work; this example keeps the byte buffer separate from the borrowed `&Str` search input.
+Borrowed strings (`&Str`) carry the searching, splitting, trimming and parsing methods; `String` offers the same methods by forwarding to its contents. Offsets and lengths are in bytes. Methods that return `&Str` borrow from the original text, while methods that return `String` or `Vec String` allocate new strings.
 
 ```rock
-> std::string::byte_at
-> std::string::byte_substr
-> std::string::string_contains
-> std::string::string_find
-
 main = !->
-    text = "rock"
-    length = text.len!
-    offset = string_find text, "oc"
-    contains = string_contains text, "ck"
-    bytes = [114, 111, 99, 107]
-    middle = byte_substr &bytes, 1, 2
-    second = byte_at &bytes, 1
-    %println length, "\n", offset, "\n", contains
-    middle.len!.println!
-    second as I64 .println!
+    line = "  name = Rock  "
+    trimmed = line.trim!
+    trimmed.println!
+    (trimmed.starts_with "name").println!
+    (trimmed.find "=").println!
+    match trimmed.split_once " = "
+        Some pair =>
+            pair.0.println!
+            pair.1.to_uppercase!.println!
+        None => "no separator".println!
+    words = "red green  blue".split_whitespace!
+    (words.join ", ").println!
+    ("1,2,,3".split ",").len!.println!
+    ("a-b-c".replace "-", "+").println!
+    ("42".parse_i64!).println!
+    ("4x".parse_i64!).println!
 ```
 
-The output is `4`, `1`, `1`, `2`, and `111` on separate lines. `string_find` returns a byte offset or `-1`; `string_contains` returns `1` or `0`; `byte_substr` returns an owned `Vec U8`; and `byte_at` reads one byte from a byte slice. Both byte helpers check bounds and terminate on an invalid index or range. They operate on arbitrary bytes and do not enforce Unicode boundaries.
+This prints `name = Rock`, `true`, `Some(5)`, `name`, `ROCK`, `red, green, blue`, `4`, `a+b+c`, `Some(42)` and `None`, each on its own line.
+
+| Purpose | Methods |
+|---|---|
+| Searching | `contains`, `find`, `rfind`, `starts_with`, `ends_with`, `matches_count` |
+| Splitting | `split`, `splitn`, `split_once`, `rsplit_once`, `lines`, `split_whitespace`; `Vec String` has `join` |
+| Borrowed pieces | `trim`, `trim_start`, `trim_end`, `strip_prefix`, `strip_suffix`, `substr` |
+| New strings | `replace`, `replacen`, `repeat`, `to_uppercase`, `to_lowercase`, `to_string` |
+| Counting and comparing | `char_count`, `eq_ignore_ascii_case`, `<` and the other comparisons on `String` |
+| Parsing | `parse_i64`, `parse_f64`, `parse_bool`, each returning an `Option` |
+
+`find` and `rfind` return a byte offset. `split` keeps empty pieces, and an empty separator yields the whole text as a single piece. `substr start, len` returns `None` when the range is out of bounds or cuts a character in half. `to_uppercase` and `to_lowercase` only change ASCII letters for now.
+
+A `String` can also be built in place. These methods need a mutable binding:
+
+```rock
+main = !->
+    mut text = String::with_capacity 16
+    text.push_str "Rock"
+    text.push '!'
+    text.insert_str 0, "Hello, "
+    text.println!
+    text.pop!.println!
+    text.truncate 5
+    text.println!
+    text.clear!
+    text.len!.println!
+```
+
+This prints `Hello, Rock!`, `Some(!)`, `Hello` and `0`. `truncate` and `insert_str` take byte offsets and stop the program when the offset is not on a character boundary.
+
+`Char` has classification helpers: `is_whitespace` (Unicode), plus the ASCII-only `is_digit`, `is_alphabetic`, `is_alphanumeric`, `is_uppercase`, `is_lowercase`, `to_ascii_uppercase`, `to_ascii_lowercase`, `to_digit radix` and `len_utf8`.
+
+`byte_at` reads one byte from a byte slice and terminates on an out-of-range index.
 
 ## `Vec T`
 

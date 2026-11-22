@@ -1,0 +1,69 @@
+// Char classification and conversion.
+//
+// `is_whitespace` follows the Unicode White_Space property. The letter, digit and
+// case helpers are ASCII-only for now.
+
+> std::control::option::Option
+
+impl Char
+    @is_whitespace: Bool
+    @is_whitespace = ->
+        v = *self as I64
+        if v < 128
+            v == 32 || (v >= 9 && v <= 13)
+        else
+            v == 133 || v == 160 || v == 5760 || (v >= 8192 && v <= 8202) || v == 8232 || v == 8233 || v == 8239 || v == 8287 || v == 12288
+
+    @is_ascii: Bool
+    @is_ascii = -> (*self as I64) < 128
+
+    @is_digit: Bool
+    @is_digit = ->
+        v = *self as I64
+        v >= 48 && v <= 57
+
+    @is_uppercase: Bool
+    @is_uppercase = ->
+        v = *self as I64
+        v >= 65 && v <= 90
+
+    @is_lowercase: Bool
+    @is_lowercase = ->
+        v = *self as I64
+        v >= 97 && v <= 122
+
+    @is_alphabetic: Bool
+    @is_alphabetic = -> self.is_uppercase! || self.is_lowercase!
+
+    @is_alphanumeric: Bool
+    @is_alphanumeric = -> self.is_alphabetic! || self.is_digit!
+
+    @to_ascii_uppercase: Char
+    @to_ascii_uppercase = ->
+        if self.is_lowercase!
+            ((*self as I64) - 32) as Char
+        else
+            *self
+
+    @to_ascii_lowercase: Char
+    @to_ascii_lowercase = ->
+        if self.is_uppercase!
+            ((*self as I64) + 32) as Char
+        else
+            *self
+
+    // Digit value in `radix` (2 to 36), accepting letters in either case.
+    @to_digit: I64 -> Option I64
+    @to_digit = radix ->
+        v = *self as I64
+        digit = if v >= 48 && v <= 57 then v - 48 else if v >= 97 && v <= 122 then v - 87 else if v >= 65 && v <= 90 then v - 55 else 99
+        if radix >= 2 && radix <= 36 && digit < radix
+            Option::Some digit
+        else
+            Option::None
+
+    // Number of bytes in the UTF-8 encoding.
+    @len_utf8: I64
+    @len_utf8 = ->
+        v = *self as I64
+        if v < 128 then 1 else if v < 2048 then 2 else if v < 65536 then 3 else 4
