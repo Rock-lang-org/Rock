@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.7.3
+
+[Release notes](docs/release-notes/v0.7.3.md) ·
+[Compare v0.7.2…v0.7.3](https://github.com/Rock-lang-org/Rock/compare/v0.7.2...v0.7.3)
+
+- Added pinned GitHub package dependencies, const generic defaults, and
+  `T::Assoc` in function signatures and implementation headers.
+- Added array and slice rest patterns, structural `Copy` for arrays with
+  `Copy` elements, and explicit `Copy` implementations for eligible structs
+  and enums.
+- Added string and character helpers, `TryFrom` and `TryInto`, and mapping
+  methods for arrays and borrowed slices.
+- Added inferred local type hints in the language server and isolated
+  diagnostics across package targets.
+- Improved trait-qualified calls, method inference, literal coercion,
+  struct literal diagnostics, and postfix parsing after calls.
+- Reduced copying and scanning of compiler inference state.
+
 ## v0.7.2 (unreleased)
 
 [Release notes](docs/release-notes/v0.7.2.md) ·
