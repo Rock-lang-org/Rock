@@ -1,6 +1,18 @@
 use crate::support::*;
 
 #[test]
+fn test_string_does_not_expose_unchecked_length_mutation() {
+    compile_should_fail(
+        r#"
+main = !->
+    mut text = String::from "hello"
+    text.set_len 2
+"#,
+        "set_len",
+    );
+}
+
+#[test]
 fn test_string_in_place_building() {
     let output = compile_and_run(
         r#"

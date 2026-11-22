@@ -267,11 +267,11 @@ impl String
         while start > 0 && !(str_is_char_boundary self.as_str!, start)
             start = start - 1
         ch = str_char_at_byte self.as_str!, start
-        self.set_len start
+        self.truncate start
         Option::Some ch
 
     ^@clear: ()
-    ^@clear = -> self.set_len 0
+    ^@clear = -> self.truncate 0
 
     // Shortens the string to `len` bytes; `len` must be a UTF-8 boundary.
     ^@truncate: I64 -> ()
@@ -281,7 +281,10 @@ impl String
         if !(str_is_char_boundary self.as_str!, len)
             puts "string index is not a UTF-8 boundary".as_ptr!
             exit (1 as I32)
-        self.set_len len
+        mut ptr = self.raw.ptr!
+        self.raw_len = len
+        unsafe
+            ptr[len] = 0
 
     // Inserts `text` at byte offset `index`, which must be a UTF-8 boundary.
     ^@insert_str: I64 -> &Str -> ()
@@ -303,13 +306,6 @@ impl String
         source = text.as_ptr!
         unsafe memcpy (ptr + index), source, count
         self.raw_len = self.raw_len + count
-
-    ^@set_len: I64 -> ()
-    ^@set_len = len ->
-        mut ptr = self.raw.ptr!
-        self.raw_len = len
-        unsafe
-            ptr[len] = 0
 
 // Concatenate two strings, returns new String
 impl String
