@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use crate::hir::{HirBlock, HirExpr, HirExprKind, HirStmt};
 use crate::infer::{ConstraintOwner, ObligationState, PartialHir};
 use crate::lower::ResolveError;
-use crate::types::Type;
 
 use super::{AuthorityObligation, AuthorityObligationKind, AuthorityPassResult};
 
@@ -18,146 +17,30 @@ pub(super) struct AuthorityCounts {
 }
 
 pub(in crate::infer) fn pending_authority_error(
-    hir: &PartialHir,
-    owners: Option<&HashSet<ConstraintOwner>>,
     obligations: &[AuthorityObligation],
 ) -> ResolveError {
-    let message = if authority_counts(hir, owners).pending_residuals > 0 {
-        "cannot resolve '?' because its carrier or enclosing residual remains unresolved"
-            .to_string()
-    } else if authority_counts(hir, owners).pending_methods > 0 {
-        "cannot resolve method authority because the receiver remains unresolved".to_string()
-    } else if let Some((member, receiver)) = first_pending_field(hir, owners) {
-        format!(
-            "cannot resolve member '{member}' because receiver type {} remains unresolved",
-            hir.engine.display_type(&receiver)
-        )
-    } else {
-        "cannot resolve field authority because the receiver remains unresolved".to_string()
-    };
-    let span = obligations
+    let obligation = obligations
         .iter()
         .find(|obligation| {
             obligation.kind != AuthorityObligationKind::Propagation
                 && obligation.state != ObligationState::Solved
         })
-        .and_then(|obligation| obligation.span.clone())
+        .expect("pending authority diagnostic requires a selection obligation");
+    let message = if matches!(
+        obligation.kind,
+        AuthorityObligationKind::TryBranch | AuthorityObligationKind::FromResidual
+    ) {
+        "cannot resolve '?' because its carrier or enclosing residual remains unresolved"
+            .to_string()
+    } else {
+        format!("cannot resolve {}", obligation.context)
+    };
+    let span = obligation
+        .span
+        .clone()
         .expect("pending source authority obligation must carry its expression span");
     ResolveError::with_span_code(message, span, crate::diagnostic::DiagnosticCode::Selection)
         .into_undetermined_receiver()
-}
-
-pub(in crate::infer) fn pending_authority_context(
-    obligations: &[AuthorityObligation],
-) -> Option<&str> {
-    obligations
-        .iter()
-        .find(|obligation| {
-            obligation.kind != AuthorityObligationKind::Propagation
-                && obligation.state != ObligationState::Solved
-        })
-        .map(|obligation| obligation.context.as_str())
-}
-
-fn first_pending_field(
-    hir: &PartialHir,
-    owners: Option<&HashSet<ConstraintOwner>>,
-) -> Option<(String, Type)> {
-    fn block(block: &HirBlock, engine: &crate::infer::InferenceEngine) -> Option<(String, Type)> {
-        block.stmts.iter().find_map(|statement| match statement {
-            HirStmt::Let { value, .. }
-            | HirStmt::Expr(value)
-            | HirStmt::Return(Some(value))
-            | HirStmt::Break(Some(value)) => expr(value, engine),
-            HirStmt::Return(None) | HirStmt::Break(None) | HirStmt::Continue => None,
-        })
-    }
-
-    fn expr(node: &HirExpr, engine: &crate::infer::InferenceEngine) -> Option<(String, Type)> {
-        match &node.kind {
-            HirExprKind::FieldAccess(receiver, name, None) => {
-                Some((name.clone(), engine.resolve(&receiver.ty)))
-            }
-            HirExprKind::FieldAccess(receiver, _, Some(_)) => expr(receiver, engine),
-            HirExprKind::Call(callee, args, _) => {
-                expr(callee, engine).or_else(|| args.iter().find_map(|arg| expr(arg, engine)))
-            }
-            HirExprKind::MethodCall(receiver, _, args, _, _) => {
-                expr(receiver, engine).or_else(|| args.iter().find_map(|arg| expr(arg, engine)))
-            }
-            HirExprKind::Try { expr: operand, .. }
-            | HirExprKind::Deref(operand)
-            | HirExprKind::Ref(_, operand)
-            | HirExprKind::Cast(operand, _)
-            | HirExprKind::TupleIndex(operand, _)
-            | HirExprKind::UnaryOp(_, operand)
-            | HirExprKind::ArrayRepeat(operand, _) => expr(operand, engine),
-            HirExprKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => expr(condition, engine)
-                .or_else(|| block(then_branch, engine))
-                .or_else(|| else_branch.as_ref().and_then(|body| block(body, engine))),
-            HirExprKind::Match { scrutinee, arms } => expr(scrutinee, engine).or_else(|| {
-                arms.iter().find_map(|arm| {
-                    arm.guard
-                        .as_ref()
-                        .and_then(|guard| expr(guard, engine))
-                        .or_else(|| block(&arm.body, engine))
-                })
-            }),
-            HirExprKind::While { condition, body } => {
-                expr(condition, engine).or_else(|| block(body, engine))
-            }
-            HirExprKind::For { iter, body, .. } => {
-                expr(iter, engine).or_else(|| block(body, engine))
-            }
-            HirExprKind::Block(body)
-            | HirExprKind::Loop(body)
-            | HirExprKind::UnsafeBlock(body)
-            | HirExprKind::Lambda { body, .. } => block(body, engine),
-            HirExprKind::Assign(left, right) | HirExprKind::BinOp(_, left, right) => {
-                expr(left, engine).or_else(|| expr(right, engine))
-            }
-            HirExprKind::Intrinsic { args, .. }
-            | HirExprKind::TupleLiteral(args)
-            | HirExprKind::ArrayLiteral(args)
-            | HirExprKind::EnumVariant(_, _, args, _) => {
-                args.iter().find_map(|arg| expr(arg, engine))
-            }
-            HirExprKind::StructLiteral(_, _, fields) => {
-                fields.iter().find_map(|field| expr(&field.value, engine))
-            }
-            HirExprKind::Var(_)
-            | HirExprKind::ResolvedVar(_)
-            | HirExprKind::IntLiteral(_)
-            | HirExprKind::ConstParam(_)
-            | HirExprKind::FloatLiteral(_)
-            | HirExprKind::BoolLiteral(_)
-            | HirExprKind::StringLiteral(_)
-            | HirExprKind::CharLiteral(_)
-            | HirExprKind::Unit => None,
-        }
-    }
-
-    hir.functions
-        .iter()
-        .filter(|(id, _)| owner_selected(owners, ConstraintOwner::Body(**id)))
-        .map(|(_, function)| function)
-        .chain(
-            hir.traits
-                .values()
-                .flat_map(|trait_def| trait_def.methods.values())
-                .filter(|function| owner_selected(owners, ConstraintOwner::Body(function.id))),
-        )
-        .chain(
-            hir.impls
-                .values()
-                .flat_map(|imp| imp.methods.values())
-                .filter(|function| owner_selected(owners, ConstraintOwner::Body(function.id))),
-        )
-        .find_map(|function| block(&function.body, &hir.engine))
 }
 
 pub(super) fn owner_selected(

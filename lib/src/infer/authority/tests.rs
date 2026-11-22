@@ -237,4 +237,23 @@ fn authority_source_site_identity_targets_only_the_selected_expression() {
         locations[1].map(|location| location.field_id),
         Some(crate::ids::FieldId(1))
     );
+
+    for obligation in &mut obligations {
+        obligation.state = crate::infer::ObligationState::Solved;
+    }
+    let first = obligations
+        .iter_mut()
+        .find(|obligation| obligation.context == "field access 'first'")
+        .expect("first field obligation");
+    first.context = "field access 'already resolved'".into();
+    let second = obligations
+        .iter_mut()
+        .find(|obligation| obligation.context == "field access 'second'")
+        .expect("second field obligation");
+    second.state = crate::infer::ObligationState::Pending;
+    let span = second.span.clone();
+
+    let error = super::pending_authority_error(&obligations);
+    assert_eq!(error.span(), span);
+    assert_eq!(error.message, "cannot resolve field access 'second'");
 }

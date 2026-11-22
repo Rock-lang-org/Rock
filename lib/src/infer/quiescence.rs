@@ -314,12 +314,7 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
             obligation.kind != authority::AuthorityObligationKind::Propagation
                 && obligation.state != ObligationState::Solved
         }) {
-            let mut error =
-                authority::pending_authority_error(hir, Some(&owners), authority_obligations);
-            if let Some(context) = authority::pending_authority_context(&authority_obligations) {
-                error.message = format!("{} ({context})", error.message);
-            }
-            undetermined_receivers.push(error);
+            undetermined_receivers.push(authority::pending_authority_error(authority_obligations));
         }
     }
 

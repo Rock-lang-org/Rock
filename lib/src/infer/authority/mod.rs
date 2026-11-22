@@ -24,7 +24,7 @@ pub(super) use obligations::{
     authority_obligations, propagate_function_instances_for_owners_with_progress,
     run_authority_obligation,
 };
-pub(super) use status::{pending_authority_context, pending_authority_error};
+pub(super) use status::pending_authority_error;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
