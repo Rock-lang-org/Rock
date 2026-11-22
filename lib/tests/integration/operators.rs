@@ -3,6 +3,25 @@ use std::process::Command;
 use std::sync::atomic::Ordering;
 
 #[test]
+fn test_numeric_literal_preserves_mixed_type_operator() {
+    let output = compile_and_run(
+        r#"
+infix 9 |+|
+trait Combine Rhs
+    @|+|: Rhs -> I64
+
+impl Combine I64 for U8
+    @|+| = right -> right
+
+main = !->
+    left = 7 as U8
+    (left |+| 42).println!
+"#,
+    );
+    assert_eq!(output, "42\n");
+}
+
+#[test]
 fn test_operator_declared_twice_is_rejected() {
     compile_should_fail(
         r#"

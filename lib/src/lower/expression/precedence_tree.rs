@@ -103,14 +103,6 @@ impl Lowerer {
         op_str: &str,
         operator_span: Option<&crate::Span>,
     ) -> HirExpr {
-        if op_str != "=" && op_str != "&&" && op_str != "||" {
-            // An unsuffixed literal takes the other operand's primitive type
-            // (`x < 7` with `x: U16` compares two `U16`s).
-            let left_ty = self.engine.resolve(&left.ty);
-            self.coerce_numeric_literal(&mut right, &left_ty);
-            let right_ty = self.engine.resolve(&right.ty);
-            self.coerce_numeric_literal(&mut left, &right_ty);
-        }
         // Assignment operator: special handling
         if op_str == "=" {
             if let Err(error) = self.engine.unify(&right.ty, &left.ty) {
@@ -346,6 +338,12 @@ impl Lowerer {
             }
             self.infer_bounded_constructor_heads(&func_ty, &[&left, &right]);
             let resolved_func_ty = self.resolve_projection_type(&self.engine.resolve(&func_ty));
+            if let Type::Function { params, .. } = &resolved_func_ty {
+                if let [left_param, right_param] = params.as_slice() {
+                    self.coerce_numeric_literal(&mut left, left_param);
+                    self.coerce_numeric_literal(&mut right, right_param);
+                }
+            }
 
             // A curried operator (`>> = f, g ~> ...`) takes its operands one at
             // a time, like an ordinary call to a curried function.
@@ -478,11 +476,32 @@ impl Lowerer {
         }
 
         let receiver_candidates = self.receiver_adjustment_candidates(left.clone());
-        let found_method = match self.select_operator_method(
+        let mut selection = self.select_operator_method(
             &receiver_candidates,
             &method_name,
             std::slice::from_ref(&right),
-        ) {
+        );
+        if matches!(&selection, Ok(None)) {
+            // Prefer an implementation accepting the original operand types.
+            let mut coerced_left = left.clone();
+            let mut coerced_right = right.clone();
+            self.coerce_numeric_literal(&mut coerced_right, &resolved_ty);
+            let right_ty = self.engine.resolve(&coerced_right.ty);
+            self.coerce_numeric_literal(&mut coerced_left, &right_ty);
+            if coerced_left.ty != left.ty || coerced_right.ty != right.ty {
+                let candidates = self.receiver_adjustment_candidates(coerced_left.clone());
+                selection = self.select_operator_method(
+                    &candidates,
+                    &method_name,
+                    std::slice::from_ref(&coerced_right),
+                );
+                if matches!(&selection, Ok(Some(_))) {
+                    left = coerced_left;
+                    right = coerced_right;
+                }
+            }
+        }
+        let found_method = match selection {
             Ok(selected) => selected,
             Err(error) => {
                 let message = self.display_selection_error(&error);
