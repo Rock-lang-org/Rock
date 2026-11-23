@@ -913,7 +913,7 @@ struct Cell T
     < b: I64
 
 bind_each: T (U A) -> M -> T (U B) where T _: Functor, U _: Monad, M: FnMut A, (U B)
-bind_each = values, mut f -> values <&> (value -> value >>= &mut f)
+bind_each = values, mut f -> values <&> (value -> value >>- &mut f)
 
 main = !->
     cells: Vec (Result (Cell I64), I64) = [

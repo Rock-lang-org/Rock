@@ -178,8 +178,8 @@ main = ->
     fallback_err: Result I64, I64 = Result::Err 7
     wrapped_res_inc: Result (I64 -> I64), I64 = Result::Ok inc
 
-    (some >>= keep_even_opt).unwrap_or 0 .println!
-    (none >>= keep_even_opt).unwrap_or 0 .println!
+    (some >>- keep_even_opt).unwrap_or 0 .println!
+    (none >>- keep_even_opt).unwrap_or 0 .println!
     (inc <$> Option::Some 4).unwrap_or 0 .println!
     ((Option::Some 4) <&> inc).unwrap_or 0 .println!
     (wrapped_inc <*> Option::Some 4).unwrap_or 0 .println!
@@ -187,8 +187,8 @@ main = ->
     (some_for_result !> 5).fold (x -> x), (x -> x) .println!
     (none_for_result !> 7).fold (x -> x), (x -> x) .println!
 
-    (ok >>= keep_even_res).unwrap_or 0 .println!
-    (err >>= keep_even_res).unwrap_or 0 .println!
+    (ok >>- keep_even_res).unwrap_or 0 .println!
+    (err >>- keep_even_res).unwrap_or 0 .println!
     (inc <$> mapped_ok).unwrap_or 0 .println!
     (mapped_ok_reverse <&> inc).unwrap_or 0 .println!
     (wrapped_res_inc <*> Result::Ok 4).unwrap_or 0 .println!
@@ -413,7 +413,7 @@ bind = s -> Option::Some (s.len!)
 
 main = ->
     value = Option::Some (String::from "hello")
-    mapped = value >>= bind
+    mapped = value >>- bind
     mapped.unwrap_or 0 .println!
     0
 "#,
@@ -431,7 +431,7 @@ bind = s -> Result::Ok (s.len!)
 
 main = ->
     value: Result String, String = Result::Ok (String::from "hello")
-    mapped = value >>= bind
+    mapped = value >>- bind
     mapped.unwrap_or 0 .println!
     0
 "#,
@@ -465,7 +465,7 @@ main = ->
     source = Source
         value: 42
     initial: Result Source, I64 = Result::Ok source
-    match (initial >>= (.next!) >>= (.finish!))
+    match (initial >>- (.next!) >>- (.finish!))
         Result::Ok result =>
             result.println!
             0

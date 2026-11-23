@@ -443,13 +443,36 @@ impl Lowerer {
             };
         }
 
-        // Use operator symbol directly as method name (e.g. "+" -> "+", ">>=" -> ">>=")
+        // Use the operator symbol directly as the method name.
         let method_name = op_str.to_string();
 
-        if matches!(resolved_ty, Type::TypeVar(_)) {
-            match self.infer_unresolved_binary_operator_receiver(&left, &right, &method_name) {
+        let receiver_candidates = self.receiver_adjustment_candidates(left.clone());
+        let mut selection = self.select_operator_method(
+            &receiver_candidates,
+            &method_name,
+            std::slice::from_ref(&right),
+        );
+        let unresolved_receiver = matches!(selection, Ok(None))
+            .then(|| {
+                receiver_candidates.iter().find(|candidate| {
+                    matches!(self.engine.resolve(&candidate.expr.ty), Type::TypeVar(_))
+                })
+            })
+            .flatten();
+        if let Some(candidate) = unresolved_receiver {
+            match self.infer_unresolved_binary_operator_receiver(
+                &candidate.expr,
+                &right,
+                &method_name,
+            ) {
                 Ok(true) => {
                     resolved_ty = self.resolve_projection_type(&self.engine.resolve(&left.ty));
+                    let candidates = self.receiver_adjustment_candidates(left.clone());
+                    selection = self.select_operator_method(
+                        &candidates,
+                        &method_name,
+                        std::slice::from_ref(&right),
+                    );
                 }
                 Ok(false) => {}
                 Err(SelectionDiagnostic::AmbiguousCandidates { .. }) => {
@@ -475,17 +498,14 @@ impl Lowerer {
             }
         }
 
-        let receiver_candidates = self.receiver_adjustment_candidates(left.clone());
-        let mut selection = self.select_operator_method(
-            &receiver_candidates,
-            &method_name,
-            std::slice::from_ref(&right),
-        );
         if matches!(&selection, Ok(None)) {
             // Prefer an implementation accepting the original operand types.
             let mut coerced_left = left.clone();
             let mut coerced_right = right.clone();
-            self.coerce_numeric_literal(&mut coerced_right, &resolved_ty);
+            let operand_ty = unresolved_receiver
+                .map(|candidate| self.engine.resolve(&candidate.expr.ty))
+                .unwrap_or_else(|| resolved_ty.clone());
+            self.coerce_numeric_literal(&mut coerced_right, &operand_ty);
             let right_ty = self.engine.resolve(&coerced_right.ty);
             self.coerce_numeric_literal(&mut coerced_left, &right_ty);
             if coerced_left.ty != left.ty || coerced_right.ty != right.ty {
@@ -501,6 +521,25 @@ impl Lowerer {
                 }
             }
         }
+        if matches!(selection, Ok(None)) && self.has_shared_index_projection(&left) {
+            let mut candidates = self.receiver_adjustment_candidates(left.clone());
+            for candidate in &mut candidates {
+                if self.has_shared_index_projection(&candidate.expr) {
+                    // Probe mutable receiver selection without discarding a valid shared call.
+                    candidate.can_autoref_mut = true;
+                }
+            }
+            let mut coerced_right = right.clone();
+            self.coerce_numeric_literal(&mut coerced_right, &resolved_ty);
+            selection = self.select_operator_method(
+                &candidates,
+                &method_name,
+                std::slice::from_ref(&coerced_right),
+            );
+            if matches!(selection, Ok(Some(_))) {
+                right = coerced_right;
+            }
+        }
         let found_method = match selection {
             Ok(selected) => selected,
             Err(error) => {
@@ -511,7 +550,19 @@ impl Lowerer {
             }
         };
 
-        if let Some(selected) = found_method {
+        if let Some(mut selected) = found_method {
+            if selected
+                .function
+                .as_ref()
+                .and_then(|func| func.self_receiver)
+                == Some(crate::types::ReceiverMode::Mut)
+                && self.has_shared_index_projection(&selected.receiver)
+            {
+                selected.receiver = self.use_mutable_index_projection(selected.receiver);
+                if selected.receiver.ty == Type::Error {
+                    return selected.receiver;
+                }
+            }
             let right = self.autoref_operator_arg_for_selected_method(right, &selected, 0);
             let Some((method_func, result_ty, mut coerced_args, target)) =
                 self.selected_method_call_types(&selected, vec![right])

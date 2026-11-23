@@ -37,7 +37,7 @@ parse = text ->
         turns.push (Turn::new letter)
     Ok turns
 
-load = -> read_to_string "" >>= parse
+load = -> read_to_string "" >>- parse
 
 main = !->
     match load!
@@ -201,7 +201,7 @@ parse = content ->
         out.push line
     out
 
-load = -> read_to_string "input" >>= parse
+load = -> read_to_string "input" >>- parse
 
 main = !->
     for line in load!

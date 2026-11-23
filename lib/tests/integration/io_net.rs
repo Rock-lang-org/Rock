@@ -376,10 +376,10 @@ fn test_tcp_listener_accept_method_section_in_result_chain() {
 
 accept_with_method_section: TcpListener -> Result TcpStream, IoError
 accept_with_method_section = listener ->
-    // `>>=` callbacks are FnMut: a lambda moving `listener` out is once-only, so
+    // `>>-` callbacks are FnMut: a lambda moving `listener` out is once-only, so
     // the address check uses `?` and the chain keeps only the method section.
     listener.local_addr!?
-    (Result::Ok listener) >>= (.accept!)
+    (Result::Ok listener) >>- (.accept!)
 
 roundtrip: () -> Result I64, IoError
 roundtrip = ->

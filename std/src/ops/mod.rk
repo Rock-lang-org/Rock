@@ -1,5 +1,6 @@
 // Operator protocols and range values.
 < mod bitwise
+< mod assign
 < mod neg
 < mod not
 < mod deref
@@ -7,6 +8,7 @@
 < mod index
 
 < bitwise::*
+< assign::*
 < neg::*
 < not::*
 < deref::*

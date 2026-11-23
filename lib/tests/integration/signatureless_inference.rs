@@ -9,7 +9,7 @@ fn test_nested_bind_callback_can_pipe_to_result_constructor() {
 > std::concurrency::thread::spawn
 
 infix 9 >|
->| = a, mut f -> a <&> (>>= &mut f)
+>| = a, mut f -> a <&> (>>- &mut f)
 
 main = !->
     values: Vec _ = [
@@ -26,7 +26,7 @@ main = !->
 fn test_bad_nested_bind_callback_is_reported_before_print_ambiguity() {
     let source = r#"
 infix 9 >|
->| = a, mut f -> a <&> (>>= &mut f)
+>| = a, mut f -> a <&> (>>- &mut f)
 
 run = !->
     values: Vec (Option I64) = [
@@ -695,7 +695,7 @@ fn test_uncalled_signatureless_functor_helper_generalizes_over_constructor() {
     let output = compile_and_run(
         r#"
 infix 9 >|
->| = a, f -> a <&> (>>= f)
+>| = a, f -> a <&> (>>- f)
 
 map_all = a, f -> a <&> f
 
@@ -730,7 +730,7 @@ fn test_uncalled_signatureless_helper_borrowing_its_callback_generalizes() {
     let output = compile_and_run(
         r#"
 infix 9 >|
->| = a, mut f -> a <&> (>>= &mut f)
+>| = a, mut f -> a <&> (>>- &mut f)
 
 main = !->
     "ok".println!
@@ -749,7 +749,7 @@ fn test_signatureless_operator_chain_instantiates_each_use() {
 > std::concurrency::thread::spawn
 
 infix 9 >|
->| = a, mut f -> a <&> (>>= &mut f)
+>| = a, mut f -> a <&> (>>- &mut f)
 
 main = !->
     handles: Vec _ = [
@@ -769,7 +769,7 @@ fn test_signatureless_operator_is_reused_at_different_constructors() {
     let output = compile_and_run(
         r#"
 infix 9 >|
->| = a, mut f -> a <&> (>>= &mut f)
+>| = a, mut f -> a <&> (>>- &mut f)
 
 main = !->
     options: Vec (Option I64) = [
@@ -794,7 +794,7 @@ fn test_moved_hole_typed_handles_through_borrowing_helper_report_move() {
         r#"
 > std::concurrency::thread::spawn
 
-join_all = a, f -> a <&> (>>= &f)
+join_all = a, f -> a <&> (>>- &f)
 
 main = !->
     handles: Vec _ = [

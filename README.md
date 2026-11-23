@@ -445,7 +445,7 @@ This prints `Some(7)`. The fallback is another option, unlike `unwrap_or`, which
 
 ### Chain Steps That Can Fail
 
-Mapping a function that itself returns `Option` would produce nested options. `>>=` chains such steps and keeps a single layer.
+Mapping a function that itself returns `Option` would produce nested options. `>>-` chains such steps and keeps a single layer.
 
 ```haskell
 half_even = value ->
@@ -455,12 +455,12 @@ half_even = value ->
 
 main = !->
     Option::Some 84
-        >>= half_even
-        >>= half_even
+        >>- half_even
+        >>- half_even
         |> (.println!)
 
     Option::Some 3
-        >>= half_even
+        >>- half_even
         |> (.println!)
 ```
 
@@ -517,7 +517,7 @@ On success, this prints `Ok(22)` and leaves both lines in `greeting.txt`; creati
 
 `total = first + second` is an ordinary local binding. `pure total` wraps that value in the inferred carrier—here, `Result::Ok`. The final expression is returned unchanged, so the block can also end directly with another fallible operation.
 
-`do` is syntax sugar for calls to the `bind` function in scope; the prelude supplies its **Monad** implementation. The `>>=` operator exposes the same sequencing explicitly, so the program above can also be written with nested callbacks:
+`do` is syntax sugar for calls to the `bind` function in scope; the prelude supplies its **Monad** implementation. The `>>-` operator exposes the same sequencing explicitly, so the program above can also be written with nested callbacks:
 
 ```haskell
 > std::io::fs::File
@@ -526,9 +526,9 @@ On success, this prints `Ok(22)` and leaves both lines in `greeting.txt`; creati
 
 write_greeting: &Str -> Result I64, IoError
 write_greeting = path ->
-    File::create path >>= file ->
-        file.write_str "Hello from Rock\n" >>= first ->
-            file.write_str "Again\n" >>= second ->
+    File::create path >>- file ->
+        file.write_str "Hello from Rock\n" >>- first ->
+            file.write_str "Again\n" >>- second ->
                 total = first + second
                 pure total
 
@@ -536,7 +536,7 @@ main = !->
     write_greeting "greeting.txt" .println!
 ```
 
-Each `action >>= value -> ...` passes a successful payload to the callback and returns its result; an error skips the callback. The nesting keeps `file` and `first` available to later steps. This version also prints `Ok(22)` on success; `do` expresses the same sequence without the increasing indentation.
+Each `action >>- value -> ...` passes a successful payload to the callback and returns its result; an error skips the callback. The nesting keeps `file` and `first` available to later steps. This version also prints `Ok(22)` on success; `do` expresses the same sequence without the increasing indentation.
 
 `do` also works with `Option` and custom carriers supported by `bind`, using the same closure and ownership rules as explicit callbacks. See [Flat Sequencing with `do`](https://rock-lang-org.github.io/Rock/functional/error-handling.html#flat-sequencing-with-do) for more examples.
 
@@ -560,7 +560,7 @@ main = !->
 
 This prints `Some(42)` and `None`. Mapping the curried `add` over `Some 20` creates an optional function waiting for one more number. `<*>` supplies that number only if both the function and argument are present.
 
-Unlike `>>=`, the next input here does not depend on the previous payload. Applicative combines wrapped inputs; Monad chooses the next computation from a successful value.
+Unlike `>>-`, the next input here does not depend on the previous payload. Applicative combines wrapped inputs; Monad chooses the next computation from a successful value.
 
 ### Operator Reference
 
@@ -570,11 +570,15 @@ Unlike `>>=`, the next input here does not depend on the previous payload. Appli
 | `function <$> values` | Map this function over those contents | `Functor` |
 | `values <&> function` | Map those contents with this function | `Functor` |
 | `wrapped_function <*> wrapped_value` | Apply inside the container | `Applicative` |
-| `value >>= next` | Continue with a container-returning function | `Monad` |
+| `value >>- next` | Continue with a container-returning function | `Monad` |
 | `result <!> map_error` | Transform the error side | `Bifunctor` |
 | `preferred <\|> backup` | Choose the first present option | `Option` |
 
 The mapping and binding operations consume their input containers. A short operator spelling does not bypass ownership.
+
+When migrating older code, replace bind expressions written as `value >>= next`
+with `value >>- next`. `>>=` now means right-shift assignment; named `bind` and
+`do` are unchanged.
 
 ## Higher-Kinded Types
 
@@ -763,12 +767,12 @@ Threads use the same `Result` operators as other fallible operations. A single c
 
 main = !->
     spawn (-> 42)
-        >>= (.join!)
+        >>- (.join!)
         <&> (.println!)
         <!> _ !-> "thread failed".println!
 ```
 
-On success this prints `42`. `>>=` joins the successfully created thread, `<&>` prints its successful result, and `<!>` prints a message if either creation or joining fails. The `!->` callback discards the print operation's return value and returns unit. Captured data must satisfy the thread API's ownership and `Send` requirements.
+On success this prints `42`. `>>-` joins the successfully created thread, `<&>` prints its successful result, and `<!>` prints a message if either creation or joining fails. The `!->` callback discards the print operation's return value and returns unit. Captured data must satisfy the thread API's ownership and `Send` requirements.
 
 ### Calling C
 

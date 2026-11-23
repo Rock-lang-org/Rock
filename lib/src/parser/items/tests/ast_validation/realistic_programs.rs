@@ -148,7 +148,7 @@ fn realistic_lambda_in_expression() {
 fn unparenthesized_lambda_after_infix_operator() {
     validate(
         r#"main = ->
-    source <!> map_error >>= value -> consume value
+    source <!> map_error >>- value -> consume value
 "#,
     );
 }

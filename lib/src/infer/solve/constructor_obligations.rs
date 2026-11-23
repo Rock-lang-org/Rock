@@ -225,7 +225,12 @@ fn select_unique_impl_by_unification(
         }
         let subst = subst
             .into_iter()
-            .map(|(param, ty)| (param, probe.resolve(&ty)))
+            .map(|(param, ty)| {
+                let resolved = probe
+                    .normalize_resolved_type(&ty)
+                    .unwrap_or_else(|_| probe.resolve(&ty));
+                (param, resolved)
+            })
             .collect::<HashMap<_, _>>();
         if !impl_bounds_satisfied(imp, &subst, impls, structs, enums, builtin_traits, assumed) {
             // An unresolved impl parameter is not evidence against a candidate.

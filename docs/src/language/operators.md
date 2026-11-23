@@ -18,6 +18,29 @@ main = !->
 
 The inferred types of `sum`, `same`, and `inside` are `I64`, `Bool`, and `Bool`; the output is `5`, `true`, and `true` on separate lines. Operand and operator constraints determine these types without local annotations. If no implementation matches the operand types, compilation fails instead of applying a hidden built-in conversion.
 
+## Compound Assignment
+
+The standard library defines `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`,
+`<<=`, and `>>=` as low-precedence infix operators. They update a mutable
+receiver and return `()`. Arithmetic forms support the numeric types;
+bitwise forms support integers and booleans, and shifts support integers.
+User types can implement the corresponding traits
+from `std::ops`, such as `AddAssign` or `ShrAssign`.
+
+```rock
+main = !->
+    mut bits = 4
+    bits += 2 * 3
+    bits >>= 1
+    bits.println!
+```
+
+This prints `5`. In older code `>>=` meant monadic bind; use `>>-` for bind now.
+
+These operators follow the ordinary mutable receiver borrow rules. To double
+`x`, read it into a temporary before `x += temporary`; `x += x` conflicts with
+the mutable receiver borrow.
+
 ## Declaring Precedence and Defining a Function
 
 An `infix` declaration gives a symbol a precedence from `0` through `255`. The function with the same symbol supplies its meaning.
@@ -127,14 +150,14 @@ keep_even = value ->
 
 main = !->
     mapped = Option::Some 4 <&> increment
-    bound = Option::Some 4 >>= keep_even
+    bound = Option::Some 4 >>- keep_even
     fallback = Option::None <|> Option::Some 9
     mapped.unwrap_or 0 .println!
     bound.unwrap_or 0 .println!
     fallback.unwrap_or 0 .println!
 ```
 
-The output is `5`, `4`, and `9`. `<&>` maps a function over `Option`, `>>=` calls a function that returns another `Option`, `<|>` chooses the first present value, and `|>` passes a value to a function. These meanings are standard-library definitions, not compiler fallbacks.
+The output is `5`, `4`, and `9`. `<&>` maps a function over `Option`, `>>-` calls a function that returns another `Option`, `<|>` chooses the first present value, and `|>` passes a value to a function. These meanings are standard-library definitions, not compiler fallbacks.
 
 ## Parsing and Common Mistakes
 

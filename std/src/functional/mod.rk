@@ -17,6 +17,6 @@
 < applicative::*
 < applicative::<*>
 < monad::*
-< monad::>>=
+< monad::>>-
 < foldable::*
 < traversable::*

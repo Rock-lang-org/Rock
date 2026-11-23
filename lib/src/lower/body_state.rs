@@ -9,6 +9,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::hir::HirExpr;
+use crate::lexer::Span;
 use crate::lower::body_context::BodyLoweringContext;
 use crate::lower::control_flow::fold_loop::FoldLoopContext;
 
@@ -21,6 +23,9 @@ pub(crate) struct BodyState {
     pattern_temp_counter: u32,
     pub(crate) capture_live_after: HashMap<usize, HashSet<String>>,
     pub(crate) borrowed_capture_sources: HashSet<crate::ids::HirLocalId>,
+    /// Original bases of bracket expressions, before shared receiver coercion.
+    /// Mutable operator selection can reuse them without lowering operands twice.
+    pub(crate) shared_index_bases: HashMap<(Span, Span), HirExpr>,
 }
 
 /// State of the enclosing body, restored by [`BodyState::leave`].
@@ -33,6 +38,7 @@ pub(crate) struct BodyFrame {
     pattern_temp_counter: u32,
     capture_live_after: HashMap<usize, HashSet<String>>,
     borrowed_capture_sources: HashSet<crate::ids::HirLocalId>,
+    shared_index_bases: HashMap<(Span, Span), HirExpr>,
 }
 
 impl BodyState {
@@ -46,6 +52,7 @@ impl BodyState {
             pattern_temp_counter: std::mem::take(&mut self.pattern_temp_counter),
             capture_live_after: std::mem::take(&mut self.capture_live_after),
             borrowed_capture_sources: std::mem::take(&mut self.borrowed_capture_sources),
+            shared_index_bases: std::mem::take(&mut self.shared_index_bases),
         }
     }
 
@@ -57,6 +64,7 @@ impl BodyState {
         self.pattern_temp_counter = frame.pattern_temp_counter;
         self.capture_live_after = frame.capture_live_after;
         self.borrowed_capture_sources = frame.borrowed_capture_sources;
+        self.shared_index_bases = frame.shared_index_bases;
     }
 
     pub(crate) fn context(&self) -> Option<&BodyLoweringContext> {

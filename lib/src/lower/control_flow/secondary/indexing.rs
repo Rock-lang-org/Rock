@@ -10,6 +10,51 @@ use crate::types::{TraitBound, Type};
 use std::collections::HashMap;
 
 impl Lowerer {
+    fn shared_index_call<'a>(&'a self, expr: &'a HirExpr) -> Option<(&'a HirExpr, &'a HirExpr)> {
+        let HirExprKind::Deref(call) = &expr.kind else {
+            return None;
+        };
+        let HirExprKind::MethodCall(_, _, args, _, Some(target)) = &call.kind else {
+            return None;
+        };
+        let [index] = args.as_slice() else {
+            return None;
+        };
+        let protocol = self.language_items.index.as_ref()?;
+        if target.trait_id() != Some(protocol.trait_id) {
+            return None;
+        }
+        // Only bracket syntax may be upgraded, never an explicit call to Index.
+        self.body
+            .shared_index_bases
+            .get(&(call.span.clone(), index.span.clone()))
+            .map(|base| (base, index))
+    }
+
+    pub(crate) fn has_shared_index_projection(&self, expr: &HirExpr) -> bool {
+        match &expr.kind {
+            HirExprKind::FieldAccess(base, _, _) | HirExprKind::TupleIndex(base, _) => {
+                self.has_shared_index_projection(base)
+            }
+            _ => self.shared_index_call(expr).is_some(),
+        }
+    }
+
+    pub(crate) fn use_mutable_index_projection(&mut self, mut expr: HirExpr) -> HirExpr {
+        if let Some((receiver, index)) = self.shared_index_call(&expr) {
+            let index = index.clone();
+            let receiver = self.use_mutable_index_projection(receiver.clone());
+            return self.apply_lowered_index(receiver, index, expr.span, ExprUse::AssignmentPlace);
+        }
+        match &mut expr.kind {
+            HirExprKind::FieldAccess(base, _, _) | HirExprKind::TupleIndex(base, _) => {
+                **base = self.use_mutable_index_projection((**base).clone());
+            }
+            _ => {}
+        }
+        expr
+    }
+
     pub(super) fn apply_indice_secondary(
         &mut self,
         expr: HirExpr,
@@ -18,6 +63,16 @@ impl Lowerer {
         use_kind: ExprUse,
     ) -> HirExpr {
         let index = self.lower_expression(index_expr);
+        self.apply_lowered_index(expr, index, span, use_kind)
+    }
+
+    fn apply_lowered_index(
+        &mut self,
+        expr: HirExpr,
+        index: HirExpr,
+        span: Span,
+        use_kind: ExprUse,
+    ) -> HirExpr {
         let resolved_expr_ty = self.resolve_projection_type(&self.engine.resolve(&expr.ty));
         let is_array_receiver = matches!(resolved_expr_ty, Type::Array(_, _))
             || matches!(
@@ -301,6 +356,11 @@ impl Lowerer {
             trait_args: vec![index.ty.clone()],
         };
         let output_ty = self.resolve_selected_projection_type(&selected, &projection);
+        if !index_mutable {
+            self.body
+                .shared_index_bases
+                .insert((span.clone(), index.span.clone()), expr);
+        }
         let method_call = HirExpr {
             ty: Type::Reference {
                 mutable: index_mutable,
