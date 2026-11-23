@@ -521,6 +521,29 @@ impl Lowerer {
                 }
             }
         }
+        if matches!(selection, Ok(None)) {
+            for candidate in &receiver_candidates {
+                let operand_ty =
+                    self.resolve_projection_type(&self.engine.resolve(&candidate.expr.ty));
+                if operand_ty == resolved_ty {
+                    continue;
+                }
+                let mut coerced_right = right.clone();
+                self.coerce_numeric_literal(&mut coerced_right, &operand_ty);
+                if coerced_right.ty == right.ty {
+                    continue;
+                }
+                selection = self.select_operator_method(
+                    std::slice::from_ref(candidate),
+                    &method_name,
+                    std::slice::from_ref(&coerced_right),
+                );
+                if !matches!(selection, Ok(None)) {
+                    right = coerced_right;
+                    break;
+                }
+            }
+        }
         if matches!(selection, Ok(None)) && self.has_shared_index_projection(&left) {
             let mut candidates = self.receiver_adjustment_candidates(left.clone());
             for candidate in &mut candidates {
@@ -529,15 +552,24 @@ impl Lowerer {
                     candidate.can_autoref_mut = true;
                 }
             }
-            let mut coerced_right = right.clone();
-            self.coerce_numeric_literal(&mut coerced_right, &resolved_ty);
             selection = self.select_operator_method(
                 &candidates,
                 &method_name,
-                std::slice::from_ref(&coerced_right),
+                std::slice::from_ref(&right),
             );
-            if matches!(selection, Ok(Some(_))) {
-                right = coerced_right;
+            if matches!(selection, Ok(None)) {
+                let mut coerced_right = right.clone();
+                self.coerce_numeric_literal(&mut coerced_right, &resolved_ty);
+                if coerced_right.ty != right.ty {
+                    selection = self.select_operator_method(
+                        &candidates,
+                        &method_name,
+                        std::slice::from_ref(&coerced_right),
+                    );
+                    if matches!(selection, Ok(Some(_))) {
+                        right = coerced_right;
+                    }
+                }
             }
         }
         let found_method = match selection {
