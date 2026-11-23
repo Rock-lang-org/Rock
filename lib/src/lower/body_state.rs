@@ -25,7 +25,7 @@ pub(crate) struct BodyState {
     pub(crate) borrowed_capture_sources: HashSet<crate::ids::HirLocalId>,
     /// Original bases of bracket expressions, before shared receiver coercion.
     /// Mutable operator selection can reuse them without lowering operands twice.
-    pub(crate) shared_index_bases: HashMap<(Span, Span), HirExpr>,
+    pub(crate) shared_index_bases: HashMap<(Span, Span), (HirExpr, Option<usize>)>,
 }
 
 /// State of the enclosing body, restored by [`BodyState::leave`].
@@ -38,7 +38,7 @@ pub(crate) struct BodyFrame {
     pattern_temp_counter: u32,
     capture_live_after: HashMap<usize, HashSet<String>>,
     borrowed_capture_sources: HashSet<crate::ids::HirLocalId>,
-    shared_index_bases: HashMap<(Span, Span), HirExpr>,
+    shared_index_bases: HashMap<(Span, Span), (HirExpr, Option<usize>)>,
 }
 
 impl BodyState {

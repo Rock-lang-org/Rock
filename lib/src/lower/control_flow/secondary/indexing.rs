@@ -10,7 +10,10 @@ use crate::types::{TraitBound, Type};
 use std::collections::HashMap;
 
 impl Lowerer {
-    fn shared_index_call<'a>(&'a self, expr: &'a HirExpr) -> Option<(&'a HirExpr, &'a HirExpr)> {
+    fn shared_index_call<'a>(
+        &'a self,
+        expr: &'a HirExpr,
+    ) -> Option<(&'a HirExpr, &'a HirExpr, Option<usize>)> {
         let HirExprKind::Deref(call) = &expr.kind else {
             return None;
         };
@@ -28,7 +31,7 @@ impl Lowerer {
         self.body
             .shared_index_bases
             .get(&(call.span.clone(), index.span.clone()))
-            .map(|base| (base, index))
+            .map(|(base, unsafe_diagnostic)| (base, index, *unsafe_diagnostic))
     }
 
     pub(crate) fn has_shared_index_projection(&self, expr: &HirExpr) -> bool {
@@ -41,9 +44,13 @@ impl Lowerer {
     }
 
     pub(crate) fn use_mutable_index_projection(&mut self, mut expr: HirExpr) -> HirExpr {
-        if let Some((receiver, index)) = self.shared_index_call(&expr) {
+        if let Some((receiver, index, unsafe_diagnostic)) = self.shared_index_call(&expr) {
             let index = index.clone();
-            let receiver = self.use_mutable_index_projection(receiver.clone());
+            let receiver = receiver.clone();
+            if let Some(id) = unsafe_diagnostic {
+                self.diagnostics.retract_selection(id);
+            }
+            let receiver = self.use_mutable_index_projection(receiver);
             return self.apply_lowered_index(receiver, index, expr.span, ExprUse::AssignmentPlace);
         }
         match &mut expr.kind {
@@ -266,6 +273,7 @@ impl Lowerer {
         let Some(selected) = selected_index else {
             return self.error_expression_at(span.clone());
         };
+        let mut unsafe_diagnostic = None;
         let (receiver_expr, receiver_ty, target, method_name, self_receiver) = {
             let selected_method_name = selected
                 .function
@@ -278,13 +286,18 @@ impl Lowerer {
                 .is_some_and(|func| func.is_unsafe)
                 && !self.is_in_unsafe()
             {
-                self.diagnostics.push_selection_with_span(
-                    format!(
-                        "Call to unsafe function '{}' requires an unsafe block",
-                        crate::type_services::display::short_item_name(&selected_method_name)
-                    ),
-                    span.clone(),
+                let message = format!(
+                    "Call to unsafe function '{}' requires an unsafe block",
+                    crate::type_services::display::short_item_name(&selected_method_name)
                 );
+                if index_mutable {
+                    self.diagnostics.push_selection_with_span(message, span.clone());
+                } else {
+                    unsafe_diagnostic = Some(
+                        self.diagnostics
+                            .push_retractable_selection(message, span.clone()),
+                    );
+                }
             }
             self.record_pending_impl_bounds(&selected, &HashMap::new(), "index operator");
             let selected_return_type = &selected.return_type;
@@ -359,7 +372,7 @@ impl Lowerer {
         if !index_mutable {
             self.body
                 .shared_index_bases
-                .insert((span.clone(), index.span.clone()), expr);
+                .insert((span.clone(), index.span.clone()), (expr, unsafe_diagnostic));
         }
         let method_call = HirExpr {
             ty: Type::Reference {

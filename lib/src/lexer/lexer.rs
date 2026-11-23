@@ -224,7 +224,7 @@ impl Lexer {
             '/' if self.peek(1) == '/' => self.comment_eol(),
             '/' if self.peek(1) == '*' => self.comment(),
             '&' if self.peek(1) == '&' => self.token(TokenType::Operator("&&".to_string()), 2),
-            '&' if matches!(self.peek(1), '*' | '^')
+            '&' if matches!(self.peek(1), '*' | '^' | '-' | '!')
                 || !OPERATORS_CHARS.contains(&self.peek(1)) =>
             {
                 self.token(TokenType::Ampersand, 1)
