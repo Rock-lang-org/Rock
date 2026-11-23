@@ -24,6 +24,8 @@ impl LowerDiagnostics {
 #[derive(Debug, Default, Clone)]
 pub(crate) struct LowerDiagnosticSink {
     diagnostics: LowerDiagnostics,
+    retractable: std::collections::BTreeMap<usize, usize>,
+    next_retractable: usize,
 }
 
 impl LowerDiagnosticSink {
@@ -73,6 +75,25 @@ impl LowerDiagnosticSink {
 
     pub(crate) fn push_selection_with_span(&mut self, message: String, span: Span) {
         self.push_with_code(message, span, DiagnosticCode::Selection);
+    }
+
+    pub(crate) fn push_retractable_selection(&mut self, message: String, span: Span) -> usize {
+        let id = self.next_retractable;
+        self.next_retractable += 1;
+        self.retractable.insert(id, self.diagnostics.errors.len());
+        self.push_selection_with_span(message, span);
+        id
+    }
+
+    pub(crate) fn retract_selection(&mut self, id: usize) {
+        if let Some(index) = self.retractable.remove(&id) {
+            self.diagnostics.errors.remove(index);
+            for other in self.retractable.values_mut() {
+                if *other > index {
+                    *other -= 1;
+                }
+            }
+        }
     }
 
     pub(crate) fn push_toolchain(&mut self, message: String) {

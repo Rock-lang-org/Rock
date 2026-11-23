@@ -38,6 +38,46 @@ main = !->
 }
 
 #[test]
+fn test_compact_borrow_of_negated_value() {
+    let output = compile_and_run(
+        r#"
+show: &I64 -> ()
+show = value !-> (*value).println!
+
+main = !->
+    value = 2 as I64
+    show (&-value)
+"#,
+    );
+    assert_eq!(output, "-2\n");
+}
+
+#[test]
+fn test_indexed_compound_assignment_checks_only_the_index_method_it_calls() {
+    let setup = r#"
+struct Cell
+    < value: I64
+
+impl Index I64 for Cell
+    type Output = I64
+    unsafe @index = _ -> &@value
+
+impl IndexMut I64 for Cell
+    type Output = I64
+    ^@index_mut = _ -> &mut @value
+
+main = !->
+    mut cell = Cell value: 1
+"#;
+    let output = compile_and_run(&format!("{setup}    cell[0] += 2\n    cell.value.println!\n"));
+    assert_eq!(output, "3\n");
+    compile_should_fail(
+        &format!("{setup}    cell[0].println!\n"),
+        "Call to unsafe function 'index' requires an unsafe block",
+    );
+}
+
+#[test]
 fn test_compound_assignment_coerces_literal_through_mutable_reference() {
     let output = compile_and_run(
         r#"
