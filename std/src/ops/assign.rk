@@ -33,286 +33,286 @@
     ^@>>=: Rhs -> ()
 
 impl AddAssign I64 for *T where T: Sized
-    unsafe ^@+= = rhs -> *self = (*self) + rhs
+    unsafe ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign I64 for *T where T: Sized
-    unsafe ^@-= = rhs -> *self = (*self) - rhs
+    unsafe ^@-= = rhs -> *self = *self - rhs
 
 impl AddAssign I8 for I8
-    ^@+= = rhs -> *self = (*self) + rhs
+    ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign I8 for I8
-    ^@-= = rhs -> *self = (*self) - rhs
+    ^@-= = rhs -> *self = *self - rhs
 
 impl MulAssign I8 for I8
-    ^@*= = rhs -> *self = (*self) * rhs
+    ^@*= = rhs -> *self = *self * rhs
 
 impl DivAssign I8 for I8
-    ^@/= = rhs -> *self = (*self) / rhs
+    ^@/= = rhs -> *self = *self / rhs
 
 impl ModAssign I8 for I8
-    ^@%= = rhs -> *self = (*self) % rhs
+    ^@%= = rhs -> *self = *self % rhs
 
 impl BitAndAssign I8 for I8
-    ^@&= = rhs -> *self = (*self) & rhs
+    ^@&= = rhs -> *self = *self & rhs
 
 impl BitOrAssign I8 for I8
-    ^@|= = rhs -> *self = (*self) | rhs
+    ^@|= = rhs -> *self = *self | rhs
 
 impl BitXorAssign I8 for I8
-    ^@^= = rhs -> *self = (*self) ^ rhs
+    ^@^= = rhs -> *self = *self ^ rhs
 
 impl ShlAssign I8 for I8
-    ^@<<= = rhs -> *self = (*self) << rhs
+    ^@<<= = rhs -> *self = *self << rhs
 
 impl ShrAssign I8 for I8
-    ^@>>= = rhs -> *self = (*self) >> rhs
+    ^@>>= = rhs -> *self = *self >> rhs
 
 impl AddAssign I16 for I16
-    ^@+= = rhs -> *self = (*self) + rhs
+    ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign I16 for I16
-    ^@-= = rhs -> *self = (*self) - rhs
+    ^@-= = rhs -> *self = *self - rhs
 
 impl MulAssign I16 for I16
-    ^@*= = rhs -> *self = (*self) * rhs
+    ^@*= = rhs -> *self = *self * rhs
 
 impl DivAssign I16 for I16
-    ^@/= = rhs -> *self = (*self) / rhs
+    ^@/= = rhs -> *self = *self / rhs
 
 impl ModAssign I16 for I16
-    ^@%= = rhs -> *self = (*self) % rhs
+    ^@%= = rhs -> *self = *self % rhs
 
 impl BitAndAssign I16 for I16
-    ^@&= = rhs -> *self = (*self) & rhs
+    ^@&= = rhs -> *self = *self & rhs
 
 impl BitOrAssign I16 for I16
-    ^@|= = rhs -> *self = (*self) | rhs
+    ^@|= = rhs -> *self = *self | rhs
 
 impl BitXorAssign I16 for I16
-    ^@^= = rhs -> *self = (*self) ^ rhs
+    ^@^= = rhs -> *self = *self ^ rhs
 
 impl ShlAssign I16 for I16
-    ^@<<= = rhs -> *self = (*self) << rhs
+    ^@<<= = rhs -> *self = *self << rhs
 
 impl ShrAssign I16 for I16
-    ^@>>= = rhs -> *self = (*self) >> rhs
+    ^@>>= = rhs -> *self = *self >> rhs
 
 impl AddAssign I32 for I32
-    ^@+= = rhs -> *self = (*self) + rhs
+    ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign I32 for I32
-    ^@-= = rhs -> *self = (*self) - rhs
+    ^@-= = rhs -> *self = *self - rhs
 
 impl MulAssign I32 for I32
-    ^@*= = rhs -> *self = (*self) * rhs
+    ^@*= = rhs -> *self = *self * rhs
 
 impl DivAssign I32 for I32
-    ^@/= = rhs -> *self = (*self) / rhs
+    ^@/= = rhs -> *self = *self / rhs
 
 impl ModAssign I32 for I32
-    ^@%= = rhs -> *self = (*self) % rhs
+    ^@%= = rhs -> *self = *self % rhs
 
 impl BitAndAssign I32 for I32
-    ^@&= = rhs -> *self = (*self) & rhs
+    ^@&= = rhs -> *self = *self & rhs
 
 impl BitOrAssign I32 for I32
-    ^@|= = rhs -> *self = (*self) | rhs
+    ^@|= = rhs -> *self = *self | rhs
 
 impl BitXorAssign I32 for I32
-    ^@^= = rhs -> *self = (*self) ^ rhs
+    ^@^= = rhs -> *self = *self ^ rhs
 
 impl ShlAssign I32 for I32
-    ^@<<= = rhs -> *self = (*self) << rhs
+    ^@<<= = rhs -> *self = *self << rhs
 
 impl ShrAssign I32 for I32
-    ^@>>= = rhs -> *self = (*self) >> rhs
+    ^@>>= = rhs -> *self = *self >> rhs
 
 impl AddAssign I64 for I64
-    ^@+= = rhs -> *self = (*self) + rhs
+    ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign I64 for I64
-    ^@-= = rhs -> *self = (*self) - rhs
+    ^@-= = rhs -> *self = *self - rhs
 
 impl MulAssign I64 for I64
-    ^@*= = rhs -> *self = (*self) * rhs
+    ^@*= = rhs -> *self = *self * rhs
 
 impl DivAssign I64 for I64
-    ^@/= = rhs -> *self = (*self) / rhs
+    ^@/= = rhs -> *self = *self / rhs
 
 impl ModAssign I64 for I64
-    ^@%= = rhs -> *self = (*self) % rhs
+    ^@%= = rhs -> *self = *self % rhs
 
 impl BitAndAssign I64 for I64
-    ^@&= = rhs -> *self = (*self) & rhs
+    ^@&= = rhs -> *self = *self & rhs
 
 impl BitOrAssign I64 for I64
-    ^@|= = rhs -> *self = (*self) | rhs
+    ^@|= = rhs -> *self = *self | rhs
 
 impl BitXorAssign I64 for I64
-    ^@^= = rhs -> *self = (*self) ^ rhs
+    ^@^= = rhs -> *self = *self ^ rhs
 
 impl ShlAssign I64 for I64
-    ^@<<= = rhs -> *self = (*self) << rhs
+    ^@<<= = rhs -> *self = *self << rhs
 
 impl ShrAssign I64 for I64
-    ^@>>= = rhs -> *self = (*self) >> rhs
+    ^@>>= = rhs -> *self = *self >> rhs
 
 impl AddAssign U8 for U8
-    ^@+= = rhs -> *self = (*self) + rhs
+    ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign U8 for U8
-    ^@-= = rhs -> *self = (*self) - rhs
+    ^@-= = rhs -> *self = *self - rhs
 
 impl MulAssign U8 for U8
-    ^@*= = rhs -> *self = (*self) * rhs
+    ^@*= = rhs -> *self = *self * rhs
 
 impl DivAssign U8 for U8
-    ^@/= = rhs -> *self = (*self) / rhs
+    ^@/= = rhs -> *self = *self / rhs
 
 impl ModAssign U8 for U8
-    ^@%= = rhs -> *self = (*self) % rhs
+    ^@%= = rhs -> *self = *self % rhs
 
 impl BitAndAssign U8 for U8
-    ^@&= = rhs -> *self = (*self) & rhs
+    ^@&= = rhs -> *self = *self & rhs
 
 impl BitOrAssign U8 for U8
-    ^@|= = rhs -> *self = (*self) | rhs
+    ^@|= = rhs -> *self = *self | rhs
 
 impl BitXorAssign U8 for U8
-    ^@^= = rhs -> *self = (*self) ^ rhs
+    ^@^= = rhs -> *self = *self ^ rhs
 
 impl ShlAssign U8 for U8
-    ^@<<= = rhs -> *self = (*self) << rhs
+    ^@<<= = rhs -> *self = *self << rhs
 
 impl ShrAssign U8 for U8
-    ^@>>= = rhs -> *self = (*self) >> rhs
+    ^@>>= = rhs -> *self = *self >> rhs
 
 impl AddAssign U16 for U16
-    ^@+= = rhs -> *self = (*self) + rhs
+    ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign U16 for U16
-    ^@-= = rhs -> *self = (*self) - rhs
+    ^@-= = rhs -> *self = *self - rhs
 
 impl MulAssign U16 for U16
-    ^@*= = rhs -> *self = (*self) * rhs
+    ^@*= = rhs -> *self = *self * rhs
 
 impl DivAssign U16 for U16
-    ^@/= = rhs -> *self = (*self) / rhs
+    ^@/= = rhs -> *self = *self / rhs
 
 impl ModAssign U16 for U16
-    ^@%= = rhs -> *self = (*self) % rhs
+    ^@%= = rhs -> *self = *self % rhs
 
 impl BitAndAssign U16 for U16
-    ^@&= = rhs -> *self = (*self) & rhs
+    ^@&= = rhs -> *self = *self & rhs
 
 impl BitOrAssign U16 for U16
-    ^@|= = rhs -> *self = (*self) | rhs
+    ^@|= = rhs -> *self = *self | rhs
 
 impl BitXorAssign U16 for U16
-    ^@^= = rhs -> *self = (*self) ^ rhs
+    ^@^= = rhs -> *self = *self ^ rhs
 
 impl ShlAssign U16 for U16
-    ^@<<= = rhs -> *self = (*self) << rhs
+    ^@<<= = rhs -> *self = *self << rhs
 
 impl ShrAssign U16 for U16
-    ^@>>= = rhs -> *self = (*self) >> rhs
+    ^@>>= = rhs -> *self = *self >> rhs
 
 impl AddAssign U32 for U32
-    ^@+= = rhs -> *self = (*self) + rhs
+    ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign U32 for U32
-    ^@-= = rhs -> *self = (*self) - rhs
+    ^@-= = rhs -> *self = *self - rhs
 
 impl MulAssign U32 for U32
-    ^@*= = rhs -> *self = (*self) * rhs
+    ^@*= = rhs -> *self = *self * rhs
 
 impl DivAssign U32 for U32
-    ^@/= = rhs -> *self = (*self) / rhs
+    ^@/= = rhs -> *self = *self / rhs
 
 impl ModAssign U32 for U32
-    ^@%= = rhs -> *self = (*self) % rhs
+    ^@%= = rhs -> *self = *self % rhs
 
 impl BitAndAssign U32 for U32
-    ^@&= = rhs -> *self = (*self) & rhs
+    ^@&= = rhs -> *self = *self & rhs
 
 impl BitOrAssign U32 for U32
-    ^@|= = rhs -> *self = (*self) | rhs
+    ^@|= = rhs -> *self = *self | rhs
 
 impl BitXorAssign U32 for U32
-    ^@^= = rhs -> *self = (*self) ^ rhs
+    ^@^= = rhs -> *self = *self ^ rhs
 
 impl ShlAssign U32 for U32
-    ^@<<= = rhs -> *self = (*self) << rhs
+    ^@<<= = rhs -> *self = *self << rhs
 
 impl ShrAssign U32 for U32
-    ^@>>= = rhs -> *self = (*self) >> rhs
+    ^@>>= = rhs -> *self = *self >> rhs
 
 impl AddAssign U64 for U64
-    ^@+= = rhs -> *self = (*self) + rhs
+    ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign U64 for U64
-    ^@-= = rhs -> *self = (*self) - rhs
+    ^@-= = rhs -> *self = *self - rhs
 
 impl MulAssign U64 for U64
-    ^@*= = rhs -> *self = (*self) * rhs
+    ^@*= = rhs -> *self = *self * rhs
 
 impl DivAssign U64 for U64
-    ^@/= = rhs -> *self = (*self) / rhs
+    ^@/= = rhs -> *self = *self / rhs
 
 impl ModAssign U64 for U64
-    ^@%= = rhs -> *self = (*self) % rhs
+    ^@%= = rhs -> *self = *self % rhs
 
 impl BitAndAssign U64 for U64
-    ^@&= = rhs -> *self = (*self) & rhs
+    ^@&= = rhs -> *self = *self & rhs
 
 impl BitOrAssign U64 for U64
-    ^@|= = rhs -> *self = (*self) | rhs
+    ^@|= = rhs -> *self = *self | rhs
 
 impl BitXorAssign U64 for U64
-    ^@^= = rhs -> *self = (*self) ^ rhs
+    ^@^= = rhs -> *self = *self ^ rhs
 
 impl ShlAssign U64 for U64
-    ^@<<= = rhs -> *self = (*self) << rhs
+    ^@<<= = rhs -> *self = *self << rhs
 
 impl ShrAssign U64 for U64
-    ^@>>= = rhs -> *self = (*self) >> rhs
+    ^@>>= = rhs -> *self = *self >> rhs
 
 impl AddAssign F32 for F32
-    ^@+= = rhs -> *self = (*self) + rhs
+    ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign F32 for F32
-    ^@-= = rhs -> *self = (*self) - rhs
+    ^@-= = rhs -> *self = *self - rhs
 
 impl MulAssign F32 for F32
-    ^@*= = rhs -> *self = (*self) * rhs
+    ^@*= = rhs -> *self = *self * rhs
 
 impl DivAssign F32 for F32
-    ^@/= = rhs -> *self = (*self) / rhs
+    ^@/= = rhs -> *self = *self / rhs
 
 impl ModAssign F32 for F32
-    ^@%= = rhs -> *self = (*self) % rhs
+    ^@%= = rhs -> *self = *self % rhs
 
 impl AddAssign F64 for F64
-    ^@+= = rhs -> *self = (*self) + rhs
+    ^@+= = rhs -> *self = *self + rhs
 
 impl SubAssign F64 for F64
-    ^@-= = rhs -> *self = (*self) - rhs
+    ^@-= = rhs -> *self = *self - rhs
 
 impl MulAssign F64 for F64
-    ^@*= = rhs -> *self = (*self) * rhs
+    ^@*= = rhs -> *self = *self * rhs
 
 impl DivAssign F64 for F64
-    ^@/= = rhs -> *self = (*self) / rhs
+    ^@/= = rhs -> *self = *self / rhs
 
 impl ModAssign F64 for F64
-    ^@%= = rhs -> *self = (*self) % rhs
+    ^@%= = rhs -> *self = *self % rhs
 
 impl BitAndAssign Bool for Bool
-    ^@&= = rhs -> *self = (*self) & rhs
+    ^@&= = rhs -> *self = *self & rhs
 
 impl BitOrAssign Bool for Bool
-    ^@|= = rhs -> *self = (*self) | rhs
+    ^@|= = rhs -> *self = *self | rhs
 
 impl BitXorAssign Bool for Bool
-    ^@^= = rhs -> *self = (*self) ^ rhs
+    ^@^= = rhs -> *self = *self ^ rhs
