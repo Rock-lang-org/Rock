@@ -115,7 +115,7 @@ make = ->
         value: 0)
 
 main = ->
-    result = make! >>= (.advance!)
+    result = make! >>- (.advance!)
     0
 "#,
         "Cannot call mutable receiver method 'advance' without a mutable receiver",
@@ -140,7 +140,7 @@ make = -> Result::Ok (Counter
     value: 41)
 
 main = ->
-    result: Result I64, I64 = make! >>= (.read!)
+    result: Result I64, I64 = make! >>- (.read!)
     result.println!
     0
 "#,
@@ -219,7 +219,7 @@ make: () -> Result Box, I64
 make = -> Result::Ok Box
 
 main = ->
-    result = make! >>= (.requires_marker 1)
+    result = make! >>- (.requires_marker 1)
     0
 "#,
         "does not implement trait",
@@ -239,7 +239,7 @@ make = ->
         value: 0)
 
 main = ->
-    result = make! >>= (.missing!)
+    result = make! >>- (.missing!)
     0
 "#,
         "Unknown field 'missing' on struct 'Counter'",

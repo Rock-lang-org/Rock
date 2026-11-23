@@ -7,6 +7,16 @@
 // Operator precedence declarations (higher = binds tighter)
 // ALL operators must be declared here - no hardcoded defaults
 // ============================================================================
+infix 0 +=
+infix 0 -=
+infix 0 *=
+infix 0 /=
+infix 0 %=
+infix 0 &=
+infix 0 |=
+infix 0 ^=
+infix 0 <<=
+infix 0 >>=
 infix 1 ||
 infix 1 |>
 infix 1 |>>
@@ -22,7 +32,7 @@ infix 7 >
 infix 7 >=
 infix 8 <<
 infix 8 >>
-infix 8 >>=
+infix 8 >>-
 infix 9 +
 infix 9 -
 infix 8 <|>

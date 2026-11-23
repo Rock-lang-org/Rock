@@ -7,8 +7,8 @@ pub const KEYWORDS: [&str; 27] = [
     "true", "false", "return", "continue", "break", "infix", "mod", "extern", "match", "unsafe",
     "type", "mut", "where", "as", "do",
 ];
-pub const OPERATORS_CHARS: [char; 13] = [
-    '+', '-', '*', '/', '%', '=', '!', '<', '>', '$', '|', '&', ';',
+pub const OPERATORS_CHARS: [char; 14] = [
+    '+', '-', '*', '/', '%', '=', '!', '<', '>', '$', '|', '&', ';', '^',
 ];
 
 #[derive(Debug, Clone)]
@@ -216,7 +216,7 @@ impl Lexer {
             '%' if self.peek(1).is_alphabetic() && self.peek(1).is_lowercase() => {
                 self.macro_invoc()
             }
-            '^' => self.token(TokenType::Caret, 1),
+            '^' if !OPERATORS_CHARS.contains(&self.peek(1)) => self.token(TokenType::Caret, 1),
             '~' if self.peek(1).is_alphabetic() && self.peek(1).is_uppercase() => {
                 self.native_operator()
             }
@@ -224,7 +224,11 @@ impl Lexer {
             '/' if self.peek(1) == '/' => self.comment_eol(),
             '/' if self.peek(1) == '*' => self.comment(),
             '&' if self.peek(1) == '&' => self.token(TokenType::Operator("&&".to_string()), 2),
-            '&' => self.token(TokenType::Ampersand, 1),
+            '&' if matches!(self.peek(1), '*' | '^')
+                || !OPERATORS_CHARS.contains(&self.peek(1)) =>
+            {
+                self.token(TokenType::Ampersand, 1)
+            }
             c if OPERATORS_CHARS.contains(&c) => self.operator(),
             '(' => self.token(TokenType::OpenParen, 1),
             ')' => self.token(TokenType::CloseParen, 1),

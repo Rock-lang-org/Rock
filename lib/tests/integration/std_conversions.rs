@@ -475,7 +475,7 @@ fn test_borrowed_callables_satisfy_functor_and_monad_operators() {
     let output = compile_and_run(
         r#"
 infix 9 >|
->| = a, f -> a <&> (>>= &f)
+>| = a, f -> a <&> (>>- &f)
 
 options = ->
     mut values: Vec (Option I64) = Vec::new!
@@ -485,9 +485,9 @@ options = ->
 
 main = !->
     step = x -> Some (x + 1)
-    (options! <&> (>>= &step)).println!
+    (options! <&> (>>- &step)).println!
     mut counted = x -> Some (x * 10)
-    (options! <&> (>>= &mut counted)).println!
+    (options! <&> (>>- &mut counted)).println!
     (options! >| (x -> Some (x - 1))).println!
 "#,
     );
@@ -507,7 +507,7 @@ main = !->
     values.push (Some 1)
     values.push (Some 3)
     step = x -> Some (x + 1)
-    (values <&> (>>= step)).println!
+    (values <&> (>>- step)).println!
 "#,
         "does not implement trait `FnMut",
     );
@@ -520,7 +520,7 @@ main = !->
     mut values: Vec (Option I64) = Vec::new!
     values.push (Some 1)
     step = x -> Some (x + 1)
-    (values <&> (>>= step)).println!
+    (values <&> (>>- step)).println!
 "#;
     let id = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let dir = test_temp_dir(id);
@@ -543,7 +543,7 @@ main = !->
     };
     // The unsatisfied `M: FnMut` bound is the right operand's, not the call's.
     assert!(
-        source[span.start..span.end].starts_with(">>="),
+        source[span.start..span.end].starts_with(">>-"),
         "span covers {:?}",
         &source[span.start..span.end]
     );

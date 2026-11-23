@@ -2,6 +2,21 @@ use super::*;
 use std::path::PathBuf;
 
 #[test]
+fn ampersand_and_caret_can_start_multi_character_operators() {
+    let tokens = lex_input("&= ^= ^+ &| && &^target &*target ^@method\n").unwrap();
+    let tokens: Vec<_> = tokens.into_iter().map(|token| token.token_type).collect();
+    for name in ["&=", "^=", "^+", "&|", "&&"] {
+        assert!(tokens.contains(&TokenType::Operator(name.into())));
+    }
+    assert!(tokens
+        .windows(2)
+        .any(|pair| pair == [TokenType::Ampersand, TokenType::Caret]));
+    assert!(tokens
+        .windows(2)
+        .any(|pair| pair == [TokenType::Ampersand, TokenType::StuckOperator("*".into())]));
+}
+
+#[test]
 fn unicode_literals_use_byte_spans_and_preserve_following_tokens() {
     let input = "\"é中🦀\" '🦀' '\\'' 42";
     let tokens = lex_input(input).unwrap();

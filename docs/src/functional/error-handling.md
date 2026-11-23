@@ -233,7 +233,7 @@ keep_even_option = value ->
 
 main = !->
     mapped = Option::Some 4 <&> increment
-    chained = Option::Some 4 >>= keep_even_option
+    chained = Option::Some 4 >>- keep_even_option
     fallback = Option::None <|> Option::Some 9
     converted = Option::Some 4 !> 1
     mapped.unwrap_or 0 .println!
@@ -242,7 +242,7 @@ main = !->
     converted.unwrap_or 0 .println!
 ```
 
-`<&>` maps, `>>=` binds, `<|>` chooses a fallback, `!>` converts an `Option` to a `Result`, and `|>` passes a value to a function. The output is `5`, `4`, `9`, and `4`. These meanings are standard-library definitions, not compiler-owned special cases.
+`<&>` maps, `>>-` binds, `<|>` chooses a fallback, `!>` converts an `Option` to a `Result`, and `|>` passes a value to a function. The output is `5`, `4`, `9`, and `4`. These meanings are standard-library definitions, not compiler-owned special cases.
 
 ## Flat Sequencing with `do`
 

@@ -1,6 +1,39 @@
 use crate::support::*;
 
 #[test]
+fn test_vec_hole_infers_borrowed_filter_pipeline() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    numbers: Vec _ = [1, 2, 3, 4].into!
+
+    numbers.filter (value -> value % 2 == 0)
+        <&> (* 10)
+        |> (.println!)
+"#,
+    );
+    assert_eq!(output.trim(), "[20, 40]");
+}
+
+#[test]
+fn test_vec_hole_infers_sequence_pipeline() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    values: Vec _ = [
+        Option::Some 4
+        Option::Some 5
+    ].into!
+
+    values
+        |> sequence
+        |> (.println!)
+"#,
+    );
+    assert_eq!(output.trim(), "Some([4, 5])");
+}
+
+#[test]
 fn test_vec_hole_annotation_infers_element_from_into() {
     let output = compile_and_run(
         r#"
@@ -36,7 +69,7 @@ fn test_vec_hole_element_feeds_later_monadic_method_calls() {
 
 main = !->
     handles: Vec _ = [(spawn (-> 1)), (spawn (-> 2))].into!
-    joined = handles <&> (>>= (.join!))
+    joined = handles <&> (>>- (.join!))
     joined.println!
 "#,
     );

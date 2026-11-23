@@ -40,7 +40,7 @@ fn test_parse_unit_receiver_shorthand() {
 
 #[test]
 fn test_parse_nested_function_shorthand() {
-    for input in ["myfn = (>>= (.join!))\n", "myfn = ((+ 1) <&>)\n"] {
+    for input in ["myfn = (>>- (.join!))\n", "myfn = ((+ 1) <&>)\n"] {
         let tokens = lex_test(input);
         let config = Config::default();
         let (rest, declaration) = function_decl

@@ -3,6 +3,105 @@ use std::process::Command;
 use std::sync::atomic::Ordering;
 
 #[test]
+fn test_stdlib_compound_assignment_operators() {
+    let output = compile_and_run(
+        r#"
+main = !->
+    mut value = 8 as I64
+    value += 2 * 3
+    value -= 2
+    value *= 3
+    value /= 2
+    value %= 11
+    value &= 6
+    value |= 1
+    value ^= 2
+    value <<= 3
+    value >>= 2
+    value.println!
+    mut small = 128 as U8
+    small >>= 6
+    small.println!
+    mut float = 5.5 as F64
+    float %= 2.0
+    (float == 1.5).println!
+    mut flag = true
+    flag ^= true
+    flag.println!
+    mut doubled = 3 as I64
+    increment = doubled
+    doubled += increment
+    doubled.println!
+"#,
+    );
+    assert_eq!(output, "10\n2\ntrue\nfalse\n6\n");
+}
+
+#[test]
+fn test_compound_assignment_inherits_mutable_receiver_borrow_rules() {
+    compile_should_fail(
+        "main = !->\n    mut value = 1 as I64\n    value += value\n",
+        "borrow conflict",
+    );
+}
+
+#[test]
+fn test_compound_assignment_rejects_immutable_receiver() {
+    compile_should_fail(
+        "main = !->\n    value = 1 as I64\n    value += 2\n",
+        "No implementation found for operator '+='",
+    );
+}
+
+#[test]
+fn test_compound_assignment_does_not_upgrade_explicit_shared_index_call() {
+    compile_should_fail(
+        r#"
+main = !->
+    mut values: Vec I64 = Vec::new!
+    values.push 1
+    *(values.index 0) += 2
+"#,
+        "No implementation found for operator '+='",
+    );
+}
+
+#[test]
+fn test_custom_mutable_operator_on_indexed_receiver() {
+    let output = compile_and_run(
+        r#"
+infix 9 |+|
+trait Update
+    ^@|+|: I64 -> ()
+
+impl Update for I64
+    ^@|+| = rhs -> *self = (*self) + rhs
+
+next: &mut I64 -> I64
+next = calls ->
+    *calls = (*calls) + 1
+    0
+
+main = !->
+    mut calls = 0
+    mut values = [10 as I64, 20 as I64]
+    values[next (&mut calls)] |+| 5
+    values[0].println!
+    calls.println!
+    mut vector: Vec I64 = Vec::new!
+    vector.push 12
+    vector[next (&mut calls)] |+| 3
+    vector[0].println!
+    calls.println!
+    vector[next (&mut calls)] += 4
+    vector[0].println!
+    calls.println!
+"#,
+    );
+    assert_eq!(output, "15\n1\n15\n2\n19\n3\n");
+}
+
+#[test]
 fn test_numeric_literal_preserves_mixed_type_operator() {
     let output = compile_and_run(
         r#"

@@ -131,7 +131,7 @@ fn test_inline_owned_capture_reads_file_and_joins_signatureless() {
 entry = file ->
     filename = String::from file
     spawn (-> read_to_string filename.as_str!)
-        >>= (.join!)
+        >>- (.join!)
         <&> (.println!)
         <!> e !-> %println "thread failed: ", e
 

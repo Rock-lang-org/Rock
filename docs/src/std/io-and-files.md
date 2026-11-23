@@ -103,7 +103,7 @@ The successful output is `22`, and `rock-greeting.txt` contains `Hello from Rock
 
 When a file leaves scope without an explicit close, `Drop` still closes it automatically, but cannot return an error. Use explicit close when delayed write or close failures matter. This is Linux descriptor handling: a failed close, including `EINTR`, is not retried because the descriptor may already have been released and reused. Closing successfully does not by itself guarantee that bytes have reached durable storage.
 
-`do` keeps the successful counts in scope without nested callbacks. Each `<-` sequences through the prelude's `bind`, which continues only for `Result::Ok`; `pure` wraps the sum in the same carrier. This has the sequencing behavior of `>>=`. At the boundary, `<&>` prints a successful total and produces exit code `0`, while `unwrap_or 1` turns either operation's error into exit code `1`. See [error handling](../functional/error-handling.md) for `do` and the named combinators.
+`do` keeps the successful counts in scope without nested callbacks. Each `<-` sequences through the prelude's `bind`, which continues only for `Result::Ok`; `pure` wraps the sum in the same carrier. This has the sequencing behavior of `>>-`. At the boundary, `<&>` prints a successful total and produces exit code `0`, while `unwrap_or 1` turns either operation's error into exit code `1`. See [error handling](../functional/error-handling.md) for `do` and the named combinators.
 
 ## Reading bytes
 
@@ -249,6 +249,6 @@ With no user arguments the output is `1`; with `first second` after the run sepa
 
 ## Errors, ownership, and portability
 
-Use a concrete error type such as `IoError` in public signatures. Use `>>=` to sequence fallible operations, `<&>` to transform successes, and `?` to propagate failures from a helper that returns a compatible carrier. At the boundary, `unwrap_or` supplies a fallback value; use `match` when you need to inspect and report the particular error. Moving a `File` transfers descriptor ownership; borrowing it for `Read` or `Write` leaves the caller responsible for the eventual drop. A failed `?` returns early and does not restore values already moved into the failed operation.
+Use a concrete error type such as `IoError` in public signatures. Use `>>-` to sequence fallible operations, `<&>` to transform successes, and `?` to propagate failures from a helper that returns a compatible carrier. At the boundary, `unwrap_or` supplies a fallback value; use `match` when you need to inspect and report the particular error. Moving a `File` transfers descriptor ownership; borrowing it for `Read` or `Write` leaves the caller responsible for the eventual drop. A failed `?` returns early and does not restore values already moved into the failed operation.
 
 The current file and stream implementations are POSIX-oriented. Error numbers and some behavior depend on the host operating system, and the examples that create files require a writable working directory.

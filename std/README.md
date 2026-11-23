@@ -9,7 +9,7 @@ children and re-exports its public API.
 | `mem` | Allocation, owned heap values, destruction, sizes, and memory helpers |
 | `cmp` | Equality and ordering |
 | `num` | Arithmetic traits and numeric helpers |
-| `ops` | Bitwise and unary operators, dereferencing, indexing, and ranges |
+| `ops` | Bitwise, unary, and compound assignment operators, dereferencing, indexing, and ranges |
 | `functional` | Callables, composition, mapping, binding, folding, and traversal |
 | `collections` | Vectors, hash maps, borrowed slices, and eager traversal |
 | `string` | Owned strings and borrowed UTF-8 operations |
