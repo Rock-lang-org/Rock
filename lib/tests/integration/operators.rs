@@ -38,6 +38,43 @@ main = !->
 }
 
 #[test]
+fn test_compound_assignment_coerces_literal_through_mutable_reference() {
+    let output = compile_and_run(
+        r#"
+bump: &mut U8 -> ()
+bump = value ->
+    value += 1
+
+main = !->
+    mut value = 0 as U8
+    bump (&mut value)
+    value.println!
+"#,
+    );
+    assert_eq!(output, "1\n");
+}
+
+#[test]
+fn test_indexed_mutable_operator_preserves_mixed_type_literal() {
+    let output = compile_and_run(
+        r#"
+infix 9 |+|
+trait Update
+    ^@|+|: I64 -> ()
+
+impl Update for U8
+    ^@|+| = rhs -> *self = rhs as U8
+
+main = !->
+    mut values = [0 as U8, 0 as U8]
+    values[0] |+| 5
+    values[0].println!
+"#,
+    );
+    assert_eq!(output, "5\n");
+}
+
+#[test]
 fn test_compound_assignment_inherits_mutable_receiver_borrow_rules() {
     compile_should_fail(
         "main = !->\n    mut value = 1 as I64\n    value += value\n",
