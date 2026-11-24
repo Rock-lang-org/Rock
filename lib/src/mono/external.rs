@@ -155,21 +155,12 @@ impl Monomorphizer {
         self.register_imported_function_instances(crate_ctx);
         self.register_effective_trait_methods(program);
         self.register_nominal_field_types(program);
-        let mut impls = program
-            .impls_in_order()
-            .map(|(_, imp)| imp.clone())
-            .collect::<Vec<_>>();
+        let mut impls = program.impls.values().collect::<Vec<_>>();
         impls.sort_by_key(|imp| imp.id);
-        self.collect_impls_with_crate_capabilities(&impls, crate_ctx);
+        self.collect_impls(impls.iter().copied());
         self.register_imported_impl_instances(&impls, crate_ctx);
 
-        let mut all_funcs = program
-            .functions_by_id()
-            .map(|(id, name, func)| (id, name.to_string(), func.clone()))
-            .collect::<Vec<_>>();
-        all_funcs.sort_by_key(|(id, _, _)| *id);
-        program.functions.clear();
-        for (_, name, func) in all_funcs {
+        for (name, func) in Self::take_functions_in_id_order(program) {
             if crate_ctx.extern_crates().any(|dependency| {
                 dependency
                     .body_providers()
@@ -190,7 +181,7 @@ impl Monomorphizer {
                 || (!function_requires_downstream_specialization(&func)
                     && hir_function_is_codegen_concrete(&func))
             {
-                self.register_concrete_function(name.clone(), func);
+                self.register_concrete_function(name, func);
             } else {
                 self.register_generic_function(name, func);
             }
@@ -234,7 +225,7 @@ impl Monomorphizer {
 
     fn register_imported_impl_instances(
         &mut self,
-        program_impls: &[super::hir_types::HirImpl],
+        program_impls: &[&super::hir_types::HirImpl],
         crate_ctx: &CrateContext,
     ) {
         for dep in crate_ctx.extern_crates() {

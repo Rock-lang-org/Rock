@@ -105,7 +105,7 @@ impl<'a> MirBuilder<'a> {
         owner: Option<DefId>,
         local: crate::ids::HirLocalId,
     ) -> Option<Span> {
-        owner.and_then(|owner| self.source_map.local_span(owner, local).cloned())
+        self.source_map?.local_span(owner?, local).cloned()
     }
 
     pub(super) fn source_operation_span(

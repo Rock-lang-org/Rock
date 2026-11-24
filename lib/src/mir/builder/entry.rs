@@ -33,7 +33,7 @@ impl<'a> MirBuilder<'a> {
             method_instance_receiver_modes: HashMap::new(),
             direct_drop_types: HashSet::new(),
             ownership: MirOwnershipMetadata::default(),
-            source_map: SemanticSourceMap::default(),
+            source_map: None,
             current_source_owner: None,
             copy_oracle: Rc::new(CopyOracle::new(program)),
         }
@@ -59,8 +59,8 @@ impl<'a> MirBuilder<'a> {
         }
     }
 
-    pub(super) fn with_source_map(mut self, source_map: &SemanticSourceMap) -> Self {
-        self.source_map = source_map.clone();
+    pub(super) fn with_source_map(mut self, source_map: &'a SemanticSourceMap) -> Self {
+        self.source_map = Some(source_map);
         self
     }
 
@@ -132,7 +132,7 @@ impl<'a> MirBuilder<'a> {
             if record.provided_by_object {
                 continue;
             }
-            let Some(body) = program.pre_mir_instance_bodies.get(record.id).cloned() else {
+            let Some(body) = program.pre_mir_instance_bodies.get(record.id) else {
                 continue;
             };
 
@@ -153,7 +153,7 @@ impl<'a> MirBuilder<'a> {
             let mir_func = builder.build_function(
                 mir_id,
                 &record.symbols.backend_symbol,
-                &body,
+                body,
                 skip_self_cleanup,
                 Some(Self::instance_origin_callable_def_id(&record.origin)),
                 None,

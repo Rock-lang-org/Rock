@@ -163,8 +163,8 @@ impl<'a> MirBuilder<'a> {
             self.method_instance_receiver_modes.clone(),
             self.direct_drop_types.clone(),
         )
-        .with_source_map(&self.source_map)
         .with_copy_oracle(&self.copy_oracle);
+        builder.source_map = self.source_map;
         builder.callable_instances_by_def_id = self.callable_instances_by_def_id.clone();
         builder.method_def_ids = self.method_def_ids.clone();
         builder.closures.set_pending_body_captures(captures);

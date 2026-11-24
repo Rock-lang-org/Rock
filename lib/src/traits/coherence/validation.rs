@@ -170,25 +170,42 @@ pub(super) fn validate_coherence_with_ids<'a>(
         }
     }
 
-    for (index, left) in impls.iter().enumerate() {
-        let Some(trait_id) = left.trait_id else {
+    #[derive(Default)]
+    struct Candidates<'a> {
+        all: Vec<&'a HirImpl>,
+        nominal: HashMap<DefId, Vec<&'a HirImpl>>,
+        other: Vec<&'a HirImpl>,
+    }
+    let mut groups = HashMap::<_, Candidates>::new();
+    for right in impls {
+        let Some(trait_id) = right.trait_id else {
             continue;
         };
-        let Some(left_target) = targets.get(&left.id) else {
+        let Some(right_target) = targets.get(&right.id) else {
             continue;
         };
-        for right in impls.iter().skip(index + 1) {
-            if right.trait_id != Some(trait_id) {
-                continue;
-            }
-            let Some(right_target) = targets.get(&right.id) else {
-                continue;
-            };
+        let right_args = &trait_args[&right.id];
+        let group = groups.entry((trait_id, right_args.len())).or_default();
+        // Only exact struct/enum heads are rigid here; blanket impls and all
+        // other target forms still go through the full unifier.
+        let head = match right_target {
+            CanonicalTarget::Exact(Type::Struct { id, .. } | Type::Enum { id, .. }) => Some(*id),
+            _ => None,
+        };
+        let (specific, other): (&[&HirImpl], &[&HirImpl]) = match head {
+            Some(id) => (
+                group
+                    .nominal
+                    .get(&id)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default(),
+                &group.other,
+            ),
+            None => (&group.all, &[]),
+        };
+        for &left in specific.iter().chain(other) {
+            let left_target = &targets[&left.id];
             let left_args = &trait_args[&left.id];
-            let right_args = &trait_args[&right.id];
-            if left_args.len() != right_args.len() {
-                continue;
-            }
 
             let mut unifier = FirstOrderUnifier::new(left, right, sized_trait_id, &env);
             if !left_args
@@ -210,6 +227,11 @@ pub(super) fn validate_coherence_with_ids<'a>(
                     witness: unifier.witness(),
                 },
             });
+        }
+        group.all.push(right);
+        match head {
+            Some(id) => group.nominal.entry(id).or_default().push(right),
+            None => group.other.push(right),
         }
     }
 

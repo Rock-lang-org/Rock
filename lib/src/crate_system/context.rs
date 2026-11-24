@@ -184,10 +184,6 @@ impl CrateContext {
         self.extern_crates().find(|dep| dep.provides_impl_body(imp))
     }
 
-    pub(crate) fn provides_impl_body(&self, imp: &HirImpl) -> bool {
-        self.impl_body_provider(imp).is_some()
-    }
-
     pub(crate) fn proc_macro_artifacts(&self) -> impl Iterator<Item = &ProcMacroArtifact> + '_ {
         self.extern_crates()
             .flat_map(|dep| dep.metadata().proc_macros().iter())

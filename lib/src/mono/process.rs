@@ -68,25 +68,16 @@ impl Monomorphizer {
         self.register_effective_trait_methods(&program);
         self.register_nominal_field_types(&program);
 
-        let mut impls = program
-            .impls_in_order()
-            .map(|(_, imp)| imp.clone())
-            .collect::<Vec<_>>();
+        let mut impls = program.impls.values().collect::<Vec<_>>();
         impls.sort_by_key(|imp| imp.id);
-        self.collect_impls(&impls);
+        self.collect_impls(impls);
 
-        let mut all_funcs = program
-            .functions_by_id()
-            .map(|(id, name, func)| (id, name.to_string(), func.clone()))
-            .collect::<Vec<_>>();
-        all_funcs.sort_by_key(|(id, _, _)| *id);
-        program.functions.clear();
-        for (_, name, func) in all_funcs {
+        for (name, func) in Self::take_functions_in_id_order(&mut program) {
             let is_entrypoint = name == "main" && func.generic_params.is_empty();
             if is_entrypoint
                 || (func.generic_params.is_empty() && hir_function_is_codegen_concrete(&func))
             {
-                self.register_concrete_function(name.clone(), func);
+                self.register_concrete_function(name, func);
             } else {
                 self.register_generic_function(name, func);
             }
@@ -112,6 +103,22 @@ impl Monomorphizer {
         names.extend(program.indexes.enums_by_id.clone());
         names.extend(program.indexes.traits_by_id.clone());
         names
+    }
+
+    pub(super) fn take_functions_in_id_order(
+        program: &mut super::hir_types::HirProgram,
+    ) -> impl Iterator<Item = (String, HirFunction)> + '_ {
+        let mut functions = program.functions.drain().collect::<Vec<_>>();
+        functions.sort_unstable_by_key(|(id, _)| *id);
+        functions.into_iter().map(|(id, function)| {
+            let name = program
+                .indexes
+                .functions_by_id
+                .get(&id)
+                .unwrap_or(&function.name)
+                .clone();
+            (name, function)
+        })
     }
 
     pub(super) fn process_function(&mut self, mut func: HirFunction) -> HirFunction {

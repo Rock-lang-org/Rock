@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use crate::crate_system::CrateContext;
 use crate::ids::DefId;
 use crate::types::Type;
 
@@ -9,23 +8,7 @@ use super::Monomorphizer;
 
 impl Monomorphizer {
     /// Collect all trait impls from the program
-    pub(super) fn collect_impls(&mut self, impls: &[HirImpl]) {
-        self.collect_impls_with_body_provider(impls, |_| false);
-    }
-
-    pub(super) fn collect_impls_with_crate_capabilities(
-        &mut self,
-        impls: &[HirImpl],
-        crate_ctx: &CrateContext,
-    ) {
-        self.collect_impls_with_body_provider(impls, |imp| crate_ctx.provides_impl_body(imp));
-    }
-
-    fn collect_impls_with_body_provider(
-        &mut self,
-        impls: &[HirImpl],
-        _provided_by_dependency: impl Fn(&HirImpl) -> bool,
-    ) {
+    pub(super) fn collect_impls<'a>(&mut self, impls: impl IntoIterator<Item = &'a HirImpl>) {
         for imp in impls {
             if let Some(trait_id) = imp.trait_id {
                 self.trait_impls

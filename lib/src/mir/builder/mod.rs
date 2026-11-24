@@ -65,7 +65,7 @@ pub struct MirBuilder<'a> {
     method_instance_receiver_modes: HashMap<InstanceId, Option<crate::types::ReceiverMode>>,
     direct_drop_types: HashSet<Type>,
     ownership: MirOwnershipMetadata,
-    source_map: SemanticSourceMap,
+    source_map: Option<&'a SemanticSourceMap>,
     current_source_owner: Option<DefId>,
     /// Copy answers shared by every builder of one program; see `needs_move`.
     copy_oracle: Rc<CopyOracle<'a, AcceptedHir>>,
