@@ -273,7 +273,9 @@ impl Backend {
                 blocking(move || {
                     rock::project::resolve_analysis_project_for_source(&root, &path)
                         .map(Some)
-                        .map_err(|error| Diagnostics(vec![RockDiagnostic::for_project(error, root)]))
+                        .map_err(|error| {
+                            Diagnostics(vec![RockDiagnostic::for_project(error, root)])
+                        })
                 })
                 .await
             }
@@ -663,7 +665,7 @@ fn diagnostic_to_lsp(diagnostic: &RockDiagnostic, uri: &Url, text: &str) -> Opti
                 let source = diagnostic.source.as_ref()?;
                 let related_text = source
                     .related
-                    .get(&label.span.file_path)
+                    .get(label.span.file_path.as_path())
                     .map(|related| related.text.as_str())
                     .or_else(|| {
                         (source.display_path == label.span.file_path)

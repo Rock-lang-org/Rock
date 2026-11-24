@@ -24,7 +24,7 @@ fn test_parse_struct_decl() {
                 span: Span {
                     start: 7,
                     end: 10,
-                    file_path: PathBuf::from("/test.rk"),
+                    file_path: PathBuf::from("/test.rk").into(),
                 },
             },
             generic_params: vec![],
@@ -35,7 +35,7 @@ fn test_parse_struct_decl() {
                         span: Span {
                             start: 15,
                             end: 16,
-                            file_path: PathBuf::from("/test.rk"),
+                            file_path: PathBuf::from("/test.rk").into(),
                         },
                     },
                     ty: ParseType::Type(ParseTypeInner {
@@ -44,7 +44,7 @@ fn test_parse_struct_decl() {
                         span: Span {
                             start: 18,
                             end: 21,
-                            file_path: PathBuf::from("/test.rk"),
+                            file_path: PathBuf::from("/test.rk").into(),
                         }
                     }),
                     public: false,
@@ -56,7 +56,7 @@ fn test_parse_struct_decl() {
                         span: Span {
                             start: 26,
                             end: 27,
-                            file_path: PathBuf::from("/test.rk"),
+                            file_path: PathBuf::from("/test.rk").into(),
                         },
                     },
                     ty: ParseType::Type(ParseTypeInner {
@@ -65,7 +65,7 @@ fn test_parse_struct_decl() {
                         span: Span {
                             start: 29,
                             end: 32,
-                            file_path: PathBuf::from("/test.rk"),
+                            file_path: PathBuf::from("/test.rk").into(),
                         }
                     }),
                     public: false,
@@ -75,7 +75,7 @@ fn test_parse_struct_decl() {
                             span: Span {
                                 start: 35,
                                 end: 36,
-                                file_path: PathBuf::from("/test.rk"),
+                                file_path: PathBuf::from("/test.rk").into(),
                             }
                         }),
                         secondaries: None,

@@ -29,7 +29,7 @@ fn multiline_fn_call() {
                     span: Span {
                         start: 0,
                         end: 3,
-                        file_path: PathBuf::from("/test.rk"),
+                        file_path: PathBuf::from("/test.rk").into(),
                     },
                 })],
             }),
@@ -42,7 +42,7 @@ fn multiline_fn_call() {
                                 span: Span {
                                     start: 4,
                                     end: 7,
-                                    file_path: PathBuf::from("/test.rk"),
+                                    file_path: PathBuf::from("/test.rk").into(),
                                 },
                             })],
                         }),
@@ -58,7 +58,7 @@ fn multiline_fn_call() {
                                 span: Span {
                                     start: 8,
                                     end: 11,
-                                    file_path: PathBuf::from("/test.rk"),
+                                    file_path: PathBuf::from("/test.rk").into(),
                                 },
                             })],
                         }),
@@ -74,7 +74,7 @@ fn multiline_fn_call() {
                                 span: Span {
                                     start: 12,
                                     end: 13,
-                                    file_path: PathBuf::from("/test.rk"),
+                                    file_path: PathBuf::from("/test.rk").into(),
                                 },
                             }),
                             secondaries: None,
@@ -85,7 +85,7 @@ fn multiline_fn_call() {
                             span: Span {
                                 start: 14,
                                 end: 15,
-                                file_path: PathBuf::from("/test.rk"),
+                                file_path: PathBuf::from("/test.rk").into(),
                             },
                         },
                         Box::new(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
@@ -94,7 +94,7 @@ fn multiline_fn_call() {
                                 span: Span {
                                     start: 16,
                                     end: 17,
-                                    file_path: PathBuf::from("/test.rk"),
+                                    file_path: PathBuf::from("/test.rk").into(),
                                 },
                             }),
                             secondaries: None,

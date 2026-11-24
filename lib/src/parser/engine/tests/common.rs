@@ -24,7 +24,7 @@ pub fn lex_test(input: &str) -> Vec<Token> {
 pub fn make_ctx(input: &str) -> ParseCtx<'static> {
     let tokens = Box::leak(Box::new(lex_test(input)));
     let config = Box::leak(Box::new(Config::default()));
-    let eof_path = Box::leak(Box::new(PathBuf::from("/test.rk")));
+    let eof_path = Box::leak(Box::new(crate::lexer::SourcePath::from("/test.rk")));
     let mut context = ParseCtx::from(tokens, config);
     context.eof_location = Some((eof_path, input.len()));
     context

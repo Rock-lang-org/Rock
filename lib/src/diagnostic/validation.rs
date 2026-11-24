@@ -69,7 +69,7 @@ impl Diagnostic {
                     } else {
                         source
                             .related
-                            .get(&label.span.file_path)
+                            .get(label.span.file_path.as_path())
                             .map(|related| related.text.as_str())
                     };
                     let Some(text) = text else {

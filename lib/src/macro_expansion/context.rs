@@ -239,7 +239,7 @@ impl<'a> MacroExpansionContext<'a> {
 impl From<&Span> for SpanKey {
     fn from(span: &Span) -> Self {
         Self {
-            file_path: span.file_path.clone(),
+            file_path: span.file_path.to_path_buf(),
             start: span.start,
             end: span.end,
         }

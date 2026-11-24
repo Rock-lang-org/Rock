@@ -14,7 +14,6 @@
 //! is not an import.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::PathBuf;
 
 use crate::ast::visit::{
     walk_expression, walk_impl, walk_module, walk_parse_type_inner, walk_top_level,
@@ -378,7 +377,7 @@ struct GlobSite {
     span: Span,
 }
 
-type ValueReferences = HashMap<(PathBuf, usize), Vec<(usize, DefId)>>;
+type ValueReferences = HashMap<(crate::lexer::SourcePath, usize), Vec<(usize, DefId)>>;
 
 fn collect_scopes(
     path: String,
@@ -446,7 +445,7 @@ impl<'a> Visitor<'a> for ScopeCollector<'a, '_> {
 
     fn visit_identifier_path(&mut self, node: &'a ast::IdentifierPath) {
         if let Some(span) = path_span(&node.path) {
-            if let Some(targets) = self.references.get(&(span.file_path, span.start)) {
+            if let Some(targets) = self.references.get(&(span.file_path.clone(), span.start)) {
                 if let Some(head) = path_names(&node.path).first() {
                     for (_, id) in targets.iter().filter(|(end, _)| *end <= span.end) {
                         self.values.push((head.clone(), *id));

@@ -52,11 +52,11 @@ thread_local! {
 /// Track an error if it's better than the current best error
 pub fn track_error(error: &ParseError) {
     BEST_ERROR.with(|best| {
+        // Most failures lose to the best error so far; only clone a winner.
         let mut best = best.borrow_mut();
-        *best = Some(match best.take() {
-            Some(prev) => prev.choose_better(error.clone()),
-            None => error.clone(),
-        });
+        if best.as_ref().is_none_or(|prev| prev.prefers(error)) {
+            *best = Some(error.clone());
+        }
     });
 }
 
@@ -81,7 +81,7 @@ pub fn reset_best_error() {
 pub struct ParseCtx<'a> {
     pub tokens: &'a [Token],
     pub previous_token_end: Option<usize>,
-    pub eof_location: Option<(&'a std::path::PathBuf, usize)>,
+    pub eof_location: Option<(&'a crate::lexer::SourcePath, usize)>,
     pub indent_level: usize,
     pub config: &'a Config,
     pub indent_step: usize,

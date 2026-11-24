@@ -26,7 +26,7 @@ fn test_parse_expression() {
                     span: Span {
                         start: 0,
                         end: 1,
-                        file_path: PathBuf::from("/test.rk"),
+                        file_path: PathBuf::from("/test.rk").into(),
                     },
                 }),
                 secondaries: None,
@@ -37,7 +37,7 @@ fn test_parse_expression() {
                 span: Span {
                     start: 2,
                     end: 3,
-                    file_path: PathBuf::from("/test.rk"),
+                    file_path: PathBuf::from("/test.rk").into(),
                 },
             },
             Box::new(Expression::UnaryExpr(UnaryExpr::PrimaryExpr(PrimaryExpr {
@@ -46,7 +46,7 @@ fn test_parse_expression() {
                     span: Span {
                         start: 4,
                         end: 5,
-                        file_path: PathBuf::from("/test.rk"),
+                        file_path: PathBuf::from("/test.rk").into(),
                     },
                 }),
                 secondaries: None,

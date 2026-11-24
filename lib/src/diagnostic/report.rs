@@ -104,7 +104,7 @@ impl Diagnostic {
                 let span = &label.span;
                 let label_file_id = if span.file_path == primary_span.file_path {
                     file_id.clone()
-                } else if let Some(related) = related_sources.get(&span.file_path) {
+                } else if let Some(related) = related_sources.get(span.file_path.as_path()) {
                     related.display_path.to_string_lossy().to_string()
                 } else {
                     span.file_path.to_string_lossy().to_string()
@@ -137,7 +137,7 @@ impl Diagnostic {
             for label in self.primary.iter().chain(self.secondary.iter()) {
                 let span = &label.span;
                 if span.file_path != primary_span.file_path
-                    && !related_sources.contains_key(&span.file_path)
+                    && !related_sources.contains_key(span.file_path.as_path())
                 {
                     if let Ok(text) = std::fs::read_to_string(&span.file_path) {
                         if !span_is_valid_for_text(span, &text) {

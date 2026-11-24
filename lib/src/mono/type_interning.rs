@@ -7,7 +7,7 @@ impl Monomorphizer {
     pub(super) fn intern_type(&mut self, ty: &Type) -> crate::ids::TypeId {
         let normalized = self.normalize_type(ty);
         self.type_context
-            .intern_normalized_type(&normalized, &self.normalization_env)
+            .intern_normalized_type_shared(&normalized, &self.normalization_env)
             .expect("mono type normalization must preserve accepted HIR invariants")
     }
 

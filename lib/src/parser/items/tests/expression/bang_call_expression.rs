@@ -25,7 +25,7 @@ fn bang_call_expression() {
                     span: Span {
                         start: 0,
                         end: 5,
-                        file_path: PathBuf::default(),
+                        file_path: PathBuf::default().into(),
                     },
                 })],
             }),

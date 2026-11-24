@@ -22,7 +22,7 @@ use crate::products::CompilerProducts;
 pub(crate) fn intern_loaded_interface_types(
     interface: &ArtifactCrateInterface,
     resolver: &ResolverTables,
-    context: &mut crate::type_context::TypeContext,
+    context: Option<&mut crate::type_context::TypeContext>,
 ) -> Result<(), String> {
     macro_rules! id_map_from_interface {
         ($entries:expr, $convert:path, $kind:literal) => {{
@@ -86,6 +86,11 @@ pub(crate) fn intern_loaded_interface_types(
         &traits,
         &externs,
     )?;
+    // Validation above holds regardless; interning only matters to a caller
+    // that keeps the type context.
+    let Some(context) = context else {
+        return Ok(());
+    };
     let canonical_names = artifact_canonical_names(
         interface,
         resolver,
@@ -245,16 +250,19 @@ pub(crate) fn intern_loaded_body_types(
     let _ = crate::hir::collect_hir_type_ids(&program, context);
 }
 
+/// Validates the record's interface and, given a context, interns its types.
 pub(crate) fn intern_loaded_extern_crate_types(
     record: &ExternCrateRecord,
-    context: &mut crate::type_context::TypeContext,
+    mut context: Option<&mut crate::type_context::TypeContext>,
 ) -> Result<(), String> {
     intern_loaded_interface_types(
         record.metadata().interface(),
         record.metadata().resolver(),
-        context,
+        context.as_deref_mut(),
     )?;
-    intern_loaded_body_types(record.bodies(), context);
+    if let Some(context) = context {
+        intern_loaded_body_types(record.bodies(), context);
+    }
     Ok(())
 }
 

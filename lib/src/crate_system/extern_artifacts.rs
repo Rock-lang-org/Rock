@@ -84,12 +84,12 @@ pub(crate) fn load_extern_artifacts(
         };
 
         let artifact = pending.remove(index);
-        let mut type_context = crate::type_context::TypeContext::new();
+        // Consumers re-intern the types they use; nothing keeps a context here.
         ctx.load_product_artifact_from_header_as_with_type_context(
             &artifact.name,
             artifact.path.clone(),
             &artifact.header,
-            &mut type_context,
+            None,
         )
         .map_err(|e| {
             diagnostic::Diagnostic::for_artifact(

@@ -115,7 +115,7 @@ pub(crate) fn monomorphize_with_crates(
     mono.crate_kind = crate_kind;
     mono.root_crate_id = root_crate_id;
     mono.source_map = source_map;
-    mono.normalization_env = normalization_env;
+    mono.normalization_env = normalization_env.into();
     mono.identity_context = identity_context;
     mono.resolver = resolver;
     let program = mono.process_with_crates(program.into_program(), crate_ctx);
@@ -149,7 +149,7 @@ struct Monomorphizer {
     /// Intern table for canonical type identities used at mono boundaries.
     type_context: TypeContext,
     /// Canonicalization environment carried from inference into specialization.
-    normalization_env: TypeNormalizationEnv,
+    normalization_env: std::sync::Arc<TypeNormalizationEnv>,
     /// Stable product identities used for backend symbols and fingerprints.
     identity_context: CompilationIdentityContext,
     /// Resolver tables used for canonical instance identity.
@@ -206,7 +206,7 @@ impl Monomorphizer {
             nominal_field_spans: HashMap::new(),
             instances: InstanceRegistry::new(),
             type_context: TypeContext::new(),
-            normalization_env: TypeNormalizationEnv::new(),
+            normalization_env: Default::default(),
             identity_context: CompilationIdentityContext::local_default(),
             resolver: ResolverTables::default(),
             dependency_resolvers: Vec::new(),

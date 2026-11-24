@@ -26,7 +26,7 @@ fn indice_expression() {
                     span: Span {
                         start: 0,
                         end: 5,
-                        file_path: PathBuf::from("/test.rk"),
+                        file_path: PathBuf::from("/test.rk").into(),
                     },
                 })],
             }),
@@ -37,7 +37,7 @@ fn indice_expression() {
                         span: Span {
                             start: 6,
                             end: 7,
-                            file_path: PathBuf::from("/test.rk"),
+                            file_path: PathBuf::from("/test.rk").into(),
                         },
                     }),
                     secondaries: None,

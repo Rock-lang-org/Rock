@@ -21,7 +21,7 @@ fn test_parse_function_decl() {
                 span: Span {
                     start: 0,
                     end: 1,
-                    file_path: PathBuf::from("/test.rk"),
+                    file_path: PathBuf::from("/test.rk").into(),
                 },
             },
             lambda: LambdaDecl {
@@ -33,7 +33,7 @@ fn test_parse_function_decl() {
                             span: Span {
                                 start: 4,
                                 end: 7,
-                                file_path: PathBuf::from("/test.rk"),
+                                file_path: PathBuf::from("/test.rk").into(),
                             },
                         },
                         mut_: false,
@@ -48,7 +48,7 @@ fn test_parse_function_decl() {
                                     span: Span {
                                         start: 11,
                                         end: 14,
-                                        file_path: PathBuf::from("/test.rk"),
+                                        file_path: PathBuf::from("/test.rk").into(),
                                     },
                                 })]
                             }),
@@ -61,7 +61,7 @@ fn test_parse_function_decl() {
                 span: Span {
                     start: 8,
                     end: 10,
-                    file_path: PathBuf::from("/test.rk"),
+                    file_path: PathBuf::from("/test.rk").into(),
                 },
             },
             self_receiver: None,

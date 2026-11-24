@@ -273,7 +273,7 @@ fn parse_top_level() {
                 span: Span {
                     start: 0,
                     end: 1,
-                    file_path: PathBuf::from("/test.rk"),
+                    file_path: PathBuf::from("/test.rk").into(),
                 },
             },
             lambda: LambdaDecl {
@@ -285,7 +285,7 @@ fn parse_top_level() {
                             span: Span {
                                 start: 4,
                                 end: 7,
-                                file_path: PathBuf::from("/test.rk"),
+                                file_path: PathBuf::from("/test.rk").into(),
                             },
                         },
                         mut_: false,
@@ -300,7 +300,7 @@ fn parse_top_level() {
                                     span: Span {
                                         start: 11,
                                         end: 14,
-                                        file_path: PathBuf::from("/test.rk"),
+                                        file_path: PathBuf::from("/test.rk").into(),
                                     },
                                 })]
                             }),
@@ -313,7 +313,7 @@ fn parse_top_level() {
                 span: Span {
                     start: 8,
                     end: 10,
-                    file_path: PathBuf::from("/test.rk"),
+                    file_path: PathBuf::from("/test.rk").into(),
                 },
             },
             self_receiver: None,

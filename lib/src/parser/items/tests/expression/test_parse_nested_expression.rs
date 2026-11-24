@@ -27,7 +27,7 @@ fn test_parse_nested_expression() {
                         span: Span {
                             start: 0,
                             end: 1,
-                            file_path: PathBuf::from("/test.rk"),
+                            file_path: PathBuf::from("/test.rk").into(),
                         },
                     })],
                 }),
@@ -36,7 +36,7 @@ fn test_parse_nested_expression() {
                     span: Span {
                         start: 2,
                         end: 3,
-                        file_path: PathBuf::from("/test.rk"),
+                        file_path: PathBuf::from("/test.rk").into(),
                     },
                 }))]),
                 type_annotation: None,
@@ -53,7 +53,7 @@ fn test_parse_nested_expression() {
                             span: Span {
                                 start: 6,
                                 end: 7,
-                                file_path: PathBuf::from("/test.rk"),
+                                file_path: PathBuf::from("/test.rk").into(),
                             },
                         })],
                     }),
@@ -70,7 +70,7 @@ fn test_parse_nested_expression() {
                         span: Span {
                             start: 10,
                             end: 11,
-                            file_path: PathBuf::from("/test.rk"),
+                            file_path: PathBuf::from("/test.rk").into(),
                         },
                     }),
                     secondaries: None,

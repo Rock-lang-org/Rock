@@ -119,7 +119,7 @@ impl CrateContext {
         let extern_record =
             extern_crate_from_products(&products, &artifact_path, &remap, &staged_crate_context)?;
         let mut staged_context = context.clone();
-        intern_loaded_extern_crate_types(&extern_record, &mut staged_context)?;
+        intern_loaded_extern_crate_types(&extern_record, Some(&mut staged_context))?;
         staged_crate_context.add_extern_crate(extern_record)?;
 
         *self = staged_crate_context;
@@ -133,7 +133,7 @@ impl CrateContext {
         expected_name: &str,
         artifact_path: PathBuf,
         header: &ProductArtifactHeader,
-        context: &mut crate::type_context::TypeContext,
+        context: Option<&mut crate::type_context::TypeContext>,
     ) -> Result<(), String> {
         let mut timer = crate::pipeline::timing::PhaseTimer::from_env();
         let portable =
@@ -156,13 +156,15 @@ impl CrateContext {
         let extern_record =
             extern_crate_from_products(&products, &artifact_path, &remap, &staged_crate_context)?;
         timer.lap("extern/remap");
-        let mut staged_context = context.clone();
-        intern_loaded_extern_crate_types(&extern_record, &mut staged_context)?;
+        let mut staged_context = context.as_deref().cloned();
+        intern_loaded_extern_crate_types(&extern_record, staged_context.as_mut())?;
         timer.lap("extern/intern");
         staged_crate_context.add_extern_crate(extern_record)?;
 
         *self = staged_crate_context;
-        *context = staged_context;
+        if let (Some(context), Some(staged)) = (context, staged_context) {
+            *context = staged;
+        }
         timer.lap("extern/register");
 
         Ok(())

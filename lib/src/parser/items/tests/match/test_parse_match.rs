@@ -28,7 +28,7 @@ fn test_parse_match() {
                         span: Span {
                             start: 6,
                             end: 7,
-                            file_path: PathBuf::from("/test.rk"),
+                            file_path: PathBuf::from("/test.rk").into(),
                         },
                     })],
                 }),
@@ -45,7 +45,7 @@ fn test_parse_match() {
                                 span: Span {
                                     start: 12,
                                     end: 13,
-                                    file_path: PathBuf::from("/test.rk"),
+                                    file_path: PathBuf::from("/test.rk").into(),
                                 },
                             },
                             mut_: false,
@@ -60,7 +60,7 @@ fn test_parse_match() {
                                     span: Span {
                                         start: 17,
                                         end: 18,
-                                        file_path: PathBuf::from("/test.rk"),
+                                        file_path: PathBuf::from("/test.rk").into(),
                                     },
                                 }),
                                 secondaries: None,
@@ -81,7 +81,7 @@ fn test_parse_match() {
                                         span: Span {
                                             start: 24,
                                             end: 25,
-                                            file_path: PathBuf::from("/test.rk"),
+                                            file_path: PathBuf::from("/test.rk").into(),
                                         },
                                     },
                                     mut_: false,
@@ -95,7 +95,7 @@ fn test_parse_match() {
                                         span: Span {
                                             start: 27,
                                             end: 28,
-                                            file_path: PathBuf::from("/test.rk"),
+                                            file_path: PathBuf::from("/test.rk").into(),
                                         },
                                     },
                                     mut_: false,

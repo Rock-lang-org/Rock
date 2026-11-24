@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::ids::TypeVarId;
 use crate::lexer::Span;
@@ -9,7 +9,7 @@ use crate::types::Type;
 use super::errors::{InferenceError, UnifyError};
 
 pub(super) struct ResolveFolder<'a> {
-    pub(super) substitutions: &'a HashMap<TypeVarId, Type>,
+    pub(super) substitutions: &'a super::layered_map::LayeredMap<TypeVarId, Type>,
 }
 
 impl TypeFolder for ResolveFolder<'_> {
@@ -27,9 +27,9 @@ impl TypeFolder for ResolveFolder<'_> {
 }
 
 pub(super) struct StrictFinalizer<'a> {
-    pub(super) substitutions: &'a HashMap<TypeVarId, Type>,
-    pub(super) var_spans: &'a HashMap<TypeVarId, Span>,
-    pub(super) var_kinds: &'a HashMap<TypeVarId, Kind>,
+    pub(super) substitutions: &'a super::layered_map::LayeredMap<TypeVarId, Type>,
+    pub(super) var_spans: &'a super::layered_map::LayeredMap<TypeVarId, Span>,
+    pub(super) var_kinds: &'a super::layered_map::LayeredMap<TypeVarId, Kind>,
     pub(super) errors: &'a mut Vec<InferenceError>,
     pub(super) reported: HashSet<TypeVarId>,
 }

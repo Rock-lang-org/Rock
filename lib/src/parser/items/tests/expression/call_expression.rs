@@ -26,7 +26,7 @@ fn call_expression() {
                     span: Span {
                         start: 0,
                         end: 5,
-                        file_path: PathBuf::from("/test.rk"),
+                        file_path: PathBuf::from("/test.rk").into(),
                     },
                 })],
             }),
@@ -38,7 +38,7 @@ fn call_expression() {
                             span: Span {
                                 start: 6,
                                 end: 7,
-                                file_path: PathBuf::from("/test.rk"),
+                                file_path: PathBuf::from("/test.rk").into(),
                             },
                         }),
                         secondaries: None,
@@ -52,7 +52,7 @@ fn call_expression() {
                             span: Span {
                                 start: 9,
                                 end: 10,
-                                file_path: PathBuf::from("/test.rk"),
+                                file_path: PathBuf::from("/test.rk").into(),
                             },
                         }),
                         secondaries: None,
@@ -66,7 +66,7 @@ fn call_expression() {
                             span: Span {
                                 start: 12,
                                 end: 13,
-                                file_path: PathBuf::from("/test.rk"),
+                                file_path: PathBuf::from("/test.rk").into(),
                             },
                         }),
                         secondaries: None,

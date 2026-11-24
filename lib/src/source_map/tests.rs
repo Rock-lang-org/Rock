@@ -7,7 +7,7 @@ use crate::ids::{CrateId, LocalDefId};
 
 fn span(start: usize, end: usize) -> Span {
     Span {
-        file_path: PathBuf::from("/virtual/main.rk"),
+        file_path: PathBuf::from("/virtual/main.rk").into(),
         start,
         end,
     }

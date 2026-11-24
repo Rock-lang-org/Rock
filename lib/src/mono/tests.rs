@@ -359,7 +359,7 @@ fn constructor_instance_keys_distinguish_families_and_reuse_eta_equivalents() {
     env.register_constructor(option, NominalTypeKind::Enum, unary.clone());
     env.register_constructor(vector, NominalTypeKind::Struct, unary);
     let mut mono = Monomorphizer::new();
-    mono.normalization_env = env;
+    mono.normalization_env = env.into();
     let option_ty = Type::Constructor {
         id: option,
         flavor: NominalTypeKind::Enum,

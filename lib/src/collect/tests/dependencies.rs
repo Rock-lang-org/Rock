@@ -184,7 +184,7 @@ fn collect_records_artifact_glob_import_alias_by_export_def_id() {
             name: None,
             top_levels: vec![TopLevel::GlobImport(
                 vec!["dep".to_string()],
-                crate::lexer::Span::new(std::path::PathBuf::from("main.rk"), 2, 8),
+                crate::lexer::Span::new(std::path::PathBuf::from("main.rk").into(), 2, 8),
             )],
             is_inline: false,
             filepath: None,

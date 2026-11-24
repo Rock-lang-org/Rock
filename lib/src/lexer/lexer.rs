@@ -17,7 +17,7 @@ pub enum LexerError {
 }
 
 pub struct Lexer {
-    file_path: PathBuf,
+    file_path: crate::lexer::SourcePath,
     input: String,
     position: usize,
     last_token: Option<Token>,
@@ -30,7 +30,7 @@ pub struct Lexer {
 impl Lexer {
     pub fn new(file_path: PathBuf, input: &str) -> Result<Self, LexerError> {
         Ok(Lexer {
-            file_path,
+            file_path: file_path.into(),
             input: input.to_string(),
             position: 0,
             last_token: None,

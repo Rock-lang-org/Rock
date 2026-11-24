@@ -5,6 +5,7 @@ mod errors;
 mod folders;
 mod fresh_vars;
 mod invariant;
+mod layered_map;
 mod lifecycle;
 mod strict;
 mod type_var_state;
@@ -13,8 +14,9 @@ mod unify;
 pub(crate) use errors::non_constructor_type_description;
 pub use errors::{InferenceError, UnifyError};
 
-use std::collections::HashMap;
 use std::sync::Arc;
+
+use layered_map::LayeredMap;
 
 use crate::ids::{IdGen, TypeVarId};
 use crate::lexer::Span;
@@ -25,15 +27,15 @@ use crate::types::{TraitBound, Type};
 /// Type inference engine using unification
 pub struct InferenceEngine {
     next_var: IdGen<TypeVarId>,
-    substitutions: Arc<HashMap<TypeVarId, Type>>,
+    substitutions: LayeredMap<TypeVarId, Type>,
     substitution_generation: u64,
     rigid_substitution_generation: u64,
     changed_type_vars: Vec<TypeVarId>,
     /// Trait bounds for type variables (var_id -> list of bounds)
-    trait_bounds: HashMap<TypeVarId, Vec<TraitBound>>,
+    trait_bounds: LayeredMap<TypeVarId, Vec<TraitBound>>,
     /// Origin span for each fresh type variable (for error messages)
-    pub var_spans: HashMap<TypeVarId, Span>,
-    var_kinds: Arc<HashMap<TypeVarId, Kind>>,
+    var_spans: LayeredMap<TypeVarId, Span>,
+    var_kinds: LayeredMap<TypeVarId, Kind>,
     // Most probes only read normalization data. Fresh variables in a probe
     // update a private copy rather than changing the parent engine.
     normalization_env: Arc<TypeNormalizationEnv>,

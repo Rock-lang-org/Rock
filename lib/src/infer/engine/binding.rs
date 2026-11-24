@@ -32,9 +32,9 @@ impl InferenceEngine {
             return Err(UnifyError::InfiniteType { variable: id, ty });
         }
         if let (Type::TypeVar(target_id), Some(span)) = (&ty, self.var_spans.get(&id).cloned()) {
-            self.var_spans.entry(*target_id).or_insert(span);
+            self.var_spans.insert_if_absent(*target_id, span);
         }
-        std::sync::Arc::make_mut(&mut self.substitutions).insert(id, ty);
+        self.substitutions.insert(id, ty);
         self.substitution_generation = self.substitution_generation.wrapping_add(1);
         if !crate::type_services::visit::type_any(&self.substitutions[&id], |nested| {
             matches!(nested, Type::TypeVar(_))
@@ -78,7 +78,7 @@ impl InferenceEngine {
             return;
         }
         if self.substitutions.contains_key(id) && self.substitutions.get(id) != Some(&normalized) {
-            std::sync::Arc::make_mut(&mut self.substitutions).insert(*id, normalized);
+            self.substitutions.insert(*id, normalized);
             self.substitution_generation = self.substitution_generation.wrapping_add(1);
             self.changed_type_vars.push(*id);
         }

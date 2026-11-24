@@ -414,7 +414,7 @@ fn constructor_specialization_normalizes_nested_generic_application() {
     env.register_generic_kind(constructor_param, Kind::arrow(Kind::Type, Kind::Type));
     env.register_generic_kind(element_param, Kind::Type);
     let mut mono = Monomorphizer::new();
-    mono.normalization_env = env;
+    mono.normalization_env = env.into();
 
     let (instance, _, ret) = mono
         .monomorphize_call("lift", &generic, &[expr_with_type(concrete.clone())])
@@ -466,7 +466,7 @@ fn specialization_beta_reduces_result_section_after_error_substitution() {
     env.register_nominal(result_id, NominalTypeKind::Enum, 2);
     env.register_generic_kind(error_param, Kind::Type);
     let mut mono = Monomorphizer::new();
-    mono.normalization_env = env;
+    mono.normalization_env = env.into();
     let bool_id = mono.intern_type(&Type::Bool);
 
     assert_eq!(

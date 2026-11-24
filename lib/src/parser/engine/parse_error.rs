@@ -157,45 +157,35 @@ impl ParseError {
     /// Prefers errors that occurred later in the input, but if positions are equal,
     /// prefers errors with more context (deeper in the parsing tree).
     pub fn choose_better(self, other: ParseError) -> ParseError {
-        // Special cases: ShortCircuit and Fail should never be reported
-        match (&self, &other) {
-            (ParseError::HardError(_, _), _) => return self,
-            (_, ParseError::HardError(_, _)) => return other,
-            (ParseError::ShortCircuit, _) => return other,
-            (_, ParseError::ShortCircuit) => return self,
-            (ParseError::Fail, _) => return other,
-            (_, ParseError::Fail) => return self,
+        if self.prefers(&other) {
+            other
+        } else {
+            self
+        }
+    }
+
+    /// Whether `other` is the better error to report: later in the input,
+    /// then more sensible, then with more context. Internal control-flow
+    /// errors (`ShortCircuit`, `Fail`) are never preferred; hard errors are.
+    pub fn prefers(&self, other: &ParseError) -> bool {
+        match (self, other) {
+            (ParseError::HardError(_, _), _) => return false,
+            (_, ParseError::HardError(_, _)) => return true,
+            (ParseError::ShortCircuit, _) => return true,
+            (_, ParseError::ShortCircuit) => return false,
+            (ParseError::Fail, _) => return true,
+            (_, ParseError::Fail) => return false,
             _ => {}
         }
-
-        let self_pos = self.position();
-        let other_pos = other.position();
-
-        // Compare positions first - prefer the error that occurred later
-        if self_pos > other_pos {
-            return self;
-        } else if other_pos > self_pos {
-            return other;
+        let (self_pos, other_pos) = (self.position(), other.position());
+        if self_pos != other_pos {
+            return other_pos > self_pos;
         }
-
-        // Positions are equal - check sensibility scores
-        let self_sensibility = self.sensibility_score();
-        let other_sensibility = other.sensibility_score();
-
-        if self_sensibility > other_sensibility {
-            return self;
-        } else if other_sensibility > self_sensibility {
-            return other;
+        let (self_sensibility, other_sensibility) =
+            (self.sensibility_score(), other.sensibility_score());
+        if self_sensibility != other_sensibility {
+            return other_sensibility > self_sensibility;
         }
-
-        // Positions and sensibility are equal - prefer the error with more context
-        let self_depth = self.context_depth();
-        let other_depth = other.context_depth();
-
-        if self_depth >= other_depth {
-            self
-        } else {
-            other
-        }
+        other.context_depth() > self.context_depth()
     }
 }

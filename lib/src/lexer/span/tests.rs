@@ -15,6 +15,6 @@ fn span_equality_compares_path_and_range() {
 
 impl Span {
     pub fn test() -> Self {
-        Self::new(PathBuf::from("/test.rk"), 0, 0)
+        Self::new(PathBuf::from("/test.rk").into(), 0, 0)
     }
 }

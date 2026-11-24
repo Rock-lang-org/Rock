@@ -284,12 +284,12 @@ pub(super) fn solve_constraints_in_place_mode(
     }
 
     for (id, constraint) in snapshot(store, |value| {
-            matches!(
-                value,
-                Constraint::Trait { .. }
-                    | Constraint::IntLiteral { .. }
-                    | Constraint::FloatLiteral { .. }
-            )
+        matches!(
+            value,
+            Constraint::Trait { .. }
+                | Constraint::IntLiteral { .. }
+                | Constraint::FloatLiteral { .. }
+        )
     }) {
         match constraint {
             Constraint::Trait {
@@ -298,7 +298,7 @@ pub(super) fn solve_constraints_in_place_mode(
                 span,
                 context,
             } => {
-                let normalization_env = engine.normalization_env();
+                let normalization_env = engine.shared_normalization_env();
                 // Impl projections whose base was inferred late
                 // (`&<String as Index Range>::Output`) reduce here as well.
                 let projections = crate::selection::SelectionService::new(
@@ -360,11 +360,7 @@ pub(super) fn solve_constraints_in_place_mode(
                 }
                 let resolved_bound = TraitBound {
                     trait_id: bound.trait_id,
-                    type_args: bound
-                        .type_args
-                        .iter()
-                        .map(|arg| normalize(&arg))
-                        .collect(),
+                    type_args: bound.type_args.iter().map(|arg| normalize(&arg)).collect(),
                 };
                 if !matches!(resolved, Type::TypeVar(_) | Type::Generic(_))
                     && contains_inference_pending_type(&resolved)

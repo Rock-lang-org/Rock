@@ -11,7 +11,7 @@ fn default_span() -> Span {
     Span {
         start: 0,
         end: 0,
-        file_path: PathBuf::from("/test.rk"),
+        file_path: PathBuf::from("/test.rk").into(),
     }
 }
 

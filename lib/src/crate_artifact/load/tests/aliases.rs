@@ -19,9 +19,12 @@ fn intern_loaded_interface_types_rejects_one_display_alias_for_distinct_ids() {
     interface.insert_function("same_alias".to_string(), second_function);
     let mut context = crate::type_context::TypeContext::new();
 
-    let error =
-        super::intern_loaded_interface_types(&interface, &ResolverTables::default(), &mut context)
-            .expect_err("distinct artifact IDs must not share one display alias");
+    let error = super::intern_loaded_interface_types(
+        &interface,
+        &ResolverTables::default(),
+        Some(&mut context),
+    )
+    .expect_err("distinct artifact IDs must not share one display alias");
 
     assert!(error.contains("artifact function display alias 'same_alias'"));
 }

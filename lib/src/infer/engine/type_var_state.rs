@@ -12,7 +12,7 @@ use super::InferenceEngine;
 impl InferenceEngine {
     /// Add a trait bound to a type variable
     pub fn add_bound(&mut self, var_id: TypeVarId, bound: TraitBound) {
-        self.trait_bounds.entry(var_id).or_default().push(bound);
+        self.trait_bounds.entry_or_default(var_id).push(bound);
     }
 
     /// Get all trait bounds for a type variable
@@ -117,5 +117,10 @@ impl InferenceEngine {
 
     pub(crate) fn normalization_env(&self) -> TypeNormalizationEnv {
         (*self.normalization_env).clone()
+    }
+
+    /// The current environment without copying it.
+    pub(crate) fn shared_normalization_env(&self) -> std::sync::Arc<TypeNormalizationEnv> {
+        std::sync::Arc::clone(&self.normalization_env)
     }
 }

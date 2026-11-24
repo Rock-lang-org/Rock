@@ -9,7 +9,7 @@ fn index_mut_pair_diagnostic_uses_index_mut_method_span() {
     let impl_id = def_id(43);
     let point_id = def_id(44);
     let span = Span {
-        file_path: PathBuf::from("cell.rk"),
+        file_path: PathBuf::from("cell.rk").into(),
         start: 12,
         end: 24,
     };

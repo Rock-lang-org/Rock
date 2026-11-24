@@ -98,7 +98,7 @@ pub struct TypeContext {
     interned: HashMap<Ty, TypeId>,
     ids: IdGen<TypeId>,
     accepting_normalized_hkt: bool,
-    normalization_env: crate::type_services::normalize::TypeNormalizationEnv,
+    normalization_env: std::sync::Arc<crate::type_services::normalize::TypeNormalizationEnv>,
 }
 
 impl Clone for TypeContext {
@@ -128,7 +128,7 @@ impl TypeContext {
         normalization_env: crate::type_services::normalize::TypeNormalizationEnv,
     ) -> Self {
         Self {
-            normalization_env,
+            normalization_env: normalization_env.into(),
             ..Self::default()
         }
     }
@@ -679,8 +679,20 @@ impl TypeContext {
         ty: &Type,
         env: &crate::type_services::normalize::TypeNormalizationEnv,
     ) -> Result<TypeId, crate::type_services::normalize::NormalizeError> {
+        self.intern_normalized_type_shared(ty, &std::sync::Arc::new(env.clone()))
+    }
+
+    /// Like [`Self::intern_normalized_type`]; callers interning many types
+    /// under one environment share it instead of copying it per type.
+    pub(crate) fn intern_normalized_type_shared(
+        &mut self,
+        ty: &Type,
+        env: &std::sync::Arc<crate::type_services::normalize::TypeNormalizationEnv>,
+    ) -> Result<TypeId, crate::type_services::normalize::NormalizeError> {
         let normalized = crate::type_services::normalize::TypeNormalizer::new(env).normalize(ty)?;
-        self.normalization_env = env.clone();
+        if !std::sync::Arc::ptr_eq(&self.normalization_env, env) {
+            self.normalization_env = std::sync::Arc::clone(env);
+        }
         let previous = std::mem::replace(&mut self.accepting_normalized_hkt, true);
         let id = self.intern_type(&normalized);
         self.accepting_normalized_hkt = previous;
@@ -752,7 +764,7 @@ impl TypeContext {
             )
         };
         let env = self.normalization_env.clone();
-        self.intern_normalized_type(&substituted, &env)
+        self.intern_normalized_type_shared(&substituted, &env)
             .expect("TypeId substitution must preserve canonical kind-correct types")
     }
 }

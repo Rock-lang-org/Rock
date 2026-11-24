@@ -301,7 +301,7 @@ impl CrateContext {
             expected_name,
             artifact_path,
             &header,
-            context,
+            Some(context),
         )
     }
 }

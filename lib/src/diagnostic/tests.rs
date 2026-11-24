@@ -19,7 +19,7 @@ fn diagnostic_report_handles_more_than_three_labels() {
     ));
     fs::write(&source_path, "main = -> 0\n").unwrap();
     let span = Span {
-        file_path: source_path.clone(),
+        file_path: source_path.clone().into(),
         start: 0,
         end: 4,
     };
@@ -53,7 +53,7 @@ fn source_diagnostic_rejects_an_empty_span() {
     let _ = Diagnostic::new(
         "invalid source diagnostic".to_string(),
         Span {
-            file_path: PathBuf::new(),
+            file_path: PathBuf::new().into(),
             start: 0,
             end: 0,
         },
@@ -76,7 +76,7 @@ fn diagnostic_source_map_attaches_virtual_source_by_span_path() {
     let mut diagnostic = Diagnostic::new(
         "unknown value".to_string(),
         Span {
-            file_path: path.clone(),
+            file_path: path.clone().into(),
             start: 10,
             end: 17,
         },
@@ -111,7 +111,7 @@ fn diagnostic_source_map_attaches_sources_for_cross_file_labels() {
     let mut diagnostic = Diagnostic::new(
         "cross-file error".to_string(),
         Span {
-            file_path: primary_path,
+            file_path: primary_path.into(),
             start: 10,
             end: 13,
         },
@@ -119,7 +119,7 @@ fn diagnostic_source_map_attaches_sources_for_cross_file_labels() {
     .with_label(
         "defined here".to_string(),
         Span {
-            file_path: related_path.clone(),
+            file_path: related_path.clone().into(),
             start: 0,
             end: 3,
         },
@@ -156,7 +156,7 @@ fn diagnostic_source_map_preserves_artifact_source_origin() {
     let mut diagnostic = Diagnostic::new(
         "artifact source error".to_string(),
         Span {
-            file_path: path,
+            file_path: path.into(),
             start: 0,
             end: 6,
         },
@@ -191,7 +191,7 @@ fn unexpected_eof_diagnostic_points_to_actual_source_end() {
 
 #[test]
 fn structured_diagnostic_dto_preserves_contract_fields() {
-    let span = Span::new(PathBuf::from("/virtual/main.rk"), 2, 5);
+    let span = Span::new(PathBuf::from("/virtual/main.rk").into(), 2, 5);
     let diagnostic = Diagnostic::new("bad expression".to_string(), span.clone())
         .with_code(DiagnosticCode::Parser)
         .with_severity(DiagnosticSeverity::Warning)
@@ -214,7 +214,7 @@ fn structured_diagnostic_dto_preserves_contract_fields() {
 
 #[test]
 fn structured_diagnostic_dto_serializes_without_losing_source_contract() {
-    let span = Span::new(PathBuf::from("/virtual/main.rk"), 2, 5);
+    let span = Span::new(PathBuf::from("/virtual/main.rk").into(), 2, 5);
     let dto = Diagnostic::new("bad expression".to_string(), span.clone())
         .with_code(DiagnosticCode::Parser)
         .with_note("parser context")
@@ -247,9 +247,9 @@ fn parser_control_flow_escape_is_internal_and_non_source() {
 #[test]
 fn parse_context_preserves_wrapped_source_variant_contracts() {
     let path = PathBuf::from("/virtual/parse.rk");
-    let macro_span = Span::new(path.clone(), 1, 2);
-    let invocation_span = Span::new(path.clone(), 3, 4);
-    let argument_span = Span::new(path.clone(), 5, 6);
+    let macro_span = Span::new(path.clone().into(), 1, 2);
+    let invocation_span = Span::new(path.clone().into(), 3, 4);
+    let argument_span = Span::new(path.clone().into(), 5, 6);
     let token = crate::lexer::Token {
         token_type: crate::lexer::TokenType::Ident("value".to_string()),
         span: invocation_span.clone(),
@@ -292,7 +292,7 @@ fn parse_context_preserves_wrapped_source_variant_contracts() {
 
 #[test]
 fn unexpected_indent_preserves_offending_token_span() {
-    let span = Span::new(PathBuf::from("/virtual/main.rk"), 11, 12);
+    let span = Span::new(PathBuf::from("/virtual/main.rk").into(), 11, 12);
     let diagnostic = Diagnostic::from(ParseError::UnexpectedIndent(3, span.clone()));
     assert_eq!(diagnostic.code, Some(DiagnosticCode::Parser));
     assert_eq!(
@@ -304,7 +304,7 @@ fn unexpected_indent_preserves_offending_token_span() {
 
 #[test]
 fn resolve_error_conversion_preserves_family_and_source_span() {
-    let span = Span::new(PathBuf::from("/virtual/main.rk"), 5, 8);
+    let span = Span::new(PathBuf::from("/virtual/main.rk").into(), 5, 8);
     let error = crate::lower::ResolveError::with_span_code(
         "type mismatch".to_string(),
         span.clone(),
@@ -322,7 +322,7 @@ fn resolve_error_conversion_preserves_family_and_source_span() {
 fn resolve_error_conversion_accepts_only_validated_origin_states() {
     let source = crate::lower::ResolveError::with_span(
         "source".to_string(),
-        Span::new(PathBuf::from("/virtual/main.rk"), 1, 2),
+        Span::new(PathBuf::from("/virtual/main.rk").into(), 1, 2),
     );
     let non_source = crate::lower::ResolveError::non_source("internal".to_string());
 
@@ -335,13 +335,16 @@ fn resolve_error_conversion_accepts_only_validated_origin_states() {
 #[test]
 fn attached_source_validation_rejects_non_boundary_ranges() {
     let path = PathBuf::from("/virtual/main.rk");
-    let diagnostic = Diagnostic::new("bad range".to_string(), Span::new(path.clone(), 1, 2))
-        .with_source(DiagnosticSource {
-            display_path: path,
-            text: "é".to_string(),
-            origin: DiagnosticSourceOrigin::Virtual,
-            related: BTreeMap::new(),
-        });
+    let diagnostic = Diagnostic::new(
+        "bad range".to_string(),
+        Span::new(path.clone().into(), 1, 2),
+    )
+    .with_source(DiagnosticSource {
+        display_path: path,
+        text: "é".to_string(),
+        origin: DiagnosticSourceOrigin::Virtual,
+        related: BTreeMap::new(),
+    });
 
     assert_eq!(
         diagnostic.validate(),
@@ -353,14 +356,17 @@ fn attached_source_validation_rejects_non_boundary_ranges() {
 #[test]
 fn attached_source_validation_rejects_invalid_secondary_ranges() {
     let path = PathBuf::from("/virtual/main.rk");
-    let diagnostic = Diagnostic::new("bad label".to_string(), Span::new(path.clone(), 0, 1))
-        .with_label("invalid".to_string(), Span::new(path.clone(), 0, 4))
-        .with_source(DiagnosticSource {
-            display_path: path,
-            text: "abc".to_string(),
-            origin: DiagnosticSourceOrigin::Virtual,
-            related: BTreeMap::new(),
-        });
+    let diagnostic = Diagnostic::new(
+        "bad label".to_string(),
+        Span::new(path.clone().into(), 0, 1),
+    )
+    .with_label("invalid".to_string(), Span::new(path.clone().into(), 0, 4))
+    .with_source(DiagnosticSource {
+        display_path: path,
+        text: "abc".to_string(),
+        origin: DiagnosticSourceOrigin::Virtual,
+        related: BTreeMap::new(),
+    });
 
     assert_eq!(
         diagnostic.validate(),
@@ -374,7 +380,7 @@ fn report_rejects_invalid_attached_ranges_without_panicking() {
     let path = PathBuf::from("/virtual/main.rk");
     let diagnostic = Diagnostic::new(
         "bad report range".to_string(),
-        Span::new(path.clone(), 0, 4),
+        Span::new(path.clone().into(), 0, 4),
     )
     .with_source(DiagnosticSource {
         display_path: path,

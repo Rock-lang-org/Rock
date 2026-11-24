@@ -73,7 +73,7 @@ pub(super) enum AuthorityObligationKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct AuthoritySiteId {
     kind: AuthorityObligationKind,
-    file_path: std::path::PathBuf,
+    file_path: crate::lexer::SourcePath,
     start: usize,
     end: usize,
 }

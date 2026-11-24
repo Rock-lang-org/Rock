@@ -60,7 +60,7 @@ impl MacroImportUses {
         };
         let key = ImportKey {
             scope: scope.clone(),
-            file_path: span.file_path.clone(),
+            file_path: span.file_path.to_path_buf(),
             start: span.start,
             end: span.end,
             written: written.clone(),

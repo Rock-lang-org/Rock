@@ -61,7 +61,7 @@ impl InferenceEngine {
 
     pub fn fresh_type_var_of_kind(&mut self, kind: Kind) -> Type {
         let id = self.next_var.fresh();
-        std::sync::Arc::make_mut(&mut self.var_kinds).insert(id, kind.clone());
+        self.var_kinds.insert(id, kind.clone());
         std::sync::Arc::make_mut(&mut self.normalization_env).register_inference_kind(id, kind);
         Type::TypeVar(id)
     }
@@ -74,7 +74,7 @@ impl InferenceEngine {
     pub fn fresh_type_var_at_kind(&mut self, span: Span, kind: Kind) -> Type {
         let id = self.next_var.fresh();
         self.var_spans.insert(id, span);
-        std::sync::Arc::make_mut(&mut self.var_kinds).insert(id, kind.clone());
+        self.var_kinds.insert(id, kind.clone());
         std::sync::Arc::make_mut(&mut self.normalization_env).register_inference_kind(id, kind);
         Type::TypeVar(id)
     }
@@ -82,7 +82,7 @@ impl InferenceEngine {
     pub fn seed_var_spans(&mut self, spans: impl IntoIterator<Item = (TypeVarId, Span)>) {
         for (id, span) in spans {
             self.var_spans.insert(id, span);
-            std::sync::Arc::make_mut(&mut self.var_kinds).insert(id, Kind::Type);
+            self.var_kinds.insert(id, Kind::Type);
             std::sync::Arc::make_mut(&mut self.normalization_env)
                 .register_inference_kind(id, Kind::Type);
         }

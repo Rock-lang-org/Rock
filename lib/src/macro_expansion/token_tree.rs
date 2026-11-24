@@ -77,7 +77,8 @@ impl TokenStream {
             trees: tokens
                 .into_iter()
                 .map(|mut token| {
-                    token.span.file_path = format!("<macro-expansion:{}>", expansion.0).into();
+                    token.span.file_path =
+                        crate::lexer::SourcePath::new(format!("<macro-expansion:{}>", expansion.0));
                     TokenTree::Leaf {
                         origin: TokenOrigin::Generated {
                             expansion,

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn codegen_source_operation_keeps_exact_origin_and_code() {
-    let span = crate::lexer::Span::new(std::path::PathBuf::from("/virtual/main.rk"), 4, 9);
+    let span = crate::lexer::Span::new(std::path::PathBuf::from("/virtual/main.rk").into(), 4, 9);
     let diagnostic = CodegenError::source_operation("operation failed")
         .with_operation_span(Some(span.clone()))
         .into_diagnostic();
@@ -14,7 +14,7 @@ fn codegen_source_operation_keeps_exact_origin_and_code() {
 
 #[test]
 fn codegen_source_operation_hides_debug_identity_payloads() {
-    let span = crate::lexer::Span::new(std::path::PathBuf::from("/virtual/main.rk"), 4, 9);
+    let span = crate::lexer::Span::new(std::path::PathBuf::from("/virtual/main.rk").into(), 4, 9);
     let diagnostic = CodegenError::source_operation(
         "MIR callable DefId { local: 1 } uses GenericParamId { index: 0 }",
     )
@@ -60,7 +60,7 @@ fn llvm_details_are_kept_as_notes_without_a_fabricated_source_span() {
 
 #[test]
 fn backend_errors_cannot_be_reclassified_as_source_operations() {
-    let span = crate::lexer::Span::new(std::path::PathBuf::from("/virtual/main.rk"), 1, 2);
+    let span = crate::lexer::Span::new(std::path::PathBuf::from("/virtual/main.rk").into(), 1, 2);
     let diagnostic = CodegenError::new("backend failed".to_string())
         .with_operation_span(Some(span))
         .into_diagnostic();

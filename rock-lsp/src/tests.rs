@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use rock_lib::diagnostic::Diagnostic as RockDiagnostic;
 use rock_lib::Span;
-use tower_lsp::lsp_types::{DiagnosticSeverity, InlayHintKind, InlayHintLabel, Position, Range, Url};
+use tower_lsp::lsp_types::{
+    DiagnosticSeverity, InlayHintKind, InlayHintLabel, Position, Range, Url,
+};
 
 use super::{
     analysis_config, byte_offset, diagnostic_to_lsp, position_at, type_hints_to_lsp, Settings,
@@ -27,7 +29,7 @@ fn regression_clears_cross_file_diagnostics_only_for_the_publishing_target() {
     let mut warnings = rock_lib::diagnostic::Diagnostics::default();
     warnings.push(RockDiagnostic::new(
         "unused helper".into(),
-        Span::new(helper_path, 0, 6),
+        Span::new(helper_path.into(), 0, 6),
     ));
 
     let updates = state.diagnostic_updates(&entry, &trigger, &warnings);
@@ -73,7 +75,7 @@ fn regression_retires_diagnostics_when_the_last_document_leaves_a_target() {
         let mut diagnostics = rock_lib::diagnostic::Diagnostics::default();
         diagnostics.push(RockDiagnostic::new(
             message.into(),
-            Span::new(shared_path.clone(), 0, 6),
+            Span::new(shared_path.clone().into(), 0, 6),
         ));
         diagnostics
     };
@@ -210,7 +212,10 @@ fn inlay_type_hints_only_label_unannotated_bindings_in_range() {
     let before_hint = Range::new(Position::new(3, 0), Position::new(3, 8));
     assert!(type_hints_to_lsp(&analysis, &path, text, before_hint).is_empty());
     let after_hint = Range::new(Position::new(3, 8), Position::new(4, 0));
-    assert_eq!(type_hints_to_lsp(&analysis, &path, text, after_hint).len(), 1);
+    assert_eq!(
+        type_hints_to_lsp(&analysis, &path, text, after_hint).len(),
+        1
+    );
 }
 
 #[test]
@@ -330,7 +335,8 @@ fn open_buffers_for_the_same_target_share_analysis() {
 fn diagnostics_convert_byte_ranges_to_utf16_ranges() {
     let path = PathBuf::from("/virtual/main.rk");
     let uri = Url::from_file_path(&path).unwrap();
-    let diagnostic = RockDiagnostic::new("bad expression".to_string(), Span::new(path, 1, 5));
+    let diagnostic =
+        RockDiagnostic::new("bad expression".to_string(), Span::new(path.into(), 1, 5));
 
     let converted = diagnostic_to_lsp(&diagnostic, &uri, "a😀b").unwrap();
     assert_eq!(converted.range.start, Position::new(0, 1));

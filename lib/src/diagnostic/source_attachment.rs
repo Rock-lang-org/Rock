@@ -27,7 +27,7 @@ impl DiagnosticSourceMap {
                 if span.file_path != primary_span.file_path {
                     if let Some(related) = self.source_for_path(&span.file_path) {
                         source.related.insert(
-                            span.file_path.clone(),
+                            span.file_path.to_path_buf(),
                             DiagnosticRelatedSource {
                                 display_path: related.display_path.clone(),
                                 text: related.text.clone(),

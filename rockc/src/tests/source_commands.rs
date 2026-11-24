@@ -77,7 +77,7 @@ fn source_command_loader_keeps_virtual_source_for_diagnostic_attachment() {
     let sources = rock_lib::diagnostic::DiagnosticSourceMap::from_source_database(&source_db);
     let mut diagnostic = rock_lib::diagnostic::Diagnostic::new(
         "source command failure".to_string(),
-        rock_lib::Span::new(path.clone(), 0, 4),
+        rock_lib::Span::new(path.clone().into(), 0, 4),
     );
     sources.attach(&mut diagnostic);
 

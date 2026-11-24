@@ -445,7 +445,7 @@ fn append_generated_parse_token(
         .map(|token| Span::new(token.span.file_path.clone(), token.span.end, token.span.end))
         .unwrap_or_else(|| {
             Span::new(
-                std::path::PathBuf::from(format!("<macro-expansion:{}>", expansion_id.0)),
+                std::path::PathBuf::from(format!("<macro-expansion:{}>", expansion_id.0)).into(),
                 0,
                 0,
             )
