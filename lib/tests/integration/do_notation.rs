@@ -21,6 +21,14 @@ main = !->
         <&> normalize
         .foldl step, initial
         |> (.println!)
+    inline_values = Option::Some 4
+    inline_values <&> normalize
+        .foldl step, initial
+        |> (.println!)
+    10
+        + (1
+        .wrapping_add 2)
+        |> (.println!)
     1
         + 2
         * 3
@@ -30,7 +38,7 @@ main = !->
         |> (.println!)
 "#,
     );
-    assert_eq!(output, "15\n28\n");
+    assert_eq!(output, "15\n15\n13\n28\n");
 }
 
 #[test]

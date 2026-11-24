@@ -127,7 +127,7 @@ fn expression_without_spaced_dot(stream: Input) -> IResult<Expression> {
     let (stream, binop) = (
         operator,
         // Allow expression continuation on the same line
-        expression_without_spaced_dot
+        infix_rhs
             // Or on the next line with indentation
             .or(preceded(
                 TokenType::Eol,
@@ -226,11 +226,17 @@ fn multiline_operator_continuation(stream: Input) -> IResult<(Operator, Expressi
     // Parse operator and expression WITHOUT increasing indent context
     // This allows subsequent continuations at the same indent level
     // A stuck prefix operator starts the nested body, not an infix continuation.
-    let (mut stream, op) = operator_token.or(ampersand_token).process(stream)?;
-    let previous = stream.infix_continuation_indent.replace(expected_indent);
+    let (stream, op) = operator_token.or(ampersand_token).process(stream)?;
+    let (stream, rhs) = infix_rhs(stream)?;
+    Ok((stream, (op, rhs)))
+}
+
+fn infix_rhs(mut stream: Input) -> IResult<Expression> {
+    let continuation_indent = stream.indent_level + stream.indent_step;
+    let previous = stream.infix_continuation_indent.replace(continuation_indent);
     let (mut stream, rhs) = expression_without_spaced_dot(stream)?;
     stream.infix_continuation_indent = previous;
-    Ok((stream, (op, rhs)))
+    Ok((stream, rhs))
 }
 
 pub fn unary_expr(stream: Input) -> IResult<UnaryExpr> {

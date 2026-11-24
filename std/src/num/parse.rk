@@ -5,7 +5,6 @@
 > std::cmp::eq::PartialEq
 > std::cmp::eq::Eq
 > std::show::Show
-> std::string::owned::String
 
 // Why text is not a valid integer.
 < enum ParseIntError

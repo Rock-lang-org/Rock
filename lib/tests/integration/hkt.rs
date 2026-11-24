@@ -139,7 +139,7 @@ fn test_hkt_functor_option_result_vec() {
                 "Traversable",
             ]
             .iter()
-            .any(|name| trait_interface.name.ends_with(name))
+            .any(|name| trait_interface.name.rsplit("::").next() == Some(*name))
             .then_some(*id)
         })
         .collect::<Vec<_>>();
