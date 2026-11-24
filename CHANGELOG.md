@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.7.4
+
+[Release notes](docs/release-notes/v0.7.4.md) ·
+[Compare v0.7.3…v0.7.4](https://github.com/Rock-lang-org/Rock/compare/v0.7.3...v0.7.4)
+
+- Added compound assignment operators (`+=` through `>>=`) backed by
+  `std::ops` traits, including on indexed places.
+- Added `RightFoldable`, `foldr`, and the `<&<` and `>&>` fold operators.
+- Multiline expressions can alternate operator and method stages.
+- Renamed monadic bind from `>>=` to `>>-`.
+- Made the compiler faster: speed-optimized release builds, lazy std costs
+  for small programs, shared inference tables, narrower coherence checks, and
+  cached dependency artifact validation.
+- Std is always built optimized with overflow checks.
+- Fixed inference of fields on imported structs in signatureless functions,
+  compact mutable reborrows (`&^*ptr`), and literal coercion for mutable
+  operator receivers.
+
 ## v0.7.3
 
 [Release notes](docs/release-notes/v0.7.3.md) ·
