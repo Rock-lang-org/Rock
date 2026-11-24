@@ -845,3 +845,48 @@ main = !->
         "Fn",
     );
 }
+
+#[test]
+fn test_signatureless_field_receiver_of_imported_struct() {
+    let dir = test_temp_dir(TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
+    std::fs::create_dir_all(&dir).unwrap();
+    let _cleanup = TestDirCleanup(dir.clone());
+    let library = dir.join("dep.rk");
+    std::fs::write(
+        &library,
+        r#"
+< struct Req
+    < target: String
+
+run: F -> I64 where F: Fn Req, I64
+< run = f -> f (Req target: "abc".into!)
+"#,
+    )
+    .unwrap();
+    let artifact = dir.join("dep.rkca");
+    let mut config = test_config(library, dir.clone());
+    config.current_crate_name = Some("dep".into());
+    config.crate_kind = rock_lib::CrateKind::Lib;
+    config.no_link = true;
+    config.emit_object = Some(dir.join("dep.o"));
+    let mut products = rock_lib::compile_with_products(&config)
+        .unwrap()
+        .products
+        .unwrap();
+    products.link.object_path = Some(std::path::PathBuf::from("dep.o"));
+    products.write_artifact_to_path(&artifact).unwrap();
+
+    // `request` is only fixed by the imported struct; its field type must
+    // reach the method receiver that was typed before the field resolved.
+    let entry = dir.join("main.rk");
+    std::fs::write(
+        &entry,
+        "> dep::run\n\nhandle = request ->\n    request.target.len!\n\nmain = -> run handle\n",
+    )
+    .unwrap();
+    let mut config = test_config(entry, dir.clone());
+    config.extern_artifacts.push(("dep".into(), artifact));
+    rock_lib::compile(&config).unwrap();
+    let output = run_test_command(&mut std::process::Command::new(dir.join("main")));
+    assert_eq!(output.status.code(), Some(3));
+}

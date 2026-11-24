@@ -169,6 +169,15 @@ impl MethodAuthorityContext<'_> {
                 })
             })
             .collect();
-        expr.ty = field.ty.substitute_generics(&substitution);
+        let field_ty = field.ty.substitute_generics(&substitution);
+        // An access typed with a bare placeholder variable may share it with
+        // other sites (a method receiver, a binding); bind it, don't just
+        // replace it. A callee-shaped placeholder (`() -> _`) is left alone:
+        // the field may be a callable struct rather than a function.
+        let placeholder = self.engine.borrow().resolve(&expr.ty);
+        if matches!(placeholder, Type::TypeVar(_)) {
+            let _ = self.engine.borrow_mut().unify(&placeholder, &field_ty);
+        }
+        expr.ty = field_ty;
     }
 }
