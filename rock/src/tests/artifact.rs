@@ -535,3 +535,25 @@ main = ->
 
     let _ = fs::remove_dir_all(temp_dir);
 }
+
+#[test]
+fn validation_stamp_resolves_bare_rockc_and_keys_artifact_content() {
+    let dir = std::env::temp_dir().join(format!("rock_validation_stamp_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let artifact = dir.join("dep.rkca");
+    let object = dir.join("dep.o");
+    fs::write(&object, b"obj").unwrap();
+    let stamp_of = |bytes: &[u8]| {
+        let file = fs::File::options().write(true).create(true).open(&artifact).unwrap();
+        let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::io::Write::write_all(&mut &file, bytes).unwrap();
+        file.set_modified(modified).unwrap();
+        crate::artifact::validation_stamp(std::path::Path::new("sh"), &artifact, &object)
+            .unwrap()
+            .expect("a bare compiler name is found on PATH")
+    };
+    // Same length and timestamp, different bytes: a restored corrupt file.
+    assert_ne!(stamp_of(b"good"), stamp_of(b"bad!"));
+    let _ = fs::remove_dir_all(&dir);
+}

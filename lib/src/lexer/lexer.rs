@@ -216,7 +216,13 @@ impl Lexer {
             '%' if self.peek(1).is_alphabetic() && self.peek(1).is_lowercase() => {
                 self.macro_invoc()
             }
-            '^' if !OPERATORS_CHARS.contains(&self.peek(1)) => self.token(TokenType::Caret, 1),
+            // `&^*ptr` is a compact mutable reborrow: a caret stuck to `&`
+            // stays the mutability marker rather than starting an operator.
+            '^' if !OPERATORS_CHARS.contains(&self.peek(1))
+                || (self.position > 0 && self.input.as_bytes()[self.position - 1] == b'&') =>
+            {
+                self.token(TokenType::Caret, 1)
+            }
             '~' if self.peek(1).is_alphabetic() && self.peek(1).is_uppercase() => {
                 self.native_operator()
             }

@@ -57,8 +57,16 @@ impl<K: Eq + Hash + Clone, V: Clone> LayeredMap<K, V> {
         if !self.delta.contains_key(&key) {
             let value = self.base.get(&key).cloned().unwrap_or_default();
             self.delta.insert(key.clone(), value);
+            // Fold here too, or probes keep cloning a delta that only grows.
+            self.fold_if_unshared();
         }
-        self.delta.get_mut(&key).expect("entry was just ensured")
+        if self.delta.contains_key(&key) {
+            return self.delta.get_mut(&key).expect("entry was just ensured");
+        }
+        // Folding only happens when the base is unshared.
+        Arc::get_mut(&mut self.base)
+            .and_then(|base| base.get_mut(&key))
+            .expect("folded entry lives in the unshared base")
     }
 
     /// Every entry once; a delta entry hides the base entry it overrides.

@@ -362,14 +362,33 @@ fn artifact_is_fresh(
     let rockc = resolve_rockc_path()?;
     let stamp = validation_stamp(&rockc, artifact_path, &object_path)?;
     let stamp_path = validation_stamp_path(artifact_path);
-    if fs::read_to_string(&stamp_path).ok() == Some(stamp.clone()) {
+    if stamp.is_some() && fs::read_to_string(&stamp_path).ok() == stamp {
         return Ok(true);
     }
     if !validate_artifact_with_rockc(&rockc, artifact_path)? {
+        let _ = fs::remove_file(&stamp_path);
         return Ok(false);
     }
-    let _ = fs::write(stamp_path, stamp);
+    match stamp {
+        Some(stamp) => {
+            let _ = fs::write(stamp_path, stamp);
+        }
+        None => {
+            let _ = fs::remove_file(&stamp_path);
+        }
+    }
     Ok(true)
+}
+
+/// The file a `ROCKC` override runs: a bare name is looked up on `PATH`,
+/// as `Command` does.
+fn rockc_executable_file(rockc: &Path) -> Option<PathBuf> {
+    if rockc.components().count() > 1 {
+        return rockc.is_file().then(|| rockc.to_path_buf());
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(rockc))
+        .find(|candidate| candidate.is_file())
 }
 
 fn validation_stamp_path(artifact_path: &Path) -> PathBuf {
@@ -377,13 +396,29 @@ fn validation_stamp_path(artifact_path: &Path) -> PathBuf {
 }
 
 /// Identifies the exact compiler, artifact and object a validation covered.
-fn validation_stamp(
+/// The artifact is keyed by content: a same-size replacement with preserved
+/// timestamps (e.g. a cache restore) must be validated again. `None` when the
+/// compiler file cannot be located; validation then always runs.
+pub(crate) fn validation_stamp(
     rockc: &Path,
     artifact_path: &Path,
     object_path: &Path,
-) -> Result<String, String> {
-    let mut stamp = String::new();
-    for path in [rockc, artifact_path, object_path] {
+) -> Result<Option<String>, String> {
+    use std::hash::{Hash, Hasher};
+
+    let Some(rockc) = rockc_executable_file(rockc) else {
+        return Ok(None);
+    };
+    let bytes = fs::read(artifact_path)
+        .map_err(|e| format!("Failed to read {}: {}", artifact_path.display(), e))?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    let mut stamp = format!(
+        "{}\tcontent\t{:016x}\n",
+        artifact_path.display(),
+        hasher.finish()
+    );
+    for path in [rockc.as_path(), object_path] {
         let metadata = fs::metadata(path)
             .map_err(|e| format!("Failed to inspect {}: {}", path.display(), e))?;
         let modified = file_modified(path)?
@@ -397,7 +432,7 @@ fn validation_stamp(
             modified
         ));
     }
-    Ok(stamp)
+    Ok(Some(stamp))
 }
 
 fn lint_stamp_path(artifact_path: &Path) -> PathBuf {

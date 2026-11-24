@@ -17,6 +17,20 @@ fn ampersand_and_caret_can_start_multi_character_operators() {
 }
 
 #[test]
+fn compact_mutable_reborrow_keeps_caret_after_ampersand() {
+    let tokens = lex_input("&^*ptr\n").unwrap();
+    let tokens: Vec<_> = tokens.into_iter().map(|token| token.token_type).collect();
+    assert_eq!(
+        tokens[1..4],
+        [
+            TokenType::Ampersand,
+            TokenType::Caret,
+            TokenType::StuckOperator("*".into())
+        ]
+    );
+}
+
+#[test]
 fn unicode_literals_use_byte_spans_and_preserve_following_tokens() {
     let input = "\"é中🦀\" '🦀' '\\'' 42";
     let tokens = lex_input(input).unwrap();

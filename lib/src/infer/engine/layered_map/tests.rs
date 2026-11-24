@@ -32,6 +32,20 @@ fn shared_base_is_never_folded_into() {
 }
 
 #[test]
+fn entries_fold_into_an_unshared_base() {
+    let mut map: LayeredMap<usize, Vec<usize>> = LayeredMap::default();
+    for key in 0..FOLD_THRESHOLD * 3 {
+        map.entry_or_default(key).push(key);
+    }
+    assert!(
+        map.delta.len() < FOLD_THRESHOLD,
+        "delta must not grow unbounded"
+    );
+    assert_eq!(map[&(FOLD_THRESHOLD * 2)], vec![FOLD_THRESHOLD * 2]);
+    assert_eq!(map.iter().count(), FOLD_THRESHOLD * 3);
+}
+
+#[test]
 fn iteration_and_entries_see_overrides_once() {
     let mut map: LayeredMap<u32, Vec<u32>> = (0..4).map(|key| (key, vec![key])).collect();
     map.entry_or_default(2).push(20);
