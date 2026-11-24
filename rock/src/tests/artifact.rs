@@ -545,7 +545,12 @@ fn validation_stamp_resolves_bare_rockc_and_keys_artifact_content() {
     let object = dir.join("dep.o");
     fs::write(&object, b"obj").unwrap();
     let stamp_of = |bytes: &[u8]| {
-        let file = fs::File::options().write(true).create(true).open(&artifact).unwrap();
+        let file = fs::File::options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&artifact)
+            .unwrap();
         let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
         std::io::Write::write_all(&mut &file, bytes).unwrap();
         file.set_modified(modified).unwrap();

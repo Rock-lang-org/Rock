@@ -360,7 +360,7 @@ pub(super) fn solve_constraints_in_place_mode(
                 }
                 let resolved_bound = TraitBound {
                     trait_id: bound.trait_id,
-                    type_args: bound.type_args.iter().map(|arg| normalize(&arg)).collect(),
+                    type_args: bound.type_args.iter().map(|arg| normalize(arg)).collect(),
                 };
                 if !matches!(resolved, Type::TypeVar(_) | Type::Generic(_))
                     && contains_inference_pending_type(&resolved)
