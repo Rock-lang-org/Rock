@@ -19,6 +19,7 @@ use super::{module_name_from_entry, CompileOutput, Config, DebugPrint};
 pub(super) fn compile_impl(
     config: &Config,
     emit_products: bool,
+    emit_output: bool,
 ) -> Result<CompileOutput, Diagnostics> {
     let mut frontend = compile_frontend(config)?;
     let warnings = std::mem::take(&mut frontend.analysis.warnings);
@@ -28,7 +29,7 @@ pub(super) fn compile_impl(
     let mut timer = super::timing::PhaseTimer::from_env();
     frontend.reachability.prune(&mut frontend.analysis.hir);
     timer.lap("hir-prune");
-    match compile_backend(config, emit_products, frontend) {
+    match compile_backend(config, emit_products, emit_output, frontend) {
         Ok(output) => Ok(CompileOutput { warnings, ..output }),
         Err(errors) => {
             let mut all = warnings;
@@ -41,6 +42,7 @@ pub(super) fn compile_impl(
 fn compile_backend(
     config: &Config,
     emit_products: bool,
+    emit_output: bool,
     frontend: FrontendOutput,
 ) -> Result<CompileOutput, Diagnostics> {
     let FrontendOutput {
@@ -186,6 +188,15 @@ fn compile_backend(
 
     if config.has_debug_print(DebugPrint::Llvm) {
         println!("{}", codegen.get_ir());
+    }
+
+    // A check has proved everything through LLVM lowering; nothing is written.
+    if !emit_output {
+        return Ok(CompileOutput {
+            ast,
+            products,
+            warnings: Diagnostics::default(),
+        });
     }
 
     // Create output directory

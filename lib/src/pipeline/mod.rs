@@ -24,16 +24,22 @@ pub struct CompileOutput {
 }
 
 pub fn compile(config: &Config) -> Result<Program, Diagnostics> {
-    backend::compile_impl(config, false).map(|output| output.ast)
+    backend::compile_impl(config, false, true).map(|output| output.ast)
 }
 
 /// Like [`compile`], but also returns the warnings of a successful build.
 pub fn compile_with_warnings(config: &Config) -> Result<CompileOutput, Diagnostics> {
-    backend::compile_impl(config, false)
+    backend::compile_impl(config, false, true)
 }
 
 pub fn compile_with_products(config: &Config) -> Result<CompileOutput, Diagnostics> {
-    backend::compile_impl(config, true)
+    backend::compile_impl(config, true, true)
+}
+
+/// Runs every check a build runs (types, ownership, LLVM lowering) without
+/// writing an object, executable or IR file.
+pub fn check(config: &Config) -> Result<CompileOutput, Diagnostics> {
+    backend::compile_impl(config, false, false)
 }
 
 /// Run the source frontend through finalized HIR without MIR or code generation.

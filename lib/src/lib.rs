@@ -33,7 +33,7 @@ pub mod type_services;
 pub mod types;
 
 pub use pipeline::{
-    analyze, compile, compile_with_products, compile_with_warnings, CompileOutput, Config,
+    analyze, check, compile, compile_with_products, compile_with_warnings, CompileOutput, Config,
     CrateKind, DebugPrint, SourceProvider,
 };
 pub use source_loader::source_load_errors_to_diagnostics;

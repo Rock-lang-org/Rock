@@ -328,10 +328,6 @@ fn artifact_is_fresh(
     let artifact_modified = file_modified(artifact_path)?;
     let object_modified = file_modified(&object_path)?;
 
-    if !validate_artifact_with_rockc(artifact_path)? {
-        return Ok(false);
-    }
-
     for source_path in collect_package_source_inputs(&package.root_dir, crate::package::BUILD_DIR)?
     {
         let source_modified = file_modified(&source_path)?;
@@ -361,7 +357,47 @@ fn artifact_is_fresh(
         }
     }
 
+    // Validation spawns rockc and decodes the payload; it runs last, and only
+    // when the artifact, its object or the compiler changed since it passed.
+    let rockc = resolve_rockc_path()?;
+    let stamp = validation_stamp(&rockc, artifact_path, &object_path)?;
+    let stamp_path = validation_stamp_path(artifact_path);
+    if fs::read_to_string(&stamp_path).ok() == Some(stamp.clone()) {
+        return Ok(true);
+    }
+    if !validate_artifact_with_rockc(&rockc, artifact_path)? {
+        return Ok(false);
+    }
+    let _ = fs::write(stamp_path, stamp);
     Ok(true)
+}
+
+fn validation_stamp_path(artifact_path: &Path) -> PathBuf {
+    artifact_path.with_extension("validated")
+}
+
+/// Identifies the exact compiler, artifact and object a validation covered.
+fn validation_stamp(
+    rockc: &Path,
+    artifact_path: &Path,
+    object_path: &Path,
+) -> Result<String, String> {
+    let mut stamp = String::new();
+    for path in [rockc, artifact_path, object_path] {
+        let metadata = fs::metadata(path)
+            .map_err(|e| format!("Failed to inspect {}: {}", path.display(), e))?;
+        let modified = file_modified(path)?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|time| time.as_nanos())
+            .unwrap_or_default();
+        stamp.push_str(&format!(
+            "{}\t{}\t{}\n",
+            path.display(),
+            metadata.len(),
+            modified
+        ));
+    }
+    Ok(stamp)
 }
 
 fn lint_stamp_path(artifact_path: &Path) -> PathBuf {
@@ -372,9 +408,8 @@ fn lint_stamp(package: &Package) -> String {
     package.lint_args.join("\n")
 }
 
-fn validate_artifact_with_rockc(artifact_path: &Path) -> Result<bool, String> {
-    let rockc = resolve_rockc_path()?;
-    let output = Command::new(&rockc)
+fn validate_artifact_with_rockc(rockc: &Path, artifact_path: &Path) -> Result<bool, String> {
+    let output = Command::new(rockc)
         .arg("--validate-artifact")
         .arg(artifact_path)
         .output()

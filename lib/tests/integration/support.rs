@@ -740,9 +740,8 @@ pub(crate) fn compile_should_pass(source: &str) {
     let source_path = dir.join("test.rk");
     std::fs::write(&source_path, source).unwrap();
 
-    let mut config = test_config(source_path, dir.clone());
-    config.no_link = true;
-    rock_lib::compile(&config).expect("Compilation failed");
+    let config = test_config(source_path, dir.clone());
+    rock_lib::check(&config).expect("Compilation failed");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -758,8 +757,7 @@ pub(crate) fn compile_should_pass_without_std(source: &str) {
     config.extern_artifacts.clear();
     config.no_std = true;
     config.no_prelude = true;
-    config.no_link = true;
-    rock_lib::compile(&config).expect("expected compilation to pass");
+    rock_lib::check(&config).expect("expected compilation to pass");
     let _ = fs::remove_dir_all(dir);
 }
 

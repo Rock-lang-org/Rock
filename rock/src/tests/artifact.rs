@@ -237,6 +237,9 @@ fn test_source_change_after_artifact_overwrite_triggers_rebuild() {
     let dep_artifact = dep_package.artifact_path();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 7);
+    // A no-op build records that this exact artifact passed validation.
+    build_project(&app, BuildProfile::Debug).unwrap();
+    assert!(dep_artifact.with_extension("validated").exists());
 
     fs::write(&dep_artifact, b"not a product artifact").unwrap();
     fs::write(dep.join("lib.rk"), "answer = -> 8\n< answer\n").unwrap();
@@ -268,6 +271,9 @@ fn test_corrupt_product_artifact_without_source_change_triggers_rebuild() {
     let dep_artifact = dep_package.artifact_path();
     assert!(dep_artifact.exists());
     assert_executable_exit_code(&executable, 7);
+    // A no-op build records that this exact artifact passed validation.
+    build_project(&app, BuildProfile::Debug).unwrap();
+    assert!(dep_artifact.with_extension("validated").exists());
 
     fs::write(&dep_artifact, b"not a product artifact").unwrap();
 

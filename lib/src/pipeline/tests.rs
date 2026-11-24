@@ -570,3 +570,42 @@ fn macro_errors_in_child_file_modules_are_reported() {
 
     assert!(!error.is_empty());
 }
+
+#[test]
+fn check_writes_no_output_but_reports_ownership_errors() {
+    let base = std::env::temp_dir().join(format!("rock_check_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(&base).unwrap();
+    let entry_file = base.join("main.rk");
+    let config = |entry_file: PathBuf| Config {
+        entry_file,
+        output_dir: base.join("build"),
+        no_std: true,
+        no_prelude: true,
+        emit_llvm: true,
+        ..Config::default()
+    };
+
+    fs::write(&entry_file, "main = ->\n    0\n").unwrap();
+    crate::check(&config(entry_file.clone())).unwrap();
+    assert!(
+        !base.join("build").exists(),
+        "check must not write build output"
+    );
+
+    fs::write(
+        &entry_file,
+        "struct Box\n    < value: I64\n\nmain = ->\n    a = Box\n        value: 1\n    b = a\n    c = a\n    0\n",
+    )
+    .unwrap();
+    let diagnostics = crate::check(&config(entry_file)).unwrap_err();
+    assert!(
+        diagnostics
+            .0
+            .iter()
+            .any(|d| d.message.contains("use of moved value")),
+        "{:?}",
+        diagnostics.0
+    );
+    let _ = fs::remove_dir_all(&base);
+}
