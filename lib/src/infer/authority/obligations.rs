@@ -6,7 +6,7 @@ use crate::lower::ResolveError;
 
 use super::propagate::propagate_block;
 use super::sites::{collect_authority_sites, materialize_authority_site};
-use super::status::{authority_counts, authority_pass_result, owner_selected};
+use super::status::authority_counts;
 use super::type_vars::{
     collect_block_type_vars, collect_type_vars, constrained_signature_vars, receiver_signature_vars,
 };
@@ -99,7 +99,7 @@ pub(in crate::infer) fn run_authority_obligation(
     let previous_owner = hir.constraint_store.replace_owner(obligation.owner);
     let result = match obligation.kind {
         AuthorityObligationKind::Propagation => {
-            propagate_function_instances_for_owners_with_progress(hir, Some(&owners))
+            propagate_function_instances_for_owners_with_progress(hir, &owners)
         }
         AuthorityObligationKind::DeferredCall
         | AuthorityObligationKind::CallableCall
@@ -190,23 +190,25 @@ pub(super) fn function_for_owner(hir: &PartialHir, owner: ConstraintOwner) -> Op
 
 pub(in crate::infer) fn propagate_function_instances_for_owners_with_progress(
     hir: &mut PartialHir,
-    owners: Option<&HashSet<ConstraintOwner>>,
+    owners: &HashSet<ConstraintOwner>,
 ) -> Result<AuthorityPassResult, Vec<ResolveError>> {
-    let before_generation = hir.engine.rigid_substitution_generation();
-    let before_counts = authority_counts(hir, owners);
+    let before_counts = authority_counts(hir, Some(owners));
     let mut constrained_vars = HashMap::new();
-    // Callers that disagree keep a receiver variable generic; it is generalized later.
-    let conflicting = super::call_sites::conflicting_caller_vars(hir);
-    for function in hir
-        .functions
-        .values()
-        .chain(
-            hir.traits
-                .values()
-                .flat_map(|trait_def| trait_def.methods.values()),
-        )
-        .chain(hir.impls.values().flat_map(|imp| imp.methods.values()))
-    {
+    let mut callees = HashSet::new();
+    for &owner in owners {
+        if let Some(function) = function_for_owner(hir, owner) {
+            super::call_sites::collect_direct_callees(&function.body, &mut callees);
+        }
+    }
+    // Snapshot before propagation mutates the engine; agreement still considers all callers.
+    let conflicting = std::cell::OnceCell::new();
+    for id in callees {
+        let Some(function) = function_for_owner(hir, ConstraintOwner::Body(id)) else {
+            continue;
+        };
+        if !function.generic_params.is_empty() || function.params.iter().any(|p| p.is_ref) {
+            continue;
+        }
         // A signatureless free function is generalized after quiescence, so each
         // call instantiates its header fresh instead of seeding it: seeding from
         // one caller is irreversible and merges callers whose argument types are
@@ -215,28 +217,32 @@ pub(in crate::infer) fn propagate_function_instances_for_owners_with_progress(
         // unless callers disagree. Item signatures cannot contain holes, so a
         // non-generic free function with header variables is signatureless; an
         // annotated one has no header variables and takes this branch harmlessly.
-        let signatureless_free_function =
-            function.generic_params.is_empty() && hir.functions.contains_key(&function.id);
+        let signatureless_free_function = hir.functions.contains_key(&function.id);
         let mut shared = if signatureless_free_function {
             receiver_signature_vars(hir, function)
         } else {
             constrained_signature_vars(hir, function)
         };
-        shared.retain(|var| !conflicting.contains(var));
-        if function.generic_params.is_empty() {
-            shared.extend(super::call_sites::field_receiver_vars(hir, function));
+        if !shared.is_empty() {
+            let conflicts =
+                conflicting.get_or_init(|| super::call_sites::conflicting_caller_vars(hir));
+            shared.retain(|var| !conflicts.contains(var));
         }
+        shared.extend(super::call_sites::field_receiver_vars(hir, function));
         if !shared.is_empty() {
             constrained_vars.insert(function.id, shared);
         }
     }
     let mut errors = Vec::new();
-    let mut function_ids = hir.functions.keys().copied().collect::<Vec<_>>();
+    let mut function_ids = owners
+        .iter()
+        .filter_map(|owner| match owner {
+            ConstraintOwner::Body(id) if hir.functions.contains_key(id) => Some(*id),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     function_ids.sort();
     for id in &function_ids {
-        if !owner_selected(owners, ConstraintOwner::Body(*id)) {
-            continue;
-        }
         if let Some(mut body) = hir.functions.get(id).map(|function| function.body.clone()) {
             propagate_block(hir, &mut body, &constrained_vars, &mut errors);
             if let Some(function) = hir.functions.get_mut(id) {
@@ -258,7 +264,7 @@ pub(in crate::infer) fn propagate_function_instances_for_owners_with_progress(
         method_names.sort();
         for method_name in method_names {
             let method_id = hir.impls[&impl_id].methods[&method_name].id;
-            if !owner_selected(owners, ConstraintOwner::Body(method_id)) {
+            if !owners.contains(&ConstraintOwner::Body(method_id)) {
                 continue;
             }
             if let Some(mut body) = hir
@@ -280,12 +286,17 @@ pub(in crate::infer) fn propagate_function_instances_for_owners_with_progress(
     }
 
     if errors.is_empty() {
-        let mut result = authority_pass_result(hir, before_generation, before_counts, owners);
+        let after = authority_counts(hir, Some(owners));
         // Instance propagation may create fresh call-site variables without
         // changing any authority; that is not observable progress for the
         // driver and must not keep waking the same call forever.
-        result.progress = authority_counts(hir, owners) != before_counts;
-        Ok(result)
+        Ok(AuthorityPassResult {
+            progress: after != before_counts,
+            pending: after.pending_methods > 0
+                || after.pending_residuals > 0
+                || after.pending_fields > 0,
+            ambiguous: false,
+        })
     } else {
         Err(errors)
     }

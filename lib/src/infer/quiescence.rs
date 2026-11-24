@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use crate::ids::DefId;
 use crate::lower::ResolveError;
@@ -76,6 +76,7 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
         owners: &HashSet<ConstraintOwner>,
         authority_obligations: &mut [authority::AuthorityObligation],
         strict: bool,
+        assumptions: &crate::hir::HirGenericBounds,
     ) -> Result<(), Vec<ResolveError>> {
         if strict {
             for obligation in authority_obligations.iter_mut() {
@@ -98,7 +99,6 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
             match item {
                 WorkItem::Structural => {
                     structural_queued = false;
-                    let assumptions = declaration_bounds(hir);
                     let solved = solve::solve_constraints_in_place_for_owners(
                         &mut hir.engine,
                         &mut hir.constraint_store,
@@ -109,7 +109,7 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
                         &hir.language_items,
                         owners,
                         false,
-                        &assumptions,
+                        assumptions,
                         &HashSet::new(),
                     );
                     if !solved.errors.is_empty() {
@@ -193,25 +193,19 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
         components.sort();
         components.dedup();
     }
-    let mut remaining_components = hir.inference_sccs.values().copied().collect::<Vec<_>>();
-    remaining_components.sort();
-    remaining_components.dedup();
-    for component in remaining_components {
-        if !components.contains(&component) {
-            components.push(component);
-        }
+    let mut members = BTreeMap::<_, Vec<_>>::new();
+    for (&id, &component) in &hir.inference_sccs {
+        members.entry(component).or_default().push(id);
     }
+    let ordered: HashSet<_> = components.iter().copied().collect();
+    components.extend(members.keys().filter(|id| !ordered.contains(*id)).copied());
     if components.is_empty() {
         components.push(DefId::new(hir.root_crate_id, crate::ids::LocalDefId(0)));
     }
     let mut first_component = true;
     let mut component_work = Vec::with_capacity(components.len());
     for component in components {
-        let mut ids = hir
-            .inference_sccs
-            .iter()
-            .filter_map(|(id, representative)| (*representative == component).then_some(*id))
-            .collect::<Vec<_>>();
+        let mut ids = members.remove(&component).unwrap_or_default();
         if ids.is_empty() && hir.functions.contains_key(&component) {
             ids.push(component);
         }
@@ -232,14 +226,16 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
     // Seed inferred headers from caller context before dependency-first body
     // solving can commit an otherwise underconstrained rigid type.
     for (_, owners, _) in component_work.iter().rev() {
-        authority::propagate_function_instances_for_owners_with_progress(hir, Some(owners))?;
+        authority::propagate_function_instances_for_owners_with_progress(hir, owners)?;
     }
 
+    // Declaration bounds and declared parameter types do not change until generalization.
+    let assumptions = declaration_bounds(hir);
     let mut component_queue = (0..component_work.len()).collect::<VecDeque<_>>();
     while let Some(index) = component_queue.pop_front() {
         let generation = hir.engine.substitution_generation();
         let (_, owners, authority_obligations) = &mut component_work[index];
-        solve_component_worklist(hir, owners, authority_obligations, false)?;
+        solve_component_worklist(hir, owners, authority_obligations, false, &assumptions)?;
         if generation != hir.engine.substitution_generation() {
             component_queue.extend(0..index);
         }
@@ -263,7 +259,7 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
     while let Some(index) = component_queue.pop_front() {
         let generation = hir.engine.substitution_generation();
         let (_, owners, authority_obligations) = &mut component_work[index];
-        solve_component_worklist(hir, owners, authority_obligations, false)?;
+        solve_component_worklist(hir, owners, authority_obligations, false, &assumptions)?;
         if generation != hir.engine.substitution_generation() {
             component_queue.extend(0..index);
         }
@@ -303,7 +299,7 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
     // report their definite errors first.
     let mut undetermined_receivers = Vec::new();
     for (_, owners, authority_obligations) in &mut component_work {
-        match solve_component_worklist(hir, owners, authority_obligations, true) {
+        match solve_component_worklist(hir, owners, authority_obligations, true, &assumptions) {
             Err(errors) if errors.iter().all(ResolveError::is_undetermined_receiver) => {
                 undetermined_receivers.extend(errors);
                 continue;
@@ -345,7 +341,6 @@ pub(super) fn drive_inference_to_quiescence(hir: &mut PartialHir) -> Result<(), 
     let mut held_errors = Vec::new();
     let mut held_deferred = Vec::new();
     for (_, owners, _) in &component_work {
-        let assumptions = declaration_bounds(hir);
         let solved = solve::solve_constraints_in_place_for_owners(
             &mut hir.engine,
             &mut hir.constraint_store,

@@ -38,6 +38,21 @@ fn collect_call_arguments(
     calls
 }
 
+/// Only direct calls consume caller-seeded signature variables during propagation.
+pub(super) fn collect_direct_callees(body: &HirBlock, callees: &mut HashSet<DefId>) {
+    block(body, &mut |node| {
+        if let HirExprKind::Call(callee, _, _) = &node.kind {
+            if let HirExprKind::ResolvedVar(HirVarRef {
+                target: HirVarTarget::Function(id),
+                ..
+            }) = &callee.kind
+            {
+                callees.insert(*id);
+            }
+        }
+    });
+}
+
 fn all_functions(hir: &PartialHir) -> impl Iterator<Item = &crate::hir::HirFunction> {
     hir.functions
         .values()
