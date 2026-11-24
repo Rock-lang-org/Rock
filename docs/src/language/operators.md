@@ -35,7 +35,7 @@ main = !->
     bits.println!
 ```
 
-This prints `5`. In older code `>>=` meant monadic bind; use `>>-` for bind now.
+This prints `5`.
 
 These operators follow the ordinary mutable receiver borrow rules. To double
 `x`, read it into a temporary before `x += temporary`; `x += x` conflicts with

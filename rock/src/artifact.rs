@@ -285,6 +285,8 @@ pub(crate) fn ensure_artifact(
                     package.manifest.crate_.name
                 ),
             )?;
+            // The rebuilt artifact invalidates any previous validation stamp.
+            let _ = fs::remove_file(validation_stamp_path(&artifact_path));
             let stamp = lint_stamp_path(&artifact_path);
             fs::write(&stamp, lint_stamp(&package))
                 .map_err(|e| format!("Failed to write lint stamp {}: {}", stamp.display(), e))?;

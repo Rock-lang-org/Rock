@@ -3,7 +3,7 @@
 [![Book](https://github.com/Rock-lang-org/Rock/actions/workflows/book.yml/badge.svg?branch=master)](https://github.com/Rock-lang-org/Rock/actions/workflows/book.yml)
 [![Discord](https://img.shields.io/discord/990627124236939314.svg)](https://discord.gg/f6skPNB96J)
 
-[GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [0.7.2 Draft Release Notes](docs/release-notes/v0.7.2.md) | [Changelog](CHANGELOG.md) | [Examples](examples/)
+[GitHub Releases](https://github.com/Rock-lang-org/Rock/releases) | [Changelog](CHANGELOG.md) | [Examples](examples/)
 
 <h3 align="center"><a href="https://rock-lang-org.github.io/Rock/">Read the Book</a></h3>
 
@@ -13,7 +13,7 @@ Rock combines type inference, pattern matching, traits, and higher-kinded types 
 
 The syntax takes inspiration from [LiveScript](https://livescript.net/), [Haskell](https://www.haskell.org/), and [Rust](https://www.rust-lang.org/). You do not need to know those languages to follow this tour. It starts with small programs and introduces the functional vocabulary through examples.
 
-Rock is experimental: syntax, APIs, and tooling can change, and compiler bugs remain. This checkout prepares v0.7.2; see the [draft release notes](docs/release-notes/v0.7.2.md) for additions and migration requirements. Use a matching development toolchain to try the changes since the published v0.7.1 release.
+Rock is experimental: syntax, APIs, and tooling can change, and compiler bugs remain.
 
 Recent development adds array-length const generics, imported enum constructors, expression and cross-crate macros, `%format`/`%println`, owned array iteration, and liveness-based closure captures. The book explains these alongside library and multiple-binary package targets.
 
@@ -576,10 +576,6 @@ Unlike `>>-`, the next input here does not depend on the previous payload. Appli
 
 The mapping and binding operations consume their input containers. A short operator spelling does not bypass ownership.
 
-When migrating older code, replace bind expressions written as `value >>= next`
-with `value >>- next`. `>>=` now means right-shift assignment; named `bind` and
-`do` are unchanged.
-
 ## Higher-Kinded Types
 
 Ordinary generics let a function work with a type such as `I64`. **Higher-kinded types**, or **HKT**, let it work with a type constructor such as `Option` or `Vec`.
@@ -825,7 +821,7 @@ cargo test -p rock-lib
 cargo test -p rockup
 ```
 
-See the [release maintainer guide](docs/releases.md) for packaging `v0.6.0`, verifying assets, and creating a draft GitHub release. Publishing a release is a separate maintainer action, not a side effect of building the workspace.
+See the [release maintainer guide](docs/releases.md) for packaging a release, verifying assets, and creating a draft GitHub release. Publishing a release is a separate maintainer action, not a side effect of building the workspace.
 
 ## Keep Exploring
 

@@ -57,8 +57,20 @@ pub(crate) fn build_dependency_artifact_invocation(
     package: &Package,
     dependency_artifacts: &[ExternArtifact],
 ) -> RockcInvocation {
-    let mut invocation = RockcInvocation::new(executable)
-        .arg(package.profile.flag())
+    // Std is built as the sysroot packages it, whatever the consumer's
+    // profile: optimized, and overflow-checked because its integer operators
+    // decide checking for every program.
+    let is_std = package.manifest.crate_.name == STD_CRATE_NAME;
+    let profile_flag = if is_std {
+        crate::package::BuildProfile::Release.flag()
+    } else {
+        package.profile.flag()
+    };
+    let mut invocation = RockcInvocation::new(executable).arg(profile_flag);
+    if is_std {
+        invocation = invocation.arg("--overflow-checks").arg("true");
+    }
+    let mut invocation = invocation
         .arg("--crate-name")
         .arg(package.manifest.crate_.name.clone())
         .arg("--entry-file")

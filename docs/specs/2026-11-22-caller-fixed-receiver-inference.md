@@ -45,10 +45,10 @@ process_file = content ->
 
 read_file = ->
     read_to_string "input"
-        >>= process_file
+        >>- process_file
 ```
 
-`process_file` returns `Vec Turn`, but `>>=` on `Result` needs a function
+`process_file` returns `Vec Turn`, but `>>-` on `Result` needs a function
 returning a `Result`. `read_file` fails to type-check, so no caller fixes
 `content`, and the strict pass reports `Ambiguous selection for 'split' on type
 _` in `process_file`. With `read_file` corrected, `content` is fixed to `String`
@@ -101,7 +101,7 @@ Implemented:
 
   ```text
   closure `(_) -> Vec Turn` does not implement trait
-  `FnMut String, (Result _, IoError)` (required by call to generic function '>>=')
+  `FnMut String, (Result _, IoError)` (required by call to generic function '>>-')
   ```
 
   When the callback's return type itself depends on the undetermined call
@@ -137,7 +137,7 @@ a receiver.
 
 - The probe programs above give the results in the Rules (two-impl and
   higher-order cases compile; never-fixed and two-type cases fail).
-- advent1 with the original `read_file` reports the `>>=` mismatch, not
+- advent1 with the original `read_file` reports the `>>-` mismatch, not
   `split`.
 - Adding an unrelated impl with the same method name changes no outcome.
 - Full workspace suite plus std built from a clean cache.

@@ -20,7 +20,7 @@ The pinned commit was fetched successfully from GitHub. The book builds with mdB
 
 Provide flat, expression-oriented monadic sequencing by expanding `do` into existing AST calls, closures, and assignments. Preserve the behavior, ownership rules, and static dispatch of ordinary bind calls. The semantic compiler pipeline receives ordinary syntax, not a new monadic operation.
 
-Rock already defines `Monad::bind`, the standalone `bind`, `.bind`, and `>>=` in `std/src/functional/monad.rk`, and `Applicative::pure` plus standalone `pure` in `std/src/functional/applicative.rk`. Both traits and functions are exported by the explicitly supplied std prelude. `Option` and `Result _, E` already implement these traits.
+Rock already defines `Monad::bind`, the standalone `bind`, `.bind`, and `>>-` in `std/src/functional/monad.rk`, and `Applicative::pure` plus standalone `pure` in `std/src/functional/applicative.rk`. Both traits and functions are exported by the explicitly supplied std prelude. `Option` and `Result _, E` already implement these traits.
 
 ## Proposed User Experience
 
