@@ -5,6 +5,35 @@ use std::process::Command;
 use std::sync::atomic::Ordering;
 
 #[test]
+fn test_multiline_pipeline_alternates_infix_and_dot_stages() {
+    let output = compile_and_run(
+        r#"
+normalize: I64 -> I64
+normalize = value -> value + 1
+
+step: (I64, I64) -> I64
+step = pair -> pair.0 + pair.1
+
+main = !->
+    values = Option::Some 4
+    initial = 10
+    values
+        <&> normalize
+        .foldl step, initial
+        |> (.println!)
+    1
+        + 2
+        * 3
+        .wrapping_add 1
+        + 4
+        * 5
+        |> (.println!)
+"#,
+    );
+    assert_eq!(output, "15\n28\n");
+}
+
+#[test]
 fn test_multiline_chain_targets_completed_call() {
     let output = compile_and_run(
         r#"

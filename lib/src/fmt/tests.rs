@@ -82,6 +82,14 @@ fn format_input_formats_module_like_convenience_function() {
 }
 
 #[test]
+fn format_mixed_multiline_pipeline_preserves_stage_boundaries() {
+    assert_source_fixture_formats(
+        "main = ->\n    values\n        <&> normalize\n        .foldl step, initial\n        |> finish\n",
+        "main = -> ((values <&> normalize).foldl step, initial) |> finish\n",
+    );
+}
+
+#[test]
 fn format_repeat_array_literal() {
     assert_source_fixture_formats(
         "main  =  ->\n    values:[U8;4] = [1 + 2;4]\n    0\n",

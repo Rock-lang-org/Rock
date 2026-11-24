@@ -92,6 +92,7 @@ pub struct ParseCtx<'a> {
     pub inside_argument_list: bool,
     pub inside_inline_argument_list: bool, // For comma-separated args, not multiline
     pub after_multiline_dot: bool,
+    pub infix_continuation_indent: Option<usize>,
     pub is_inside_fn_type_decl: bool,
     pub disallow_multiline_operators: bool, // Disallow multiline operator continuations (e.g., in single-line function bodies)
     pub no_literal_type_args: bool, // Types parsed where an expression could also appear (cast targets, parenthesized path heads): numbers are never literal type arguments
@@ -214,6 +215,7 @@ impl ParseCtx<'_> {
             inside_argument_list: false,
             inside_inline_argument_list: false,
             after_multiline_dot: false,
+            infix_continuation_indent: None,
             is_inside_fn_type_decl: false,
             disallow_multiline_operators: false,
             no_literal_type_args: false,

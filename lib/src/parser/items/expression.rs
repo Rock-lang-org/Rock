@@ -15,21 +15,54 @@ use super::{literal, stuck_operator_token};
 pub fn expression(stream: Input) -> IResult<Expression> {
     let original_indent = stream.indent_level;
     let (mut stream, mut expression) = range_expression(stream)?;
+    let mut after_dot = stream.indent_level != original_indent;
 
-    while !stream.inside_argument_list
-        && matches!(
+    while !stream.inside_argument_list {
+        let spaced_dot = matches!(
             stream.tokens.first().map(|token| &token.token_type),
             Some(TokenType::SpacedDot)
-        )
-    {
-        let (next_stream, _) = TokenType::SpacedDot.process(stream)?;
-        let (next_stream, member) = ident_or_number.process(next_stream)?;
-        let (next_stream, trailing) = many(secondary).process(next_stream)?;
-
-        let mut secondaries = vec![SecondaryExpr::Dot(member)];
-        secondaries.extend(trailing);
-        expression = append_secondaries(expression, secondaries);
-        stream = next_stream;
+        );
+        let member = if spaced_dot {
+            Some(preceded(TokenType::SpacedDot, ident_or_number).process(stream)?)
+        } else {
+            match (
+                TokenType::Eol,
+                empty_lines_permissive,
+                indent_token,
+                TokenType::Dot,
+            )
+                .process(stream)
+            {
+                Ok((_, (_, _, level, _)))
+                    if level as usize == original_indent + stream.indent_step
+                        && stream.infix_continuation_indent != Some(level as usize) =>
+                {
+                    Some(dot(stream)?)
+                }
+                _ => None,
+            }
+        };
+        if let Some((next_stream, member)) = member {
+            let (next_stream, trailing) = many(secondary).process(next_stream)?;
+            let mut secondaries = vec![SecondaryExpr::Dot(member)];
+            secondaries.extend(trailing);
+            expression = append_secondaries(expression, secondaries);
+            stream = next_stream;
+            after_dot = true;
+        } else if after_dot {
+            // A method continuation temporarily raises the indent for its arguments.
+            // Resume infix parsing at the enclosing expression's indent.
+            let mut continuation = stream;
+            continuation.indent_level = original_indent;
+            let Ok((next_stream, (op, rhs))) = multiline_operator_continuation(continuation) else {
+                break;
+            };
+            expression = Expression::BinopExpr(group_expression(expression), op, Box::new(rhs));
+            stream = next_stream;
+            after_dot = false;
+        } else {
+            break;
+        }
     }
 
     // Dot continuations temporarily set their own indentation for arguments
@@ -113,15 +146,23 @@ fn expression_without_spaced_dot(stream: Input) -> IResult<Expression> {
     let Some((op, rhs)) = binop else {
         return Ok((stream, base));
     };
+    Ok((stream, binary_expression(base, op, rhs)))
+}
+
+fn binary_expression(base: Expression, op: Operator, rhs: Expression) -> Expression {
     let lhs = match base {
         Expression::UnaryExpr(unary) => unary,
-        expression => UnaryExpr::PrimaryExpr(PrimaryExpr {
-            operand: Operand::Expression(Box::new(expression)),
-            secondaries: None,
-            type_annotation: None,
-        }),
+        expression => group_expression(expression),
     };
-    Ok((stream, Expression::BinopExpr(lhs, op, Box::new(rhs))))
+    Expression::BinopExpr(lhs, op, Box::new(rhs))
+}
+
+fn group_expression(expression: Expression) -> UnaryExpr {
+    UnaryExpr::PrimaryExpr(PrimaryExpr {
+        operand: Operand::Expression(Box::new(expression)),
+        secondaries: None,
+        type_annotation: None,
+    })
 }
 
 fn append_secondaries(expression: Expression, mut trailing: Vec<SecondaryExpr>) -> Expression {
@@ -185,11 +226,11 @@ fn multiline_operator_continuation(stream: Input) -> IResult<(Operator, Expressi
     // Parse operator and expression WITHOUT increasing indent context
     // This allows subsequent continuations at the same indent level
     // A stuck prefix operator starts the nested body, not an infix continuation.
-    (
-        operator_token.or(ampersand_token),
-        expression_without_spaced_dot,
-    )
-        .process(stream)
+    let (mut stream, op) = operator_token.or(ampersand_token).process(stream)?;
+    let previous = stream.infix_continuation_indent.replace(expected_indent);
+    let (mut stream, rhs) = expression_without_spaced_dot(stream)?;
+    stream.infix_continuation_indent = previous;
+    Ok((stream, (op, rhs)))
 }
 
 pub fn unary_expr(stream: Input) -> IResult<UnaryExpr> {
@@ -762,7 +803,9 @@ pub fn dot(stream: Input) -> IResult<IdentOrNumber> {
         // If the dot's indent level is less than the current indent level,
         // it belongs to an outer scope and should not be consumed here
         // This prevents lambda bodies from consuming dots that belong to the outer expression
-        if (dot_indent_level as usize) < stream.indent_level {
+        if (dot_indent_level as usize) < stream.indent_level
+            || stream.infix_continuation_indent == Some(dot_indent_level as usize)
+        {
             return Err(ParseError::Fail);
         }
 

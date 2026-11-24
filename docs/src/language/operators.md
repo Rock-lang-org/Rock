@@ -159,6 +159,24 @@ main = !->
 
 The output is `5`, `4`, and `9`. `<&>` maps a function over `Option`, `>>-` calls a function that returns another `Option`, `<|>` chooses the first present value, and `|>` passes a value to a function. These meanings are standard-library definitions, not compiler fallbacks.
 
+## Mixed Multiline Pipelines
+
+An infix operator and a dot call can continue the same expression at the same
+indentation. A leading dot applies to the expression accumulated so far;
+operators following the call use its result. Operators between dot stages
+still follow their normal precedence.
+
+```rock
+main = !->
+    values = Option::Some 4
+    values
+        <&> (+ 1)
+        .unwrap_or 0
+        |> (.println!)
+```
+
+This prints `5`.
+
 ## Parsing and Common Mistakes
 
 Function application has precedence `8`. Operators above that precedence become part of the final argument, while operators at or below it operate on the call result. This keeps arithmetic arguments concise and functional composition outside the call.
