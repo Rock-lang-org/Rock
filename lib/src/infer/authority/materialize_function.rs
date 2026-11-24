@@ -75,7 +75,7 @@ impl MethodAuthorityContext<'_> {
         args: &[HirExpr],
         function_id: DefId,
     ) {
-        let Some(function) = self.functions.get(&function_id).cloned() else {
+        let Some(function) = self.function(function_id).cloned() else {
             return;
         };
         if function.is_method

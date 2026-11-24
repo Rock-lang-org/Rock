@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 use crate::hir::{HirBlock, HirExpr, HirExprKind, HirGenericBounds, HirStmt};
+use crate::ids::DefId;
 use crate::infer::{ConstraintOwner, PartialHir};
 use crate::lower::ResolveError;
 use crate::types::Type;
@@ -152,27 +153,57 @@ pub(super) fn materialize_pending(
     owners: Option<&HashSet<ConstraintOwner>>,
     selected_site: Option<AuthoritySiteId>,
 ) -> Result<bool, Vec<ResolveError>> {
-    let struct_ids = hir
-        .structs
-        .values()
-        .map(|structure| (structure.id, structure.clone()))
-        .collect();
-    let traits = hir
-        .traits
-        .values()
-        .map(|trait_def| (trait_def.id, trait_def.clone()))
-        .collect();
-    let impls = hir
-        .impls
-        .iter()
-        .map(|(&id, impl_def)| (id, impl_def.clone()))
-        .collect();
-    let functions = hir.functions.clone();
+    // Bodies are materialized against the program as it stood when the pass
+    // started; only the selected bodies are copied, then written back.
+    enum Slot {
+        Function(DefId),
+        TraitMethod(DefId, String),
+        ImplMethod(DefId, String),
+    }
+    // Imported declarations arrive header-only; their signatures are already
+    // final, so an empty foreign body has nothing to materialize.
+    let root_crate_id = hir.root_crate_id;
+    let selected = |function: &crate::hir::HirFunction| {
+        owner_selected(owners, ConstraintOwner::Body(function.id))
+            && (function.id.crate_id == root_crate_id || !function.body.stmts.is_empty())
+    };
+    let mut pending = Vec::new();
+    let mut function_ids = hir.functions.keys().copied().collect::<Vec<_>>();
+    function_ids.sort();
+    for id in function_ids {
+        if selected(&hir.functions[&id]) {
+            pending.push((Slot::Function(id), hir.functions[&id].clone()));
+        }
+    }
+    let mut trait_ids = hir.traits.keys().copied().collect::<Vec<_>>();
+    trait_ids.sort();
+    for id in trait_ids {
+        let mut methods = hir.traits[&id].methods.iter().collect::<Vec<_>>();
+        methods.sort_by_key(|(_, function)| function.id);
+        for (name, function) in methods {
+            if selected(function) {
+                pending.push((Slot::TraitMethod(id, name.clone()), function.clone()));
+            }
+        }
+    }
+    let mut impl_ids = hir.impls.keys().copied().collect::<Vec<_>>();
+    impl_ids.sort();
+    for id in impl_ids {
+        let mut methods = hir.impls[&id].methods.iter().collect::<Vec<_>>();
+        methods.sort_by_key(|(_, function)| function.id);
+        for (name, function) in methods {
+            if selected(function) {
+                pending.push((Slot::ImplMethod(id, name.clone()), function.clone()));
+            }
+        }
+    }
+
     let mut context = MethodAuthorityContext {
         language_items: hir.language_items.clone(),
-        functions,
-        traits: &traits,
-        impls: &impls,
+        functions: &hir.functions,
+        materialized_functions: HashMap::new(),
+        traits: &hir.traits,
+        impls: &hir.impls,
         sized_trait_id: hir
             .language_items
             .sized
@@ -182,7 +213,7 @@ pub(super) fn materialize_pending(
         constraint_store: &mut hir.constraint_store,
         effective_trait_methods: &hir.imported_effective_trait_methods,
         resolver: &hir.resolver,
-        structs: &struct_ids,
+        structs: &hir.structs,
         engine: RefCell::new(&mut hir.engine),
         try_protocol: hir.language_items.try_protocol.clone(),
         unsafe_context: Cell::new(false),
@@ -196,60 +227,32 @@ pub(super) fn materialize_pending(
     };
 
     let mut errors = Vec::new();
-    let mut function_ids = hir.functions.keys().copied().collect::<Vec<_>>();
-    function_ids.sort();
-    for id in function_ids {
-        if !owner_selected(owners, ConstraintOwner::Body(id)) {
-            continue;
-        }
-        if let Some(function) = hir.functions.get_mut(&id) {
-            context.materialize_function(function, &mut errors);
-            context.functions.insert(id, function.clone());
+    for (slot, function) in &mut pending {
+        context.materialize_function(function, &mut errors);
+        if let Slot::Function(id) = slot {
+            context.materialized_functions.insert(*id, function.clone());
         }
     }
-    let mut trait_ids = hir.traits.keys().copied().collect::<Vec<_>>();
-    trait_ids.sort();
-    for id in trait_ids {
-        if let Some(trait_def) = hir.traits.get_mut(&id) {
-            let mut methods = trait_def
-                .methods
-                .iter()
-                .map(|(name, function)| (function.id, name.clone()))
-                .collect::<Vec<_>>();
-            methods.sort_by_key(|(method_id, _)| *method_id);
-            for (_, name) in methods {
-                if !owner_selected(owners, ConstraintOwner::Body(trait_def.methods[&name].id)) {
-                    continue;
-                }
-                if let Some(function) = trait_def.methods.get_mut(&name) {
-                    context.materialize_function(function, &mut errors);
-                }
-            }
-        }
-    }
-    let mut impl_ids = hir.impls.keys().copied().collect::<Vec<_>>();
-    impl_ids.sort();
-    for id in impl_ids {
-        if let Some(imp) = hir.impls.get_mut(&id) {
-            let mut methods = imp
-                .methods
-                .iter()
-                .map(|(name, function)| (function.id, name.clone()))
-                .collect::<Vec<_>>();
-            methods.sort_by_key(|(method_id, _)| *method_id);
-            for (_, name) in methods {
-                if !owner_selected(owners, ConstraintOwner::Body(imp.methods[&name].id)) {
-                    continue;
-                }
-                if let Some(function) = imp.methods.get_mut(&name) {
-                    context.materialize_function(function, &mut errors);
-                }
-            }
+    let ambiguous = context.ambiguous;
+    for (slot, function) in pending {
+        let target = match slot {
+            Slot::Function(id) => hir.functions.get_mut(&id),
+            Slot::TraitMethod(id, name) => hir
+                .traits
+                .get_mut(&id)
+                .and_then(|trait_def| trait_def.methods.get_mut(&name)),
+            Slot::ImplMethod(id, name) => hir
+                .impls
+                .get_mut(&id)
+                .and_then(|imp| imp.methods.get_mut(&name)),
+        };
+        if let Some(target) = target {
+            *target = function;
         }
     }
 
     if errors.is_empty() {
-        Ok(context.ambiguous)
+        Ok(ambiguous)
     } else {
         Err(errors)
     }

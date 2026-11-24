@@ -163,19 +163,21 @@ impl HirProgram {
 
         let mut type_context = crate::type_context::TypeContext::new();
         let type_ids = collect_hir_type_ids(self, &mut type_context);
-        let mut locations = type_ids.iter().collect::<Vec<_>>();
-        locations.sort_by_key(|(location, _)| format!("{location:?}"));
-        for (location, type_id) in locations {
+        // Report in location order; a valid program has no errors to order,
+        // so locations are not formatted (or sorted) unless one fails.
+        let mut location_errors = Vec::new();
+        for (location, type_id) in type_ids.iter() {
+            let mut found = Vec::new();
             let ty = type_context.type_for(type_id);
             if type_contains_backend_forbidden_sentinel(&ty) {
-                errors.push(format!(
+                found.push(format!(
                     "accepted HIR contains unresolved type at {location:?}: {ty:?}"
                 ));
             }
             let normalizer =
                 crate::type_services::normalize::TypeNormalizer::new(&normalization_env);
             if let Err(error) = normalizer.validate_canonical(&ty) {
-                errors.push(format!(
+                found.push(format!(
                     "accepted HIR contains noncanonical type at {location:?}: {error}"
                 ));
             }
@@ -202,17 +204,22 @@ impl HirProgram {
                 match crate::type_services::normalize::TypeNormalizer::new(&normalization_env)
                     .kind_of(&ty)
                 {
-                    Ok(actual_kind) if actual_kind != expected_kind => errors.push(format!(
+                    Ok(actual_kind) if actual_kind != expected_kind => found.push(format!(
                         "accepted HIR type at {location:?} has kind {actual_kind}, expected {expected_kind}"
                     )),
-                    Err(error) => errors.push(format!(
+                    Err(error) => found.push(format!(
                         "accepted HIR cannot determine kind at {location:?}: {error}"
                     )),
                     _ => {}
                 }
             }
-            validate_projection_ambiguities(self, &ty, &format!("{location:?}"), &mut errors);
+            validate_projection_ambiguities(self, &ty, location, &mut found);
+            if !found.is_empty() {
+                location_errors.push((format!("{location:?}"), found));
+            }
         }
+        location_errors.sort_by(|left, right| left.0.cmp(&right.0));
+        errors.extend(location_errors.into_iter().flat_map(|(_, errors)| errors));
 
         errors
     }
@@ -284,7 +291,7 @@ fn projection_impl_matches(
 fn validate_projection_ambiguities(
     program: &HirProgram,
     ty: &Type,
-    location: &str,
+    location: &HirTypeLocation,
     errors: &mut Vec<String>,
 ) {
     match ty {
@@ -316,7 +323,7 @@ fn validate_projection_ambiguities(
                 matching.dedup();
                 if matching.len() > 1 {
                     errors.push(format!(
-                        "accepted HIR contains multiple matching typed projection implementations at {location}: {matching:?}"
+                        "accepted HIR contains multiple matching typed projection implementations at {location:?}: {matching:?}"
                     ));
                 }
             }

@@ -14,8 +14,8 @@ use super::id_remap::{
 use super::method_authority::validate_product_method_authority_maps;
 use super::nominal_validator::ProductNominalTypeValidator;
 use super::product_names::{
-    product_def_id_to_existing_def_id, product_display_name, product_id_has_canonical_binding,
-    qualify_product_name,
+    product_def_id_to_existing_def_id, product_display_name, qualify_product_name,
+    CanonicalBindings,
 };
 use super::ProductIdentityRemap;
 use crate::collect::resolver::ResolverTables;
@@ -33,9 +33,10 @@ pub(super) fn interface_from_products(
 ) -> Result<ArtifactCrateInterface, String> {
     let type_validator =
         ProductNominalTypeValidator::from_products_with_context(products, remap, ctx);
+    let bindings = CanonicalBindings::new(products);
     let mut canonical_names = BTreeMap::new();
     for (id, name) in &products.identity_table.display_names {
-        if let Some(def_id) = product_def_id_to_existing_def_id(products, remap, *id)? {
+        if let Some(def_id) = product_def_id_to_existing_def_id(&bindings, remap, *id)? {
             canonical_names.insert(def_id, qualify_product_name(crate_name, name));
         }
     }
@@ -48,12 +49,13 @@ pub(super) fn interface_from_products(
                 alias
             )
         })?;
-        let def_id = product_def_id_to_existing_def_id(products, remap, *id)?.ok_or_else(|| {
-            format!(
-                "Product artifact root export '{}' has no canonical DefId",
-                alias
-            )
-        })?;
+        let def_id =
+            product_def_id_to_existing_def_id(&bindings, remap, *id)?.ok_or_else(|| {
+                format!(
+                    "Product artifact root export '{}' has no canonical DefId",
+                    alias
+                )
+            })?;
         let source = qualify_product_name(crate_name, &display_name);
         root_export_ids.insert(alias.clone(), ArtifactExport { source, id: def_id });
     }
@@ -310,21 +312,22 @@ pub(super) fn resolver_from_products(
     remap: &ProductIdentityRemap,
     ctx: &CrateContext,
 ) -> Result<ResolverTables, String> {
+    let bindings = CanonicalBindings::new(products);
     let mut resolver = ResolverTables::default();
     for (id, name) in &products.identity_table.display_names {
-        if let Some(def_id) = product_def_id_to_existing_def_id(products, remap, *id)? {
+        if let Some(def_id) = product_def_id_to_existing_def_id(&bindings, remap, *id)? {
             let source = qualify_product_name(crate_name, name);
             resolver.item_paths.insert(source.clone(), def_id);
             resolver.item_names_by_id.insert(def_id, source);
         }
     }
     for (alias, id) in &products.identity_table.export_names {
-        if let Some(def_id) = product_def_id_to_existing_def_id(products, remap, *id)? {
+        if let Some(def_id) = product_def_id_to_existing_def_id(&bindings, remap, *id)? {
             resolver.export_aliases.insert(alias.clone(), def_id);
         }
     }
     for (alias, id) in &products.identity_table.import_alias_names {
-        if let Some(def_id) = product_def_id_to_alias_def_id(products, remap, *id)? {
+        if let Some(def_id) = product_def_id_to_alias_def_id(products, &bindings, remap, *id)? {
             if let Some(source) = canonical_alias_source(&resolver, ctx, def_id) {
                 resolver.insert_import_alias_with_name(alias.clone(), source, def_id);
             }
@@ -341,7 +344,7 @@ pub(super) fn resolver_from_products(
         );
     }
     for (alias, id) in &products.identity_table.module_alias_names {
-        if let Some(def_id) = product_def_id_to_alias_def_id(products, remap, *id)? {
+        if let Some(def_id) = product_def_id_to_alias_def_id(products, &bindings, remap, *id)? {
             if let Some(source) = canonical_alias_source(&resolver, ctx, def_id) {
                 resolver.insert_module_alias_with_name(alias.clone(), source, def_id);
             }
@@ -353,12 +356,11 @@ pub(super) fn resolver_from_products(
 
 fn product_def_id_to_alias_def_id(
     products: &CompilerProducts,
+    bindings: &CanonicalBindings,
     remap: &ProductIdentityRemap,
     id: ProductDefId,
 ) -> Result<Option<DefId>, String> {
-    if product_id_has_canonical_binding(products, id)
-        || products.identity_table.local_crate != Some(id.crate_id)
-    {
+    if bindings.contains(id) || products.identity_table.local_crate != Some(id.crate_id) {
         Ok(Some(remap.def_id(id)?))
     } else {
         Ok(None)

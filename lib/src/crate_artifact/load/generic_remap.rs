@@ -55,14 +55,21 @@ pub(super) fn remap_generic_param_decls(
     remap: &ProductIdentityRemap,
     validator: &ProductNominalTypeValidator,
 ) -> Result<(), String> {
-    let mut env = validator.normalization_env.clone();
-    for decl in decls.iter() {
-        env.register_generic_kind(decl.id, decl.kind.clone());
-    }
+    // The crate-wide environment is large; only defaulted parameters need it.
+    let mut env = decls.iter().any(|decl| decl.default.is_some()).then(|| {
+        let mut env = validator.normalization_env.clone();
+        for decl in decls.iter() {
+            env.register_generic_kind(decl.id, decl.kind.clone());
+        }
+        env
+    });
     let mut default_seen = false;
     for decl in decls {
         if let Some(default) = &mut decl.default {
             default_seen = true;
+            let env = env
+                .as_mut()
+                .expect("built when any parameter has a default");
             let owner = ProductDefId::from(decl.id.owner);
             let subject_index = validator.trait_generic_counts.get(&owner).copied();
             if let Some(index) = subject_index {

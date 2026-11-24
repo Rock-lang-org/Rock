@@ -128,6 +128,16 @@ impl Monomorphizer {
             };
             let trait_generic_count = trait_def.generic_params.len();
             let trait_args = imp.trait_arg_types.clone();
+            let provided_by_object = imp
+                .methods
+                .values()
+                .filter(|method| {
+                    crate_ctx
+                        .extern_crates()
+                        .any(|dep| dep.provides_impl_method_body(imp, method))
+                })
+                .map(|method| method.id)
+                .collect::<std::collections::HashSet<_>>();
             let method_names = Self::method_names_in_id_order(&imp.methods);
             for name in method_names {
                 let Some(method) = imp.methods.get_mut(&name) else {
@@ -141,7 +151,9 @@ impl Monomorphizer {
                 };
                 if method.id == default.id {
                     imp.methods.remove(&name);
-                } else {
+                } else if !provided_by_object.contains(&method.id) {
+                    // Demand prefers the object instance, so a body for an
+                    // object-provided method would never be used.
                     *method = self.instantiate_dependency_trait_default(
                         trait_id,
                         trait_generic_count,

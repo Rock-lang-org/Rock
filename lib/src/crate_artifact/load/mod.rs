@@ -135,9 +135,12 @@ impl CrateContext {
         header: &ProductArtifactHeader,
         context: &mut crate::type_context::TypeContext,
     ) -> Result<(), String> {
-        let products =
-            PortableProductArtifact::read_payload_from_path_bounded(&artifact_path, header)?
-                .into_products()?;
+        let mut timer = crate::pipeline::timing::PhaseTimer::from_env();
+        let portable =
+            PortableProductArtifact::read_payload_from_path_bounded(&artifact_path, header)?;
+        timer.lap("extern/decode");
+        let products = portable.into_products()?;
+        timer.lap("extern/products");
         let crate_name = products.crate_identity.name.clone();
         if crate_name != expected_name {
             return Err(format!(
@@ -152,12 +155,15 @@ impl CrateContext {
         let remap = ProductIdentityRemap::from_products(&mut staged_crate_context, &products)?;
         let extern_record =
             extern_crate_from_products(&products, &artifact_path, &remap, &staged_crate_context)?;
+        timer.lap("extern/remap");
         let mut staged_context = context.clone();
         intern_loaded_extern_crate_types(&extern_record, &mut staged_context)?;
+        timer.lap("extern/intern");
         staged_crate_context.add_extern_crate(extern_record)?;
 
         *self = staged_crate_context;
         *context = staged_context;
+        timer.lap("extern/register");
 
         Ok(())
     }

@@ -6,7 +6,7 @@ mod config;
 mod frontend;
 #[cfg(test)]
 mod tests;
-mod timing;
+pub(crate) mod timing;
 
 pub use config::{Config, CrateKind, DebugPrint, SourceProvider};
 

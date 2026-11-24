@@ -74,7 +74,7 @@ impl MethodAuthorityContext<'_> {
         id: crate::ids::DefId,
         index: usize,
     ) -> Vec<(String, Vec<String>)> {
-        let Some(function) = self.functions.get(&id) else {
+        let Some(function) = self.function(id) else {
             return Vec::new();
         };
         let Some(Type::Apply { constructor, .. }) = function.params.get(index).map(|p| &p.ty)

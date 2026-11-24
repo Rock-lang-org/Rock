@@ -129,7 +129,9 @@ fn binding_sort_key(binding: &HirTypeBinding) -> (u32, u32, u32) {
 
 struct MethodAuthorityContext<'a> {
     language_items: crate::hir::HirLanguageItems,
-    functions: HashMap<DefId, HirFunction>,
+    /// Functions as of the pass start, overlaid by those it has materialized.
+    functions: &'a HashMap<DefId, HirFunction>,
+    materialized_functions: HashMap<DefId, HirFunction>,
     traits: &'a HashMap<DefId, crate::hir::HirTrait>,
     impls: &'a HashMap<DefId, crate::hir::HirImpl>,
     sized_trait_id: Option<DefId>,
@@ -148,6 +150,14 @@ struct MethodAuthorityContext<'a> {
     selected_site: Option<AuthoritySiteId>,
     strict: bool,
     try_strict: bool,
+}
+
+impl MethodAuthorityContext<'_> {
+    fn function(&self, id: DefId) -> Option<&HirFunction> {
+        self.materialized_functions
+            .get(&id)
+            .or_else(|| self.functions.get(&id))
+    }
 }
 
 #[cfg(test)]
