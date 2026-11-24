@@ -8,6 +8,10 @@
     foldl: S -> B -> F A -> B where S: FnMut (B, A), B
     foldl = step, initial, values -> fold_all step, initial, values
 
+// Reverse traversal is separate: a forward-only source need not buffer.
+< trait RightFoldable A
+    ~@foldr: S -> B -> B where S: FnMut (A, B), B
+
 fold_all: S -> B -> F A -> B where F _: Foldable, S: FnMut (B, A), B
 fold_all = mut step, initial, values ->
     visit: (B, A) -> ControlFlow B, B = pair ->
@@ -19,6 +23,15 @@ fold_all = mut step, initial, values ->
 
 foldl: S -> B -> F A -> B where F _: Foldable, S: FnMut (B, A), B
 < foldl = step, initial, values -> fold_all step, initial, values
+
+foldr: S -> B -> C -> B where C: RightFoldable A, S: FnMut (A, B), B
+< foldr = step, initial, values -> values.foldr step, initial
+
+<&<: C -> (S, B) -> B where C: FoldableValue A, S: FnMut (B, A), B
+< <&< = values, spec -> values.foldl spec.0, spec.1
+
+>&>: C -> (S, B) -> B where C: RightFoldable A, S: FnMut (A, B), B
+< >&> = values, spec -> foldr spec.0, spec.1, values
 
 lang fold
 < trait FoldableValue A

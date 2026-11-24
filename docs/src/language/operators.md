@@ -159,6 +159,24 @@ main = !->
 
 The output is `5`, `4`, and `9`. `<&>` maps a function over `Option`, `>>-` calls a function that returns another `Option`, `<|>` chooses the first present value, and `|>` passes a value to a function. These meanings are standard-library definitions, not compiler fallbacks.
 
+## Fold Operators
+
+`<&<` folds from the left (`foldl`); `>&>` folds from the right (`foldr`).
+Both take a foldable value on the left and a `(step, initial)` tuple on the
+right. The left fold calls `step` with `(accumulator, item)`, and the right
+fold calls it with `(item, accumulator)`. An empty fold returns `initial`.
+Both operators bind less tightly than `<&>` and more tightly than `|>`.
+The named `foldl` and `foldr` functions and methods take `step` before `initial`.
+Right folds require `RightFoldable`, implemented by `Vec`, `Option`, `Result`,
+and ranges with both endpoints. Forward-only sources do not need to buffer.
+
+```rock
+values
+    <&> normalize
+    >&> (step, initial)
+    |> (.println!)
+```
+
 ## Mixed Multiline Pipelines
 
 An infix operator and a dot call can continue the same expression at the same

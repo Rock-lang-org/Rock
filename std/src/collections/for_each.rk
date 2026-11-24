@@ -2,6 +2,7 @@
 
 > std::functional::callable::FnMut
 > std::functional::foldable::FoldableValue
+> std::functional::foldable::RightFoldable
 > std::control::control_flow::ControlFlow
 > std::ffi::libc::exit
 > std::ffi::libc::puts
@@ -15,6 +16,27 @@ for_each: C -> A -> () where C: FoldableValue T, A: FnMut T, ()
         next: ControlFlow (), () = ControlFlow::Continue ()
         next
     values.try_fold step, ()
+
+impl RightFoldable I64 for Range
+    ~@foldr = mut step, initial ->
+        mut state = initial
+        match self
+            Range::Exclusive start, end =>
+                index = end
+                while index > start
+                    index = index - 1
+                    state = step (index, state)
+            Range::Inclusive start, end =>
+                index = end
+                while index >= start
+                    state = step (index, state)
+                    if index == start
+                        break
+                    index = index - 1
+            _ =>
+                puts "foldr requires a bounded range".as_ptr!
+                exit (1 as I32)
+        state
 
 impl FoldableValue I64 for Range
     ~@try_fold = mut step, initial ->

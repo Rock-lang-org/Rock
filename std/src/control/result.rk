@@ -11,6 +11,7 @@
 > std::functional::applicative::Applicative
 > std::functional::monad::Monad
 > std::functional::foldable::Foldable
+> std::functional::foldable::RightFoldable
 > std::functional::traversable::Traversable
 
 < enum Result T, E
@@ -48,6 +49,12 @@ impl Monad for Result _, E
         match value
             Result::Ok item => callback item
             Result::Err error => Result::Err error
+
+impl RightFoldable A for Result A, E
+    ~@foldr = mut step, initial ->
+        match self
+            Result::Ok item => step (item, initial)
+            Result::Err _ => initial
 
 impl Foldable for Result _, E
     try_fold = mut step, initial, value ->

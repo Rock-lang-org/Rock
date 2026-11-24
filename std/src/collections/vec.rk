@@ -21,6 +21,7 @@
 > std::functional::callable::FnMut
 > std::functional::functor::Functor
 > std::functional::foldable::Foldable
+> std::functional::foldable::RightFoldable
 > std::functional::traversable::Traversable
 > std::control::control_flow::ControlFlow
 
@@ -346,6 +347,19 @@ impl Functor for Vec
             output.push (mapper item)
             i = i + 1
         output
+
+impl RightFoldable A for Vec A
+    ~@foldr = mut step, initial ->
+        mut value = self
+        i = value.raw_len
+        ptr = value.raw.ptr!
+        value.raw_len = 0
+        mut acc = initial
+        while i > 0
+            i = i - 1
+            item = unsafe *(ptr + i)
+            acc = step (item, acc)
+        acc
 
 impl Foldable for Vec
     try_fold = mut step, initial, mut value ->

@@ -19,4 +19,6 @@
 < monad::*
 < monad::>>-
 < foldable::*
+< foldable::<&<
+< foldable::>&>
 < traversable::*

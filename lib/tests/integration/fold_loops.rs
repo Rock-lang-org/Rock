@@ -356,3 +356,35 @@ main = !->
         "for loop pattern must be irrefutable",
     );
 }
+#[test]
+fn test_fold_pipeline_operators() {
+    let output = compile_and_run(
+        r#"
+values = ->
+    mut items = Vec::new!
+    items.push 1
+    items.push 2
+    items.push 3
+    items
+
+subtract: (I64, I64) -> I64
+subtract = pair -> pair.0 - pair.1
+
+main = !->
+    values!
+        <&> (+ 0)
+        <&< (subtract, 0)
+        |> (.println!)
+    values!
+        <&> (+ 0)
+        >&> (subtract, 0)
+        |> (.println!)
+    values!.foldr subtract, 0 .println!
+    (1..=3).foldr subtract, 0 .println!
+    foldr subtract, 10, (Option::Some 4) .println!
+    empty: Vec I64 = Vec::new!
+    (empty >&> (subtract, 42)).println!
+"#,
+    );
+    assert_eq!(output, "-6\n2\n2\n2\n-6\n42\n");
+}
