@@ -181,6 +181,15 @@ fn test_std_package_invocation_uses_rockc_product_outputs() {
     assert!(args.contains(&"--no-std".to_string()));
     assert!(args.contains(&"--no-prelude".to_string()));
     assert!(args.contains(&"--no-link".to_string()));
+    assert!(
+        args.contains(&"--release".to_string()),
+        "std is always packaged optimized"
+    );
+    assert!(
+        args.windows(2)
+            .any(|pair| pair[0] == "--overflow-checks" && pair[1] == "true"),
+        "std's operators keep overflow checks"
+    );
     assert!(args.windows(2).any(|pair| pair[0] == "--emit-object"
         && pair[1] == layout.std_object.to_string_lossy().as_ref()));
     assert!(args.windows(2).any(|pair| pair[0] == "--emit-artifact"

@@ -13,6 +13,9 @@ use std::{
 pub const ROCK_SYSROOT_ENV: &str = "ROCK_SYSROOT";
 pub const CARGO_TARGET_DIR_ENV: &str = "CARGO_TARGET_DIR";
 pub const STD_CRATE_NAME: &str = "std";
+/// Build profile of a packaged std, recorded in the sysroot manifest. Every
+/// program links std's object, so it is always built optimized.
+pub const STD_PROFILE: &str = "release";
 pub const STD_ARTIFACT_FILE_NAME: &str = "std.rkca";
 pub const STD_OBJECT_FILE_NAME: &str = "std.o";
 pub const TOOLCHAIN_MANIFEST_FILE_NAME: &str = "manifest.json";

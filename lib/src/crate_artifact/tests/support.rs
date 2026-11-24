@@ -254,8 +254,10 @@ pub(super) fn build_product_artifact_with_extern_artifacts(
         extern_artifacts,
         source_providers: Vec::new(),
         current_crate_name: Some(crate_name.to_string()),
-        opt_level: 0,
-        overflow_checks: None,
+        // Std is always built optimized and overflow-checked, as the sysroot
+        // packages it.
+        opt_level: if crate_name == "std" { 3 } else { 0 },
+        overflow_checks: (crate_name == "std").then_some(true),
         emit_llvm: false,
         no_link: true,
         emit_object: Some(object_path.clone()),

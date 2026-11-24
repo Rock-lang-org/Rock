@@ -62,6 +62,12 @@ pub(crate) fn build_std_package_invocation(
             "--no-std".into(),
             "--no-prelude".into(),
             "--no-link".into(),
+            // Every program links this object; it is never built unoptimized.
+            "--release".into(),
+            // Std's integer operators resolve `~OverflowChecks!` when std is
+            // compiled, so they decide checking for every program: keep it on.
+            "--overflow-checks".into(),
+            "true".into(),
             "--emit-object".into(),
             layout.std_object.clone().into_os_string(),
             "--emit-artifact".into(),
@@ -161,6 +167,10 @@ fn write_sysroot_metadata(
         format!(
             "    \"object\": \"{}\",\n",
             rock_shared::sysroot::STD_OBJECT_FILE_NAME
+        ),
+        format!(
+            "    \"profile\": \"{}\",\n",
+            rock_shared::sysroot::STD_PROFILE
         ),
         format!(
             "    \"artifact_format_version\": {}\n",

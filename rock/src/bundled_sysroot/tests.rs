@@ -77,3 +77,32 @@ fn test_sysroot_std_is_fresh_with_current_artifact_format() {
 pub(crate) fn current_sysroot_layout() -> Result<SysrootLayout, String> {
     current_sysroot_resolution().map(|resolution| resolution.into_layout())
 }
+
+#[test]
+fn test_dev_sysroot_std_without_release_profile_is_rebuilt() {
+    let (root, layout) = write_complete_sysroot_std(&PRODUCT_ARTIFACT_FORMAT_VERSION.to_string());
+    let std_root = root.join("std-src");
+    fs::create_dir_all(&std_root).unwrap();
+    fs::write(std_root.join("rock.toml"), "[crate]\nname = \"std\"\n").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    // The packaged std must be newer than its sources to be fresh.
+    fs::write(&layout.std_artifact, "artifact").unwrap();
+    fs::write(&layout.std_object, "object").unwrap();
+
+    // An installed toolchain cannot rebuild std, so it is used as shipped.
+    assert!(sysroot_std_is_fresh(&layout, None).unwrap());
+    assert!(!sysroot_std_is_fresh(&layout, Some(&std_root)).unwrap());
+
+    let manifest = fs::read_to_string(&layout.manifest_path).unwrap().replacen(
+        "\"std\": {\n",
+        &format!(
+            "\"std\": {{\n    \"profile\": \"{}\",\n",
+            rock_shared::sysroot::STD_PROFILE
+        ),
+        1,
+    );
+    fs::write(&layout.manifest_path, manifest).unwrap();
+    assert!(sysroot_std_is_fresh(&layout, Some(&std_root)).unwrap());
+
+    let _ = fs::remove_dir_all(root);
+}

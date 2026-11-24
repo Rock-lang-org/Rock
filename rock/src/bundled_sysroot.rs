@@ -120,6 +120,11 @@ fn sysroot_std_is_fresh(
     }
 
     if let Some(std_root) = workspace_std_root {
+        // A dev sysroot packaged before std was always optimized is rebuilt;
+        // an installed toolchain cannot rebuild, so it is used as shipped.
+        if !sysroot_std_profile_is_release(&layout.manifest_path)? {
+            return Ok(false);
+        }
         let artifact_modified = file_modified(&layout.std_artifact)?;
         let object_modified = file_modified(&layout.std_object)?;
         for source_path in collect_package_source_inputs(std_root, crate::package::BUILD_DIR)? {
@@ -131,6 +136,18 @@ fn sysroot_std_is_fresh(
     }
 
     Ok(true)
+}
+
+fn sysroot_std_profile_is_release(manifest_path: &Path) -> Result<bool, String> {
+    let manifest = fs::read_to_string(manifest_path).map_err(|e| {
+        format!(
+            "Failed to read sysroot manifest {}: {}",
+            manifest_path.display(),
+            e
+        )
+    })?;
+    let expected = format!("\"profile\": \"{}\"", sysroot::STD_PROFILE);
+    Ok(manifest.contains(&expected))
 }
 
 fn sysroot_std_artifact_format_is_current(manifest_path: &Path) -> Result<bool, String> {

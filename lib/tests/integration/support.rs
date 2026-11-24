@@ -352,8 +352,10 @@ pub(crate) fn std_artifact_path() -> PathBuf {
                 extern_artifacts: vec![],
                 source_providers: Vec::new(),
                 current_crate_name: Some("std".to_string()),
-                opt_level: 0,
-                overflow_checks: None,
+                // Std is always built optimized and overflow-checked, as the
+                // sysroot packages it.
+                opt_level: 3,
+                overflow_checks: Some(true),
                 emit_llvm: false,
                 no_link: true,
                 emit_object: Some(build_object_path),
