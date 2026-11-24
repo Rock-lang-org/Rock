@@ -28,8 +28,14 @@ fn product_artifact_rejects_nested_error_in_unexported_interface_type() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let error =
-        super::validate_product_type_fields(&products, &remap, &CrateContext::new()).unwrap_err();
+    let error = super::super::products_to_interface::interface_from_products(
+        &products,
+        "dep",
+        &remap,
+        &CrateContext::new(),
+        &Default::default(),
+    )
+    .unwrap_err();
 
     assert!(error.contains("Type::Error"), "unexpected error: {error}");
 }
@@ -53,8 +59,13 @@ fn product_artifact_rejects_nested_type_var_in_unexported_body_type() {
         local_crate: ProductCrateId(0),
         crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
     };
-    let error =
-        super::validate_product_type_fields(&products, &remap, &CrateContext::new()).unwrap_err();
+    let error = super::super::products_to_interface::cross_crate_hir_from_products(
+        &products,
+        "dep",
+        &remap,
+        &CrateContext::new(),
+    )
+    .unwrap_err();
 
     assert!(
         error.contains("unresolved type"),

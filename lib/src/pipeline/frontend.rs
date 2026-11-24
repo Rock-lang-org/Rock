@@ -48,6 +48,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         return Err(diagnostics);
     }
 
+    timer.lap("load-externs");
     let mut source_db = source_loader::SourceDatabase::new();
     source_db.add_source_providers(&config.source_providers);
     let mut source_graph = match source_db.load_entry(config.entry_file.clone(), config) {

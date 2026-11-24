@@ -7,7 +7,7 @@ use super::extern_crate_record::{artifact_hir_name_tables, intern_loaded_interfa
 use super::generic_remap::remap_type_def_ids;
 use super::method_authority::validate_product_method_authority_maps;
 use super::nominal_validator::ProductNominalTypeValidator;
-use super::product_validation::{validate_product_interface_rows, validate_product_type_fields};
+use super::product_validation::validate_product_interface_rows;
 use super::products_to_interface::{cross_crate_hir_from_products, resolver_from_products};
 use super::target_remap::{remap_pattern_child_locations, remap_var_target_child_location};
 use super::*;

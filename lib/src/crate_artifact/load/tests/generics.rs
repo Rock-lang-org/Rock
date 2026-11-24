@@ -308,7 +308,14 @@ fn product_artifact_rejects_invalid_generic_defaults() {
             crate_ids: BTreeMap::from([(ProductCrateId(0), CrateId(7))]),
         };
         assert!(
-            super::validate_product_type_fields(&products, &remap, &CrateContext::new()).is_err()
+            super::super::products_to_interface::interface_from_products(
+                &products,
+                "dep",
+                &remap,
+                &CrateContext::new(),
+                &Default::default(),
+            )
+            .is_err()
         );
     }
 }

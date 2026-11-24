@@ -5,7 +5,7 @@ use super::object_link::{
     backend_symbols_from_products, resolve_product_object_path, validate_object_link_records,
 };
 use super::prelude_exports::normalize_product_prelude_exports;
-use super::product_validation::{validate_product_interface_rows, validate_product_type_fields};
+use super::product_validation::validate_product_interface_rows;
 use super::products_to_interface::{
     cross_crate_hir_from_products, interface_from_products, resolver_from_products,
 };
@@ -276,7 +276,6 @@ pub(super) fn extern_crate_from_products(
             )
         })?;
     validate_product_interface_rows(products)?;
-    validate_product_type_fields(products, remap, ctx)?;
     let language_items =
         crate::crate_artifact::language_items::language_items_from_products(products, remap)?;
     validate_object_link_records(products)?;
