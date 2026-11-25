@@ -1,0 +1,77 @@
+name: Platforms
+
+# Builds the toolchain natively on macOS and Windows and runs the std
+# platform smoke program there. Linux is covered by the release workflow.
+# Manual for now: these runners and the LLVM download are slow, and the ports
+# are not yet qualified.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            triple: aarch64-apple-darwin
+          - os: windows-2022
+            triple: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM 18 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@18 zstd
+          echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
+          # Static LLVM archives link against Homebrew's zstd and friends.
+          echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+
+      - name: Install LLVM 18 (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # Static MSVC build of LLVM with llvm-config, built against the
+          # dynamic CRT (msvcrt) that Rust uses by default.
+          curl -fsSL -o llvm.7z https://github.com/vovkos/llvm-package-windows/releases/download/llvm-18.1.8/llvm-18.1.8-windows-amd64-msvc17-msvcrt.7z
+          7z x llvm.7z -o"$RUNNER_TEMP/llvm" > /dev/null
+          config=$(find "$RUNNER_TEMP/llvm" -name llvm-config.exe | head -n 1)
+          test -n "$config"
+          prefix=$(cd "$(dirname "$config")/.." && pwd -W)
+          echo "LLVM_SYS_180_PREFIX=$prefix" >> "$GITHUB_ENV"
+
+      # Puts MSVC's link.exe and the CRT/SDK libraries on PATH and LIB for
+      # rockc's linker invocation.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - name: Build toolchain
+        run: cargo build --locked --release -p rock -p rockc -p rockup
+
+      - name: Report target
+        run: |
+          target/release/rockc --print target-triple
+          target/release/rockc --print cfg
+          test "$(target/release/rockc --print target-triple)" = "${{ matrix.triple }}"
+
+      - name: Package std
+        run: target/release/rockup dev std package --path "$PWD/std" --sysroot "$PWD/target" --copy-source --rockc "$PWD/target/release/rockc"
+
+      - name: Platform smoke
+        run: |
+          work="$RUNNER_TEMP/platform_smoke"
+          rm -rf "$work"
+          cp -R lib/tests/fixtures/platform_smoke "$work"
+          cd "$work"
+          "$GITHUB_WORKSPACE/target/release/rock" run --release -- first-arg
+
+      - name: Shared crate tests
+        run: cargo test --locked --release -p rock-shared

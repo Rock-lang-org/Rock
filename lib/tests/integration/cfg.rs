@@ -103,6 +103,29 @@ main = -> (c_abs (~IntWrappingSub (0 as I32), (42 as I32))) as I64
     assert_eq!(status, 42);
 }
 
+// The same program runs natively on macOS and Windows in CI.
+#[test]
+fn test_platform_smoke_program_runs_on_the_host() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    let _cleanup = TestDirCleanup(dir.clone());
+    let source =
+        fs::read_to_string(workspace_root().join("lib/tests/fixtures/platform_smoke/src/main.rk"))
+            .unwrap();
+    let output = compile_and_run_in_working_dir(&source, &dir);
+    assert!(
+        output.status.success(),
+        "smoke failed with {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "platform smoke ok"
+    );
+}
+
 // No native runner exists for macOS or Windows here, so at least keep std
 // compiling for every supported target; each backend is selected by cfg.
 #[test]

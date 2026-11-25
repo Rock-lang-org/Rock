@@ -1,0 +1,84 @@
+// Exercises every std operation that goes through an OS backend. Run it in
+// an empty working directory on each supported platform. A failing step
+// exits with its own code (10, 20, ...) so CI logs name the broken operation;
+// success prints `platform smoke ok` and exits 0.
+
+> std::io::fs::File
+> std::io::fs::read_to_string
+> std::io::IoError
+> std::io::net::TcpListener
+> std::io::net::TcpStream
+> std::io::net::SocketAddrV4
+> std::concurrency::thread::spawn
+> std::concurrency::thread::sleep_ms
+> std::control::Result
+> std::env::args
+
+// Non-ASCII file name: exercises UTF-8 to native path conversion.
+file_name = -> "smoke-ünïcødé-é.txt"
+
+write_then_append: () -> Result I64, IoError
+write_then_append = ->
+    mut created = File::create file_name!?
+    created.write_str "first"?
+    created.close!?
+    mut appended = File::append file_name!?
+    written = appended.write_str "-second"?
+    Result::Ok written
+
+loopback: () -> Result I64, IoError
+loopback = ->
+    listener = TcpListener::bind (SocketAddrV4::localhost 0)?
+    addr = listener.local_addr!?
+    mut client = TcpStream::connect addr?
+    mut server = listener.accept!?
+    client.write_str "ping"?
+    client.shutdown_write!?
+    mut buf = [0 as U8, 0, 0, 0]
+    read = server.read (&mut buf)?
+    if read == 4 && buf[0] == (112 as U8) && buf[3] == (103 as U8)
+        Result::Ok read
+    else
+        Result::Ok 0
+
+main = ->
+    // Arguments: argv[0] is always present.
+    if args!.len! < 1
+        return 10
+
+    // Files: create, close, append, read back.
+    match write_then_append!
+        Result::Ok 7 => ()
+        _ => return 20
+    match read_to_string file_name!
+        Result::Ok text =>
+            if text != "first-second"
+                return 21
+        Result::Err _ => return 22
+
+    // A missing file reports an OS error rather than crashing.
+    match File::open "definitely-missing-file.txt"
+        Result::Err (IoError::Os _) => ()
+        _ => return 30
+
+    // Sockets: loopback round trip.
+    match loopback!
+        Result::Ok 4 => ()
+        _ => return 40
+
+    // Threads: spawn, sleep inside the thread, join with a value.
+    match spawn (->
+        sleep_ms 5
+        42)
+        Result::Ok handle =>
+            match handle.join!
+                Result::Ok 42 => ()
+                _ => return 50
+        Result::Err _ => return 51
+
+    // Float formatting goes through the C runtime.
+    if (1.5).show! != "1.5"
+        return 60
+
+    "platform smoke ok".println!
+    0

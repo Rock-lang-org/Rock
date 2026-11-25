@@ -1,0 +1,7 @@
+[crate]
+name = "platform_smoke"
+version = "0.1.0"
+
+[[bin]]
+name = "platform_smoke"
+path = "src/main.rk"
