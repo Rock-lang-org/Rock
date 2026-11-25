@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-latest
             triple: aarch64-apple-darwin
           - os: windows-2022
             triple: x86_64-pc-windows-msvc
@@ -55,6 +55,12 @@ jobs:
       # rockc's linker invocation.
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
+
+      # Git Bash puts coreutils' link.exe (hard links) ahead of MSVC's linker,
+      # which breaks both Cargo and rockc's link step.
+      - name: Remove Git's link.exe
+        if: runner.os == 'Windows'
+        run: rm -f /usr/bin/link.exe && which link.exe
 
       - name: Build toolchain
         run: cargo build --locked --release -p rock -p rockc -p rockup
