@@ -203,6 +203,8 @@ impl Lexer {
 
         let token = match self.current_char() {
             '\n' => self.token(TokenType::Eol, 1),
+            // Windows line ending: one Eol covering both bytes.
+            '\r' if self.peek(1) == '\n' => self.token(TokenType::Eol, 2),
             '!' if self.peek(1) == '-' && self.peek(2) == '>' => {
                 self.token(TokenType::UnitArrow, 3)
             }
@@ -343,7 +345,11 @@ impl Lexer {
     // Comment lengths are byte offsets: comments may contain any UTF-8 text.
     fn comment_eol(&self) -> Token {
         let rest = &self.input[self.position..];
-        let len = rest.find('\n').unwrap_or(rest.len());
+        let mut len = rest.find('\n').unwrap_or(rest.len());
+        // Leave a CRLF's `\r` to the following Eol token.
+        if rest[..len].ends_with('\r') {
+            len -= 1;
+        }
 
         self.token(TokenType::Comment(String::new()), len)
     }
@@ -428,11 +434,11 @@ impl Lexer {
         let start = self.position;
         let mut end = self.position;
 
-        while self.peek(end - start).is_whitespace() && self.peek(end - start) != '\n' {
+        while self.peek(end - start).is_whitespace() && !self.line_end_at(end - start) {
             end += 1;
         }
 
-        let indent_level = if self.peek(end - start) == '\n' {
+        let indent_level = if self.line_end_at(end - start) {
             0
         } else {
             end - start
@@ -442,8 +448,17 @@ impl Lexer {
     }
 
     fn skip_whitespace(&mut self) {
-        while self.current_char().is_whitespace() && self.current_char() != '\n' {
+        while self.current_char().is_whitespace() && !self.line_end_at(0) {
             self.position += self.current_char().len_utf8();
+        }
+    }
+
+    /// Whether a line ending (`\n` or `\r\n`) starts `n` chars ahead.
+    fn line_end_at(&self, n: usize) -> bool {
+        match self.peek(n) {
+            '\n' => true,
+            '\r' => self.peek(n + 1) == '\n',
+            _ => false,
         }
     }
 

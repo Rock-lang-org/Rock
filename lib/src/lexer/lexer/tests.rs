@@ -327,3 +327,25 @@ impl Lexer {
         self
     }
 }
+
+#[test]
+fn crlf_line_endings_lex_like_lf() {
+    let lf = "// header\nmain = ->\n    x = 1\n\n    x\n";
+    let crlf = lf.replace('\n', "\r\n");
+    let kinds = |input: &str| {
+        lex_input(input)
+            .unwrap()
+            .into_iter()
+            .map(|token| token.token_type)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(kinds(&crlf), kinds(lf));
+
+    // Spans still index the original bytes: the first Eol covers "\r\n".
+    let tokens = lex_input(&crlf).unwrap();
+    let eol = tokens
+        .iter()
+        .find(|token| token.token_type == TokenType::Eol)
+        .unwrap();
+    assert_eq!(&crlf[eol.span.start..eol.span.end], "\r\n");
+}
