@@ -7,6 +7,7 @@ mod std_cache_key;
 
 #[path = "../support/callable.rs"]
 mod callable;
+mod cfg;
 
 mod support;
 use support::{compile_and_run, compile_and_run_without_std, compile_should_fail};

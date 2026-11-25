@@ -9,6 +9,8 @@ use crate::products::{
 };
 use crate::Config;
 
+const TEST_TARGET: &str = "x86_64-unknown-linux-gnu";
+
 #[test]
 fn compile_rejects_duplicate_extern_artifact_names() {
     let config = Config {
@@ -54,7 +56,10 @@ fn load_extern_artifacts_rejects_missing_declared_dependency() {
 
     let missing_identity = ProductCrateIdentity::local("missing".to_string());
     let products = CompilerProducts {
-        crate_identity: ProductCrateIdentity::local("app".to_string()),
+        crate_identity: ProductCrateIdentity {
+            target_triple: Some(TEST_TARGET.to_string()),
+            ..ProductCrateIdentity::local("app".to_string())
+        },
         identity_table: ProductIdentityTable {
             local_crate: Some(ProductCrateId(0)),
             dependencies: BTreeMap::from([(ProductCrateId(1), missing_identity)]),
@@ -75,13 +80,29 @@ fn load_extern_artifacts_rejects_missing_declared_dependency() {
 
     let error = load_extern_artifacts(
         &mut CrateContext::new(),
-        &[("app".to_string(), artifact_path)],
+        &[("app".to_string(), artifact_path.clone())],
         base.clone(),
+        TEST_TARGET,
     )
     .unwrap_err();
 
     assert!(
         error.message.contains("missing"),
+        "unexpected error: {error:?}"
+    );
+
+    // The same artifact is rejected outright for another target.
+    let error = load_extern_artifacts(
+        &mut CrateContext::new(),
+        &[("app".to_string(), artifact_path)],
+        base.clone(),
+        "x86_64-pc-windows-msvc",
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .message
+            .contains("was built for target 'x86_64-unknown-linux-gnu'"),
         "unexpected error: {error:?}"
     );
 

@@ -322,6 +322,7 @@ fn test_function_like_proc_macro_expands_through_public_macro_api() {
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        target: None,
         crate_kind: Default::default(),
         lint_levels: Default::default(),
     };

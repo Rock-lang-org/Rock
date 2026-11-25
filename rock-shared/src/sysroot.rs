@@ -46,7 +46,11 @@ impl SysrootResolution {
     }
 
     pub fn into_layout(self) -> SysrootLayout {
-        SysrootLayout::new(self.path, host_target_triple())
+        self.into_layout_for(host_target_triple())
+    }
+
+    pub fn into_layout_for(self, target_triple: String) -> SysrootLayout {
+        SysrootLayout::new(self.path, target_triple)
     }
 }
 

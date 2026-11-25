@@ -1,4 +1,5 @@
-// File manipulation API backed by POSIX descriptors.
+// File manipulation API backed by POSIX descriptors; OS-specific flags and
+// open semantics come from std::sys.
 
 > std::mem::drop::Drop
 > std::io::traits::IoError
@@ -8,7 +9,13 @@
 > std::io::traits::write_all
 > std::io::traits::write_str
 > std::io::fd::close_fd
-> std::ffi::libc::open
+> std::sys::open_file
+> std::sys::o_rdonly
+> std::sys::o_wronly
+> std::sys::o_creat
+> std::sys::o_trunc
+> std::sys::o_append
+> std::sys::eintr
 > std::ffi::libc::read
 > std::ffi::libc::write
 > std::control::result::Result
@@ -18,17 +25,6 @@
 
 < struct File
     fd: I32
-
-// Linux open(2) flags remain private backend details.
-o_rdonly = -> 0
-o_wronly = -> 1
-o_creat = -> 64
-o_trunc = -> 512
-o_append = -> 1024
-default_mode = -> 438
-
-// Linux errno for an interrupted system call; the read loop retries on it.
-eintr = -> 4
 
 path_has_nul: &Str -> Bool
 path_has_nul = path ->
@@ -52,7 +48,7 @@ open_with_flags = path, flags ->
         Result::Err err
     else
         owned_path = String::from path
-        fd = open owned_path.as_ptr!, flags, default_mode!
+        fd = open_file owned_path.as_ptr!, flags
         if fd < (0 as I32)
             Result::Err (last_os_error!)
         else

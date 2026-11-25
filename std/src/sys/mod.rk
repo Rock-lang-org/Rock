@@ -1,0 +1,38 @@
+// Private operating-system backends.
+//
+// Portable std code imports from `std::sys` only. Exactly one backend is
+// active per target; inactive backend files are never loaded. Every backend
+// exports the same operations:
+//
+//   errno_location: () -> *I32         thread-local errno slot
+//   open_file: *U8 -> I32 -> I32       open(2) with the default creation mode
+//   o_rdonly, o_wronly, o_creat, o_trunc, o_append: () -> I32
+//   eintr: () -> I32
+//   msg_nosignal: () -> I32            send(2) flag suppressing SIGPIPE
+//   sockaddr_v4_set_family: *U8 -> ()  writes the family header of sockaddr_in
+
+cfg(target_os = "linux")
+    mod linux
+    < linux::errno_location
+    < linux::open_file
+    < linux::o_rdonly
+    < linux::o_wronly
+    < linux::o_creat
+    < linux::o_trunc
+    < linux::o_append
+    < linux::eintr
+    < linux::msg_nosignal
+    < linux::sockaddr_v4_set_family
+
+cfg(target_os = "macos")
+    mod macos
+    < macos::errno_location
+    < macos::open_file
+    < macos::o_rdonly
+    < macos::o_wronly
+    < macos::o_creat
+    < macos::o_trunc
+    < macos::o_append
+    < macos::eintr
+    < macos::msg_nosignal
+    < macos::sockaddr_v4_set_family

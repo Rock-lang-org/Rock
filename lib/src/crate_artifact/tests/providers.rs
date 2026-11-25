@@ -25,6 +25,7 @@ fn compile_artifact_app_without_std_failure(
         no_prelude: true,
         no_std: true,
         sysroot: None,
+        target: None,
         crate_kind: crate::CrateKind::Lib,
         lint_levels: Default::default(),
     })
@@ -362,6 +363,7 @@ main = -> probe 0
         no_prelude: true,
         no_std: true,
         sysroot: None,
+        target: None,
         crate_kind: crate::CrateKind::Lib,
         lint_levels: Default::default(),
     })

@@ -1,0 +1,37 @@
+// Linux (glibc) backend for std::sys.
+
+> std::ffi::libc::__errno_location
+> std::ffi::libc::open
+
+errno_location: () -> *I32
+< errno_location = -> __errno_location!
+
+o_rdonly: () -> I32
+< o_rdonly = -> 0 as I32
+o_wronly: () -> I32
+< o_wronly = -> 1 as I32
+o_creat: () -> I32
+< o_creat = -> 64 as I32
+o_trunc: () -> I32
+< o_trunc = -> 512 as I32
+o_append: () -> I32
+< o_append = -> 1024 as I32
+
+eintr: () -> I32
+< eintr = -> 4 as I32
+
+// 0666, narrowed by the process umask.
+default_mode = -> 438 as I32
+
+// glibc declares open as variadic, but x86-64 and aarch64 Linux pass the
+// optional mode in the same register as a fixed third argument.
+open_file: *U8 -> I32 -> I32
+< open_file = path, flags -> open path, flags, default_mode!
+
+msg_nosignal: () -> I32
+< msg_nosignal = -> 16384 as I32
+
+// struct sockaddr_in starts with a 16-bit sa_family_t.
+sockaddr_v4_set_family: *U8 -> ()
+< sockaddr_v4_set_family = buf ->
+    unsafe *(buf as *U16) = 2 as U16

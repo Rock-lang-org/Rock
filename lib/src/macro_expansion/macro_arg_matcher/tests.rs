@@ -22,6 +22,7 @@ fn test_config() -> crate::Config {
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        target: None,
         crate_kind: Default::default(),
         lint_levels: Default::default(),
     }

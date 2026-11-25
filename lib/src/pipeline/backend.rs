@@ -64,8 +64,10 @@ fn compile_backend(
 
     let source_fingerprint =
         product_source_fingerprint(config, &source_db, &fingerprint_source_files);
-    let current_crate_identity = ProductCrateIdentity::local(effective_current_crate_name.clone())
-        .with_source_fingerprint(source_fingerprint.clone());
+    let mut current_crate_identity =
+        ProductCrateIdentity::local(effective_current_crate_name.clone())
+            .with_source_fingerprint(source_fingerprint.clone());
+    current_crate_identity.target_triple = Some(config.target().triple);
     let compilation_identity = mono::CompilationIdentityContext::new(
         hir.root_crate_id,
         current_crate_identity.clone(),
@@ -165,6 +167,12 @@ fn compile_backend(
     let mut codegen =
         codegen::CodeGen::new_with_symbol_namespace(&context, &module_name, symbol_namespace);
     codegen.set_type_context(mir_program.type_context.clone());
+    let target = config.target();
+    if let Err(e) = codegen.configure_target(&target) {
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.push(e.into_diagnostic());
+        return Err(diagnostics);
+    }
     let link_inputs = crate_ctx.dependency_link_inputs();
 
     if let Err(e) = codegen.compile_program_from_mir(&mir_program) {
@@ -223,29 +231,27 @@ fn compile_backend(
         _ => OptimizationLevel::Aggressive,
     };
 
-    let exe_name = if cfg!(target_os = "windows") {
-        format!("{}.exe", module_name)
-    } else {
-        module_name.to_string()
-    };
+    let exe_name = format!("{}{}", module_name, target.exe_suffix());
     let exe_path = config.output_dir.join(&exe_name);
 
     if config.no_link {
-        let obj_path = config
-            .emit_object
-            .clone()
-            .unwrap_or_else(|| config.output_dir.join(format!("{}.o", module_name)));
+        let obj_path = config.emit_object.clone().unwrap_or_else(|| {
+            config
+                .output_dir
+                .join(format!("{}.{}", module_name, target.object_extension()))
+        });
         if let Some(parent) = obj_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        if let Err(e) = codegen.write_object(&obj_path, opt) {
+        if let Err(e) = codegen.write_object(&obj_path, &target, opt) {
             let mut diagnostics = Diagnostics::default();
             diagnostics.push(e.into_diagnostic());
             return Err(diagnostics);
         }
         attach_product_object_path(&mut products, &obj_path);
     } else {
-        if let Err(e) = codegen.write_executable(&exe_path, opt, &link_inputs.object_paths) {
+        if let Err(e) = codegen.write_executable(&exe_path, &target, opt, &link_inputs.object_paths)
+        {
             let mut diagnostics = Diagnostics::default();
             diagnostics.push(e.into_diagnostic());
             return Err(diagnostics);

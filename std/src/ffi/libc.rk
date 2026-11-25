@@ -23,7 +23,6 @@
 < extern listen: I32 -> I32 -> I32
 < extern accept: I32 -> *U8 -> *I32 -> I32
 < extern connect: I32 -> *U8 -> I32 -> I32
-< extern open: *U8 -> I32 -> I32 -> I32
 < extern read: I32 -> *U8 -> I64 -> I64
 < extern write: I32 -> *U8 -> I64 -> I64
 < extern send: I32 -> *U8 -> I64 -> I32 -> I64
@@ -34,7 +33,19 @@
 < extern ntohs: U16 -> U16
 < extern htonl: U32 -> U32
 < extern ntohl: U32 -> U32
-< extern __errno_location: () -> *I32
+
+// Target-specific raw bindings. Portable code uses std::sys instead.
+cfg(target_os = "linux")
+    // Variadic in C; Linux passes the mode like a fixed third argument.
+    < extern open: *U8 -> I32 -> I32 -> I32
+    < extern __errno_location: () -> *I32
+
+cfg(target_os = "macos")
+    // Variadic in C; arm64 Darwin needs the mode on the stack, so this
+    // binding omits it and is only valid without O_CREAT.
+    < extern open: *U8 -> I32 -> I32
+    < extern creat: *U8 -> I32 -> I32
+    < extern __error: () -> *I32
 
 // POSIX threads
 < extern pthread_create: *U64 -> *U8 -> *U8 -> *U8 -> I32
@@ -44,7 +55,7 @@
 < extern sched_yield: () -> I32
 < extern usleep: U32 -> I32
 
-// Linux 64-bit timespec layout: time_t and long are both 64-bit.
+// LP64 Unix timespec layout: time_t and long are both 64-bit.
 < struct Timespec
     < seconds: I64
     < nanoseconds: I64

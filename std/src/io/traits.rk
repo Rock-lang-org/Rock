@@ -1,6 +1,6 @@
 // Portable IO traits and errors.
 
-> std::ffi::libc::__errno_location
+> std::sys::errno_location
 > std::ffi::libc::read
 > std::ffi::libc::write
 > std::concurrency::arc::Arc
@@ -21,7 +21,7 @@
 < struct Stdout
 
 < last_os_error = ->
-    ptr = __errno_location!
+    ptr = errno_location!
     IoError::Os (unsafe *ptr)
 
 < trait Read

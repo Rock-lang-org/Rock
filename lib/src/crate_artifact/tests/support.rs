@@ -264,6 +264,7 @@ pub(super) fn build_product_artifact_with_extern_artifacts(
         no_prelude,
         no_std,
         sysroot: None,
+        target: None,
         crate_kind: crate::CrateKind::Lib,
         lint_levels: Default::default(),
     })
@@ -443,6 +444,7 @@ pub(super) fn compile_with_options(
         no_prelude,
         no_std,
         sysroot,
+        target: None,
         crate_kind: Default::default(),
         lint_levels: Default::default(),
     };

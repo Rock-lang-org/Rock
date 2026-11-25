@@ -144,7 +144,10 @@ fn compile_with_products_records_canonical_extern_artifact_paths() {
     fs::write(&dep_object, []).unwrap();
 
     CompilerProducts {
-        crate_identity: ProductCrateIdentity::local("dep".to_string()),
+        crate_identity: ProductCrateIdentity {
+            target_triple: Some(crate::target::Target::host().triple),
+            ..ProductCrateIdentity::local("dep".to_string())
+        },
         identity_table: ProductIdentityTable {
             local_crate: Some(ProductCrateId(0)),
             ..ProductIdentityTable::default()

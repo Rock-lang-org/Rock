@@ -18,7 +18,14 @@ pub(super) fn print_request_output(config: &Config) -> Result<Option<String>, Di
             .target_libdir
             .display()
             .to_string(),
-        PrintValue::TargetTriple => rock_lib::sysroot::host_target_triple(),
+        PrintValue::TargetTriple => config.resolved_target()?.triple,
+        PrintValue::Cfg => config
+            .resolved_target()?
+            .cfg_pairs()
+            .into_iter()
+            .map(|(key, value)| format!("{}=\"{}\"", key, value))
+            .collect::<Vec<_>>()
+            .join("\n"),
     };
 
     Ok(Some(output))
@@ -27,7 +34,8 @@ pub(super) fn print_request_output(config: &Config) -> Result<Option<String>, Di
 fn resolved_sysroot_layout(
     config: &Config,
 ) -> Result<rock_lib::sysroot::SysrootLayout, Diagnostics> {
+    let triple = config.resolved_target()?.triple;
     rock_lib::sysroot::resolve_sysroot(config.sysroot.as_deref())
-        .map(|resolution| resolution.into_layout())
+        .map(|resolution| resolution.into_layout_for(triple))
         .map_err(diagnostics_from_message)
 }

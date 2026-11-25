@@ -238,6 +238,51 @@ value = -> 31
 
 The output is `42`. If both paths are imported under the same short name, name resolution reports a conflict; use a qualified path or choose a deliberate local facade name instead.
 
+## Target-specific modules with `cfg`
+
+Some code only makes sense on one operating system. A `cfg` block keeps the indented declarations below it only when its condition matches the target being compiled; on other targets they disappear before any file is loaded or any import is resolved. The block does not create a namespace: kept declarations behave exactly as if they were written in place.
+
+Here `main.rk` picks one of two backend files. On Linux, `unix_backend.rk` is loaded and `windows_backend.rk` is never opened, and on Windows it is the other way round. Either way, `main` calls the same short name.
+
+### `main.rk`
+
+```rock
+cfg(target_family = "unix")
+    mod unix_backend
+    > unix_backend::greeting
+
+cfg(target_family = "windows")
+    mod windows_backend
+    > windows_backend::greeting
+
+main = !-> greeting!.println!
+```
+
+### `unix_backend.rk`
+
+```rock
+greeting: () -> I64
+< greeting = -> 1
+```
+
+### `windows_backend.rk`
+
+```rock
+greeting: () -> I64
+< greeting = -> 2
+```
+
+On Linux or macOS the program prints `1`.
+
+A condition is one of:
+
+- `key = "value"` with a built-in key: `target_os` (`"linux"`, `"macos"`, `"windows"`), `target_family` (`"unix"`, `"windows"`), `target_arch` (`"x86_64"`, `"aarch64"`), or `target_env` (`"gnu"`, `"msvc"`, or `""` on macOS).
+- `all(a, b, ...)`, `any(a, b, ...)`, and `not(a)` to combine conditions.
+
+Blocks may nest, and nested conditions must all hold. Unknown keys or values are compile errors on every target, so a typo cannot silently drop code. Inactive declarations must still be valid syntax, but their files, imports, macros, and operators are ignored. `cfg` blocks are allowed among module-level declarations, not inside functions, `impl` bodies, or expressions. There is no `else`: write the opposite condition with `not(...)`.
+
+`rockc --print cfg` shows the values for the current target, and `rockc --target <triple>` compiles for another one.
+
 ## Current limits and common mistakes
 
 - Unresolved imports are compilation errors, even if the imported name is never used. A valid target may be declared later in its module.

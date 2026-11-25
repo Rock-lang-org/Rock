@@ -57,6 +57,7 @@ fn lower_source_for_test(
         no_prelude: true,
         no_std: true,
         sysroot: None,
+        target: None,
         crate_kind: Default::default(),
         lint_levels: Default::default(),
     };

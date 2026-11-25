@@ -18,6 +18,7 @@ pub(crate) fn load_extern_artifacts(
     ctx: &mut CrateContext,
     extern_artifacts: &[(String, PathBuf)],
     project_path: PathBuf,
+    target_triple: &str,
 ) -> Result<(), diagnostic::Diagnostic> {
     let mut pending = Vec::new();
     for (name, path) in extern_artifacts {
@@ -33,6 +34,21 @@ pub(crate) fn load_extern_artifacts(
                     path.clone(),
                 )
             })?;
+        // Objects built for another target cannot link; reject before codegen.
+        let artifact_target = header.crate_identity.target_triple.as_deref();
+        if artifact_target != Some(target_triple) {
+            return Err(diagnostic::Diagnostic::for_artifact(
+                format!(
+                    "External artifact '{}' was built for target '{}', but this build targets \
+                     '{}'; rebuild it for '{}'",
+                    name,
+                    artifact_target.unwrap_or("<unknown>"),
+                    target_triple,
+                    target_triple
+                ),
+                path.clone(),
+            ));
+        }
         pending.push(PendingExternArtifact {
             name: name.clone(),
             path: path.clone(),

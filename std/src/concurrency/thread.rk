@@ -14,7 +14,8 @@
 > std::ffi::libc::sched_yield
 > std::ffi::libc::nanosleep
 > std::ffi::libc::Timespec
-> std::ffi::libc::__errno_location
+> std::sys::errno_location
+> std::sys::eintr
 > std::ffi::libc::exit
 > std::mem::utils::forget
 > std::mem::utils::sizeof
@@ -209,7 +210,7 @@ current_id: () -> U64
 
 yield_now: () -> ()
 < yield_now = ->
-    // Linux sched_yield has no documented errors. Keep the infallible API,
+    // POSIX sched_yield has no documented errors. Keep the infallible API,
     // but fail fast if the operating system rejects this invariant.
     if sched_yield! != (0 as I32)
         exit (1 as I32)
@@ -228,8 +229,8 @@ sleep_ms: I64 -> ()
         seconds: 0
         nanoseconds: 0
     while (nanosleep ((&request) as *Timespec), ((&mut remaining) as *Timespec)) != (0 as I32)
-        error = unsafe *(__errno_location!)
-        if error != (4 as I32)
+        error = unsafe *(errno_location!)
+        if error != (eintr!)
             exit (1 as I32)
         request.seconds = remaining.seconds
         request.nanoseconds = remaining.nanoseconds

@@ -44,6 +44,7 @@ main = ->
         no_prelude: false,
         no_std: false,
         sysroot: None,
+        target: None,
         crate_kind: crate::CrateKind::Lib,
         lint_levels: Default::default(),
     })

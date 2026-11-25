@@ -91,6 +91,20 @@ impl<'a> Visitor<'a> for AstFormatter {
                 }
             };
 
+            // The parsed module holds only the active cfg branch; rewriting it
+            // would delete every other target's code.
+            if source
+                .lines()
+                .any(|line| line.trim_start().starts_with("cfg("))
+            {
+                self.result = Err(diagnostics_from_message(format!(
+                    "Refusing to format {}: it contains cfg blocks, which the formatter \
+                     does not preserve yet",
+                    path.display()
+                )));
+                return;
+            }
+
             rock_lib::fmt::format(rock_lib::fmt::FormatInput::module_with_source(
                 module, &source,
             ))

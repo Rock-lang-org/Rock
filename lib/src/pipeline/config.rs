@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::lint::LintLevels;
+use crate::target::Target;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebugPrint {
@@ -60,6 +61,8 @@ pub struct Config {
     pub no_prelude: bool,         // Don't inject std prelude
     pub no_std: bool,             // Don't auto-load bundled std
     pub sysroot: Option<PathBuf>, // Toolchain sysroot override
+    /// Target triple; `None` builds for the host.
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,5 +81,14 @@ pub enum SourceProvider {
 impl Config {
     pub fn has_debug_print(&self, name: DebugPrint) -> bool {
         self.debug_print.contains(&name)
+    }
+
+    /// The resolved compilation target. CLIs validate explicit triples before
+    /// building a config, so an invalid one here falls back to the host.
+    pub fn target(&self) -> Target {
+        self.target
+            .as_deref()
+            .and_then(|triple| Target::parse(triple).ok())
+            .unwrap_or_else(Target::host)
     }
 }

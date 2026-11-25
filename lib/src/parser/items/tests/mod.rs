@@ -3,6 +3,7 @@ mod common;
 mod array;
 mod ast_validation;
 mod block;
+mod cfg;
 mod enum_decl;
 mod expression;
 mod function_decl;

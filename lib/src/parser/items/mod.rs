@@ -1,5 +1,6 @@
 mod array;
 mod block;
+mod cfg;
 mod do_expr;
 mod enum_decl;
 mod expression;

@@ -140,9 +140,13 @@ invariant.
 
 ## Target scope
 
-The shipped FFI-backed std currently assumes POSIX APIs and the
-`x86_64-unknown-linux-gnu` target. Put foreign declarations in target-specific
-modules and isolate them behind portable traits where that improves the public
-API. A program that needs Windows, another architecture, nonblocking sockets,
-or a C-layout aggregate must provide a separate boundary implementation and
-test that target explicitly.
+The shipped FFI-backed std assumes POSIX APIs. Its operating-system details
+(errno access, `open` flags, socket address layout) live in a private backend
+selected with [`cfg` blocks](../programs/modules.md#target-specific-modules-with-cfg);
+Linux is the tested target, macOS has a backend that compiles but is not yet
+qualified on a native runner, and Windows has no std backend yet. Some raw
+`std::ffi::libc` bindings, such as `open` and `__errno_location`, exist only on
+the targets where their C signature is known. Put your own foreign declarations
+in `cfg`-selected modules the same way, and isolate them behind portable APIs. A
+program that needs nonblocking sockets or a C-layout aggregate must provide a
+separate boundary implementation and test each target explicitly.

@@ -97,6 +97,7 @@ enum PrintValue {
     Sysroot,
     TargetLibdir,
     TargetTriple,
+    Cfg,
 }
 
 #[derive(Parser, Debug)]
@@ -143,6 +144,9 @@ pub struct Config {
     /// Override the compiler sysroot
     #[arg(long)]
     sysroot: Option<PathBuf>,
+    /// Target triple to compile for (defaults to the host)
+    #[arg(long)]
+    target: Option<String>,
     /// External product artifacts in name=path format
     #[arg(long)]
     extern_artifact: Vec<String>,
@@ -231,6 +235,7 @@ impl Config {
 
     fn into_compiler_config(self) -> Result<rock_lib::Config, Diagnostics> {
         let config = self;
+        config.resolved_target()?;
         let lint_levels = config.lint_levels()?;
         let entry_file = config.entry_file.ok_or_else(|| {
             diagnostics_from_message("Missing required --entry-file unless --print is used")
@@ -266,7 +271,18 @@ impl Config {
             no_prelude: config.no_prelude,
             no_std: config.no_std,
             sysroot: config.sysroot,
+            target: config.target,
         })
+    }
+
+    /// The selected target, rejecting unsupported triples up front.
+    fn resolved_target(&self) -> Result<rock_lib::target::Target, Diagnostics> {
+        match &self.target {
+            Some(triple) => {
+                rock_lib::target::Target::parse(triple).map_err(diagnostics_from_message)
+            }
+            None => Ok(rock_lib::target::Target::host()),
+        }
     }
 }
 

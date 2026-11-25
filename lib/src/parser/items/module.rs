@@ -1,6 +1,6 @@
 use crate::{lexer::TokenType, parser::*};
 
-use super::top_level;
+use super::cfg::module_item;
 
 pub fn module_inline(stream: Input) -> IResult<Module> {
     let mut current_stream = stream;
@@ -20,10 +20,10 @@ pub fn module_inline(stream: Input) -> IResult<Module> {
             }
         }
 
-        match top_level(current_stream) {
-            Ok((new_stream, top_level_item)) => {
+        match module_item(current_stream) {
+            Ok((new_stream, items)) => {
                 current_stream = new_stream;
-                top_levels.push(top_level_item);
+                top_levels.extend(items);
             }
             Err(err) => {
                 // Track the deepest error
@@ -72,11 +72,11 @@ pub fn module(stream: Input) -> IResult<Module> {
         TokenType::Keyword("mod".to_string()),
         ident,
         TokenType::Eol,
-        indented(many(top_level)),
+        indented(many(module_item)),
     )
-        .map(|(_, name, _, top_levels)| Module {
+        .map(|(_, name, _, groups)| Module {
             name: Some(name),
-            top_levels,
+            top_levels: groups.into_iter().flatten().collect(),
             is_inline: false,
             filepath: None,
         })

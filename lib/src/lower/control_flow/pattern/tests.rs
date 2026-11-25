@@ -55,6 +55,7 @@ fn compile_source_to_resolved_hir_for_test(source: &str) -> ResolvedHirProgram {
         no_prelude: true,
         no_std: true,
         sysroot: None,
+        target: None,
         crate_kind: Default::default(),
         lint_levels: Default::default(),
     };

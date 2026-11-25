@@ -42,6 +42,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
             .parent()
             .unwrap_or(&config.entry_file)
             .to_path_buf(),
+        &config.target().triple,
     ) {
         let mut diagnostics = Diagnostics::default();
         diagnostics.push(diagnostic);

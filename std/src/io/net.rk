@@ -16,6 +16,8 @@
 > std::ffi::libc::htonl
 > std::ffi::libc::ntohl
 > std::io::fd::close_fd
+> std::sys::msg_nosignal
+> std::sys::sockaddr_v4_set_family
 > std::mem::raw_buffer::RawBuffer
 > std::control::result::Result
 
@@ -39,7 +41,6 @@ af_inet = -> 2
 sock_stream = -> 1
 sockaddr_in_len = -> 16
 somaxconn_default = -> 128
-msg_nosignal = -> 16384 as I32
 
 unit = ->
     return
@@ -67,8 +68,8 @@ sockaddr_v4_new = addr ->
     while i < (sockaddr_in_len! as I64)
         unsafe buf[i] = 0
         i = i + 1
+    sockaddr_v4_set_family buf
     unsafe
-        *((buf + 0) as *U16) = af_inet! as U16
         *((buf + 2) as *U16) = htons (addr.port as U16)
         *((buf + 4) as *U32) = htonl (ipv4_to_u32 addr.ip)
     raw

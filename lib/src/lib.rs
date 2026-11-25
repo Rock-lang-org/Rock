@@ -26,6 +26,7 @@ pub mod selection;
 pub mod source_loader;
 pub mod source_map;
 pub mod sysroot;
+pub mod target;
 pub mod traits;
 pub mod type_context;
 pub(crate) mod type_lowering;
