@@ -152,12 +152,60 @@ pub(super) fn receiver_signature_vars(
     hir: &PartialHir,
     function: &HirFunction,
 ) -> HashSet<crate::ids::TypeVarId> {
+    receiver_signature_vars_from(hir, function, &mut HashSet::new())
+}
+
+/// Also transitive: a signature variable passed to a parameter of another
+/// signatureless function that must itself be caller-seeded (`f = a -> square
+/// a` where `square = x -> x * x`) needs a concrete caller type too, or the
+/// inner receiver is only ever seen through `f`'s fresh instantiation.
+fn receiver_signature_vars_from(
+    hir: &PartialHir,
+    function: &HirFunction,
+    visiting: &mut HashSet<crate::ids::DefId>,
+) -> HashSet<crate::ids::TypeVarId> {
+    let signature = signature_vars(hir, function);
     let mut authority_vars = HashSet::new();
     collect_unresolved_authority_vars(&function.body, &hir.engine, &mut authority_vars);
-    signature_vars(hir, function)
-        .intersection(&authority_vars)
-        .copied()
-        .collect()
+    let mut result: HashSet<_> = signature.intersection(&authority_vars).copied().collect();
+
+    if !visiting.insert(function.id) {
+        return result;
+    }
+    let mut calls = Vec::new();
+    super::call_sites::for_each_direct_call(&function.body, &mut |id, args| {
+        calls.push((
+            id,
+            args.iter().map(|arg| arg.ty.clone()).collect::<Vec<_>>(),
+        ));
+    });
+    for (callee_id, arg_types) in calls {
+        let Some(callee) = hir.functions.get(&callee_id) else {
+            continue;
+        };
+        if callee_id == function.id
+            || !callee.generic_params.is_empty()
+            || callee.params.iter().any(|param| param.is_ref)
+        {
+            continue;
+        }
+        let callee_vars = receiver_signature_vars_from(hir, callee, visiting);
+        if callee_vars.is_empty() {
+            continue;
+        }
+        for (param, arg_ty) in callee.params.iter().zip(&arg_types) {
+            let mut param_vars = HashSet::new();
+            collect_type_vars(&hir.engine.resolve(&param.ty), &mut param_vars);
+            if param_vars.is_disjoint(&callee_vars) {
+                continue;
+            }
+            let mut arg_vars = HashSet::new();
+            collect_type_vars(&hir.engine.resolve(arg_ty), &mut arg_vars);
+            result.extend(arg_vars.intersection(&signature).copied());
+        }
+    }
+    visiting.remove(&function.id);
+    result
 }
 
 pub(super) fn constrained_signature_vars(

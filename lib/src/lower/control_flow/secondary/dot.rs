@@ -337,7 +337,22 @@ impl Lowerer {
                         .collect::<Vec<_>>();
                     matches.sort_by_key(|(_, structure, _)| structure.id);
                     matches.dedup_by_key(|(_, structure, _)| structure.id);
+                    // Only a non-generic struct can be committed by field name
+                    // alone: a generic field type depends on the receiver's
+                    // arguments, so it stays a deferred site that the inference
+                    // authority binds once callers seed the receiver.
                     if let [(struct_name, structure, field)] = matches.as_slice() {
+                        if !structure.generic_params.is_empty() {
+                            return HirExpr {
+                                ty: field_ty,
+                                kind: HirExprKind::FieldAccess(
+                                    Box::new(original_expr),
+                                    ident.name.clone(),
+                                    None,
+                                ),
+                                span,
+                            };
+                        }
                         let type_args = structure
                             .generic_params
                             .iter()

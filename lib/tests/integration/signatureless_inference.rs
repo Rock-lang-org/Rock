@@ -847,6 +847,64 @@ main = !->
 }
 
 #[test]
+fn test_signatureless_operator_helper_through_signatureless_caller() {
+    let output = compile_and_run(
+        r#"
+square = x -> x * x
+
+hypot_sq = a, b ->
+    aa = square a
+    bb = square b
+    aa + bb
+
+main = !->
+    hypot_sq 3, 4 .println!
+"#,
+    );
+    assert_eq!(output.trim(), "25");
+}
+
+#[test]
+fn test_signatureless_dereference_is_seeded_from_callers() {
+    let output = compile_and_run(
+        r#"
+bump = r !-> *r = *r + 1
+
+main = !->
+    mut n = 1
+    bump &mut n
+    local = r !-> *r = *r * 10
+    local &mut n
+    n.println!
+"#,
+    );
+    assert_eq!(output.trim(), "20");
+}
+
+#[test]
+fn test_signatureless_generic_struct_field_is_seeded_from_callers() {
+    let output = compile_and_run(
+        r#"
+struct Pair A, B
+    < first: A
+    < second: B
+
+swap = pair -> Pair
+    first: pair.second
+    second: pair.first
+
+main = !->
+    p = swap Pair
+        first: 1
+        second: "one"
+    p.first.println!
+    p.second.println!
+"#,
+    );
+    assert_eq!(output.trim().lines().collect::<Vec<_>>(), vec!["one", "1"]);
+}
+
+#[test]
 fn test_signatureless_field_receiver_of_imported_struct() {
     let dir = test_temp_dir(TEST_COUNTER.fetch_add(1, Ordering::SeqCst));
     std::fs::create_dir_all(&dir).unwrap();

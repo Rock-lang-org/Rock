@@ -108,6 +108,17 @@ impl Lowerer {
                         return next;
                     }
 
+                    // A signatureless parameter is only typed once callers seed
+                    // it; the inference authority binds this placeholder to the
+                    // pointee when the operand resolves.
+                    if matches!(resolved_inner_ty, Type::TypeVar(_)) {
+                        return HirExpr {
+                            ty: self.engine.fresh_type_var_at(op.span.clone()),
+                            kind: HirExprKind::Deref(Box::new(inner_hir)),
+                            span: inner_span,
+                        };
+                    }
+
                     let result_ty = resolved_inner_ty.clone();
                     let receiver_type = self.display_type(&resolved_inner_ty);
                     self.diagnostics.push_type_with_span(

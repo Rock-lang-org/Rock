@@ -76,6 +76,46 @@ impl MethodAuthorityContext<'_> {
         ))
     }
 
+    /// Binds a deferred dereference (`*x` whose operand was unresolved while
+    /// lowering) to the pointee once callers have seeded the operand.
+    pub(super) fn materialize_deref(&mut self, expr: &mut HirExpr, errors: &mut Vec<ResolveError>) {
+        let HirExprKind::Deref(operand) = &mut expr.kind else {
+            return;
+        };
+        self.materialize_expr(operand, errors);
+        let placeholder = self.engine.borrow().resolve(&expr.ty);
+        if !matches!(placeholder, Type::TypeVar(_)) {
+            return;
+        }
+        let operand_ty = self.resolved_type(&operand.ty);
+        let pointee = match operand_ty {
+            Type::Reference { inner, .. } => *inner,
+            Type::Pointer(inner) => {
+                if !self.unsafe_context.get() {
+                    errors.push(ResolveError::with_span_code(
+                        "Dereference of raw pointer requires an unsafe block".to_string(),
+                        expr.span.clone(),
+                        crate::diagnostic::DiagnosticCode::Selection,
+                    ));
+                }
+                *inner
+            }
+            ty if contains_inference_type(&ty) => return,
+            ty => {
+                errors.push(ResolveError::with_span(
+                    format!(
+                        "Cannot dereference non-pointer type: {}",
+                        self.display_type(&ty)
+                    ),
+                    expr.span.clone(),
+                ));
+                return;
+            }
+        };
+        let _ = self.engine.borrow_mut().unify(&placeholder, &pointee);
+        expr.ty = pointee;
+    }
+
     pub(super) fn materialize_field_access(
         &mut self,
         expr: &mut HirExpr,

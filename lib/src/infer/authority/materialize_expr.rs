@@ -348,8 +348,8 @@ impl MethodAuthorityContext<'_> {
                     self.materialize_expr(receiver, errors);
                 }
             }
-            HirExprKind::Deref(receiver)
-            | HirExprKind::Ref(_, receiver)
+            HirExprKind::Deref(_) => self.materialize_deref(expr, errors),
+            HirExprKind::Ref(_, receiver)
             | HirExprKind::Cast(receiver, _)
             | HirExprKind::TupleIndex(receiver, _) => self.materialize_expr(receiver, errors),
             HirExprKind::If {

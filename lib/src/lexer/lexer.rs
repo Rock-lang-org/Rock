@@ -262,7 +262,7 @@ impl Lexer {
             c if c.is_alphabetic() => self.ident_or_keyword_or_type(),
             c if c.is_ascii_digit() => self.number(),
             '\0' => self.token(TokenType::Eof, 1),
-            c => return Err(LexerError::UnknownToken(c, self.span(1))),
+            c => return Err(LexerError::UnknownToken(c, self.span(c.len_utf8()))),
         };
 
         Ok(token)
@@ -299,99 +299,73 @@ impl Lexer {
         }
     }
 
+    /// Byte offset, relative to the current position, of the first character
+    /// at or after `from` (also a byte offset) that does not satisfy `accept`.
+    fn scan_while(&self, from: usize, accept: impl Fn(char) -> bool) -> usize {
+        let rest = &self.input[self.position + from..];
+        from + rest
+            .char_indices()
+            .find(|&(_, ch)| !accept(ch))
+            .map_or(rest.len(), |(offset, _)| offset)
+    }
+
+    fn is_name_char(ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_'
+    }
+
     fn ident_or_keyword_or_type(&self) -> Token {
-        let start = self.position;
-        let mut end = self.position;
-
-        while self.peek(end - start).is_alphanumeric() || self.peek(end - start) == '_' {
-            end += 1;
-        }
-
-        let ident = self.input[start..end].to_string();
+        let len = self.scan_while(0, Self::is_name_char);
+        let ident = self.input[self.position..self.position + len].to_string();
 
         if self.current_char().is_uppercase() {
-            self.token(TokenType::Type(ident), end - start)
+            self.token(TokenType::Type(ident), len)
         } else if KEYWORDS.contains(&ident.as_str()) {
-            self.token(TokenType::Keyword(ident), end - start)
+            self.token(TokenType::Keyword(ident), len)
         } else {
-            self.token(TokenType::Ident(ident), end - start)
+            self.token(TokenType::Ident(ident), len)
         }
+    }
+
+    /// Lexes a one-character sigil (`$`, `%`, `~`) followed by a name.
+    fn sigil_name(&self) -> (String, usize) {
+        let len = self.scan_while(1, Self::is_name_char);
+        (
+            self.input[self.position + 1..self.position + len].to_string(),
+            len,
+        )
     }
 
     fn macro_var(&self) -> Token {
-        let start = self.position;
-        let mut end = self.position;
-
-        while self.peek(end - start + 1).is_alphanumeric() || self.peek(end - start + 1) == '_' {
-            end += 1;
-        }
-
-        self.token(
-            TokenType::MacroVar(self.input[start + 1..end + 1].to_string()),
-            end - start + 1,
-        )
+        let (name, len) = self.sigil_name();
+        self.token(TokenType::MacroVar(name), len)
     }
 
+    // Comment lengths are byte offsets: comments may contain any UTF-8 text.
     fn comment_eol(&self) -> Token {
-        let start = self.position;
-        let mut end = self.position;
+        let rest = &self.input[self.position..];
+        let len = rest.find('\n').unwrap_or(rest.len());
 
-        // consume the '//'
-        end += 2;
-
-        while self.peek(end - start) != '\n' {
-            end += 1;
-        }
-
-        self.token(TokenType::Comment(String::new()), end - start)
+        self.token(TokenType::Comment(String::new()), len)
     }
 
     fn comment(&self) -> Token {
-        let start = self.position;
-        let mut end = self.position;
+        let rest = &self.input[self.position..];
+        let len = rest[2..].find("*/").map_or(rest.len(), |offset| offset + 4);
 
-        // consume the '/*'
-        end += 2;
-
-        while self.peek(end - start) != '*' && self.peek(end - start + 1) != '/' {
-            end += 1;
-        }
-
-        // consume the '*/'
-        end += 2;
-
-        self.token(TokenType::Comment(String::new()), end - start)
+        self.token(TokenType::Comment(String::new()), len)
     }
 
     fn macro_invoc(&self) -> Token {
-        let start = self.position;
-        let mut end = self.position;
-
-        while self.peek(end - start + 1).is_alphanumeric() || self.peek(end - start + 1) == '_' {
-            end += 1;
-        }
-
-        self.token(
-            TokenType::MacroInvoc(self.input[start + 1..end + 1].to_string()),
-            end - start + 1,
-        )
+        let (name, len) = self.sigil_name();
+        self.token(TokenType::MacroInvoc(name), len)
     }
 
     fn native_operator(&self) -> Token {
-        let start = self.position;
-        let mut end = self.position;
-
-        while self.peek(end - start + 1).is_alphabetic()
-            || self.peek(end - start + 1).is_ascii_digit()
-            || self.peek(end - start + 1) == '_'
-        {
-            end += 1;
-        }
-
-        self.token(
-            TokenType::NativeOperator(self.input[start + 1..end + 1].to_string()),
-            end - start + 1,
-        )
+        let len = self.scan_while(1, |ch| {
+            ch.is_alphabetic() || ch.is_ascii_digit() || ch == '_'
+        });
+        let name = self.input[self.position + 1..self.position + len].to_string();
+        self.token(TokenType::NativeOperator(name), len)
     }
 
     fn number(&self) -> Token {
@@ -469,7 +443,7 @@ impl Lexer {
 
     fn skip_whitespace(&mut self) {
         while self.current_char().is_whitespace() && self.current_char() != '\n' {
-            self.position += 1;
+            self.position += self.current_char().len_utf8();
         }
     }
 

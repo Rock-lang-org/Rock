@@ -85,6 +85,7 @@
 < std::concurrency::thread_safety::*
 < std::clone::*
 < std::mem::drop::*
+< std::mem::copy::*
 < std::num::arithmetic::*
 < std::cmp::ord::*
 < std::cmp::eq::*

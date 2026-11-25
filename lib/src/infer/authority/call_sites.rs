@@ -53,6 +53,21 @@ pub(super) fn collect_direct_callees(body: &HirBlock, callees: &mut HashSet<DefI
     });
 }
 
+/// Visits every direct call to a function item in `body` with its arguments.
+pub(super) fn for_each_direct_call(body: &HirBlock, visit: &mut dyn FnMut(DefId, &[HirExpr])) {
+    block(body, &mut |node| {
+        if let HirExprKind::Call(callee, args, _) = &node.kind {
+            if let HirExprKind::ResolvedVar(HirVarRef {
+                target: HirVarTarget::Function(id),
+                ..
+            }) = &callee.kind
+            {
+                visit(*id, args);
+            }
+        }
+    });
+}
+
 fn all_functions(hir: &PartialHir) -> impl Iterator<Item = &crate::hir::HirFunction> {
     hir.functions
         .values()
@@ -272,6 +287,13 @@ pub(super) fn field_receiver_vars(
                 ty = *inner;
             }
             if let Type::TypeVar(id) = ty {
+                vars.insert(id);
+            }
+        }
+        // A deferred dereference needs to know whether its operand is a
+        // reference or a raw pointer, which only a concrete caller can tell.
+        if let HirExprKind::Deref(operand) = &node.kind {
+            if let Type::TypeVar(id) = hir.engine.resolve(&operand.ty) {
                 vars.insert(id);
             }
         }

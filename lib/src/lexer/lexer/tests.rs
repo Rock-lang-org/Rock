@@ -94,6 +94,47 @@ fn test_block_comment() {
 }
 
 #[test]
+fn unicode_comments_keep_byte_positions_for_following_tokens() {
+    let input = "x // é中🦀\n/* 🦀 a/b * c */ y\n";
+    let tokens = lex_input(input).unwrap();
+    let y = tokens
+        .iter()
+        .find(|t| matches!(t.token_type, TokenType::Ident(ref name) if name == "y"))
+        .expect("identifier after comments");
+    let y_offset = input.find(" y").unwrap() + 1;
+    assert_eq!(y.span.start, y_offset);
+}
+
+#[test]
+fn unicode_names_use_byte_spans() {
+    let input = "café Été $né %mé ~Né tail\n";
+    let tokens = lex_input(input).unwrap();
+    let kinds: Vec<_> = tokens.iter().map(|t| t.token_type.clone()).collect();
+    for expected in [
+        TokenType::Ident("café".into()),
+        TokenType::Type("Été".into()),
+        TokenType::MacroVar("né".into()),
+        TokenType::MacroInvoc("mé".into()),
+        TokenType::NativeOperator("Né".into()),
+    ] {
+        assert!(kinds.contains(&expected), "missing {expected:?}");
+    }
+    let tail = tokens
+        .iter()
+        .find(|t| matches!(t.token_type, TokenType::Ident(ref name) if name == "tail"))
+        .expect("identifier after unicode names");
+    assert_eq!(tail.span.start, input.find("tail").unwrap());
+}
+
+#[test]
+fn line_comment_without_trailing_newline_ends_at_input_end() {
+    let tokens = lex_input("x // é").unwrap();
+    assert!(tokens
+        .iter()
+        .any(|t| matches!(t.token_type, TokenType::Ident(ref name) if name == "x")));
+}
+
+#[test]
 fn test_spaced_dot_operator() {
     let input = "obj .method";
     let tokens = lex_input(input).unwrap();
